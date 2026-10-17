@@ -13,7 +13,8 @@ Three things are asserted, in the order they matter:
   a sibling self-test the CI collection runs that names the guard; a comment, a
   hook's `files:` pattern, a sibling that never mentions the guard and the
   hyphen-named sibling the collection does not glob do not, and an excuse that
-  is spent or stale is reported rather than honoured;
+  is spent (its guard wired or gone) or stale (its guard exits 0) is reported
+  rather than honoured;
 * the report bites. A copy of the guard with discovery neutered stays green on
   the same tree, so the red the real guard prints is the finding and not the
   fixture — the one thing a tree-shaped assertion cannot tell you by itself.
@@ -66,6 +67,10 @@ def fixture(
     `workflow` is the body of `.github/workflows/repo-guards.yml`; `None` leaves
     the workflow out altogether. `precommit` adds `.pre-commit-config.yaml`
     when it is given, `self_test` a sibling by that file name.
+
+    Each excused guard is a stub that exits non-zero: an excuse only stands
+    while its guard is red on the tree, and a fixture whose excused guards
+    exited 0 would report every entry as stale.
     """
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -73,7 +78,8 @@ def fixture(
         scripts.mkdir(parents=True)
         (scripts / "check-unwired.py").write_text("# a guard\n", encoding="utf-8")
         for name in EXCUSED:
-            (scripts / name).write_text("# excused\n", encoding="utf-8")
+            body = "exit 1\n" if name.endswith(".sh") else "raise SystemExit(1)\n"
+            (scripts / name).write_text(body, encoding="utf-8")
         if self_test is not None:
             (scripts / self_test).write_text(
                 'GUARD = "check-unwired.py"\n', encoding="utf-8"
@@ -236,6 +242,53 @@ class GuardWiringTests(unittest.TestCase):
             result = run(root)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn(f"ON_DEMAND still excuses {excused}", result.stderr)
+
+    def test_an_excuse_whose_guard_turned_green_is_reported(self) -> None:
+        """The entry claims the guard is red; a guard that exits 0 no longer is."""
+        excused = EXCUSED[0] if EXCUSED else None
+        if excused is None:
+            self.skipTest("the guard excuses nothing")
+        wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
+        with fixture(workflow=wired) as root:
+            (root / ".claude/scripts" / excused).write_text(
+                "raise SystemExit(0)\n", encoding="utf-8"
+            )
+            result = run(root)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn(
+            f"{excused} is green now: delete the ON_DEMAND entry", result.stderr
+        )
+
+    def test_an_excuse_stands_on_any_non_zero_exit(self) -> None:
+        """`cannot judge` (exit 2) is not green: check-split-frontend.py exits 2."""
+        excused = EXCUSED[0] if EXCUSED else None
+        if excused is None:
+            self.skipTest("the guard excuses nothing")
+        wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
+        with fixture(workflow=wired) as root:
+            (root / ".claude/scripts" / excused).write_text(
+                "raise SystemExit(2)\n", encoding="utf-8"
+            )
+            result = run(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_an_excuse_that_never_finishes_is_not_honoured(self) -> None:
+        """A guard that hangs gives no verdict, so it cannot show the tree is red."""
+        excused = EXCUSED[0] if EXCUSED else None
+        if excused is None:
+            self.skipTest("the guard excuses nothing")
+        guard = _load_guard()
+        guard.EXCUSE_TIMEOUT = 0.5
+        wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
+        with fixture(workflow=wired) as root:
+            (root / ".claude/scripts" / excused).write_text(
+                "import time\ntime.sleep(30)\n", encoding="utf-8"
+            )
+            code, problems, _ = guard.judge(root)
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(
+            any("did not finish" in problem for problem in problems), problems
+        )
 
     def test_an_excuse_for_a_script_that_is_gone_is_reported(self) -> None:
         excused = EXCUSED[0] if EXCUSED else None

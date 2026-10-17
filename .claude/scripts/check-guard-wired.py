@@ -37,16 +37,20 @@ which self-test repo-guards runs does not wire anything. Neither does a hook's
 decides when that hook runs, not whether anything starts the guard.
 
 A guard that no lane CAN run is named in ON_DEMAND with the reason: one reads a
-refactor rather than the tree, one is red wherever it runs. The list is
-self-checking in both directions — an entry whose script is gone, or whose
-script has since been wired, is a failure — so it cannot quietly become the
-place the next unwired guard is forgotten.
+refactor rather than the tree, one is red wherever it runs. The list checks
+itself three ways — a script that is gone, one that has since been wired, and
+one that exits 0 on this tree are each a failure — so it cannot quietly become
+the place the next unwired guard is forgotten. The third is read from a run of
+the guard itself: an excuse that says "red on this tree" holds only while that
+run is still red, because a fixed guard left on the list reports a red tree
+that is no longer red.
 
-SCOPE. This judges whether a guard is started, not whether the thing that would
-notice it going wrong is started. The second half is repo-guards.yml's CI helper
-tests step, which collects `test_*.py` from both script trees and skips
-`test_<stem>.py` for every guard named in ON_DEMAND below, so that one list
-decides both. Its comment says the rest.
+SCOPE. This judges whether a guard is started, and whether the ones it excuses
+still deserve it; not whether the thing that would notice a started guard going
+wrong is started. The second half is repo-guards.yml's CI helper tests step,
+which collects `test_*.py` from both script trees and skips `test_<stem>.py` for
+every guard named in ON_DEMAND below, so that one list decides both. Its comment
+says the rest.
 
 Usage: check-guard-wired.py [--root DIR]   check a tree (default: repo root)
        check-guard-wired.py --self-test    prove this guard catches what it claims
@@ -73,9 +77,10 @@ WIRING_FILES = (".pre-commit-config.yaml", "Taskfile.yml", ".cheese/pre-push")
 WIRING_GLOBS = (".github/workflows/*.yml", ".github/workflows/*.yaml")
 
 #: Guards with no lane that could run them, and why. Every entry is checked:
-#: the script must exist, and must really be unwired — wire it and this entry
-#: goes red until it is deleted. Keep the list empty unless the script truly
-#: cannot run against the tree.
+#: the script must exist, must really be unwired, and must still exit non-zero
+#: on this tree. Wire one, or fix it, and this entry goes red until it is
+#: deleted. Keep the list empty unless the script truly cannot run against the
+#: tree.
 ON_DEMAND: dict[str, str] = {
     "check-split-frontend.py": (
         "judges one refactor, not the tree: the run it is built for takes "
@@ -94,6 +99,12 @@ ON_DEMAND: dict[str, str] = {
         "the tree is clean, so it is red too"
     ),
 }
+
+#: How long an excused guard gets to prove it is still red. Both entries here
+#: answer in under a second; the limit exists so that a guard which hangs fails
+#: this check instead of hanging the job that runs it. It is also what keeps
+#: this check inside `.cheese/pre-push`'s 240s wall clock: one limit per entry.
+EXCUSE_TIMEOUT = 60
 
 #: A `#` starting a line, or following whitespace, begins a comment. YAML and
 #: shell agree on that much; a `#` inside a word (a URL fragment, a hex colour)
@@ -205,6 +216,51 @@ def lanes(
     return found
 
 
+def stale_excuse(root: Path, script: str) -> str | None:
+    """Run an excused guard: None while it is still red, else the problem.
+
+    ON_DEMAND's reason is a claim about a run — that the guard is red on the
+    tree it would judge — so it is read from a run rather than trusted. A guard
+    that exits 0 has been fixed and its excuse is spent. One that cannot be
+    started, or that does not finish, produced no verdict either, and neither is
+    evidence that the tree is red.
+
+    Any non-zero exit stands, "cannot judge" included: an entry excused for a
+    reason a bare run cannot express — `check-split-frontend.py` exits 2 asking
+    for the refactor arguments it needs — would otherwise be reported stale
+    forever. This is a floor on the claim, not a judgement of the guard.
+
+    The script runs from the tree root and from its own copy inside that tree,
+    the way a lane would start it: the guards here read the repository root off
+    their own path, so a fixture tree's stub is run as the fixture's guard.
+    """
+    path = root / SCRIPTS_DIR / script
+    command = ["sh", str(path)] if path.suffix == ".sh" else [sys.executable, str(path)]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=EXCUSE_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            f"ON_DEMAND excuses {script}, but it did not finish in "
+            f"{EXCUSE_TIMEOUT}s, so its reason is unproven on this tree: "
+            f"make the guard answer, or delete the entry"
+        )
+    except OSError as exc:
+        return (
+            f"ON_DEMAND excuses {script}, but it cannot be started ({exc}), so its "
+            f"reason is unproven on this tree: make the guard answer, or delete the entry"
+        )
+    if result.returncode == 0:
+        return f"{script} is green now: delete the ON_DEMAND entry"
+    return None
+
+
 HOW_TO_WIRE = (
     "name it where something runs: a step in .github/workflows/repo-guards.yml "
     "(its own `run:`, or the Guards self-test list), a hook in "
@@ -247,6 +303,10 @@ def judge(root: Path) -> tuple[int, list[str], str]:
                 f"ON_DEMAND still excuses {script}, but {', '.join(found)} names it: "
                 f"the entry ({reason}) is spent, delete it"
             )
+            continue  # already a problem; the run would only add a second reason
+        stale = stale_excuse(root, script)
+        if stale:
+            problems.append(stale)
     return (1 if problems else 0), problems, HOW_TO_WIRE if unwired else ""
 
 
