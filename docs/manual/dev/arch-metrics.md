@@ -7,13 +7,12 @@ covers:
   - .github/workflows/arch-metrics.yml
   - .claude/scripts/check-file-sizes.py
   - backend/.importlinter
-  - frontend/import-boundary-baseline.json
   - .claude/rules/architecture.md
 ---
 
 # 架构指标 {#arch-metrics}
 
-三道检查挡的是「新违规」：模块边界（`backend/.importlinter` 的九条契约）、组件不能自己取数（`frontend/import-boundary-baseline.json` 的棘轮）、文件大小上限（`.claude/scripts/check-file-sizes.py`）。三道各有一个基准，基准不动就会一直绿——绿到看不出一棵树是不是在变好：后端模块边界现在连基准都没写下来，每次运行从与 `origin/main` 的合并基准那棵树现场推。这一页讲的是另一半：`.claude/scripts/arch-metrics.py` 读同样的几份声明，把每个数现在是多少、和一个月前差多少打出来。
+三道检查挡违规：模块边界（`backend/.importlinter` 的九条契约）、组件不能自己取数（`pnpm run lint:boundary`，有一处就红，没有基准）、文件大小上限（`.claude/scripts/check-file-sizes.py`）。模块边界和文件大小上限各有一个基准，只拦新增，基准不动就会一直绿——绿到看不出一棵树是不是在变好：后端模块边界现在连基准都没写下来，每次运行从与 `origin/main` 的合并基准那棵树现场推。这一页讲的是另一半：`.claude/scripts/arch-metrics.py` 读同样的几份声明，把每个数现在是多少、和一个月前差多少打出来。
 
 > 讲：有哪些数字、每个数怎么算、现在是多少、要往哪个方向走，以及怎么和另一个版本比。不讲：三道闸各自的规则和为什么那样定（见仓库里的 `.claude/rules/architecture.md`），CI 的整体设计（见 [CI 设计](/dev/ci#required)）。
 
@@ -23,7 +22,7 @@ covers:
 
 看板的输入有一半是别人给的东西——一个会从 checkout 里老掉的 git 引用、一份正在迁移的基线文件、半夜的定时任务碰上一台状态不好的机器。这些情况里报红，等于说「架构变差了」，而这句话这个脚本没有资格说。所以工作流（`.github/workflows/arch-metrics.yml`）里每一步都写着 `continue-on-error: true`：它在 main 上每三小时跑一次（也可以手动触发），不在 PR 上跑，也不会让任何一次运行失败。数字落进 job summary 和 JSON artifact，**读它是人的事**。
 
-规则本身的门禁仍然只有三道，而且只拦新增。
+规则本身的门禁仍然只有这三道。
 
 ## 怎么跑 {#run}
 
@@ -45,7 +44,6 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 | `frontend.grade_counts.components` | 前端组件数 | `frontend/src` 下的 `.vue` 文件数 | 中性 |
 | `frontend.grade_counts.grades` / `grade_pct` | A/B/C/D 各多少个、占几成 | 见下面的分级方法 | A 升，D 降 |
 | `frontend.grade_counts.grade_lines` | 每一级的行数 | 同级组件的行数之和 | A 升 |
-| `frontend.boundary.violations` | 组件直接取数 / 读路由的处数 | 直接读 `frontend/import-boundary-baseline.json`，不重算 | 只降 |
 | `backend.contracts.per_contract` | 九条契约各自**写在文件里**的例外有多少条 | 解析 `backend/.importlinter` 的 `ignore_imports`，一条 `importer -> imported` 算一条。2026-10-14 起这个文件不再装基线：基准改成每次检查时从合并基准那棵树量出来，所以这一栏是「有人明确接受的例外」，正常接近 0；九条契约真正压着的债在 ratchet 快照的 `frozen` 里 | 只降 |
 | `backend.deferred_imports` | 函数内导入的条数 | `ast` 遍历 `backend/app`，只数词法上落在函数体里的 `import` / `from ... import`（嵌套函数算一次，模块级的 `if TYPE_CHECKING:` 不算） | 只降 |
 | `backend.files.files_over_1000` | 后端超过 1000 行的文件数 | `backend/app/**/*.py` 的行数分布 | 只降 |

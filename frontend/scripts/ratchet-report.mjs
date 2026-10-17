@@ -1,5 +1,5 @@
-// The JSON form the ratchet snapshot collector reads, shared by the three
-// ratchets under frontend/scripts.
+// The JSON form the ratchet snapshot collector reads, shared by the checks
+// under frontend/scripts — the ratchets and the plain checks alike.
 //
 //   node scripts/import-boundary-ratchet.mjs --json
 //
@@ -72,4 +72,14 @@ export function verdict({ id, better = BETTER, result, details = [] }) {
     stale: result.improvements.map(({ file, base, now }) => ({ file, frozen: base, actual: now })),
     details: details.slice(0, 200),
   }
+}
+
+/**
+ * The `result` a plain check hands `verdict()`: nothing is frozen, so every
+ * violation it counted is a failure and there is no allowance to go stale.
+ * @param {Record<string, number>} counts violations per file
+ */
+export function plainResult(counts) {
+  const currentTotal = Object.values(counts).reduce((a, b) => a + b, 0)
+  return { ok: currentTotal === 0, currentTotal, baselineTotal: 0, improvements: [] }
 }

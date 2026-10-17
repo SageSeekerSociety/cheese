@@ -2,7 +2,7 @@
 // counts violations of it. No I/O, no eslint import — so the rule can be
 // declared ONCE and read from two places: `eslint.browser-storage.config.mjs`
 // (which turns it into a lint rule) and `browser-storage-ratchet.mjs` (which
-// decides whether the counts are allowed). A rule id that drifts between the
+// runs it and fails on any violation). A rule id that drifts between the
 // enforcing config and the counting script would silently count nothing.
 //
 // THE RULE. `localStorage` and `sessionStorage` are reachable from anywhere, so
@@ -169,54 +169,25 @@ export function parseStorageEslintJson(text, root = process.cwd()) {
   return parseEslintJsonFor(text, root, STORAGE_RULE_ID)
 }
 
-// The ratchet arithmetic is the same question the vue-tsc and stylelint
-// ratchets ask of their own counts — a file may not go up, a file that went
-// down should have its baseline tightened, and a stale baseline entry is not a
-// failure. It lives in one place (tsc-ratchet-core.mjs) rather than in another
-// copy that can drift; a second definition of "regression" is a second answer
-// to what the baseline means.
-export { compare, tightenedBaseline } from './tsc-ratchet-core.mjs'
-
 /**
- * The human-readable half: what went wrong, where, and what to do about it.
- * @param {ReturnType<typeof compare>} result
- * @param {{file: string, line: number, column: number, rule: string, message: string}[]} [details]
+ * The human-readable half: every violation, and what to do about it.
+ * @param {{file: string, line: number, column: number, rule: string, message: string}[]} violations
  */
-export function formatStorageReport(result, details = []) {
-  const lines = []
-  if (result.regressions.length) {
-    lines.push('New direct Web Storage references (this is what the ratchet blocks):')
-    for (const { file, base, now } of result.regressions) {
-      lines.push(`  ${file}: ${base} -> ${now}`)
-    }
-    if (details.length) {
-      lines.push('')
-      lines.push('In those files (old and new alike — the count is per file):')
-      for (const { file, line, column, rule, message } of details) {
-        lines.push(`  ${file}:${line}:${column}  ${rule}  ${message}`)
-      }
-    }
-    lines.push('')
-    lines.push('Import from @/lib/browserStorage instead: storageGet, storageSet,')
-    lines.push('storageGetJson, storageSetJson, storageRemove, storageGetStrings.')
-    lines.push('It never throws, so a blocked or full storage just means the')
-    lines.push('preference does not persist. Keep the key and the value format the')
-    lines.push('same, so what users already have stored keeps working. If a file')
-    lines.push('genuinely has to touch the storage object itself, the place for that')
-    lines.push('is src/lib/browserStorage.ts — not a line in')
-    lines.push('browser-storage-baseline.json, which only ever goes down.')
-    lines.push('The rule and its messages: scripts/browser-storage-ratchet-core.mjs.')
+export function formatStorageReport(violations) {
+  if (!violations.length) return 'no direct Web Storage references'
+  const lines = ['Direct Web Storage references:']
+  for (const { file, line, column, rule, message } of violations) {
+    lines.push(`  ${file}:${line}:${column}  ${rule}  ${message}`)
   }
-  if (result.improvements.length) {
-    lines.push(
-      result.regressions.length ? 'Also improved:' : 'Direct storage references went down — tighten the baseline:'
-    )
-    for (const { file, base, now } of result.improvements) {
-      lines.push(`  ${file}: ${base} -> ${now}`)
-    }
-    lines.push('')
-    lines.push('Run: pnpm run lint:storage:update  (then commit browser-storage-baseline.json)')
-  }
-  lines.push(`total: ${result.currentTotal} reference(s), baseline allows ${result.baselineTotal}`)
+  lines.push('')
+  lines.push('Import from @/lib/browserStorage instead: storageGet, storageSet,')
+  lines.push('storageGetJson, storageSetJson, storageRemove, storageGetStrings.')
+  lines.push('It never throws, so a blocked or full storage just means the')
+  lines.push('preference does not persist. Keep the key and the value format the')
+  lines.push('same, so what users already have stored keeps working. If a file')
+  lines.push('genuinely has to touch the storage object itself, the place for that')
+  lines.push('is src/lib/browserStorage.ts.')
+  lines.push('The rule and its messages: scripts/browser-storage-ratchet-core.mjs.')
+  lines.push(`total: ${violations.length} reference(s)`)
   return lines.join('\n')
 }
