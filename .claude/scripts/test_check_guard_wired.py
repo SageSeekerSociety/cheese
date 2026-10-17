@@ -259,18 +259,51 @@ class GuardWiringTests(unittest.TestCase):
             f"{excused} is green now: delete the ON_DEMAND entry", result.stderr
         )
 
-    def test_an_excuse_stands_on_any_non_zero_exit(self) -> None:
-        """`cannot judge` (exit 2) is not green: check-split-frontend.py exits 2."""
-        excused = EXCUSED[0] if EXCUSED else None
-        if excused is None:
+    def test_every_excuse_stands_on_a_non_zero_exit(self) -> None:
+        """`cannot judge` (exit 2) is not green, and every entry is really run.
+
+        The stub leaves a marker so this fails if the guard stops running the
+        entry at all: a run that never happens cannot mis-report exit 2.
+        """
+        if not EXCUSED:
             self.skipTest("the guard excuses nothing")
         wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
         with fixture(workflow=wired) as root:
-            (root / ".claude/scripts" / excused).write_text(
-                "raise SystemExit(2)\n", encoding="utf-8"
-            )
+            for name in EXCUSED:
+                (root / ".claude/scripts" / name).write_text(
+                    "from pathlib import Path\n"
+                    f"Path(__file__).with_name({name + '.ran'!r}).write_text('2')\n"
+                    "raise SystemExit(2)\n",
+                    encoding="utf-8",
+                )
             result = run(root)
+            marks = [root / ".claude/scripts" / f"{name}.ran" for name in EXCUSED]
+            ran = [mark.exists() for mark in marks]
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(ran, [True] * len(EXCUSED), "an entry was not run")
+
+    def test_an_excuse_is_not_honoured_when_the_guard_cannot_start(self) -> None:
+        """A guard that never started gives no verdict either."""
+        excused = EXCUSED[0] if EXCUSED else None
+        if excused is None:
+            self.skipTest("the guard excuses nothing")
+        guard = _load_guard()
+        wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
+
+        def refuse(*args, **kwargs):
+            raise OSError("exec format error")
+
+        with fixture(workflow=wired) as root:
+            original = guard.subprocess.run
+            guard.subprocess.run = refuse
+            try:
+                code, problems, _ = guard.judge(root)
+            finally:
+                guard.subprocess.run = original
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(
+            any("cannot be started" in problem for problem in problems), problems
+        )
 
     def test_an_excuse_that_never_finishes_is_not_honoured(self) -> None:
         """A guard that hangs gives no verdict, so it cannot show the tree is red."""

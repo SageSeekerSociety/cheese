@@ -43,7 +43,9 @@ one that exits 0 on this tree are each a failure — so it cannot quietly become
 the place the next unwired guard is forgotten. The third is read from a run of
 the guard itself: an excuse that says "red on this tree" holds only while that
 run is still red, because a fixed guard left on the list reports a red tree
-that is no longer red.
+that is no longer red. A bare run cannot express every finding: the one guard
+excused for arguments it needs exits 2 without them, so for that entry the run
+only proves the guard still answers non-zero. The reason carries the rest.
 
 SCOPE. This judges whether a guard is started, and whether the ones it excuses
 still deserve it; not whether the thing that would notice a started guard going
@@ -102,8 +104,8 @@ ON_DEMAND: dict[str, str] = {
 
 #: How long an excused guard gets to prove it is still red. Both entries here
 #: answer in under a second; the limit exists so that a guard which hangs fails
-#: this check instead of hanging the job that runs it. It is also what keeps
-#: this check inside `.cheese/pre-push`'s 240s wall clock: one limit per entry.
+#: this check instead of hanging repo-guards.yml, the only job that runs it.
+#: Two entries hanging at the limit would add two minutes to that job.
 EXCUSE_TIMEOUT = 60
 
 #: A `#` starting a line, or following whitespace, begins a comment. YAML and
@@ -275,7 +277,11 @@ def judge(root: Path) -> tuple[int, list[str], str]:
     A guard nothing runs is one problem per script, so the instruction is said
     once at the end rather than three times: the same sentence repeated down a
     list of five is a sentence nobody finishes reading.
+
+    The root is made absolute first: `stale_excuse` runs a script with the root
+    as its working directory, and a relative root would then resolve twice.
     """
+    root = root.resolve()
     try:
         scripts = guards(root)
         wiring_files = wiring(root)
@@ -320,7 +326,11 @@ def self_test() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--root", default=str(REPO_ROOT), help="the tree to check")
+    parser.add_argument(
+        "--root",
+        default=str(REPO_ROOT),
+        help="the tree to check; its excused guards are run",
+    )
     parser.add_argument("--self-test", action="store_true", help="prove the guard fires")
     args = parser.parse_args(argv)
 
