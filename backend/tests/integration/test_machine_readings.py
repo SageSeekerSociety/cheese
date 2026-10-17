@@ -189,6 +189,11 @@ def test_the_load_is_shown_once_for_the_physical_node_not_per_host(
     first, second, _ = cloud.seats
     working_on(cloud, first, "host-1")
     working_on(cloud, second, "host-2")
+    earlier = {**memory(2), "load1": 3.0}
+    kernel_says(cloud, {"host-1": earlier, "host-2": earlier}, {})
+    guard(cloud)
+    readings_go_back(cloud, timedelta(seconds=60))
+    # The node's load now, read by both hosts: the page gives the newest reading.
     node = {**memory(2), "load1": 25.65}
     kernel_says(cloud, {"host-1": node, "host-2": node}, {})
     guard(cloud)
@@ -196,6 +201,10 @@ def test_the_load_is_shown_once_for_the_physical_node_not_per_host(
     data = page(cloud)
     assert data["node_load1"] == pytest.approx(25.65)
     assert all("load1" not in (h["usage"] or {}) for h in data["hosts"])
+
+    # Shown with no age beside it, an old figure would read as the node's now.
+    readings_go_back(cloud, timedelta(seconds=3 * settings.sandbox_disk_check_s + 60))
+    assert page(cloud)["node_load1"] is None
 
 
 def test_a_sandbox_destroyed_while_its_host_is_read_does_not_stop_the_guard(

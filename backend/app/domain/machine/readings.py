@@ -311,15 +311,18 @@ async def node_load1(
     session: AsyncSession, host_ids: list[uuid.UUID], now: datetime
 ) -> float | None:
     """The physical node's one-minute load, from the newest reading of any of
-    these hosts within ``KEEP``: each host reads the node's /proc/loadavg, so
-    the figure is not any one host's."""
+    these hosts: each host reads the node's /proc/loadavg, so the figure is not
+    any one host's. Only a reading from the last three checks counts — the
+    line past which the page calls a host's reading stale — so the figure,
+    shown with no age beside it, is never an old one; with none, it is None."""
     if not host_ids:
         return None
     return await session.scalar(
         select(HostReading.load1)
         .where(
             HostReading.host_id.in_(host_ids),
-            HostReading.read_at >= now - KEEP,
+            HostReading.read_at
+            >= now - timedelta(seconds=3 * settings.sandbox_disk_check_s),
             HostReading.load1.is_not(None),
         )
         .order_by(HostReading.read_at.desc())

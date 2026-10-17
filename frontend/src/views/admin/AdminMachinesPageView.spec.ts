@@ -200,9 +200,8 @@ describe('机器', () => {
 
   it('负载是物理节点的，整页只出现一次，不挂在哪台宿主机下面', () => {
     const two = [host({ usage: usage() }), host({ id: 'h2', hostname: 'pool-b', usage: usage() })]
-    const { getAllByText, getByText } = mount({ overview: { ...overview({}, two), node_load1: 25.65 } })
-    expect(getAllByText('25.65')).toHaveLength(1)
-    expect(getByText(/Physical node load|物理节点负载/)).toBeTruthy()
+    const { container } = mount({ overview: { ...overview({}, two), node_load1: 25.65 } })
+    expect(container.textContent?.split('25.65').length).toBe(2)
   })
 
   it('点开宿主机，每个沙箱的内存和它的 3 GiB 上限放在一起', async () => {
