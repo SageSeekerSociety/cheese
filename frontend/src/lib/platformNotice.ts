@@ -229,11 +229,5 @@ export interface NoticeRow {
   notice: PlatformNotice | null
 }
 
-export {
-  actionResource,
-  confirmTarget,
-  environmentTarget,
-  mailOutcomes,
-  platformNotice,
-} from './platformNoticeCards'
+export { actionResource, confirmTarget, environmentTarget, mailOutcomes, platformNotice } from './platformNoticeCards'
 export { collapseNotices, rendersInRoom } from './platformNoticeCollapse'
