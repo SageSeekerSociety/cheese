@@ -303,11 +303,11 @@ def same_sha_green(runs: list[Run], reds: list[Run]) -> dict[str, int]:
 
 
 def judge_known_flakes(runs: list[Run]) -> dict:
-    """把命中档案的红灯按同 SHA 判据判一遍，返回两段。
+    """把命中档案的红灯按同入场判据判一遍，返回两段。
 
-    `cases` 是用例级档案的判定，一条一行：红过的 SHA、坐实的 SHA（同 SHA 也有绿
-    的那些）、以及坐实与否。`runs` 是运行级档案命中的那些运行 —— 它不带判定，判
-    据问的是「这条用例是不是偶发」，一条整轮运行答不了这个问题，它给的是处置。
+    `cases` 是用例级档案的判定，一条一行：红过的入场、坐实的入场（同名还有一次
+    绿的那些）、以及坐实与否。`runs` 是运行级档案命中的那些运行 —— 它不带判定，
+    判据问的是「这条用例是不是偶发」，一条整轮运行答不了这个问题，它给的是处置。
     """
     matches: dict[tuple[str, str], list[Run]] = defaultdict(list)
     run_rows: dict[str, dict] = {}
@@ -661,16 +661,25 @@ def _self_test_offline() -> None:
         def page(name: str, workflow_runs: list[dict]) -> None:
             (root / name).write_text(json.dumps({"workflow_runs": workflow_runs}))
 
-        def raw_run(run_id: int, conclusion: str, created_at: str) -> dict:
-            return {"id": run_id, "conclusion": conclusion, "created_at": created_at}
+        def raw_run(run_id: int, conclusion: str, created_at: str, pr: int) -> dict:
+            """照 gh 返回的样子造，字段名一个不少 —— 判据全靠它们。"""
+            return {
+                "id": run_id,
+                "conclusion": conclusion,
+                "created_at": created_at,
+                "head_sha": f"{run_id:040x}",
+                "head_branch": f"gh-readonly-queue/main/pr-{pr}-{'a' * 40}",
+                "path": ".github/workflows/required-ci.yml",
+                "event": "merge_group",
+            }
 
         # 第二页把第一页的最后一条又带了一次：gh 分页之间位置会被新运行挤动。
-        repeated = raw_run(3, "success", "2026-10-16T09:00:00Z")
+        repeated = raw_run(3, "success", "2026-10-16T09:00:00Z", 4009)
         page(
             "runs-page1.json",
             [
-                raw_run(1, "failure", "2026-10-15T05:00:00Z"),
-                raw_run(2, "failure", "2026-10-16T08:00:00Z"),
+                raw_run(1, "failure", "2026-10-15T05:00:00Z", 4010),
+                raw_run(2, "failure", "2026-10-16T08:00:00Z", 4011),
                 repeated,
             ],
         )
@@ -695,6 +704,14 @@ def _self_test_offline() -> None:
         runs = load_offline(root, limit=300)
         # 3 条而不是 4 条：重复的那条被去掉了；最近的在最前。
         assert [run.id for run in runs] == [3, 2, 1], [run.id for run in runs]
+        # gh 的字段名读错一位，整条判据会静默降级成「什么也坐实不了」——subject 回落
+        # 到那个永不重复的 head_sha。所以这条路要逐字段核一遍，不只看条数。
+        loaded = runs[1]
+        assert loaded.head_sha == f"{2:040x}", loaded
+        assert loaded.head_branch == f"gh-readonly-queue/main/pr-4011-{'a' * 40}", loaded
+        assert loaded.subject == f"pr-4011-{'a' * 40}", loaded
+        assert loaded.workflow == ".github/workflows/required-ci.yml", loaded
+        assert loaded.event == "merge_group", loaded
         report = analyze(runs, top=DEFAULT_TOP, min_tests=DEFAULT_CONFLICT_MIN_TESTS)
         assert report["runs_total"] == 3 and report["runs_failed"] == 2, report
         top_test = report["tests"][0]
@@ -932,6 +949,11 @@ def _self_test_flake_criterion() -> None:
     assert judged["runs"][0]["runs"] == [5], judged["runs"]
     # 不在档案里的用例不许被认领。
     assert known_flake_for_case("tests/b.py::test_other", "AssertionError: x") is None
+    # 用例对上、签名对不上，是同一个用例的另一种红：借旧档案溜走就是漏一条真故障。
+    # 少了这一半（签名那一句被删成 return True），这里会当场认领。
+    assert known_flake_for_case(writeup, "assert False") is None
+    assert known_flake_for_case(orphan, "AssertionError: a different failure") is None
+    assert known_flake_for_case(planner, "ValueError: boom") is None
 
     # 渲染也真跑一遍：坐实、未坐实、运行级三种行都得出来。
     text = render(analyze(runs, top=DEFAULT_TOP, min_tests=DEFAULT_CONFLICT_MIN_TESTS))
