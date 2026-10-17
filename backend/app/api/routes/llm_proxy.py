@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import require_seated_in_its_room
 from app.api.deps import get_chat_service, get_db
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.db import async_session_factory, release_read_session
 from app.core.errors import (
@@ -479,7 +480,12 @@ async def _person_key(claims: PersonalClaims) -> str | None:
         return await stored_key(session, claims.user_id)
 
 
-@router.api_route("/{path:path}", methods=["GET", "POST"], include_in_schema=False)
+@router.api_route(
+    "/{path:path}",
+    methods=["GET", "POST"],
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
+)
 async def proxy(
     path: str,
     request: Request,
