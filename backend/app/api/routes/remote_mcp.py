@@ -29,6 +29,7 @@ from app.core.errors import (
     BaseError,
     ForbiddenError,
     NotFoundError,
+    UnprocessableEntityError,
     ValidationError,
     message_key,
 )
@@ -266,7 +267,7 @@ async def callback(
     base = settings.frontend_url.rstrip("/")
     try:
         flow = service.read_state(state)
-    except ValidationError as exc:
+    except UnprocessableEntityError as exc:
         return RedirectResponse(f"{base}/?{urlencode(_failure(exc))}", 302)
     back = f"{base}/projects/{flow['project']}/settings"
     query = {"mcp": flow["server"]}

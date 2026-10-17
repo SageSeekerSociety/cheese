@@ -15,7 +15,7 @@ from app.api.auth import ActorResolverDep, session_in
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import AuthenticationRequiredError, ValidationError
+from app.core.errors import AuthenticationRequiredError, UnprocessableEntityError
 from app.domain.agent_instance.services import type_of_seat
 from app.domain.device import mcp_machines
 from app.domain.remote_mcp import declared, local, service
@@ -104,7 +104,7 @@ async def run(
             else None,
         )
     except ValueError as exc:
-        raise ValidationError(str(exc)) from exc
+        raise UnprocessableEntityError(str(exc)) from exc
     await db.commit()
     return ok({"state": state})
 

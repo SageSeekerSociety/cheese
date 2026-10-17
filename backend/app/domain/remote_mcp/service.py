@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import single_use_state
 from app.core.config import settings
 from app.core.crypto import DecryptionError, Purpose, decrypt, encrypt
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.remote_mcp import declared, local, oauth, upstream
 from app.domain.remote_mcp.declared import Declared, RemoteServer
@@ -421,12 +421,12 @@ async def begin_connect(
     """Start the authorization; returns the URL the browser goes to."""
     server = await _declared_server(db, project_id, name, project_types, fresh=True)
     if not server.uses_oauth:
-        raise ValidationError(say("mcpServerUsesHeaderKey"))
+        raise UnprocessableEntityError(say("mcpServerUsesHeaderKey"))
     values = _secret_values(project_id, await _secret_rows(db, project_id))
     try:
         url, _ = server.expanded(values)
     except KeyError as missing:
-        raise ValidationError(
+        raise UnprocessableEntityError(
             say("mcpFillVariableFirst", variable=missing.args[0])
         ) from None
     await db.rollback()  # nothing below needs the database
@@ -471,9 +471,9 @@ def read_state(state: str) -> dict:
             decrypt(Purpose.MCP_OAUTH_STATE, state, bound_to="remote-mcp-state")
         )
     except (DecryptionError, ValueError):
-        raise ValidationError(say("mcpAuthLinkInvalid")) from None
+        raise UnprocessableEntityError(say("mcpAuthLinkInvalid")) from None
     if flow.get("exp", 0) < time.time():
-        raise ValidationError(say("mcpAuthExpired"))
+        raise UnprocessableEntityError(say("mcpAuthExpired"))
     return flow
 
 
@@ -482,13 +482,13 @@ async def finish_connect(
 ) -> None:
     """The authorization server sent the browser back with a code."""
     if not await single_use_state.claim(_STATE_SCOPE, flow["jti"]):
-        raise ValidationError(say("mcpAuthAlreadyUsed"))
+        raise UnprocessableEntityError(say("mcpAuthAlreadyUsed"))
     # RFC 9207: a response naming another issuer is a mix-up, not ours; so is
     # one naming none from a server that said it always names itself.
     if issuer and issuer.rstrip("/") != flow["issuer"].rstrip("/"):
-        raise ValidationError(say("mcpIssuerMismatch"))
+        raise UnprocessableEntityError(say("mcpIssuerMismatch"))
     if not issuer and flow.get("names_itself"):
-        raise ValidationError(say("mcpIssuerMismatch"))
+        raise UnprocessableEntityError(say("mcpIssuerMismatch"))
     tokens = await oauth.exchange(
         token_endpoint=flow["token_endpoint"],
         code=code,
@@ -607,14 +607,16 @@ _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 def _checked(name: str, url: str, header_name: str | None) -> None:
     if not _NAME.match(name):
-        raise ValidationError(say("mcpServerNameInvalid"))
+        raise UnprocessableEntityError(say("mcpServerNameInvalid"))
     parts = urlsplit(url)
     if not parts.netloc or (
         parts.scheme != "https" and not settings.remote_mcp_allow_private_hosts
     ):
-        raise ValidationError(say("mcpServerNeedsHttps", host=parts.hostname or url))
+        raise UnprocessableEntityError(
+            say("mcpServerNeedsHttps", host=parts.hostname or url)
+        )
     if header_name is not None and not re.match(r"^[A-Za-z0-9-]{1,128}$", header_name):
-        raise ValidationError(say("mcpHeaderNameInvalid"))
+        raise UnprocessableEntityError(say("mcpHeaderNameInvalid"))
 
 
 async def _added_row(
@@ -690,10 +692,10 @@ async def add_server(
     project uses, so the server an agent calls by that name is not in doubt."""
     _checked(name, url, header_name)
     if header_name is not None and not header_value:
-        raise ValidationError(say("mcpValueRequired"))
+        raise UnprocessableEntityError(say("mcpValueRequired"))
     found = await _project_declared(db, project_id, project_types, fresh=True)
     if name in found.names or found.get(name) is not None or name in found.shadowed:
-        raise ValidationError(say("mcpServerNameTaken", name=name))
+        raise UnprocessableEntityError(say("mcpServerNameTaken", name=name))
     db.add(
         ProjectMcpServer(
             project_id=project_id,
@@ -727,7 +729,7 @@ async def update_server(
     if row.url != url or row.header_name != header_name:
         await _forget_credentials(db, project_id, name)
         if header_name is not None and not header_value:
-            raise ValidationError(say("mcpValueRequired"))
+            raise UnprocessableEntityError(say("mcpValueRequired"))
     row.url, row.header_name = url, header_name
     if header_name is not None and header_value:
         await _store_header(db, project_id, name, header_value, handle)
@@ -759,7 +761,7 @@ async def set_secret(
     ):
         raise NotFoundError(say("mcpVariableNotUsed"))
     if not value:
-        raise ValidationError(say("mcpValueRequired"))
+        raise UnprocessableEntityError(say("mcpValueRequired"))
     row = await db.scalar(
         select(ProjectMcpSecret).where(
             ProjectMcpSecret.project_id == project_id, ProjectMcpSecret.name == name
