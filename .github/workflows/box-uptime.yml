@@ -52,10 +52,12 @@ jobs:
         run: python3 .github/scripts/ci-pool-health.py
 
       # Two different failures leave the step above red: a machine is missing
-      # (exit 1) or the runner list could not be read (exit 2). The script
-      # decides which sentence each one is; this step sends that sentence and
-      # adds nothing of its own, so the unreadable case can never arrive as
-      # "a machine is missing". A healthy pool writes no alert and stays quiet.
+      # (exit 1), or the check reached no conclusion about the pool (exit 2 —
+      # the runner list could not be read, or it arrived and could not be
+      # interpreted). The script decides which sentence each one is; this step
+      # sends that sentence and adds nothing of its own, so a could-not-judge
+      # case can never arrive as "a machine is missing". A healthy pool writes
+      # no alert and stays quiet.
       - name: Tell the team what the pool check found
         if: ${{ always() && env.WEBHOOK != '' && steps.pool.outputs.alert != '' }}
         env:
