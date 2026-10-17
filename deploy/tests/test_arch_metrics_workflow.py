@@ -46,6 +46,7 @@ sys.exit(int(os.environ["STUB_EXIT"]))
 class RatchetCollectionTest(unittest.TestCase):
     def setUp(self):
         workflow = yaml.safe_load(WORKFLOW.read_text())
+        self.triggers = workflow[True]  # YAML reads the `on:` key as the boolean True
         self.steps = workflow["jobs"]["board"]["steps"]
         self.collect = next(
             step
@@ -59,6 +60,32 @@ class RatchetCollectionTest(unittest.TestCase):
             step
             for step in self.steps
             if step.get("with", {}).get("name") == "ratchet-snapshot"
+        )
+
+    def test_something_runs_this_workflow(self):
+        """Every other test here reads a step, so a `run:` body could be perfect
+        and the series still stop receiving points: a trigger that never fires is
+        a collection nobody makes. This is the case that has to be red when the
+        `on:` block is emptied or its schedule lost."""
+        self.assertTrue(self.triggers, "the workflow has no trigger at all")
+        schedule = self.triggers.get("schedule")
+        self.assertTrue(schedule, "no schedule: nothing collects on a clock")
+        crons = [entry["cron"] for entry in schedule]
+        # Five fields, of which the minute and the hour decide how often a
+        # collection happens: a bare `0 0 * * *` would be once a day, not the
+        # interval the snapshot series is sized for.
+        self.assertTrue(
+            any(len(cron.split()) == 5 and cron.split()[1].startswith("*/") for cron in crons),
+            f"no recurring schedule among {crons}",
+        )
+        self.assertTrue(
+            self.triggers.get("workflow_dispatch") is not None,
+            "no workflow_dispatch: a revision that no run covers cannot be collected",
+        )
+        self.assertNotIn(
+            "push",
+            self.triggers,
+            "a push trigger collects per merge, and main cancels its own runs",
         )
 
     def run_step(
