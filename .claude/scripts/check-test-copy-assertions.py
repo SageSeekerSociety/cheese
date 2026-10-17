@@ -48,6 +48,7 @@ BASELINE: dict[tuple[str, str], int] = {
     ("frontend/src/components/panels/PanelPreview.document.spec.ts", "在 output/说明.md 的 标题「配置」（「重试 3 次」）：这里也要写清楚"): 1,
     ("frontend/src/components/panels/doc/blocks/reader.spec.ts", "组会报名\n时间：周四下午三点\n地点：B201\n报名找林老师"): 1,
     ("frontend/src/lib/platformEvents.spec.ts", "这轮因运行环境存储空间不足而暂停，项目文件和已完成的改动都还在。"): 1,
+    ("deploy/tests/test_pr_watch_deploy.py", "Require images and tests for the same commit"): 1,
 }
 
 SKIP_DIRS = {
@@ -66,7 +67,7 @@ TOKEN_RE = re.compile(
     r"(?P<space>\s+)|(?P<line_comment>//[^\n]*)|(?P<block_comment>/\*.*?\*/)|"
     r"(?P<string>`(?:\\.|[^`\\])*`|'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\")|"
     r"(?P<identifier>[A-Za-z_$][\w$]*)|(?P<number>\d+(?:\.\d+)?)|"
-    r"(?P<operator>===|!==|==|!=|=>|\?\.|&&|\|\||.)",
+    r"(?P<operator>\+\+|--|===|!==|==|!=|=>|\?\.|&&|\|\||.)",
     re.DOTALL,
 )
 HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
@@ -95,7 +96,10 @@ SHELL_COMMAND_RE = re.compile(
     r"python3?\s+(?:-[mcu]\b|\S+\.py\b)|(?:sh|bash)\s+\S+)|^workflow\s+run\b",
     re.IGNORECASE,
 )
-TITLE_ACTION_RE = re.compile(r"^(?:Require|Ensure|Check|Run|Use|Add|Remove|Enter|Click|Select)\b")
+SQL_EXPRESSION_RE = re.compile(
+    r"\w+(?:\.\w+)?\s+IS\s+NULL\s+AND\s+\w+(?:\.\w+)?\s+IN\s*\(\{\}\)",
+    re.IGNORECASE,
+)
 JS_ASSERTION_METHODS = {
     "toBe",
     "toEqual",
@@ -148,17 +152,17 @@ def _is_explanatory_sentence(value: str) -> bool:
         or KEY_VALUE_RE.search(value)
         or SHELL_COMMAND_RE.search(value)
         or WORKFLOW_EXPRESSION_RE.fullmatch(value)
-        or value.startswith(("<", ":::" , "import ", "src/", "backend/", "frontend/", "deploy/", "可递：", "missing:", "since=", "Type "))
+        or value.startswith(("<", ":::" , "import ", "src/", "backend/", "frontend/", "deploy/", "可递：", "missing:", "since="))
         or value.count("|") >= 2
         or ":::" in value
         or value.startswith("step ")
-        or re.search(r"\b(?:IS\s+NULL|IN\s*\(\{\}\)|SELECT|FROM|WHERE)\b", value, re.IGNORECASE)
+        or SQL_EXPRESSION_RE.fullmatch(value)
+        or (value.startswith("Type '") and " is not assignable" in value)
         or (EMAIL_RE.search(value) and not han_count and len(WORD_RE.findall(value)) < 9)
         or IDENTIFIER_RE.fullmatch(value)
         or STATUS_CODES_RE.fullmatch(value)
         or value.startswith(("Co-authored-by:", "::error::", "## "))
         or (not han_count and (value.startswith(("/", "./", "../", "http")) or "://" in value or ("?" in value and "/" in value)))
-        or (not re.search(r"[.!?:;]", value) and TITLE_ACTION_RE.match(value))
     ):
         return False
     if han_count >= 18:
@@ -250,13 +254,43 @@ def _call_argument_strings(tokens: list[tuple[str, int]], open_index: int) -> li
             arguments.append([])
         elif len(arguments) <= 2:
             arguments[-1].append((token, line))
+
     literals: list[tuple[int, str]] = []
     for argument in arguments[:2]:
-        literals.extend(
-            (line, _decode_js_string(token))
-            for token, line in argument
-            if _is_js_string(token)
-        )
+        while argument:
+            if argument[-2:]:
+                if [token for token, _ in argument[-2:]] == ["as", "const"]:
+                    argument = argument[:-2]
+                    continue
+            if len(argument) >= 2 and argument[0][0] == "(" and argument[-1][0] == ")":
+                nesting = 0
+                wraps_all = True
+                for index, (token, _) in enumerate(argument):
+                    if token == "(":
+                        nesting += 1
+                    elif token == ")":
+                        nesting -= 1
+                        if nesting == 0 and index != len(argument) - 1:
+                            wraps_all = False
+                            break
+                if wraps_all:
+                    argument = argument[1:-1]
+                    continue
+            break
+
+        nested: list[bool] = []
+        for index, (token, line) in enumerate(argument):
+            if token in {"(", "[", "{"}:
+                previous = argument[index - 1][0] if index else ""
+                is_call = token == "(" and (
+                    bool(IDENTIFIER_RE.fullmatch(previous)) or previous in {")", "]"}
+                )
+                nested.append(any(nested) or token == "[" or is_call)
+            elif token in {")", "]", "}"}:
+                if nested:
+                    nested.pop()
+            elif _is_js_string(token) and not any(nested):
+                literals.append((line, _decode_js_string(token)))
     return literals
 
 

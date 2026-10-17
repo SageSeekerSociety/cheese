@@ -133,13 +133,16 @@ assert actual == "这个团队已经有这个成员了，无法重复添加该�
 assert actual == "answer-first.md 的这一版已经改不动了：它已经存在（现在是第 1 版）。重读一次，把改动并进去，再写。"
 assert actual == "The task can only be assigned to one person in this workspace"
 assert actual == "Please run python from the project root after the environment starts"
+assert actual == "Select one option and then continue with the next step"
+assert actual == "The dialog explains where the file should be saved after the process finishes"
 assert actual == "The deployment failed because the gateway could not reach the upstream.\\nPlease retry after the environment has started."
+assert actual == "deleted_at IS NULL AND completion_status IN ({})"
 ''',
             )
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        for line in (2, 3, 4, 6):
+        for line in (2, 3, 4, 5, 6, 7, 8):
             self.assertIn(f"test_copy.py:{line}", result.stderr)
 
     def test_python_fstrings_and_wrapped_vitest_arguments_are_rejected(self) -> None:
@@ -158,9 +161,12 @@ assert actual == "The deployment failed because the gateway could not reach the 
             self._write(
                 root,
                 "frontend/src/copy.spec.ts",
-                f'''const quote = /["']/;
+                f'''let index = 0; index++ / 2;
+const quote = /["']/;
 expect(actual).toBe(("{LONG_COPY}" as const));
-expect(actual).toEqual("{LONG_COPY}" + suffix);
+expect(actual).toEqual("{LONG_COPY}" + " suffix");
+expect(actual).toBe(normalize("{LONG_COPY}"));
+expect(actual).toBe(joinWords(["{LONG_COPY}", "other"]));
 ''',
             )
             result = self._run(root)
@@ -168,8 +174,10 @@ expect(actual).toEqual("{LONG_COPY}" + suffix);
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("test_fstring.py:1", result.stderr)
         self.assertIn("test_fstring.py:2", result.stderr)
-        self.assertIn("copy.spec.ts:2", result.stderr)
         self.assertIn("copy.spec.ts:3", result.stderr)
+        self.assertIn("copy.spec.ts:4", result.stderr)
+        self.assertNotIn("copy.spec.ts:5", result.stderr)
+        self.assertNotIn("copy.spec.ts:6", result.stderr)
 
     def test_additional_test_roots_are_scanned(self) -> None:
         roots = (".github/scripts", "backend/scripts", "deploy/gateway", "deploy/tests", "docs/site/test")
