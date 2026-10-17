@@ -84,26 +84,37 @@ class DiscussionReactionService:
         discussion_id: int,
         current_user_id: int | None,
     ) -> list[dict]:
+        summaries = await self.summaries_for(
+            [discussion_id], current_user_id=current_user_id
+        )
+        return summaries[discussion_id]
+
+    async def summaries_for(
+        self,
+        discussion_ids: list[int],
+        *,
+        current_user_id: int | None,
+    ) -> dict[int, list[dict]]:
+        if not discussion_ids:
+            return {}
         await self.ensure_default_reaction_types()
-        counts = await self._reaction_repo.count_by_discussion(discussion_id)
+        reactions = await self._reaction_repo.summaries_for(
+            discussion_ids, current_user_id=current_user_id
+        )
         reaction_types = await self._reaction_type_repo.list_active()
-        summaries: list[dict] = []
-        for rt in reaction_types:
-            total = counts.get(rt.id, 0)
-            active = False
-            if current_user_id is not None and total:
-                active = await self._reaction_repo.has_user_reacted(
-                    discussion_id=discussion_id,
-                    user_id=current_user_id,
-                    reaction_type_id=rt.id,
+        summaries: dict[int, list[dict]] = {}
+        for discussion_id in discussion_ids:
+            counts = reactions.get(discussion_id, {})
+            summaries[discussion_id] = []
+            for rt in reaction_types:
+                total, active = counts.get(rt.id, (0, False))
+                summaries[discussion_id].append(
+                    {
+                        "reactionType": self._reaction_type_to_dict(rt),
+                        "count": total,
+                        "hasReacted": active,
+                    }
                 )
-            summaries.append(
-                {
-                    "reactionType": self._reaction_type_to_dict(rt),
-                    "count": total,
-                    "hasReacted": active,
-                }
-            )
         return summaries
 
     async def list_reaction_types(self) -> list[dict]:

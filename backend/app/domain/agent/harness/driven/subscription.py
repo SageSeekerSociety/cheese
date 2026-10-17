@@ -185,6 +185,11 @@ class Subscription[B: Backlog]:
         self.hurry = False
         # The mark of what the agent was last seen writing.
         self.live_mark: str | None = None
+        # The last frame the runner reported (its heartbeat), with the
+        # monotonic moment this backend heard it. Kept here rather than in
+        # `heard`: `drain` clears `heard` at the start of every pass, and a
+        # quiet session's last frame must survive that.
+        self.frame_snapshot: dict | None = None
 
     @property
     def seat(self) -> Seat:
@@ -220,15 +225,20 @@ class Subscription[B: Backlog]:
     async def read(self, method: str, params: dict) -> dict:
         """One page from the runner. The first page of a drain that may wait
         asks the runner to hold it until there is news (``driven.runner``),
-        and what else that answer says is kept in ``heard``."""
+        and what else that answer says is kept in ``heard``.
+
+        Every path keeps the answer's heartbeat (`_heard_frame`): a drain can
+        read without waiting, hurry a held read, or give way and read at once,
+        and each of those answers is still evidence of the last frame.
+        """
         asking, self.asking = self.asking, None
         if asking is None:
-            return await self.call(method, params)
+            return self._heard_frame(await self.call(method, params))
         if self.hurry:
             # Asked to land now before this read was held: read at once, this
             # once; the next drain holds its read again.
             self.hurry = False
-            return await self.call(method, params)
+            return self._heard_frame(await self.call(method, params))
         self.parked = asyncio.ensure_future(self.call(method, {**params, **asking}))
         try:
             answer = await self.parked
@@ -237,13 +247,47 @@ class Subscription[B: Backlog]:
             if task is not None and task.cancelling():
                 raise
             # Given way (``unpark``): read now instead.
-            return await self.call(method, params)
+            return self._heard_frame(await self.call(method, params))
         finally:
             self.parked = None
         self.heard = {k: v for k, v in answer.items() if k in ("alive", "live")}
         if live := self.heard.get("live"):
             self.live_mark = live.get("mark")
+        return self._heard_frame(answer)
+
+    def _heard_frame(self, answer: dict) -> dict:
+        """Keep the runner's heartbeat apart from ``heard``.
+
+        ``drain`` clears ``heard`` at the start of every pass; the last frame
+        a session reported outlives that pass — a quiet session has nothing
+        new to say — so it is kept here instead.
+        """
+        heartbeat = answer.get("heartbeat")
+        if isinstance(heartbeat, dict):
+            self.frame_snapshot = {**heartbeat, "heard_at": time.monotonic()}
         return answer
+
+    def frame(self) -> dict | None:
+        """The last frame this session reported, its age advanced by the time
+        this backend has spent since hearing it.
+
+        ``last_frame_age_s`` came from the session host's monotonic clock and
+        ``heard_at`` is this process's. Only the elapsed time since receipt —
+        both readings on this machine — is added; one machine's monotonic is
+        never subtracted from another's.
+        """
+        snapshot = self.frame_snapshot
+        if snapshot is None:
+            return None
+        age = snapshot.get("last_frame_age_s")
+        heard_at = snapshot.get("heard_at")
+        if age is not None and heard_at is not None:
+            age = round(float(age) + (time.monotonic() - heard_at), 2)
+        return {
+            "work_id": snapshot.get("work_id"),
+            "last_frame_kind": snapshot.get("last_frame_kind"),
+            "last_frame_age_s": age,
+        }
 
     def reader(self) -> B:
         raise NotImplementedError
