@@ -888,6 +888,184 @@ export function usePanel(source: () => { topic: Ref<{ value: string }> }) {
   assert.match(shallow.output, /topic\.value/)
 })
 
+test('a scope property handed as a getter is not the value the composable reads', (t) => {
+  // `{ topicId: () => topicId.value }` hands the composable a function: `s.topicId`
+  // is that function, so the `.value` written after it is `undefined` and the watch
+  // tracks nothing. The base watch on the ref's value is therefore lost. Only a
+  // transparent call that ends on the property (`toValue(scope.topicId)`) reaches
+  // the value the getter returns.
+  const script = `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel({ topicId: () => topicId.value })`
+  const viaValue = `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string }) {
+  const loading = ref(false)
+  const s = toValue(scope)
+  watch(() => s.topicId.value, () => { loading.value = false })
+  return { loading }
+}`
+  const lost = split(t, { script, head, composableSource: viaValue }).run()
+  assert.equal(lost.status, 1, lost.output)
+  assert.match(lost.output, /topicId\.value/)
+
+  const viaCall = `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.topicId), () => { loading.value = false })
+  return { loading }
+}`
+  const carried = split(t, { script, head, composableSource: viaCall }).run()
+  assert.equal(carried.status, 0, carried.output)
+  assert.match(carried.output, /1 checked/)
+})
+
+test('a nested toValue keeps the path it unwrapped', (t) => {
+  // `toValue(s.rewrite.phase)` unwraps the property at `phase`, so the `.value`
+  // after the call names a field of that value. The `phase` segment belongs to the
+  // watch source and must not be dropped, or a ported watch reads as lost.
+  const field = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ rewrite: { phase: { value: string } } }>()
+const loading = ref(false)
+watch(() => props.rewrite.phase.value, () => { loading.value = false })`
+  const fieldHead = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ rewrite: { phase: { value: string } } }>()
+const { loading } = usePanel(() => ({ rewrite: props.rewrite }))`
+  const ported = split(t, {
+    script: field,
+    head: fieldHead,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: () => { rewrite: { phase: { value: string } } }) {
+  const loading = ref(false)
+  const s = toValue(scope)
+  watch(() => toValue(s.rewrite.phase).value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(ported.status, 0, ported.output)
+  assert.match(ported.output, /1 checked/)
+
+  // The same reading must not accept a watch on a different property: the base
+  // tracks `rewrite.value`, this composable tracks the field inside `phase`.
+  const other = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ rewrite: { value: string; phase: { value: string } } }>()
+const loading = ref(false)
+watch(() => props.rewrite.value, () => { loading.value = false })`
+  const otherHead = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ rewrite: { value: string; phase: { value: string } } }>()
+const { loading } = usePanel({ rewrite: () => props.rewrite })`
+  const dropped = split(t, {
+    script: other,
+    head: otherHead,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel({ rewrite }: { rewrite: () => { value: string; phase: { value: string } } }) {
+  const loading = ref(false)
+  const r = toValue(rewrite)
+  watch(() => toValue(r.phase).value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /props\.rewrite\.value/)
+})
+
+test('destructuring a toValue result keeps the field it names', (t) => {
+  // `const { value } = toValue(config)` takes a field of the unwrapped value: the
+  // destructured name is that field, not a ref whose `.value` unpacks it again.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { computed } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel(computed(() => props.config))`
+  const carried = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(config: { value: { value: string } }) {
+  const loading = ref(false)
+  watch(() => { const { value } = toValue(config); return value }, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(carried.status, 0, carried.output)
+  assert.match(carried.output, /1 checked/)
+
+  // A field of a local ref's value is still a field: the base watches the ref, so
+  // the destructured field is a different source and must be reported lost.
+  const local = `import { ref, watch } from 'vue'
+
+const config = ref({ value: '' })
+const loading = ref(false)
+watch(() => config.value, () => { loading.value = false })`
+  const localHead = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const config = ref({ value: '' })
+const { loading } = usePanel(config)`
+  const dropped = split(t, {
+    script: local,
+    head: localHead,
+    composableSource: `import { ref, toValue, watch, type Ref } from 'vue'
+
+export function usePanel(config: Ref<{ value: string }>) {
+  const loading = ref(false)
+  const { value } = toValue(config)
+  watch(() => value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /config\.value/)
+})
+
+test('an outer toValue does not undo the unwrap written inside it', (t) => {
+  // `toValue(toValue(config).value)` wraps a field read of a value that is already
+  // unwrapped; the outer call unwraps nothing new, so the field stays a field.
+  const script = `import { ref, watch } from 'vue'
+
+const topic = ref({ value: '' })
+const loading = ref(false)
+watch(() => topic.value.value, () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topic = ref({ value: '' })
+const { loading } = usePanel(topic)`
+  const composed = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch, type Ref } from 'vue'
+
+export function usePanel(config: Ref<{ value: string }>) {
+  const loading = ref(false)
+  watch(() => toValue(toValue(config).value), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(composed.status, 0, composed.output)
+  assert.match(composed.output, /1 checked/)
+})
+
 test('a local ref destructured into the composable keeps its unwrap', (t) => {
   const script = `import { ref, watch } from 'vue'
 

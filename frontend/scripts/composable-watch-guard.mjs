@@ -93,14 +93,27 @@ function memberPath(node, ctx = {}) {
       // not `topicId`, and the ref in `topicId` still unwraps. A getter writes its
       // accesses inside the callback, where they unwrap as usual
       // (`computed(() => x.value)` watches x), so its path keeps its own reading.
-      if (inner && !getter) inner.unwrappedAt = inner.path.length
+      // `unwrappedAt` is the earliest argument end of a transparent call on the
+      // chain, i.e. where fields start; `argEnd` stays the last call's own argument
+      // end, so a property can tell whether a call ended on it.
+      if (inner && !getter) {
+        const end = inner.path.length
+        if (inner.unwrappedAt === undefined || end < inner.unwrappedAt) inner.unwrappedAt = end
+        inner.argEnd = end
+      }
       return inner
     }
     return null
   }
   if (ts.isIdentifier(node)) {
     const alias = ctx.aliases?.get(node.text)
-    if (alias) return { root: alias.root, path: [...alias.path], unwrappedAt: alias.unwrappedAt }
+    if (alias)
+      return {
+        root: alias.root,
+        path: [...alias.path],
+        unwrappedAt: alias.unwrappedAt,
+        argEnd: alias.argEnd,
+      }
     return { root: node.text, path: [] }
   }
   if (ts.isPropertyAccessExpression(node)) {
@@ -137,7 +150,13 @@ function collectAliases(root, ctx) {
         for (const element of node.name.elements) {
           if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue
           const key = element.propertyName ? propertyName(element.propertyName) : element.name.text
-          if (key !== null) bind(element.name.text, { root: member.root, path: [...member.path, key] })
+          if (key !== null)
+            bind(element.name.text, {
+              root: member.root,
+              path: [...member.path, key],
+              unwrappedAt: member.unwrappedAt,
+              argEnd: member.argEnd,
+            })
         }
       }
     }
@@ -172,14 +191,12 @@ function propertyName(node) {
 // written there names a field. A `$local.` key names a local's value the same way the
 // component writes it.
 function refSegments(segments, asRef, unwrappedAt, consumed = 0) {
-  // The call unwrapped the chain as written up to `unwrappedAt` segments, so a
-  // `.value` at that depth or later names a field. `consumed` is how many segments
-  // the walk has already taken past that point: a scope's own property is taken by
-  // `memberKeys`, and the unwrap happened below it.
-  if (typeof unwrappedAt === 'number') {
-    const depth = unwrappedAt - consumed
-    if (depth >= 0 && depth < segments.length) return segments.slice(depth)
-  }
+  // `unwrappedAt` is how far a transparent call unwrapped the chain. A walk that has
+  // consumed exactly that many segments is at the value the call returned: every
+  // further `.value` names a field, not an unwrap. Before that depth the chain is
+  // read as written — a container may have been unwrapped while the property on it
+  // is still whatever its call site handed over.
+  if (typeof unwrappedAt === 'number' && unwrappedAt - consumed === 0) return segments
   if (!asRef || segments[0] !== 'value') return segments
   return segments.slice(1)
 }
@@ -196,7 +213,7 @@ function mapSegments(keys, segments, unwrappedAt, consumed = 0) {
 function memberKeys(node, ctx) {
   const member = memberPath(node, ctx)
   if (!member) return null
-  const { root, unwrappedAt } = member
+  const { root, unwrappedAt, argEnd } = member
   // Both sides of the split must spell the same path for `props.config` and
   // `props.config.value` to stay apart: a prop path keeps its segments as written.
   const path = [...member.path]
@@ -206,9 +223,14 @@ function memberKeys(node, ctx) {
     if (path.length) {
       const [head, ...rest] = path
       const mapped = ctx.scopeProps?.get(head)
-      // `head` is this call's own segment, so an unwrap recorded at its depth
-      // belongs to it (the call unwrapped the property, not the container).
-      if (mapped) for (const key of mapSegments(mapped, rest, unwrappedAt, 1)) out.add(key)
+      // A property the call sites hand over as a getter is a function here: reading
+      // it without a transparent call that ends on it (`toValue(scope.x)`) yields the
+      // function, and nothing watched through it. `head` is this call's own segment,
+      // so an unwrap recorded at its depth belongs to it.
+      const invoked = argEnd === 1
+      if (mapped && !(ctx.scopePropGetter?.get(head) && !invoked)) {
+        for (const key of mapSegments(mapped, rest, unwrappedAt, 1)) out.add(key)
+      }
       // The props object itself was handed over: the segments are prop names.
       if (ctx.scopeWholeProps) out.add(path.join('.'))
     } else if (ctx.scopeWholeProps) {
@@ -499,6 +521,7 @@ function scopeContext(found, callSites) {
       }
     }
   }
+  ctx.scopePropGetter = callSites.scopePropGetter
   collectAliases(found.node, ctx)
   return ctx
 }
@@ -516,10 +539,17 @@ function isRefArgument(node) {
 
 function callSiteMappings(vueFiles, fnName, readHead) {
   const scopeProps = new Map()
+  // Property -> whether every call site hands it as a function (a getter). The
+  // composable only reaches such a property's value through a call.
+  const scopePropGetter = new Map()
   const scopeValue = new Map()
   let scopeWholeProps = false
-  const add = (key, keys) => {
-    if (!scopeProps.has(key)) scopeProps.set(key, new Set())
+  const add = (key, keys, getter) => {
+    if (!scopeProps.has(key)) {
+      scopeProps.set(key, new Set())
+      scopePropGetter.set(key, true)
+    }
+    if (!getter) scopePropGetter.set(key, false)
     for (const value of keys) scopeProps.get(key).add(value)
   }
   for (const file of vueFiles) {
@@ -550,7 +580,9 @@ function callSiteMappings(vueFiles, fnName, readHead) {
             for (const property of scopeObject.properties) {
               if (ts.isPropertyAssignment(property)) {
                 const name = propertyName(property.name)
-                if (name !== null) add(name, canonical(property.initializer))
+                const initializer = unwrap(property.initializer)
+                const getter = ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)
+                if (name !== null) add(name, canonical(property.initializer), getter)
               } else if (ts.isShorthandPropertyAssignment(property)) {
                 add(property.name.text, canonical(property.name))
               }
@@ -572,7 +604,7 @@ function callSiteMappings(vueFiles, fnName, readHead) {
       visit(parseModule(block.text, file))
     }
   }
-  return { scopeProps, scopeWholeProps, scopeValue }
+  return { scopeProps, scopePropGetter, scopeWholeProps, scopeValue }
 }
 
 function analyzeComposable(file, source, vueFiles, readHead) {
