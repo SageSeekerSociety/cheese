@@ -13,8 +13,7 @@
 // WHY A RATCHET. The tree breaks these rules in ~159 places across ~79 files.
 // Freezing today's count per file and blocking only NEW violations makes the
 // rules enforceable now and lets the backlog be paid down file by file — the
-// reasoning behind tsc-baseline.json, stylelint-baseline.json and
-// import-boundary-baseline.json, whose shape this copies.
+// reasoning behind stylelint-baseline.json, whose shape this copies.
 //
 // THE KEY IS THE FILE, NOT THE LINE. A baseline keyed by line would fail every
 // PR that adds a line above an old violation. Per-file counts let code move
