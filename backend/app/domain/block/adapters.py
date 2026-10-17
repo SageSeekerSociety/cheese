@@ -30,16 +30,15 @@ async def dump_blocks_json(blocks: Sequence[Block], chunk: int = 500) -> list[di
     """Validate and dump a sequence of blocks to JSON-mode dicts in chunks,
     yielding to the event loop (`await asyncio.sleep(0)`) between chunks so a
     multi-thousand-block page does not monopolize the loop."""
-    if chunk < 1:
-        raise ValueError("chunk must be >= 1")
+    step = max(chunk, 1)
     items = blocks if isinstance(blocks, (list, tuple)) else list(blocks)
     if not items:
         return []
     out: list[dict] = []
-    for i in range(0, len(items), chunk):
+    for i in range(0, len(items), step):
         if i > 0:
             await asyncio.sleep(0)
-        validated = _BLOCK_LIST_ADAPTER.validate_python(items[i : i + chunk])
+        validated = _BLOCK_LIST_ADAPTER.validate_python(items[i : i + step])
         out.extend(_BLOCK_LIST_ADAPTER.dump_python(validated, mode="json"))
     return out
 

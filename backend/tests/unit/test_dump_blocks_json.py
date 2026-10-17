@@ -52,34 +52,47 @@ def test_dump_blocks_json_10k_yields_between_chunks_and_matches_bytes(
 
     real_sleep = asyncio.sleep
     sleep_zero_calls = 0
+    validated_at_each_yield: list[int] = []
+    validated_so_far = 0
+    real_validate = adapters._BLOCK_LIST_ADAPTER.validate_python
+
+    def tracking_validate(batch, *args, **kwargs):
+        nonlocal validated_so_far
+        res = real_validate(batch, *args, **kwargs)
+        validated_so_far += len(res)
+        return res
 
     async def counting_sleep(delay: float):
         nonlocal sleep_zero_calls
         if delay == 0:
             sleep_zero_calls += 1
+            validated_at_each_yield.append(validated_so_far)
         return await real_sleep(delay)
 
     monkeypatch.setattr(adapters.asyncio, "sleep", counting_sleep)
+    monkeypatch.setattr(
+        adapters._BLOCK_LIST_ADAPTER, "validate_python", tracking_validate
+    )
 
     async def run():
         return await adapters.dump_blocks_json(blocks, chunk=500)
 
     actual = asyncio.run(run())
 
-    # 10,000 blocks / 500 per chunk = 20 chunks -> 19 inter-chunk sleep(0) yields.
+    # 10,000 blocks / 500 per chunk = 20 chunks -> 19 inter-chunk sleep(0) yields,
+    # with validation progressing by 500 rows before each yield.
     assert sleep_zero_calls == 19
+    assert validated_at_each_yield == [500 * i for i in range(1, 20)]
     assert actual == expected
     assert json.dumps(actual, sort_keys=True, ensure_ascii=False).encode(
         "utf-8"
     ) == json.dumps(expected, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
-def test_dump_blocks_json_empty_and_invalid_chunk() -> None:
+def test_dump_blocks_json_empty() -> None:
     from app.domain.block.adapters import dump_blocks_json
 
     assert asyncio.run(dump_blocks_json([])) == []
-    with pytest.raises(ValueError, match="chunk"):
-        asyncio.run(dump_blocks_json([], chunk=0))
 
 
 def test_create_questions_yields_between_block_chunks(
