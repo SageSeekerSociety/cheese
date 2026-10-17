@@ -581,7 +581,7 @@ jobs:
     name: Backend coverage complete
     needs: [static, test]
     if: ${{ !cancelled() }}
-    # Seconds-long serial job: on a GitHub machine it waits 7-12 min in the shared
+    # Seconds-long serial job: on a GitHub machine it waited 3-18 min (#4101) in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
     # cheese-ci pool (docs/infrastructure.md); fork PRs, a deleted fork and every
     # other caller (deploy-prod's x86 run) stay on GitHub's machines.

@@ -485,7 +485,7 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
 - **Serial aggregation jobs run here too** (2026-10-17): `scope`, `CI required`,
   `CI required (draft quick)` and `Backend coverage complete` take
   `[self-hosted, cheese-ci]` for same-repo PRs and the merge queue, and stay on
-  `ubuntu-latest` for fork PRs. They run seconds of work and used to wait 7-12
+  `ubuntu-latest` for fork PRs. They run seconds of work and used to wait 3-18 (#4101)
   min in the shared hosted queue. The boxes have python3, git and curl but no
   gh, jq or node on PATH (JS actions use the runner's bundled node), so those
   jobs' `run:` steps must not call them. Every other event (deploy-prod's x86
