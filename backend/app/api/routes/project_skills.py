@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.doc_access import require_role
 from app.api.project_skill_rows import _iso, _skill
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
@@ -258,6 +259,7 @@ async def create_skill(
 ) -> dict:
     place = await place_or_404(db, topic_id)
     actor = await _in_project(db, resolver, place.project_id, topic_id)
+    await require_role(db, actor, place.project_id, Permission.configure_agents)
     by_agent = not _is_person(actor)
     by = await _speaker(db, actor, topic_id)
     service = ProjectSkillService(db)
@@ -441,6 +443,7 @@ async def update_skill(
     topic: uuid.UUID | None = None,
 ) -> dict:
     row, actor = await _load(db, resolver, skill_id, topic)
+    await require_role(db, actor, row.project_id, Permission.configure_agents)
     service = ProjectSkillService(db)
     by_agent = not _is_person(actor)
     pending = row.state == "draft"
