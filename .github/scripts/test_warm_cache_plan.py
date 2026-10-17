@@ -354,6 +354,18 @@ def step_named(job, name):
     raise AssertionError(f"no step named {name!r} in job:\n{job}")
 
 
+def cache_step_ids(job):
+    """The `id:` of every actions/cache step in the job, in order."""
+    ids = []
+    for block in steps(job):
+        if "uses: actions/cache@" not in block:
+            continue
+        match = re.search(r"^\s+id: (\S+)$", block, re.M)
+        if match:
+            ids.append(match.group(1))
+    return ids
+
+
 def job_field(job, key):
     """A property of the job itself: four spaces, not a step's eight."""
     match = re.search(rf"^    {re.escape(key)}: (.+)$", job, re.M)
@@ -489,13 +501,7 @@ class WorkflowTests(unittest.TestCase):
         for name, (step_name, command) in GATED_INSTALLS.items():
             with self.subTest(job=name):
                 job = job_block(self.text, name)
-                cache_ids = [
-                    match.group(1)
-                    for block in steps(job)
-                    if "uses: actions/cache@" in block
-                    for match in [re.search(r"^\s+id: (\S+)$", block, re.M)]
-                    if match
-                ]
+                cache_ids = cache_step_ids(job)
                 self.assertEqual(
                     len(cache_ids), 1, f"{name} should read one cache step"
                 )
@@ -522,6 +528,11 @@ class WorkflowTests(unittest.TestCase):
             "ARM must sync Python on every run",
         )
         self.assertIn("uv sync --frozen --all-extras", install)
+        # The condition below reads this id. Without the id on the cache step
+        # the hit is always empty, the unpack runs every time, and the rule
+        # this job exists to keep would be broken while the step still looks
+        # conditional.
+        self.assertEqual(cache_step_ids(job), ["harness-bins"])
         unpack = step_named(job, "Unpack the pinned harness binaries")
         self.assertEqual(
             step_field(unpack, "if"),
