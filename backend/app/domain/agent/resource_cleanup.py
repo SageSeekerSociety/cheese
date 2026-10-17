@@ -390,14 +390,33 @@ def end_holders(paths: list[Path]) -> None:
             return
 
 
+# Left in a task checkout's git directory by `cheese sync` on a person's own
+# machine while the checkout holds work its branch does not have: that machine
+# takes no snapshot, so this checkout is the only copy (the CLI's
+# `_WORK_ONLY_HERE`).
+WORK_ONLY_HERE = "cheese-work-only-here"
+
+
+def _work_only_here(checkout: Path) -> bool:
+    try:
+        pointer = (checkout / ".git").read_text().strip()
+    except OSError:
+        return False
+    if not pointer.startswith("gitdir:"):
+        return False
+    admin = Path(pointer.removeprefix("gitdir:").strip())
+    return (checkout / admin / WORK_ONLY_HERE).exists()
+
+
 def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
     """Remove the checkouts of these closed tasks.
 
-    The platform names the tasks. A closed task's work went to its branch and
-    snapshot at each turn's checkpoint, so nothing here waits on publication;
-    only a checkout something still has open stays, and comes back with the
-    reason. A checkout that is not there is already done, so the same list can
-    be sent again and again.
+    The platform names the tasks. A closed task's work went to its branch and,
+    on the platform's machines, to its snapshot at each turn's checkpoint, so
+    nothing here waits on publication. Two kinds stay and come back with the
+    reason: a checkout something still has open, and one on a person's own
+    machine holding work its branch does not have. A checkout that is not there
+    is already done, so the same list can be sent again and again.
     """
     root = home / FOOTPRINT_ROOT / "tasks"
     if root.is_symlink():
@@ -410,6 +429,9 @@ def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
             kept[task] = "unrecognized entry in task storage"
             continue
         if path.exists():
+            if _work_only_here(path):
+                kept[task] = "holds work its branch does not have, and no snapshot"
+                continue
             candidates.append(path)
     try:
         check_no_writers(candidates)

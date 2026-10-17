@@ -4052,9 +4052,8 @@ def _report_sync_failure(
     if queued_pr:
         # Retrying cannot help: the branch stays locked until the queue is done.
         content = (
-            f"⚠️ {branch} 上采纳之后的新提交进不了 PR #{queued_pr}——它已在合并"
-            "队列里，排队的分支不能再改。PR 合并后在新任务里交付它们，或由验收人"
-            "退回这张卡、PR 撤出队列后再推。"
+            f"最新的改动进不了已在合并队列里的 PR #{queued_pr}：合并后在新任务里"
+            "交付，或由验收人退回这张卡后再推。"
         )
     told_file = admin / _SYNC_FAILURE_TOLD
     try:
@@ -4322,6 +4321,45 @@ def _sync_task(task_id: str) -> list[str]:
                 _git_task(worktree, "remote", "set-url", "origin", data["remote"])
                 _configure_git_transport(worktree, data)
             head = _git_task(worktree, "rev-parse", "HEAD")
+            # The push first: it is the agent's, and it waits on nothing of the
+            # platform's. A machine being let go gives this command two and a
+            # half minutes, and an upload to storage that hangs can take four.
+            push_failed = None
+            if not closed:
+                try:
+                    step = "branch"
+                    branch = data["branch"]
+                    found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+                    if found != branch:
+                        # A step of the task landed since this checkout was opened.
+                        _task_worktree(task_id)
+                        found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+                    if found != branch:
+                        raise RuntimeError(
+                            f"Expected task branch {branch}, found {found}"
+                        )
+                    step = "push"
+                    try:
+                        _once_more_if_transient(
+                            lambda: _deliver_task_branch(
+                                worktree,
+                                branch,
+                                head,
+                                queued_pr=data.get("merge_queued_pr"),
+                            )
+                        )
+                    finally:
+                        # The report of the push that just ran, to the author
+                        # of the commit that triggered it. Only a push
+                        # produces one, so a sync that had nothing to deliver
+                        # is silent here. In a `finally` because a push that
+                        # failed still ran the entry point: its report is the
+                        # reason to look.
+                        _flush_pre_push_reports()
+                except Exception as exc:
+                    # Raised once the snapshot is taken: work the branch does
+                    # not have is exactly what the snapshot is for.
+                    push_failed = (step, exc)
             left_out: list[str] = []
             snapshot = None
             if not restored:
@@ -4331,7 +4369,9 @@ def _sync_task(task_id: str) -> list[str]:
                     "snapshot skipped step=restore: the platform's snapshot is "
                     "not restored here yet"
                 )
-            elif _snapshots_here():
+            elif not _snapshots_here():
+                _mark_work_only_here(admin, worktree)
+            else:
                 try:
                     step = "snapshot"
                     snapshot, left_out = _snapshot_commit(
@@ -4352,30 +4392,9 @@ def _sync_task(task_id: str) -> list[str]:
                 # backup, on whichever branch an agent went on to use it for.
                 note(f"archived snapshot={snapshot}; delivery is closed")
                 return left_out
-            step = "branch"
-            branch = data["branch"]
-            found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
-            if found != branch:
-                # A step of the task landed since this checkout was opened.
-                _task_worktree(task_id)
-                found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
-            if found != branch:
-                raise RuntimeError(f"Expected task branch {branch}, found {found}")
-            step = "push"
-            try:
-                _once_more_if_transient(
-                    lambda: _deliver_task_branch(
-                        worktree, branch, head, queued_pr=data.get("merge_queued_pr")
-                    )
-                )
-            finally:
-                # The report of the push that just ran, to the author of the
-                # commit that triggered it. Only a push produces one, so a
-                # sync that had nothing to deliver is silent here. In a
-                # `finally` because a push that failed still ran the entry
-                # point: its report is the reason to look, and the sync that
-                # would carry it forward is the one being abandoned here.
-                _flush_pre_push_reports()
+            if push_failed:
+                step, exc = push_failed
+                raise exc
             note(f"success head={head} snapshot={snapshot}")
             (admin / _SYNC_FAILURE_TOLD).unlink(missing_ok=True)
             return left_out
@@ -4387,10 +4406,47 @@ def _sync_task(task_id: str) -> list[str]:
                 # platform tells the room which task stayed behind and why.
                 _report_backup_failure(task_id, step, exc)
                 raise _ClosedTaskNotBackedUp(str(exc)) from exc
-            _report_sync_failure(
-                admin, branch, exc.pr if isinstance(exc, _BranchQueued) else None
-            )
+            if _review_behind(worktree):
+                _report_sync_failure(
+                    admin, branch, exc.pr if isinstance(exc, _BranchQueued) else None
+                )
             raise
+
+
+# In a task checkout's git directory on a person's own machine, while it holds
+# work its branch does not have: no snapshot keeps that work, so the sweep of
+# closed tasks' checkouts leaves this one (`resource_cleanup`'s
+# `remove_task_checkouts` reads the same name).
+_WORK_ONLY_HERE = "cheese-work-only-here"
+
+
+def _mark_work_only_here(admin: Path, worktree: Path) -> None:
+    marker = admin / _WORK_ONLY_HERE
+    try:
+        unsaved = bool(
+            _git_task(worktree, "--no-optional-locks", "status", "--porcelain")
+        ) or _review_behind(worktree)
+    except RuntimeError:
+        unsaved = True
+    if unsaved:
+        marker.touch()
+    else:
+        marker.unlink(missing_ok=True)
+
+
+def _review_behind(worktree: Path) -> bool:
+    """Whether the checkout has commits its branch on the forge lacks, as this
+    checkout last pushed or fetched it: what review shows is then behind. A
+    sync that failed with nothing unpushed (only files not committed) leaves
+    review as it should be. Anything this cannot read counts as behind."""
+    try:
+        branch = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+        pushed = _git_task(
+            worktree, "rev-parse", "--verify", f"refs/remotes/origin/{branch}"
+        )
+        return not _is_ancestor(worktree, "HEAD", pushed)
+    except RuntimeError:
+        return True
 
 
 def _snapshot_commit(
@@ -4422,8 +4478,10 @@ def _sync_delivered(task_id: str) -> None:
     ran it, in place of a traceback."""
     try:
         left_out = _sync_task(task_id)
-    except _ClosedTaskNotBackedUp as exc:
-        print(f"[cheese] 已结束的任务 {task_id} 没能备份：{exc}", file=sys.stderr)
+    except _ClosedTaskNotBackedUp:
+        return  # The platform's snapshot, logged and reported; nothing to push.
+    except _BranchQueued as exc:
+        print(f"[cheese] 任务 {task_id} 的新提交没推上去：{exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     except Exception as exc:
         print(
@@ -4883,8 +4941,8 @@ def _apply_snapshot(worktree: Path, data: dict) -> str | None:
             f"{files['A']}、删除 {files['D']}；都是未暂存的状态）"
         )
     message = (
-        f"[cheese] 这是一个新环境。任务 {task_id} 上次检查点（{when}）时还没推送"
-        "的工作已从平台快照恢复：" + "；".join(lines) + "。" + _NOT_CARRIED
+        f"[cheese] 这是一个新环境。任务 {task_id} 平台上最近一次快照（{when}）里"
+        "还没推送的工作已恢复：" + "；".join(lines) + "。" + _NOT_CARRIED
     )
     record = _git_task(worktree, "log", "-1", "--format=%B", saved)
     if _LEFT_OUT_HEADER in record:

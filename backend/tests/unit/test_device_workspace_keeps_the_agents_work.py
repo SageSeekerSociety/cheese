@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import environment_runner
+from app.domain.agent import environment_runner, resource_cleanup
 from app.domain.project.environment import EnvironmentConfig
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox/cheese"
@@ -1457,3 +1457,24 @@ def test_a_failure_the_room_never_received_is_told_at_the_next_sync(device):
         cli._sync_task(task)
 
     assert len(_told_the_room(home)) == 1
+
+
+@pytest.mark.parametrize(("supply", "kept"), [("self_hosted", True), ("cloud", False)])
+def test_a_closed_tasks_work_only_on_a_persons_machine_survives_the_sweep(
+    device, monkeypatch, supply, kept
+):
+    """A person's own machine takes no snapshot, so a closed task's checkout
+    there that holds work its branch does not have is the only copy, and the
+    sweep of closed tasks' checkouts leaves it. On the platform's machines the
+    snapshot holds it and the checkout goes."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", supply)
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("only here\n")
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert (work / "draft.txt").exists() is kept

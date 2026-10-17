@@ -107,7 +107,7 @@ covers:
 
 ## 同步、备份、恢复 {#sync}
 
-`cheese sync` 做两件互不牵连的事（`_sync_task`）：快照是平台的，推送是 agent 的。快照没成功（或没做）从不挡推送，也不让命令失败。
+`cheese sync` 做两件互不牵连的事（`_sync_task`）：推送是 agent 的，快照是平台的。先推送，再做快照（推送没成功也做，那正是快照要留住的东西）；快照没成功（或没做）从不挡推送，也不让命令失败。
 
 1. **给平台做快照**（只在平台自己的机器上做，`CHEESE_MACHINE_SUPPLY` 不是 `self_hosted` 时；快照是平台挪房间、重建机器时恢复用的，一个人自己登记的机器平台不挪也不重建，文件就在那台机器上）：用另一个索引文件（`GIT_INDEX_FILE=…/cheese-snapshot-index`）`read-tree HEAD` + `add -u`，再加上该带的未跟踪文件，`write-tree`，把树写成一个挂在当前 HEAD 上的临时提交（`commit-tree`）。工作树自己的暂存区不受影响。带哪些见下面的[备份里有什么](#backup-contents)。
 2. **推 HEAD**（`_deliver_task_branch`）：HEAD 已在本检出上次推送或 fetch 时记下的分支尖（`refs/remotes/origin/<branch>`）里，就不问托管平台、什么都不推：托管平台一时连不上时，问一句只会把它已经有的工作报成「没能推回」，而且每次 sync 都报一遍。否则先读托管平台上这条分支的尖。HEAD 已在其中——同一任务的另一个检出走得更远——就什么都不推；尖在 HEAD 的历史里就普通推送；两边分叉而那个尖是本检出自己在这条分支上有过、后来 amend/rebase 掉的提交，就以它为 lease 替换（`--force-with-lease`），整理本任务的提交（比如移除依赖）本来就是工作的一部分；尖里有本检出从没有过的提交就拒绝，替换会把别人的工作从 PR 上删掉。
@@ -122,9 +122,9 @@ covers:
 
 各方看到什么：
 
-- **推送失败**：房间里说一句「最新的改动还没进入验收，会自动重试。」（`_report_sync_failure`）——验收卡和 diff 还停在上一次推上去的版本，这件事不说，一轮推送失败和一轮成功长得一模一样。同一条在一个房间里只说一次：说过的记在这条检出的 `cheese-sync-failure-told`，内容变了、中间成功同步过一次、或过了 24 小时才再说；房间没收到的不算说过。成功不发消息。跑 `cheese sync`（提交钩子跑的就是它）的 agent 在 stderr 读到推送失败和原因，命令退出码 1，它可以自己重试或修好。
+- **推送失败，且有提交不在分支上**：房间里说一句「最新的改动还没进入验收，会自动重试。」（`_report_sync_failure`；PR 在合并队列里时换成「最新的改动进不了已在合并队列里的 PR #N：合并后在新任务里交付，或由验收人退回这张卡后再推。」）——验收卡和 diff 还停在上一次推上去的版本，这件事不说，一轮推送失败和一轮成功长得一模一样。同一条在一个房间里只说一次：说过的记在这条检出的 `cheese-sync-failure-told`，内容变了、中间成功同步过一次、或过了 24 小时才再说；房间没收到的不算说过。成功不发消息。跑 `cheese sync`（提交钩子跑的就是它）的 agent 在 stderr 读到推送失败和原因，命令退出码 1，它可以自己重试或修好。
 - **快照失败**：房间里什么都不说——在哪台机器、快照成没成，是 agent 和平台的事。`cheese-sync.log` 记一行 `snapshot failed step=<snapshot|backup> …`，并经 `/backend-errors` 报给平台（`TaskBackupFailed`），后端按失败的步骤发运维告警（`backend_log.TASK_BACKUP_FAILED`）。
-- 日志里每次失败都写 `failed step=<task|restore|configure|branch|push> …`，可以按步骤数。
+- 日志里每次失败都写 `failed step=<task|restore|configure|branch|push> …`（已结束的任务还有 `snapshot|backup`），可以按步骤数。
 
 ### 每轮的检查点 {#checkpoint}
 
