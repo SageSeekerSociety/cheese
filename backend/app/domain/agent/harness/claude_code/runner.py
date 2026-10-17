@@ -1088,6 +1088,7 @@ class Runner(runner.Runner[Journal]):
             "files": outcome.files,
             "refused": outcome.refused,
             "rejected": outcome.rejected,
+            "unindexed": list(outcome.unindexed),
             "held": list(outcome.held),
         }
 

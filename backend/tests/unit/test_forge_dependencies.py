@@ -15,10 +15,9 @@ from app.domain.delivery.input_identity import InputEffects, InputIdentity, Inpu
 from app.domain.delivery.models import Delivery
 from app.domain.delivery.receipts import register_input
 from app.domain.project.models import Project
-from app.domain.review import pr_poll
+from app.domain.review import pr_poll, pr_publish
 from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
 from app.domain.review.pr_publish import retarget_completed_dependencies
-from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
 from tests.integration.conftest import a_team
@@ -79,7 +78,7 @@ async def test_dependency_notice_is_durable_and_deduplicated(
         session.add(AcceptApproval(card_id=card.id, approver_handle="reviewer"))
         await session.commit()
     forge = AsyncMock()
-    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=forge))
+    monkeypatch.setattr(pr_publish, "proposal_client", AsyncMock(return_value=forge))
     await retarget_completed_dependencies(
         db_factory, announce=announce, record_instruction=record_task_instruction
     )
@@ -108,7 +107,7 @@ async def test_failed_retarget_retries_before_announcing(db_factory, monkeypatch
     await seed(db_factory, delivered=True)
     forge = AsyncMock()
     forge.update_pr.side_effect = [RuntimeError("offline"), {}]
-    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=forge))
+    monkeypatch.setattr(pr_publish, "proposal_client", AsyncMock(return_value=forge))
     await retarget_completed_dependencies(
         db_factory, announce=announce, record_instruction=record_task_instruction
     )
@@ -156,7 +155,7 @@ async def test_detached_parent_preserves_ancestor_review_for_descendants(
         )
         session.add(descendant)
         await session.commit()
-    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock())
+    monkeypatch.setattr(pr_publish, "proposal_client", AsyncMock())
     await retarget_completed_dependencies(
         db_factory, announce=announce, record_instruction=record_task_instruction
     )
@@ -281,7 +280,7 @@ async def test_rejected_dependency_can_later_deliver(db_factory, monkeypatch):
         session.add(AcceptApproval(card_id=child_card.id, approver_handle="reviewer"))
         await session.commit()
     forge = AsyncMock()
-    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=forge))
+    monkeypatch.setattr(pr_publish, "proposal_client", AsyncMock(return_value=forge))
     await retarget_completed_dependencies(
         db_factory, announce=announce, record_instruction=record_task_instruction
     )

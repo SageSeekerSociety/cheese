@@ -207,18 +207,11 @@ class Machine:
         repository says nothing."""
         if self.taken:
             return
-        self.client.call("project_tools", {}, preparing=preparing)
+        self.client.call("take", {}, preparing=preparing)
         self.taken = True
         self.instructions = self.context()
         if self.instructions:
             raise WorkReady(WORK_READY + self.instructions)
-
-    def servers(self) -> list[str]:
-        """Every MCP server this session lists (`session_servers`): the
-        machine's own stdio servers only once the session runs on it."""
-        if self.placeholder:
-            return self.client.session_servers()
-        return list(self.client.call("project_tools", {})["servers"])
 
     # --- commands -------------------------------------------------------------
 

@@ -1,0 +1,8 @@
+{
+  "connectTitle": "Connect {name}?",
+  "connectBody": "Once connected, everyone in the project can use {name} as this account through {agent}. Use a dedicated bot account, not a personal one.",
+  "connect": "Authorize",
+  "removeTitle": "Delete {name}?",
+  "removeBody": "{agent} can no longer call it, and its connection and header are cleared.",
+  "remove": "Delete"
+}

@@ -86,3 +86,10 @@ async def retain_step_output(
 ) -> Block | None:
     """Attach the already bounded output tail and its original length."""
     return await BlockRepository(session).record_step_output(block_id, tail, total)
+
+
+async def retain_step_calls(
+    session: AsyncSession, block_id: uuid.UUID, calls: list[dict]
+) -> Block | None:
+    """Attach the tools the step called on its own."""
+    return await BlockRepository(session).record_step_calls(block_id, calls)

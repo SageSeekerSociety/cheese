@@ -104,6 +104,43 @@
               </template>
             </InboxRow>
 
+            <!-- A command from the repository waiting to run on my own device: what runs,
+                 where it came from, and the two answers. -->
+            <InboxRow v-else-if="item.kind === 'mcp_run'" :time="relTime(item.at)" :at="item.at">
+              <template #lead>
+                <v-icon icon="mdi-console-line" size="16" />
+              </template>
+              <template #title>
+                <span class="waiting__ask waiting__ask--warn">{{ t('home.inbox.reason.allow') }}</span>
+                <span>{{ t('home.inbox.mcpRun.title', { device: item.device, server: item.server }) }}</span>
+              </template>
+              <code class="waiting__command">{{ item.command }}</code>
+              <i18n-t
+                v-if="item.author"
+                scope="global"
+                keypath="home.inbox.mcpRun.from"
+                tag="span"
+                class="waiting__where"
+              >
+                <template #file><code>.mcp.json</code></template>
+                <template #name>{{ item.author.name }}</template>
+              </i18n-t>
+              <span class="waiting__where">{{ t('home.inbox.mcpRun.once') }}</span>
+              <template #side>
+                <BaseButton
+                  size="sm"
+                  kind="secondary"
+                  :loading="replying === keyOf(item)"
+                  @click="emit('allow', item, true)"
+                >
+                  {{ t('home.inbox.mcpRun.allow') }}
+                </BaseButton>
+                <BaseButton size="sm" :disabled="replying === keyOf(item)" @click="emit('allow', item, false)">
+                  {{ t('home.inbox.mcpRun.refuse') }}
+                </BaseButton>
+              </template>
+            </InboxRow>
+
             <!-- An invitation or join request: who sent it, the two answers always shown.
                  No mark-read / delete: answering is how it leaves. -->
             <InboxRow v-else :time="relTime(item.at)" :at="item.at">
@@ -145,7 +182,7 @@
 </template>
 
 <script setup lang="ts">
-import type { WaitingAsk, WaitingItem, WaitingWork } from '@/cx_types'
+import type { WaitingAsk, WaitingItem, WaitingRun, WaitingWork } from '@/cx_types'
 
 import { computed, ref } from 'vue'
 
@@ -180,6 +217,7 @@ const emit = defineEmits<{
   dismiss: [item: WaitingWork]
   dismissAll: [projectId: string]
   reply: [item: WaitingAsk, yes: boolean]
+  allow: [item: WaitingRun, yes: boolean]
 }>()
 
 /** 这一件要你做什么。负责人那一条按停在哪一格说：检查没过，或被退回。 */
@@ -275,14 +313,15 @@ const placeKindOf = (item: WaitingAsk) =>
 const groups = computed(() => {
   const out: Group[] = []
   for (const item of props.items) {
-    const key = item.kind === 'work' ? `project:${item.projectId}` : `${placeKindOf(item)}:${item.placeId}`
+    const inProject = item.kind === 'work' || item.kind === 'mcp_run'
+    const key = inProject ? `project:${item.projectId}` : `${placeKindOf(item)}:${item.placeId}`
     const group = out.find((g) => g.key === key)
     if (group) group.items.push(item)
     else
       out.push({
         key,
-        name: item.kind === 'work' ? item.projectName : item.place.name,
-        projectId: item.kind === 'work' ? item.projectId : null,
+        name: inProject ? item.projectName : item.place.name,
+        projectId: inProject ? item.projectId : null,
         items: [item],
       })
   }
@@ -301,6 +340,11 @@ function answer(item: WaitingWork) {
 </script>
 
 <style scoped>
+.waiting__command {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
 .waiting__heading {
   display: flex;
   gap: 8px;

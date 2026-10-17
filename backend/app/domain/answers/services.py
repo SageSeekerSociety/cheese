@@ -3,6 +3,7 @@ from app.domain.answers.models import Answer
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.questions.models import VoteType
 from app.domain.questions.repositories import QuestionRepository
+from app.domain.user.author_dto import profile_to_author
 from app.domain.user.repositories import UserProfileRepository
 
 
@@ -70,7 +71,7 @@ class AnswersService:
         for row in rows:
             dto = _answer_to_dto(
                 row,
-                author=_profile_to_dto(
+                author=profile_to_author(
                     profiles.get(row.created_by_id), chosen.get(row.created_by_id)
                 ),
             )
@@ -149,7 +150,7 @@ class AnswersService:
         profile = await self._profile_repo.get_profile_by_user_id(user_id)
         chosen = await self._profile_repo.chosen_avatar_ids([user_id])
         return _answer_to_dto(
-            answer, author=_profile_to_dto(profile, chosen.get(user_id))
+            answer, author=profile_to_author(profile, chosen.get(user_id))
         )
 
     async def _ensure_question_exists(self, question_id: int) -> None:
@@ -231,7 +232,7 @@ class AnswersService:
         chosen = await self._profile_repo.chosen_avatar_ids([answer.created_by_id])
         dto = _answer_to_dto(
             answer,
-            author=_profile_to_dto(profile, chosen.get(answer.created_by_id)),
+            author=profile_to_author(profile, chosen.get(answer.created_by_id)),
         )
         await self._attach_answer_stats(dto, answer_id=answer_id, viewer_id=user_id)
 
@@ -263,7 +264,7 @@ class AnswersService:
                 "bounty": question.bounty,
                 "acceptedAnswerId": question.accepted_answer_id,
                 "createdBy": question.created_by_id,
-                "author": _profile_to_dto(
+                "author": profile_to_author(
                     author_profile, author_chosen.get(question.created_by_id)
                 ),
                 "createdAt": created_at_ms,
@@ -283,7 +284,8 @@ class AnswersService:
         profile = await self._profile_repo.get_profile_by_user_id(updated.created_by_id)
         chosen = await self._profile_repo.chosen_avatar_ids([updated.created_by_id])
         return _answer_to_dto(
-            updated, author=_profile_to_dto(profile, chosen.get(updated.created_by_id))
+            updated,
+            author=profile_to_author(profile, chosen.get(updated.created_by_id)),
         )
 
     async def delete_answer(self, *, answer_id: int, user_id: int) -> None:
@@ -305,19 +307,3 @@ class AnswersService:
             raise BadRequestError("Answer not favorited")
         count = await self._repo.count_favorites(answer_id)
         return {"favoriteCount": count, "isFavorited": False}
-
-
-def _profile_to_dto(profile, chosen_avatar_id: int | None = None) -> dict | None:
-    """把档案拼成作者 dto。``chosen_avatar_id`` 由调用方从
-    ``UserProfileRepository.chosen_avatar_ids`` 取：档案上的 ``avatar_id`` 含注册时
-    写死的全局默认头像，直接回它会让所有没挑过的人共用同一张脸（契约 §3.14）。
-    没挑过就是 ``None``，前端画彩色首字母。
-    """
-    if profile is None:
-        return None
-    return {
-        "id": profile.user_id,
-        "nickname": profile.nickname,
-        "avatarId": chosen_avatar_id,
-        "intro": profile.intro,
-    }

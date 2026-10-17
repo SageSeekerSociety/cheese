@@ -191,6 +191,7 @@ async def detail(
         "severity": newest.severity,
         "content": newest.content,
         "meta": newest.meta or {},
+        "turn_id": str(newest.turn_id) if newest.turn_id else None,
         "at": newest.created_at.isoformat(),
         "places": [
             {

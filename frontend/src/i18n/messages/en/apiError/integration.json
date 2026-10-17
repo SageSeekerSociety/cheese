@@ -102,5 +102,11 @@
   "repoTakenHidden": "The repository {repo} is already connected to another project you can't see, and a repository can be connected to only one project. Choose another repository, or ask a member of that project to invite you.",
   "repoTakenVisible": "The repository {repo} is already connected to the project “{project}”, and a repository can be connected to only one project. Work in that project, or choose another repository.",
   "roomNotInProject": "This channel doesn't belong to this project",
-  "sourceRequired": "source can't be empty"
+  "sourceRequired": "source can't be empty",
+  "mcpServerNameInvalid": "A name can only use lowercase letters, digits and hyphens",
+  "mcpHeaderNameInvalid": "A header name can only use letters, digits and hyphens",
+  "mcpServerNotAdded": "This server was not added in project settings",
+  "mcpServerNameTaken": "The project already has a server named {name}",
+  "mcpApprovalNotFound": "This run request no longer exists",
+  "mcpApprovalOwnerOnly": "Only the owner of this device can decide"
 }

@@ -21,24 +21,36 @@ from sqlalchemy import select
 from app.api.deps import get_chat_service
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block
-from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery.agent import dispatch_pending, instance_for_seat
 from app.domain.delivery.models import Delivery
 from app.domain.delivery.timer import give_up_stale
+from app.domain.identity.handles import agent_instance_handle
 from tests.integration.conftest import in_thread, post_project, room_agent_seat
 
 
 def _stale_delivery(
-    client, project: str, conversation: str, seat: str, *, kind: str = "MENTION"
+    client,
+    project: str,
+    conversation: str,
+    seat: str,
+    *,
+    kind: str = "MENTION",
+    attempt_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     """An instruction for the teammate, given 31 minutes ago and tried once:
     a person's message to it, unless ``kind`` says otherwise."""
 
     async def record() -> uuid.UUID:
         async with client.test_factory() as session:
-            instance = await session.scalar(
-                select(AgentInstance.id).where(
-                    AgentInstance.project_id == uuid.UUID(project),
-                    AgentInstance.is_active.is_(True),
+            matched = await instance_for_seat(session, uuid.UUID(project), seat)
+            instance = (
+                matched.id
+                if matched is not None
+                else await session.scalar(
+                    select(AgentInstance.id).where(
+                        AgentInstance.project_id == uuid.UUID(project),
+                        AgentInstance.is_active.is_(True),
+                    )
                 )
             )
             long_ago = datetime.now(UTC) - timedelta(minutes=31)
@@ -53,12 +65,28 @@ def _stale_delivery(
                 event_at=long_ago,
                 recorded_at=long_ago,
                 attempts=1,
+                attempt_id=attempt_id or uuid.uuid4(),
             )
             session.add(delivery)
             await session.commit()
             return delivery.id
 
     return asyncio.run(record())
+
+
+def _second_seat(client, project: str) -> str:
+    async def create() -> str:
+        async with client.test_factory() as session:
+            other = AgentInstance(
+                project_id=uuid.UUID(project),
+                handle="second",
+                configuration={},
+            )
+            session.add(other)
+            await session.commit()
+            return agent_instance_handle(other.id)
+
+    return asyncio.run(create())
 
 
 def _failure_lines(client, conversation: str) -> list[Block]:
@@ -82,7 +110,10 @@ def test_an_instruction_that_never_starts_is_told_once_where_people_wait(client)
     seat = room_agent_seat(client, thread)
     chat = client.app.dependency_overrides[get_chat_service]()
     runner = SimpleNamespace(submit=Mock())
-    delivery_id = _stale_delivery(client, data["id"], thread, seat)
+    attempt_id = uuid.uuid4()
+    delivery_id = _stale_delivery(
+        client, data["id"], thread, seat, attempt_id=attempt_id
+    )
 
     # Whoever dispatches next leaves it alone; the sweep gives it up, once.
     client.portal.call(
@@ -96,7 +127,30 @@ def test_an_instruction_that_never_starts_is_told_once_where_people_wait(client)
     runner.submit.assert_not_called()
     lines = _failure_lines(client, thread)
     assert len(lines) == 1, "没开始的指令说了不止一遍，或者没说"
+    assert lines[0].turn_id == attempt_id
     assert (lines[0].meta or {}).get("retryable") is True
+
+
+def test_each_seat_whose_instruction_never_starts_is_told_with_its_own_turn(client):
+    data = post_project(client, {"name": "Never started"}, owner="alice").json()["data"]
+    thread = in_thread(client, data["root_topic_id"], "alice")
+    first_seat = room_agent_seat(client, thread)
+    second_seat = _second_seat(client, data["id"])
+    chat = client.app.dependency_overrides[get_chat_service]()
+    first_turn = uuid.uuid4()
+    second_turn = uuid.uuid4()
+    _stale_delivery(client, data["id"], thread, first_seat, attempt_id=first_turn)
+    _stale_delivery(client, data["id"], thread, second_seat, attempt_id=second_turn)
+
+    client.portal.call(lambda: give_up_stale(chat.session_factory, chat=chat))
+
+    lines = _failure_lines(client, thread)
+    by_turn = {line.turn_id: line for line in lines}
+    assert set(by_turn) == {first_turn, second_turn}
+    assert f"<@{first_seat}>" in by_turn[first_turn].content
+    assert f"<@{second_seat}>" in by_turn[second_turn].content
+    assert (by_turn[first_turn].meta or {}).get("seat") == first_seat
+    assert (by_turn[second_turn].meta or {}).get("seat") == second_seat
 
 
 def test_a_platform_instruction_gives_up_without_a_line(client):

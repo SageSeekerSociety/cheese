@@ -2,7 +2,7 @@ import type { BoardPhrase } from '../cx_types'
 
 /** 待我处理清单里的一行（后端 `/awaiting-me`）：项目里的一件事，或一条等我回答的
  *  邀请、申请。两种按 `kind` 分。 */
-export type WaitingItem = WaitingWork | WaitingAsk
+export type WaitingItem = WaitingWork | WaitingAsk | WaitingRun
 
 /** 项目里等我的一件事（后端 `room_task/awaiting.py`）。
  *
@@ -59,5 +59,24 @@ export interface WaitingAsk {
   role: 'MEMBER' | 'ADMIN' | 'OWNER' | 'member' | 'mentor' | null
   /** 邀请或申请时附的那句话；没写是空串。 */
   message: string
+  at: string
+}
+
+/** 项目要在我自己的设备上运行仓库里的一个本地命令类 MCP 服务器，等我允许。同一条命令
+ *  允许过就不再问，命令改了再问。 */
+export interface WaitingRun {
+  kind: 'mcp_run'
+  /** 回答时交回去的号。 */
+  id: string
+  projectId: string
+  projectName: string
+  /** 服务器的名字。 */
+  server: string
+  /** 要运行的那一行命令。 */
+  command: string
+  /** 我的哪台设备。 */
+  device: string
+  /** 最近一次改了 .mcp.json 里这一条的人；读不出来是 null。 */
+  author: WaitingFace | null
   at: string
 }

@@ -47,7 +47,7 @@ from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.driven.runner import LONG_POLL, socket_path
-from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.launch import MachinePlace
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_session.services import AgentSessionService

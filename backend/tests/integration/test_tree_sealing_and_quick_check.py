@@ -11,6 +11,7 @@ from app.domain.delivery.agent import record_task_instruction
 from app.domain.project import forge
 from app.domain.project.models import Project
 from app.domain.repository.forge_files import ProjectFiles
+from app.domain.review import pr_publish
 from app.domain.review.pr_publish import retarget_completed_dependencies
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
@@ -215,7 +216,7 @@ def test_quick_checks_belong_to_the_checked_task_and_do_not_gate_work(client):
 def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypatch):
     project, room = _room(client)
     github = AsyncMock()
-    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
+    monkeypatch.setattr(pr_publish, "proposal_client", AsyncMock(return_value=github))
 
     async def seed():
         async with client.test_factory() as session:
@@ -276,7 +277,7 @@ def test_retargeting_holds_no_task_lock_while_github_is_called(client, monkeypat
         await release.wait()
 
     github.update_pr = slow_update_pr
-    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
+    monkeypatch.setattr(pr_publish, "proposal_client", AsyncMock(return_value=github))
 
     async def seed():
         async with client.test_factory() as session:
