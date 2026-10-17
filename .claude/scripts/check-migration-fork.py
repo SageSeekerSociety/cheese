@@ -806,13 +806,18 @@ def self_test() -> int:
 
         # A broken intermediate migration must not disappear from the graph while
         # the base supplies its old revision and makes the remaining chain pass.
-        original = (versions / "a.py").read_bytes()
+        originals = {path: path.read_bytes() for path in (versions / "a.py", versions / "m.py", sentinel)}
         broken = versions / "broken.py"
         (versions / "a.py").write_text("<<<<<<< HEAD\n", encoding="utf-8")
         broken.write_text("def upgrade(\n", encoding="utf-8")
-        before = {path: path.read_bytes() for path in (*versions.glob("*.py"), sentinel)}
         try:
             for label, argv in (("the check", []), ("the re-chain", ["--rechain"])):
+                if argv:
+                    # A late refusal must be caught even when re-chaining would
+                    # change both a migration and the sentinel.
+                    (versions / "m.py").write_text('revision = "m"\ndown_revision = "a"\n', encoding="utf-8")
+                    sentinel.write_text("n\n", encoding="utf-8")
+                before = {path: path.read_bytes() for path in (*versions.glob("*.py"), sentinel)}
                 invalid = subprocess.run(
                     [sys.executable, str(script), *argv, "--base", "main"],
                     cwd=lab,
@@ -830,7 +835,8 @@ def self_test() -> int:
                     before,
                 )
         finally:
-            (versions / "a.py").write_bytes(original)
+            for path, original in originals.items():
+                path.write_bytes(original)
             broken.unlink()
 
         # An unavailable --base is not a clean tree. `collect()` cannot read the
