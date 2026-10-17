@@ -41,8 +41,7 @@ INTERVAL_S = 0.25
 # process runs an agent platform, and a hundred milliseconds of JSON is normal
 # here. A second is already long enough to be the reason a request failed.
 STALL_S = 1.0
-# One line a minute at most, for the same reason the pool-saturation warning is
-# rate-limited: a process that is stalling repeatedly must not also flood.
+# One diagnostic a minute at most: repeated stalls must not flood stderr.
 REPORT_EVERY_S = 60.0
 
 DUMP_FILE = sys.stderr
@@ -76,33 +75,44 @@ async def watch_loop_lag(
                 _last_dump_at is None
                 or time.monotonic() - _last_dump_at >= report_every_s
             )
+            timer_started_at: float | None = None
             if should_report:
                 try:
                     faulthandler.dump_traceback_later(stall_s, file=DUMP_FILE)
                     timer_armed = True
+                    timer_started_at = time.monotonic()
                 except (AttributeError, OSError, RuntimeError, ValueError):
                     # Captured streams and closed files may not expose a usable fd.
                     pass
             began = loop.time()
+            timer_fired = False
             try:
                 await asyncio.sleep(interval_s)
             finally:
                 if timer_armed:
+                    timer_fired = (
+                        timer_started_at is not None
+                        and time.monotonic() - timer_started_at >= stall_s
+                    )
                     faulthandler.cancel_dump_traceback_later()
                     timer_armed = False
             lag = loop.time() - began - interval_s
             _recent = lag
             _worst = max(_worst, lag)
+            now = time.monotonic()
+            if timer_fired:
+                _last_dump_at = now
             if lag < stall_s or not should_report:
                 continue
-            _last_dump_at = time.monotonic()
+            _last_dump_at = now
             logger.warning(
                 "event loop stalled",
                 stalled_ms=round(lag * 1000),
                 worst_ms=round(_worst * 1000),
                 note=(
                     "one piece of work held the loop this long; every other request "
-                    "waited. The faulthandler dump names it."
+                    "waited. A stack dump is written when stderr exposes "
+                    "a usable file descriptor."
                 ),
             )
     finally:
