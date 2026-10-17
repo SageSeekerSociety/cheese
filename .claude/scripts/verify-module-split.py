@@ -1546,23 +1546,22 @@ class ModuleFileReads(ast.NodeVisitor):
 
     # `for`, `with` and `except` do not open a scope of their own: a binding
     # made in the body stays bound afterwards, and an import there is visible
-    # below. So these shadow the target for the body and do not put the whole
-    # map back — only the target name, and only where Python puts it back.
+    # below. So these shadow the target and do not put the whole map back.
+    # The target itself is not restored either: a name a statement bound is
+    # not the module again. When such a statement sits under an `if` and does
+    # not run, the module is still bound and a read of it is missed — the
+    # direction this check errs in, since a false report fails a split that
+    # broke nothing, while a miss leaves the reader as it was before.
     def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
+        # The target is bound to an item, and the loop body may bind it to
+        # something else again — an import inside the loop, say. Neither is
+        # the module it may have been before, so the old binding is not put
+        # back: a loop over an empty iterable leaves the module bound, and
+        # that read is then missed rather than guessed at. Everything else
+        # bound in the body stays bound, as Python leaves it.
         self.visit(node.iter)
-        targets = _target_names(node.target)
-        before = {name: self.aliases.get(name, "") for name in targets}
-        self._shadow(targets)
-        for statement in node.body:
-            self.visit(statement)
-        # An empty iterable leaves the previous binding in place; keep it, so
-        # a read below is reported rather than assumed to be the item.
-        for name in targets:
-            if before[name]:
-                self.aliases[name] = before[name]
-            else:
-                self.aliases.pop(name, None)
-        for statement in node.orelse:
+        self._shadow(_target_names(node.target))
+        for statement in node.body + node.orelse:
             self.visit(statement)
 
     visit_AsyncFor = visit_For

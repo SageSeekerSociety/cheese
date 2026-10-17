@@ -2145,6 +2145,37 @@ with open("x") as handle:
 SOURCE = Path(foo.__file__).read_text()
 '''
 
+SQUASH_LOOP_TARGET_REBINDS = '''\
+from pathlib import Path
+
+from app import bar, foo
+
+for foo in [bar]:
+    pass
+
+SOURCE = Path(foo.__file__).read_text()
+'''
+
+SQUASH_LOOP_IMPORT_INTO_TARGET = '''\
+from pathlib import Path
+
+from app import bar
+
+for bar in (1,):
+    import app.foo as bar
+
+SOURCE = Path(bar.__file__).read_text()
+'''
+
+SQUASH_LOOP_ELSE_READS_BODY_IMPORT = '''\
+from pathlib import Path
+
+for mod in (1,):
+    import app.foo as mod
+else:
+    SOURCE = Path(mod.__file__).read_text()
+'''
+
 SQUASH_LOOP_IMPORT = '''\
 from pathlib import Path
 
@@ -2298,7 +2329,8 @@ class WholeFileReadTests(unittest.TestCase):
         self.assertIn("__spec__.origin 现在是包的 __init__.py", result.stdout)
 
     def test_a_spec_loaded_through_the_location_keyword_is_blocked(self) -> None:
-        """`location=` is the same argument by another name."""
+        """`location=` is the same argument by another name; the read inside
+        it is reported wherever it sits, so this pins the keyword spelling."""
         fixture = SquashFixture(self.root, SQUASH_SPEC_KEYWORD)
         fixture.split()
         result = fixture.run_tool()
@@ -2385,6 +2417,32 @@ class WholeFileReadTests(unittest.TestCase):
         """`for` opens no scope either: the module imported in the body is
         still bound below, and its file read is the break."""
         fixture = SquashFixture(self.root, SQUASH_LOOP_IMPORT)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
+
+    def test_a_loop_target_stays_the_item_after_the_loop(self) -> None:
+        """`for foo in [bar]` leaves `foo` as `bar`; putting the module back
+        after the loop would fail a split that broke nothing."""
+        fixture = SquashFixture(self.root, SQUASH_LOOP_TARGET_REBINDS)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("模块文件路径已改指", result.stdout)
+
+    def test_an_import_into_the_loop_target_is_seen_after_the_loop(self) -> None:
+        """The body may bind the target to the split module; that binding is
+        what the loop leaves behind, so the read below is the break."""
+        fixture = SquashFixture(self.root, SQUASH_LOOP_IMPORT_INTO_TARGET)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
+
+    def test_a_loop_else_sees_what_the_body_bound(self) -> None:
+        """`else` runs with the body's bindings still in place."""
+        fixture = SquashFixture(self.root, SQUASH_LOOP_ELSE_READS_BODY_IMPORT)
         fixture.split()
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
