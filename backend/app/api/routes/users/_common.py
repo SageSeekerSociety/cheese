@@ -4,7 +4,6 @@
 """
 
 import logging
-import re
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -26,6 +25,10 @@ from app.common.auth import (
 )
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
+
+# The pattern's one home is app.core.email; this package imports it under the
+# name its routes have always used.
+from app.core.email import EMAIL_FORMAT as _EMAIL_FORMAT
 from app.core.email import is_placeholder_email
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -301,6 +304,3 @@ def _too_many_from_client(wait_seconds: int) -> ForbiddenError:
         f"Try again in {wait_seconds} seconds",
         {"reason": "too_many_attempts", "retryAfterSeconds": wait_seconds},
     )
-
-
-_EMAIL_FORMAT = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
