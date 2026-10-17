@@ -22,12 +22,19 @@ on:
         description: Integration shard to run, index/count
         type: string
         default: "0/5"
+      workers:
+        description: pytest workers per slot; empty means half the box's cores
+        type: string
+        default: ""
   # TEMPORARY, and removed before this file is delivered: GitHub only offers
   # `workflow_dispatch` for a workflow that is already on the default branch, so
   # a workflow still under measurement cannot be dispatched from its branch.
   # These probe branches exist only to start it during the measurement.
   push:
-    branches: [probe/integration-single, probe/integration-pair]
+    branches:
+      - probe/integration-single
+      - probe/integration-pair
+      - probe/integration-pair-2w
 
 permissions:
   contents: read
@@ -48,7 +55,9 @@ jobs:
       matrix:
         replica: >-
           ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.pair)
-                        || (github.event_name == 'push' && github.ref_name == 'probe/integration-pair'))
+                        || (github.event_name == 'push'
+                            && (github.ref_name == 'probe/integration-pair'
+                                || github.ref_name == 'probe/integration-pair-2w')))
                        && '[1, 2]' || '[1]') }}
 
     runs-on: [self-hosted, cheese-ci, cheese-ci-box-1]
@@ -66,6 +75,12 @@ jobs:
       # 16-database block per slot. The tests' default capacity is 16, which
       # would reject the slot-1 block at collection time before any test ran.
       CHEESEX_REDIS_DB_COUNT: "64"
+      # A dispatch input, or the temporary 2-worker pair branch, pins the
+      # workers; otherwise the slot step takes half the cores (see there).
+      PROBE_WORKERS: >-
+        ${{ inputs.workers
+            || (github.ref_name == 'probe/integration-pair-2w' && '2')
+            || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -101,9 +116,10 @@ jobs:
           # provision.sh writes half the cores into a two-slot runner's .env.
           # When it did not (slot 0 can be provisioned before slot 1 exists),
           # `auto` would give each slot the whole machine's cores, which is
-          # twice the box; the same half is what provision.sh intends.
+          # twice the box; the same half is what provision.sh intends. A probe
+          # that measures a narrower run (PROBE_WORKERS) wins over both.
           cores="$(nproc 2>/dev/null || echo 8)"
-          workers="${CHEESE_CI_TEST_WORKERS:-$((cores / 2 > 0 ? cores / 2 : 1))}"
+          workers="${PROBE_WORKERS:-${CHEESE_CI_TEST_WORKERS:-$((cores / 2 > 0 ? cores / 2 : 1))}}"
           echo "CHEESE_CI_TEST_WORKERS=$workers" >> "$GITHUB_ENV"
           root="postgresql+asyncpg://postgres:postgres@localhost:5442"
           echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
