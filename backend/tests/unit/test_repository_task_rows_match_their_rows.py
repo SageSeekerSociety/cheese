@@ -194,8 +194,9 @@ async def test_identity_reads_only_columns_the_copy_declares(
     `_thread` 从 `TaskService.get` 换过来之后，原来没有单测经过它。
 
     每一列都要有一条断言经过它：`getattr(task, ..., None)` 会把读错的列悄悄变成
-    `None`，只走一遍而不看结果，读者改坏列名照样绿。`author_handle` 只在
-    `attribution` 里读，而 `attribution` 要连会员和项目服务，这里不碰。
+    `None`，只走一遍而不看结果，读者改坏列名照样绿。列表都给两个元素，截断成
+    第一个也能红。`author_handle` 是唯一没在这里经过的列：它只在 `attribution`
+    里读，而 `attribution` 要连会员和项目服务，代价不成比例。
     """
     task_id = uuid.uuid4()
     creator_id = uuid.uuid4()
@@ -205,7 +206,7 @@ async def test_identity_reads_only_columns_the_copy_declares(
         title="把后端领域包之间的循环依赖降到零",
         owner_handle="wangchangxin",
         reporter_handle="reporter-x",
-        contributor_handles=["cheese-7bfbc959f100"],
+        contributor_handles=["cheese-7bfbc959f100", "cheese-000000000001"],
     )
     rows = {
         task_id: _Row(**values),
@@ -231,12 +232,16 @@ async def test_identity_reads_only_columns_the_copy_declares(
 
     items = await identity.work_items(
         object(),
-        SimpleNamespace(delivered_task_ids=[str(task_id)]),  # type: ignore[arg-type]
+        # 两条：只保留第一条、或者把顺序改了，下面的断言都会红。
+        SimpleNamespace(delivered_task_ids=[str(task_id), str(creator_id)]),  # type: ignore[arg-type]
     )
-    assert [item.task_id for item in items] == [task_id]
+    assert [item.task_id for item in items] == [task_id, creator_id]
     assert items[0].title == "把后端领域包之间的循环依赖降到零"
     assert items[0].reporter_handle == "reporter-x"
-    assert items[0].contributor_handles == ("cheese-7bfbc959f100",)
+    assert items[0].contributor_handles == (
+        "cheese-7bfbc959f100",
+        "cheese-000000000001",
+    )
 
     topic = SimpleNamespace(id=uuid.uuid4(), created_by="someone")
     assert (
