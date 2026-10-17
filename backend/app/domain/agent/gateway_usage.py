@@ -142,6 +142,26 @@ def model_capabilities(*models: str | None) -> str:
     )
 
 
+def window_env(model: str | None) -> dict[str, str]:
+    """``CLAUDE_CODE_MAX_CONTEXT_TOKENS`` for a session on ``model``: the window
+    the gateway declares for it. Without it Claude Code assumes 200K for every
+    model id it does not recognise and compacts at about 167K, whatever the
+    model can hold. It knows every ``claude-`` id itself and ignores the
+    variable for one, so none is sent.
+
+    The variable is the session's, and Claude Code applies it to every model id
+    it does not recognise, subagents included; a subagent on a model with a
+    smaller window is held to its own by the per-model compaction windows in
+    the session's settings (``session_launch.compact_windows``)."""
+    if not model or model.lower().startswith("claude-"):
+        return {}
+    window = next(
+        (m.context_window for m in gateway_catalog.snapshot() if m.id == model),
+        None,
+    )
+    return {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(window)} if window else {}
+
+
 def model_agents(project_settings: dict | None) -> dict[str, str]:
     """The project's models as Claude Code subagent definitions, by file name.
 
@@ -341,6 +361,7 @@ async def _model_kwargs(
             None, child_choices, default_model=child_default
         ).wire_model
     capabilities = model_capabilities(model, child_model)
+    window = window_env(model)
     agent_types = model_agents(project.settings)
     config_hash = hashlib.sha256(
         # Author identity, chat skills, and native RC arguments are installed
@@ -368,6 +389,7 @@ async def _model_kwargs(
                         "default_subagent_model"
                     ),
                     "capabilities": capabilities,
+                    "window": window,
                     "model_agents": agent_types,
                 },
                 sort_keys=True,
@@ -385,6 +407,8 @@ async def _model_kwargs(
             # self-description for the model the turn actually runs on.
             "ANTHROPIC_MODEL": model,
             "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
+            # The model's real window, so it does not compact at 200K.
+            **window,
             # Written as subagent definitions by the launch (`model_agents`).
             "CHEESE_MODEL_AGENTS": json.dumps(agent_types),
             # The teammate's thinking effort and compaction share. Both are in

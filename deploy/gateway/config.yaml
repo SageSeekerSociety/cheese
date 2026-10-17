@@ -20,6 +20,11 @@
 #                              / high / max), offered on a teammate's settings
 #                              and passed by Claude Code as output_config.effort.
 #                              None when absent: the model's own default.
+#   cheese_auto_compact_window: 786432
+#                              where Claude Code compacts on this model, when
+#                              its provider recommends earlier than the window.
+#                              Absent: at the window max_input_tokens declares
+#                              (Claude Code is told that window either way).
 #   cheese_overseas: true      only teams a platform administrator approved
 #                              may use it (Claude, GPT, Gemini); other teams
 #                              are not shown it at all.
@@ -202,6 +207,9 @@ model_list:
       # Accepted a 952,366-token prompt on 2026-10-08; same limit as the
       # official route, for the same reason.
       max_input_tokens: 920000
+      # DeepSeek's own Claude Code setup compacts here (75% of its 1M window).
+      # https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code
+      cheese_auto_compact_window: 786432
   - model_name: deepseek-flash
     litellm_params:
       <<: *ruc_deepseek_flash_params
@@ -271,13 +279,13 @@ model_list:
       supports_vision: true
       supports_adaptive_thinking: true
       supports_output_config: true
-      # Claude Code compacts by the max_input_tokens that /v1/models reports,
-      # and LiteLLM's own figure for this model is 1,000,000. DeepSeek counts
-      # the request's max_tokens against its 1,048,576 window, and Claude Code
-      # asks for 128,000 on every request, so a conversation past ~920k tokens
-      # was refused before Claude Code thought it was time to compact.
-      # 1,048,576 - 128,000, rounded down.
+      # The window Claude Code is told (CLAUDE_CODE_MAX_CONTEXT_TOKENS), and
+      # LiteLLM's own figure for this model is 1,000,000. DeepSeek counts the
+      # request's max_tokens against its 1,048,576 window, and Claude Code asks
+      # for 128,000 on every request, so a conversation past ~920k tokens is
+      # refused. 1,048,576 - 128,000, rounded down.
       max_input_tokens: 920000
+      cheese_auto_compact_window: 786432
 
   # Gemini through Google AI Studio. LiteLLM translates Claude Code's Messages
   # requests to Gemini; patch_gemini_generation.py makes it treat gemini-4 as
