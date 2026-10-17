@@ -70,7 +70,6 @@ jobs:
       cifast: ${{ steps.scope.outputs.cifast }}
       tier: ${{ steps.scope.outputs.tier }}
     steps:
-      - run: 'echo host=$(hostname); for t in python3 git gh jq node; do printf "%s=" $t; command -v $t || echo MISSING; done'  # PROBE-TEMP
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Only the cheap selection/aggregation self-test runs here: every product
       # suite waits on this job, so anything slow on it is serial time for the
@@ -405,13 +404,20 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        # curl + python3, not gh + jq: the cheese-ci boxes have neither gh nor jq
+        # (python3, git and curl only), and both calls are plain GETs.
         run: |
+          set -o pipefail
+          api() {
+            curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/$1"
+          }
           if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
-            gh api "repos/$GITHUB_REPOSITORY/compare/$BASE_SHA...$HEAD_SHA" \
-              --jq '.commits[].commit.message | split("\n")[0]' \
+            api "compare/$BASE_SHA...$HEAD_SHA" \
+              | python3 -c 'import json,sys; [print(c["commit"]["message"].split("\n")[0]) for c in json.load(sys.stdin)["commits"]]' \
               | python3 .github/scripts/check-commit-title.py
           else
-            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
+            api "pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
             python3 .github/scripts/check-commit-title.py --pull-request "$RUNNER_TEMP/pull.json"
           fi
 
