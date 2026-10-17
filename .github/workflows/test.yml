@@ -579,7 +579,10 @@ jobs:
     name: Backend coverage complete
     needs: [static, test]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    # Seconds-long serial job: on a GitHub machine it waits 7-12 min in the shared
+    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
+    # cheese-ci pool (docs/infrastructure.md); fork PRs stay on GitHub's machines.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-latest"]' || '["self-hosted","cheese-ci"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

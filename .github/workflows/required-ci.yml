@@ -51,7 +51,10 @@ concurrency:
 
 jobs:
   scope:
-    runs-on: ubuntu-latest
+    # Seconds-long serial job: on a GitHub machine it waits 7-12 min in the shared
+    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
+    # cheese-ci pool (docs/infrastructure.md); fork PRs stay on GitHub's machines.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-latest"]' || '["self-hosted","cheese-ci"]') }}
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.scope.outputs.backend }}
@@ -67,6 +70,7 @@ jobs:
       cifast: ${{ steps.scope.outputs.cifast }}
       tier: ${{ steps.scope.outputs.tier }}
     steps:
+      - run: 'echo host=$(hostname); for t in python3 git gh jq node; do printf "%s=" $t; command -v $t || echo MISSING; done'  # PROBE-TEMP
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Only the cheap selection/aggregation self-test runs here: every product
       # suite waits on this job, so anything slow on it is serial time for the
@@ -374,7 +378,10 @@ jobs:
       contents: read
       pull-requests: read
     needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
-    runs-on: ubuntu-latest
+    # Seconds-long serial job: on a GitHub machine it waits 7-12 min in the shared
+    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
+    # cheese-ci pool (docs/infrastructure.md); fork PRs stay on GitHub's machines.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-latest"]' || '["self-hosted","cheese-ci"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -414,7 +421,10 @@ jobs:
     permissions:
       contents: read
     needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
-    runs-on: ubuntu-latest
+    # Seconds-long serial job: on a GitHub machine it waits 7-12 min in the shared
+    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
+    # cheese-ci pool (docs/infrastructure.md); fork PRs stay on GitHub's machines.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-latest"]' || '["self-hosted","cheese-ci"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
