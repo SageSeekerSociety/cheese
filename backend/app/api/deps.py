@@ -97,12 +97,23 @@ def get_llm_gateway() -> LlmGateway | None:
     return None
 
 
+def _note_alive(conversation: uuid.UUID) -> None:
+    """A runner answered a read for ``conversation``: stamp the channel its
+    turn publishes to (`realtime.broker.note_alive`).
+
+    Not a frame — it may come from a turn that has written nothing for half an
+    hour — and that is the point: it is the one sign of life a quiet turn
+    leaves, and the sidebar's red light reads it to tell quiet from stopped.
+    """
+    get_broker().note_alive(str(conversation))
+
+
 @lru_cache
 def get_session_host() -> SessionHost:
     """The sessions on the session host this process talks to — a room's, a
     person's 芝士, a document thread's. One per process, like the chat
     service: it remembers which sessions are running and where each is read."""
-    return SessionHost(device_hub)
+    return SessionHost(device_hub, on_alive=_note_alive)
 
 
 @lru_cache

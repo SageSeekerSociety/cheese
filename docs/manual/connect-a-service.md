@@ -27,14 +27,14 @@ Notion 通过 MCP 连接。MCP 是一种让 AI 调用外部服务的通用接口
 
 ## 连接 Notion {#connect}
 
-项目里的任何成员都能连接。连接属于整个项目，之后芝士以授权人的 Notion 账号读取页面。
+有「配置 AI 队友」权限的成员能连接。连接属于整个项目，之后芝士以授权人的 Notion 账号读取页面。
 
 :::walk
 1. 点左侧栏顶部的项目名，在项目菜单中点「项目设置」。
-2. 点左侧的「MCP 服务器」。notion 这一行写着「来自项目的 .mcp.json」和「未连接」。
-3. 点「连接」。浏览器打开 Notion 的授权页 Connect with Notion MCP。
+2. 点左侧的「MCP 服务器」。notion 在「远程」一组，写着「未连接」。
+3. 点「连接」，在确认框里点「去授权」。浏览器打开 Notion 的授权页 Connect with Notion MCP。
 4. 在授权页上确认工作区，勾选 I recognize and trust this URL，点 Continue。
-5. 页面回到「MCP 服务器」，提示「notion 已连接」，这一行写着「已连接（由 … 授权，…）」。
+5. 页面回到「MCP 服务器」，提示「notion 已连接」，这一行写着「已连接」和授权人。
 
 ```demo-panel
 title: 在项目设置中连接 Notion
@@ -69,7 +69,7 @@ parts:
     until: 3
   - kind: row
     title: notion
-    sub: mcp.notion.com · 来自项目的 .mcp.json
+    sub: mcp.notion.com
     status: 未连接
     button: 连接
     press: 3
@@ -97,8 +97,8 @@ parts:
     at: 5
   - kind: row
     title: notion
-    sub: mcp.notion.com · 来自项目的 .mcp.json
-    status: 已连接（由 @lin 授权，刚刚）
+    sub: mcp.notion.com
+    status: 已连接
     at: 5
 ```
 :::

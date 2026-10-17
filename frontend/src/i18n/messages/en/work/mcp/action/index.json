@@ -3,5 +3,11 @@
   "connect": "Connect",
   "disconnect": "Disconnect",
   "reconnect": "Reconnect",
-  "save": "Save"
+  "save": "Save",
+  "add": "Add server",
+  "edit": "Edit",
+  "remove": "Delete",
+  "log": "View log",
+  "fill": "Fill in",
+  "values": "Change values"
 }

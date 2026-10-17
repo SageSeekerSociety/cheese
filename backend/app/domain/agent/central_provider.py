@@ -24,6 +24,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent_instance.services import agent_stdio_servers, type_of_seat
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.remote_mcp import local as mcp_local
 from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
@@ -340,8 +341,17 @@ class CentralChannel(DeviceChannel):
                 type_of_seat=type_of_seat,
             )
             own = await agent_stdio_servers(db, project_id, agent_handle)
+            decided = await mcp_local.decided(db, project_id)
         if remote is not None:
             target["remote_mcp"] = remote
+        # Where the session's gateway asks about the project's local servers
+        # before it starts one, and says how it fared (`RemoteClient.local`).
+        target["mcp_path"] = f"/topics/{topic_id}/mcp"
+        # What the owners of members' computers have answered about running the
+        # project's commands there: an answer changes it, so an idle session
+        # starts again with a command it may now run.
+        if decided is not None:
+            target["mcp_decided"] = decided
         # The teammate's type's own stdio servers, as definitions: they run
         # where the session's commands run — the room's machine, beside the
         # checkout's `.mcp.json` ones, or a private chat's scratch container —

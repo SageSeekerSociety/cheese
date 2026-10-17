@@ -215,12 +215,11 @@ NEEDS_THE_MACHINE = {
 #: 只等那台机器、什么也不写到平台上的那一样。
 WAITS_FOR_THE_MACHINE = {"cheese_wait_environment"}
 
-#: 这条传输自己的四个口子，不是产品动作。
+#: 这条传输自己的三个口子，不是产品动作。
 TRANSPORT = {
     "invoke",
     "permission",
     "send_user_file",
-    "project_tools",
 }
 
 

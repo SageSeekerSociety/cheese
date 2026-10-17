@@ -4,8 +4,8 @@ A repository writes `PreToolUse` and `PostToolUse` hooks in `.claude/settings.js
 for plain Claude Code, which fires them around every tool call. pi fires none, so
 the extension asks before and after each of its own calls (`platform.ts`), and
 the room's machine runs them by the executor's own rules — the machine holds the
-project, its settings and whatever the hooks run. The project's MCP calls have
-theirs run around them by the same executor (`mcp.py`).
+project, its settings and whatever the hooks run. A project MCP tool's call is
+one of pi's own (its MCP client's), asked about the same way.
 
 A hook's matcher and its `tool_input` are written against Claude Code's tools.
 On Codex nothing is renamed, because the executor serves Codex its tools under

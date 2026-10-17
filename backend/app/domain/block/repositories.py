@@ -383,6 +383,18 @@ class BlockRepository(
         await self._session.flush()
         return block
 
+    async def record_step_calls(
+        self, block_id: uuid.UUID, calls: list[dict]
+    ) -> Block | None:
+        """Keep on a 现场 step the tools it called on its own (a script's).
+        Same `meta` replacement rule as above."""
+        block = await self._session.get(Block, block_id)
+        if block is None:
+            return None
+        block.meta = {**(block.meta or {}), "calls": calls}
+        await self._session.flush()
+        return block
+
     async def running_notices(
         self, turn_id: uuid.UUID, event_type: str
     ) -> list[uuid.UUID]:

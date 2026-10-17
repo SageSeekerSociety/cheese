@@ -14,7 +14,7 @@
 // 读者的语言说出来，再由页面把它从地址栏拿掉 —— 刷新不会再说一遍。
 //
 // `enabled`：设置页一次只画一栏，这一栏没被打开过就不读，授权回跳也等这一刻才认。
-import type { McpServer, McpServerList } from '@/api'
+import type { McpServer, McpServerDraft, McpServerList } from '@/api'
 
 import { onMounted, reactive, ref, watch } from 'vue'
 import { toast } from 'vuetify-sonner'
@@ -22,12 +22,24 @@ import { toast } from 'vuetify-sonner'
 import { useNavigation } from '@/composables/useNavigation'
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
-import { clearMcpSecret, connectMcpServer, disconnectMcpServer, getMcpServers, setMcpSecret } from '@/api'
+import {
+  addMcpServer,
+  clearMcpSecret,
+  connectMcpServer,
+  disconnectMcpServer,
+  getMcpServers,
+  removeMcpServer,
+  setMcpSecret,
+  updateMcpServer,
+} from '@/api'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
 import { renderNoticeMessage } from '@/lib/noticeText'
+import { useDialog } from '@/plugins/dialog'
 
 export interface UseProjectMcpSettingsOptions {
+  /** 项目给它的 AI 队友起的名字，确认框里用。 */
+  agentName?: () => string
   /** 这一栏此刻在不在屏幕上：第一次为真才读。不给就是挂上即读。 */
   enabled?: () => boolean
   revealGate?: { hold: () => () => void }
@@ -44,6 +56,10 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
   const settled = ref(false)
   let generation = 0
   let actionGeneration = 0
+  const dialog = useDialog()
+  const agentName = options.agentName ?? (() => t('shell.agentDefaultName'))
+  // 「添加 / 编辑」那张表：开没开、改的是哪一条（添加时 null）、存到一半、存失败的那句话。
+  const form = reactive({ open: false, editing: null as McpServer | null, saving: false, error: '' })
 
   async function load() {
     settled.value = false
@@ -70,10 +86,21 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
   }
 
   async function connect(server: McpServer) {
+    // 连上的是一个账号，项目里所有人都会通过 AI 队友用它：点下去之前说清楚。确认框开着
+    // 的时候换了项目，答的就不是这个项目的了：记下问的是哪个项目，回来对一下。
+    const project = projectId()
+    const confirmed = await dialog
+      .confirm(t('work.mcp.confirm.connectBody', { name: server.name, agent: agentName() }), {
+        title: t('work.mcp.confirm.connectTitle', { name: server.name }),
+        confirmLabel: t('work.mcp.confirm.connect'),
+      })
+      .wait()
+      .catch(() => false)
+    if (!confirmed || projectId() !== project) return
     const current = ++actionGeneration
     busy.value = server.name
     try {
-      const { authorization_url } = await connectMcpServer(projectId(), server.name)
+      const { authorization_url } = await connectMcpServer(project, server.name)
       if (current === actionGeneration && goAuthorize(authorization_url)) busy.value = ''
     } catch (e) {
       if (current === actionGeneration) {
@@ -121,6 +148,51 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
       if (current === actionGeneration) await load()
     } catch (e) {
       if (current === actionGeneration) fail(e, t('work.mcp.saveFailed'))
+    } finally {
+      if (current === actionGeneration) busy.value = ''
+    }
+  }
+
+  function openAdd() {
+    Object.assign(form, { open: true, editing: null, saving: false, error: '' })
+  }
+
+  function openEdit(server: McpServer) {
+    Object.assign(form, { open: true, editing: server, saving: false, error: '' })
+  }
+
+  async function submit(draft: McpServerDraft) {
+    form.saving = true
+    form.error = ''
+    try {
+      await (form.editing ? updateMcpServer(projectId(), draft) : addMcpServer(projectId(), draft))
+      form.open = false
+      await load()
+    } catch (e) {
+      form.error = e instanceof Error ? e.message : t('work.mcp.saveFailed')
+    } finally {
+      form.saving = false
+    }
+  }
+
+  async function remove(server: McpServer) {
+    const project = projectId()
+    const confirmed = await dialog
+      .confirm(t('work.mcp.confirm.removeBody', { agent: agentName() }), {
+        title: t('work.mcp.confirm.removeTitle', { name: server.name }),
+        confirmLabel: t('work.mcp.confirm.remove'),
+        danger: true,
+      })
+      .wait()
+      .catch(() => false)
+    if (!confirmed || projectId() !== project) return
+    const current = ++actionGeneration
+    busy.value = server.name
+    try {
+      await removeMcpServer(project, server.name)
+      if (current === actionGeneration) await load()
+    } catch (e) {
+      if (current === actionGeneration) fail(e, t('work.mcp.removeFailed'))
     } finally {
       if (current === actionGeneration) busy.value = ''
     }
@@ -186,5 +258,22 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
     void load()
   })
 
-  return { list, error, busy, values, load, connect, disconnect, save, clear, setValue, consumeCallback }
+  return {
+    list,
+    error,
+    busy,
+    values,
+    form,
+    load,
+    connect,
+    disconnect,
+    save,
+    clear,
+    setValue,
+    consumeCallback,
+    openAdd,
+    openEdit,
+    submit,
+    remove,
+  }
 }

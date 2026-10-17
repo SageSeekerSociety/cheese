@@ -6,7 +6,7 @@ after the room has selected another teammate or harness.
 """
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -134,6 +134,19 @@ class AgentStepOutput:
 
     call_id: str
     text: str = ""
+
+
+@dataclass
+class AgentStepCalls:
+    """The tools a step called on its own, in order: a script the model wrote
+    (pi's codemode) calls them without the model calling each, so the step
+    is the only place they show. Each is ``{"tool", "arg", "failed"}``: the
+    tool's name, its argument as one short line, and whether it failed.
+
+    Written onto the step like its output; no block of its own."""
+
+    call_id: str
+    calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -276,6 +289,7 @@ AgentEvent = (
     | AgentToolUse
     | AgentStepFailed
     | AgentStepOutput
+    | AgentStepCalls
     | AgentToolResult
     | AgentSessionInfo
     | AgentResult

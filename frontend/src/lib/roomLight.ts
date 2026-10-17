@@ -15,7 +15,8 @@
 //
 // 六条判据全是**事实**，这一份不推状态、只排先后：在不在往前走看 `moving`
 // （后端按「活的事实压过纸面」算，房间那一行还含它名下的活），等不等人看
-// `awaits_me`（后端按看的人算），多久没输出看 `last_output_at`（后端取整到分钟），
+// `awaits_me`（后端按看的人算），多久没动静看 `last_output_at`（后端取整到分钟：
+// 落了帧、或者会话自己应了一声，取较新的那个），
 // 交付完没看过看 `unseen_delivery`（后端比的是这个人的已读位和采纳时刻），有人回了
 // 我没处理看 `repliedToMe`（后端比的是这个人上次打开这间房的时刻和那条回复落地的
 // 时刻），还有没有一轮停在报错上没恢复、从什么时候起看 `incompleteSince`（后端
@@ -63,7 +64,7 @@ const BRIGHTNESS: Record<LightKind, number> = { red: 3, yellow: 2, green: 1, blu
  * 事——五分钟没有新东西出来。 */
 export const LIGHT_STALL_MS = 5 * 60_000
 
-/** 上一次有输出，距今多久（毫秒）。说不出（没在跑、或那个戳没记着）就是 null。 */
+/** 上一次有动静，距今多久（毫秒）。说不出（没在跑、或那个戳没记着）就是 null。 */
 function quietForMs(lastOutputAt: string | null | undefined, now: number): number | null {
   if (!lastOutputAt) return null
   const at = Date.parse(lastOutputAt)
@@ -75,8 +76,9 @@ function quietForMs(lastOutputAt: string | null | undefined, now: number): numbe
  * 这一行画哪盏灯；不该亮灯的行是 null。
  *
  * `moving` 是「这里在不在往前走」，**它管两盏**：往前走的画呼吸绿，往前
- * 走、又已经五分钟没有新输出的画红。后者要 `lastOutputAt` 说得出话说得准 —— 说不
- * 出来（没在跑、或那个进程说不了）就不画红：不知道不等于卡住。
+ * 走、又已经五分钟没动静的画红。后者要 `lastOutputAt` 说得出话说得准 —— 说不
+ * 出来（没在跑、或那个进程说不了）就不画红：不知道不等于卡住。`lastOutputAt` 数
+ * 的是任何一样动静（输出，或者会话应的一声），所以长思考、跑长命令期间它是新的。
  *
  * `incompleteSince` 是红灯的另一半，**不看它跑不跑**：一轮停在报错上、过了五分钟
  * 还没人接手，也是「出问题了」。（后端只在失败没被恢复时才给这个时刻 —— 队友又说
@@ -103,7 +105,7 @@ export function lightOf(
     unseenDelivery: boolean
     /** 尚未恢复的失败从什么时候开始；不依赖这一行是否还在跑。 */
     incompleteSince?: string | null
-    /** 在跑的那一轮上一次有输出是什么时候。 */
+    /** 在跑的那一轮上一次有动静是什么时候（落了帧，或者会话应了一声）。 */
     lastOutputAt: string | null | undefined
   },
   now: number

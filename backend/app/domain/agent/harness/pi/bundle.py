@@ -28,7 +28,6 @@ def build() -> bytes:
             "domain/agent/harness/pi/hooks.py",
             "domain/agent/harness/pi/machine.py",
             "domain/agent/harness/pi/jobs.py",
-            "domain/agent/harness/pi/mcp.py",
             # Run on the room's machine, read from the archive as source.
             "domain/agent/harness/pi/repository.py",
             "domain/agent/harness/pi/project_skills.py",

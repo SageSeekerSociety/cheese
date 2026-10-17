@@ -198,11 +198,14 @@ def _replaced_names_taken_from_elsewhere(source: str) -> set[str]:
         elif isinstance(node, ast.Import):
             mentioned |= {alias.name.split(".")[-1] for alias in node.names}
 
+    # 形参是「自己绑的名字」。数 `ast.arguments` 而不是先收 FunctionDef：函数、
+    # 方法、嵌套函数、lambda 的形参都是它，一层就数全，也不会像递归收函数定义
+    # 那样把类里的方法当成模块级函数（接缝守卫拦的正是那种写法）。
     own = {
         arg.arg
         for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
-        for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+        if isinstance(node, ast.arguments)
+        for arg in (*node.posonlyargs, *node.args, *node.kwonlyargs)
     }
     own |= {
         node.id
