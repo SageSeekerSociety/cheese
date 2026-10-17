@@ -6,6 +6,139 @@ import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
 // at a time.
 test.describe.configure({ mode: 'parallel' });
 
+// These are real catalog fixtures, not whatever tasks the shared demo user has.
+// The frame indices are the registered collapsed-task row and page-form row in
+// frontend/src/views/demo/catalogRail.ts. No source-module imports are needed.
+test.describe('sidebar channel row geometry', () => {
+  type Box = { x: number; y: number; width: number; height: number };
+
+  async function boxOf(target: Locator): Promise<Box> {
+    const box = await target.boundingBox();
+    expect(box, 'the measured control must have a rendered box').not.toBeNull();
+    return box!;
+  }
+
+  function expectSeparate(a: Box, b: Box) {
+    const overlapX = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+    const overlapY = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+    expect(overlapX <= 0.5 || overlapY <= 0.5, 'independent row contents must not overlap').toBe(true);
+  }
+
+  function expectStationary(before: Box, after: Box) {
+    for (const edge of ['x', 'y', 'width', 'height'] as const) {
+      expect(Math.abs(after[edge] - before[edge]), `revealing more must not change ${edge}`).toBeLessThanOrEqual(0.5);
+    }
+  }
+
+  async function expectHitSurface(target: Locator) {
+    // Check inside the whole button, not only its tiny icon at the centre.
+    // A visually exposed but covered button is not a usable touch target.
+    const hits = await target.evaluate(el => {
+      const r = el.getBoundingClientRect();
+      return [0.25, 0.5, 0.75].flatMap(x => [0.25, 0.5, 0.75].map(y => {
+        const hit = document.elementFromPoint(r.left + r.width * x, r.top + r.height * y);
+        return hit !== null && el.contains(hit);
+      }));
+    });
+    expect(hits).toEqual(Array(9).fill(true));
+  }
+
+  async function catalogRow(page: Page, state: number, theme = 'light') {
+    // Dev/nginx rewrite /demo/* to demo.html; Vite preview has no such
+    // middleware. Serve that same built document at the frame address in both
+    // environments, preserving the pathname/query consumed by demo-main.ts.
+    await page.route('**/demo/catalog/topic-rail-row/frame/*', async route => {
+      if (route.request().resourceType() !== 'document') return route.continue();
+      const url = new URL(route.request().url());
+      url.pathname = '/demo.html';
+      const response = await route.fetch({ url: url.href });
+      await route.fulfill({ response });
+    });
+    await page.goto(`/demo/catalog/topic-rail-row/frame/${state}?theme=${theme}&motion=off&bg=canvas`);
+    const row = page.locator('.frame-page .topic-row');
+    await expect(row).toHaveCount(1);
+    await expect(row).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    return row;
+  }
+
+  test('task arrow precedes the name and revealing more neither shifts nor covers the name or light', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    for (const theme of ['light', 'dark']) {
+      const row = await catalogRow(page, 10, theme);
+      // The standalone frame supplies real component markup; give it the same
+      // constrained width as a sidebar rather than a whole desktop viewport.
+      await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+      await page.mouse.move(1000, 700);
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const light = row.locator('.row-light');
+      const actions = row.locator('.row-actions');
+      const more = row.locator('.row-actions__btn');
+      await expect(light).toHaveCount(1);
+      await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      await expect(actions).toHaveCSS('opacity', '0');
+      const before = await Promise.all([arrow, title, light, more].map(boxOf));
+      expect(before[0].x + before[0].width).toBeLessThanOrEqual(before[1].x + 0.5);
+
+      await row.hover();
+
+      await expect(actions).toHaveCSS('opacity', '1');
+      const shown = await Promise.all([arrow, title, light, more].map(boxOf));
+      expectStationary(before[1], shown[1]);
+      expectStationary(before[2], shown[2]);
+      for (let i = 0; i < shown.length; i++) {
+        for (let j = i + 1; j < shown.length; j++) expectSeparate(shown[i], shown[j]);
+      }
+      await expectHitSurface(arrow);
+      await expectHitSurface(more);
+
+      await page.mouse.move(1000, 700);
+      await expect(actions).toHaveCSS('opacity', '0');
+      expectStationary(before[1], await boxOf(title));
+      expectStationary(before[2], await boxOf(light));
+    }
+  });
+
+  test.describe('400px touch page', () => {
+    test.use({ viewport: { width: 400, height: 844 }, hasTouch: true, isMobile: true });
+
+    test('more is present without hover and both controls have separate hittable 44px targets', async ({ page }) => {
+      const row = await catalogRow(page, 8);
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const light = row.locator('.row-light');
+      const more = row.locator('.row-actions__btn');
+      await expect(row.locator('.row-actions')).toHaveCSS('opacity', '1');
+      await expect(light).toHaveCount(1);
+      await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      const boxes = await Promise.all([arrow, title, light, more].map(boxOf));
+      expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x + 0.5);
+      for (const target of [boxes[0], boxes[3]]) {
+        expect(target.width).toBeGreaterThanOrEqual(44);
+        expect(target.height).toBeGreaterThanOrEqual(44);
+        expect(target.x).toBeGreaterThanOrEqual(0);
+        expect(target.x + target.width).toBeLessThanOrEqual(400);
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
+      }
+      for (const target of [arrow, more]) {
+        await expectHitSurface(target);
+        // Catalog props are controlled: observe the actual browser-delivered
+        // click rather than expecting an unhandled emit to update the fixture.
+        await target.evaluate(el => el.addEventListener('click', () => {
+          el.setAttribute('data-layout-clicked', 'true');
+        }, { once: true }));
+        await target.tap();
+        await expect(target).toHaveAttribute('data-layout-clicked', 'true');
+      }
+      expectStationary(boxes[1], await boxOf(title));
+      expectStationary(boxes[2], await boxOf(light));
+    });
+  });
+});
+
 // 表单字段的几何不变量。
 //
 // 起因是一类会静悄悄发出去的缺陷：outlined 字段的浮动 label 用 translateY(-50%)
