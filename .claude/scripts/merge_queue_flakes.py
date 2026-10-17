@@ -354,15 +354,23 @@ def judge_known_flakes(runs: list[Run]) -> dict:
         evidenced.update(
             run.id for run in reds if (run.workflow, run.subject) in green_keys
         )
+        #: 这批红所在的入场里有没有 workflow 取不到（`--jq` 挑窄）的运行。判据对空
+        #: workflow 一律不下结论，渲染那边也就不能说「没有绿」—— 数据里可能就有，
+        #: 只是认不出来。两件事分开说，处置才不会指错方向。
+        subjects = {run.subject for run in reds if run.subject}
+        workflow_unknown = any(
+            not run.workflow and run.subject in subjects for run in runs
+        )
         case_rows.append(
             {
                 "flake": flake_id,
                 "title": flake.title,
                 "case": node,
-                "reds": sorted({run.subject for run in reds if run.subject}),
+                "reds": sorted(subjects),
                 "greens": greens,
                 "confirmed": sorted(greens),
                 "verdict": "confirmed" if greens else "unproven",
+                "workflow_unknown": workflow_unknown,
                 "action": flake.action,
                 "seen": flake.seen,
             }
@@ -520,7 +528,12 @@ def render(report: dict) -> str:
             lines.append("          同一个名字再入场才落这里；中间推过提交的话，这次红是真故障")
         else:
             lines.append(f"  [未坐实] {row['case']}")
-            lines.append("          只有红、没有同 SHA 的绿：按真故障读，别当偶发放行")
+            if row["workflow_unknown"]:
+                lines.append(
+                    "          取数里 workflow 是空的，判不了同 SHA 有没有绿：先修取数，别当偶发放行"
+                )
+            else:
+                lines.append("          只有红、没有同 SHA 的绿：按真故障读，别当偶发放行")
         lines.append(f"          档案 {row['flake']} — {row['title']}")
         lines.append(f"          处置 {row['action']}")
         lines.append(f"          依据 {_clip(row['seen'], 96)}")
@@ -760,6 +773,28 @@ def _self_test_offline() -> None:
         # 分母是 3（含那条绿运行），不是 2 —— 和内存里那条路同一套算法。
         assert abs(top_test["share"] - 2 / 3) < 1e-9, top_test
 
+        # `--jq` 挑窄的样本缺 path/name：workflow 留空、两张榜照出，不整张毙掉。
+        # 这条守着 `_run_fields` 不再 raise —— 改回去这里就红。
+        narrow = root / "narrow"
+        narrow.mkdir()
+        page(
+            "narrow/runs-page1.json",
+            [
+                {
+                    "id": 4,
+                    "conclusion": "failure",
+                    "created_at": "2026-10-16T10:00:00Z",
+                    "head_sha": "c" * 40,
+                    "head_branch": f"gh-readonly-queue/main/pr-4012-{'a' * 40}",
+                    "event": "merge_group",
+                }
+            ],
+        )
+        thin = load_offline(narrow, limit=300)
+        assert [(run.id, run.workflow) for run in thin] == [(4, "")], thin
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert main(["--json-dir", str(narrow)]) == 0
+
         # 目录写错和目录里没有数据：都要退 2，并把原因说出来。
         (root / "blank").mkdir()
         page("blank/runs-page1.json", [])
@@ -991,7 +1026,7 @@ def _self_test_flake_criterion() -> None:
 
     # 证据要逐轮核，不能按用例桶汇：同一条用例在入场 A 上红绿都有，不等于入场 B
     # 的那一轮也坐实过。这里 B 只红过一次、从没绿过，运行级只许列 A 那一轮。
-    # 按桶汇（把桶里所有红运行都记成有证据）会把 21 一起放进来。
+    # 按桶汇（把桶里所有红运行都记成有证据）会把 22 一起放进来。
     same_node_other_entry = [
         failed(
             20,
@@ -1044,8 +1079,22 @@ def _self_test_flake_criterion() -> None:
             workflow=frontend,
             event="merge_group",
         ),
+        # 同一条入场在 frontend 上也红了一轮：它才是那条 workflow 上坐实过的运行。
+        # 少了这一条，样本里没有任何一轮「绿在同一入场」，按 subject 汇的写法也全绿。
+        failed(
+            27,
+            66,
+            "c" * 40,
+            planner,
+            "AssertionError: assert 'GroupAggregate' not in plan",
+            head_branch=f"gh-readonly-queue/main/pr-4022-{head}",
+            workflow=frontend,
+            event="merge_group",
+        ),
     ]
-    assert judge_known_flakes(other_workflow)["runs"] == []
+    assert [row["runs"] for row in judge_known_flakes(other_workflow)["runs"]] == [
+        [27]
+    ]
     # workflow 取不到的运行同样不许坐实 —— 空串当成同一条 workflow，会把不相干的
     # 轮次归到一处。这条守的是 `_run_fields` 留空之后判据那一侧的分寸。
     no_workflow = [
@@ -1072,6 +1121,13 @@ def _self_test_flake_criterion() -> None:
     no_wf = judge_known_flakes(no_workflow)
     assert no_wf["cases"][0]["verdict"] == "unproven", no_wf["cases"]
     assert no_wf["runs"] == [], no_wf["runs"]
+    # 判不了和判过是两句话：workflow 取不到的样本里，渲染不能说「数据里没有绿」，
+    # 那是在下一句事实里不存在的话。处置也要指向取数，不是让人去查真故障。
+    thin_text = render(
+        analyze(no_workflow, top=DEFAULT_TOP, min_tests=DEFAULT_CONFLICT_MIN_TESTS)
+    )
+    assert "workflow 是空的，判不了同 SHA 有没有绿" in thin_text, thin_text
+    assert "只有红、没有同 SHA 的绿" not in thin_text, thin_text
 
     # 不在档案里的用例不许被认领。
     assert known_flake_for_case("tests/b.py::test_other", "AssertionError: x") is None
