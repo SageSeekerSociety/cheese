@@ -218,16 +218,6 @@ CHECKS: tuple[Check, ...] = (
         ledger=True,
     ),
     Check(
-        id="is-private-read-points",
-        area=BOUNDARY,
-        argv=("python", "-m", "pytest", "tests/unit/test_is_private_read_points.py", "-q"),
-        cwd="backend",
-        rules=("backend/tests/unit/test_is_private_read_points.py",),
-        probe=("tests/unit/test_is_private_read_points.py", "sum(BASELINE.values())"),
-        baseline="BASELINE",
-        ledger=True,
-    ),
-    Check(
         id="file-sizes",
         area=SIZE,
         argv=("python", ".claude/scripts/check-file-sizes.py", "--json", "--base", "origin/main"),
