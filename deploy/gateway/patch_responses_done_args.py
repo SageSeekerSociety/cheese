@@ -12,8 +12,7 @@ The patch emits the full arguments as one input_json_delta when a function-call
 block closes without having received any delta. Blocks that did get deltas are
 left alone, so arguments are never sent twice.
 
-Upstream: BerriAI/litellm#45348 (fix proposed in #45356). Delete this patch once
-the pinned image includes that fix.
+Upstream: BerriAI/litellm#45348 (fix proposed in #45356).
 """
 
 import hashlib

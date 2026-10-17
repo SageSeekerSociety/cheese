@@ -1,8 +1,9 @@
 """Function-call arguments reach Messages exactly once, with or without Responses deltas.
 
-Both event sequences were recorded from the ChatGPT Codex backend through the dev
-gateway (2026-10-12): two parallel read_file calls, once without any
-`function_call_arguments.delta` and once with them.
+The sequences are modelled on the ChatGPT Codex backend's streams seen through
+the dev gateway (2026-10-12): two parallel read_file calls without any
+`function_call_arguments.delta`, with them, and without
+`function_call_arguments.done` either.
 """
 
 import asyncio
