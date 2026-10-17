@@ -86,6 +86,11 @@ tasks:
     cmds:
       - task: fe:dev:collab
 
+  dev:sandbox:
+    desc: Whole stack on loopback without Docker or integrations (e2e's servers; prints the port to open)
+    cmds:
+      - node e2e/dev-stack.mjs
+
   dev:docker:
     desc: Start all services in Docker (Windows without WSL)
     cmds:

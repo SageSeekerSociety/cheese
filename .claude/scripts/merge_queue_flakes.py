@@ -41,7 +41,7 @@ CI 上都只是「一个红的作业」。混在一张榜里，真故障会被�
 的日志。`--json-dir` 换成从磁盘读同样三步的原始返回，用来在没网时对着抓下来的样本
 跑；目录布局：
 
-    DIR/runs*.json             gh api repos/{repo}/actions/runs?event=merge_group
+    DIR/runs*.json             gh api repos/{repo}/actions/workflows/required-ci.yml/runs?event=merge_group
                                的分页原文，每页 {"total_count":..., "workflow_runs":[...]}
     DIR/jobs/<run_id>.json     gh api repos/{repo}/actions/runs/<run_id>/jobs 的原文
     DIR/logs/job-<job_id>.log  失败作业的原始日志
@@ -623,7 +623,10 @@ def fetch_online(repo: str, limit: int) -> list[Run]:
     payloads: list[dict] = []
     for page in range(1, (limit + 99) // 100 + 1):
         data = _gh_json(
-            f"repos/{repo}/actions/runs?event=merge_group&per_page=100&page={page}"
+            # Required CI 的运行；queue-dedupe.yml 也在每个 merge_group 事件上跑，
+            # 混进来会把分母翻倍。
+            f"repos/{repo}/actions/workflows/required-ci.yml/runs"
+            f"?event=merge_group&per_page=100&page={page}"
         )
         payloads.extend(data["workflow_runs"])
         if len(data["workflow_runs"]) < 100:
@@ -1424,7 +1427,8 @@ def main(argv: list[str]) -> int:
             ">= --conflict-min-tests distinct cases is marked [疑似合并冲突] because "
             "a merge-combination break is not a flake. --json-dir reads a saved "
             "sample instead of the network; layout: DIR/runs*.json (gh pages of "
-            "actions/runs?event=merge_group), DIR/jobs/<run_id>.json "
+            "actions/workflows/required-ci.yml/runs?event=merge_group), "
+            "DIR/jobs/<run_id>.json "
             "(actions/runs/<id>/jobs), DIR/logs/job-<job_id>.log (job logs)."
         )
     )

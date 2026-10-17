@@ -119,6 +119,30 @@ async def threads_of_rooms(
     return {thread_id: room_id for thread_id, room_id in rows}
 
 
+async def threads_still_threads(
+    session: AsyncSession, rooms: list[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """A room's 支线 that are still 支线, mapped to their room.
+
+    Not `threads_of_rooms`, which reads the ``threads`` table alone: a 支线 that
+    has become a task KEEPS its ``threads`` row (it is what hangs the
+    conversation under its message, migration ``e4f7009313c1``), but its
+    conversation is a task's now. Treating it as a 支线 again folds a task's
+    failures back under the room — a closed piece of work relights its channel
+    — and lets what is said in the task clear the room's own failures. The
+    register (``conversations.kind``) is what tells the two apart."""
+    if not rooms:
+        return {}
+    stmt = select(_threads.c.id, _threads.c.room_id).where(
+        _threads.c.room_id == any_(_threads_param),
+        _threads.c.id.in_(
+            select(Conversation.id).where(Conversation.kind == ConversationKind.thread)
+        ),
+    )
+    rows = await session.execute(stmt, {"threads_rooms": list(rooms)})
+    return {thread_id: room_id for thread_id, room_id in rows}
+
+
 def conversations_of(room_ids) -> Subquery:
     """Every conversation of these rooms — each room's own, its tasks' and its
     支线' — as rows of ``(id, room_id)``.

@@ -95,6 +95,10 @@ NATIVE_TOOLS = {
 # link drop a deploy of the device connection causes, which the prefix waits
 # out and then reattaches.
 COMMAND_ABANDONED_S = 600.0
+# The record of a command whose output the session keeps in a file of its own
+# (`keep`) holds the same bytes, which a later command reads here; it stays
+# until the session says it dropped that file, or this long after it ended.
+OUTPUT_KEPT_S = 86400.0
 # How long an executor with no request and nothing of its own running waits
 # before it ends what its commands left behind and stops (`idle_stop`). Taking
 # the session's hands starts it again — at a session's launch

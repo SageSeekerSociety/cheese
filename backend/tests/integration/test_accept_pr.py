@@ -676,7 +676,12 @@ def app_world(client, monkeypatch):
 
     async def branch_head(project_id, session, branch, **_):
         repo = git_store.path(project_id)
-        head = git_store.git(repo, "rev-parse", branch).strip()
+        if not repo.exists():
+            return None
+        result = git_store.run(["git", "rev-parse", "--verify", branch], repo, 20, None)
+        if result.returncode != 0:
+            return None
+        head = result.stdout.strip()
         ahead = int(git_store.git(repo, "rev-list", "--count", f"main..{head}"))
         fake.compare_status_by_pair.setdefault(
             ("main", head), "ahead" if ahead else "identical"
