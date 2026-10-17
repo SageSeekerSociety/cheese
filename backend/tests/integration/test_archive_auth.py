@@ -96,15 +96,22 @@ def test_creator_can_still_archive_channel_after_leaving_and_rejoining(client):
 
     # 创建者先退出再重新加入频道，没有进行中的任务时仍能归档该频道
     assert (
-        client.delete(
-            f"/topics/{topic}/members/me",
+        client.post(
+            f"/topics/{topic}/leave",
             headers=session_auth_headers("creator"),
         ).status_code
         == 200
     )
     assert (
+        client.get(
+            f"/topics/{topic}",
+            headers=session_auth_headers("creator"),
+        ).json()["data"]["can_manage"]
+        is True
+    )
+    assert (
         client.post(
-            f"/topics/{topic}/members/me",
+            f"/topics/{topic}/join",
             headers=session_auth_headers("creator"),
         ).status_code
         == 200
