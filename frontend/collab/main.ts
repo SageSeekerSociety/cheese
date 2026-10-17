@@ -12,6 +12,7 @@ function required(name: string): string {
 
 const server = createCollabServer({
   port: Number(process.env.PORT ?? 8902),
+  address: process.env.COLLAB_ADDRESS || undefined,
   backendUrl: required('COLLAB_BACKEND_URL'),
   secret: required('COLLAB_SECRET'),
   redisUrl: process.env.REDIS_URL || undefined,

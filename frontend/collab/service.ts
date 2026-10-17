@@ -52,6 +52,8 @@ import { checkMarkdownWrite } from './writeCheck'
 
 export interface CollabConfig {
   port: number
+  /** The address to listen on; every interface when not given. */
+  address?: string
   /** The backend's base URL, as this service reaches it. */
   backendUrl: string
   /** Shared with the backend's COLLAB_SECRET. */
@@ -347,6 +349,8 @@ export function createCollabServer(config: CollabConfig): Server {
 
   return new Server({
     port: config.port,
+    // Absent rather than undefined, which would replace Hocuspocus's own default.
+    ...(config.address ? { address: config.address } : {}),
     quiet: config.quiet ?? false,
     debounce: config.debounceMs ?? 3000,
     maxDebounce: config.maxDebounceMs ?? 30000,

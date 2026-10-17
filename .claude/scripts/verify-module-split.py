@@ -149,10 +149,6 @@ EXIT_OK, EXIT_DIFFERENT, EXIT_CANNOT_JUDGE = 0, 1, 2
 
 DEFAULT_BASE_REF = "origin/main"
 
-#: The module that owns the deferred-import rule; the self-test cross-checks
-#: against it when it is present.
-DEFERRED_RULE_SOURCE = Path("backend/scripts/check_deferred_imports.py")
-
 
 def _public(name: str) -> bool:
     return bool(name) and not name.startswith("_")
@@ -387,11 +383,6 @@ def _collect_statements(
                 _collect_statements(handler.body, facts, package_name)
             _collect_statements(node.orelse, facts, package_name)
             _collect_statements(node.finalbody, facts, package_name)
-
-
-def _literal_all(tree: ast.Module) -> list[str] | None:
-    """`__all__` when it is a literal list or tuple of strings, else None."""
-    return _read_all(tree)[0]
 
 
 def _read_all(tree: ast.Module) -> tuple[list[str] | None, bool]:
