@@ -8,8 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.errors import GatewayUnavailableError
-from app.domain.repository import forge_files
-from app.domain.room_task.models import TaskStatus
+from app.domain.repository import forge_files, task_rows
 
 
 @pytest.mark.anyio
@@ -27,7 +26,7 @@ async def test_github_comparison_includes_files_beyond_its_300_file_cap(monkeypa
         id=uuid.uuid4(),
         branch_name="task/report",
         base_branch="main",
-        status=TaskStatus.open,
+        status=task_rows.STATUS_OPEN,
         closing_since=None,
         delivered_head=None,
     )

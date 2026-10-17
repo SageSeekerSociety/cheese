@@ -318,15 +318,15 @@ def _card(declares, task_id: uuid.UUID | None = None) -> SimpleNamespace:
 def _rows(monkeypatch, tasks):
     """Stand in for the task table. `tasks` is every row that exists, or an
     exception the read raises."""
-    from app.domain.room_task.services import TaskService
+    from app.domain.repository import task_rows
 
-    async def _list_by_ids(_self, task_ids):
+    async def _many(_session, task_ids):
         if isinstance(tasks, BaseException):
             raise tasks
         wanted = set(task_ids)
         return [t for t in tasks if t.id in wanted]
 
-    monkeypatch.setattr(TaskService, "list_by_ids", _list_by_ids)
+    monkeypatch.setattr(task_rows, "many", _many)
 
 
 @pytest.mark.anyio
