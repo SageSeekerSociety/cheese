@@ -101,14 +101,16 @@ _DEAD_CREDENTIAL = (
     "This credential works another conversation",
 )
 
-# 平台接连答 5xx：再发也是一样，只是让 agent 每一两秒重试一次（10-04 一个会话连着
-# 376 次）。连续 `BREAKER_AFTER` 次之后，这段时间内的平台请求不发出去，直接给这句
-# 话；时间从 `BREAKER_WINDOW_S[0]` 秒起，每再断一次翻倍，到 `BREAKER_WINDOW_S[1]`
-# 为止。任何一个不是 5xx 的应答都把它清掉。504 不算：那是前面一跳等不及，平台还在
-# 准备机器（`acquire`）。
+# 平台的一个接口接连答 5xx：再发也是一样，只是让 agent 每一两秒重试一次（10-04 一个
+# 会话对拿机器那一步连着 376 次）。同一个接口（方法加路径）连续 `BREAKER_AFTER` 次之
+# 后，这段时间内发给它的请求不发出去，直接给这句话；时间从 `BREAKER_WINDOW_S[0]` 秒
+# 起，每再断一次翻倍，到 `BREAKER_WINDOW_S[1]` 为止。这个接口任何一个不是 5xx 的应答
+# 都把它清掉。按接口算，不按整个平台：一个接口可以照常地答 503（比如它要的沙箱已经
+# 收回），那不该让别的工具也停下。504 不算：那是前面一跳等不及，平台还在准备机器
+# （`acquire`）。
 PLATFORM_FAILING = (
-    "平台接连出错，这个会话 {seconds} 秒内不再向平台发请求：现在重试结果一样，"
-    "{seconds} 秒后再试。这不是这次调用本身的问题。"
+    "平台的这个接口接连出错，这个会话 {seconds} 秒内不再向它发请求：现在重试结果一样，"
+    "{seconds} 秒后再试，别的工具照常可用。"
 )
 BREAKER_AFTER = 3
 BREAKER_WINDOW_S = (30, 300)
@@ -127,18 +129,22 @@ def _dead_credential(error) -> bool:
         body = json.loads(error.body)
     except ValueError:
         return False
-    if not isinstance(body, dict) or body.get("retryable") is True:
+    if not isinstance(body, dict):
         return False
     detail = body.get("error")
     if not isinstance(detail, dict):
         detail = {}
+    # The platform says it in `error.retryable` (`format_error_response`).
+    if detail.get("retryable") is True or body.get("retryable") is True:
+        return False
     message = f"{body.get('message', '')} {detail.get('message', '')}"
     return any(text in message for text in _DEAD_CREDENTIAL)
 
 
 class PlatformHealth:
     """What this session has learned about the platform: a credential it
-    refused for good (``dead``, by fingerprint) and its run of 5xx answers.
+    refused for good (``dead``, by fingerprint) and, per route, its run of
+    5xx answers (``routes``).
 
     A Claude Code session starts one process per command, so the state lives
     in a file beside the session's target (`target_file`) when there is one;
@@ -166,29 +172,35 @@ class PlatformHealth:
         else:
             _replace_file(self.path, json.dumps(state))
 
-    def check(self, token=None):
+    def check(self, token=None, route=None):
         """Raise instead of sending, while the platform is known to refuse."""
         state = self.read()
         if token is not None and state.get("dead") == _fingerprint(token):
             raise RuntimeError(SESSION_ENDED)
-        wait = state.get("until", 0) - time.time()
+        failing = (state.get("routes") or {}).get(route) or {}
+        wait = failing.get("until", 0) - time.time()
         if wait > 0:
             raise RuntimeError(PLATFORM_FAILING.format(seconds=math.ceil(wait)))
 
-    def answered(self, status):
+    def answered(self, route, status):
         state = self.read()
+        routes = state.get("routes") if isinstance(state.get("routes"), dict) else {}
         if status not in _BREAKER_STATUSES:
-            if state.get("failures") or state.get("until"):
-                state.pop("failures", None)
-                state.pop("trips", None)
-                state.pop("until", None)
+            if route in routes:
+                del routes[route]
+                state["routes"] = routes
                 self.write(state)
             return
-        state["failures"] = state.get("failures", 0) + 1
-        if state["failures"] >= BREAKER_AFTER:
-            state["trips"] = state.get("trips", 0) + 1
+        failing = routes.get(route) or {}
+        failing["failures"] = failing.get("failures", 0) + 1
+        if failing["failures"] >= BREAKER_AFTER:
+            failing["trips"] = failing.get("trips", 0) + 1
             first, most = BREAKER_WINDOW_S
-            state["until"] = time.time() + min(first * 2 ** (state["trips"] - 1), most)
+            failing["until"] = time.time() + min(
+                first * 2 ** (failing["trips"] - 1), most
+            )
+        routes[route] = failing
+        state["routes"] = routes
         self.write(state)
 
     def refused_for_good(self, token):
@@ -640,7 +652,8 @@ class RemoteClient:
         token = self.platform_token()
         if not api or not token:
             raise RuntimeError("Platform requests require room credentials")
-        self.health.check()
+        route = f"{method} {parsed.path}"
+        self.health.check(route=route)
         with self.platform_lock:
             if self.platform is None or self.platform.config["url"] != api:
                 if self.platform is not None:
@@ -668,7 +681,7 @@ class RemoteClient:
                 )
                 response = connection.getresponse()
                 body = response.read().decode()
-                self.health.answered(response.status)
+                self.health.answered(route, response.status)
                 if not 200 <= response.status < 300:
                     raise PlatformHTTPError(response.status, body)
             except Exception:

@@ -17,15 +17,16 @@ from app.domain.agent.executor_transport import (
     RemoteClient,
 )
 
+# The body the platform answers with (`format_error_response`).
 _REFUSED = {
     "code": 403,
-    "message": "ForbiddenError: Execution credential does not own this session",
+    "message": "Execution credential does not own this session",
     "error": {
         "name": "ForbiddenError",
         "message": "Execution credential does not own this session",
+        "data": None,
         "retryable": False,
     },
-    "retryable": False,
 }
 _LEASE = {
     "data": {
@@ -109,7 +110,7 @@ def test_a_new_credential_for_the_session_is_tried(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "body",
     [
-        {**_REFUSED, "retryable": True},
+        {**_REFUSED, "error": {**_REFUSED["error"], "retryable": True}},
         {"code": 403, "message": "ForbiddenError: 只有房间成员可以这样做"},
     ],
 )
@@ -181,5 +182,21 @@ def test_a_session_without_a_target_file_keeps_the_count_in_memory(monkeypatch):
             client.platform_request({"path": "/topics/room"})
     with pytest.raises(RuntimeError) as held:
         client.platform_request({"path": "/topics/room"})
-    assert "平台接连出错" in str(held.value)
+    assert str(held.value).startswith(PLATFORM_FAILING.split("{")[0])
     assert platform.asked == 3
+
+
+def test_one_route_failing_does_not_hold_off_the_others(tmp_path, monkeypatch):
+    """A route can answer 503 on a healthy platform (the sandbox it needs was
+    taken back): the rest of the session's platform calls still go out."""
+    error = {"code": 503, "message": "上游不可用"}
+    platform = Platform([(503, error)] * 3 + [(200, {})])
+    platform.install(monkeypatch)
+    config = _session(tmp_path)
+    for _ in range(3):
+        with pytest.raises(executor_transport.PlatformHTTPError):
+            RemoteClient(dict(config)).platform_request({"path": "/projects/p/files"})
+    with pytest.raises(RuntimeError):
+        RemoteClient(dict(config)).platform_request({"path": "/projects/p/files"})
+    RemoteClient(dict(config)).platform_request({"path": "/topics/room"})
+    assert platform.asked == 4
