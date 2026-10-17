@@ -14,8 +14,38 @@ module while this module's only reader imported the plan would be a cycle
 import json
 import shlex
 
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS
 from app.domain.agent.harness.prompt import SUBAGENT_RULES
+
+#: The window Claude Code assumes for a model id it does not recognise.
+_ASSUMED_WINDOW = 200_000
+#: The range Claude Code accepts for an auto-compact window.
+_COMPACT_RANGE = (100_000, 1_000_000)
+
+
+def compact_windows() -> dict[str, dict[str, int]]:
+    """Claude Code's ``modelSettings``: where each gateway model compacts.
+
+    Per model, because one session runs several: its own model, the subagent
+    default, and the models offered as subagent types. A model compacts where
+    its provider recommends (``GatewayModel.compact_window``), else at the
+    window the gateway declares, else at the 200K Claude Code would assume
+    anyway. Claude Code caps each at the window it believes the session's
+    model has (``gateway_usage.window_env``), and a subagent on a model with a
+    smaller window than that compacts before it overflows its own. A
+    ``claude-`` id is left out: Claude Code knows its window itself."""
+    low, high = _COMPACT_RANGE
+    return {
+        m.id: {
+            "autoCompactWindow": min(
+                high,
+                max(low, m.compact_window or m.context_window or _ASSUMED_WINDOW),
+            )
+        }
+        for m in gateway_catalog.snapshot()
+        if not m.id.lower().startswith("claude-")
+    }
 
 
 def session_settings() -> dict:
@@ -100,4 +130,5 @@ def session_settings() -> dict:
         "hooks": {
             "SubagentStart": subagent_rules,
         },
+        "modelSettings": compact_windows(),
     }

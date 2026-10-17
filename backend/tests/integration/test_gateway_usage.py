@@ -1146,3 +1146,73 @@ async def test_a_model_the_gateway_adds_is_a_subagent_type_from_the_next_launch(
     assert "name: kimi-k3\n" in agents["model-kimi-k3.md"]
     assert "model: kimi-k3\n" in agents["model-kimi-k3.md"]
     assert after["env"]["CHEESE_AGENT_CONFIG"] != before["env"]["CHEESE_AGENT_CONFIG"]
+
+
+@pytest.mark.anyio
+async def test_a_session_on_a_gateway_model_is_told_the_window_the_gateway_declares(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """Claude Code assumes 200K for a model id it does not know and compacts at
+    about 167K, so a session on a gateway model is told the window the gateway
+    declares for it. Each model compacts where its provider recommends, or at
+    its own window; a subagent on a model the gateway declares no window for
+    compacts at the 200K Claude Code would have assumed, not the session's."""
+    from app.core.config import settings as app_settings
+    from app.domain.agent import gateway_catalog
+    from app.domain.agent.harness.claude_code.session_launch import (
+        session_settings,
+    )
+
+    def row(name, **window):
+        return {
+            "model_name": name,
+            "litellm_params": {"model": f"anthropic/{name}"},
+            "model_info": {
+                "cheese_selectable": True,
+                "input_cost_per_token": 0.000001,
+                "output_cost_per_token": 0.000001,
+                **window,
+            },
+        }
+
+    rows = [
+        row(
+            "deepseek-flash",
+            max_input_tokens=920_000,
+            cheese_auto_compact_window=786_432,
+        ),
+        row("gpt-6.1-sol", max_input_tokens=922_000),
+        row("kimi-k3"),
+    ]
+    answering = gw.LlmGateway(
+        "http://gw",
+        "mk",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"data": rows})
+        ),
+    )
+    monkeypatch.setattr(app_settings, "agent_model", "deepseek-flash")
+    gateway_catalog.reset()
+    try:
+        await gateway_catalog.refresh(answering)
+        svc, factory, pid, _tid = await _mk_service(
+            business_db_factory, tmp_path, FakeGateway()
+        )
+        declared, _ = await svc._model_kwargs(pid, _on_a_machine())
+        compaction = session_settings().get("modelSettings", {})
+
+        async with factory() as session:
+            project = await ProjectRepository(session).get(pid)
+            assert project is not None
+            project.settings = {**(project.settings or {}), "default_model": "kimi-k3"}
+            await session.commit()
+        undeclared, _ = await svc._model_kwargs(pid, _on_a_machine())
+    finally:
+        gateway_catalog.reset()
+
+    assert declared["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "920000"
+    # No window declared: Claude Code keeps the one it assumes.
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in undeclared["env"]
+    assert compaction["deepseek-flash"] == {"autoCompactWindow": 786_432}
+    assert compaction["gpt-6.1-sol"] == {"autoCompactWindow": 922_000}
+    assert compaction["kimi-k3"] == {"autoCompactWindow": 200_000}
