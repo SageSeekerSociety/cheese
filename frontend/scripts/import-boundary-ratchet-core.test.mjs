@@ -140,18 +140,33 @@ describe('the gate on a planted violation', () => {
 
   // The command the report tells the reader to run has to be a real one, or the
   // shortest path it points at is a dead end and the reader falls back to the
-  // baseline. This runs the eslint half as printed (the same config, the same
-  // file) and requires the rule to fire.
-  it('the eslint command the report prints really reports the violation', () => {
+  // baseline. So this reads the line out of the report instead of rebuilding
+  // it, and runs exactly what it prints — through the binary resolved here, but
+  // with the printed arguments — so a config name that is not on disk, a
+  // dropped `eslint`, or a file argument that is not the one scanned fails here.
+  it('runs the eslint command the report prints, and it reports the violation', () => {
     try {
       plant()
-      const run = spawnSync(LOCAL_BIN, ['--config', CONFIG, '--no-color', RELATIVE], {
+      const printed = formatBoundaryReport(compare({}, { [RELATIVE]: 1 }))
+        .split('\n')
+        .filter((line) => line.trim().startsWith('pnpm exec eslint'))
+      assert.equal(printed.length, 1, 'one regressed file, one printed eslint command')
+
+      const tokens = printed[0].trim().split(/\s+/)
+      assert.deepEqual(tokens.slice(0, 3), ['pnpm', 'exec', 'eslint'])
+      const argv = tokens.slice(3)
+      assert.equal(argv[0], '--config')
+      assert.equal(resolve(ROOT, argv[1]), CONFIG, `the report printed a different config: ${argv[1]}`)
+      assert.equal(existsSync(CONFIG), true, 'the boundary eslint config is not on disk')
+      assert.equal(argv[argv.length - 1], RELATIVE)
+      assert.equal(existsSync(LOCAL_BIN), true, 'eslint is not installed under node_modules/.bin')
+
+      const run = spawnSync(LOCAL_BIN, argv, {
         cwd: ROOT,
         encoding: 'utf8',
         shell: process.platform === 'win32',
       })
 
-      assert.equal(existsSync(LOCAL_BIN), true, 'eslint is not installed under node_modules/.bin')
       assert.match(`${run.stdout}${run.stderr}`, new RegExp(BOUNDARY_RULE_ID.replace('/', '\\/')))
     } finally {
       rmSync(PROBE, { force: true })
