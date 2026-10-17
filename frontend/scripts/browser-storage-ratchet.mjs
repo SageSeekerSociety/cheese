@@ -112,7 +112,7 @@ const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath
 const result = compare(baseline, current)
 
 if (update) {
-  // Shrink-only, like the a11y ratchet and backend/scripts/boundary_baseline.py.
+  // Shrink-only, like the a11y ratchet and every other one here.
   // `tightenedBaseline` never raises a frozen count, but it does admit a file the
   // baseline has not seen yet — which is exactly where a new reference lands. So
   // an update that would freeze anything new refuses and says what; accepting new

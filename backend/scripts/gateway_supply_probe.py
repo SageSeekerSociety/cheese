@@ -21,9 +21,12 @@ from contextlib import contextmanager
 
 
 class ProbeFailure(Exception):
-    def __init__(self, category, status=None, code=None, call_id=None):
+    def __init__(self, category, status=None, code=None, call_id=None, detail=None):
         self.category, self.status, self.code = category, status, code
         self.call_id = call_id
+        # The provider's own error message, for an operator's tool that shows it
+        # (gateway_conformance.py); this probe never emits it.
+        self.detail = detail
         super().__init__(category)
 
 
@@ -99,11 +102,18 @@ def emit(phase, **fields):
     )
 
 
-def open_request(base, key, path, payload=None):
+def error_message(body):
+    error = body.get("error", {}) if isinstance(body, dict) else {}
+    message = error.get("message") if isinstance(error, dict) else None
+    return message[:300] if isinstance(message, str) else None
+
+
+def open_request(base, key, path, payload=None, headers=None, timeout=10):
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "anthropic-version": "2023-06-01",
+        **(headers or {}),
     }
     request = urllib.request.Request(
         base + path,
@@ -111,12 +121,13 @@ def open_request(base, key, path, payload=None):
         data=None if payload is None else json.dumps(payload).encode(),
     )
     try:
-        return urllib.request.urlopen(request, timeout=10)
+        return urllib.request.urlopen(request, timeout=timeout)
     except urllib.error.HTTPError as error:
         try:
-            code = error_code(json.loads(error.read(65536)))
+            body = json.loads(error.read(65536))
+            code, detail = error_code(body), error_message(body)
         except (ValueError, OSError):
-            code = None
+            code = detail = None
         finally:
             error.close()
         raise ProbeFailure(
@@ -124,12 +135,13 @@ def open_request(base, key, path, payload=None):
             error.code,
             code,
             call_id_from(error.headers),
+            detail,
         ) from error
 
 
-def read_json(response):
-    raw = response.read(262145)
-    if len(raw) > 262144:
+def read_json(response, limit=262144):
+    raw = response.read(limit + 1)
+    if len(raw) > limit:
         raise ProbeFailure("invalid_response")
     try:
         return json.loads(raw)

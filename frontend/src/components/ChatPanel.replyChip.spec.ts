@@ -11,6 +11,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
+import { fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 let vuetify: ReturnType<typeof createVuetify>
@@ -94,14 +96,16 @@ async function replyThenSend(text: string, cancel: boolean) {
   const bar = view.container.querySelector('.hover-bar') as HTMLElement
   await fireEvent.click(within(bar).getByTitle('引用回复'))
   if (cancel) await fireEvent.click(view.getByRole('button', { name: t('work.room.composer.cancelReply') }))
-  const box = view.container.querySelector('textarea') as HTMLTextAreaElement
+  const box = view.container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
   box.focus()
-  await fireEvent.update(box, text)
+  await fillComposer(box, text)
   await fireEvent.keyDown(box, { key: 'Enter' })
   await settle()
   view.unmount()
   return sent.find((f) => f.content === text)
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('输入框里的回复标签', () => {
   it('发出去的消息挂在回复的那一条下面', async () => {

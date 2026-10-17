@@ -1,12 +1,17 @@
 import type { BoardPhrase } from '../cx_types'
 
-/** 待我处理清单里的一件事（后端 `room_task/awaiting.py`）。
+/** 待我处理清单里的一行（后端 `/awaiting-me`）：项目里的一件事，或一条等我回答的
+ *  邀请、申请。两种按 `kind` 分。 */
+export type WaitingItem = WaitingWork | WaitingAsk | WaitingRun
+
+/** 项目里等我的一件事（后端 `room_task/awaiting.py`）。
  *
  *  `phrase` 就是看板卡面上那一句的码，后端算好的 —— 前端不推状态，理由和
  *  `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
  *  (`reviewer`)、我提的需求有了结果 (`reporter`)、或者芝士停在一个只有我能回答的
  *  待回答的问题上 (`asked`)。 */
-export interface WaitingItem {
+export interface WaitingWork {
+  kind: 'work'
   projectId: string
   projectName: string
   /** 在哪个频道；来自通知、不指向频道的那几件没有。 */
@@ -29,5 +34,49 @@ export interface WaitingItem {
   alertId?: number | null
   headline?: string
   options?: string[]
+  at: string
+}
+
+/** 一行上画的一个人或一个团队。头像只有自己挑过才有，没有就画彩色首字母。 */
+export interface WaitingFace {
+  name: string
+  handle: string | null
+  avatarUrl: string | null
+}
+
+/** 等我回答的一条邀请或申请（后端 `api/awaiting_asks.py`）：有人邀请我加入项目或
+ *  团队，或有人申请加入我管的团队。答了就不在清单上了。 */
+export interface WaitingAsk {
+  kind: 'project_invite' | 'project_transfer' | 'team_invite' | 'join_request'
+  /** 回答时交回去的号：项目邀请是 uuid，团队的邀请和申请是数字的字符串。 */
+  id: string
+  /** 加入的是哪里：项目或团队的 id。 */
+  placeId: string
+  place: WaitingFace
+  /** 发起的人：邀请人，或提出申请的人。 */
+  person: WaitingFace
+  /** 邀请给的角色：团队邀请是大写那三种，项目邀请是成员或导师；其余没有。 */
+  role: 'MEMBER' | 'ADMIN' | 'OWNER' | 'member' | 'mentor' | null
+  /** 邀请或申请时附的那句话；没写是空串。 */
+  message: string
+  at: string
+}
+
+/** 项目要在我自己的设备上运行仓库里的一个本地命令类 MCP 服务器，等我允许。同一条命令
+ *  允许过就不再问，命令改了再问。 */
+export interface WaitingRun {
+  kind: 'mcp_run'
+  /** 回答时交回去的号。 */
+  id: string
+  projectId: string
+  projectName: string
+  /** 服务器的名字。 */
+  server: string
+  /** 要运行的那一行命令。 */
+  command: string
+  /** 我的哪台设备。 */
+  device: string
+  /** 最近一次改了 .mcp.json 里这一条的人；读不出来是 null。 */
+  author: WaitingFace | null
   at: string
 }

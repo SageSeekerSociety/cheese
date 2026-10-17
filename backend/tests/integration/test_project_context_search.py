@@ -5,8 +5,8 @@ has to be found, part of a word counts, and the best match comes first."""
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.living_doc.models import DocumentNode
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import ProjectArtifact

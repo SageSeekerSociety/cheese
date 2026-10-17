@@ -1,7 +1,7 @@
 {
   "backend": [
     "backend/**",
-    "frontend/src/i18n/messages/*/roomNotice.json",
+    "frontend/src/i18n/messages/*/roomNotice/*.json",
     "frontend/src/i18n/messages/*/apiError/*.json",
     "frontend/src/i18n/messages/*/global.json",
     "deploy/metering-proxy/**",
@@ -12,7 +12,7 @@
   ],
   "frontend": [
     "frontend/**",
-    "backend/openapi.json",
+    "backend/openapi.sha256",
     ".github/workflows/frontend.yml",
     ".claude/scripts/frontend_grade.py",
     ".claude/scripts/catalog-ratchet.py",
@@ -26,7 +26,15 @@
     "backend/app/domain/skill_library/doc_form.md"
   ],
   "e2e": [
-    "backend/**",
+    "backend/app/**",
+    "backend/alembic/**",
+    "backend/alembic.ini",
+    "backend/sandbox/**",
+    "backend/pyproject.toml",
+    "backend/uv.lock",
+    "backend/.python-version",
+    "backend/scripts/seed_fusion_demo.py",
+    "backend/tests/forgejo/**",
     "frontend/**",
     "e2e/**",
     ".github/scripts/ci-test-evidence.py",
@@ -47,10 +55,13 @@
   ],
   "deploy": [
     "deploy/**",
+    "backend/alembic/versions/**",
     ".github/scripts/ensure-apt.sh",
     ".claude/scripts/pr-watch.sh",
     "backend/scripts/gateway_supply_probe.py",
     "backend/scripts/test_gateway_supply_probe.py",
+    "backend/scripts/gateway_conformance.py",
+    "backend/scripts/test_gateway_conformance.py",
     ".github/workflows/deploy-drift.yml",
     ".github/workflows/deploy-scripts-test.yml",
     ".github/workflows/deploy-dev.yml",
@@ -72,7 +83,16 @@
     ".github/workflows/harness-contract.yml"
   ],
   "remote": [
-    "backend/**",
+    "backend/app/**",
+    "backend/alembic/**",
+    "backend/alembic.ini",
+    "backend/sandbox/**",
+    "backend/pyproject.toml",
+    "backend/uv.lock",
+    "backend/.python-version",
+    "backend/tests/**",
+    "backend/scripts/assert_suite_ran.py",
+    "backend/scripts/device_connection_lifecycle_acceptance.py",
     "cli/**",
     "scripts/remote_execution/**",
     ".dockerignore",

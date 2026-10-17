@@ -62,6 +62,27 @@ describe("平台工具", () => {
     socket.close();
   });
 
+  it("工具带回的图片跟在文字后面交给模型", async () => {
+    // A mini-app's save hands back the pictures the platform took of it, for
+    // the model to look at what it made.
+    const socket = await runner(() => ({
+      result: {
+        status: 0,
+        stdout: "已保存",
+        stderr: "",
+        images: [{ data: "d2lkZQ==", mimeType: "image/png" }],
+      },
+    }));
+    const { pi } = await load({ socket: socket.address });
+
+    const answer = await pi.call("cheese_doc_get", {});
+    assert.deepEqual(answer.content, [
+      { type: "text", text: "已保存" },
+      { type: "image", data: "d2lkZQ==", mimeType: "image/png" },
+    ]);
+    socket.close();
+  });
+
   it("命令失败时带回它自己说的话", async () => {
     // Only the half this file owns: what the CLI wrote on stderr is what the
     // model gets to read. That a non-zero status is `isError` is the fixture
@@ -80,50 +101,23 @@ describe("平台工具", () => {
 
 describe("项目的 MCP 服务器", () => {
   const TRACKER = {
-    name: "mcp__tracker__whoami",
-    description: "Say which credential reached the server.",
-    inputSchema: { type: "object", properties: { note: { type: "string" } } },
+    url: "http://127.0.0.1:4100/mcp/tracker",
+    headers: { "X-Cheese-Gateway": "${CHEESE_MCP_SECRET}" },
+    timeout: 300,
   };
 
-  it("runner 列出的每个工具都注册成 pi 的工具，调用送回 runner 的 mcp", async () => {
-    const socket = await runner(() => ({
-      result: { content: [{ type: "text", text: "reached" }], isError: false },
-    }));
-    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
+  it("runner 给的每个服务器都交给 pi 自己的 MCP 客户端，地址就是会话的网关", async () => {
+    const { pi } = await load({ mcp: { tracker: TRACKER } });
 
-    assert.deepEqual(pi.tools.get(TRACKER.name).parameters, TRACKER.inputSchema);
-    const answer = await pi.call(TRACKER.name, { note: "hi" });
-    assert.deepEqual(answer.content, [{ type: "text", text: "reached" }]);
-    assert.deepEqual(socket.asked, [
-      {
-        method: "mcp",
-        params: { id: "call-1", tool: TRACKER.name, arguments: { note: "hi" } },
-      },
-    ]);
-    socket.close();
-  });
-
-  it("服务器说失败的调用抛出去，pi 才会把它标成错误", async () => {
-    // pi 0.85.1 sets a tool result's error flag only when `execute` throws; a
-    // returned `isError` is ignored, and the model would read a failure as an
-    // answer.
-    const socket = await runner(() => ({
-      result: { content: [{ type: "text", text: "no such issue" }], isError: true },
-    }));
-    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
-
-    await assert.rejects(pi.call(TRACKER.name, {}), /no such issue/);
-    socket.close();
+    assert.deepEqual([...pi.mcpServers.entries()], [["tracker", TRACKER]]);
+    assert.ok(
+      ![...pi.tools.keys()].some((name) => name.startsWith("mcp__")),
+      "a server's tools are pi's MCP client's, not the extension's",
+    );
   });
 });
 
 describe("项目的 hooks 管着 pi 自己的工具", () => {
-  const TRACKER = {
-    name: "mcp__tracker__whoami",
-    description: "Say which credential reached the server.",
-    inputSchema: { type: "object", properties: {} },
-  };
-
   it("PreToolUse 拒了的命令不会跑，模型读到的是 hook 给的理由", async () => {
     const socket = await runner(() => ({ result: { denied: "PROJECT_POLICY: no" } }));
     const { pi } = await load({ socket: socket.address, workspace: "/work" });
@@ -226,17 +220,21 @@ describe("项目的 hooks 管着 pi 自己的工具", () => {
     socket.close();
   });
 
-  it("平台工具和 MCP 工具不在这里问：前者不跑 hooks，后者由 runner 在调用两边跑", async () => {
-    const socket = await runner(() => ({
-      result: { status: 0, stdout: "ok", stderr: "" },
-    }));
-    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
+  it("平台工具不在这里问，MCP 工具和 pi 自己的工具一样问", async () => {
+    const socket = await runner(() => ({ result: { input: {} } }));
+    const { pi } = await load({ socket: socket.address });
 
-    for (const name of ["chat_send", TRACKER.name]) {
+    for (const name of ["chat_send", "mcp__tracker__whoami"]) {
       await pi.run(name, {}, () => ({ content: [{ type: "text", text: "ok" }] }));
     }
 
-    assert.deepEqual(socket.asked, []);
+    assert.deepEqual(
+      socket.asked.map((request) => [request.params.tool, request.params.event]),
+      [
+        ["mcp__tracker__whoami", "PreToolUse"],
+        ["mcp__tracker__whoami", "PostToolUse"],
+      ],
+    );
     socket.close();
   });
 });

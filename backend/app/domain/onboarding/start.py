@@ -25,8 +25,9 @@ from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.models import Conversation
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.topic.models import Topic

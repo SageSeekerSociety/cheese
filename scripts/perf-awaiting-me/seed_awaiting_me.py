@@ -244,11 +244,11 @@ async def _fill(
             await conn.execute(
                 """insert into tasks (id, project_id, room_id, title, status,
                        owner_handle, created_by, created_at, updated_at,
-                       accepted_at, closed_at, conclusion, started_at,
+                       accepted_at, closed_at, conclusion,
                        title_source, title_version, title_calibrated,
                        last_check_detail, reporter_handle, number)
-                   values ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,$12,
-                           'human',0,false,'',$13,$14)""",
+                   values ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,
+                           'human',0,false,'',$12,$13)""",
                 tid,
                 pid,
                 room,
@@ -260,7 +260,6 @@ async def _fill(
                 None if is_open else created + timedelta(hours=2),
                 None if is_open else created + timedelta(hours=3),
                 None if is_open else "done",
-                created + timedelta(minutes=5),
                 VIEWER,
                 t + 1,
             )

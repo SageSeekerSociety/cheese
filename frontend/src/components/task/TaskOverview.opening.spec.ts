@@ -1,5 +1,5 @@
-/** 从讨论转出来的任务，文档还空着时先是 AI 队友在整理它：任务页说它整理到哪了；失败
- * 了，做这件任务的人能让它再试一次，谁都可以选择自己写。 */
+/** 从讨论另开的任务，文档还空着时 AI 队友的第一轮在做：任务页说它做到哪了；失败了，
+ * 做这件任务的人能让它再试一次，谁都可以选择自己写。 */
 import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
 import type { DocReviewRequest } from '@/lib/docReview'
@@ -61,7 +61,7 @@ function propsFor(opening: RoomTask['opening'], canRetry = true) {
     owner_handle: 'alice',
     created_at: '2026-10-06T00:00:00Z',
     updated_at: '2026-10-06T00:00:00Z',
-    presentation: { column: 'not_started', phrase: 'discussing' },
+    presentation: { column: 'building', phrase: 'running' },
     opening,
   } as unknown as RoomTask
   return {
@@ -73,9 +73,6 @@ function propsFor(opening: RoomTask['opening'], canRetry = true) {
     agentName: '芝士',
     agentHandle: null,
     members: [],
-    comparing: false,
-    comparison: null,
-    compareError: null,
     checklist: [],
     related: null,
     canRetry,
@@ -130,7 +127,7 @@ describe('新任务的第一轮', () => {
     expect(docHostAsked.yes).toBe(false)
   })
 
-  it('还在整理：说正在整理，不给重试', () => {
+  it('第一轮还在做：说正在做，不给重试', () => {
     const ui = mount('drafting')
     expect(ui.queryByRole('button', { name: '重试' })).toBeNull()
     // 这一条不用等 `defineAsyncComponent`：`drafting` 走的是 `v-if="opening"` 那半边，
@@ -166,7 +163,7 @@ describe('新任务的第一轮', () => {
   // 以前会被 `?.` 静默吞掉——不报错，高亮也不发生。
   it('递进来时文档那一格还没长出来：等它挂上也得标上改过的那几处', async () => {
     const { ui, api } = mountWithRef('failed')
-    api().reviewEdits({ requester: '芝士', edits: [{ old: '30 天', new: '60 天' }] })
+    api().reviewEdits({ edits: [{ old: '30 天', new: '60 天' }] })
     expect(docHostCalls).toEqual([])
 
     await fireEvent.click(ui.getByRole('button', { name: '自己写' }))
@@ -194,7 +191,7 @@ describe('新任务的第一轮', () => {
   it('还没递出去又来了一个：只补最后那一个，不把前一个也发了', async () => {
     const { ui, api } = mountWithRef('failed')
     api().highlightTurn('turn-1')
-    api().reviewEdits({ requester: '芝士', edits: [{ old: '30 天', new: '60 天' }] })
+    api().reviewEdits({ edits: [{ old: '30 天', new: '60 天' }] })
 
     await fireEvent.click(ui.getByRole('button', { name: '自己写' }))
     await waitFor(() => expect(docHostCalls).toContain('review'))

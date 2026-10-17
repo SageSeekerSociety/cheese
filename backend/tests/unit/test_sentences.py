@@ -69,8 +69,9 @@ def _placeholders(template: str) -> set[str]:
 #: 目录一致性的修法（三处目录/键对齐断言共用）。
 _REPAIR_CATALOG = (
     "修法：后端与前端共用一份目录。每个键要同时存在于 frontend/src/i18n/messages/ "
-    "每个 locale（zh-CN 与 en）下的 roomNotice.json（后端在房间里说的句子）或 "
-    "apiError/（后端拒绝时说的句子，按说出这句话的后端模块分片，文件名不是键的一部分）；"
+    "每个 locale（zh-CN 与 en）下的 roomNotice/（后端在房间里说的句子）或 "
+    "apiError/（后端拒绝时说的句子）——两个都按说出这句话的后端模块分片，"
+    "文件名不是键的一部分；"
     "两份 locale 的 {占位符} 集合必须一致，"
     "en 不能有 zh-CN 没有的键，值也不能为空。"
     "规则：docs/i18n.md 第 2 节（目录与命名空间）、第 4 节（缺翻译怎么办）、"
@@ -82,16 +83,18 @@ _REPAIR_CATALOG = (
 _REPAIR_SAY = (
     "修法：say(键, ...) 的键必须在目录里，关键字参数名要正好等于该键模板里的 "
     "{占位符} 集合。加新键就在 frontend/src/i18n/messages 的两个 locale 的 "
-    "roomNotice.json 或 apiError/ 里同时补中英两份；参数对不上就改调用点的关键字，"
+    "roomNotice/ 或 apiError/ 里同时补中英两份（说到哪个后端域，就在那个域的 "
+    "分片里加）；参数对不上就改调用点的关键字，"
     "不要改模板。规则：docs/i18n.md 第 4 节（缺翻译怎么办）、第 5 节（机器闸门）。"
     "复查：cd backend && uv run pytest tests/unit/test_sentences.py -q"
 )
 
 #: 孤儿键（目录里有、没有 say() 说过）的修法。
 _REPAIR_ORPHAN = (
-    "修法：每个现用键都要有源码里的 say(...) 调用点。确实只该留给旧房间重放的退役句，"
-    "把它加进 backend/app/core/sentences.py 的 HISTORICAL_NOTICE_KEYS，并从 "
-    "frontend/src/i18n/messages 两个 locale 的 roomNotice.json 里删掉这个键；"
+    "修法：每个现用键都要有源码里的 say(...) 调用点。确实没人用的键，从 "
+    "frontend/src/i18n/messages 两个 locale 的 roomNotice/ 里删掉；只该留给旧房间"
+    "重放的退役句，把它加进 backend/app/core/sentences.py 的 HISTORICAL_NOTICE_KEYS"
+    "（键仍留在目录里，旧房间重放才渲染得出来）；"
     "还在用的句，在说它的地方写 say(键, ...)。"
     "规则：docs/i18n.md 第 4 节、第 5 节。"
     "复查：cd backend && uv run pytest tests/unit/test_sentences.py -q"
@@ -114,9 +117,10 @@ def _catalog_diff(backend: dict[str, str], catalog: dict[str, str]) -> list[str]
 @pytest.mark.parametrize(("namespace", "templates"), CATALOGS)
 def test_the_backend_says_the_frontend_chinese_catalog(namespace, templates):
     diff = _catalog_diff(templates, _catalog("zh-CN", namespace))
+    one_file = CATALOG / "zh-CN" / f"{namespace}.json"
+    where = f"{namespace}{'.json' if one_file.is_file() else '/'}"
     assert diff == [], (
-        f"后端 {namespace} 目录与 "
-        f"frontend/src/i18n/messages/zh-CN/{namespace}.json 对不上：\n"
+        f"后端 {namespace} 目录与 frontend/src/i18n/messages/zh-CN/{where} 对不上：\n"
         + "\n".join(diff)
         + "\n"
         + _REPAIR_CATALOG
@@ -258,7 +262,7 @@ def test_an_orphan_names_its_repair_and_the_doc(monkeypatch):
     message = str(caught.value)
     assert "unregisteredHistoricalSentence" in message
     assert "HISTORICAL_NOTICE_KEYS" in message
-    assert "roomNotice.json" in message
+    assert "roomNotice/" in message
     assert "docs/i18n.md" in message
     assert "test_sentences.py" in message
 
@@ -273,7 +277,7 @@ def test_a_catalog_drift_names_the_key_and_the_localized_files(monkeypatch):
     # 另一头：json 多一个后端不认的键也要报出来。
     extra = _catalog_diff(templates, {**templates, "goneKey": "旧"})
     assert any("goneKey" in line for line in extra)
-    assert "roomNotice.json" in _REPAIR_CATALOG
+    assert "roomNotice/" in _REPAIR_CATALOG
     assert "docs/i18n.md" in _REPAIR_CATALOG
     assert "第 5 节" in _REPAIR_CATALOG
 
@@ -313,7 +317,7 @@ def test_a_say_key_or_parameter_mismatch_names_the_call_site(monkeypatch):
     message = str(caught.value)
     assert "app/example.py:7" in message and "noSuchSentence" in message
     assert "app/example.py:9" in message and "reviewer" in message
-    assert "roomNotice.json" in message
+    assert "roomNotice/" in message
     assert "test_sentences.py" in message
 
 

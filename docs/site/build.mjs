@@ -38,8 +38,10 @@ for (const f of fs.readdirSync(SCENES).filter((f) => f.endsWith('.json'))) {
 // The product's own interface strings, which a `demo-panel` must quote exactly.
 const UI_STRINGS = path.join(REPO, 'frontend/src/i18n/messages/zh-CN')
 const leaves = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [])
-// The catalog is a tree of files — `work/` and `apiError/` are directories since
-// the split (docs/i18n.md §2) — so every `.json` under it is read, at any depth.
+// The catalog is a tree of files — `work/`, `apiError/`, `roomNotice/`,
+// `notifications/`, `tasks/`, `account/`, `feedback/` and `spaces/` are
+// directories since the split (docs/i18n.md §2) — so every `.json` under it is
+// read, at any depth.
 const catalogFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
   e.isDirectory() ? catalogFiles(path.join(dir, e.name)) : e.name.endsWith('.json') ? [path.join(dir, e.name)] : [])
 registerUiStrings(catalogFiles(UI_STRINGS).flatMap((f) => leaves(JSON.parse(fs.readFileSync(f, 'utf8')))))
@@ -368,13 +370,13 @@ ${p.library.files.map((f) => fold(`${inline(f.title)} · ${f.chars} 字符`, cod
 
   out.push(`## 相关常量 {#constants}
 
-\`prompt.py\` 里模块级的东西：预算、上限，和那些整段拼进提示词的文本。行号链到 GitHub 上的源码。
+\`prompt.py\` 里模块级的东西：预算、上限，和那些整段拼进提示词的文本。行号链到 GitHub 上的源码——常量写在哪个文件就链到哪个文件（提示词分成 \`prompt.py\` 和它同目录的三个模块之后，预算和引用上限不在门面那一份里）。
 
 | 常量 | 类型 | 值 | 代码里的说明 |
 |---|---|---|---|
 ${p.constants.map((c) => {
     const shown = c.kind === 'int' ? `\`${c.value}\`` : c.value.length <= 40 ? `\`${c.value}\`` : `${c.value.length} 字符${c.in_blocks.length ? '，见上面「' + inline(c.in_blocks[0]) + '」那一块' : ''}`
-    return `| [\`${c.name}\`](${blob(PROMPT_SRC, c.line)}) | ${c.kind === 'int' ? '整数' : '文本'} | ${shown} | ${cell(c.comment || '—')} |`
+    return `| [\`${c.name}\`](${blob(c.file || PROMPT_SRC, c.line)}) | ${c.kind === 'int' ? '整数' : '文本'} | ${shown} | ${cell(c.comment || '—')} |`
   }).join('\n')}`)
 
   return {
@@ -645,16 +647,17 @@ ${connector.trim()}
 `,
   }
   const env = gen('env.py')
+  const envFiles = [...new Set(env.fields.map((f) => f.origin))]
   out['ref-env'] = {
-    title: '环境变量全表', kind: '参考', covers: ['backend/app/core/config.py'],
+    title: '环境变量全表', kind: '参考', covers: envFiles,
     summary: `后端读取的全部 ${env.fields.length} 个设置：环境变量名、类型、默认值和代码里的说明。`,
     body: `# 环境变量全表 {#ref-env}
 
-后端读取的全部 ${env.fields.length} 个设置：环境变量名、类型、默认值和代码里的说明。从 \`backend/app/core/config.py\` 的 \`Settings\` 解析，不导入模块，所以不需要一个可用的环境。
+后端读取的全部 ${env.fields.length} 个设置：环境变量名、类型、默认值和代码里的说明。从 \`backend/app/core/config.py\` 的 \`Settings\` 解析（它继承的几节设置也一并读出来），不导入模块，所以不需要一个可用的环境。
 
 | 环境变量 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-${env.fields.map((f) => `| ${f.env.map((e) => `\`${e}\``).join('<br>')} | \`${mdCell(f.type)}\` | \`${mdCell(f.default).slice(0, 80)}\` | ${mdCell(f.doc).slice(0, 400)} [↗](https://github.com/SageSeekerSociety/cheese/blob/main/backend/app/core/config.py#L${f.line}) |`).join('\n')}
+${env.fields.map((f) => `| ${f.env.map((e) => `\`${e}\``).join('<br>')} | \`${mdCell(f.type)}\` | \`${mdCell(f.default).slice(0, 80)}\` | ${mdCell(f.doc).slice(0, 400)} [↗](https://github.com/SageSeekerSociety/cheese/blob/main/${f.origin}#L${f.line}) |`).join('\n')}
 `,
   }
   const wfDir = path.join(REPO, '.github/workflows')
@@ -695,7 +698,7 @@ ${workflows.map((w) => `| \`${w.f}\` | ${mdCell(w.name)} | ${w.triggers.map((t) 
   const components = gen('components.py')
   out['ref-components'] = {
     title: '组件总览', kind: '参考',
-    covers: ['.claude/scripts/frontend_grade.py', '.claude/scripts/catalog-ratchet.py', '.claude/scripts/scene-ratchet.py', 'frontend/catalog-baseline.json', 'frontend/scene-baseline.json'],
+    covers: ['.claude/scripts/frontend_grade.py', '.claude/scripts/catalog-ratchet.py', '.claude/scripts/scene-ratchet.py', 'frontend/catalog-baseline.json'],
     summary: `frontend/src 下全部 ${components.totals.components} 个 .vue 组件：每个的档位（A 能单独渲染）、有没有进预览站 /demo/catalog、属于哪个场景。`,
     body: componentsReference(components),
   }
@@ -874,6 +877,17 @@ write('changelog.xml', changelogFeed(RELEASES))
 write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerSociety/cheese/releases/download/desktop-latest' }))
 write('dev-gate.html', devGatePage(ctx))
 write('404.html', notFoundPage(ctx))
+// Search engines read these only at a host's root, so only the docs host's own build has them;
+// under /docs/ the platform's root answers. The developer pages stay out: they are sign-in only.
+if (!BASE) {
+  const userUrls = ['/', '/changelog', '/download', ...SECTIONS.flatMap(([key]) => flatNav(userNav[key]).map((p) => `/${p.slug}`))]
+  write('sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${userUrls.map((u) => `<url><loc>${SITE}${u}</loc></url>`).join('\n')}
+</urlset>
+`)
+  write('robots.txt', `User-agent: *\nDisallow: /dev/\nDisallow: /api/\n\nSitemap: ${SITE}/sitemap.xml\n`)
+}
 for (const [from, to] of Object.entries(REDIRECTS)) {
   if (!from.includes('#')) write(`${from}.html`, redirectPage(target(from, to)))
 }

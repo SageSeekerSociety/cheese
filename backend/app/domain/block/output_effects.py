@@ -10,8 +10,9 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 
 
 async def append_output(
@@ -85,3 +86,10 @@ async def retain_step_output(
 ) -> Block | None:
     """Attach the already bounded output tail and its original length."""
     return await BlockRepository(session).record_step_output(block_id, tail, total)
+
+
+async def retain_step_calls(
+    session: AsyncSession, block_id: uuid.UUID, calls: list[dict]
+) -> Block | None:
+    """Attach the tools the step called on its own."""
+    return await BlockRepository(session).record_step_calls(block_id, calls)

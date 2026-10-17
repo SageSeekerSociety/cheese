@@ -14,30 +14,38 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.membership.services import MemberService
-from app.domain.room_task.services import TaskService
+from app.domain.project_permissions import Permission
 from app.domain.topic.models import TopicKind, TopicStatus
+from app.domain.topic.ports import OpenTaskCounts, ProjectTeam
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 
 
 async def channel_directory(
-    session: AsyncSession, project_id: uuid.UUID, viewer: str
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    viewer: str,
+    *,
+    team: ProjectTeam,
+    counts: OpenTaskCounts,
 ) -> dict:
     members = TopicMemberService(session)
     repo = TopicRepository(session)
     topics = await repo.list_for_project(project_id)
-    seen = {t.id for t in await members.seen(topics, viewer)}
-    manages_project = await MemberService(session).manages(project_id, viewer)
+    seen = {t.id for t in await members.seen(topics, viewer, team=team)}
+    manages_project = await MemberService(session).manages(
+        project_id, viewer, Permission.manage_channels
+    )
     listed = [t for t in topics if t.id in seen or manages_project]
     ids = [t.id for t in listed]
-    joined = await members.joined_topic_ids(listed, viewer)
-    seats = await members.seat_counts(listed)
+    joined = await members.joined_topic_ids(listed, viewer, team=team)
+    seats = await members.seat_counts(listed, team=team)
     # 频道卡片上「N 个进行中的任务」那一个数：和侧栏那一行的 `my_tasks.open`、项目
     # 总览是同一个判据（`underway_counts`）——合并后在写总结的那几个不算，因为它们
     # 已经在收尾、没有人还要动。曾经这里读的是 `open_counts`（只按 status 数），于是
     # 同一个频道在三处会给出不同的数（清单第 14 条）。字段名沿用 `open_tasks`，值换成
     # 这一个判据。
-    open_tasks = await TaskService(session).underway_counts(ids)
+    open_tasks = await counts.underway_counts(ids)
     last_activity = await repo.last_activity_for_topics(ids)
     managed = await members.managed_topic_ids(
         [t for t in listed if t.id in seen], viewer

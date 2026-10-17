@@ -17,6 +17,7 @@ import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
+import type { RefNames } from '../../lib/refChip'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -24,8 +25,8 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import { replySnippet } from '../../lib/blockDisplay'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
+import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
-import { editableText } from '../../lib/renderMessage'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
@@ -93,7 +94,7 @@ const props = defineProps<{
   showStarters: boolean
   starterPrompts: { label: string; hint: string; text: string }[]
   agentName: string
-  refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
+  refs: RefNames
   outbox: Outgoing[]
   /** 队友正在写、还没发出的那几条（useTypingPreview），接在发件箱后面。 */
   typing: { block: Block; edge: RunEdge }[]
@@ -185,11 +186,14 @@ const liveChecklists = computed(() => {
   return ids
 })
 
-// 合成一行的那一串署谁的名，看它最后那一条。
+// 合成一行的那一串署谁的名，看它最后那一条。改文档的那一行不在哪一轮里时不署名
+// （lib/docEditLine）：它是一行记录，不是哪位队友说的话，后面接着的事件行也不能当它
+// 是那位队友的续行。
 function agentOf(block: Block, notice: PlatformNotice): NoticeAgent | null {
-  if (notice.mode !== 'repeats') return props.noticeAgent(block, notice)
-  const last = notice.rows[notice.rows.length - 1]
-  return last.notice ? props.noticeAgent(last.block, last.notice) : null
+  const own = notice.mode === 'repeats' ? notice.rows[notice.rows.length - 1] : { block, notice }
+  if (!own.notice) return null
+  if (isDocLine(own.block) && !docLineInTurn(own.block)) return null
+  return props.noticeAgent(own.block, own.notice)
 }
 
 // 「新建了任务」那一行：认得出那件任务时，画成新建它的人发出的一张任务卡。
@@ -218,6 +222,15 @@ function ownerName(task: TaskLine): string | null {
 function under(blockId: string): TaskLine[] {
   return props.tasksUnder?.(blockId) ?? []
 }
+/** 这条消息的支线自己转成的那件任务：画在支线那一块的顶上，不另起一行。 */
+function became(m: Block): TaskLine | undefined {
+  return m.thread ? under(m.id).find((task) => task.id === m.thread?.id) : undefined
+}
+/** 从这条消息（或支线里的这句话）拆出去的任务，一件一行。 */
+function madeFrom(m: Block): TaskLine[] {
+  const own = props.threadable ? became(m) : undefined
+  return under(m.id).filter((task) => task !== own)
+}
 
 // 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
 // 名字和时间。断开的条件和消息一样（chatGrouping.ts）：中间插了别的行、换了一天、
@@ -225,6 +238,8 @@ function under(blockId: string): TaskLine[] {
 const noticeCont = computed(() =>
   props.rows.map((row, i) => {
     const prev = props.rows[i - 1]
+    // 一轮里改文档的那一行接在这一轮的话后面（chatGrouping 的 runEdgeBetween）。
+    if (row.notice && props.runEdges[i] === 'cont') return true
     if (!row.notice || !prev?.notice) return false
     const agent = agentOf(row.block, row.notice)
     const before = agentOf(prev.block, prev.notice)
@@ -538,7 +553,6 @@ const rowLabels = computed(() =>
               :face-label="faceLabel(faceRows.get(m.id))"
               :face-status="faceStatus(faceRows.get(m.id))"
               :editing="editingId === m.id"
-              :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
               :saving="editSaving"
               :mention-pool="mentionPool"
               :topic-list="topicList"
@@ -575,37 +589,49 @@ const rowLabels = computed(() =>
             />
             <!-- 主线上这条消息的支线：和正文同一栏，挂在消息下面。不用 RoomMessage 的插槽：
                带插槽的行每次重画都会跟着重画。 -->
-            <!-- 这条消息下面：上面是支线里的讨论，下面是从它出来的任务。两样都有时合成一块。 -->
+            <!-- 这条消息下面合成一块：上面是它的支线（转成了任务就多一行任务名），下面一件
+                 一行是从这里拆出去的任务。支线里的回复下面，是从那句话拆出去的任务。 -->
             <div
-              v-if="!notice && threadable && (m.thread || under(m.id).length)"
+              v-if="!notice && ((threadable && m.thread) || under(m.id).length)"
               class="tl-thread msg-work"
+              :class="{ 'msg-work--mine': became(m)?.tone === 'mine' }"
               :data-feed-of="m.id"
-              :class="{ 'msg-work--joined': !!m.thread && under(m.id).length > 0 }"
             >
-              <ThreadLine
-                v-if="m.thread"
-                v-guide-anchor="replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'"
-                :summary="m.thread ?? null"
-                :replying="replyingFor?.(m) ?? null"
-                :replying-seats="replyingSeatsFor?.(m) ?? []"
-                :status="threadStatusFor?.(m) ?? null"
-                :refs="refs"
-                :name-of="nameOf ?? String"
-                :avatar-of="avatarOf"
-                :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
-                @open="emit('open-thread', m)"
-              />
-              <div v-if="under(m.id).length" class="msg-work__tasks">
+              <div v-if="threadable && m.thread" class="msg-work__talk">
                 <TaskCard
-                  v-for="task in under(m.id)"
-                  :key="task.id"
+                  v-if="became(m)"
                   v-guide-anchor="'task-card'"
-                  :task="task"
-                  :owner-name="ownerName(task)"
-                  :in-list="!!m.thread"
+                  :task="became(m)!"
+                  :owner-name="ownerName(became(m)!)"
+                  head
                   @open="emit('open-card', $event)"
                 />
+                <ThreadLine
+                  v-guide-anchor="
+                    replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'
+                  "
+                  :summary="m.thread ?? null"
+                  :replying="replyingFor?.(m) ?? null"
+                  :replying-seats="replyingSeatsFor?.(m) ?? []"
+                  :status="threadStatusFor?.(m) ?? null"
+                  :refs="refs"
+                  :name-of="nameOf ?? String"
+                  :avatar-of="avatarOf"
+                  :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
+                  @open="emit('open-thread', m)"
+                />
               </div>
+              <TaskCard
+                v-for="task in madeFrom(m)"
+                :key="task.id"
+                v-guide-anchor="'task-card'"
+                :task="task"
+                :owner-name="ownerName(task)"
+                :owner-avatar="task.owner ? avatarOf(task.owner) : undefined"
+                in-list
+                :lone="!(threadable && m.thread) && madeFrom(m).length === 1"
+                @open="emit('open-card', $event)"
+              />
             </div>
           </template>
         </template>
@@ -724,41 +750,41 @@ const rowLabels = computed(() =>
   margin-left: 54px;
   width: calc(100% - 70px);
 }
-/* 消息下面那一块：只有任务时，一件一张卡；支线和任务都有时，支线那一行在上，任务列在
-   下面一块白底里，合成一块。 */
+/* 消息下面那一块：支线和任务长在一起，同一个底色。支线那几行在上，转成任务时顶上多
+   一行任务名；拆出去的任务一件一行，排在下面。 */
 .msg-work {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 6px;
-}
-.msg-work :deep(.thread-line) {
-  margin-top: 0;
-}
-.msg-work__tasks {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.msg-work--joined {
   max-width: 620px;
-  gap: 0;
+  margin-top: 6px;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: var(--fill);
   overflow: hidden;
 }
-.msg-work--joined :deep(.thread-line) {
+.msg-work--mine {
+  border-color: var(--warn);
+}
+.msg-work > * + * {
+  border-top: 1px solid var(--line);
+}
+/* 任务名那一行和下面的回复是同一段对话：一起变色，点哪儿都打开它。 */
+.msg-work__talk {
+  display: flex;
+  flex-direction: column;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.msg-work__talk:hover {
+  background: var(--line-2);
+}
+.msg-work__talk > :deep(.task-card--head + .thread-line) {
+  padding-top: 2px;
+}
+.msg-work :deep(.thread-line),
+.msg-work :deep(.thread-line:hover) {
   max-width: none;
   margin-top: 0;
   background: transparent;
-}
-.msg-work--joined .msg-work__tasks {
-  gap: 0;
-  margin: 0 6px 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  overflow: hidden;
 }
 .tl-content {
   position: relative;

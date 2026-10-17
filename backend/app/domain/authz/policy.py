@@ -4,8 +4,7 @@ Verified room members and project members can access shared rooms. Private
 rooms — private chats and private channels — require exact room membership.
 Missing credentials or an empty roster grant nothing. Credential scope is
 checked by ActorResolver before this policy.
-Managing a project — its external members and the settings that used to need a
-lead — requires the project's owner or an owner/admin of the project's team.
+What a person may do inside a project is ``app.auth.project_roles``.
 """
 
 import uuid
@@ -18,9 +17,6 @@ from app.domain.topic.models import TopicRole
 # Injected adapters — each a thin DB read wired in app.api.auth.
 TopicRoleReader = Callable[[uuid.UUID, str], Awaitable[TopicRole | None]]
 ProjectMemberCheck = Callable[[uuid.UUID, str], Awaitable[bool]]  # project, handle
-ProjectOwnerReader = Callable[[uuid.UUID], Awaitable[str | None]]
-# project, handle -> whether that handle is an owner or admin of the project's team
-TeamManagerCheck = Callable[[uuid.UUID, str], Awaitable[bool]]
 AgentBindingCheck = Callable[[str], Awaitable[bool]]  # handle → carries a binding?
 
 
@@ -105,24 +101,3 @@ async def refuse_management_action(
     if await carries_agent_binding(actor.handle):
         return "agent 不能执行管理动作"
     return None
-
-
-async def can_manage_project_members(
-    actor: Actor,
-    *,
-    project_id: uuid.UUID,
-    project_owner: ProjectOwnerReader,
-    team_manager: TeamManagerCheck,
-) -> bool:
-    """May ``actor`` manage this project: its external members, and every setting
-    that is the project's rather than one room's?
-
-    The project belongs to its team, so the team's owner and admins manage it,
-    as does the person who owns the project. Credentials prove identity, not
-    management authority.
-    """
-    if not actor.authenticated:
-        return False
-    if await project_owner(project_id) == actor.handle:
-        return True
-    return await team_manager(project_id, actor.handle)

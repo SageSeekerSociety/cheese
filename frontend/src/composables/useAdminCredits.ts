@@ -24,6 +24,7 @@ import {
   listCreditTeams,
   listPlanModels,
   listPlans,
+  setCreditTeamOverseas,
   setCreditTeamPlan,
   updatePlan,
 } from '@/api/adminCredits'
@@ -188,6 +189,8 @@ export function useAdminCredits() {
   const historyError = ref<string | null>(null)
   const teamPlanSaving = ref(false)
   const teamPlanError = ref<string | null>(null)
+  const overseasSaving = ref(false)
+  const overseasError = ref<string | null>(null)
   let openTeamId: number | null = null
 
   async function loadTeam(id: number) {
@@ -218,6 +221,7 @@ export function useAdminCredits() {
     team.value = null
     history.value = null
     teamPlanError.value = null
+    overseasError.value = null
     panelOpen.value = true
     void loadTeam(row.id)
     void loadHistory(row.id)
@@ -239,6 +243,22 @@ export function useAdminCredits() {
       teamPlanError.value = message(e, t('credits.panel.planFailed'))
     } finally {
       teamPlanSaving.value = false
+    }
+  }
+
+  /** 开通或收回需开通才能用的模型。和改方案一样：成功后面板、操作记录、列表的标记一起重拉。 */
+  async function setTeamOverseas(approved: boolean) {
+    const current = team.value
+    if (!current || approved === current.overseas_approved) return
+    overseasSaving.value = true
+    overseasError.value = null
+    try {
+      await setCreditTeamOverseas(current.id, approved)
+      await Promise.all([loadTeam(current.id), loadHistory(current.id), loadTeams()])
+    } catch (e) {
+      overseasError.value = message(e, t('credits.panel.overseasFailed'))
+    } finally {
+      overseasSaving.value = false
     }
   }
 
@@ -311,6 +331,9 @@ export function useAdminCredits() {
     openTeam,
     retryTeam,
     changeTeamPlan,
+    overseasSaving,
+    overseasError,
+    setTeamOverseas,
     grantOpen,
     grantSaving,
     grantError,

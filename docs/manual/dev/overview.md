@@ -61,7 +61,7 @@ covers:
 
 - **浏览器和桌面端**：只和前端 nginx 打交道。
 - **设备与云机器**：用户电脑上的 Go 连接器（`cli/`）和云机器（MicroCloud）经机器连接服务接入，只执行命令、存文件；调模型只发生在会话主机上，走模型隧道。
-- **GitHub**：平台 GitHub App 的私钥只在主 API；沙盒要推代码时换一张一小时有效、只限绑定仓库的令牌（`backend/app/domain/agent/github_app.py`）。
+- **GitHub**：平台 GitHub App 的私钥只在主 API；沙盒要推代码时换一张一小时有效、只限绑定仓库的令牌（`backend/app/domain/project/github_app.py`）。
 - **模型厂商**：只有计量代理和网关持有上游凭证。
 - **Cloudflare R2**：数据库备份的异地副本（`deploy/r2-upload.py`）。
 
@@ -84,7 +84,7 @@ covers:
 | 会话与骨架 | [记忆](/dev/memory) | 记忆树的分层、两个作用域、写入与整理 |
 | 会话与骨架 | [技能](/dev/skills) | 平台说明库、平台技能、项目技能和分身定义怎么装进会话 |
 | 会话与骨架 | [平台工具与会话侧 MCP](/dev/mcp) | 平台工具表怎么变成每种骨架手里的工具 |
-| 会话与骨架 | [项目自定义 MCP](/dev/remote-mcp) | 项目声明的 MCP 服务怎么被代连、代桥接 |
+| 会话与骨架 | [项目的 MCP 服务器](/dev/remote-mcp) | 项目的 MCP 服务器从哪来、会话怎么经网关连到它们、本地命令在哪跑 |
 | 会话与骨架 | [cheese CLI 原理](/dev/cli) | 沙盒里的 `cheese` 命令和用户电脑上的 `cheesehost` |
 | 模型与计费 | [模型调用流程](/dev/llm) | 一次模型请求从出发到拿回 token 的完整路径 |
 | 模型与计费 | [计量代理](/dev/metering-proxy) | 模型流量的唯一出口：持有订阅凭证，计量、准入、改道 |

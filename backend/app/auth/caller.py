@@ -49,7 +49,7 @@ async def handle_named_by(session: AsyncSession, claims: AccessClaims) -> str:
     the caller was told their sign-in had lapsed — on the files and git-diff
     routes alone, because every other route resolves the caller through
     ``ActorResolver``, which repairs the same confusion
-    (``app.api.auth._recover_numeric_handle``).
+    (``app.api.auth.resolver.ActorResolver._recover_numeric_handle``).
 
     Only a token that states no claim carries an id: its ``handle`` is then
     ``sub``, the int user PK, and the name has to come from the row. An id that
@@ -91,9 +91,10 @@ async def may_access_project(
     can no longer check — expired, or signed for another deployment — was told
     the project was gone, by a sentence it could not act on: the frontend
     refreshes on 401 and retries, and has nothing to do with a 404. It is
-    ``app.api.auth.reject_failed_credential``'s rule, for a route that has no
-    ``Actor`` to hand it: 认不出 is an answer, but only no-credential-at-all
-    may be treated as anonymous. With no ``Authorization`` header and no
+    ``app.api.auth.resolver.ActorResolver.reject_failed_credential``'s rule,
+    for a route that has no ``Actor`` to hand it: 认不出 is an answer, but only
+    no-credential-at-all may be treated as anonymous. With no ``Authorization``
+    header and no
     ``token`` parameter nothing was presented, so genuinely anonymous traffic
     still gets ``False``.
     """

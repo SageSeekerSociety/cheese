@@ -28,12 +28,16 @@ from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.project.models import Project
-from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import stub_compute
-from tests.integration.conftest import put_on_plan, registered
+from tests.integration.conftest import (
+    approve_overseas,
+    project_service,
+    put_on_plan,
+    registered,
+)
 from tests.unit.test_device_provider import FakeHub
 
 
@@ -54,9 +58,10 @@ async def _room(factory) -> dict[str, uuid.UUID]:
     """一个房间，里面一条活。项目按正常路子建，所以它自带它的芝士。"""
     async with factory() as session:
         await registered(session, "alice")
-        project = await ProjectService(session).create(name="P", owner_handle="alice")
+        project = await project_service(session).create(name="P", owner_handle="alice")
         # The work here binds Claude subscription models, which Free leaves out.
         await put_on_plan(session, project.team_id, "reserve")
+        await approve_overseas(session, project.team_id)
         room = await TopicService(session).create(
             project_id=project.id, title="房间", created_by="alice"
         )

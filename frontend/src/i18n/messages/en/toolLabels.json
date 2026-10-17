@@ -72,7 +72,6 @@
   "cheeseMembers": "List channel members",
   "cheeseGhToken": "Get a GitHub token",
   "cheeseStatus": "View platform status",
-  "cheeseSyncAgents": "Refresh subagent settings",
   "cheeseServe": "Set up the preview",
   "cheeseLibraryLs": "List project library files",
   "cheeseLibraryGet": "Fetch a project library file",
@@ -106,5 +105,6 @@
   "bashKill": "Stop the background task",
   "bashList": "List background tasks",
   "cheeseSkillDraft": "Draft a skill",
-  "cheeseSkillUpdate": "Propose a change to a skill"
+  "cheeseSkillUpdate": "Propose a change to a skill",
+  "codemode": "Run script"
 }

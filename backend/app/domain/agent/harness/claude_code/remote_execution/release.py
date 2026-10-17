@@ -281,18 +281,35 @@ def sources():
     # deferred-import: this file also runs on the machine, with no `app` package
     from app.domain.agent import executor_transport
 
+    # deferred-import: this file also runs on the machine, with no `app` package
+    from app.domain.agent.harness.driven import mcp_gateway
+
     directory = Path(__file__).parent
     result = {
         name: (directory / name).read_text()
         for name in (
             "client.py",
             "shell_stop.py",
-            # Windows' locks, process trees and detached starts, which the two
-            # above load from beside them there.
+            # The parts of `client.py` it imports from beside itself: the
+            # command it runs for the build's shell prefix, the namespace it
+            # enters a session into, and the files a turn hands a person.
+            "shell_prefix.py",
+            "namespace.py",
+            "send_user_file.py",
+            # Windows' locks, process trees and detached starts, which
+            # `shell_stop.py` and `runtime.py` load from beside them there.
             "portable.py",
             "proxy.js",
             "private.py",
             "runtime.py",
+            # The parts of `runtime.py` it imports from beside itself: the
+            # primitives every piece reads, the command registry, the project's
+            # context and the tool calls. It is shipped whole and loaded by
+            # path, so it can reach no module of the app.
+            "runtime_core.py",
+            "runtime_commands.py",
+            "runtime_context.py",
+            "runtime_calls.py",
             "context_service.py",
             "forwarded_fs.py",
             "release.py",
@@ -309,6 +326,8 @@ def sources():
                 Path(__file__).resolve().parents[6] / "sandbox/cheese"
             ).read_text(),
             "executor_transport.py": Path(executor_transport.__file__).read_text(),
+            # The door its Claude Code reaches the project's MCP servers by.
+            "mcp_gateway.py": Path(mcp_gateway.__file__).read_text(),
         }
     )
     return result
@@ -322,8 +341,8 @@ def sources():
 # Every other helper stays as the launch left it, so a change to one is a
 # change to the launch (`launch_only`). `client.py` is replaced on disk here,
 # but `prepare` wrote the shell prefix, the launch environment, the argv and
-# the MCP config out of it once, the forwarded view's server and the other MCP
-# bridges keep the modules they started with, and nothing writes those again.
+# the MCP config out of it once, the forwarded view's server and the MCP
+# gateway keep the modules they started with, and nothing writes those again.
 # A helper added later is launch-only until it is shown to be one of these.
 RESIDENT = frozenset({"proxy.js", "context_service.py", "cheese.py"})
 
@@ -347,7 +366,7 @@ def hook_module(proxy_source: str, target: dict, platform_tools: list[str]) -> s
 def allow_native_tools(settings: dict, platform_tools: list[str]) -> None:
     """Allow the native server's tools by name, the table's rows included."""
     allowed = settings.setdefault("permissions", {}).setdefault("allow", [])
-    for name in ("invoke", "project_tools", *platform_tools):
+    for name in ("invoke", *platform_tools):
         tool = "mcp__native__" + name
         if tool not in allowed:
             allowed.append(tool)

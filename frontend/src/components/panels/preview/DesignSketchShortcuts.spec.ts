@@ -177,3 +177,16 @@ it('收起来的那一页不接全局快捷键：⌘Z 改不到它', async () =>
   await fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', metaKey: true })
   expect(rects(ui)).toBe(2)
 })
+
+it('收起来的那一刻，按着的空格和手上的平移一起放下', async () => {
+  // 空格和 panning 住在视口那一半里，这一页收起来却是组件那头转达的。两边拆开之后
+  // 这条路要还连着：断了的话收起时那句「放下手里的东西」会落到全局的 window.blur
+  // 上，什么也不做，而这一页是 v-show 收起来的，松手之外没人会再来收尾。
+  const ui = mount()
+  await painted(ui)
+  const viewport = () => ui.container.querySelector('.design-image__viewport') as HTMLElement
+  await fireEvent.keyDown(window, { key: ' ', code: 'Space' })
+  await waitFor(() => expect(viewport().className).toContain('is-pannable'))
+  await ui.rerender({ src: 'blob:sketch', alt: 'design.png', identity: 'v1', active: false })
+  await waitFor(() => expect(viewport().className).not.toContain('is-pannable'))
+})

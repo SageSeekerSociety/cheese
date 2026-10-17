@@ -31,9 +31,12 @@ def _keep(client, rows) -> None:
     client.portal.call(add)
 
 
-def _error(project, fingerprint, *, ago=timedelta(minutes=5)) -> RunRecord:
+def _error(
+    project, fingerprint, *, turn_id=None, ago=timedelta(minutes=5)
+) -> RunRecord:
     return RunRecord(
         project_id=project,
+        turn_id=turn_id,
         kind="backend_error",
         severity="error",
         content="后端报错（GET /projects/x/site）：ConnectError",
@@ -50,12 +53,13 @@ def test_only_a_platform_admin_reads_them(client, admin):
 
 def test_one_error_across_projects_is_one_line_that_counts_them(client, admin):
     a, b = _project(client), _project(client)
+    turn = uuid.uuid4()
     _keep(
         client,
         [
             _error(a, "fp-site"),
             _error(a, "fp-site"),
-            _error(b, "fp-site"),
+            _error(b, "fp-site", turn_id=turn, ago=timedelta(minutes=1)),
             _error(a, "fp-other"),
             # Older than the window asked for: not counted.
             _error(a, "fp-site", ago=timedelta(days=2)),
@@ -86,8 +90,16 @@ def test_one_error_across_projects_is_one_line_that_counts_them(client, admin):
         params={"key": "fp-site", "kind": "backend_error"},
         headers=admin,
     ).json()["data"]
+    assert shown["turn_id"] == str(turn)
     assert "ConnectError" in shown["meta"]["stack"]
     assert {p["project_id"] for p in shown["places"]} == {str(a), str(b)}
+
+    other = client.get(
+        "/admin/run-records/detail",
+        params={"key": "fp-other", "kind": "backend_error"},
+        headers=admin,
+    ).json()["data"]
+    assert other["turn_id"] is None
 
 
 def test_one_frontend_bug_in_two_rooms_is_one_line(client, admin, monkeypatch):

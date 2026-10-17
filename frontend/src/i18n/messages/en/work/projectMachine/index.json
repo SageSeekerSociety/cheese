@@ -6,7 +6,6 @@
   "distribution": "Where agents are now",
   "hint": "Only affects agents that have not started; agents already working keep their own environment",
   "loadFailed": "Could not load environment settings",
-  "managedBy": "Project managers can change the default",
   "noneStarted": "No agents have started",
   "onDevice": "{name} · {agents}",
   "onPlatform": "{env} · {agents}",

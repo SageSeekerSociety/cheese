@@ -19,6 +19,9 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+# Assemble the app up front: this file drives the app stack, and conftest now does
+# that only for `client`/`python_client` (the layer ceiling counts wall clock).
+import app.main  # noqa: F401
 from app.core.config import settings
 from app.domain.agent import device_provider, machine_launcher, screen_identity
 from app.domain.agent.device_hub import DeviceCallError, HubScreen

@@ -46,16 +46,19 @@ elif _db_url.startswith("postgresql+psycopg2://"):
 # Only a test's own child process sets it; the pytest suite runs the
 # production pool shape and closes each event loop's connections itself
 # (tests/conftest.py, tests/integration/conftest.py).
-_engine_kwargs: dict[str, Any] = (
-    {"poolclass": NullPool}
-    if os.environ.get("CHEESEX_TEST_NULLPOOL")
-    else {
-        "pool_size": settings.db_pool_size,
-        "max_overflow": settings.db_max_overflow,
+if os.environ.get("CHEESEX_TEST_NULLPOOL"):
+    _engine_kwargs: dict[str, Any] = {"poolclass": NullPool}
+else:
+    # `db_pool_size` / `db_max_overflow` are the CONTAINER's budget, and this is
+    # one of its workers (`backend/Dockerfile` passes the same BACKEND_WORKERS
+    # to uvicorn's --workers), so it takes its share of them.
+    _pool_size, _pool_overflow = settings.db_connections_per_worker()
+    _engine_kwargs = {
+        "pool_size": _pool_size,
+        "max_overflow": _pool_overflow,
         "pool_timeout": settings.db_pool_timeout_s,
         "pool_pre_ping": settings.db_pool_pre_ping,
     }
-)
 
 
 def _json_dumps_utf8(obj: Any) -> str:

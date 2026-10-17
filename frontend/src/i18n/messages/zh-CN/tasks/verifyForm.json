@@ -1,0 +1,20 @@
+{
+  "applyReason": "申请理由",
+  "applyReasonHint": "请简要说明参与题目的目的和期望",
+  "atLeastOne": "至少填写一项",
+  "contact": "联系方式",
+  "email": "邮箱",
+  "emailInvalid": "请输入正确的邮箱地址",
+  "fill": "一键填入",
+  "ignore": "忽略",
+  "phone": "手机号",
+  "phoneInvalid": "请输入正确的手机号",
+  "phoneOrEmail": "请至少填写手机号或邮箱中的一项",
+  "realNameTip": "此题目要求实名参与，你的联系方式将用于身份验证和通知",
+  "reasonTooLong": "理由最多500个字符",
+  "saveLocal": "保存联系方式到本地，下次自动填写",
+  "saveLocalTip1": "为方便你下次填写，可选择将联系方式保存在浏览器本地。",
+  "saveLocalTip2": "这些信息仅存储在你的设备上，平台不会收集或保存。",
+  "saveLocalTip3": "申请理由不会被保存。",
+  "savedFound": "检测到你之前保存的联系方式，是否填入？"
+}

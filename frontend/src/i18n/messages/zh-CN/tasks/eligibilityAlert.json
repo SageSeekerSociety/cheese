@@ -1,0 +1,14 @@
+{
+  "cannotJoinTitle": "暂时无法参与",
+  "goFillIn": "前往填写",
+  "manageMyTeams": "管理我的团队",
+  "manageThisTeam": "管理这个团队",
+  "memberMissingRealName": "以下成员尚未填写实名信息：",
+  "needRealName": "这道题需要实名信息才能参与。",
+  "needTeam": "你需要创建或加入一个团队才能参与这道题",
+  "rankHint": "完成更多基础题目来提升等级，解锁更高难度的题目。",
+  "teamNotEligibleTitle": "团队不满足参与条件",
+  "teamTooBig": "这道题要求团队最多 {count} 人，你的团队人数超出限制。",
+  "teamTooSmall": "这道题要求团队至少 {count} 人，邀请更多成员加入团队。",
+  "teamsNoneEligible": "你有 {count} 个团队，但没有一个符合这道题的条件"
+}

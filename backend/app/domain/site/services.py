@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlsplit
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.errors import (
     ConflictError,
@@ -24,10 +25,9 @@ from app.core.sentences import say
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.site.models import Site, SiteRelease
-from app.domain.team.services import team_service
-from app.domain.user.services import user_by_handle
 
 # Publication copies untrusted repository files into platform storage, so bound
 # the allocation before reading blobs. These are bundle limits, not upload limits.
@@ -40,21 +40,14 @@ BUILD_REQUIRED = say("siteBuildRequired")
 async def require_site_access(
     session: AsyncSession, handle: str, project_id: uuid.UUID
 ) -> None:
-    """Private sites follow project and team membership, even with authz disabled."""
+    """A private site is read by whoever may read its project — the same answer
+    the project itself gives, so leaving the project closes the site too. Holds
+    even with authz disabled."""
     project = await ProjectService(session).get(project_id)
     if project is None or not handle:
         raise NotFoundError("Site not found")
-    if project.owner_handle == handle:
-        return
-    if await MemberService(session).get(project_id=project_id, user_handle=handle):
-        return
-    if project.team_id is not None:
-        user = await user_by_handle(session, handle)
-        if user is not None and await team_service(session).is_team_member(
-            project.team_id, user.id
-        ):
-            return
-    raise NotFoundError("Site not found")
+    if not await may_read_project(session, project_id=project_id, handle=handle):
+        raise NotFoundError("Site not found")
 
 
 async def can_publish_site(
@@ -63,7 +56,9 @@ async def can_publish_site(
     project = await ProjectService(session).get(project_id)
     if project is None or not handle:
         return False
-    return await MemberService(session).manages(project_id, handle)
+    return await MemberService(session).manages(
+        project_id, handle, Permission.edit_settings
+    )
 
 
 async def get_current_release(

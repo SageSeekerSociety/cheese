@@ -12,7 +12,6 @@ export interface DocAppVersionInfo {
   version: number
   note: string
   author: string
-  requested_by: string | null
   /** Whether the platform's browser ran it before it was kept. */
   checked: boolean
   created_at: string

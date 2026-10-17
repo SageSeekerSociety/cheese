@@ -7,9 +7,11 @@ version. A version that fails when the platform's browser runs it is not kept,
 and the writer is told why; when no browser can be had, it is kept unchecked.
 """
 
+import uuid
+
 import pytest
 
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import mint_delegated_credential, mint_scoped_token
 from app.domain.web_snippet import check
 from tests.conftest import seed_user
 from tests.integration.conftest import (
@@ -44,6 +46,12 @@ def _project(client) -> tuple[str, str, dict]:
     """dave's project with a library document alice wrote; alice and bob are
     on its team, mallory is not. Returns the project, the document and the
     credential 芝士 works in the project with."""
+    pid, doc, token, _, _ = _project_with_room(client)
+    return pid, doc, token
+
+
+def _project_with_room(client) -> tuple[str, str, dict, str, str]:
+    """``_project``, with the room 芝士 works in and its seat there."""
     for who in ("alice", "bob", "dave", "mallory"):
         seed_user(client, who)
     pid = post_project(client, json={"name": "P"}, owner="dave").json()["data"]["id"]
@@ -68,7 +76,7 @@ def _project(client) -> tuple[str, str, dict]:
     token = mint_scoped_token(
         project_id=pid, topic_id=room, agent_handle=seat, access_scope="project"
     )
-    return pid, made.json()["data"]["id"], {"X-Cheese-Token": token}
+    return pid, made.json()["data"]["id"], {"X-Cheese-Token": token}, room, seat
 
 
 def _save(client, doc: str, agent: dict, code: str = CODE):
@@ -186,3 +194,49 @@ def test_the_pictures_taken_when_it_was_kept_are_its_readers(client, browser):
     )
     assert refused.status_code in (403, 404)
     assert refused.content != PNG
+
+
+def test_its_writer_may_have_the_pictures_back_with_the_save(client, browser):
+    """For the AI teammate to look at what it made before it moves on: the
+    light pictures, by width, only when asked for."""
+    import base64
+
+    _, doc, agent = _project(client)
+    shots = {"400-light": PNG, "720-light": PNG, "400-dark": PNG, "720-dark": PNG}
+    browser.append(check.Ran(heights={400: 300, 720: 260}, shots=shots))
+    asked = client.post(
+        f"/documents/{doc}/apps",
+        params={"pictures": "true"},
+        json={"code": CODE, "note": "第一版"},
+        headers=agent,
+    )
+    assert asked.status_code == 200, asked.text
+    pictures = asked.json()["data"]["pictures"]
+    assert set(pictures) == {"400", "720"}
+    assert base64.b64decode(pictures["720"]) == PNG
+
+    browser.append(check.Ran(heights={400: 300, 720: 260}, shots=shots))
+    plain = _save(client, doc, agent)
+    assert "pictures" not in plain.json()["data"]
+
+
+def test_a_version_made_because_someone_asked_is_the_teammates_own(client, browser):
+    """芝士 answering someone on the document writes the app as itself: the
+    version records and serves no one as having asked for it."""
+    pid, doc, _, room, seat = _project_with_room(client)
+    asked = mint_delegated_credential(
+        user_id=None,
+        handle="bob",
+        agent=seat,
+        project_id=pid,
+        topic_id=room,
+        work=str(uuid.uuid4()),
+        read_only=False,
+        ttl_s=300,
+    )
+
+    saved = _save(client, doc, {"X-Cheese-Token": asked})
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["data"]["author"] == seat
+    assert "requested_by" not in saved.json()["data"]

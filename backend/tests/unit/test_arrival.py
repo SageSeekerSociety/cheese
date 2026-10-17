@@ -1,7 +1,7 @@
 """怎么送到 —— 人走站内信，agent 读自己房间的时间线。
 
 这是全系统唯一合法的人 / agent 分叉，分的是物理事实（人有浏览器，agent 有一条会
-话），不是身份：谁该收到由 `delivery/addressing.py` 答，对两者是同一句话。
+话），不是身份：谁该收到由 `addressing.py` 答，对两者是同一句话。
 """
 
 import uuid

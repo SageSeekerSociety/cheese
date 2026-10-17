@@ -31,7 +31,8 @@ rejects `@/network` with a message pointing at `@/api`.
 `localStorage` and `sessionStorage` throw — Safari private mode, a full quota, a
 context with no browser at all — so nothing outside `src/lib/browserStorage.ts`
 may reference them. Import `storageGet`, `storageSet`, `storageRemove`,
-`storageGetJson`, `storageSetJson` or `storageGetStrings`: they never throw, and a
+`storageGetJson`, `storageSetJson`, `storageGetStrings`, `storageKeys` or
+`storageAvailable`: they never throw, and a
 blocked storage just means the preference does not persist. Keep the key and the
 value format that is already in users' browsers. CI runs
 `pnpm run lint:storage` (`lint:storage:update` rewrites the baseline downward);
@@ -60,9 +61,9 @@ layout or a shell is not a candidate.
 
 A **scene** is a router page under `src/views` or an SFC under
 `src/components/panels`. `pnpm run lint:scenes` freezes the standalone-ready ones
-in `scene-baseline.json`; a frozen scene that stops being ready fails, and a
-**new** page or panel that is not ready fails from day one, with no baseline edit
-to excuse it. Standalone-ready means grade A — props and events only, no
+in the tree at the merge base with `origin/main`; a scene that is ready there and
+stops being ready fails, and a **new** page or panel that is not ready fails from
+day one. Nothing is written down, so there is no baseline edit to excuse either. Standalone-ready means grade A — props and events only, no
 fetching, no `useRoute`/`$route`, no business store. To get there, lift the read
 into a composable or the shell: `PanelDoc` (shell, fetches) →
 `composables/usePanelDoc.ts` → `PanelDocView.vue` (props only). Full reasoning,

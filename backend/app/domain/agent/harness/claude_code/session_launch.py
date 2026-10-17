@@ -14,38 +14,52 @@ module while this module's only reader imported the plan would be a cycle
 import json
 import shlex
 
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS
 from app.domain.agent.harness.prompt import SUBAGENT_RULES
+
+#: The window Claude Code assumes for a model id it does not recognise.
+_ASSUMED_WINDOW = 200_000
+#: The range Claude Code accepts for an auto-compact window.
+_COMPACT_RANGE = (100_000, 1_000_000)
+
+
+def compact_windows() -> dict[str, dict[str, int]]:
+    """Claude Code's ``modelSettings``: where each gateway model compacts.
+
+    Per model, because one session runs several: its own model, the subagent
+    default, and the models offered as subagent types. A model compacts where
+    its provider recommends (``GatewayModel.compact_window``), else at the
+    window the gateway declares, else at the 200K Claude Code would assume
+    anyway. Claude Code caps each at the window it believes the session's
+    model has (``gateway_usage.window_env``), and a subagent on a model with a
+    smaller window than that compacts before it overflows its own. A
+    ``claude-`` id is left out: Claude Code knows its window itself. So is a
+    model nobody can pick (``selectable``), which no session runs on.
+
+    Sorted by id: the settings are part of what a launch is compared by, and
+    the gateway's row order is not something a session should restart for."""
+    low, high = _COMPACT_RANGE
+    return {
+        m.id: {
+            "autoCompactWindow": min(
+                high,
+                max(low, m.compact_window or m.context_window or _ASSUMED_WINDOW),
+            )
+        }
+        for m in sorted(gateway_catalog.snapshot(), key=lambda m: m.id)
+        if m.selectable and not m.id.lower().startswith("claude-")
+    }
 
 
 def session_settings() -> dict:
     """Base Claude settings for one seat's session.
 
     No hook here observes the session: the runner reads what it does from its
-    own stdout. The hooks left are the ones that act — the model catalogue
-    written as agent definitions at session start and on each prompt, and the
-    step-title and shared-checkout rules put in front of every agent the
-    session starts — and the
-    remote-execution client adds the rest of its own (``client.prepare``).
+    own stdout. The hook left is one that acts — the step-title and
+    shared-checkout rules put in front of every agent the session starts — and
+    the remote-execution client adds the rest of its own (``client.prepare``).
     """
-    # 发现层：把项目的模型目录写成本会话的 CC 分身定义文件（名字、一句话描
-    # 述、model=目录 id），主 agent 于是在 Agent 工具的可用清单里直接读到可
-    # 指定哪个模型。闸在准入（/llm/admission）——指定了目录外的模型会被拒并
-    # 列出可选；这里是让人事先知道范围。sync-agents 自己恒退出 0，够不着后
-    # 端时这一轮一切照旧。
-    sync_agents = [
-        {
-            "hooks": [
-                {
-                    "type": "command",
-                    # Existing rooms can retain a CLI release without sync-agents.
-                    # Discovery must never block a user prompt on that old CLI.
-                    "command": "cheese sync-agents || true",
-                    "timeout": 15,
-                }
-            ]
-        }
-    ]
     # An agent the session starts — the Agent tool's, a workflow's — gets none
     # of the session's system prompt, but its every step is a line on the room's
     # 施工现场 all the same, and it commits, pulls and starts servers beside
@@ -118,8 +132,7 @@ def session_settings() -> dict:
         # identities (`domain/repository/identity.py`), not to the CLI.
         "attribution": {"commit": "", "pr": "", "sessionUrl": False},
         "hooks": {
-            "SessionStart": sync_agents,
-            "UserPromptSubmit": sync_agents,
             "SubagentStart": subagent_rules,
         },
+        "modelSettings": compact_windows(),
     }

@@ -6,10 +6,11 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const replace = vi.fn()
-const route = { params: { handle: 'crew' }, query: {} as Record<string, string> }
+const copy = vi.fn()
+const route = { name: 'TeamsDetailMembers', params: { handle: 'crew' }, query: {} as Record<string, string> }
 vi.mock('vue-router', async () => ({
   ...(await vi.importActual<typeof import('vue-router')>('vue-router')),
   useRoute: () => route,
@@ -23,12 +24,23 @@ vi.mock('@/api/teams', () => ({
     approveJoinRequest: vi.fn(),
     removeMember: vi.fn(),
     createInvitation: vi.fn(),
+    getJoinLink: vi.fn(async () => ({ token: 'first', approval: true })),
+    resetJoinLink: vi.fn(async () => ({ token: 'second', approval: true })),
+    updateJoinLink: vi.fn(async () => ({ token: 'first', approval: false })),
+    update: vi.fn(),
   },
 }))
 const lookupUser = vi.fn()
 vi.mock('@/api', async () => ({
   ...(await vi.importActual<typeof import('@/api')>('@/api')),
   lookupUser: (...a: unknown[]) => lookupUser(...a),
+}))
+const inboxListeners = new Set<() => void>()
+vi.mock('@/lib/inboxLive', () => ({
+  onInboxChange: (fn: () => void) => {
+    inboxListeners.add(fn)
+    return () => inboxListeners.delete(fn)
+  },
 }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -47,6 +59,7 @@ import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
 beforeAll(() => {
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } })
   vi.stubGlobal('devicePixelRatio', 1)
   // The invite dialog is an overlay, and Vuetify positions overlays against it.
   vi.stubGlobal('visualViewport', new EventTarget())
@@ -62,7 +75,10 @@ beforeAll(() => {
 afterEach(() => {
   cleanup()
   route.query = {}
+  inboxListeners.clear()
   vi.clearAllMocks()
+  vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [] } as never)
+  vi.mocked(TeamsApi.listTeamJoinRequests).mockResolvedValue({ applications: [] } as never)
   // 默认「点了确定」：取消那一格在下面的用例里单独摆。
   dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
 })
@@ -71,6 +87,7 @@ function mount(overrides: Partial<Team>) {
   setLocale('zh-CN')
   const team = ref({
     id: 7,
+    handle: 'crew',
     name: 'Cheese 核心组',
     intro: '',
     avatarId: 1,
@@ -81,25 +98,164 @@ function mount(overrides: Partial<Team>) {
     visibility: 'public',
     ...overrides,
   } as unknown as Team)
-  return render(Members as unknown as Component, {
+  const view = render(Members as unknown as Component, {
     global: {
       plugins: [createVuetify({ components, directives })],
       provide: { [teamDataInjectionKey as symbol]: team },
-      stubs: { TeamJoinLinkCard: { template: '<section>小队链接管理</section>' } },
     },
   })
+  // 注入的那一份就是页头读的那一份：团队被改过没有，看它。
+  return { ...view, team }
 }
 
 describe('who manages the team link', () => {
   it('an admin who is not among the listed examples', async () => {
     mount({ role: 'ADMIN' })
-    await screen.findByText('小队链接管理')
+    await screen.findByText('团队地址与加入')
   })
 
   it('not an ordinary member', async () => {
     mount({ role: 'MEMBER' })
     await waitFor(() => screen.getByText('成员列表'))
-    expect(screen.queryByText('小队链接管理')).toBeNull()
+    expect(screen.queryByText('团队地址与加入')).toBeNull()
+  })
+})
+
+// 加入链接是「能把人带进来」的人的东西：读它对普通成员只回 403。取数在这层，所以
+// 「谁去读」也断在这层——卡片由 v-if 挡住，取数要一并挡住，权限变动时也一样。
+describe('who the join link is read for', () => {
+  it('an ordinary member never asks for it', async () => {
+    mount({ role: 'MEMBER' })
+
+    await screen.findByText('成员列表')
+    expect(TeamsApi.getJoinLink).not.toHaveBeenCalled()
+  })
+
+  it('reads it once the reader is given the right to bring people in', async () => {
+    const { team } = mount({ role: 'MEMBER' })
+    await screen.findByText('成员列表')
+    expect(TeamsApi.getJoinLink).not.toHaveBeenCalled()
+
+    team.value.role = 'ADMIN'
+
+    await waitFor(() => expect(TeamsApi.getJoinLink).toHaveBeenCalledWith(7))
+    await screen.findByText('团队地址与加入')
+  })
+
+  it('drops the link and stops asking for it when the right is taken away', async () => {
+    const { team } = mount({ role: 'OWNER' })
+    await screen.findByText('团队地址与加入')
+    await waitFor(() => expect(TeamsApi.getJoinLink).toHaveBeenCalledTimes(1))
+
+    team.value.role = 'MEMBER'
+
+    await waitFor(() => expect(screen.queryByText('团队地址与加入')).toBeNull())
+    expect(TeamsApi.getJoinLink).toHaveBeenCalledTimes(1)
+  })
+})
+
+// 加入链接那张卡的取数在这层：卡片自己一件都不做，所以行为要在这里断。
+describe('running the team link', () => {
+  const linkField = () => (screen.getByLabelText('团队链接') as HTMLInputElement).value
+
+  it('hands out a link the reader can copy', async () => {
+    mount({ role: 'OWNER' })
+
+    await waitFor(() => expect(linkField()).toBe(`${location.origin}/team-invites/first`))
+    await fireEvent.click(screen.getByRole('button', { name: '复制链接' }))
+
+    expect(copy).toHaveBeenCalledWith(`${location.origin}/team-invites/first`)
+    await screen.findByRole('button', { name: '已复制' })
+  })
+
+  it('hands out a new link when the old one is reset', async () => {
+    mount({ role: 'OWNER' })
+
+    await waitFor(() => expect(linkField()).toContain('/team-invites/first'))
+    await fireEvent.click(screen.getByRole('button', { name: '重置链接' }))
+
+    await waitFor(() => expect(linkField()).toContain('/team-invites/second'))
+    expect(TeamsApi.resetJoinLink).toHaveBeenCalledWith(7)
+  })
+
+  it('turns approval off', async () => {
+    mount({ role: 'OWNER' })
+    const approval = await screen.findByLabelText('加入需要审批')
+    await waitFor(() => expect((approval as HTMLInputElement).checked).toBe(true))
+    ;(approval as HTMLInputElement).click()
+
+    await waitFor(() => expect(TeamsApi.updateJoinLink).toHaveBeenCalledWith(7, { approval: false }))
+    await waitFor(() => expect((screen.getByLabelText('加入需要审批') as HTMLInputElement).checked).toBe(false))
+  })
+
+  it('hides the team from search, and the team the page holds follows', async () => {
+    const { team } = mount({ role: 'OWNER' })
+    vi.mocked(TeamsApi.update).mockResolvedValue({ team: { ...team.value, visibility: 'stealth' } } as never)
+    const stealth = (await screen.findByLabelText(/^隐身/)) as HTMLInputElement
+    // 读链接那一下期间它按不动：等这一手过去再点。
+    await waitFor(() => expect(stealth.disabled).toBe(false))
+
+    stealth.click()
+
+    await waitFor(() => expect(TeamsApi.update).toHaveBeenCalledWith(7, { visibility: 'stealth' }))
+    await waitFor(() => expect(team.value.visibility).toBe('stealth'))
+  })
+
+  it('says so when the link cannot be read', async () => {
+    vi.mocked(TeamsApi.getJoinLink).mockRejectedValue(new Error('boom'))
+    mount({ role: 'OWNER' })
+
+    await screen.findByText('操作失败，请重试')
+    expect(screen.queryByRole('button', { name: '复制链接' })).toBeNull()
+  })
+})
+
+describe('the team address', () => {
+  it('moves the page to the new address once the team is renamed', async () => {
+    const { team } = mount({ role: 'OWNER' })
+    vi.mocked(TeamsApi.update).mockResolvedValue({ team: { ...team.value, handle: 'zhishi' } } as never)
+
+    await fireEvent.update(await screen.findByLabelText('团队地址'), ' zhishi ')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith({
+        name: 'TeamsDetailMembers',
+        params: { handle: 'zhishi' },
+        query: {},
+      })
+    )
+    expect(TeamsApi.update).toHaveBeenCalledWith(7, { handle: 'zhishi' })
+    expect(team.value.handle).toBe('zhishi')
+  })
+
+  it('says so when another team or a person already holds the address', async () => {
+    vi.mocked(TeamsApi.update).mockRejectedValue(
+      new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'handle' })
+    )
+    mount({ role: 'OWNER' })
+
+    await fireEvent.update(await screen.findByLabelText('团队地址'), 'taken-name')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await screen.findByText('这个地址已被占用')
+    expect(replace).not.toHaveBeenCalled()
+  })
+
+  it('does not carry a rejected address over to the next team', async () => {
+    vi.mocked(TeamsApi.update).mockRejectedValue(
+      new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'handle' })
+    )
+    const { team } = mount({ role: 'OWNER' })
+
+    await fireEvent.update(await screen.findByLabelText('团队地址'), 'taken-name')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await screen.findByText('这个地址已被占用')
+
+    // 换一个团队：上一队那条「被占用」不该在下一队还挂着。
+    team.value.id = 8
+
+    await waitFor(() => expect(screen.queryByText('这个地址已被占用')).toBeNull())
   })
 })
 
@@ -212,6 +368,49 @@ describe('answering a join request', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /批准/ })).toBeNull())
     expect(TeamsApi.approveJoinRequest).toHaveBeenCalledTimes(1)
     expect(TeamsApi.approveJoinRequest).toHaveBeenCalledWith(7, 31)
+  })
+
+  it('shows pending request count on the tab immediately and updates in real time when inbox pushes', async () => {
+    const first = {
+      id: 31,
+      status: 'PENDING',
+      createdAt: Date.now(),
+      user: { id: 9, username: 'shenlan', nickname: 'shenlan' },
+    }
+    const second = {
+      id: 32,
+      status: 'PENDING',
+      createdAt: Date.now(),
+      user: { id: 10, username: 'lz123y', nickname: 'lz123y' },
+    }
+    let applications = [first]
+    vi.mocked(TeamsApi.listTeamJoinRequests).mockImplementation(async () => ({ applications }) as never)
+
+    // 默认停在「成员列表」页签，不点「加入申请」也该立刻读出待处理数字。
+    mount({ role: 'OWNER' })
+
+    const requestsTab = await screen.findByRole('tab', { name: /加入申请/ })
+    await waitFor(() => expect(requestsTab.textContent).toContain('1'))
+
+    // 切到「加入申请」页签：第一条申请已经在表里。
+    await fireEvent.click(requestsTab)
+    await screen.findByText('shenlan')
+
+    // 有人新递了一条申请，收件箱连接推来通知：不用刷新页面，列表和页签角标当场更新。
+    applications = [first, second]
+    for (const fn of inboxListeners) fn()
+
+    await screen.findByText('lz123y')
+    await waitFor(() => expect(requestsTab.textContent).toContain('2'))
+  })
+
+  it('does not fetch join requests for a regular member until they become an admin', async () => {
+    const { team } = mount({ role: 'MEMBER' })
+    for (const fn of inboxListeners) fn()
+    expect(TeamsApi.listTeamJoinRequests).not.toHaveBeenCalled()
+
+    team.value = { ...team.value, role: 'ADMIN' }
+    await waitFor(() => expect(TeamsApi.listTeamJoinRequests).toHaveBeenCalledWith(7))
   })
 })
 

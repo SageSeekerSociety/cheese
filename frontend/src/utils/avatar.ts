@@ -11,9 +11,9 @@
  * handle/name (hash → hue) so a given user always gets the same color.
  *
  * That background is deliberately **theme-invariant**: the same seed yields the
- * same color in light and dark mode, which is why the white `#fff` text drawn
- * on top of it is a hard-coded literal rather than a theme token. See
- * docs/design-system.md §「唯一的例外」.
+ * same color in light and dark mode, which is why the text drawn on top of it
+ * cannot use a theme-following token either — it is `--avatar-ink`, the one
+ * value both themes share. See docs/design-system.md §「唯一的例外」.
  */
 
 /** First visible character of a name, upper-cased. Falls back to '·'. */

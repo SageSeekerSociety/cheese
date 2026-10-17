@@ -2,9 +2,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  storageAvailable,
   storageGet,
   storageGetJson,
   storageGetStrings,
+  storageKeys,
   storageRemove,
   storageSet,
   storageSetJson,
@@ -66,6 +68,45 @@ describe('字符串读写', () => {
   })
 })
 
+describe('可用性探针', () => {
+  it('能用就是 true', () => {
+    expect(storageAvailable()).toBe(true)
+    expect(storageAvailable('session')).toBe(true)
+  })
+
+  // 「读不出来」和「这台浏览器不给留东西」是两回事，探针答的是后一个。
+  it('读得出来但写不进去（配额满）仍算能用', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('QuotaExceededError')
+    })
+
+    expect(storageAvailable()).toBe(true)
+  })
+
+  it('站点数据被禁时是 false，且不抛', () => {
+    vi.spyOn(globalThis, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('SecurityError')
+    })
+
+    expect(() => storageAvailable()).not.toThrow()
+    expect(storageAvailable()).toBe(false)
+  })
+
+  it('读本身就抛时是 false', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('SecurityError')
+    })
+
+    expect(storageAvailable()).toBe(false)
+  })
+
+  it('探一下不留下东西', () => {
+    storageAvailable()
+
+    expect(localStorage.length).toBe(0)
+  })
+})
+
 describe('JSON 读写', () => {
   it('存什么读回什么', () => {
     expect(storageSetJson('k', { a: [1, 'two'] })).toBe(true)
@@ -99,6 +140,51 @@ describe('JSON 读写', () => {
 
     expect(storageSetJson('k', circular)).toBe(false)
     expect(localStorage.getItem('k')).toBeNull()
+  })
+
+  // 调用者自己那层上限（草稿粘进一整个文件那种）：超了当作不写，写下去的还是原来那一份。
+  it('超过 maxChars 的值不写，原来那一份不动', () => {
+    storageSetJson('k', { n: '旧' })
+
+    expect(storageSetJson('k', { n: '新'.repeat(20) }, 'local', 12)).toBe(false)
+    expect(storageGetJson('k')).toEqual({ n: '旧' })
+
+    expect(storageSetJson('k', { n: '新' }, 'local', 12)).toBe(true)
+    expect(storageGetJson('k')).toEqual({ n: '新' })
+  })
+
+  // 边界：判据是「超过」，所以正好等于上限还是写。少一个字符就不写。
+  it('正好等于 maxChars 还是写', () => {
+    const value = 'a'.repeat(10) // 序列化后带引号正好 12 个字符
+
+    expect(storageSetJson('k', value, 'local', 12)).toBe(true)
+    expect(storageSetJson('k', value, 'local', 11)).toBe(false)
+  })
+})
+
+describe('按键前缀枚举', () => {
+  it('只给前缀对得上的那些键', () => {
+    storageSet('draft:a', '1')
+    storageSet('draft:b', '2')
+    storageSet('other', '3')
+    // 前缀在中间 / 结尾的不算 —— 这条用来把「开头对得上」和「包含」分开。
+    storageSet('x-draft:y', '4')
+    storageSet('draft', '5')
+    storageSet('draft:c', '6', 'session')
+
+    expect(storageKeys('draft:').sort()).toEqual(['draft:a', 'draft:b'])
+  })
+
+  it('一条都没有时是空数组', () => {
+    expect(storageKeys('draft:')).toEqual([])
+  })
+
+  it('取不到存储对象时（存储被禁）是空数组', () => {
+    vi.spyOn(globalThis, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('SecurityError')
+    })
+
+    expect(storageKeys('draft:')).toEqual([])
   })
 })
 

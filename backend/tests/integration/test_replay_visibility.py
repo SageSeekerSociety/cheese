@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
+from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.session_host import claude_code
@@ -28,6 +29,7 @@ from tests.integration.conftest import (
     in_thread,
     post_message,
     post_project,
+    room_agent_headers,
     room_socket,
     session_auth_headers,
 )
@@ -425,3 +427,110 @@ def test_a_batch_a_dead_session_never_started_on_is_sent_again(client):
     assert screen.last_prompt is not None
     assert "下一句" in screen.last_prompt
     assert "死掉那句" in screen.last_prompt, screen.last_prompt
+
+
+class UnheededScreen(StubChannel):
+    """A session that starts on the prompt and never echoes it back.
+
+    `took` is the half of `acknowledges` a session prints by merely beginning:
+    the turn opens on the input's own identity and nothing stamps that input
+    read. Nothing here ends the turn either — the provider failure the test
+    scripts does. Set `echoing` and the next turn is an ordinary one.
+    """
+
+    def __init__(self, **policy: float) -> None:
+        super().__init__(**policy)
+        self.echoing = False
+
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
+        del reply
+        self.starts(topic_id, agent=agent)
+        if self.echoing:
+            self.acknowledges(topic_id, prompt, agent=agent)
+            self.says(topic_id, "好", agent=agent)
+            self.stops(topic_id, "好", agent=agent)
+            return
+        self.took(topic_id, prompt, agent=agent)
+        self.uses(topic_id, "Bash", command="sleep 600", agent=agent)
+
+
+def _turns_of(client, topic_id: str) -> list[dict]:
+    """What `/run-records/turns` reports for this room, one row per turn."""
+    response = client.get(
+        "/run-records/turns",
+        params={"topic": topic_id},
+        headers=room_agent_headers(client, topic_id),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["turns"]
+
+
+def test_a_batch_a_failed_turn_never_echoed_is_sent_again(client, monkeypatch):
+    """写进活会话、会话没回显、这一轮以错误结束 —— 这批消息还没被任何会话读走，
+    下一轮必须原样再送一次。
+
+    同时，这一轮的公开运行记录不该把批次算在自己名下：这一轮没送成功，计数的痕迹
+    留在消息块上，而没有指针指回这一轮（运行记录的口径就是「失败的那一轮恰恰最常
+    读回空」）。两件事一起断言——只看重投的话，把错误收尾里那步撤回删掉，这条测试
+    仍然绿。"""
+    project = post_project(
+        client, json={"name": "知是"}, headers=session_auth_headers("user-1")
+    ).json()["data"]["id"]
+    # 运行记录只在平台自己项目的房间里读得到。
+    monkeypatch.setattr(
+        settings, "docs_dev_repositories", [f"project-{uuid.UUID(project).hex}/code"]
+    )
+    room_topic = client.post(
+        "/topics",
+        json={"project_id": project, "title": "没回显的一轮"},
+        headers=session_auth_headers("user-1"),
+    ).json()["data"]["id"]
+    topic_id = in_thread(client, room_topic, "user-1")
+    room = uuid.UUID(topic_id)
+
+    screen = UnheededScreen()
+    service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
+        session_factory=client.test_request_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root="/tmp/replay-ws",
+        compute=stub_compute(screen),
+    )
+    app.dependency_overrides[get_chat_service] = lambda: service
+
+    with room_socket(client, topic_id, "user-1") as ws:
+        post_message(client, topic_id, "user-1", {"content": "第一句 @芝士"})
+        while True:
+            frame = ws.receive_json()
+            if frame["type"] == "event_block" and "sleep 600" in str(frame["block"]):
+                break
+
+    # 会话正在干活，provider 先断了：这一轮以错误结果结束。
+    screen.says(room, "API Error: Rate limit reached", error="rate_limit")
+    screen.record(
+        room,
+        type="result",
+        subtype="success",
+        is_error=True,
+        result="API Error: Rate limit reached",
+        terminal_reason="api_error",
+    )
+    client.portal.call(settle_turn, service, room)
+
+    # 读在失败轮结束之后、下一轮重新认领这批消息之前。
+    turns = _turns_of(client, topic_id)
+    assert len(turns) == 1, turns
+    assert turns[0]["prompt_attempts"] is None, turns
+
+    screen.echoing = True
+    _say(client, topic_id, "第二句")
+    assert screen.last_prompt is not None
+    assert "第二句" in screen.last_prompt
+    assert "第一句" in screen.last_prompt, screen.last_prompt

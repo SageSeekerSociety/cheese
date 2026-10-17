@@ -8,13 +8,12 @@
   "checks_failed": "Checks failed; it's yours to decide",
   "closed": "Closed",
   "completed": "Closed",
-  "discussing": "Discussing",
   "draft": "Draft",
   "fixing_checks": "Checks failed; Cheese is fixing them",
   "gate_running": "The platform is running checks",
   "idle": "Idle",
   "resolving_conflict": "Conflicts with the main branch; Cheese is resolving them",
   "running": "Cheese is on it",
-  "started": "Started",
+  "started": "In progress",
   "updating_branch": "The platform is updating the branch"
 }

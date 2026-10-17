@@ -9,8 +9,10 @@ log, so the test can say what was and was not asked of GitHub. No network, no cr
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,16 +25,20 @@ PR_MECHANICAL = "8"
 #: A PR whose head commit is a lock bump but whose first commit is an auth change: 档位 A,
 #: the tier of the whole change, not of the last commit.
 PR_MIXED = "9"
+#: A PR that rewrites the rule its own review would be handed, and changes a path that
+#: rule is scoped to: the point of reading the rules at the default branch.
+PR_RULE_EDIT = "10"
 
 GH = r"""#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$*" in
   *.head.sha*) case "$*" in *pulls/8*) echo "$PR8_HEAD" ;; *pulls/9*) echo "$PR9_HEAD" ;;
-    *) echo "$PR_HEAD" ;; esac ;;
+    *pulls/10*) echo "$PR10_HEAD" ;; *) echo "$PR_HEAD" ;; esac ;;
   *.base.ref*) echo main ;;
   *--paginate*/commits*)
     case "$*" in *pulls/8*) printf '%s\n' $PR8_COMMITS ;;
-      *pulls/9*) printf '%s\n' $PR9_COMMITS ;; *) printf '%s\n' $PR_COMMITS ;; esac ;;
+      *pulls/9*) printf '%s\n' $PR9_COMMITS ;;
+      *pulls/10*) printf '%s\n' $PR10_COMMITS ;; *) printf '%s\n' $PR_COMMITS ;; esac ;;
   *check-runs*) printf '%s\n' "${CI_JSON:-}" ;;
   *'"# "'*) printf '# A title\n\nThe body.\n' ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
@@ -61,7 +67,11 @@ def git(cwd, *args):
     ).stdout.strip()
 
 
-def result_json(sha, *severities):
+def result_json(sha, *severities, kinds=None):
+    """A result with one finding per severity. `kinds` overrides the kind of them, in
+    order; the default is the kind most findings have, so a case about severity does not
+    have to say it."""
+    kind_of = list(kinds or []) + ["runtime"] * len(severities)
     return {
         "reviewed_sha": sha,
         "summary": "Summary.",
@@ -73,13 +83,13 @@ def result_json(sha, *severities):
                 "title": f"a {sev} thing",
                 "file": "f.txt",
                 "line": 1,
-                "kind": "runtime",
+                "kind": kind_of[i],
                 "rung": 4,
                 "failure": "it breaks",
                 "evidence": "ran it",
                 "confirm_with": "",
             }
-            for sev in severities
+            for i, sev in enumerate(severities)
         ],
         "not_covered": [],
     }
@@ -97,6 +107,17 @@ class PrReview(unittest.TestCase):
         (work / ".claude/scripts").mkdir(parents=True)
         shutil.copytree(REPO_ROOT / ".claude/pr-review", work / ".claude/pr-review")
         shutil.copy(REPO_ROOT / ".claude/scripts/pr-review.sh", work / ".claude/scripts/")
+        # The rules a change loads, as the default branch has them: one scoped to a path
+        # this repo's PRs touch, one scoped elsewhere, one scoped to nothing, and the
+        # AGENTS.md of a directory one of them changes a file in.
+        (work / ".claude/rules").mkdir(parents=True)
+        (work / ".claude/rules/backend.md").write_text(
+            '---\npaths:\n  - "backend/app/**"\n---\n\n# BACKEND RULE TEXT\n')
+        (work / ".claude/rules/elsewhere.md").write_text(
+            '---\npaths: ["cli/**"]\n---\n\n# ELSEWHERE RULE TEXT\n')
+        (work / ".claude/rules/unscoped.md").write_text("# UNSCOPED RULE TEXT\n")
+        (work / "backend").mkdir(parents=True, exist_ok=True)
+        (work / "backend/AGENTS.md").write_text("# BACKEND AGENTS TEXT\n")
         (work / "f.txt").write_text("base\n")
         git(work, "add", "-A")
         git(work, "commit", "-qm", "base")
@@ -141,6 +162,19 @@ class PrReview(unittest.TestCase):
         git(work, "commit", "-qm", "bump lock")
         cls.mixed = git(work, "rev-parse", "HEAD")
         git(work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_MIXED}/head")
+        # A PR that rewrites a rule to point at other paths, and changes a file the rule
+        # as it is on main covers. Read from the default branch the rule still arrives;
+        # read from this PR's own head it would not, and the reviewer would be handed the
+        # author's edited copy of the rule judging the author's change.
+        git(work, "checkout", "-q", "-b", "rule-edit", "main")
+        (work / ".claude/rules/backend.md").write_text(
+            '---\npaths: ["cli/**"]\n---\n\n# REWRITTEN RULE TEXT\n')
+        (work / "backend/app/auth").mkdir(parents=True, exist_ok=True)
+        (work / "backend/app/auth/caller.py").write_text("ok = True\n")
+        git(work, "add", ".claude/rules/backend.md", "backend/app/auth/caller.py")
+        git(work, "commit", "-qm", "rewrite the rule")
+        cls.rule_edit = git(work, "rev-parse", "HEAD")
+        git(work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_RULE_EDIT}/head")
         git(work, "checkout", "-q", "main")
         git(work, "fetch", "-q", "origin")
         cls.work = work
@@ -166,6 +200,8 @@ class PrReview(unittest.TestCase):
             "PR8_COMMITS": self.mech,
             "PR9_HEAD": self.mixed,
             "PR9_COMMITS": self.mixed,
+            "PR10_HEAD": self.rule_edit,
+            "PR10_COMMITS": self.rule_edit,
             "PR_REVIEW_DIR": str(self.tmp / "reviews"),
             **(env_extra or {}),
         }
@@ -220,6 +256,165 @@ class PrReview(unittest.TestCase):
         self.assertIn("**档位 B 实现代码**", text)
         self.assertIn("两路全新上下文找茬", text)
         self.assertIn("f.txt（实现代码）", text)
+
+    def test_prepare_prints_the_topology_that_tier_spends(self):
+        # The topology is what the tier costs in subagents; it is written where the reviewer
+        # reads it, next to the tier it belongs to. What it has to say is the numbers and
+        # the severities — tier B is two finders and at most two concurrent refuters, spent
+        # on blockers and majors — so the assertion is on those, not on the sentence.
+        _, text = self.prepare()
+        line = next(l for l in text.splitlines() if l.startswith("- 子代理拓扑："))
+        self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [2, 2, 2])
+        # The effort is an enum the tier spends, not a phrase: rewording the sentence around
+        # it must not go red, and dropping it must.
+        self.assertIn("high", line)
+        for severity in ("blocker", "major"):
+            self.assertIn(severity, line)
+
+    def meta_of(self, review_md):
+        return dict(
+            line.split("=", 1)
+            for line in (review_md.parent / "meta").read_text().splitlines() if "=" in line
+        )
+
+    def test_prepare_injects_the_rules_the_changed_paths_load(self):
+        # The rules come from the default branch: the rule scoped to the changed path and
+        # the AGENTS.md above it arrive with their text, the rule scoped elsewhere does
+        # not, and the one scoped to nothing arrives because nothing scoped it.
+        out = self.run_script("prepare", PR_RULE_EDIT)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        d = Path(out.stdout.strip()).parent
+        text = (d / "REVIEW.md").read_text()
+        self.assertIn("## Rules this change loads", text)
+        self.assertIn("BACKEND RULE TEXT", text)
+        self.assertIn("BACKEND AGENTS TEXT", text)
+        self.assertIn("UNSCOPED RULE TEXT", text)
+        self.assertNotIn("ELSEWHERE RULE TEXT", text)
+        self.assertIn("- Rules injected:", text)
+
+    def test_a_pull_request_cannot_rewrite_the_rules_its_review_is_handed(self):
+        # PR 10 rewrites backend.md to point at cli/** and changes the path main's copy of
+        # that rule covers. The reviewer must be handed main's rule, the one that applies
+        # to the change, and not the author's edited copy of it.
+        out = self.run_script("prepare", PR_RULE_EDIT)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        text = (Path(out.stdout.strip()).parent / "REVIEW.md").read_text()
+        self.assertIn(".claude/rules/backend.md", text)
+        self.assertIn("BACKEND RULE TEXT", text)
+        self.assertNotIn("REWRITTEN RULE TEXT", text)
+
+    def test_prepare_injects_nothing_scoped_to_an_unrelated_change(self):
+        _, text = self.prepare()  # PR 7 changes f.txt, at the repo root
+        self.assertIn("UNSCOPED RULE TEXT", text)
+        self.assertNotIn("BACKEND RULE TEXT", text)
+        self.assertNotIn("BACKEND AGENTS TEXT", text)
+
+    def test_prepare_embeds_the_requirement_contract_it_was_handed(self):
+        spec = self.tmp / "spec.md"
+        spec.write_text("# Contract\n\n- It must do the thing.\n")
+        review_md, text = self.prepare("--spec", str(spec))
+        self.assertIn("## Requirement contract", text)
+        self.assertIn("It must do the thing.", text)
+        self.assertEqual((review_md.parent / "spec.md").read_text(), spec.read_text())
+        self.assertIn(f"- Spec: {review_md.parent}/spec.md", text)
+        # In meta too: a delta round reuses the contract from the directory it names.
+        self.assertEqual(self.meta_of(review_md)["spec"].strip("'"),
+                         f"{review_md.parent}/spec.md")
+
+    def test_a_delta_review_reuses_the_last_rounds_contract(self):
+        # The contract is what the change was written against; the deliverer hands it over
+        # once, at the round that opened the review, not again on every increment.
+        spec = self.tmp / "spec.md"
+        spec.write_text("CONTRACT TEXT\n")
+        self.prepare(self.shas[0], "--spec", str(spec))
+        review_md, text = self.prepare("--since", self.shas[0])
+        self.assertIn("## Requirement contract", text)
+        self.assertIn("CONTRACT TEXT", text)
+        self.assertEqual(self.meta_of(review_md)["spec"].strip("'"),
+                         f"{review_md.parent}/spec.md")
+
+    def test_without_a_spec_the_review_is_told_to_skip_step_5b(self):
+        _, text = self.prepare()
+        self.assertNotIn("## Requirement contract", text)
+        self.assertIn("- Spec: none", text)
+
+    def test_a_spec_that_is_not_there_is_an_error_not_a_review_without_one(self):
+        # Silently reviewing without the contract would report 无 blocker/major for a
+        # change half of which was never written, so a --spec that names nothing stops.
+        out = self.run_script("prepare", PR, "--spec", str(self.tmp / "nope.md"))
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("no such file", out.stderr)
+        (self.tmp / "empty.md").write_text("")
+        out = self.run_script("prepare", PR, "--spec", str(self.tmp / "empty.md"))
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("empty", out.stderr)
+
+    def test_the_spec_bullet_names_the_step_the_method_it_was_handed_has(self):
+        # The bullet used to read `none — skip step 5b` whenever no contract was passed,
+        # including in the window where the default branch's method has no 5b at all: it
+        # pointed the review at a step that is not above it. Without a contract it says
+        # which of the two it is now. The other half is in the old-method test below.
+        review_md, text = self.prepare()
+        self.assertIn("## 5b", text)
+        self.assertIn("- Spec: none — skip step 5b", text)
+        self.assertNotIn("this review's method has no step 5b", text)
+        self.assertFalse((review_md.parent / "spec.md").exists())
+
+    def test_a_method_that_predates_step_5b_is_handed_no_contract(self):
+        # The contract section names step 5b, and the method the reviewer is handed comes
+        # from the default branch: until 5b is on main, that section would name a step that
+        # is not above it. It is left out in that window the way the 档位 is, and the review
+        # is told there is no contract rather than handed a dangling one.
+        spec = self.tmp / "spec.md"
+        spec.write_text("# Contract\n\n- It must do the thing.\n")
+        main = git(self.work, "rev-parse", "origin/main")
+        git(self.work, "checkout", "-q", "-b", "old-main", main)
+        try:
+            (self.work / ".claude/pr-review/prompt.md").write_text(
+                "# Independent review\n\n## 5. Now read the PR's own words\n")
+            git(self.work, "commit", "-qam", "an older method")
+            old = git(self.work, "rev-parse", "HEAD")
+            git(self.work, "push", "-q", "-f", "origin", f"{old}:main")
+            git(self.work, "checkout", "-q", "pr")
+            out = self.run_script("prepare", PR, "--spec", str(spec))
+            self.assertEqual(out.returncode, 0, out.stderr)
+            d = Path(out.stdout.strip()).parent
+            text = (d / "REVIEW.md").read_text()
+            self.assertNotIn("## Requirement contract", text)
+            self.assertNotIn("It must do the thing.", text)
+            self.assertFalse((d / "spec.md").exists())
+            self.assertEqual(self.meta_of(Path(out.stdout.strip()))["spec"], "''")
+            self.assertIn("还没有 step 5b", out.stderr)
+            self.assertIn("- Spec: none — this review's method has no step 5b", text)
+            self.assertNotIn("skip step 5b", text)
+            # And the same window with no contract offered at all: the bullet still says
+            # which method it was handed, rather than pointing at a 5b that is not there.
+            out = self.run_script("prepare", PR)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            text = Path(out.stdout.strip()).read_text()
+            self.assertIn("- Spec: none — this review's method has no step 5b", text)
+            self.assertNotIn("skip step 5b", text)
+        finally:
+            git(self.work, "checkout", "-q", "main")
+            git(self.work, "branch", "-qD", "old-main")
+            git(self.work, "push", "-q", "-f", "origin", f"{main}:main")
+            git(self.work, "fetch", "-q", "origin")
+
+    def test_the_schema_takes_a_spec_finding_and_still_refuses_an_unknown_kind(self):
+        review_md, _ = self.prepare()
+        d = review_md.parent
+        meta = self.meta_of(review_md)
+        sha = meta["sha"].strip("'")
+        (d / "result.json").write_text(json.dumps(
+            result_json(sha, "major", kinds=["spec"])))
+        out = self.run_script("post", str(d))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("档位 B", out.stdout.splitlines()[0])
+        (d / "result.json").write_text(json.dumps(
+            result_json(sha, "major", kinds=["speculation"])))
+        out = self.run_script("post", str(d))
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("speculation", out.stderr)
 
     def test_prepare_still_works_when_the_tier_cannot_be_decided(self):
         # The tier says how deep to review; it is not a gate on reviewing at all. A machine
@@ -477,11 +672,137 @@ class PrReview(unittest.TestCase):
     def test_usage_errors(self):
         for args in (
             ("prepare", PR, "--since"),
+            ("prepare", PR, "--spec"),
             ("prepare", PR, "--bogus"),
             ("post",),
             ("show", "d", "--bogus"),
         ):
             self.assertEqual(self.run_script(*args).returncode, 2, args)
+
+
+class ReviewFindingsTrend(unittest.TestCase):
+    """review-findings-trend.py, over result files written by hand.
+
+    Its cases live in this file rather than in one of their own because this is the file
+    repo-guards.yml runs for the review tooling: a test in a file no check loads is a test
+    nobody runs.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="trend-test-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def finding(self, kind, file, severity, rung=4, title="a thing"):
+        return {"severity": severity, "kind": kind, "file": file, "line": 1, "title": title,
+                "failure": "f", "evidence": "e", "rung": rung, "confirm_with": ""}
+
+    def round(self, pr, sha, findings):
+        d = self.tmp / f"pr-review-{pr}-{sha[:12]}.input"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "result.json").write_text(json.dumps({
+            "reviewed_sha": sha, "summary": "", "candidates_found": len(findings),
+            "candidates_refuted": 0, "findings": findings, "not_covered": [],
+        }))
+        return d
+
+    def trend(self, *args, dirs=None):
+        return subprocess.run(
+            [sys.executable, str(REPO_ROOT / ".claude/scripts/review-findings-trend.py"),
+             *[a for d in (dirs if dirs is not None else [self.tmp]) for a in ("--dir", str(d))],
+             *args],
+            capture_output=True, text=True,
+        )
+
+    def test_it_clusters_by_kind_and_area_and_ranks_the_busiest_first(self):
+        self.round("7", "a" * 40, [
+            self.finding("test", "backend/tests/unit/test_a.py", "minor"),
+            self.finding("test", "backend/tests/unit/test_b.py", "major"),
+            self.finding("runtime", "backend/app/domain/x.py", "blocker"),
+        ])
+        self.round("8", "b" * 40, [
+            self.finding("test", "backend/tests/unit/test_c.py", "minor"),
+        ])
+        out = self.trend()
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("读了 2 轮审查", out.stdout)
+        # Two findings in one review are one round and one PR, not two of either, and the
+        # busiest cluster is first.
+        first = [l for l in out.stdout.splitlines() if l.startswith("| 1 |")][0]
+        self.assertIn("`test｜backend/tests`", first)
+        self.assertIn("| 3 | 2 | 2 | major |", first)
+        # The same area under another kind is a cluster of its own: what kind it is decides
+        # which check could hold it, so merging them would lose the answer.
+        self.assertIn("`runtime｜backend/app`", out.stdout)
+
+    def test_a_finding_without_a_file_is_placed_rather_than_dropped(self):
+        self.round("7", "a" * 40, [self.finding("rule", "", "major")])
+        out = self.trend("--json")
+        top = json.loads(out.stdout)["top"][0]
+        self.assertEqual(top["cluster"], "rule｜(no file)")
+
+    def test_it_counts_the_rounds_that_found_nothing(self):
+        self.round("7", "a" * 40, [])
+        self.round("8", "b" * 40, [self.finding("ci", ".github/workflows/x.yml", "minor")])
+        out = json.loads(self.trend("--json").stdout)
+        self.assertEqual(out["rounds_read"], 2)
+        self.assertEqual(out["rounds_with_nothing"], 1)
+        self.assertEqual(out["findings"], 1)
+
+    def test_it_counts_what_a_refuter_did_not_confirm(self):
+        self.round("7", "a" * 40, [
+            self.finding("runtime", "backend/app/a.py", "minor", rung=3),
+            self.finding("runtime", "backend/app/b.py", "minor", rung=4),
+        ])
+        out = json.loads(self.trend("--json").stdout)
+        self.assertEqual(out["top"][0]["unverified"], 1)
+
+    def test_with_no_dir_it_reads_where_prepare_writes(self):
+        # prepare writes under $PR_REVIEW_DIR. Looking in /tmp regardless would tell a
+        # machine that moved it that its results are gone while they sit on disk.
+        self.round("7", "a" * 40, [self.finding("test", "backend/tests/a.py", "minor")])
+        out = subprocess.run(
+            [sys.executable, str(REPO_ROOT / ".claude/scripts/review-findings-trend.py")],
+            capture_output=True, text=True,
+            env={**os.environ, "PR_REVIEW_DIR": str(self.tmp)},
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("backend/tests", out.stdout)
+
+    def test_a_result_it_cannot_read_is_skipped_and_said_so(self):
+        self.round("7", "a" * 40, [self.finding("test", "backend/tests/a.py", "minor")])
+        (self.tmp / "broken.input").mkdir(exist_ok=True)
+        (self.tmp / "broken.input" / "result.json").write_text("{")
+        out = self.trend()
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("skip", out.stderr)
+        self.assertIn("backend/tests", out.stdout)
+
+    def test_a_result_of_the_wrong_shape_is_skipped_not_this_boards_problem(self):
+        # A seat writes result.json by hand and a round abandoned before `post` leaves one
+        # behind: a file that parses and is not a review result is one unreadable round, not
+        # a reason for the round that is readable to go unreported.
+        self.round("7", "a" * 40, [self.finding("test", "backend/tests/a.py", "minor")])
+        for name, body in (("an-array", "[]"),
+                           ("findings-not-a-list", '{"findings": {"a": 1}}'),
+                           ("a-finding-not-an-object", '{"findings": ["a"]}')):
+            (self.tmp / f"{name}.input").mkdir(exist_ok=True)
+            (self.tmp / f"{name}.input" / "result.json").write_text(body)
+        out = self.trend()
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stderr.count("skip"), 3)
+        self.assertIn("backend/tests", out.stdout)
+
+    def test_top_limits_the_board(self):
+        self.round("7", "a" * 40, [
+            self.finding("test", f"backend/tests{i}/t.py", "minor") for i in range(5)
+        ])
+        out = json.loads(self.trend("--top", "2", "--json").stdout)
+        self.assertEqual(len(out["top"]), 2)
+
+    def test_with_nothing_to_read_it_says_where_results_come_from(self):
+        out = self.trend(dirs=[self.tmp / "not-there"])
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("没有任何审查结果可读", out.stdout)
 
 
 if __name__ == "__main__":

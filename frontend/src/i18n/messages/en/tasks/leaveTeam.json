@@ -1,0 +1,8 @@
+{
+  "choose": "Choose the team to withdraw:",
+  "emptyText": "You haven't joined this challenge on behalf of any team",
+  "emptyTitle": "No teams have joined",
+  "hint": "The team will no longer take part in this challenge. To rejoin, claim the challenge again.",
+  "joined": "Joined",
+  "title": "Leave challenge"
+}

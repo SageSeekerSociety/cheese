@@ -1,0 +1,40 @@
+{
+  "cancel": "取消",
+  "confirmRemove": "确认移除",
+  "download": "下载",
+  "downloads": "{n} 次下载",
+  "empty": "暂无资料",
+  "hint": {
+    "admins": "只有这个空间的管理员看得见、能下载。",
+    "members": "这个空间里的人都看得见、都能下载。"
+  },
+  "intro": "空间成员都能看。标了「仅管理员」的，成员看不到，成员项目里的 AI 队友也读不到。",
+  "pickFile": "选一个文件",
+  "remove": "移除",
+  "toast": {
+    "downloadFailed": "下载失败",
+    "loadFailed": "资料读不出来",
+    "removeFailed": "移除失败",
+    "removed": "已移除，学生那边的清单里没有了",
+    "uploadFailed": "上传失败",
+    "uploaded": "已上传",
+    "visibilityFailed": "改可见范围失败",
+    "visibilityUpdated": "已改"
+  },
+  "type": {
+    "audio": "音频",
+    "file": "文件",
+    "image": "图片",
+    "video": "视频"
+  },
+  "unused": "未被引用",
+  "upload": "上传资料",
+  "uploadTitle": "上传一份资料",
+  "uploadedOn": "{date} 上传",
+  "usedBy": "被 {n} 处引用",
+  "visibility": "谁能看",
+  "visibilityValue": {
+    "admins": "仅管理员",
+    "members": "所有成员"
+  }
+}

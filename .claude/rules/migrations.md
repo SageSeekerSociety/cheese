@@ -21,8 +21,13 @@ head`, which reddens CI and aborts the dev deploy.
   THREE heads; the sentinel is what makes that unrepresentable. CI
   (`check-migration-fork.py`) and the pre-commit gate both assert
   sentinel == real tip.
-- After merging main into your branch, re-check heads — if main gained a
-  migration, rechain yours onto the new head and move the sentinel again.
+- After merging main into your branch, run
+  `python3 .claude/scripts/check-migration-fork.py --rechain`. If main gained a
+  migration, it re-points this branch's own migrations at the new head and moves
+  the sentinel, in one step. Run `git fetch` first: it reads `--base`
+  (`origin/main` by default), so a head you have not fetched is a head it cannot
+  see. Re-chaining moves exactly one head, so a fork this branch made itself
+  still needs `alembic merge heads` or a split.
 - Two heads found? Prefer rechaining your own migration. Only reach for
   `alembic merge heads` when both sides are already on main — and first check
   whether a merge migration for that parent pair ALREADY exists (two identical

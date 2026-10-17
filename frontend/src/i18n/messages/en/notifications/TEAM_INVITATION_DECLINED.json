@@ -1,0 +1,5 @@
+{
+  "body": "Declined the invitation to join \"{team}\"",
+  "title": "{decliner} declined your invitation",
+  "title_anonymous": "Your team invitation was declined"
+}

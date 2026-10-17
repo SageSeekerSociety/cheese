@@ -33,6 +33,30 @@ function store(area: StorageArea): Storage | null {
   }
 }
 
+/** 探可用性的那个键：只读，从来没有谁写过它。 */
+const PROBE_KEY = 'cheese:storage-probe'
+
+/**
+ * 这一份存储**现在能不能用**。
+ *
+ * **别拿它替代读写。** 平时的两条判据已经够了：读不到就是没存过，写不进就是返回
+ * false。它是给另一种调用者的 —— 那种「存储不可用时我另有做法」的：它要的不是
+ * 「这里没有值」，而是「这台浏览器根本不给你留东西」。
+ *
+ * 探的是一次读，和调用者从前自己试的那一下一样。配额写满和 Safari 隐私模式都读得
+ * 出来（只是写不进去），只有站点数据被禁时连读都抛。
+ */
+export function storageAvailable(area: StorageArea = 'local'): boolean {
+  const target = store(area)
+  if (!target) return false
+  try {
+    target.getItem(PROBE_KEY)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** 读一个字符串；没存过、读不到，都是 null。 */
 export function storageGet(key: string, area: StorageArea = 'local'): string | null {
   try {
@@ -78,15 +102,46 @@ export function storageGetJson<T = unknown>(key: string, area: StorageArea = 'lo
   }
 }
 
-/** 把值写成 JSON。序列化不了（循环引用）和写不进去一样返回 false。 */
-export function storageSetJson(key: string, value: unknown, area: StorageArea = 'local'): boolean {
+/**
+ * 把值写成 JSON。序列化不了（循环引用）和写不进去一样返回 false。
+ *
+ * `maxChars` 按序列化后的长度算，超了就当作不写 —— 给「一条记录里可能粘进一整个
+ * 文件，写满了会挤掉别人」的那种调用者用，它自己那层上限是多少、由它自己传。
+ */
+export function storageSetJson(
+  key: string,
+  value: unknown,
+  area: StorageArea = 'local',
+  maxChars: number = Number.POSITIVE_INFINITY
+): boolean {
   let raw: string | undefined
   try {
     raw = JSON.stringify(value)
   } catch {
     return false
   }
-  return raw === undefined ? false : storageSet(key, raw, area)
+  if (raw === undefined || raw.length > maxChars) return false
+  return storageSet(key, raw, area)
+}
+
+/**
+ * 这一份存储里所有以 `prefix` 开头的键，顺序不保证；存储不可用时是空数组。
+ * 枚举和读、写一样，都是那两个全局的能力，所以也收在这里 —— 按前缀清理或淘汰
+ * 「一条记录一个键」的调用者（话题一条、草稿一条）不必自己去数 `store.length`。
+ */
+export function storageKeys(prefix: string, area: StorageArea = 'local'): string[] {
+  const target = store(area)
+  if (!target) return []
+  const keys: string[] = []
+  try {
+    for (let i = 0; i < target.length; i++) {
+      const key = target.key(i)
+      if (key !== null && key.startsWith(prefix)) keys.push(key)
+    }
+  } catch {
+    // 遍历到一半被拒（站点数据被禁）：已经拿到的就是全部。
+  }
+  return keys
 }
 
 /** 读一份字符串数组（存进去的是 JSON 数组）。不是数组、里面混了别的东西，都按过滤后的结果算。 */

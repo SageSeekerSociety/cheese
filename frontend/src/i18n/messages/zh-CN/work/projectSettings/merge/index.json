@@ -15,8 +15,6 @@
   "defaultReviewerHint": "任务没有指定由谁审阅时，由这个人审阅",
   "dismissStale": "新提交作废已有的采纳",
   "dismissStaleHint": "推送代码的通常是 AI 队友，新的提交需要重新采纳，因此默认开启",
-  "dispatchSeat": "调度座位",
-  "dispatchSeatHint": "PR 可以合并、以及离开合并队列时，也叫这位 AI 队友一遍",
   "githubEnforced": "GitHub 已在执行以下规则",
   "githubUnknown": "无法读取 GitHub 上的保护状态，以下规则按本平台的配置执行",
   "loadFailed": "加载分支保护规则失败",

@@ -32,7 +32,7 @@
 | 域名组 | **domain group** | `views/spaces/detail/ManageDomainGroups.vue`、`spaces.domainGroups.*`。域 = **domain**，不用 field / realm |
 | 模板 | **template** | `views/spaces/detail/ManageTemplates.vue`、`views/spaces/detail/SelectTemplate.vue`、`views/spaces/detail/TemplateForm.vue`。**不用 boilerplate / preset** |
 | 公告 | **announcement** | `views/spaces/detail/Announcements.vue`。**不用 notice**：notice 更像「系统提示」，且和通知混淆 |
-| 邀请 | **invitation**（名词）/ **invite**（动词） | 后端 `/invitations/{invitation_id}`、`en/account.json` 既有 `invitationCode = "Invitation code"`。邀请码固定为 **invitation code** |
+| 邀请 | **invitation**（名词）/ **invite**（动词） | 后端 `/invitations/{invitation_id}`、`en/account/index.json` 既有 `invitationCode = "Invitation code"`。邀请码固定为 **invitation code** |
 | 回复 | **reply** | 代码里 `reply` 出现 148 次（`reply_to`、`replyTarget`、`repliesCount`）。**和「回答」不是一个词**，见下条 |
 | 回答 | **answer** | `views/question/`、`network/api/answers/`。**不用 response / reply**：reply 是「回复某条发言」 |
 | 提问 | **question** | `network/api/questions/` |

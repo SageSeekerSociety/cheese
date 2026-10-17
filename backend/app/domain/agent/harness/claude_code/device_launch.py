@@ -450,6 +450,22 @@ if [ ! -e "$CLAUDE_CONFIG_DIR/projects" ]; then
   esac
 fi
 export DISABLE_AUTOUPDATER=1
+# The project's models as subagent definitions (`gateway_usage.model_agents`),
+# written before claude starts: it reads its agents directory once, at start.
+# The seat's directory is the platform's, so every `model-*.md` is ours to
+# replace, and a session with none (a member's own login) is left with none.
+python3 - "$CLAUDE_CONFIG_DIR/agents" <<'CHEESE_MODEL_AGENTS'
+import glob, json, os, sys
+agents = sys.argv[1]
+for stale in glob.glob(os.path.join(agents, "model-*.md")):
+    os.remove(stale)
+wanted = json.loads(os.environ.get("CHEESE_MODEL_AGENTS") or "{{}}")
+if wanted:
+    os.makedirs(agents, exist_ok=True)
+for name, content in wanted.items():
+    with open(os.path.join(agents, name), "w", encoding="utf-8") as out:
+        out.write(content)
+CHEESE_MODEL_AGENTS
 {webfetch_block}{skill_setup}
 {ca_block}
 # This seat's own directory, and everything below that belongs to one session

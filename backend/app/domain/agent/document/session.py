@@ -52,6 +52,9 @@ GONE_AFTER_S = 15.0
 TOOLS = (
     "cheese_doc_get",
     "cheese_doc_edit",
+    # 整篇写：只给空着的文档写第一版（起草项目总览）；写过的文档平台会拒，
+    # 只能一处一处地改（`living_docs.replace_document`）。
+    "cheese_doc_set",
     "cheese_app_save",
     "cheese_app_get",
     "cheese_project_search",

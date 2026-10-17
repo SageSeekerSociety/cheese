@@ -1,8 +1,14 @@
 {
   "connected": "Connected",
-  "connectedBy": "Connected (authorized by {name}, {when})",
   "disconnected": "Not connected",
   "missingValues": "Needs {names}",
   "needsReconnect": "Needs reconnecting",
-  "ready": "Ready"
+  "ready": "Ready",
+  "shadowed": "Not in effect: the repository has a server with this name",
+  "idle": "Not started",
+  "running": "Running",
+  "failed": "Failed to start",
+  "awaiting": "Waiting for {name} to allow",
+  "refused": "{name} did not allow it",
+  "authorizedBy": "Authorized by {name}, {when}"
 }

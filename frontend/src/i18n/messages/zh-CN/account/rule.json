@@ -1,0 +1,13 @@
+{
+  "confirmPasswordRequired": "再次填写密码",
+  "displayName": "显示名称只能使用字母、数字、下划线和中文",
+  "displayNameRequired": "填写显示名称",
+  "emailHint": "建议使用学校或单位邮箱，部分题目仅对特定邮箱开放",
+  "emailInvalid": "邮箱地址无效",
+  "passwordHint": "至少 8 个字符，包含字母、数字和特殊字符",
+  "passwordInvalid": "密码须至少 8 个字符，并包含字母、数字和特殊字符",
+  "passwordRequired": "填写密码",
+  "passwordsDoNotMatch": "两次输入的密码不一致",
+  "username": "用户名须为 4–32 个字符，只能使用字母、数字、下划线和连字符",
+  "usernameRequired": "填写用户名"
+}

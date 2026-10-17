@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_access import may_read_project, outsiders_reading
 from app.core.errors import ValidationError
 from app.core.redis import get_redis_client
 from app.core.sandbox_auth import mint_delegated_credential
@@ -42,10 +43,13 @@ from app.domain.agent.session_host.contract import SessionRef
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent.skills import load_skills
 from app.domain.agent.supply import GATEWAY
+from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import room_of
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.living_doc.overview import pointed_overview
 from app.domain.living_doc.services import Documents
 from app.domain.memory.files_store import memory_index
 from app.domain.policy import gate
@@ -182,12 +186,14 @@ async def credential(
     asker: str,
     work: uuid.UUID,
     may_edit: bool,
+    shown_to_readers: bool = False,
 ) -> str:
     """What the session's tools act with while answering ``asker``'s question:
     that person's permissions, in the document's task (in its project, for a
     document of no task), for no longer than the answer may take; edits authored
     by ``agent`` at the asker's request, and only when the question may change
-    the document."""
+    the document. An answer every reader of the document sees reads only what
+    all of them may (``shown_to_readers``)."""
     person = await user_by_handle(db, asker)
     return mint_delegated_credential(
         user_id=person.id if person is not None else None,
@@ -197,6 +203,7 @@ async def credential(
         topic_id=str(asked.task_id) if asked.task_id is not None else None,
         work=str(work),
         read_only=not may_edit,
+        shown_to_readers=shown_to_readers,
         ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
     )
 
@@ -256,7 +263,7 @@ async def bind(session: AsyncSession, asked: Asked, seat: str | None = None) -> 
     seat = seat or agent_instance_handle(agent.instance_id)
     bound = binding.resolve(
         None,
-        binding.catalog(project.settings),
+        catalog(project.settings),
         agent_model=agent.configuration.get("model"),
         default_model=(project.settings or {}).get("default_model"),
     )
@@ -272,7 +279,7 @@ async def bind(session: AsyncSession, asked: Asked, seat: str | None = None) -> 
 async def admit(session: AsyncSession, project_id: uuid.UUID, bound: Bound) -> None:
     """Refuse the question the way the agent's own turn would be refused."""
     project = await ProjectService(session).get_or_404(project_id)
-    choice = binding.catalog(project.settings)[bound.model]
+    choice = catalog(project.settings)[bound.model]
     result = gate.check(
         gate.Call(
             resource=gate.Resource.model,
@@ -280,10 +287,14 @@ async def admit(session: AsyncSession, project_id: uuid.UUID, bound: Bound) -> N
             label=choice["label"],
             tier=choice["tier"],
             approver=project.owner_handle or "",
+            overseas=choice["overseas"],
         ),
         gate.policy_of(
             project.settings,
             await UsageService(session).plan_model_tiers(project.team_id),
+            overseas_approved=await UsageService(session).overseas_approved(
+                project.team_id
+            ),
         ),
         actor=bound.agent_handle,
     )
@@ -438,9 +449,27 @@ class Surroundings:
         return parts
 
 
-async def surroundings(db: AsyncSession, asked: Asked, *, seat: str) -> Surroundings:
+async def surroundings(
+    db: AsyncSession, asked: Asked, *, seat: str, asker: str | None
+) -> Surroundings:
+    """What the question is asked in. The project's goals, its shared memory and
+    its code are the project's: they go only to an answer whose every reader may
+    read the project — ``asker`` alone (the box), or everyone who reads the
+    document (``asker`` None: a thread)."""
     doc = await Documents(db).get(asked.document_id)
     messages, machine = "", None
+    if asker is not None:
+        project_wide = await may_read_project(
+            db, project_id=asked.project_id, handle=asker
+        )
+    elif asked.task_id is not None:
+        project_wide = not await outsiders_reading(
+            db,
+            project_id=asked.project_id,
+            room_id=await room_of(db, asked.task_id),
+        )
+    else:
+        project_wide = True
     if asked.task_id is not None:
         recent = await BlockRepository(db).page_for_topic(
             asked.task_id, limit=RECENT_MESSAGES, kinds=[BlockKind.message]
@@ -448,25 +477,23 @@ async def surroundings(db: AsyncSession, asked: Asked, *, seat: str) -> Surround
         messages = "\n".join(
             f"<@{block.author}>：{block.content}" for block in recent.items
         )
-        machine = await machine_to_read(
-            db,
-            project_id=asked.project_id,
-            conversation_id=asked.task_id,
-            seat=seat,
-            ttl_s=TOKEN_TTL_S,
-        )
-    project = await ProjectService(db).get_or_404(asked.project_id)
-    goals = None
-    if project.overview_document_id is not None:
-        overview = await Documents(db).get(project.overview_document_id)
+        if project_wide:
+            machine = await machine_to_read(
+                db,
+                project_id=asked.project_id,
+                conversation_id=asked.task_id,
+                seat=seat,
+                ttl_s=TOKEN_TTL_S,
+            )
+    await ProjectService(db).get_or_404(asked.project_id)
+    goals, memory = None, None
+    if project_wide:
+        overview = await pointed_overview(db, asked.project_id)
         if overview is not None and overview.id != asked.document_id:
             goals = overview.content
-    index = await memory_index(db, asked.project_id, speaker_handles=[])
-    memory = (
-        "\n\n".join(section.text for section in index.sections)
-        if not index.is_empty()
-        else None
-    )
+        index = await memory_index(db, asked.project_id, speaker_handles=[])
+        if not index.is_empty():
+            memory = "\n\n".join(section.text for section in index.sections)
     return Surroundings(
         doc.content if doc is not None else "", messages, goals, memory, machine
     )

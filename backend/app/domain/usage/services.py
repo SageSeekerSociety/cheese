@@ -21,6 +21,7 @@ from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.model_access import ModelAccess, model_access
+from app.domain.usage.model_access import overseas_approved as _overseas_approved
 
 
 def _gateway_budget(balance: ledger.Balance, spent_usd: float) -> float | None:
@@ -40,7 +41,8 @@ class UsageService:
     async def project_credits(self, project_id: uuid.UUID) -> dict:
         """一个项目在算力账上的额度：总额 / 已用 / 剩余 / 是不是不限额。
 
-        额度包只有 `usage.ledger` 答得出「这个项目还能花多少」—— 网关那把虚拟 key
+        额度包只有账本答得出「这个项目还能花多少」（读那一半，
+        `usage/ledger_queries.py`）—— 网关那把虚拟 key
         上的 `max_budget` 只是这个数的换算结果。管理页要同时看「账上是多少」和
         「刹车上被设成了多少」，所以这扇门得把它转出去。
         """
@@ -50,6 +52,10 @@ class UsageService:
     async def plan_model_tiers(self, team_id: int) -> frozenset[str] | None:
         """The model tiers the team's plan allows; None is every tier."""
         return (await ledger.team_terms(self._session, team_id)).model_tiers
+
+    async def overseas_approved(self, team_id: int) -> bool:
+        """Has an administrator approved the team for overseas models."""
+        return await _overseas_approved(self._session, team_id)
 
     async def model_access(self, team_id: int) -> ModelAccess:
         """Which models the team's plan lets it pick, and which plan each of
@@ -64,7 +70,7 @@ class UsageService:
 
     async def project_credits_batch(self, projects: list) -> dict[uuid.UUID, dict]:
         """`project_credits` 的批量版：一批项目 → 各自的额度汇总，一条查询取回
-        额度包，再按与逐项目同一条规则（`ledger._applies`）归给各项目。"""
+        额度包，再按与逐项目同一条规则（`usage.balance._applies`）归给各项目。"""
         payers = await ledger.payers_for_projects(self._session, projects)
         return await self._summaries(payers)
 

@@ -18,6 +18,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.delivery.ledger import deliver
 from app.domain.project.services import ProjectService
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.protocol import (
@@ -115,7 +116,9 @@ invites_router = APIRouter(prefix="/team-invites", tags=["Teams"])
 async def get_team_membership_service(
     db=Depends(get_db),
 ) -> TeamMembershipService:
-    return TeamMembershipService.from_session(db)
+    # The membership events go to the delivery ledger, one layer above `team`,
+    # so the composition root hands the write in (``Deliver``).
+    return TeamMembershipService.from_session(db, deliver)
 
 
 def _team_handle(team: Team, users_map: dict) -> str | None:
@@ -799,7 +802,6 @@ async def add_team_member_entry(
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
-    _ = auth_user
     user_id = payload.user_id
     role_str = payload.role.upper()
 
@@ -811,6 +813,8 @@ async def add_team_member_entry(
     team = await service.get_team(team_id)
     if team is None:
         raise NotFoundError("Team not found")
+    if role_val == TeamMemberRole.ADMIN:
+        await service.refuse_admin_grant(team_id, auth_user.user_id)
 
     # deferred-import: tests patch this name on app.domain.team.services
     from app.domain.team.services import check_team_locking_status

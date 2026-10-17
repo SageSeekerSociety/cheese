@@ -138,8 +138,8 @@ def test_a_message_asking_a_teammate_turned_into_a_task_keeps_that_teammate(clie
 
     assert upgraded.status_code == 200, upgraded.text
     task = upgraded.json()["data"]["id"]
+    # The message's 支线 became the task; the teammate it called works it.
     assert _worked_by(client, task) == seat
-    assert _instructed(client, task) == [seat]
 
 
 def test_a_task_is_given_only_a_teammate_its_project_has(client):

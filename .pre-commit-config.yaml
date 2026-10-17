@@ -62,14 +62,17 @@ repos:
       # The import graph, not the diff: this walks every module under app/ and
       # reports the ones that broke a declared boundary (api -> domain -> core,
       # no route reaching another domain's models, no cycle between sibling
-      # domains). 373 pre-existing violations are frozen inside
-      # backend/.importlinter as exact `importer -> imported` pairs, so this
-      # blocks new ones and stays quiet about the old ones.
+      # domains). The baseline it measures against is the tree at the merge base
+      # with origin/main: the violations that tree already has are held open,
+      # and a violation only this tree has is the verdict. Nothing is stored, so
+      # no pull request has to carry a list of exemptions and no writer has to
+      # keep one in step.
       #
-      # `files:` includes .importlinter because editing the freeze is how
-      # somebody would make a violation go away without fixing it.
+      # `files:` includes .importlinter because it is the declaration the check
+      # reads, and because writing an exception in it is how somebody could make
+      # a violation go away without fixing it.
       - id: boundary-check
-        name: module boundaries (import-linter + frozen baseline)
+        name: module boundaries (import-linter, baseline from the merge base)
         entry: bash -c 'cd backend && uv run python scripts/check_boundaries.py'
         language: system
         pass_filenames: false
@@ -85,6 +88,90 @@ repos:
         language: system
         pass_filenames: false
         files: ^backend/(app/.*\.py|deferred-import-baseline\.json|scripts/check_deferred_imports\.py)$
+
+      # The two refactors that leave every other gate green: a module becomes a
+      # package and its facade stops offering a name, and a name leaves a module
+      # for a sibling while the callers still import it from where it left. The
+      # callers are often under scripts/ or backend/scripts/, which pyright
+      # never reads (`include app`), so nothing else notices. The guard compares
+      # each changed module with its base-ref self, reads every caller in the
+      # tree, and leaves a deleted module whose place a package took to
+      # --check-facade, so one break is not reported twice. Exit 2 (cannot
+      # judge) is a failure here, never a pass.
+      #
+      # `always_run`, not `files:`: pre-commit's default diff filter drops
+      # deleted files, and a commit that only deletes a module is one of the
+      # cases this answers. The script reads `git diff` itself, so a commit that
+      # touches no Python costs one git call.
+      #
+      # The base is HEAD, the commit's parent: the question is what this commit
+      # introduced, and a long-lived branch must not rescan everything it ever
+      # changed on every commit. A runner that names a range
+      # (`pre-commit run --from-ref ... --to-ref ...`) passes that range's start
+      # through PRE_COMMIT_FROM_REF instead.
+      #
+      # The interpreter is picked from PATH rather than taken from `python3`
+      # blindly: `uvx pre-commit` (what Taskfile.yml installs) puts its tool
+      # venv first, and on the work image that python is 3.9 — the guard needs
+      # 3.10 (`zip(strict=True)`). Because this hook runs on every commit, a
+      # 3.9 traceback would turn every commit red; with none found it is exit 2,
+      # which says it could not judge instead of pretending to.
+      - id: module-split
+        name: split packages and moved names keep every caller importing
+        entry: |
+          bash -c '
+          set -u
+          base=${PRE_COMMIT_FROM_REF:-HEAD}
+          tool=.claude/scripts/verify-module-split.py
+          if ! git rev-parse --verify -q "$base^{commit}" >/dev/null 2>&1; then
+            printf "cannot judge: %s is not a ref in this checkout (git fetch origin)\n" "$base" >&2
+            exit 2
+          fi
+          py=
+          for candidate in python3 python3.13 python3.12 python3.11 python3.10; do
+            if command -v "$candidate" >/dev/null 2>&1 \
+               && "$candidate" -c "import sys; raise SystemExit(sys.version_info < (3, 10))" >/dev/null 2>&1; then
+              py=$candidate
+              break
+            fi
+          done
+          if [ -z "$py" ]; then
+            printf "cannot judge: no Python 3.10+ on PATH for verify-module-split.py\n" >&2
+            exit 2
+          fi
+          status=0
+          changed=$(git diff --name-only --no-renames "$base" -- .)
+          untracked=$(git ls-files --others --exclude-standard -- .)
+          while IFS= read -r init; do
+            dir=${init%/__init__.py}
+            if git cat-file -e "$base:$dir.py" 2>/dev/null; then
+              "$py" "$tool" --check-facade "$dir" --base-ref "$base" || status=$?
+            fi
+          done < <(printf "%s\n" "$changed" | grep -E "(^|/)__init__\.py$" || true)
+          if printf "%s\n%s\n" "$changed" "$untracked" | grep -q "\.py$"; then
+            "$py" "$tool" --check-moves . --base-ref "$base" || status=$?
+          fi
+          exit "$status"
+          '
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # The API surface the frontend's types are generated from. This builds
+      # the document and holds the two one-line files beside it: the digest,
+      # which is how a change is routed into the frontend types suite, and the
+      # untyped ratchet, which only shrinks. CI runs it as a step of the
+      # `backend / static` job (test.yml) rather than through pre-commit, since
+      # that job has the venv already synced — the pre-push entry point is what
+      # reads this id. `stages: [manual]` for the reason the heavy hooks above
+      # carry it: 23s on a work machine is too much for a commit gate.
+      - id: openapi-document
+        name: OpenAPI document builds, digest and untyped ratchet hold
+        entry: bash -c 'cd backend && uv run python -m scripts.export_openapi --check'
+        language: system
+        pass_filenames: false
+        files: ^backend/
+        stages: [manual]
 
       # Two checks in one script: backend/alembic/HEAD must name the chain's
       # tip, and merging into main must not leave two heads. The second is only
@@ -166,21 +253,38 @@ repos:
         pass_filenames: false
         files: ^frontend/(src/.*\.vue|eslint\.(a11y\.)?config\.mjs|a11y-baseline\.json|package\.json|pnpm-lock\.yaml|scripts/(a11y-ratchet|tsc-ratchet-core|ratchet-report))
 
-      # Every page the router reaches and every SFC under
-      # src/components/panels/ has to render with no backend, no route and no
-      # business store: 20 do today (frontend/scene-baseline.json) and may not
-      # stop, and a scene added from now on has to from its first commit. The
-      # router is in `files:` because registering a page there is what makes it
-      # a scene. python3 stdlib only — no venv, no node_modules — because it
-      # grades with the same module arch-metrics.py reports from, and the two
-      # must not disagree about a scene. The writer is
-      # `pnpm run lint:scenes:update`, which only ever adds to the frozen set.
-      - id: scene-ratchet
-        name: scenes run standalone (python ratchet)
-        entry: python3 .claude/scripts/scene-ratchet.py
+      # Check the index against the branch baseline, not unstaged repairs.
+      # CI's test:ratchet also checks the committed tree via the discovered test.
+      - id: sfc-attribute-diff
+        name: Vue splits preserve explicit attribute fallbacks (staged)
+        entry: node frontend/scripts/sfc-attribute-diff.mjs --staged
         language: system
         pass_filenames: false
-        files: ^(frontend/(src/(views|router|components/panels)/|scene-baseline\.json|package\.json)|\.claude/scripts/(frontend_grade|scene-ratchet|ratchet_report)\.py)$
+        files: ^(.*\.vue|frontend/scripts/sfc-attribute-diff(\.test)?\.mjs|\.pre-commit-config\.yaml)$
+
+      - id: sfc-attribute-diff-self-test
+        name: Vue split attribute guard self-test
+        entry: node frontend/scripts/sfc-attribute-diff.mjs --self-test
+        language: system
+        pass_filenames: false
+        files: ^(frontend/scripts/sfc-attribute-diff(\.test)?\.mjs|\.pre-commit-config\.yaml)$
+
+      # Every page the router reaches and every SFC under
+      # src/components/panels/ has to render with no backend, no route and no
+      # business store. The freeze is the tree at the merge base with
+      # origin/main: a scene that is standalone-ready there may not stop being,
+      # and a scene added from now on has to be from its first commit. Nothing
+      # is written down, so there is no writer and no list to edit. The router
+      # is in `files:` because registering a page there is what makes it a
+      # scene. python3 stdlib only — no venv, no node_modules — because it
+      # grades with the same module arch-metrics.py reports from, and the two
+      # must not disagree about a scene.
+      - id: scene-ratchet
+        name: scenes run standalone (python ratchet)
+        entry: python3 .claude/scripts/scene-ratchet.py --base origin/main
+        language: system
+        pass_filenames: false
+        files: ^(frontend/(src/(views|router|components/panels)/.*|package\.json)|\.claude/scripts/(frontend_grade|scene-ratchet|ratchet_report)\.py)$
 
       # Exact rendered child edges, useRoute callers and legacy importers can
       # only disappear. This parser needs frontend dependencies and origin/main.
@@ -265,6 +369,19 @@ repos:
       - id: doc-references
         name: agent docs name paths and sections that exist
         entry: python3 .claude/scripts/check-doc-references.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # `docs/reviews/artifacts/` is read by nothing — no build, no test, no
+      # link checker — so an artifact whose note was rewritten stays on disk
+      # named by nobody. Two one-off PDFs sat there until #4032 removed them by
+      # hand. The guard fails when a file under that directory is named by no
+      # note in `docs/reviews/`. always_run because the claim is about the
+      # tree: a deleted or rewritten note anywhere is what falsifies it.
+      - id: review-artifacts
+        name: review artifacts are cited by a review note
+        entry: python3 .claude/scripts/check-review-artifacts.py
         language: system
         pass_filenames: false
         always_run: true

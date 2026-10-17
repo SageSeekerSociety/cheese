@@ -32,7 +32,6 @@ export function bpRules(over: Partial<BranchProtection> = {}): BranchProtection 
     override_handles: null,
     approvals_required: 1,
     default_reviewer: '',
-    dispatch_seat: '',
     merge_method: 'squash',
     github_protection: { enforced: false, status: 'none' },
     ...over,
@@ -48,14 +47,7 @@ export const BP_MEMBERS = [
 /** 任务默认 reviewer 的可选项：多一档「未指定」。 */
 export const BP_REVIEWERS = [{ title: '未指定', value: '' }, ...BP_MEMBERS]
 
-/** 调度座位的可选项：AI 队友的席位，value 是 `seat_handle`，同样多一档「未指定」。 */
-export const BP_DISPATCH_SEATS = [
-  { title: '未指定', value: '' },
-  { title: '芝士（cheese-ab12cd34ef56）', value: 'cheese-ab12cd34ef56' },
-  { title: '小助（cheese-9f8e7d6c5b4a）', value: 'cheese-9f8e7d6c5b4a' },
-]
-
-/** 分支保护那一块吃的十一样。 */
+/** 分支保护那一块吃的十样。 */
 export function bpProps(
   over: {
     state?: BranchProtectionLoadState
@@ -76,7 +68,6 @@ export function bpProps(
     error: null as string | null,
     memberItems: BP_MEMBERS,
     reviewerItems: BP_REVIEWERS,
-    dispatchSeatItems: BP_DISPATCH_SEATS,
     checkName: '',
     checkPaths: '',
     approvalsDraft: '1',

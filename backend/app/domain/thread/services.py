@@ -81,6 +81,11 @@ async def open_thread(session: AsyncSession, block_id: uuid.UUID, *, by: str) ->
     return thread
 
 
+async def thread_of(session: AsyncSession, thread_id: uuid.UUID) -> Thread | None:
+    """The 支线 ``thread_id`` names, also once it became a task in place."""
+    return await session.get(Thread, thread_id)
+
+
 async def answer_place(
     sessions, block_id: uuid.UUID | None, posted_in: uuid.UUID
 ) -> uuid.UUID:

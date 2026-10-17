@@ -29,9 +29,12 @@ import GuideBubble from '@/components/common/GuideBubble.vue'
 import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
+import ComposerEditor from '@/components/room/ComposerEditor.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
+import ThreadHead from '@/components/room/ThreadHead.vue'
+import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 
@@ -149,11 +152,12 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
     tone: 'running',
     accepted: null,
     at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    latest: null,
     ...over,
   }
 }
 
-/** 任务页页头那一格：一件还没开始的任务，一位 AI 队友，它的会话在标准沙箱里。 */
+/** 任务页页头那一格：一件在做的任务，一位 AI 队友，它的会话在标准沙箱里。 */
 const TASK_HEADER_PROPS = {
   room: { id: 'demo-room', project_id: 'demo', title: '前端', kind: 'topic', status: 'active' },
   task: {
@@ -164,10 +168,9 @@ const TASK_HEADER_PROPS = {
     title_source: 'human',
     status: 'open',
     owner_handle: 'alice',
-    started_at: null,
     created_at: '2026-10-05T00:00:00Z',
     updated_at: '2026-10-05T00:00:00Z',
-    presentation: { column: 'not_started', phrase: 'discussing' },
+    presentation: { column: 'building', phrase: 'started' },
   },
   memberNames: { 'cheese-topica': AGENT_NAME },
   agentName: AGENT_NAME,
@@ -190,10 +193,7 @@ const TASK_HEADER_PROPS = {
     ],
   },
   machineError: false,
-  starting: false,
-  startError: null,
   actionError: null,
-  start: async () => {},
   close: async () => true,
   reopen: async () => true,
   handOver: async () => true,
@@ -216,8 +216,8 @@ const TASK_ENTRIES: CatalogEntry[] = [
     needs: UI_T,
     states: [
       {
-        name: '还没开始',
-        note: '一件刚建好的任务：标题在左，状态写着在讨论；数据都从 props 来，开始、改环境这些动作交给上面。',
+        name: '在做',
+        note: '一件在做的任务：标题在左，状态在后面；数据都从 props 来，转交、改环境这些动作交给上面。',
         props: TASK_HEADER_PROPS,
         expect: '登录页加「记住我」',
       },
@@ -282,6 +282,94 @@ const TASK_ENTRIES: CatalogEntry[] = [
           ownerName: AGENT_NAME,
         },
         expect: '已采纳 2 次',
+      },
+      {
+        name: '单独成块',
+        note: '单独成块时多一行：任务里最后说的一句，说它此刻在做什么。负责人带头像。',
+        props: {
+          task: taskLine({
+            latest: '发送验证码的接口写好了，正在写校验那一个',
+            status: '芝士在做',
+          }),
+          ownerName: '王一鸣',
+          ownerAvatar: '',
+        },
+        expect: '正在写校验那一个',
+      },
+      {
+        name: '支线顶上',
+        note: '支线转成任务后，画在支线那一块顶上：只有任务名、负责人和状态，回复数和最后一句在下面的支线那几行里。',
+        props: {
+          task: taskLine({ latest: '这一句不画', status: '芝士在做' }),
+          ownerName: '王一鸣',
+          head: true,
+        },
+        expect: '王一鸣',
+      },
+    ],
+  },
+  {
+    id: 'room-thread-root',
+    title: 'ThreadRoot',
+    about: '一条支线挂着的那条主线消息，画在这段对话最上面：支线的右半边和支线转成的任务页开头都是它。',
+    file: 'src/components/room/ThreadRoot.vue',
+    component: ThreadRoot,
+    needs: UI_T,
+    states: [
+      {
+        name: '一条人说的话',
+        note: '署名、时间、正文；长了收起，点「展开」看全。',
+        props: {
+          root: {
+            id: 'b-root',
+            conversation_id: 'demo-room',
+            kind: 'message',
+            author_type: 'participant',
+            author: 'wangyiming',
+            content: '登录要不要加手机验证码？老师上次好像提过',
+            created_at: '2026-10-15T02:15:00Z',
+          },
+          name: '王一鸣',
+          avatar: '',
+          refs: { mentionNames: {}, topicTitles: {} },
+        },
+        expect: '登录要不要加手机验证码',
+      },
+    ],
+  },
+  {
+    id: 'room-thread-head',
+    title: 'ThreadHead',
+    about:
+      '支线的页头一行：它挂着的那条消息说的事和「转为任务」；转成以后是任务名、状态、负责人和「整页打开」。桌面上在支线那一栏顶上，手机上是顶栏的内容。',
+    file: 'src/components/room/ThreadHead.vue',
+    component: ThreadHead,
+    needs: UI_T,
+    args: { viewer: 'alice', members: [], memberNames: { alice: 'Alice' }, canToTask: true },
+    states: [
+      {
+        name: '还是支线',
+        note: '写挂着的那条消息说的事，右边「转为任务」；桌面那一栏带关闭键。',
+        props: { heading: '登录要不要加手机验证码？', task: null, closable: true },
+        expect: '登录要不要加手机验证码',
+      },
+      {
+        name: '转成了任务',
+        note: '同一行换成任务：任务名、状态、负责人，「整页打开」进任务页。',
+        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, closable: true },
+        expect: '登录页加「记住我」',
+      },
+      {
+        name: '在手机顶栏里',
+        note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边，没有关闭键。',
+        props: { heading: '登录要不要加手机验证码？', task: null, bar: true },
+        expect: '登录要不要加手机验证码',
+      },
+      {
+        name: '转成任务，在手机顶栏里',
+        note: '两行：任务名独占第一行，状态和负责人退到第二行，同一号字、同一种灰，各成一格。',
+        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, bar: true },
+        expect: '登录页加「记住我」',
       },
     ],
   },
@@ -424,6 +512,31 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'room-composer-editor',
+    title: 'ComposerEditor',
+    about: '打字的那一块：正文是要发出去的那段字，里面点到的人、频道画成标签，标签当一个字删。',
+    file: 'src/components/room/ComposerEditor.vue',
+    component: ComposerEditor,
+    needs: UI_T,
+    states: [
+      {
+        name: '点了一个人，还贴了一段代码',
+        note: '标签和对话里的样子一样；``` 围起来的几行画成代码块，里面按 Tab 是缩进。',
+        props: {
+          modelValue: '请 <@alice> 看一下这段：\n```\ndef f(x):\n    return x * 2\n```',
+          names: { mentionNames: { alice: 'Alice' }, topicTitles: {}, notified: true },
+        },
+        expect: '@Alice',
+      },
+      {
+        name: '还没打字',
+        note: '空着的时候是一行提示语，打了字就没了。',
+        props: { modelValue: '', names: { mentionNames: {}, topicTitles: {} }, placeholder: `给${AGENT_NAME}发消息` },
+        expect: `给${AGENT_NAME}发消息`,
+      },
+    ],
+  },
+  {
     id: 'room-composer-actions',
     title: 'ComposerActions',
     about: '输入框下面那一行：左边是「这条消息本身」的动作，右边是「它会怎么发出去」。',
@@ -479,15 +592,16 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     id: 'ask-quick-replies',
     title: 'AskQuickReplies',
     about:
-      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。选项下面最后一行一直是个输入框（「其他回答」）：不用先点开，打字回车就是他对这道题的答案，发的是他自己打的字。',
+      '芝士问的一道题，画成一张卡：页头一句谁问谁（平文，不是 @ 的 chip），题目是卡的标题；选项是卡里带编号的几行，点一个（或卡有焦点时按它的数字键）就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。卡里最后一行一直是个输入框（「其他回答」）：不用先点开，打字回车就是他对这道题的答案，发的是他自己打的字。',
     file: 'src/components/ask/AskQuickReplies.vue',
     component: AskQuickReplies,
     needs: UI_T,
     states: [
       {
         name: '刚问出来',
-        note: '选项各自带一句说明；模型标了推荐的那一项多一个「推荐」。最后一行是一直摆着的输入框，和选项同一种卡——模型没给的答案直接在这儿打，回车或右边的箭头发出去，发的是他自己那句话；Shift+回车换行。',
+        note: '选项各自带一句说明；模型标了推荐的那一项在选项后面跟一个「推荐」小标签。最后一行是一直摆着的输入框，和选项同一种行——模型没给的答案直接在这儿打，回车或右边的箭头发出去，发的是他自己那句话；Shift+回车换行。跳过的 ✕ 在页头右上角。',
         props: {
+          asker: AGENT_NAME,
           block: askBlock([]),
           names: {},
           viewer: 'alice',
@@ -495,8 +609,9 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '选项只是几个词',
-        note: '没有说明的短选项横着排成一行按钮；末行的输入框照样在，自己另起一整行。',
+        note: '没有说明的短选项也是一项一行，只是每行矮一些；末行的输入框照样在。',
         props: {
+          asker: AGENT_NAME,
           block: askBlock([], [{ text: '按部门' }, { text: '按项目' }, { text: '按季度' }]),
           names: {},
           viewer: 'alice',
@@ -504,8 +619,9 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '问的是别人',
-        note: '题问的是 @alice，看的人不在被问的人里：选项和末行的输入框都灰着、点不动，也没有跳过的 ✕；上面那行「问 @alice」说明在等谁。',
+        note: '题问的是 alice，看的人不在被问的人里：选项和末行的输入框都灰着、点不动，也没有跳过的 ✕；页头那句「芝士 问 Alice」说明在等谁。',
         props: {
+          asker: AGENT_NAME,
           block: askBlock([]),
           names: { alice: 'Alice' },
           viewer: 'bob',
@@ -515,6 +631,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         name: '有人答过了',
         note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。答的人不是看着这一页的人，所以没有撤回的入口。',
         props: {
+          asker: AGENT_NAME,
           block: askBlock([
             { kind: 'option', option: '按部门', note: null, by: 'alice', at: null },
             { kind: 'note', option: null, note: '外包单列一栏', by: 'bob', at: null },
@@ -527,6 +644,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         name: '自己答的，可以撤回',
         note: '答过的那一条旁边多一个「撤回」；点它先弹确认框，题回到重新等回答。',
         props: {
+          asker: AGENT_NAME,
           block: askBlock([{ kind: 'option', option: '按部门', note: null, by: 'alice', at: null }]),
           names: { alice: 'Alice' },
           viewer: 'alice',

@@ -149,7 +149,7 @@ class ToolTable:
 #: out, the session's own document, or its room's living document.
 _DOCUMENT_ARG = {
     "type": "string",
-    "description": "项目资料库里那份文档的编号；省略就是这里的实况文档",
+    "description": "那份文档的编号（见 cheese_doc_list）；省略就是这里的实况文档",
 }
 
 
@@ -423,7 +423,7 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_doc_get",
             "读一份文档，末尾列出还没人处理的修改建议。不给 document 读这里的实况"
-            "文档；给了读项目资料库里的那一份（编号见 cheese_doc_list）。读到的这一版"
+            "文档；给了读编号是它的那一份（编号见 cheese_doc_list）。读到的这一版"
             "就是接下来 cheese_doc_set 写回所依据的那一版；没读过就写，只有文档还是"
             "空的时才让你写。",
             {"document": _DOCUMENT_ARG},
@@ -446,9 +446,8 @@ PLATFORM_TOOLS = ToolTable(
             "改一份文档里的几处文字，其余部分和别人正在打的字都不动。每处给"
             "原文 old（照 cheese_doc_get 读到的 Markdown 原样抄，要在文档里只出现"
             "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
-            "用它，不用 cheese_doc_set 整份覆盖。没人让你改文档时（平台提醒、"
-            "做完一件事顺手整理）设 suggest=true，只提建议，等人接受或拒绝；"
-            "这样的一轮里改了人写的段落，平台也会把它转成建议。"
+            "用它，不用 cheese_doc_set 整份覆盖。改动直接生效；想先让人看过再定的，"
+            "设 suggest=true，作为建议留在文档里，等人接受或拒绝。"
             "改到一处 AI 队友（包括自己）留下、还没处理的建议时，那条旧建议会被"
             "撤掉、这处照改；人留下的建议还没处理时这处改不动，先请人接受或退回。",
             {
@@ -474,9 +473,12 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_doc_new",
-            "在项目资料库里新建一份文档，项目成员都能看、能改，当前对话里会出现这份"
-            "文档，点开就在对话旁边。有人要一份独立的文档（调研、方案、清单）时用它；"
-            "这里的实况文档用 cheese_doc_set。给 content 就把它写成第一版。"
+            "新建一份文档。它留在当前这段对话里：能看到这里的人都能看、能改，资料库里"
+            "没有它；当前对话里会出现这份文档，点开就在对话旁边。有人要一份独立的文档"
+            "（调研、方案、清单）时用它；这里的实况文档用 cheese_doc_set。给 content "
+            "就把它写成第一版。写的是以后还会反复用到的东西（方案、规范、操作说明）时，"
+            "写完问一句要不要保存到资料库，项目里的人在资料库里才找得到它；保存由人在"
+            "文档上点「保存到资料库」，你做不了。一次性的分析、复盘、周报不用问。"
             "返回文档编号，之后读写都带上 document。",
             {
                 "title": _text("文档标题，正文里别再用一级标题重复"),
@@ -486,8 +488,8 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_doc_list",
-            "列出项目资料库里的文档（编号、标题、最近谁改的），最近改过的在前。"
-            "不含各任务的实况文档。",
+            "列出资料库里的文档和你在当前这段对话里建的文档（编号、标题、最近谁改的），"
+            "最近改过的在前。不含各任务的实况文档。",
         ),
         _tool(
             "cheese_app_save",
@@ -580,25 +582,29 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_task",
-            "在当前支线里创建一个任务，挂在支线所在的那条消息下面。任务有自己的对话和"
-            "工作目录，由那里的 AI 队友去做。有人让你去做：start 填 true、owner 填"
-            "说这话的人，建好就开始。你自己想到的：start 填 false，任务停在讨论中，"
-            "你在支线里问一次负责人要不要开始。",
+            "有人要把支线里说的事做出来时建任务，两种做法：这条支线讨论的就是这一件事，"
+            "here 填 true，支线原地转为任务，还是这段对话、还是你接着做，下一轮起你可以"
+            "改项目；讨论拆出了几件各自要做的事，here 不填，每件另开一个任务，挂在支线"
+            "所在的那条消息下面，由那边的 AI 队友去做，summary 必填。只在有人说要做时"
+            "调：是你自己看出来该做的，先用 cheese_ask 问一句要不要转为任务（选项"
+            "「转为任务」「不转」），有人选了「转为任务」再调，owner 就是他。",
             {
                 "title": _text(
                     f"任务标题，{TITLE_WIDTH_NOTE}；超了会被拒绝，改短了再调一次"
                 ),
                 "summary": _text(
-                    "要做什么、已经定了什么（含否掉的做法）、还要确认什么；"
-                    "任务那边的 AI 队友只能从这里和支线里的讨论知道来龙去脉"
+                    "另开任务时必填：要做什么、已经定了什么（含否掉的做法）、还要确认什么；"
+                    "那边的 AI 队友只能从这里和支线里的讨论知道来龙去脉"
                 ),
-                "owner": _text("负责人 handle，就是要这件事的人；省略是支线所在那条消息的作者"),
-                "start": {
+                "owner": _text(
+                    "负责人 handle，就是说要做这件事的人；省略是你这一轮回应的那个人"
+                ),
+                "here": {
                     "type": "boolean",
-                    "description": "有人让你去做填 true；你自己想到的填 false",
+                    "description": "这条支线原地转为任务填 true；另开任务不填",
                 },
             },
-            ["title", "summary", "start"],
+            ["title"],
         ),
         _tool(
             "cheese_close_task",
@@ -1133,7 +1139,7 @@ DELEGATED_TOOLS = ToolTable(
         _tool(
             "cheese_attachment_read",
             "读消息里附带的文件或资料库里的文件（消息里写着的地址，资料库的以 library/ "
-            "开头）。只读得了文本；二进制的文件只返回大小。",
+            "开头）。读得了文本和资料库里 PDF 的文字；别的二进制文件只返回大小。",
             {"path": _text("文件的地址")},
             ["path"],
         ),
@@ -1166,7 +1172,7 @@ _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     # 画布有自己的编号，跟着它的文档走。
     "cheese_canvas_get",
     "cheese_canvas_edit",
-} | {"cheese_attachment_read"}
+}
 _NEEDS_DOCUMENT = frozenset({"cheese_doc_get", "cheese_doc_edit"})
 _NEEDS_PROJECT = frozenset(
     {
@@ -1439,7 +1445,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "body": {
                 "title": args["title"],
                 "summary": args.get("summary") or "",
-                "start": args.get("start") is True,
+                "here": args.get("here") is True,
                 **_given(args, "owner:owner_handle"),
             },
         }
@@ -1521,7 +1527,15 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         query = urllib.parse.urlencode({"project_id": project, "scope": "team"})
         return {"method": "GET", "path": f"/memory/files?{query}"}
     if tool == "cheese_attachment_read":
-        query = urllib.parse.urlencode({"path": args["path"].strip()})
+        path = args["path"].strip()
+        # 资料库是项目的：不在哪个房间里的会话（项目总览的文档芝士）也读得到，
+        # PDF 读成文字。房间里自己的文件才要话题。
+        if path.startswith("library/") and project:
+            query = urllib.parse.urlencode({"path": path})
+            return {"method": "GET", "path": f"/projects/{project}/library/text?{query}"}
+        if not topic:
+            raise ValueError("Missing CHEESE_TOPIC")
+        query = urllib.parse.urlencode({"path": path})
         return {"method": "GET", "path": f"/topics/{topic}/preview/file?{query}"}
     if tool == "cheese_my_tasks":
         return {"method": "GET", "path": "/tasks/joined"}
@@ -1750,6 +1764,20 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
 
 class PlatformToolError(Exception):
     """A refusal the agent reads as written: what happened and what to do next."""
+
+
+class Said(str):
+    """What a tool says, with pictures for an agent that can look at them:
+    `images` holds {"data": base64, "mimeType": ...}. Every caller takes it as
+    the text it is; a session runner that can hand pictures to its model (pi,
+    Codex) hands these over as well."""
+
+    images: tuple = ()
+
+    def __new__(cls, text: str, images=()):
+        said = super().__new__(cls, text)
+        said.images = tuple(images)
+        return said
 
 
 class PlatformHTTPError(RuntimeError):
@@ -1992,7 +2020,7 @@ def _doc_get(args: dict, host) -> str:
 
 
 def _document(host, args: dict | None = None) -> dict:
-    """本次要读写的文档：点了名的那一份（项目资料库里的），会话本来就是对着
+    """本次要读写的文档：点了名的那一份（按编号），会话本来就是对着
     某份文档开的（CHEESE_DOCUMENT），或者是任务里的会话，用任务的实况文档。"""
     named = str((args or {}).get("document") or "").strip()
     if named:
@@ -2030,10 +2058,7 @@ def _doc_edit(args: dict, host) -> str:
     edits = data.get("edits") or []
     if data.get("mode") == "suggest":
         return f"已提出 {len(edits)} 处修改建议，等人接受或拒绝；正文还没有变。"
-    who = data.get("requested_by")
     done = f"已改了 {len(edits)} 处"
-    if who:
-        done = f"已按 {who} 的要求改了 {len(edits)} 处"
     version = data.get("doc_version")
     lines = [f"{done}（第 {version} 版）。" if version else f"{done}。"]
     lines += _made_canvases(answer)
@@ -2057,7 +2082,7 @@ def _searched(args: dict, host, document: str) -> str:
     else:
         where = f"这里的实况文档{named}"
     return (
-        f"这次没给 document，找的是{where}；要改项目资料库里的文档，"
+        f"这次没给 document，找的是{where}；要改别的文档，"
         "带上它的 document 编号（见 cheese_doc_list）。"
     )
 
@@ -2151,13 +2176,13 @@ def _doc_new(args: dict, host) -> str:
         except (ValueError, KeyError, TypeError):
             raise exc from None
         raise PlatformToolError(
-            f"没建成，资料库里没有多出文档：{why} 改好正文再 cheese_doc_new。"
+            f"没建成，没有多出文档：{why} 改好正文再 cheese_doc_new。"
         ) from exc
     doc = answer.get("data") or {}
     host.doc_versions[doc["id"]] = doc.get("doc_version", 0)
     shown = "当前对话里已经出现这份文档。" if host.environ.get("CHEESE_TOPIC") else ""
     lines = [
-        f"已在资料库新建《{doc.get('title') or args['title']}》，编号 {doc['id']}"
+        f"已新建《{doc.get('title') or args['title']}》，编号 {doc['id']}"
         f"（第 {doc.get('doc_version', 0)} 版）。{shown}之后读写它都带上 document。"
     ]
     lines += _made_canvases(answer)
@@ -2185,11 +2210,16 @@ def _app_save(args: dict, host) -> str:
     just made and the document's history keeps which code it showed."""
     body = {"code": str(args["code"]), "note": str(args.get("note") or "")}
     key = str(args.get("app") or "").strip()
+    # The pictures the platform took come back with the answer, for the writer
+    # to look at what it made (`_LOOK`), when its model reads pictures
+    # (CHEESE_PICTURES, which the platform sets from the gateway's word).
+    pictures = "?pictures=true" if host.environ.get("CHEESE_PICTURES") == "1" else ""
     if key:
-        plan = {"method": "POST", "path": _app_path(key) + "/versions", "body": body}
+        path = _app_path(key) + "/versions" + pictures
     else:
         document = _document(host, args)["CHEESE_DOCUMENT"]
-        plan = {"method": "POST", "path": f"/documents/{document}/apps", "body": body}
+        path = f"/documents/{document}/apps" + pictures
+    plan = {"method": "POST", "path": path, "body": body}
     try:
         answer = host.request(plan)
     except Exception as exc:
@@ -2205,18 +2235,36 @@ def _app_save(args: dict, host) -> str:
         if saved.get("checked")
         else "平台的浏览器暂时不可用，这一版未经试运行，也没有截图。"
     )
+    images = [
+        {"data": data, "mimeType": "image/png"}
+        for _, data in sorted((saved.get("pictures") or {}).items(), key=lambda kv: -int(kv[0]))
+    ]
     if not key:
         title = str(args.get("title") or "").strip() or "小程序"
         made = saved.get("key") or "?"
-        return (
+        said = (
             f"已保存小程序 {made} 的第 1 版。{unchecked}它还不在文档中：用 "
             "cheese_doc_edit 把下面的块放到文档中合适的位置，并把第二行改写为一句说明，"
             "写明它展示什么、最重要的结论是什么。读者和你以后读文档时，都只读这一句。\n\n"
             f":::app {made}@1 {title}\n一句话说明\n:::"
         )
+        if images:
+            said += _LOOK.format(app=made) + "无论是否修改，最后都要把块放进文档。"
+        return Said(said, images)
     version = saved.get("version") or 1
-    done = f"已保存小程序 {key} 的第 {version} 版。{unchecked}"
-    return done + _point_at(host, key, version)
+    said = f"已保存小程序 {key} 的第 {version} 版。{unchecked}" + _point_at(host, key, version)
+    if images:
+        said += _LOOK.format(app=key)
+    return Said(said, images)
+
+
+#: What the writer is asked to do with the pictures of what it just saved.
+_LOOK = (
+    "\n\n附上平台试运行这一版时拍下的截图，依次是桌面宽度和手机宽度（浅色），读者"
+    "打开时看到的就是这样。看一眼：画面是否讲清楚了要讲的东西，数字和标注是否正确，"
+    "手机宽度上是否挤在一起、重叠或被截断。有问题就改好后带上 app（{app}）再保存一版，"
+    "文档中的块会改用新的一版。"
+)
 
 
 def _point_at(host, key: str, version: int) -> str:
@@ -2232,7 +2280,10 @@ def _point_at(host, key: str, version: int) -> str:
         if (m := head.match(line)) and int(m.group(1)) != version
     ]
     if not any(head.match(line) for line in content.splitlines()):
-        return "文档中没有这个小程序的块，读者还看不到这一版。"
+        return (
+            "文档中还没有这个小程序的块，读者还看不到它。放进文档时写这一版："
+            f":::app {key}@{version}。"
+        )
     if not edits:
         return "文档中的块已经是这一版。"
     try:
@@ -2814,10 +2865,11 @@ def _wait_machine(args: dict, host) -> str:
 def _task(args: dict, host) -> str:
     """Creating a task, a refusal said to the agent in the open.
 
-    A title too wide for the sidebar is the one refusal the agent can act on:
-    the backend answers with the width it allows and the width it read, so the
-    agent writes a shorter title and calls again. Handed the raw body instead,
-    it reads as a wall of JSON and tries the same title a second time."""
+    Every refusal here is one the agent can act on — a title too wide for the
+    sidebar (the backend answers with the width it allows and the width it
+    read), an owner outside the project, ``here`` outside a 支线, a new task
+    with nothing said of what it is for. Handed the raw body instead, it reads
+    as a wall of JSON and makes the same call a second time."""
     try:
         answer = host.request(request_plan("cheese_task", args, host.environ))
     except Exception as exc:
@@ -2828,7 +2880,7 @@ def _task(args: dict, host) -> str:
         except (ValueError, KeyError, TypeError):
             raise exc from None
         raise PlatformToolError(
-            f"没有建出任务：{why.rstrip('。')}。标题改短了，再调一次 cheese_task。"
+            f"没有建出任务：{why.rstrip('。')}。改好了，再调一次 cheese_task。"
         ) from exc
     return _say_task(args, answer.get("data"), host.environ)
 
@@ -2860,16 +2912,18 @@ _STEPS = {
 def _say_task(args, data, env) -> str:
     data = data or {}
     owner = data.get("owner_handle") or "负责人"
-    made = f"已创建任务「{data.get('title') or args['title']}」，负责人 {owner}。"
-    if data.get("started"):
-        return made + "任务已经开始，由它自己对话里的 AI 队友去做。"
-    if args.get("start") is True:
+    title = data.get("title") or args["title"]
+    if data.get("here"):
         return (
-            made
-            + f"没能直接开始：{data.get('not_started_because') or '原因不明'}。"
-            + f"在这里告诉 {owner}，请他在任务里点「开始」。"
+            f"这条支线已转为任务「{title}」，负责人 {owner}。从现在起你可以改项目："
+            "用 cheese worktree 准备任务自己的工作目录，在支线里临时改过、要留下的内容"
+            "带过去，做完提交审阅。先把这段讨论整理进任务文档：要做什么、已经定了什么、"
+            "还有什么没定。然后，负责人已经说了要做什么就接着做；还没说，回复一两句说明"
+            "文档整理了什么，停下来等他的话。"
         )
-    return made + f"任务停在讨论中：在这里问一次 {owner} 要不要开始，问过就不再追。"
+    return (
+        f"已创建任务「{title}」，负责人 {owner}，由它自己对话里的 AI 队友去做。"
+    )
 
 
 
@@ -3022,7 +3076,7 @@ def _say_library(args, data, env) -> str:
 def _say_documents(args, data, env) -> str:
     rows = (data or {}).get("data") or []
     if not rows:
-        return "资料库里还没有文档。"
+        return "还没有文档。"
     return "\n".join(
         f"{row['id']}\t{row.get('title') or '未命名文档'}\t{row.get('author') or ''}"
         f" {str(row.get('updated_at') or '')[:16]}"
@@ -4770,6 +4824,29 @@ def _has_work_to_sync(worktree: Path) -> bool:
         return True
 
 
+def _synced_already(task_id: str) -> bool:
+    """Whether the task's checkout here has nothing a sync would deliver or
+    back up (`_has_work_to_sync`), no platform snapshot still waiting to come
+    back into it, and is on the task's current branch.
+
+    The branch is the platform's to say: once a step lands the task moves on
+    to a new one, and the full sync carries the checkout over to it
+    (`_task_worktree`) and delivers there. One call, and no forge probe."""
+    worktree = _task_root() / task_id
+    if not (worktree / ".git").exists() or _has_work_to_sync(worktree):
+        return False
+    try:
+        admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
+        if (admin / _RESTORE_PENDING).exists():
+            return False
+        branch = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+    except RuntimeError:
+        return False
+    project = _need("CHEESE_PROJECT", PROJECT)
+    data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
+    return data["closed"] or data["branch"] == branch
+
+
 def _sync_all_tasks() -> None:
     root = _task_root()
     if not root.exists():
@@ -5144,8 +5221,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="准备项目默认分支的代码并输出路径",
         description=(
             "在 ~/.cheese/checkout 准备项目默认分支的代码（已有且没改过就更新到最新），"
-            "输出路径；不会改变当前 shell 的目录。支线和还没开始的任务里看代码、"
-            "跑命令用它：这里的改动留不下，要改项目就创建任务（cheese_task）。"
+            "输出路径；不会改变当前 shell 的目录。支线里看代码、跑命令用它：这里的"
+            "改动留不下，要改项目就转为任务（cheese_task）。"
         ),
     )
     psync = sub.add_parser(
@@ -5177,18 +5254,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--drop-dependency",
         action="store_true",
         help="已整理并验证独立改动后，将现有 PR 改到项目默认分支，清除任务依赖和旧批准",
-    )
-
-    sub.add_parser(
-        "sync-agents",
-        help="把项目模型目录写成本会话的分身定义(钩子自动调,一般不用手跑)",
-        description=(
-            "从项目 default-model 接口读出模型目录,在 $CLAUDE_CONFIG_DIR/agents/ 下"
-            "给每个可指定模型写一份 model-<id>.md(名字、一句话描述、model=目录 id),"
-            "不再可指定的对应 model-*.md 一并清掉(旧版按队友生成的 mate-*.md 也清)。"
-            "写在 SessionStart/UserPromptSubmit 钩子上自动跑;它只是发现层,任何失败"
-            "都不打断会话(恒退出 0)。"
-        ),
     )
 
     psv = sub.add_parser(
@@ -5449,95 +5514,6 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _sync_agents() -> None:
-    """把项目的模型目录写成本会话的 Claude Code 分身定义文件。
-
-    挂在 SessionStart / UserPromptSubmit 钩子上跑：主 agent 用 Agent 工具按名
-    起分身（模型=目录里的那一个）靠的就是这批文件。它只是发现层 —— 真正的
-    闸在准入（指定了目录外的模型会被拒绝并列出可选）—— 所以任何失败都不
-    许打断会话：`_call` 自己打印原因，这里恒退出 0。
-
-    分身是骨架原生机制，没有平台语义（无身份/席位/记忆）：文件按模型起，
-    不按队友起（2026-09-23 拍板）。
-    """
-    try:
-        _sync_agents_core()
-    except SystemExit:
-        pass  # `_call` 已经说过为什么了
-    except Exception as exc:  # noqa: BLE001
-        print(f"[cheese] sync-agents 跳过: {exc}", file=sys.stderr)
-
-
-def _sync_agents_core() -> None:
-    if not PROJECT:
-        return
-    # A member's own Claude Code runs on its owner's login, which serves its
-    # own models and none of the project's catalogue: listing the catalogue's
-    # would offer subagents models this session cannot reach.
-    if os.environ.get("CHEESE_OWN_LOGIN"):
-        return
-    res = _call(
-        "GET",
-        f"/projects/{PROJECT}/default-model",
-        tolerate=(401, 403, 404),
-        timeout=8,
-    )
-    if res.get("ok") is False:
-        return
-    state = res.get("data") or {}
-    choices = state.get("choices") or []
-    # 项目自己的池：后端直接给（与准入的 resolve_pool 同源）；旧后端没有这个
-    # 字段时退回「默认那一项的供给」。池外的模型主 agent 指定了也跑不起来,
-    # 所以知道池就按池列。实在推不出池（零默认的旧响应）就全列——准入兜底
-    # 会拒掉错池并给出正确的可选清单,比整个发现层空转强。
-    pool = state.get("pool")
-    if not isinstance(pool, str) or not pool:
-        pool = next(
-            (c.get("supply") for c in choices if c.get("default") and c.get("supply")),
-            None,
-        )
-    agents_dir = (
-        Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "agents"
-    )
-    marker = "由 cheese sync-agents 按项目模型目录生成，别手改。"
-    wanted: dict[str, str] = {}
-    for item in choices:
-        model = item.get("id") or ""
-        if pool is not None and item.get("supply") != pool:
-            continue
-        # CC 的分身名比模型 id 严格：清洗出名字,真 id 由 frontmatter 的
-        # model 带过去,准入认的是它。
-        name = re.sub(r"[^a-z0-9._-]+", "-", model.lower()).strip("-.")
-        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,62}", name):
-            continue
-        label = item.get("label") or model
-        # description 就是主 agent 在 Agent 工具的可用清单里读到的那一行 ——
-        # 发现模型、知道起哪个分身跑它，全在这一行里,所以要短。
-        desc = f"平台模型目录 · {label}（{model}）"
-        content = (
-            "---\n"
-            f"name: {name}\n"
-            f"description: {json.dumps(desc, ensure_ascii=False)}\n"
-            f"model: {model}\n"
-            "---\n\n" + marker + "\n"
-        )
-        wanted[f"model-{name}.md"] = content
-    agents_dir.mkdir(parents=True, exist_ok=True)
-    for name, content in wanted.items():
-        path = agents_dir / name
-        if not path.exists() or path.read_text(encoding="utf-8") != content:
-            path.write_text(content, encoding="utf-8")
-    # model-*.md 只收带自己记号的（别人手写的同名前缀文件不动）；
-    # mate-*.md 是上一版按队友生成的，全是我们的陈迹，无条件清。
-    for stale in agents_dir.glob("model-*.md"):
-        if stale.name in wanted:
-            continue
-        if marker in stale.read_text(encoding="utf-8", errors="replace"):
-            stale.unlink()
-    for stale in agents_dir.glob("mate-*.md"):
-        stale.unlink()
-
-
 def main() -> None:
     parser = build_parser()
     a = parser.parse_args()
@@ -5553,7 +5529,13 @@ def main() -> None:
             _sync_all_tasks()
         else:
             task = _task_id(a.task)
-            _print_left_out(task, _sync_task(task))
+            # Run by hand right after a commit, whose own hook has just synced
+            # it, this used to ask the platform and probe the forge again to
+            # find nothing to do (dev, 10-12..10-17: 169 such calls, 5.2 s at
+            # the median). A checkout on the task's branch with nothing to
+            # deliver or back up is done after asking only for that branch.
+            if not _synced_already(task):
+                _print_left_out(task, _sync_task(task))
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)
@@ -5606,8 +5588,6 @@ def main() -> None:
             if parent:
                 os.makedirs(parent, exist_ok=True)
             _raw_request("GET", f"{base}/attachments/{a.index}{where}", None, out=out)
-    elif a.cmd == "sync-agents":
-        _sync_agents()
     elif a.cmd == "serve":
         topic = _need("CHEESE_TOPIC", TOPIC)
         if not (1 <= a.port <= 65535):

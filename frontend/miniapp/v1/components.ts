@@ -23,6 +23,7 @@ import Row from './components/Row.ce.vue'
 import Segmented from './components/Segmented.ce.vue'
 import Select from './components/Select.ce.vue'
 import Slider from './components/Slider.ce.vue'
+import Space from './components/Space.ce.vue'
 import Stat from './components/Stat.ce.vue'
 import Switch from './components/Switch.ce.vue'
 
@@ -39,6 +40,7 @@ const ALL = {
   'c-chart': Chart,
   'c-math': MathEl,
   'c-plane': Plane,
+  'c-space': Space,
 }
 /** Vue gives an element its properties only once it is in the page. A
  *  framework sets them earlier — React sets every prop on an element it has

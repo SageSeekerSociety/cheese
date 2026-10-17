@@ -72,10 +72,12 @@ from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
+from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import BlockOut, BlockRepository, _actor_in_place
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
+from app.auth.project_roles import may
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -86,6 +88,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.mentions import mentioned_outside
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_identity import InputReconciliationPending
@@ -96,9 +99,9 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.room_task.services import TaskService
+from app.domain.project_permissions import Permission
+from app.domain.room_task.place import place_or_404
 from app.domain.thread.services import answered_in
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -128,11 +131,14 @@ async def send_chat_message(
     `request_id` makes a retry safe: the same id returns the message already
     stored instead of posting it twice.
 
-    In a task only the people working it speak — its owner and the
-    collaborators the owner brought in — and its own session, publishing in
-    its turn. What anyone else has to say about a task they say in the room.
+    Anyone in the project speaks in a task, as in a 支线 — it is often one
+    that became the task, with the same people in it. What its AI teammate
+    acts on is its owner's and collaborators' word (`agent.turn.intake.human`).
+    A closed task is still talked in: its teammate answers when named and
+    changes nothing (`Place.keeps_work`). Of the agents, only the task's own
+    session publishes there, in its turn.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Sign in to send a message")
@@ -142,9 +148,6 @@ async def send_chat_message(
             if resolver.credential_conversation() != task.id:
                 raise ForbiddenError(say("taskOwnSessionSpeaks"))
             return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
-        if not TaskService.takes_part(task, actor.handle):
-            raise ForbiddenError(say("taskParticipantsOnly"))
-        TaskService.require_open(task)
     elif await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
     if task is None and actor.via == "cheese":
@@ -156,12 +159,13 @@ async def send_chat_message(
         # and its tasks alike. Unarchiving it is how it is spoken in again.
         raise ForbiddenError(say("roomArchivedUnarchiveFirst"))
     if place.inner_id is None and not await TopicMemberService(db).may_speak(
-        place.room, actor.handle
+        place.room, actor.handle, team=project_team
     ):
         # A channel's main line is its members speaking. Anyone in the project
         # reads it and answers in a 支线 under it; speaking in the main line
         # is joining first.
         raise ForbiddenError(say("channelJoinToPost"))
+    await require_role(db, actor, place.project_id, Permission.speak)
     content = body.content.strip()
     attachments = [
         {"path": a.path, "mime": a.mime}
@@ -181,6 +185,7 @@ async def send_chat_message(
         if body.quoted_context
         else None,
         client_id=str(body.request_id),
+        may_summon=await may(db, place.project_id, actor.handle, Permission.ask_agent),
     )
     stored = await BlockRepository(db).get(anchor_id)
     sent = BlockOut.model_validate(stored).model_dump(mode="json")
@@ -232,7 +237,7 @@ async def _publish_as_agent(
     )
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
-    # A task's session names nobody into its task: only its owner speaks there.
+    # A task's session names nobody into its task: it works for its owner.
     if payload is not None and place.task is None:
         await _summon_the_named(chat, runner, place, payload, author)
     return payload
@@ -314,7 +319,7 @@ async def leave_a_note(
     房间里的一条消息。那边这一刻没有在跑的轮次就没人接住，如实回 `delivered: false`。
     """
 
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     sender = actor.handle
     if not actor.authenticated:

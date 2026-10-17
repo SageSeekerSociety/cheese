@@ -33,6 +33,7 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent.service import AgentResult
+from app.domain.agent.session_host import host as session_host
 from tests.conftest import stub_compute
 from tests.support.room_reader import room_reader
 from tests.turn_log import a_topic, open_turn_ids
@@ -75,6 +76,25 @@ async def test_one_backend_owns_the_running_work_and_the_next_takes_it_over(
 
 
 @pytest.mark.anyio
+async def test_one_ownership_serves_a_second_event_loop(db_factory):
+    """The process keeps one Ownership; a second lifespan runs on a new event
+    loop, and the lock must be taken and checked there as in the first."""
+    owner = Ownership(_url(db_factory))
+
+    async def a_lifespan() -> bool:
+        try:
+            assert await owner.try_acquire()
+            checks = await asyncio.gather(*(owner.still_held() for _ in range(3)))
+            return all(checks)
+        finally:
+            await owner.release()
+
+    assert await a_lifespan()
+    # The next lifespan: the same instance, on an event loop of its own.
+    assert await asyncio.to_thread(asyncio.run, a_lifespan())
+
+
+@pytest.mark.anyio
 async def test_a_backend_that_dies_hands_the_work_over_too(db_factory):
     """No goodbye: its database connection is simply gone, as when the
     container is killed.
@@ -114,6 +134,33 @@ async def test_a_backend_that_dies_hands_the_work_over_too(db_factory):
         assert not await dying.still_held()
     finally:
         await dying.release()
+        await incoming.release()
+
+
+@pytest.mark.anyio
+async def test_a_watch_stopped_mid_check_keeps_the_work_until_it_is_let_go(
+    db_factory, caplog
+):
+    """Handing over stops the lock's watch first and lets the lock go last,
+    after this backend has stopped reading its sessions. A watch stopped while
+    it is checking the lock must not let it go early: the next backend would
+    take the running work while this one still reads it."""
+    outgoing, incoming = Ownership(_url(db_factory)), Ownership(_url(db_factory))
+    try:
+        assert await outgoing.try_acquire()
+        for _ in range(20):
+            check = asyncio.create_task(outgoing.still_held())
+            await asyncio.sleep(0)  # the check is on its way to the database
+            check.cancel()
+            await asyncio.gather(check, return_exceptions=True)
+            assert not await incoming.try_acquire(), "the lock went with the watch"
+
+        with caplog.at_level("ERROR", logger="app.core.ownership"):
+            await outgoing.release()
+        assert not [r for r in caplog.records if r.levelname == "ERROR"]
+        await asyncio.wait_for(incoming.acquire(), timeout=5)
+    finally:
+        await outgoing.release()
         await incoming.release()
 
 
@@ -280,6 +327,45 @@ async def test_session_output_lands_once_through_the_backend_that_took_over():
         await room.close()
         if incoming is not None:
             await incoming.stop_listening()
+
+
+@pytest.mark.anyio
+async def test_a_reading_stopped_while_the_room_lands_an_item_ends_cleanly(
+    monkeypatch,
+):
+    # The outgoing backend stops listening while its room is still landing
+    # what the session said, for longer than the stop waits for a pass. Its
+    # reading ends; it does not fail on the item the room finishes after.
+    monkeypatch.setattr(session_host, "STOP_LISTENING_S", 0.05)
+    room = Room(Scripted(_works_on_it))
+    landing, release = asyncio.Event(), asyncio.Event()
+    heard_by_room = room.runtime.reader
+
+    async def slow_to_land(session, read):
+        if getattr(read.event, "text", None) == "the login page is fixed":
+            landing.set()
+            await release.wait()
+        await heard_by_room(session, read)
+
+    room.runtime.reader = slow_to_land
+    try:
+        await room.send("fix the login page")
+        await _until(lambda: room.receipts == ["fix the login page"])
+        reading = room.runtime.tasks[(room.topic, "cheese")]
+        room.channel.says(room.topic, "the login page is fixed")
+        await asyncio.wait_for(landing.wait(), 5)
+
+        stop = asyncio.create_task(room.runtime.stop_listening())
+        await asyncio.sleep(0.2)  # past the stop's wait for the pass
+        release.set()
+        await asyncio.wait_for(stop, 10)
+
+        assert reading.done()
+        assert not reading.cancelled()
+        assert reading.exception() is None
+    finally:
+        release.set()
+        await room.close()
 
 
 class _GatedLock:

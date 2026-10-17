@@ -7,7 +7,7 @@ dependencies = [
     "aiofiles>=25.1.0",
     "aiosmtplib>=5.1.0",
     "alembic>=1.18.4",
-    "asyncpg>=0.31.0",
+    "asyncpg>=0.32.0",
     "bcrypt>=5.0.0",
     "fastapi>=0.137.0",
     "httpx>=0.28.1",
@@ -51,6 +51,9 @@ dependencies = [
     # anyone could install it — so it is a runtime dependency, not a dev one.
     "py-spy>=0.4.2",
     "tenacity>=9.2.1",
+    # app/core/model_images.py decodes an uploaded picture before a model is
+    # sent it; the image the app runs must have it.
+    "pillow>=12.3.0",
 ]
 
 [dependency-groups]
@@ -59,11 +62,10 @@ dev = [
     "anyio>=4.13.0",
     "httpx>=0.28.1",
     "httpx2>=2.13.1",
-    # Checks the import graph in backend/.importlinter: declaration + a frozen
-    # baseline, run by scripts/check_boundaries.py.
+    # Checks the import graph in backend/.importlinter: the declaration, and the
+    # baseline scripts/check_boundaries.py derives from the tree at the merge
+    # base.
     "import-linter>=2.15",
-    # test_codex_runner_process builds a PNG to feed the runner.
-    "pillow>=12.3.0",
     "pyright>=1.1.410",
     "pytest>=9.1.0",
     "pytest-anyio>=0.0.0",
@@ -185,7 +187,10 @@ timeout = 300
 # A signal can interrupt anyio's run_until_complete without cancelling the
 # async test. Fixture teardown then queues behind that still-running test and
 # hangs before the timeout report reaches CI. Dump the stack and exit the
-# worker instead; xdist reports the crashed test and runs the remaining work.
+# worker instead; xdist reports the crashed test. A local run, on a scheduler
+# that hands out one case at a time, keeps going; CI's --dist loadfile ends the
+# shard at the loss (scripts/ci_evidence), where the lost case cannot be
+# retried either.
 timeout_method = "thread"
 # Keep a test's tmp_path only when it failed. Every passing test's directory
 # used to stay until pytest's three-run rotation, which is how 13 GB of them

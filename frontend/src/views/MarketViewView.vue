@@ -33,7 +33,7 @@ const props = withDefaults(
   }>(),
   { loading: false, error: null, nodes: null, nodesLoading: false, nodesError: null }
 )
-const emit = defineEmits<{ (e: 'retry'): void }>()
+const emit = defineEmits<{ retry: [] }>()
 
 const { t } = useI18n()
 

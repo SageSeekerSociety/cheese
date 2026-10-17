@@ -31,6 +31,7 @@ export const keys = {
   ) => ['project', projectId, 'tasks', 'closed', filter] as const,
   projectOverview: (projectId: string) => ['project', projectId, 'overview'] as const,
   projectProgress: (projectId: string) => ['project', projectId, 'progress'] as const,
+  projectSituation: (projectId: string) => ['project', projectId, 'situation'] as const,
   projectDocs: (projectId: string, kind: string) => ['project', projectId, 'docs', kind] as const,
   projectSkills: (projectId: string) => ['project', projectId, 'skills'] as const,
 

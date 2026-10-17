@@ -1,0 +1,148 @@
+/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/163c41bf-28d8-4244-ba8e-b5c34cbdca05/.cheese/tasks/1151b7c9-5e86-4cf7-8429-2e5774076300/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 17 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+  return self._jws.encode(
+/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/163c41bf-28d8-4244-ba8e-b5c34cbdca05/.cheese/tasks/1151b7c9-5e86-4cf7-8429-2e5774076300/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 17 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+  decoded = self.decode_complete(
+2026-10-15 10:11:41 [warning  ] request_rate_unchecked         [app.request_limits] detail='Connection closed by server.' error=ConnectionError req=ef23e82cc257
+2026-10-15 10:11:41 [info     ] req                            [http] bytes=1875 client=127.0.0.1 host=probe method=GET ms=343.2 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76 req=ef23e82cc257 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:41 [info     ] req                            [http] bytes=1875 client=127.0.0.1 host=probe method=GET ms=112.6 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76 req=ecdc75be544d status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:41 [info     ] req                            [http] bytes=1875 client=127.0.0.1 host=probe method=GET ms=119.1 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76 req=b3361e10ad35 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:41 [info     ] req                            [http] bytes=1875 client=127.0.0.1 host=probe method=GET ms=68.5 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76 req=5dc607c51150 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:41 [info     ] req                            [http] bytes=1875 client=127.0.0.1 host=probe method=GET ms=109.5 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76 req=9f7c861f3624 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:41 [info     ] req                            [http] bytes=1875 client=127.0.0.1 host=probe method=GET ms=77.9 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76 req=56a49b9b1892 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:41 [info     ] req                            [http] bytes=12159 client=127.0.0.1 host=probe method=GET ms=94.8 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/tasks req=3c8465b97af5 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:41 [info     ] req                            [http] bytes=12159 client=127.0.0.1 host=probe method=GET ms=29.9 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/tasks req=50cfdb784175 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=12159 client=127.0.0.1 host=probe method=GET ms=29.8 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/tasks req=1f9cb3d05441 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=12159 client=127.0.0.1 host=probe method=GET ms=33.4 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/tasks req=522879f242f8 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=12159 client=127.0.0.1 host=probe method=GET ms=34.7 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/tasks req=02d1af0d849b status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=12159 client=127.0.0.1 host=probe method=GET ms=31.5 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/tasks req=3fb2da4a4991 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=20544 client=127.0.0.1 host=probe method=GET ms=83.4 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/blocks req=7cd3899953d2 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=20544 client=127.0.0.1 host=probe method=GET ms=27.1 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/blocks req=bd57f2ea2987 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=20544 client=127.0.0.1 host=probe method=GET ms=27.2 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/blocks req=87bb5f3effbb status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=20544 client=127.0.0.1 host=probe method=GET ms=26.5 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/blocks req=c3b5cf6fb135 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=20544 client=127.0.0.1 host=probe method=GET ms=66.7 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/blocks req=9a5542cd65be status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=20544 client=127.0.0.1 host=probe method=GET ms=27.0 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/blocks req=ed712285c61b status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=174 client=127.0.0.1 host=probe method=GET ms=28.3 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/environment req=0887ee20b030 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=174 client=127.0.0.1 host=probe method=GET ms=20.7 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/environment req=ec64db796e4e status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=174 client=127.0.0.1 host=probe method=GET ms=19.6 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/environment req=c0de456ba5ea status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=174 client=127.0.0.1 host=probe method=GET ms=19.4 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/environment req=f8ea2fb63e55 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=174 client=127.0.0.1 host=probe method=GET ms=19.0 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/environment req=feca7c0fbb45 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=174 client=127.0.0.1 host=probe method=GET ms=19.3 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/environment req=14a204a20c3b status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=56 client=127.0.0.1 host=probe method=GET ms=26.6 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/members req=7ba4d7a6b5e9 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=56 client=127.0.0.1 host=probe method=GET ms=19.9 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/members req=e700446615cb status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=56 client=127.0.0.1 host=probe method=GET ms=59.5 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/members req=8341c8166ec0 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=56 client=127.0.0.1 host=probe method=GET ms=18.8 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/members req=238b08d45471 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=56 client=127.0.0.1 host=probe method=GET ms=18.0 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/members req=64d5df84f81a status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=56 client=127.0.0.1 host=probe method=GET ms=28.9 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/members req=51d756289b6a status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=60.8 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/pins req=6ca63447d189 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=57.8 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/pins req=92e56578bebb status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=57.6 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/pins req=60e2c864f841 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:42 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=16.6 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/pins req=d139c73ea541 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=56.5 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/pins req=6b59d23e015f status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=16.3 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/pins req=cec680e1a448 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=60.4 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/threads req=f6712b31a818 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=18.1 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/threads req=d92793ed315e status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=17.6 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/threads req=569e1fbdbe47 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=18.0 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/threads req=c970c727a1a7 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=21.5 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/threads req=40710a5b8982 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=17.2 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/threads req=46ee76712282 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=86747 client=127.0.0.1 host=probe method=GET ms=47.8 path=/projects/586786ec-acac-41f5-ba69-7296055c73a2/tasks req=03d4b9595b98 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=86747 client=127.0.0.1 host=probe method=GET ms=41.9 path=/projects/586786ec-acac-41f5-ba69-7296055c73a2/tasks req=d506760ad28a status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=86747 client=127.0.0.1 host=probe method=GET ms=40.2 path=/projects/586786ec-acac-41f5-ba69-7296055c73a2/tasks req=2b6ba0250132 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=86747 client=127.0.0.1 host=probe method=GET ms=80.0 path=/projects/586786ec-acac-41f5-ba69-7296055c73a2/tasks req=cf047649f695 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=86747 client=127.0.0.1 host=probe method=GET ms=38.2 path=/projects/586786ec-acac-41f5-ba69-7296055c73a2/tasks req=a0c7e1a3648a status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=86747 client=127.0.0.1 host=probe method=GET ms=80.4 path=/projects/586786ec-acac-41f5-ba69-7296055c73a2/tasks req=357eccf25986 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=25300 client=127.0.0.1 host=probe method=GET ms=111.8 path=/awaiting-me req=3a1cc6e1c171 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:43 [info     ] req                            [http] bytes=25300 client=127.0.0.1 host=probe method=GET ms=91.5 path=/awaiting-me req=8e8109061019 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:44 [info     ] req                            [http] bytes=25300 client=127.0.0.1 host=probe method=GET ms=87.4 path=/awaiting-me req=6b1a3b4ed2ab status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:44 [info     ] req                            [http] bytes=25300 client=127.0.0.1 host=probe method=GET ms=87.3 path=/awaiting-me req=aa2f7ac6aa61 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:44 [info     ] req                            [http] bytes=25300 client=127.0.0.1 host=probe method=GET ms=87.9 path=/awaiting-me req=bac466ce8de4 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:44 [info     ] req                            [http] bytes=25300 client=127.0.0.1 host=probe method=GET ms=85.7 path=/awaiting-me req=cbd789613aad status=200 ua=python-httpx/0.28.1
+ids {"project": "586786ec-acac-41f5-ba69-7296055c73a2", "room": "13f6e609-d016-49c0-b8ac-d67d1641bd76", "task": "5f4dcca7-31e5-4f88-9c10-2baff7e70619"} rounds=5 loadavg=52.61 57.25 55.61 24/9475 33320
+
+===== channel detail  (5 req, wall 112 ms)  statements/req 38.0  db/req 33.7 ms =====
+       4.3 ms/req    2.0 calls/req  SELECT tasks,threads,blocks,unnest
+       3.7 ms/req    1.0 calls/req  SELECT blocks,threads,topic_read_states
+       3.1 ms/req    3.0 calls/req  SELECT blocks,tasks
+       2.9 ms/req    3.0 calls/req  SELECT blocks
+       2.8 ms/req    4.0 calls/req  SELECT tasks
+       1.8 ms/req    1.0 calls/req  SELECT unnest,tasks,threads,LATERAL
+       1.8 ms/req    3.0 calls/req  SELECT accept_cards
+       1.7 ms/req    1.0 calls/req  SELECT tasks,threads,notification,unnest
+
+===== channel task list  (5 req, wall 34 ms)  statements/req 16.0  db/req 9.9 ms =====
+       1.9 ms/req    1.0 calls/req  SELECT blocks
+       1.8 ms/req    1.0 calls/req  SELECT blocks,tasks
+       1.4 ms/req    2.0 calls/req  SELECT accept_cards
+       1.0 ms/req    1.0 calls/req  SELECT unnest,LATERAL,blocks
+       1.0 ms/req    1.0 calls/req  SELECT tasks
+       0.5 ms/req    2.0 calls/req  SELECT projects
+       0.5 ms/req    1.0 calls/req  SELECT topics
+       0.4 ms/req    2.0 calls/req  SELECT tasks,threads
+
+===== channel blocks  (5 req, wall 30 ms)  statements/req 14.0  db/req 7.0 ms =====
+       2.6 ms/req    2.0 calls/req  SELECT blocks
+       0.8 ms/req    1.0 calls/req  SELECT tasks
+       0.7 ms/req    1.0 calls/req  SELECT routine_runs,routines,threads
+       0.5 ms/req    2.0 calls/req  SELECT projects
+       0.5 ms/req    1.0 calls/req  SELECT topics
+       0.4 ms/req    2.0 calls/req  SELECT tasks,threads
+       0.4 ms/req    1.0 calls/req  SELECT block_reactions
+       0.4 ms/req    1.0 calls/req  SELECT threads
+
+===== channel environment  (5 req, wall 22 ms)  statements/req 14.0  db/req 3.9 ms =====
+       0.6 ms/req    2.0 calls/req  SELECT device_team,projects
+       0.5 ms/req    2.0 calls/req  SELECT device_project
+       0.5 ms/req    2.0 calls/req  SELECT projects
+       0.5 ms/req    1.0 calls/req  SELECT topics
+       0.4 ms/req    2.0 calls/req  SELECT tasks,threads
+       0.4 ms/req    1.0 calls/req  SELECT agent_sessions
+       0.3 ms/req    1.0 calls/req  SELECT agent_environments
+       0.2 ms/req    1.0 calls/req  SELECT user
+
+===== channel members  (5 req, wall 22 ms)  statements/req 12.0  db/req 4.1 ms =====
+       0.9 ms/req    3.0 calls/req  SELECT topic_memberships
+       0.8 ms/req    2.0 calls/req  SELECT projects
+       0.7 ms/req    1.0 calls/req  SELECT threads
+       0.4 ms/req    1.0 calls/req  SELECT topics
+       0.4 ms/req    2.0 calls/req  SELECT tasks,threads
+       0.4 ms/req    1.0 calls/req  SELECT agent_instances
+       0.2 ms/req    1.0 calls/req  SELECT user
+       0.2 ms/req    1.0 calls/req  SELECT project_members
+
+===== channel pins  (5 req, wall 59 ms)  statements/req 8.0  db/req 2.6 ms =====
+       0.7 ms/req    1.0 calls/req  SELECT pins,blocks
+       0.5 ms/req    1.0 calls/req  SELECT topics
+       0.4 ms/req    2.0 calls/req  SELECT tasks,threads
+       0.4 ms/req    1.0 calls/req  SELECT project_members
+       0.2 ms/req    1.0 calls/req  SELECT projects
+       0.2 ms/req    1.0 calls/req  SELECT user
+       0.2 ms/req    1.0 calls/req  SELECT topic_memberships
+
+===== channel threads  (5 req, wall 21 ms)  statements/req 8.0  db/req 3.4 ms =====
+       1.6 ms/req    1.0 calls/req  SELECT threads,blocks
+       0.4 ms/req    1.0 calls/req  SELECT topics
+       0.4 ms/req    2.0 calls/req  SELECT tasks,threads
+       0.3 ms/req    1.0 calls/req  SELECT projects
+       0.2 ms/req    1.0 calls/req  SELECT user
+       0.2 ms/req    1.0 calls/req  SELECT topic_memberships
+       0.2 ms/req    1.0 calls/req  SELECT project_members
+
+===== project task list  (5 req, wall 45 ms)  statements/req 11.0  db/req 11.3 ms =====
+       4.1 ms/req    2.0 calls/req  SELECT blocks,tasks
+       2.5 ms/req    1.0 calls/req  SELECT tasks
+       1.1 ms/req    1.0 calls/req  SELECT topics,topic_memberships
+       1.0 ms/req    1.0 calls/req  SELECT accept_cards
+       1.0 ms/req    1.0 calls/req  SELECT unnest,LATERAL,blocks
+       0.5 ms/req    2.0 calls/req  SELECT projects
+       0.4 ms/req    1.0 calls/req  SELECT user
+       0.4 ms/req    1.0 calls/req  SELECT agent_turns
+
+===== awaiting-me (reference)  (5 req, wall 90 ms)  statements/req 12.0  db/req 18.8 ms =====
+       7.2 ms/req    2.0 calls/req  SELECT blocks,tasks
+       2.3 ms/req    1.0 calls/req  SELECT accept_cards
+       2.0 ms/req    1.0 calls/req  SELECT unnest,LATERAL,blocks
+       1.5 ms/req    1.0 calls/req  SELECT tasks
+       1.4 ms/req    1.0 calls/req  SELECT topics,topic_memberships
+       1.1 ms/req    1.0 calls/req  SELECT topics
+       0.8 ms/req    1.0 calls/req  SELECT threads
+       0.8 ms/req    1.0 calls/req  SELECT notification

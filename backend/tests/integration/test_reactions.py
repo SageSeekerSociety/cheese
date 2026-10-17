@@ -17,6 +17,7 @@ from tests.integration.conftest import (
     join_project_team,
     post_message,
     post_project,
+    project_service,
     registered,
     room_agent_seat,
     room_socket,
@@ -224,12 +225,11 @@ async def test_resume_turn_adds_no_receipt(business_db_factory, tmp_path):
         workspace_root=str(tmp_path / "ws"),
         compute=stub_compute(),
     )
-    from app.domain.project.services import ProjectService
     from app.domain.topic.services import TopicService
 
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )

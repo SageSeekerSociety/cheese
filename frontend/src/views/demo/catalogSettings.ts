@@ -12,9 +12,9 @@
  * （`frontend_grade.py` 的 A 级，取数全在 `composables/useProjectSettings.ts` 和
  * `composables/useBranchProtection.ts` 里），于是每一件都能单独摆在预览站里。
  *
- * 这里没有登记整页：整页现在只剩接线（取数 + 把六件摆进四组里），而且它在
- * `scene-baseline.json` 的 debt 里 —— 「场景」指的是路由页和 `components/panels/**`，
- * `components/settings/**` 这几件不是场景，也不该往那张表里加。
+ * 这里没有登记整页：整页现在只剩接线（取数 + 把六件摆进四组里），而且它自己不是
+ * A 级，在场景棘轮眼里是那棵树上的欠债 —— 「场景」指的是路由页和
+ * `components/panels/**`，`components/settings/**` 这几件不是场景。
  *
  * 末尾另收「归档项目」那一块（`ArchiveProjectSection`）和它的确认框（`ArchiveProjectDialog`）：
  * 两件都是哑的，请求和状态在 `composables/useProjectArchive.ts`。
@@ -44,6 +44,7 @@ import {
 import ArchiveProjectDialog from '@/components/ArchiveProjectDialog.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
 import EnvironmentPicker from '@/components/EnvironmentPicker.vue'
+import McpServerDialog from '@/components/McpServerDialog.vue'
 import ArchiveProjectSection from '@/components/settings/ArchiveProjectSection.vue'
 import AttributionSettings from '@/components/settings/AttributionSettings.vue'
 import BranchProtectionSection from '@/components/settings/BranchProtectionSection.vue'
@@ -69,14 +70,13 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '读到了，GitHub 没开保护',
-        note: '九条规则按「检查 → 跟上 main → 作废采纳 → 自动合并 → 放行名单 → 批准人数 → 合并方式 → 默认 reviewer → 调度座位」排；填了路径范围的检查只在改到对应文件时要求。',
+        note: '九条规则按「检查 → 跟上 main → 作废采纳 → 自动合并 → 放行名单 → 批准人数 → 合并方式 → 默认 reviewer」排；填了路径范围的检查只在改到对应文件时要求。',
         props: bpProps({
           bp: bpRules({
             required_checks: [{ name: 'ci / tests', paths: ['backend/**', 'frontend/**'] }, { name: 'lint' }],
             approvals_required: 2,
             override_handles: ['alice'],
             default_reviewer: 'wang',
-            dispatch_seat: 'cheese-ab12cd34ef56',
           }),
           checkName: '网页端 e2e',
           checkPaths: 'frontend/**',
@@ -359,6 +359,44 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
         note: '后端那句理由原样画在框里，框不关，可以改了再试。',
         props: { error: ARCHIVE_REFUSED },
         expect: ARCHIVE_REFUSED,
+      },
+    ],
+  },
+  {
+    id: 'settings-mcp-server-dialog',
+    title: 'McpServerDialog',
+    about: '「添加 MCP 服务器」/「编辑」那张表：只收远程服务器，名称、地址和登录方式；改了地址要重新填请求头的值。',
+    file: 'src/components/McpServerDialog.vue',
+    component: McpServerDialog,
+    needs: UI_I18N,
+    teleport: true,
+    args: { modelValue: true, initial: null, agentName: '芝士', saving: false, error: '' },
+    states: [
+      {
+        name: '添加',
+        note: '名称、地址都填对之前「添加」是灰的；默认用账号登录。',
+        props: {},
+        expectSelector: '.v-btn--disabled',
+      },
+      {
+        name: '编辑一条填请求头的',
+        note: '名称不能改；请求头的值不回显，留空就是不改。',
+        props: {
+          initial: {
+            name: 'sentry',
+            url: 'https://mcp.sentry.dev/mcp',
+            auth: 'headers',
+            header: 'Authorization',
+            value: null,
+          },
+        },
+        expect: '编辑 sentry',
+      },
+      {
+        name: '保存被拒',
+        note: '服务端的原话留在框里，框不关。',
+        props: { error: '地址必须是 https' },
+        expect: '地址必须是 https',
       },
     ],
   },

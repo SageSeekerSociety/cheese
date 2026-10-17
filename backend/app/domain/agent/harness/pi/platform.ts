@@ -39,6 +39,12 @@ type ToolSpec = {
   inputSchema: Record<string, unknown>;
 };
 
+type McpServer = {
+  url: string;
+  headers: Record<string, string>;
+  timeout: number;
+};
+
 type Manifest = {
   socket: string;
   state: string;
@@ -52,7 +58,9 @@ type Manifest = {
   jobs: string;
   tools: ToolSpec[];
   unavailable: string;
-  mcp: ToolSpec[];
+  // The project's MCP servers, each an `mcpServers` entry at the session's
+  // gateway, for pi's own MCP client.
+  mcp: Record<string, McpServer>;
   notice: string;
   subagents: boolean;
 };
@@ -67,7 +75,7 @@ function manifest(): Manifest {
     jobs: "",
     tools: [],
     unavailable: "the runner wrote no manifest",
-    mcp: [],
+    mcp: {},
     notice: "",
     subagents: false,
   };
@@ -112,10 +120,10 @@ function text(body: string) {
 
 // --- the platform's own tools ------------------------------------------------
 //
-// pi has no MCP client, so these arrive as extension tools. The catalog is
-// the runner's, read from the platform's own file: the platform's tool table
-// (the same one the other harnesses serve) plus the CLI commands that run on
-// the room's machine as a process.
+// These arrive as extension tools. The catalog is the runner's, read from the
+// platform's own file: the platform's tool table (the same one the other
+// harnesses serve) plus the CLI commands that run on the room's machine as a
+// process.
 
 function registerPlatformTools(pi: any, spec: Manifest) {
   for (const tool of spec.tools) {
@@ -137,7 +145,13 @@ function registerPlatformTools(pi: any, spec: Manifest) {
             isError: true,
           };
         }
-        return text(body || "done");
+        // Pictures the tool hands back go to the model after its text.
+        const images = (result.images ?? []).map((image: { data: string; mimeType: string }) => ({
+          type: "image" as const,
+          data: image.data,
+          mimeType: image.mimeType,
+        }));
+        return { content: [...text(body || "done").content, ...images] };
       },
     });
   }
@@ -145,37 +159,17 @@ function registerPlatformTools(pi: any, spec: Manifest) {
 
 // --- the project's MCP servers ----------------------------------------------
 //
-// The runner is pi's MCP client (mcp.py): it listed every server's tools —
-// the machine's stdio servers and the platform's remote ones — under the name
-// the other harnesses give them, `mcp__<server>__<tool>`. A call goes back to
-// the runner, which sends it to the server that owns the tool, with the
-// project's PreToolUse and PostToolUse hooks run around it on the machine.
-//
-// A failed call is thrown, not returned: pi marks a tool result as an error
-// only when `execute` throws, whatever the returned object says.
+// pi's own MCP client (`builtin:mcp`, which the launch loads) reaches each of
+// the project's servers — the machine's commands, the type's and the remote
+// ones — at the session's gateway (mcp_gateway.py), which sends each call
+// where the server is served. Registered here rather than written to an
+// `mcp.json`: pi reads that file from places the session host shares with
+// every other room. The secret in the headers is the variable pi expands from
+// its own environment.
 
-function registerMcpTools(pi: any, spec: Manifest) {
-  for (const tool of spec.mcp ?? []) {
-    pi.registerTool({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.inputSchema,
-      async execute(id: string, params: any) {
-        const result = await ask(spec.socket, "mcp", {
-          id,
-          tool: tool.name,
-          arguments: params ?? {},
-        });
-        if (result.isError) {
-          const said = result.content
-            .map((item: any) => (item.type === "text" ? item.text : `[${item.type}]`))
-            .join("\n")
-            .trim();
-          throw new Error(said || `${tool.name} failed`);
-        }
-        return { content: result.content };
-      },
-    });
+function registerMcpServers(pi: any, spec: Manifest) {
+  for (const [name, server] of Object.entries(spec.mcp ?? {})) {
+    pi.registerMcpServer(name, server);
   }
 }
 
@@ -188,9 +182,10 @@ function registerMcpTools(pi: any, spec: Manifest) {
 // the room's machine runs the hooks under the name each one is written for
 // (hooks.py).
 //
-// Two kinds of call are not asked about here. An MCP tool's hooks run around
-// the call itself (mcp.py). A platform tool runs none, as on the executor,
-// which runs no project hook around the platform's own tools.
+// An MCP tool's call is asked about like any other, and the gateway is told
+// its hooks have run. A platform tool runs none, as on the executor, which
+// runs no project hook around the platform's own tools. A codemode script is a
+// call of its own, and each tool it calls is asked about in turn.
 //
 // A PreToolUse block stops the call and pi hands the model its reason as the
 // tool's error; an `updatedInput` is written into the call's input, which pi
@@ -200,7 +195,7 @@ function registerMcpTools(pi: any, spec: Manifest) {
 // added to the result, since the call has already happened.
 
 function applyProjectHooks(pi: any, spec: Manifest) {
-  const skipped = new Set([...spec.tools, ...(spec.mcp ?? [])].map((tool) => tool.name));
+  const skipped = new Set(spec.tools.map((tool) => tool.name));
 
   pi.on("tool_call", async (event: any) => {
     if (skipped.has(event.toolName)) return;
@@ -1254,7 +1249,7 @@ export default function (pi: any) {
     // never given any, and the agent will conclude it must shell out.
     process.stderr.write(`[cheese] no platform tools: ${spec.unavailable}\n`);
   }
-  registerMcpTools(pi, spec);
+  registerMcpServers(pi, spec);
   // Always, runner or no runner: pi's own tools left in place would work on the
   // session host, which holds nothing of the project and everything of every
   // other room's. Without a runner to reach they fail, which is the truth.

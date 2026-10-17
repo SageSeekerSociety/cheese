@@ -1,25 +1,29 @@
-import { test, expect, type Page } from '@playwright/test'
-import { readFileSync, writeFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { test, expect } from '@playwright/test'
+import { writeFileSync } from 'node:fs'
 import {
   PAGES,
   THEMES,
   collectRuns,
   compare,
   contrastRatio,
-  entryFor,
-  floorFor,
   formatContrastReport,
   roundRatio,
   tightenedBaseline,
   worstOf,
 } from '../../frontend/scripts/contrast-ratchet-core.mjs'
+import { BASELINE, baselineFile, collect, measure, open, readBaseline } from '../contrast-walk.mjs'
 
 // The rendered half of `fe-contrast`: what a reader of the public pages
 // actually gets, painted. The rule, the ratchet and the baseline live in
 // frontend/ (scripts/contrast-ratchet-core.mjs, contrast-baseline.json) beside
-// the other frontend ratchets; this is the driver, because the measurement
-// needs a real browser and Playwright lives here.
+// the other frontend ratchets; this is the gate, because the measurement needs
+// a real browser and Playwright lives here.
+//
+// The walk itself is not here: it is in e2e/contrast-walk.mjs, shared with the
+// driver the ratchet snapshot collector runs (e2e/contrast-ratchet.mjs), so the
+// number that page freezes and the verdict this gate gives come out of the same
+// code. What stays here is the three plants that say the walk still means what
+// the numbers need it to mean.
 //
 // What it covers, and what it deliberately does not: the three public pages a
 // visitor can reach, in both themes, at 1440×900. `/` and `/about` are the same
@@ -35,104 +39,8 @@ import {
 // Under reduced motion the landing's own stylesheet resolves the clause to
 // `--ink` immediately, so the measured value is the settled one.
 
-const BASELINE = fileURLToPath(new URL('../../frontend/contrast-baseline.json', import.meta.url))
 const UPDATE = process.env.CONTRAST_UPDATE === '1'
 const FREEZE_NEW = process.env.CONTRAST_FREEZE_NEW === '1'
-
-const readBaseline = () => {
-  try {
-    return JSON.parse(readFileSync(BASELINE, 'utf8')).runs ?? {}
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
-    throw error
-  }
-}
-
-/**
- * A floor on how much each page has to produce, so that "the page rendered
- * nothing measurable" cannot pass as "nothing is wrong". Each is about half of
- * what the page actually produced when the baseline was frozen — `/solutions`
- * is the longest and `/download` is a short page with a heading and a few
- * buttons — and between them they catch the failure modes that make a walk
- * return almost nothing: a page that did not load, a redirect to sign-in, a
- * removed section, or a browser with no font able to lay out text at all. The
- * last of those is not hypothetical: it is what this check found on the machine
- * it was written on, where 86 of the landing's 94 text nodes measured 0×0 and
- * the walk quietly returned a handful of runs. The one failure this count
- * cannot see — the app stylesheet missing, which leaves every run at the
- * browser default and therefore at 21:1 — is caught by the token check in
- * `measure()` instead.
- */
-const MIN_RUNS: Record<string, number> = { '/': 50, '/solutions': 60, '/download': 8 }
-
-/**
- * Open a page in one theme and leave it settled: loaded, mounted, and with its
- * stylesheet confirmed to have arrived.
- */
-async function open(page: Page, path: string, theme: string) {
-  await page.emulateMedia({ colorScheme: theme === 'dark' ? 'dark' : 'light', reducedMotion: 'reduce' })
-  await page.addInitScript((value) => {
-    localStorage.setItem('cheesex.theme', value)
-  }, theme)
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto(path, { waitUntil: 'load' })
-  // The visitor shell's own bar is the first thing the app renders, and it is
-  // on all three pages. `body` is visible from the first byte of index.html and
-  // would let the walk run against a page the app has not mounted yet — which
-  // is how this measured eight runs on a page that has a hundred.
-  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
-  // The app mounting does not mean its stylesheet arrived: index.html loads the
-  // CSS as its own render-blocking <link>, and the module mounts either way. With
-  // no stylesheet every run falls back to the browser's black on white — 21:1,
-  // which is greener than the styled page — and a walk over it would empty the
-  // baseline. One design token is enough to tell the two apart, so this is the
-  // check that the count guard cannot be.
-  const muted = await page.evaluate(() =>
-    getComputedStyle(document.documentElement).getPropertyValue('--muted').trim(),
-  )
-  expect(muted, 'the app stylesheet did not load — every colour would measure as the browser default').not.toBe('')
-}
-
-/**
- * Walk the page as it now stands and return the runs it painted. Split from
- * `open` so a test can change the page (a planted style tag survives) without
- * navigating, which would throw the change away.
- */
-async function collect(page: Page, path: string, theme: string) {
-  // Walk the document once so anything revealed on scroll has been revealed,
-  // then come back to the top where the page settles.
-  await page.evaluate(async () => {
-    for (let y = 0; y < document.body.scrollHeight; y += 700) {
-      window.scrollTo(0, y)
-      await new Promise((resolve) => requestAnimationFrame(resolve))
-    }
-    window.scrollTo(0, 0)
-    await document.fonts.ready
-    await new Promise((resolve) => requestAnimationFrame(resolve))
-  })
-  const runs = await page.evaluate(collectRuns)
-  const stamped = runs.map((run: object) => ({ ...run, path, theme }))
-  expect(
-    stamped.length,
-    `${path} [${theme}] produced ${stamped.length} rendered text runs — too few to be the page; ` +
-      'see MIN_RUNS in this spec for what that usually means.',
-  ).toBeGreaterThanOrEqual(MIN_RUNS[path])
-  // The floor the driver applies in the page and floorFor() above are the same
-  // rule written twice — the page cannot import it. This is where a change to
-  // one that is not mirrored in the other fails, instead of silently
-  // misjudging every run.
-  for (const run of stamped) {
-    expect(run.need, `${run.path} [${run.theme}] ${run.selector}`).toBe(
-      floorFor({ size: run.size, weight: run.weight, icon: run.icon }),
-    )
-  }
-  return stamped
-}
-
-const measure = async (page: Page, path: string, theme: string) => {
-  await open(page, path, theme)
-  return collect(page, path, theme)
-}
 
 test('the public pages render every text run above its contrast floor', async ({ page }) => {
   test.slow()
@@ -225,26 +133,4 @@ const PROBES: [string, string][] = [
 /** `#rrggbb` as the `[r, g, b]` triple the rule takes. */
 function hex(value: string): [number, number, number] {
   return [parseInt(value.slice(1, 3), 16), parseInt(value.slice(3, 5), 16), parseInt(value.slice(5, 7), 16)]
-}
-
-/** The baseline file as it is written, matching the other ratchets' shape. */
-function baselineFile(runs: Record<string, object>) {
-  return {
-    _comment:
-      'Frozen rendered-contrast debt on the public pages, one entry per text run that is below ' +
-      'its WCAG floor (4.5:1, or 3:1 for large text and icon glyphs) or that the walker cannot ' +
-      'measure, wholly or in part — a `ratio` of null with a reason means a background image or ' +
-      'gradient ' +
-      'sits between the run and its ground, and those are frozen too rather than skipped. One ' +
-      'entry covers a whole selector, and a selector is not always one element: `ratio` answers ' +
-      'for the instances of it the walker could read, and `unreadable` counts those it could ' +
-      'not, so text hidden behind a picture cannot drop out of the check by sitting beside a ' +
-      'readable sibling. `sample` is a piece of the text the ratio was measured on. The ratchet ' +
-      'blocks any new or worse run, and the count is ratcheted the same way; the baseline only ' +
-      'goes down. Regenerate with `CONTRAST_UPDATE=1 pnpm --dir e2e exec playwright test ' +
-      'contrast-ratchet`, which will not add a key the baseline has never seen unless ' +
-      'CONTRAST_FREEZE_NEW=1 is set as well. The rule and its messages live in ' +
-      'frontend/scripts/contrast-ratchet-core.mjs.',
-    runs,
-  }
 }

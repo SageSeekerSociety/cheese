@@ -9,7 +9,7 @@
 //   红（不动）    显示在跑，但五分钟没动静。
 //   黄（不动）    有事等你：一道只有你能答的问题、一张等你采纳的卡，或者有人回复了
 //                 我、我还没处理。
-//   蓝（不动）    这条是我之外的人负责的。只有任务行用得着。
+//   蓝（不动）    这条活归我，状态上没别的话可说。只有任务行用得着。
 //   不亮          没开过、也没活在跑的，不亮灯。
 //
 // 五条判据全是**事实**，这一份不推状态、只排先后：在不在往前走看 `moving`
@@ -20,11 +20,12 @@
 // 时刻）。
 //
 // 蓝灯**不是判据**：谁负责写在数据里（`owner_handle`），`lightOf` 不看它，
-// 也永远不会返回蓝灯——它是调用方在拿到灯之后盖上的一枚印（`useTopicRail.taskLight`）。
+// 也永远不会返回蓝灯——它是调用方盖的一枚印（`useTopicRail.taskLight`），而且只在
+// 状态那几盏都没话说的时候才盖：它说的那件事（这条归我）比状态轻。
 //
-// 优先级：蓝 > 红 > 黄 > 呼吸绿 > 长绿 —— 一行上只画一盏灯，蓝最亮。蓝压过一切
-// 是刻意的：那条活不归我，先看清这件事，再看它在跑还是卡住。折叠开关在收起来
-// 的一堆行里挑一个颜色出来时也走同一个次序（`brightest`）。
+// 优先级：红 > 黄 > 呼吸绿 > 长绿 > 蓝 —— 一行上只画一盏灯，蓝最暗。蓝垫底是刻意
+// 的：红黄绿说的是这条活现在怎么了，非说不可；蓝只说这条归我，没别的可说时才轮到
+// 它。折叠开关在收起来的一堆行里挑一个颜色出来时也走同一个次序（`brightest`）。
 //
 // 「点开过就灭」不在这一份里：那是数据的事（服务端按已读位算 `unseen_delivery` 和
 // `replied_to_me`，点开时本地先把那一行灭掉，见 `stores/workspace` 的
@@ -41,11 +42,11 @@ export interface RowLight {
   breathe: boolean
 }
 
-/** 别人的活那一盏灯：`lightOf` 不产它，调用方盖上（见文件头）。 */
-export const OTHERS_LIGHT: RowLight = { kind: 'blue', breathe: false }
+/** 我负责的活那一盏灯：`lightOf` 不产它，调用方在前面四盏都不亮时盖上（见文件头）。 */
+export const MINE_LIGHT: RowLight = { kind: 'blue', breathe: false }
 
-/** 亮到暗。`brightest` 用它排序。 */
-const BRIGHTNESS: Record<LightKind, number> = { blue: 4, red: 3, yellow: 2, green: 1 }
+/** 亮到暗。`brightest` 用它排序。蓝垫底：它说的是这条归谁，不是这条怎么了。 */
+const BRIGHTNESS: Record<LightKind, number> = { red: 3, yellow: 2, green: 1, blue: 0 }
 
 /** 「显示在跑、但五分钟没动静」的那五分钟，和 `lib/replyWait.ts` 里等一位成员
  * 回话的阈值是同一个数：两条判据说的是同一件事——五分钟没有新东西出来。 */
@@ -116,7 +117,7 @@ export function brightest(lights: Iterable<RowLight | null | undefined>): RowLig
 
 /** 灯上悬停（和读屏）说的那一个词：这一行现在怎么了。 */
 export function lightTitle(light: RowLight): string {
-  if (light.kind === 'blue') return t('work.sidebar.light.others')
+  if (light.kind === 'blue') return t('work.sidebar.light.mine')
   if (light.kind === 'red') return t('work.sidebar.light.red')
   if (light.kind === 'yellow') return t('work.sidebar.light.yellow')
   return t(light.breathe ? 'work.sidebar.light.moving' : 'work.sidebar.light.delivered')

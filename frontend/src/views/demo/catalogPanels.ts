@@ -19,6 +19,9 @@ import { DOC_TOPIC, docSession, NO_REPO, NOTHING_CHANGED } from './catalogFixtur
 import { DOC_PANEL_ENTRIES } from './catalogPanelsDoc'
 import {
   BUILD_LOG_BYTES,
+  CHANGES_ALL_PROPS,
+  CHANGES_BAR_PROPS,
+  CHANGES_CONTENT_PROPS,
   CHANGES_TASK,
   changesBundle,
   checklistAt,
@@ -38,7 +41,17 @@ import {
   ROUTINE_DRAFT,
   ROUTINE_RUNS,
   ROUTINE_WEEKLY,
+  SITE_ACT_BASH_OUTPUT,
+  SITE_ACT_EDIT,
+  SITE_ACT_FAILED,
+  SITE_ACT_PLATFORM,
+  SITE_AGENT_LABELS,
+  SITE_AGENTS,
   SITE_DONE,
+  SITE_ONE_TURN,
+  SITE_SAY_DETAIL,
+  SITE_SAY_SHORT,
+  SITE_TURN_START,
   SITE_WORKING,
   siteBundle,
   THREAD_ROWS,
@@ -48,8 +61,11 @@ import {
 import { PREVIEW_PANEL_ENTRIES } from './catalogPanelsPreview'
 import { DEMO_PROJECT, DEMO_TOPIC } from './demoPanels'
 
+import ChangesAllView from '@/components/panels/ChangesAllView.vue'
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
 import ChangesDiffList from '@/components/panels/ChangesDiffList.vue'
+import ChangesFileBar from '@/components/panels/ChangesFileBar.vue'
+import ChangesFileContent from '@/components/panels/ChangesFileContent.vue'
 import ChangesFileTree from '@/components/panels/ChangesFileTree.vue'
 import ChangesMoreMenu from '@/components/panels/ChangesMoreMenu.vue'
 import ChangesOpenFile from '@/components/panels/ChangesOpenFile.vue'
@@ -60,7 +76,11 @@ import PanelRoutines from '@/components/panels/PanelRoutines.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import ProjectFileView from '@/components/panels/ProjectFileView.vue'
+import SiteActRow from '@/components/panels/SiteActRow.vue'
+import SiteAgentTabs from '@/components/panels/SiteAgentTabs.vue'
+import SiteSayRow from '@/components/panels/SiteSayRow.vue'
 import SiteStepOutput from '@/components/panels/SiteStepOutput.vue'
+import SiteTurnHead from '@/components/panels/SiteTurnHead.vue'
 import TodoChecklist from '@/components/panels/TodoChecklist.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
@@ -186,6 +206,99 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         name: '什么都没改',
         note: '空的时候说哪句话由外面给：看改动说「暂无改动」，看全部文件说「暂无文件」。',
         props: { rows: [] },
+        expect: '暂无改动',
+      },
+    ],
+  },
+  {
+    id: 'changes-file-bar',
+    title: 'ChangesFileBar',
+    about: '改动那一格打开一份文件时顶上那条横条：返回、这份文件、它的两面（差异 / 全文），以及能对它做的事。',
+    file: 'src/components/panels/ChangesFileBar.vue',
+    component: ChangesFileBar,
+    needs: UI,
+    args: {},
+    states: [
+      {
+        name: '打开着改过的一份',
+        note: '一头写着这件任务的状态，中间是路径和两面对切的开关，另一头是下载和版本菜单；没打开文件时整条不画。',
+        props: CHANGES_BAR_PROPS,
+        expect: '差异',
+      },
+      {
+        name: '改到一半',
+        note: '有没保存的改动时路径后面点一颗点，切到全文面就摆出保存；没改动之前那颗按钮是灰的。',
+        props: { ...CHANGES_BAR_PROPS, effectiveView: 'edit' as const, fileDirty: true },
+        expect: '保存',
+      },
+      {
+        name: '打不开的一份',
+        note: '二进制、图片、过大的文件没有编辑面，也就没有保存：这里摆一句「只读」，省得人以为是自己没权限。',
+        props: { ...CHANGES_BAR_PROPS, fileReadOnly: true },
+        expectSelector: '.changes-bar__ro',
+      },
+    ],
+  },
+  {
+    id: 'changes-file-content',
+    title: 'ChangesFileContent',
+    about: '改动那一格里打开着的那一份的正文：文档画成一页，文本按差异或全文出，图片、二进制、过大的各给一个说法。',
+    file: 'src/components/panels/ChangesFileContent.vue',
+    component: ChangesFileContent,
+    needs: UI,
+    args: {},
+    states: [
+      {
+        name: '改过的那一份',
+        note: '默认看差异：新增的行是新建的 README，一整个文件都算增。',
+        props: CHANGES_CONTENT_PROPS,
+        expect: '这个项目放本课程的课件和作业',
+      },
+      {
+        name: '一张图',
+        note: '图片没有文本差异可看，也不该拿去按文本编辑：直接把原图摆出来。',
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, openIsImage: true },
+        expectSelector: '.file-image-view img',
+      },
+      {
+        name: '二进制文件',
+        note: '解不出文本的文件说清是二进制，只给下载原文件这一条路。',
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, fileBinary: true, fileBytes: 40960 },
+        expect: '非文本文件，无法编辑',
+      },
+      {
+        name: '文件太大',
+        note: '超过上限的一份不往浏览器里搬，报一下有多大、让人下载下去看。',
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, fileTooLarge: true, fileBytes: 9437184 },
+        expect: '文件过大，无法在浏览器中打开',
+      },
+      {
+        name: '文档预览没开',
+        note: '这台机器没装文档渲染器时，不摆一页空白：说明这里看不了，下载原文件看。',
+        props: { ...CHANGES_CONTENT_PROPS, openIsDocument: true, docRendererMissing: true },
+        expect: '文档预览未启用',
+      },
+    ],
+  },
+  {
+    id: 'changes-all-view',
+    title: 'ChangesAllView',
+    about: '改动那一格没打开具体文件时的那一面：先列这次一共改了多少、改了哪几份，再把每一份的差异全摊开。',
+    file: 'src/components/panels/ChangesAllView.vue',
+    component: ChangesAllView,
+    needs: UI,
+    args: {},
+    states: [
+      {
+        name: '整支活的改动',
+        note: '顶上一行是文件数和增删行数，下面按文件一段一段地列；宿主塞进来的那一块（这次交付的情况）在插槽里，这里没给。',
+        props: CHANGES_ALL_PROPS,
+        expect: '个文件 · +',
+      },
+      {
+        name: '这一轮什么都没改',
+        note: '没有改动时收起来的不只是清单：一行总数和文件那几颗也一起收，只留一句「暂无改动」。',
+        props: { ...CHANGES_ALL_PROPS, treeFiles: [], diffByPath: new Map(), fileDiffs: [] },
         expect: '暂无改动',
       },
     ],
@@ -370,6 +483,126 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '这个房间还没人干过活：会话栏照常在顶上，底下一句话。',
         props: { site: siteBundle({ transcript: [] }) },
         expect: '暂无现场记录',
+      },
+    ],
+  },
+  {
+    id: 'site-agent-tabs',
+    title: 'SiteAgentTabs',
+    about: '现场顶上按队友筛的那一排：一个房间里几个队友并行时，切一个看他做过什么；只有一个队友时整排不画。',
+    file: 'src/components/panels/SiteAgentTabs.vue',
+    component: SiteAgentTabs,
+    needs: ['i18n'],
+    args: { agents: SITE_AGENTS, labels: SITE_AGENT_LABELS, controls: 'demo-site-log' },
+    states: [
+      {
+        name: '两个队友',
+        note: '默认停在「全部」：几段轮次交错着排，哪一段是谁做的由每组的组头署。',
+        props: { viewing: null },
+        expect: '芝士K',
+        expectSelector: '.site-agents__tab--on',
+      },
+      {
+        name: '只看一个队友',
+        note: '选中的那一格填成实心、字提亮；底下那条记录就只剩他这一段。',
+        props: { viewing: 'cheese-k' },
+        expect: '全部',
+      },
+    ],
+  },
+  {
+    id: 'site-turn-head',
+    title: 'SiteTurnHead',
+    about: '现场一轮开头的那一行：谁、什么时候、几步、用了多久，底下那根细条说这一轮的时间花在哪几段。',
+    file: 'src/components/panels/SiteTurnHead.vue',
+    component: SiteTurnHead,
+    needs: ['i18n'],
+    args: { turn: SITE_ONE_TURN, startsAtMs: SITE_TURN_START },
+    states: [
+      {
+        name: '一轮做完了',
+        note: '几步、用了多久写在这里（用时从这一轮开始那一刻算，不是从头一步，不然「思考中」等掉的那十几秒就不见了）。',
+        props: { who: '芝士', live: false },
+        expect: '5 步',
+        expectSelector: '.turn__phases',
+      },
+      {
+        name: '一轮还在跑',
+        note: '右头亮一个「进行中」，那个点是呼吸的（浏览器里看得出来）。',
+        props: { who: '芝士', live: true },
+        expect: '进行中',
+      },
+      {
+        name: '只有一个队友的房间',
+        note: '`who` 由父组件算：只看一个队友、或者房间里只有一个时不给名字，组头上就不写。',
+        props: { who: null, live: false },
+        expect: '5 步',
+      },
+    ],
+  },
+  {
+    id: 'site-act-row',
+    title: 'SiteActRow',
+    about:
+      '现场里的一步：一格圆点、一个动作词、一段参数，右头是时刻。失败的那句错另起一行，平台自己做的事圆点是实心的。',
+    file: 'src/components/panels/SiteActRow.vue',
+    component: SiteActRow,
+    needs: ['i18n'],
+    args: { memberNames: PANEL_NAMES, topicId: DEMO_TOPIC, load: loadLsOutput },
+    states: [
+      {
+        name: '改一个文件',
+        note: '动词是这一步做的事，参数是它指着哪一样 —— 现场一行就这两样，扫一眼知道到哪儿了。',
+        props: { block: SITE_ACT_EDIT, expanded: false },
+        expect: 'landing.css',
+      },
+      {
+        name: '平台的动作',
+        note: '芝士调平台接口（发消息、开工作区）也是它做的事，圆点画成实心的，和自己起的工具分得开。',
+        props: { block: SITE_ACT_PLATFORM, expanded: false },
+        expect: '主按钮已改成琥珀色',
+        expectSelector: '.site-act--platform',
+      },
+      {
+        name: '这一步失败了',
+        note: '那句错另起一行、缩进到这一步底下，不藏在提示里：卡在哪一眼看得见。',
+        props: { block: SITE_ACT_FAILED, expanded: false },
+        expect: '执行器连接中断，结果未知',
+      },
+      {
+        name: '摊开一步的输出',
+        note: '收着时只说这一步打印了多少字节，第一次点开才去取那一段（输出那一行是它自己那一件）。',
+        props: { block: SITE_ACT_BASH_OUTPUT, expanded: true },
+        expect: `输出（${LS_OUTPUT_BYTES} B）`,
+      },
+    ],
+  },
+  {
+    id: 'site-say-row',
+    title: 'SiteSayRow',
+    about: '现场里「芝士说了一句话」的那一行：头像、名字、时刻，正文照对话栏渲染，里面的引用点得动。',
+    file: 'src/components/panels/SiteSayRow.vue',
+    component: SiteSayRow,
+    needs: ['i18n'],
+    args: { memberNames: PANEL_NAMES, agentName: PANEL_NAMES.cheese },
+    states: [
+      {
+        name: '短的一句话',
+        note: '一句话占一行，署名写的是开口的那个人（名册上查不到的 AI 落成项目队友的名字）。',
+        props: { block: SITE_SAY_SHORT, long: false, expanded: false },
+        expect: '收到补充：手机上也要检查。',
+      },
+      {
+        name: '长的一段收成 12 行',
+        note: '父组件量出来越过 12 行那条线（`long`）就收：正文折到 12 行、末尾淡出，底下那颗说清全部有多少行。',
+        props: { block: SITE_SAY_DETAIL, long: true, expanded: false },
+        expect: '展开全部（14 行）',
+      },
+      {
+        name: '摊开之后',
+        note: '摊开就不再收，那颗按钮改说「收起」。',
+        props: { block: SITE_SAY_DETAIL, long: true, expanded: true },
+        expect: '收起',
       },
     ],
   },

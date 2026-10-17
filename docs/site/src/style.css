@@ -3218,16 +3218,22 @@ body.dragging .dock-resize::after {
 /* Parts the walk frames use. */
 .dp-task {
   display: flex;
-  margin: -8px 0 0 38px;
-  padding: 7px 10px;
+  margin: -6px 0 0 38px;
+  padding: 8px 12px;
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
-  background: var(--surface);
-  border: 1px solid var(--line-2);
+  background: var(--fill);
   border-radius: var(--radius-md);
   align-items: center;
   gap: 8px;
+}
+
+/* The task's name on top of the 支线 it became: one block with its replies. */
+.dp-thread .dp-task-head {
+  margin: 0 0 4px;
+  padding: 0;
+  background: none;
 }
 
 .dp-task .ico {

@@ -7,6 +7,7 @@
 // 在协同文档（`session`）上，没有一个「保存」要这一层去管。
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
+import type { useMentionOutside } from '../../composables/useMentionOutside'
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, Topic } from '../../cx_types'
@@ -18,7 +19,7 @@ import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/docThreadTypes'
 import type { CanvasData } from '../../types/canvas'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 
 import { scrollBehavior } from '@/utils/motion'
 
@@ -29,6 +30,7 @@ import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
 import { anchorComment } from '../../lib/docCommentSpots'
 import { exportMarkdown } from '../../lib/docSchema'
+import { draftWaiting, takeDraft } from '../../lib/overviewDraft'
 import { topicTitle } from '../../lib/topicState'
 
 import DocCommentPanel from './doc/DocCommentPanel.vue'
@@ -41,6 +43,7 @@ import DocSurface from './doc/DocSurface.vue'
 import DocTopBar from './doc/DocTopBar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import MentionOutsidePrompt from '@/components/chat/MentionOutsidePrompt.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -60,6 +63,10 @@ const props = withDefaults(
     mentionNames?: Record<string, string>
     /** 正文里打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
+    /** 这份文档 @ 到并通知过的人（只有他们的 `<@handle>` 画成 @chip）。 */
+    notifiedMentions?: string[]
+    /** 正文里（或某个旧版本里）有了 `<@handle>` 时调一下：读这份文档通知过谁。 */
+    fetchNotifiedMentions?: () => void
     /** 项目话题表：正文里的 `<#id>` chip 靠它认名字。 */
     topicList?: Topic[]
     /** 画在一整页里（项目文档的项目目标）：页头已经说了这是什么，不再画大标题和总览自动区。 */
@@ -93,6 +100,8 @@ const props = withDefaults(
     sendComment?: (content: string, quote: string) => Promise<{ id: string }>
     /** 重读评论串。 */
     refreshThreads?: () => Promise<void>
+    /** 我刚写的评论 @ 了打不开这份文档的人：评论栏顶上问一句。 */
+    commentOutside?: ReturnType<typeof useMentionOutside>
     // ---- 装饰的原料（原样递给正文那一半） ----
     /** 修改建议的理由（建议 id → 理由），卡上写出来。 */
     suggestionReasons?: Record<string, string>
@@ -124,6 +133,9 @@ const props = withDefaults(
     avatarOf?: (handle: string) => string
     loadVersions?: (before?: number) => Promise<DocVersionPage>
     restoreVersion?: (version: number, expected: number) => Promise<unknown>
+    // ---- 我在文档里 @ 了打不开它的人 ----
+    /** 要不要把他们加进频道：名字已经连成一串；没有就是 null。 */
+    mentionOutside?: { names: string; membersOnly: boolean; mayAdd: boolean; adding: boolean } | null
   }>(),
   {
     document: null,
@@ -132,6 +144,8 @@ const props = withDefaults(
     agentHandle: null,
     mentionNames: undefined,
     mentionPeople: () => [],
+    notifiedMentions: () => [],
+    fetchNotifiedMentions: undefined,
     topicList: () => [],
     bare: false,
     untitled: false,
@@ -141,6 +155,7 @@ const props = withDefaults(
     commentAuthor: '',
     sendComment: undefined,
     refreshThreads: undefined,
+    commentOutside: undefined,
     askAgent: undefined,
     stopAgent: undefined,
     answerToComment: undefined,
@@ -152,18 +167,36 @@ const props = withDefaults(
     avatarOf: () => '',
     loadVersions: undefined,
     restoreVersion: undefined,
+    mentionOutside: null,
     canvas: null,
   }
 )
 
 const emit = defineEmits<{
-  (e: 'open-topic', topicId: string): void
-  (e: 'mention-click', handle: string): void
-  (e: 'open-file', path: string): void
+  'open-topic': [topicId: string]
+  'mention-click': [handle: string]
+  'open-file': [path: string]
   /** 资料库文档的标题改成了这样。 */
-  (e: 'rename', title: string): void
-  (e: 'delete'): void
+  rename: [title: string]
+  delete: []
+  'mention-outside-add': []
+  'mention-outside-dismiss': []
 }>()
+
+// 顶栏画到页面上的那个位置（`barTo`）。这个位置在页面自己那一行里，要等页面挂进文档
+// 里才找得到；而项目目标那一页是保活的：人走开时它整棵树摘在文档外面，文档要是这时候
+// 才打开，按选择器去找什么也找不到。Teleport 拿着一个找不到的目标照样挂上，顶栏就哪儿
+// 都没画，之后它的每一次更新、卸下都踩在一棵没挂上的子树上，页面跟着坏掉。所以位置由
+// 这里自己找：挂上之后、页面回到屏幕上时各找一次，找到了才把顶栏送过去。
+const barTarget = shallowRef<HTMLElement | null>(null)
+function findBarTarget() {
+  barTarget.value = props.barTo ? document.querySelector<HTMLElement>(props.barTo) : null
+}
+onMounted(findBarTarget)
+onActivated(findBarTarget)
+watch(() => props.barTo, findBarTarget, { flush: 'post' })
+// 页面不再要顶栏画过去时（`barTo` 没了），当场就画回原处，不等上面那次重找。
+const barEl = computed(() => (props.barTo ? barTarget.value : null))
 
 /** 大标题：对话的名字，或者资料库文档自己的名字（没起名时是「未命名文档」）。 */
 const docTitle = computed(() =>
@@ -307,6 +340,17 @@ const agentOptions = {
 const rewrite = useDocAgent({ ...agentOptions, scope: 'selection' })
 const docAgent = useDocAgent({ ...agentOptions, scope: 'document' })
 const canAskDocument = computed(() => !!props.agentHandle && !!props.askAgent)
+// 总览页上点了「让 AI 队友起草」，跳到了这一篇：编辑器在了、能问、能改，就由对整篇的
+// 那个 AI 队友接着起草（`lib/overviewDraft`）。
+watch(
+  [() => props.document?.id, () => surfaceRef.value?.editor, canAskDocument, () => props.editable],
+  ([id, editor, canAsk, editable]) => {
+    if (!id || !editor || !canAsk || !editable || !draftWaiting(id)) return
+    const note = takeDraft(id)
+    if (note !== null) docAgent.draft(note)
+  },
+  { immediate: true }
+)
 const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
 // 建议那一条：点顶栏上的「N 处建议」打开，从第一处看起。
 const suggestionsOpen = ref(false)
@@ -336,6 +380,31 @@ watch(
     if (ids && ids.split(' ').some((id) => !before?.split(' ').includes(id))) props.fetchSuggestionReasons?.()
   }
 )
+// 正文里第一次出现 `<@handle>`（打开时就有，或后来有人写进来），或者翻开修改记录：
+// 读一次这份文档通知过谁，之后由取数那一层跟着存回重读。没有 @ 的文档不去问。
+let mentionsAsked = false
+watch(
+  () => props.session,
+  () => (mentionsAsked = false)
+)
+function askMentions() {
+  if (mentionsAsked) return
+  mentionsAsked = true
+  props.fetchNotifiedMentions?.()
+}
+watch(
+  () => surfaceRef.value?.editor,
+  (editor, _old, onCleanup) => {
+    if (!editor) return
+    const look = () => {
+      if (!mentionsAsked && editor.state.doc.textContent.includes('<@')) askMentions()
+    }
+    look()
+    editor.on('update', look)
+    onCleanup(() => editor.off('update', look))
+  }
+)
+watch(historyOpen, (open) => open && askMentions())
 const review = useDocReview({
   editor: () => surfaceRef.value?.editor ?? null,
   applyEdits: () => props.applyDocEdits,
@@ -394,7 +463,7 @@ defineExpose({
     <template v-else>
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
       <div class="doc-stage flex-grow-1">
-        <Teleport :to="barTo || 'body'" defer :disabled="!barTo">
+        <Teleport v-if="!barTo || barEl" :to="barEl || 'body'" :disabled="!barEl">
           <DocTopBar
             class="doc-top"
             :class="{ 'doc-top--inline': !!barTo }"
@@ -440,7 +509,6 @@ defineExpose({
           <DocReviewStrip
             v-if="review.request.value"
             :agent-name="agentName"
-            :requester="review.request.value.requester"
             :count="review.live.value.length"
             @step="review.step"
             @close="review.close"
@@ -459,6 +527,17 @@ defineExpose({
             @dismiss="dismissSuggestions"
           />
         </Transition>
+        <MentionOutsidePrompt
+          v-if="mentionOutside"
+          class="doc-mention-outside"
+          in-document
+          :names="mentionOutside.names"
+          :members-only="mentionOutside.membersOnly"
+          :may-add="mentionOutside.mayAdd"
+          :adding="mentionOutside.adding"
+          @add="emit('mention-outside-add')"
+          @dismiss="emit('mention-outside-dismiss')"
+        />
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
         <!-- 顶栏下面、正文上面的那一格：任务把芝士这一轮的清单放在这里。 -->
         <slot name="lead" />
@@ -473,6 +552,8 @@ defineExpose({
           :place-of="placeOfThread"
           :agent-name="agentName"
           :mention-names="mentionNames"
+          :mention-people="mentionPeople"
+          :outside="commentOutside"
           :name-of="nameOf"
           :avatar-of="avatarOf"
           :writable="!readOnly"
@@ -512,6 +593,7 @@ defineExpose({
                 :topic-list="topicList"
                 :mention-names="mentionNames"
                 :mention-people="mentionPeople"
+                :notified-mentions="notifiedMentions"
                 :can-comment="!readOnly"
                 :open-threads="openThreads"
                 :active-thread="openId"
@@ -556,6 +638,7 @@ defineExpose({
         :editable="editable"
         :name-of="nameOf"
         :mention-names="mentionNames"
+        :notified-mentions="notifiedMentions"
       />
 
       <!-- Floating, never clipped: the old flow-layout alert sat below the
@@ -726,6 +809,10 @@ defineExpose({
   overflow-x: auto;
 }
 
+/* 贴在正文上方，和横条之间留一行的空。 */
+.doc-mention-outside {
+  margin-top: 8px;
+}
 .doc-error-toast {
   position: absolute;
   left: 50%;

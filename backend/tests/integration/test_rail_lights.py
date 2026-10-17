@@ -166,7 +166,6 @@ def test_a_delivery_lights_the_row_of_everyone_on_the_task_and_of_nobody_else(cl
                 "title": "做完的活",
                 "owner_handle": "alice",
                 "contributor_handles": ["carol"],
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
                 "accepted_at": datetime.now(UTC) - DELIVERED_AT,
             }
         ],
@@ -199,7 +198,6 @@ def test_opening_the_room_puts_out_the_delivery_for_that_person_only(client):
                 "title": "做完的活",
                 "owner_handle": "alice",
                 "contributor_handles": ["carol"],
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
                 "accepted_at": datetime.now(UTC) - DELIVERED_AT,
             }
         ],
@@ -232,7 +230,6 @@ def test_opening_the_task_itself_counts_as_having_seen_the_delivery(client):
                 "name": "delivered",
                 "title": "做完的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
                 "accepted_at": datetime.now(UTC) - DELIVERED_AT,
             }
         ],
@@ -394,7 +391,6 @@ def test_an_answer_inside_a_task_under_the_channel_does_not_light_that_row(clien
                 "title": "一件活",
                 "owner_handle": "alice",
                 "contributor_handles": ["bob"],
-                "started_at": datetime.now(UTC),
             }
         ],
     )
@@ -425,7 +421,6 @@ def test_a_room_breathes_while_a_task_under_it_rides_a_delivery(client):
                 "name": "riding",
                 "title": "在等检查的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC),
                 "card": {
                     "status": AcceptStatus.pending,
                     "note_code": NoteCode.waiting_merge_queue,
@@ -443,7 +438,6 @@ def test_a_room_breathes_while_a_task_under_it_rides_a_delivery(client):
                 "name": "waiting",
                 "title": "等我采纳的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC),
                 "card": {"status": AcceptStatus.pending},
             }
         ],
@@ -482,7 +476,6 @@ def test_a_running_turn_breathes_and_the_room_says_nothing_about_its_clock(clien
                 "name": "running",
                 "title": "在跑的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC),
                 "turn": True,
             }
         ],
@@ -543,7 +536,6 @@ def test_the_process_holding_the_turn_says_when_it_last_output(client):
                 "name": "running",
                 "title": "在跑的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC),
                 "turn": True,
             }
         ],

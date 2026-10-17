@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import type { AdminCandidate } from '@/api'
 
-import { useAdminCandidateSearch } from '@/composables/useAdminCandidateSearch'
+import { computed } from 'vue'
 
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import { t } from '@/i18n'
@@ -10,7 +10,10 @@ import { t } from '@/i18n'
  * AdminAssigneeSelect.vue — 分诊面板里的「指派给谁」。
  *
  * 搜谁、防抖、竞态都在 `useAdminCandidateSearch` 里（数据源是 `searchAdminCandidates`
- * 而不是管理员名单，理由记在那儿）。
+ * 而不是管理员名单，理由记在那儿）。**这个组件不吃那个 composable**：候选、当前搜索
+ * 词、正在搜三样都从 props 进来，输入报 `update:search` 出去。理由和详情那一层一样 ——
+ * 详情一关就得把搜索词清掉（不清的话，下一条反馈上「指派给」框里还留着上一条的人名，
+ * 而候选是那份词搜出来的），而「详情还开着没有」只有拿着详情的调用方知道。
  *
  * `:no-filter="true"` 是这里**必须**写的一行（AdminMembersPage 那里记着这个 bug 的
  * 完整来历）：`v-autocomplete` 默认会拿输入串再筛一次自己的 `items`，筛的是
@@ -28,38 +31,44 @@ const props = withDefaults(
     label?: string
     /** 分诊面板里那一条窄，用 `compact`；对话框里用默认的 `comfortable`。 */
     dense?: boolean
+    /** 输入框里那串字。受控：只有调用方改得动它（关详情时它得能清掉）。 */
+    search?: string
+    candidates?: AdminCandidate[]
+    searching?: boolean
   }>(),
-  { label: undefined, dense: false }
+  { label: undefined, dense: false, search: '', candidates: () => [], searching: false }
 )
 
-const emit = defineEmits<{ (e: 'update:modelValue', v: string | null): void }>()
-
-const { search, candidates, searching } = useAdminCandidateSearch()
+const emit = defineEmits<{
+  (e: 'update:modelValue', v: string | null): void
+  (e: 'update:search', v: string): void
+}>()
 
 /** 输入框里什么都没有 / 正在搜 / 搜完了没人，是三句不同的话，下拉里只能出现一句。 */
 const hint = computed(() => {
-  if (searching.value) return t('admin.assignee.searching')
-  return search.value.trim() ? t('admin.assignee.noMatch') : t('admin.assignee.placeholder')
+  if (props.searching) return t('admin.assignee.searching')
+  return props.search.trim() ? t('admin.assignee.noMatch') : t('admin.assignee.placeholder')
 })
 </script>
 
 <template>
   <v-autocomplete
-    v-model:search="search"
+    :search="props.search"
     :model-value="props.modelValue"
     autocomplete="off"
     :label="props.label ?? t('admin.assignee.label')"
     :placeholder="t('admin.assignee.placeholder')"
     variant="outlined"
     :density="props.dense ? 'compact' : 'comfortable'"
-    :items="candidates"
-    :loading="searching"
+    :items="props.candidates"
+    :loading="props.searching"
     :no-filter="true"
     item-title="handle"
     item-value="handle"
     hide-details
     clearable
     @update:model-value="emit('update:modelValue', $event)"
+    @update:search="emit('update:search', $event)"
   >
     <!-- 昵称当标题、handle 当副标题：搜的是账号，但人认的是昵称。 -->
     <template #item="{ item, props: itemProps }">

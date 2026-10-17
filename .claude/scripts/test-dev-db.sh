@@ -167,7 +167,30 @@ printf '#!/usr/bin/env bash\necho 0.85.1\n' >"$pi_dir/pi"
 chmod +x "$stub"/* "$harness"/* "$pi_dir/pi"
 
 # --- helpers -----------------------------------------------------------------
-free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
+port_candidate() {
+    local port
+    if [ -s "$state/port-candidates" ]; then
+        IFS= read -r port <"$state/port-candidates"
+        tail -n +2 "$state/port-candidates" >"$state/port-candidates.next"
+        mv "$state/port-candidates.next" "$state/port-candidates"
+    else
+        port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+    fi
+    printf '%s\n' "$port"
+}
+
+free_port() {
+    local port
+    while :; do
+        port="$(port_candidate)"
+        if grep -Fqx "$port" "$state/allocated-ports" 2>/dev/null || [ -e "$state/redis-$port" ]; then
+            continue
+        fi
+        printf '%s\n' "$port" >>"$state/allocated-ports"
+        printf '%s\n' "$port"
+        return 0
+    done
+}
 
 new_data_dir() {
     local d="$sandbox/$1"
@@ -196,6 +219,19 @@ dev_db() {  # dev_db <data dir> <port> <args...>; output in $sandbox/{out,err}, 
     set -e
 }
 
+dev_db_default_home() {  # dev_db_default_home <home> <port> <args...>
+    local home="$1" port="$2"; shift 2
+    set +e
+    env -u CHEESEX_DEV_DB_DIR -u XDG_DATA_HOME \
+        HOME="$home" PATH="$stub:$PATH" STUB="$stub" STATE="$state" \
+        CHEESEX_DEV_PG_PORT="$port" \
+        CHEESEX_DEV_REDIS_PORT="${redis_port:-$(free_port)}" CHEESEX_DEV_TOOL_CACHE="$tools" \
+        CHEESEX_DEV_SERVER_HOME="$servers" \
+        bash "$dev_db" "$@" >"$sandbox/out" 2>"$sandbox/err"
+    status=$?
+    set -e
+}
+
 failures=0
 check() {  # check <case> <description> <command...>
     local name="$1" what="$2"; shift 2
@@ -212,6 +248,26 @@ dead() { ! kill -0 "$1" 2>/dev/null; }
 stdout_is_only_exports() { ! grep -qv '^export ' "$sandbox/out"; }
 
 # --- cases -------------------------------------------------------------------
+# Force a previously allocated port and a file-backed Redis port so the next
+# allocation must skip both and use the following candidate.
+printf '%s\n' 12345 >"$state/port-candidates"
+allocated_port="$(free_port)"
+registered_port=12346
+expected_port=12347
+: >"$state/redis-$registered_port"
+printf '%s\n' "$allocated_port" "$registered_port" "$expected_port" >"$state/port-candidates"
+next_port="$(free_port)"
+rm -f "$state/port-candidates" "$state/redis-$registered_port"
+: >"$sandbox/err"
+check port-allocation "skips allocated and registered ports" [ "$next_port" = "$expected_port" ]
+
+# A deep default HOME falls back without requiring an environment override.
+long_home="$sandbox/$(printf '%0120d' 0)"
+fallback_dir="/tmp/cheesex-dev-db-$(id -u)"
+dev_db_default_home "$long_home" "$(free_port)" status
+check deep-home "status succeeds" [ "$status" = 0 ]
+check deep-home "fallback path is reported" grep -Fq "using $fallback_dir" "$sandbox/err"
+
 # 1. An older major of ours, idle: replaced, and its directory removed.
 d="$(new_data_dir older-idle)"; port="$(free_port)"; echo 0 >"$state/clients"
 run_server "$d/pg" "$port"; old="$(server_pid "$d/pg")"

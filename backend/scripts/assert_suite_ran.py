@@ -16,6 +16,12 @@ Two marks are not silence and are let through, each named on the run instead:
 a case that only passed on a retry (``--reruns``, recorded by
 ``scripts.ci_evidence`` in ``reruns.jsonl``), and a case listed in
 ``tests/quarantine.txt``, which runs as a non-strict xfail.
+
+The same judgement is available offline, without the CI artifact tree: give it
+the plan of cases a local run promised to execute (``--expected``) and it names
+the ones the report is missing instead of only counting them. That plan is
+whatever records what should have run — the selection manifests
+``scripts.ci_shard`` writes, or a plain list of node IDs.
 """
 
 import argparse
@@ -26,6 +32,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -191,20 +198,73 @@ def read_selection(selection_dir: Path) -> tuple[int, list[str], list[str]]:
     return len(selected), selected, assigned
 
 
-def assert_suite_ran(
-    junit_xml: Path,
-    *,
-    at_least: int,
-    selection_dir: Path | None = None,
-    reruns: Path | None = None,
-) -> int:
-    """Return how many cases ran, or raise ``SuiteDidNotRun`` saying what is wrong.
+def read_plan(path: Path) -> list[str]:
+    """The node IDs a run promised to execute, from a plan a local run can keep.
 
-    A case counts as having run when it neither was skipped nor errored during
-    setup: a case that failed ran and told us something, a case that errored in
-    its fixtures did not reach its own body. A quarantined case ran too; its
-    result is what the quarantine sets aside.
+    A plan is whatever records what should have run. Three forms are accepted:
+    a directory of selection manifests (what ``pytest -p scripts.ci_shard
+    --ci-selection-output=<dir>`` writes), one such manifest (``selected``, or
+    ``nodeids`` / a bare JSON list), or a text file with one node ID per line
+    where blank lines and lines starting with ``#`` are ignored.
     """
+    if path.is_dir():
+        _, selected, _ = read_selection(path)
+        return _as_nodeids(path, selected)
+    try:
+        # utf-8-sig, not utf-8: an editor that writes a byte-order mark would
+        # otherwise turn the first planned case into a different, never-run ID.
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SuiteDidNotRun(f"{path} is not a readable plan: {exc}") from exc
+    if path.suffix != ".json":
+        lines = [line.strip() for line in text.splitlines()]
+        return _as_nodeids(path, [line for line in lines if line and line[0] != "#"])
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SuiteDidNotRun(f"{path} is not a readable plan: {exc}") from exc
+    if isinstance(data, dict):
+        match = next(
+            (
+                data[field]
+                for field in ("nodeids", "selected", "assigned")
+                if field in data
+            ),
+            None,
+        )
+        if match is None:
+            raise SuiteDidNotRun(f"{path} must hold nodeids, selected, or assigned")
+        data = match
+    return _as_nodeids(path, data)
+
+
+def _as_nodeids(path: Path, values: object) -> list[str]:
+    if (
+        not isinstance(values, list)
+        or not values
+        or any(not isinstance(nodeid, str) or not nodeid.strip() for nodeid in values)
+    ):
+        raise SuiteDidNotRun(f"{path} must name at least one nonempty test node ID")
+    nodeids = [nodeid.strip() for nodeid in values]
+    if len(nodeids) != len(set(nodeids)):
+        raise SuiteDidNotRun(f"{path} names the same case more than once")
+    return nodeids
+
+
+@dataclass(frozen=True)
+class _Run:
+    """What one JUnit report says the suite did, before any judgement."""
+
+    junit_xml: Path
+    ran: int
+    skipped: list[str]
+    errored: list[str]
+    nodeids: list[str]
+    placeholders: int
+    crashes: int
+
+
+def _inspect(junit_xml: Path, reruns: Path | None, *, require_nodeid: bool) -> _Run:
     if not junit_xml.exists():
         raise SuiteDidNotRun(
             f"{junit_xml} does not exist — the suite never got as far as writing "
@@ -217,15 +277,11 @@ def assert_suite_ran(
             f"{junit_xml} is not readable as JUnit XML: {exc}"
         ) from exc
 
-    selection_result = (
-        read_selection(selection_dir) if selection_dir is not None else None
-    )
     recorded_reruns = read_reruns(reruns)
-    crashes = sum(1 for rerun in recorded_reruns if rerun.get("crashed"))
     placeholders = 0
     cases = _final_attempts(tree.getroot(), recorded_reruns)
     quarantine = read_quarantine(_QUARANTINE)
-    ran, skipped, errored, executed_nodeids = 0, [], [], []
+    ran, skipped, errored, nodeids = 0, [], [], []
     for case in cases:
         if _is_crash_placeholder(case):
             placeholders += 1
@@ -242,64 +298,152 @@ def assert_suite_ran(
             errored.append(f"{name} — {why}")
         else:
             ran += 1
-        properties = [
-            prop.get("value")
-            for prop in case.findall("./properties/property")
-            if prop.get("name") == "cheese_nodeid"
-        ]
-        if selection_dir is not None:
+        if require_nodeid:
+            properties = [
+                prop.get("value")
+                for prop in case.findall("./properties/property")
+                if prop.get("name") == "cheese_nodeid"
+            ]
             if len(properties) != 1 or not properties[0]:
                 raise SuiteDidNotRun(
-                    f"{name} must report exactly one nonempty cheese_nodeid property"
+                    f"{name} must report exactly one nonempty cheese_nodeid "
+                    "property — run pytest with -p scripts.ci_shard so its JUnit "
+                    "report says which case each result belongs to"
                 )
-            executed_nodeids.append(properties[0])
+            nodeids.append(properties[0])
+    crashes = sum(1 for rerun in recorded_reruns if rerun.get("crashed"))
+    return _Run(junit_xml, ran, skipped, errored, nodeids, placeholders, crashes)
 
-    if placeholders > crashes:
+
+def _require_no_silence(run: _Run, *, allow_empty: bool = False) -> None:
+    """Refuse a report that could pass while saying nothing about the cases.
+
+    ``allow_empty`` is for a caller judging several reports together: one shard
+    of a plan can legitimately collect no case at all (more shards than cases),
+    and the aggregate's coverage check is what refuses a plan nothing ran. A
+    single report is never allowed to be empty.
+    """
+    if run.placeholders > run.crashes:
         raise SuiteDidNotRun(
-            f"the JUnit report has {placeholders} nameless testcase(s) but "
-            f"{crashes} recorded worker crash(es) that a retry ran again"
+            f"the JUnit report has {run.placeholders} nameless testcase(s) but "
+            f"{run.crashes} recorded worker crash(es) that a retry ran again"
         )
-    if skipped:
-        listing = "\n".join(f"  {line}" for line in skipped)
+    if len(run.nodeids) != len(set(run.nodeids)):
         raise SuiteDidNotRun(
-            f"{len(skipped)} case(s) were skipped. A suite that cannot meet its "
+            "the JUnit report contains duplicate cheese_nodeid properties"
+        )
+    if run.skipped:
+        listing = "\n".join(f"  {line}" for line in run.skipped)
+        if run.ran == 0:
+            raise SuiteDidNotRun(
+                f"every case in {run.junit_xml} was skipped — the suite ran "
+                f"nothing, so nothing was verified:\n{listing}"
+            )
+        raise SuiteDidNotRun(
+            f"{len(run.skipped)} case(s) were skipped. A suite that cannot meet its "
             f"environment fails; install what it needs in the job instead:\n{listing}"
         )
-    if errored:
-        listing = "\n".join(f"  {line}" for line in errored)
+    if run.errored:
+        listing = "\n".join(f"  {line}" for line in run.errored)
         raise SuiteDidNotRun(
-            f"{len(errored)} case(s) errored before their test body ran:\n{listing}"
+            f"{len(run.errored)} case(s) errored before their test body ran:\n{listing}"
+        )
+    if run.ran == 0 and not allow_empty:
+        raise SuiteDidNotRun(
+            f"{run.junit_xml} reports no executed case — the suite ran nothing, "
+            "so nothing was verified"
         )
 
+
+def assert_suite_ran(
+    junit_xml: Path,
+    *,
+    at_least: int | None = None,
+    selection_dir: Path | None = None,
+    reruns: Path | None = None,
+    expected: Path | None = None,
+) -> int:
+    """Return how many cases ran, or raise ``SuiteDidNotRun`` saying what is wrong.
+
+    ``at_least`` is a floor on what the job selected. ``expected`` names the
+    cases a local run promised to execute, so a report that is green because it
+    ran fewer of them fails and names the missing ones. Give at least one; a
+    plan is the stronger statement because it can judge an exact set.
+
+    A case counts as having run when it neither was skipped nor errored during
+    setup: a case that failed ran and told us something, a case that errored in
+    its fixtures did not reach its own body. A quarantined case ran too; its
+    result is what the quarantine sets aside.
+    """
+    if at_least is None and expected is None:
+        raise ValueError("assert_suite_ran needs at_least or expected")
+    planned = read_plan(expected) if expected is not None else None
+    selection_result = (
+        read_selection(selection_dir) if selection_dir is not None else None
+    )
+    run = _inspect(
+        junit_xml,
+        reruns,
+        require_nodeid=selection_dir is not None or planned is not None,
+    )
+    _require_no_silence(run)
+
     selected_count = None
-    assigned: list[str] | None = None
     if selection_result is not None:
         selected_count, _, assigned = selection_result
-        if ran != len(assigned):
+        if run.ran != len(assigned):
             raise SuiteDidNotRun(
-                f"the JUnit report contains {ran} executed case(s), but the shard "
+                f"the JUnit report contains {run.ran} executed case(s), but the shard "
                 f"manifest assigned {len(assigned)}"
             )
-        if len(executed_nodeids) != len(set(executed_nodeids)):
-            raise SuiteDidNotRun(
-                "the JUnit report contains duplicate cheese_nodeid properties"
-            )
-        if set(executed_nodeids) != set(assigned):
-            missing = sorted(set(assigned) - set(executed_nodeids))
-            unexpected = sorted(set(executed_nodeids) - set(assigned))
+        if set(run.nodeids) != set(assigned):
+            missing = sorted(set(assigned) - set(run.nodeids))
+            unexpected = sorted(set(run.nodeids) - set(assigned))
             raise SuiteDidNotRun(
                 "the JUnit report does not contain the cases assigned by the shard "
                 f"manifest; missing={missing}, unexpected={unexpected}"
             )
+    if planned is not None:
+        missing = sorted(set(planned) - set(run.nodeids))
+        unexpected = sorted(set(run.nodeids) - set(planned))
+        if missing or unexpected:
+            raise SuiteDidNotRun(
+                "the JUnit report does not contain the cases the plan expected; "
+                f"{len(missing)} missing {missing}, "
+                f"{len(unexpected)} unexpected {unexpected}"
+            )
 
-    floor_count = selected_count if selected_count is not None else ran
-    if floor_count < at_least:
+    if selected_count is not None:
+        floor_count = selected_count
+    elif planned is not None:
+        floor_count = len(planned)
+    else:
+        floor_count = run.ran
+    if at_least is not None and floor_count < at_least:
         raise SuiteDidNotRun(
             f"only {floor_count} case(s) were selected, and this job expects at "
             f"least {at_least}. "
             "Either the selection collapsed or the floor is out of date."
         )
-    return ran
+    return run.ran
+
+
+def executed_nodeids(
+    junit_xml: Path,
+    reruns: Path | None = None,
+    *,
+    allow_empty: bool = False,
+) -> list[str]:
+    """The node IDs the report says executed, in report order.
+
+    A caller aggregating several reports needs the identities, not just the
+    count, so the report must name every case it holds: run pytest with
+    ``-p scripts.ci_shard``. ``allow_empty`` admits a report that executed
+    nothing, for a caller judging several reports together.
+    """
+    run = _inspect(junit_xml, reruns, require_nodeid=True)
+    _require_no_silence(run, allow_empty=allow_empty)
+    return list(run.nodeids)
 
 
 def not_clean(junit_xml: Path, reruns: Path | None) -> list[str]:
@@ -342,7 +486,6 @@ def main() -> int:
     parser.add_argument(
         "--at-least",
         type=int,
-        required=True,
         help="the fewest cases this job accepts as having run",
     )
     parser.add_argument(
@@ -358,7 +501,18 @@ def main() -> int:
         type=Path,
         help="reruns.jsonl from scripts.ci_evidence: retries the report hides",
     )
+    parser.add_argument(
+        "--expected",
+        type=Path,
+        help=(
+            "the plan of cases this run promised to execute: a selection-manifest "
+            "directory, one selection-*.json, or a file of node IDs; requires the "
+            "report to contain exactly those cases"
+        ),
+    )
     arguments = parser.parse_args()
+    if arguments.at_least is None and arguments.expected is None:
+        parser.error("give --at-least, --expected, or both")
     try:
         unclean = not_clean(arguments.junit_xml, arguments.reruns)
     except SuiteDidNotRun as exc:
@@ -382,11 +536,17 @@ def main() -> int:
             at_least=arguments.at_least,
             selection_dir=arguments.selection_dir,
             reruns=arguments.reruns,
+            expected=arguments.expected,
         )
     except SuiteDidNotRun as exc:
         print(f"::error::{exc}")
         return 1
-    print(f"{ran} case(s) ran, none skipped (floor {arguments.at_least}).")
+    judged = []
+    if arguments.expected is not None:
+        judged.append(f"matching the plan {arguments.expected}")
+    if arguments.at_least is not None:
+        judged.append(f"floor {arguments.at_least}")
+    print(f"{ran} case(s) ran, none skipped ({', '.join(judged)}).")
     return 0
 
 

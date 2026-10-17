@@ -1,0 +1,237 @@
+viewer=perfviewer room=13f6e609-d016-49c0-b8ac-d67d1641bd76 project=586786ec-acac-41f5-ba69-7296055c73a2
+parameters, in placeholder order: ['user_handle_1', 'user_handle_2', 'kind_1', 'author_type_1', 'author_1', 'param_1', 'author_2', 'replied_rooms_1', 'replied_inner_1']
+this room holds 51 blocks directly and 0 threads
+
+========================================================================
+A  the statement as the app runs it
+========================================================================
+Nested Loop Left Join  (cost=0.29..4078169.66 rows=1 width=32) (actual time=120.409..120.411 rows=0 loops=1)
+  Join Filter: (topic_read_states_2.topic_id = blocks.conversation_id)
+  Filter: ((topic_read_states_2.last_read_seq IS NULL) OR (blocks.seq > topic_read_states_2.last_read_seq))
+  Buffers: shared hit=12634
+  ->  Nested Loop Left Join  (cost=0.15..4078161.48 rows=1 width=40) (actual time=120.409..120.410 rows=0 loops=1)
+        Join Filter: (topic_read_states_1.topic_id = COALESCE(threads.room_id, blocks.conversation_id))
+        Filter: ((topic_read_states_1.updated_at IS NULL) OR (topic_read_states_1.updated_at < blocks.created_at))
+        Buffers: shared hit=12634
+        ->  Nested Loop Left Join  (cost=0.00..4078153.30 rows=1 width=48) (actual time=120.408..120.409 rows=0 loops=1)
+              Join Filter: (threads.id = blocks.conversation_id)
+              Filter: ((blocks.conversation_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid) OR (threads.room_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid))
+              Buffers: shared hit=12634
+              ->  Seq Scan on blocks  (cost=0.00..4078134.77 rows=1 width=32) (actual time=120.407..120.408 rows=0 loops=1)
+                    Filter: (((author)::text <> 'perfviewer'::text) AND ((kind)::text = 'message'::text) AND ((author_type)::text = 'participant'::text) AND (((refs)::jsonb @> '["user:perfviewer"]'::jsonb) OR EXISTS(SubPlan 1)))
+                    Rows Removed by Filter: 479832
+                    Buffers: shared hit=12634
+                    SubPlan 1
+                      ->  Index Scan using blocks_pkey on blocks blocks_1  (cost=0.42..8.44 rows=1 width=0) (actual time=0.002..0.002 rows=0 loops=12)
+                            Index Cond: (id = blocks.reply_to)
+                            Filter: ((author)::text = 'perfviewer'::text)
+              ->  Seq Scan on threads  (cost=0.00..13.10 rows=310 width=32) (never executed)
+        ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_1  (cost=0.15..8.17 rows=1 width=24) (never executed)
+              Index Cond: ((user_handle)::text = 'perfviewer'::text)
+  ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_2  (cost=0.15..8.17 rows=1 width=24) (never executed)
+        Index Cond: ((user_handle)::text = 'perfviewer'::text)
+Planning:
+  Buffers: shared hit=387
+Planning Time: 6.981 ms
+Execution Time: 120.585 ms
+
+========================================================================
+B  A minus `OR threads.room_id IN ($9::UUID)` and its argument
+========================================================================
+Nested Loop Left Join  (cost=5.24..643.40 rows=1 width=32) (actual time=0.069..0.070 rows=0 loops=1)
+  Filter: ((topic_read_states_2.last_read_seq IS NULL) OR (blocks.seq > topic_read_states_2.last_read_seq))
+  Buffers: shared hit=6
+  ->  Nested Loop Left Join  (cost=5.09..635.22 rows=1 width=40) (actual time=0.068..0.069 rows=0 loops=1)
+        Join Filter: (topic_read_states_1.topic_id = COALESCE(threads.room_id, blocks.conversation_id))
+        Filter: ((topic_read_states_1.updated_at IS NULL) OR (topic_read_states_1.updated_at < blocks.created_at))
+        Buffers: shared hit=6
+        ->  Nested Loop Left Join  (cost=4.95..627.04 rows=1 width=48) (actual time=0.068..0.069 rows=0 loops=1)
+              Buffers: shared hit=6
+              ->  Bitmap Heap Scan on blocks  (cost=4.80..618.86 rows=1 width=32) (actual time=0.068..0.068 rows=0 loops=1)
+                    Recheck Cond: (conversation_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid)
+                    Filter: (((author)::text <> 'perfviewer'::text) AND ((kind)::text = 'message'::text) AND ((author_type)::text = 'participant'::text) AND (((refs)::jsonb @> '["user:perfviewer"]'::jsonb) OR EXISTS(SubPlan 1)))
+                    Rows Removed by Filter: 51
+                    Heap Blocks: exact=3
+                    Buffers: shared hit=6
+                    ->  Bitmap Index Scan on ix_blocks_conversation_seq  (cost=0.00..4.80 rows=50 width=0) (actual time=0.036..0.036 rows=51 loops=1)
+                          Index Cond: (conversation_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid)
+                          Buffers: shared hit=3
+                    SubPlan 1
+                      ->  Index Scan using blocks_pkey on blocks blocks_1  (cost=0.42..8.44 rows=1 width=0) (never executed)
+                            Index Cond: (id = blocks.reply_to)
+                            Filter: ((author)::text = 'perfviewer'::text)
+              ->  Index Scan using threads_pkey on threads  (cost=0.15..8.17 rows=1 width=32) (never executed)
+                    Index Cond: (id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid)
+        ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_1  (cost=0.15..8.17 rows=1 width=24) (never executed)
+              Index Cond: ((user_handle)::text = 'perfviewer'::text)
+  ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_2  (cost=0.15..8.17 rows=1 width=24) (never executed)
+        Index Cond: ((user_handle)::text = 'perfviewer'::text)
+        Filter: (topic_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid)
+Planning:
+  Buffers: shared hit=91
+Planning Time: 2.762 ms
+Execution Time: 0.116 ms
+
+========================================================================
+C  the room's own blocks alone
+========================================================================
+Index Only Scan using ix_blocks_conversation_kind_seq on blocks  (cost=0.42..17.28 rows=50 width=16) (actual time=0.018..0.031 rows=51 loops=1)
+  Index Cond: (conversation_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid)
+  Heap Fetches: 2
+  Buffers: shared hit=6
+Planning:
+  Buffers: shared hit=14
+Planning Time: 0.401 ms
+Execution Time: 0.045 ms
+
+========================================================================
+D1  OR blocks.conversation_id IN (SELECT t.id FROM threads AS t WHERE t.room_id = $9)
+========================================================================
+Nested Loop Left Join  (cost=12.48..4080580.95 rows=1 width=32) (actual time=118.839..118.841 rows=0 loops=1)
+  Join Filter: (topic_read_states_2.topic_id = blocks.conversation_id)
+  Filter: ((topic_read_states_2.last_read_seq IS NULL) OR (blocks.seq > topic_read_states_2.last_read_seq))
+  Buffers: shared hit=12636
+  ->  Nested Loop Left Join  (cost=12.34..4080572.77 rows=1 width=40) (actual time=118.839..118.841 rows=0 loops=1)
+        Join Filter: (topic_read_states_1.topic_id = COALESCE(threads.room_id, blocks.conversation_id))
+        Filter: ((topic_read_states_1.updated_at IS NULL) OR (topic_read_states_1.updated_at < blocks.created_at))
+        Buffers: shared hit=12636
+        ->  Nested Loop Left Join  (cost=12.19..4080564.59 rows=1 width=48) (actual time=118.838..118.840 rows=0 loops=1)
+              Join Filter: (threads.id = blocks.conversation_id)
+              Buffers: shared hit=12636
+              ->  Seq Scan on blocks  (cost=12.19..4080547.61 rows=1 width=32) (actual time=118.837..118.839 rows=0 loops=1)
+                    Filter: (((author)::text <> 'perfviewer'::text) AND ((kind)::text = 'message'::text) AND ((author_type)::text = 'participant'::text) AND ((conversation_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid) OR (ANY (conversation_id = (hashed SubPlan 1).col1))) AND (((refs)::jsonb @> '["user:perfviewer"]'::jsonb) OR EXISTS(SubPlan 2)))
+                    Rows Removed by Filter: 479832
+                    Buffers: shared hit=12636
+                    SubPlan 1
+                      ->  Index Scan using ix_threads_room_id on threads t  (cost=0.15..12.18 rows=2 width=16) (actual time=0.014..0.014 rows=0 loops=1)
+                            Index Cond: (room_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid)
+                            Buffers: shared hit=2
+                    SubPlan 2
+                      ->  Index Scan using blocks_pkey on blocks blocks_1  (cost=0.42..8.44 rows=1 width=0) (never executed)
+                            Index Cond: (id = blocks.reply_to)
+                            Filter: ((author)::text = 'perfviewer'::text)
+              ->  Seq Scan on threads  (cost=0.00..13.10 rows=310 width=32) (never executed)
+        ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_1  (cost=0.15..8.17 rows=1 width=24) (never executed)
+              Index Cond: ((user_handle)::text = 'perfviewer'::text)
+  ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_2  (cost=0.15..8.17 rows=1 width=24) (never executed)
+        Index Cond: ((user_handle)::text = 'perfviewer'::text)
+Planning:
+  Buffers: shared hit=100
+Planning Time: 2.742 ms
+Execution Time: 118.934 ms
+
+========================================================================
+D2  OR (threads.id = blocks.conversation_id AND blocks.conversation_id = ANY (SELECT t.id FROM threads AS t WHERE t.room_id = $9))
+========================================================================
+Nested Loop Left Join  (cost=24.82..4080584.34 rows=1 width=32) (actual time=116.741..116.744 rows=0 loops=1)
+  Join Filter: (topic_read_states_2.topic_id = blocks.conversation_id)
+  Filter: ((topic_read_states_2.last_read_seq IS NULL) OR (blocks.seq > topic_read_states_2.last_read_seq))
+  Buffers: shared hit=12636
+  ->  Nested Loop Left Join  (cost=24.67..4080576.16 rows=1 width=40) (actual time=116.740..116.743 rows=0 loops=1)
+        Join Filter: (topic_read_states_1.topic_id = COALESCE(threads.room_id, blocks.conversation_id))
+        Filter: ((topic_read_states_1.updated_at IS NULL) OR (topic_read_states_1.updated_at < blocks.created_at))
+        Buffers: shared hit=12636
+        ->  Nested Loop Left Join  (cost=24.52..4080567.98 rows=1 width=48) (actual time=116.740..116.742 rows=0 loops=1)
+              Filter: ((blocks.conversation_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid) OR ((threads.id = blocks.conversation_id) AND (ANY (blocks.conversation_id = (hashed SubPlan 1).col1))))
+              Buffers: shared hit=12636
+              ->  Seq Scan on blocks  (cost=12.19..4080547.61 rows=1 width=32) (actual time=116.739..116.741 rows=0 loops=1)
+                    Filter: (((author)::text <> 'perfviewer'::text) AND ((kind)::text = 'message'::text) AND ((author_type)::text = 'participant'::text) AND ((conversation_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid) OR (ANY (conversation_id = (hashed SubPlan 1).col1))) AND (((refs)::jsonb @> '["user:perfviewer"]'::jsonb) OR EXISTS(SubPlan 2)))
+                    Rows Removed by Filter: 479832
+                    Buffers: shared hit=12636
+                    SubPlan 1
+                      ->  Index Scan using ix_threads_room_id on threads t  (cost=0.15..12.18 rows=2 width=16) (actual time=0.013..0.013 rows=0 loops=1)
+                            Index Cond: (room_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid)
+                            Buffers: shared hit=2
+                    SubPlan 2
+                      ->  Index Scan using blocks_pkey on blocks blocks_1  (cost=0.42..8.44 rows=1 width=0) (never executed)
+                            Index Cond: (id = blocks.reply_to)
+                            Filter: ((author)::text = 'perfviewer'::text)
+              ->  Index Scan using threads_pkey on threads  (cost=0.15..8.17 rows=1 width=32) (never executed)
+                    Index Cond: (id = blocks.conversation_id)
+        ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_1  (cost=0.15..8.17 rows=1 width=24) (never executed)
+              Index Cond: ((user_handle)::text = 'perfviewer'::text)
+  ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_2  (cost=0.15..8.17 rows=1 width=24) (never executed)
+        Index Cond: ((user_handle)::text = 'perfviewer'::text)
+Planning:
+  Buffers: shared hit=100
+Planning Time: 6.562 ms
+Execution Time: 116.858 ms
+
+========================================================================
+D3  OR blocks.conversation_id = ANY (SELECT t.id FROM threads AS t WHERE t.room_id = $9)
+========================================================================
+Nested Loop Left Join  (cost=12.48..4080580.95 rows=1 width=32) (actual time=117.380..117.382 rows=0 loops=1)
+  Join Filter: (topic_read_states_2.topic_id = blocks.conversation_id)
+  Filter: ((topic_read_states_2.last_read_seq IS NULL) OR (blocks.seq > topic_read_states_2.last_read_seq))
+  Buffers: shared hit=12636
+  ->  Nested Loop Left Join  (cost=12.34..4080572.77 rows=1 width=40) (actual time=117.379..117.381 rows=0 loops=1)
+        Join Filter: (topic_read_states_1.topic_id = COALESCE(threads.room_id, blocks.conversation_id))
+        Filter: ((topic_read_states_1.updated_at IS NULL) OR (topic_read_states_1.updated_at < blocks.created_at))
+        Buffers: shared hit=12636
+        ->  Nested Loop Left Join  (cost=12.19..4080564.59 rows=1 width=48) (actual time=117.379..117.381 rows=0 loops=1)
+              Join Filter: (threads.id = blocks.conversation_id)
+              Buffers: shared hit=12636
+              ->  Seq Scan on blocks  (cost=12.19..4080547.61 rows=1 width=32) (actual time=117.378..117.379 rows=0 loops=1)
+                    Filter: (((author)::text <> 'perfviewer'::text) AND ((kind)::text = 'message'::text) AND ((author_type)::text = 'participant'::text) AND ((conversation_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid) OR (ANY (conversation_id = (hashed SubPlan 1).col1))) AND (((refs)::jsonb @> '["user:perfviewer"]'::jsonb) OR EXISTS(SubPlan 2)))
+                    Rows Removed by Filter: 479832
+                    Buffers: shared hit=12636
+                    SubPlan 1
+                      ->  Index Scan using ix_threads_room_id on threads t  (cost=0.15..12.18 rows=2 width=16) (actual time=0.009..0.009 rows=0 loops=1)
+                            Index Cond: (room_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid)
+                            Buffers: shared hit=2
+                    SubPlan 2
+                      ->  Index Scan using blocks_pkey on blocks blocks_1  (cost=0.42..8.44 rows=1 width=0) (never executed)
+                            Index Cond: (id = blocks.reply_to)
+                            Filter: ((author)::text = 'perfviewer'::text)
+              ->  Seq Scan on threads  (cost=0.00..13.10 rows=310 width=32) (never executed)
+        ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_1  (cost=0.15..8.17 rows=1 width=24) (never executed)
+              Index Cond: ((user_handle)::text = 'perfviewer'::text)
+  ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_2  (cost=0.15..8.17 rows=1 width=24) (never executed)
+        Index Cond: ((user_handle)::text = 'perfviewer'::text)
+Planning:
+  Buffers: shared hit=100
+Planning Time: 2.899 ms
+Execution Time: 117.436 ms
+
+========================================================================
+E  the fix with the room's thread ids passed in as a list: OR blocks.conversation_id IN ('00000000-0000-0000-0000-000000000001'::uuid, '00000000-0000-0000-0000-000000000002'::uuid)
+   (0 real thread ids in this room; the two above are synthetic)
+========================================================================
+Nested Loop Left Join  (cost=14.69..1881.55 rows=1 width=32) (actual time=0.093..0.095 rows=0 loops=1)
+  Join Filter: (topic_read_states_2.topic_id = blocks.conversation_id)
+  Filter: ((topic_read_states_2.last_read_seq IS NULL) OR (blocks.seq > topic_read_states_2.last_read_seq))
+  Buffers: shared hit=9
+  ->  Nested Loop Left Join  (cost=14.54..1873.37 rows=1 width=40) (actual time=0.093..0.094 rows=0 loops=1)
+        Join Filter: (topic_read_states_1.topic_id = COALESCE(threads.room_id, blocks.conversation_id))
+        Filter: ((topic_read_states_1.updated_at IS NULL) OR (topic_read_states_1.updated_at < blocks.created_at))
+        Buffers: shared hit=9
+        ->  Nested Loop Left Join  (cost=14.39..1865.19 rows=1 width=48) (actual time=0.093..0.094 rows=0 loops=1)
+              Join Filter: (threads.id = blocks.conversation_id)
+              Buffers: shared hit=9
+              ->  Bitmap Heap Scan on blocks  (cost=14.39..1848.22 rows=1 width=32) (actual time=0.093..0.093 rows=0 loops=1)
+                    Recheck Cond: ((conversation_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid) OR (conversation_id = ANY ('{00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002}'::uuid[])))
+                    Filter: (((author)::text <> 'perfviewer'::text) AND ((kind)::text = 'message'::text) AND ((author_type)::text = 'participant'::text) AND (((refs)::jsonb @> '["user:perfviewer"]'::jsonb) OR EXISTS(SubPlan 1)))
+                    Rows Removed by Filter: 51
+                    Heap Blocks: exact=3
+                    Buffers: shared hit=9
+                    ->  BitmapOr  (cost=14.39..14.39 rows=151 width=0) (actual time=0.061..0.061 rows=0 loops=1)
+                          Buffers: shared hit=6
+                          ->  Bitmap Index Scan on ix_blocks_conversation_seq  (cost=0.00..4.80 rows=50 width=0) (actual time=0.017..0.017 rows=51 loops=1)
+                                Index Cond: (conversation_id = '13f6e609-d016-49c0-b8ac-d67d1641bd76'::uuid)
+                                Buffers: shared hit=3
+                          ->  Bitmap Index Scan on ix_blocks_conversation_seq  (cost=0.00..9.60 rows=101 width=0) (actual time=0.043..0.043 rows=0 loops=1)
+                                Index Cond: (conversation_id = ANY ('{00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002}'::uuid[]))
+                                Buffers: shared hit=3
+                    SubPlan 1
+                      ->  Index Scan using blocks_pkey on blocks blocks_1  (cost=0.42..8.44 rows=1 width=0) (never executed)
+                            Index Cond: (id = blocks.reply_to)
+                            Filter: ((author)::text = 'perfviewer'::text)
+              ->  Seq Scan on threads  (cost=0.00..13.10 rows=310 width=32) (never executed)
+        ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_1  (cost=0.15..8.17 rows=1 width=24) (never executed)
+              Index Cond: ((user_handle)::text = 'perfviewer'::text)
+  ->  Index Scan using ix_topic_read_states_user_handle on topic_read_states topic_read_states_2  (cost=0.15..8.17 rows=1 width=24) (never executed)
+        Index Cond: ((user_handle)::text = 'perfviewer'::text)
+Planning:
+  Buffers: shared hit=97
+Planning Time: 2.957 ms
+Execution Time: 0.133 ms

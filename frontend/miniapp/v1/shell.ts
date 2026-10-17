@@ -19,7 +19,8 @@ import * as motion from './platform/motion'
 import * as random from './platform/random'
 import * as sim from './platform/sim'
 import * as theme from './platform/theme'
-import { requireFrom, start } from './runtime'
+import { exercise } from './exercise'
+import { fail, requireFrom, start } from './runtime'
 import { miswired } from './wiring'
 
 const require = requireFrom({
@@ -31,6 +32,10 @@ const require = requireFrom({
 })
 /** The platform's elements are elements, not Vue components to resolve. */
 const isCustomElement = (tag: string) => tag.startsWith('c-')
+
+// For the platform's check: use the app as a reader would (exercise.ts).
+;(window as { __inspect_exercise?: () => Promise<number> }).__inspect_exercise = () =>
+  exercise(document.getElementById('cheese-app') as HTMLElement)
 
 start((code, root) => {
   // The rule has to be there when the template is parsed: by compile time the
@@ -67,9 +72,9 @@ start((code, root) => {
   new Function('require', 'module', 'exports', out)(require, module, module.exports)
   const app = Vue.createApp(module.exports.default as Vue.Component)
   app.config.compilerOptions.isCustomElement = isCustomElement
-  app.config.errorHandler = (error) => {
-    throw error
-  }
+  // An error in the app's own code (a handler, a render) is reported where
+  // the check and the document read it, and with what the reader was doing.
+  app.config.errorHandler = (error) => fail(String((error as Error)?.message ?? error))
   for (const style of descriptor.styles) {
     const el = document.createElement('style')
     el.textContent = style.content

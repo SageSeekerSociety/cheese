@@ -15,6 +15,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -92,6 +93,8 @@ beforeEach(() => {
 })
 
 const settle = () => new Promise((r) => setTimeout(r, 0))
+
+beforeAll(loadMarkdownReader)
 
 describe('日期分隔线', () => {
   it('跨天的地方标一次，同一天的连续消息不重复标', async () => {
