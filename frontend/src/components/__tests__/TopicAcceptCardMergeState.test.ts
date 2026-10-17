@@ -218,7 +218,9 @@ describe('合的是人看到的那个 commit', () => {
     })
     acceptCard.mockResolvedValue({ ...pending, status: 'accepted' })
     const { container } = await mountWith([pending])
-    expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.trim() === '创建 PR')).toBe(false)
+    expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.trim() === '创建 PR')).toBe(
+      false
+    )
     const btn = acceptButton(container)
     expect(btn.disabled).toBe(false)
     await fireEvent.click(btn)

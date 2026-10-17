@@ -58,9 +58,7 @@ export function useAcceptCardDerive(host: AcceptCardDeriveHost) {
   const mergeReasons = computed<MergeReason[]>(() => {
     const card = pendingCard.value
     if (!card) return []
-    return card.forge.reports_checks && needsPr.value
-      ? card.merge_state.reasons
-      : visibleReasons(card.merge_state)
+    return card.forge.reports_checks && needsPr.value ? card.merge_state.reasons : visibleReasons(card.merge_state)
   })
   // 读不到检查结论的托管方，采纳就是验收人自己的判断。
   const platformLane = computed(() => {
