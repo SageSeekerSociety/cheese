@@ -157,10 +157,9 @@ REGISTRY_BASENAME_MARKERS = ("route_index", "baseline")
 #: 2026-10-14): the window this board reads is trailing, and a conflict those two
 #: files took part in before they were removed still cost a rebase, not a re-read
 #: of somebody else's logic. The list describes what the window holds, not what
-#: the tree holds today. The digest that replaced the document is the same kind of
-#: file and goes on the list for the opposite reason: it is in the tree, two
-#: branches that each moved the API surface collide on its one line, and that is
-#: the benign half of the metric.
+#: the tree holds today. The digest that replaced the document,
+#: backend/openapi.sha256, left the same way on 2026-10-17 and stays listed for
+#: the same reason.
 REGISTRY_FILES = (
     "backend/openapi.json",
     "frontend/src/api/openapi.d.ts",

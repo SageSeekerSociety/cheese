@@ -389,6 +389,9 @@ class RequiredCITest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "skipped"},
+            # A backend change the paths do not send to the frontend: the api
+            # job answers whether the surface moved, and here it did not.
+            "api": {"result": "success", "outputs": {"moved": "false"}},
             **{
                 k: {"result": "success" if v else "skipped"}
                 for k, v in selected.items()
@@ -408,6 +411,7 @@ class RequiredCITest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "success"},
+            "api": {"result": "skipped"},
             **{k: {"result": "skipped"} for k in selected},
         }
 
@@ -545,6 +549,9 @@ class AggregationTierTest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "skipped"},
+            # A backend change the paths do not send to the frontend: the api
+            # job answers whether the surface moved, and here it did not.
+            "api": {"result": "success", "outputs": {"moved": "false"}},
             **{
                 k: {"result": "success" if v else "skipped"}
                 for k, v in selected.items()
@@ -558,6 +565,7 @@ class AggregationTierTest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "success"},
+            "api": {"result": "skipped"},
             **{k: {"result": "skipped"} for k in selected},
         }
 
@@ -613,6 +621,84 @@ class AggregationTierTest(unittest.TestCase):
         needs = self.needs()
         del needs["scope"]["outputs"]["tier"]
         self.assertTrue(gate.failures(needs, "full"))
+
+
+class ApiSurfaceTest(unittest.TestCase):
+    """A backend change that moves the OpenAPI document runs the frontend suite.
+
+    The frontend compiles against types generated from that document, so a
+    change that moves it and lands without the frontend suite has shipped an
+    API surface nobody compiled the frontend against. No path says when the
+    document moved; the ``api`` job says it, and the required check must hold
+    the frontend suite to that answer.
+    """
+
+    def needs(self, paths=("backend/app/api/rooms.py",), api=None, frontend=None):
+        selected = gate.select(list(paths))
+        outputs = {k: str(v).lower() for k, v in selected.items()}
+        outputs["tier"] = "full"
+        needs = {
+            "scope": {"result": "success", "outputs": outputs},
+            "fast": {"result": "skipped"},
+            **{k: {"result": "success" if v else "skipped"} for k, v in selected.items()},
+        }
+        if api is not None:
+            needs["api"] = api
+        if frontend is not None:
+            needs["frontend"] = {"result": frontend}
+        return needs
+
+    def test_a_moved_surface_without_the_frontend_suite_is_red(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="skipped")
+        self.assertTrue(gate.failures(needs, "full"))
+
+    def test_a_moved_surface_with_the_frontend_suite_green_passes(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="success")
+        self.assertEqual(gate.failures(needs, "full"), [])
+
+    def test_a_moved_surface_with_a_red_frontend_suite_is_red(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="failure")
+        self.assertTrue(gate.failures(needs, "full"))
+
+    def test_an_unmoved_surface_leaves_the_frontend_suite_out(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "false"}},
+                           frontend="skipped")
+        self.assertEqual(gate.failures(needs, "full"), [])
+
+    def test_a_backend_change_with_no_answer_from_api_is_red(self):
+        # A job that did not report whether the surface moved has not excused
+        # the frontend suite it would have started.
+        for api in ({"result": "failure"}, {"result": "cancelled"}, {"result": "skipped"},
+                    None, {"result": "success"},
+                    {"result": "success", "outputs": {"moved": ""}},
+                    {"result": "success", "outputs": {"moved": "maybe"}}):
+            with self.subTest(api=api):
+                self.assertTrue(gate.failures(self.needs(api=api, frontend="skipped"), "full"))
+
+    def test_api_runs_only_where_the_paths_left_the_question_open(self):
+        # A frontend change already runs the suite, and a change outside the
+        # backend cannot move the document: neither asks api.
+        for paths in (("frontend/src/main.ts",),
+                      ("backend/app/api/rooms.py", "frontend/src/main.ts"),
+                      ("docs/workflows.md",)):
+            with self.subTest(paths=paths):
+                ran = self.needs(paths, api={"result": "success", "outputs": {"moved": "false"}})
+                self.assertTrue(gate.failures(ran, "full"))
+                skipped = self.needs(paths, api={"result": "skipped"})
+                self.assertEqual(gate.failures(skipped, "full"), [])
+
+    def test_a_draft_never_asks_api(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}})
+        needs["scope"]["outputs"]["tier"] = "quick"
+        needs["fast"]["result"] = "success"
+        for suite in gate.PATHS:
+            needs[suite] = {"result": "skipped"}
+        self.assertTrue(gate.failures(needs, "quick"))
+        needs["api"] = {"result": "skipped"}
+        self.assertEqual(gate.failures(needs, "quick"), [])
 
 
 def run_bodies(text):
@@ -1151,7 +1237,11 @@ class MainCliTest(unittest.TestCase):
             self.assertEqual(written["remote"], "false")
             self.assertEqual(written["cifast"], "false")
             self.assertIn("e2e/remote 留给合并队列", proc.stdout)
-            self.assertTrue(all(v in ("true", "false") for k, v in written.items() if k != "tier"))
+            # The api job compares the document against the commit this diff
+            # was taken from, so the two cannot be answering different questions.
+            self.assertEqual(written["base"], base)
+            self.assertTrue(all(v in ("true", "false") for k, v in written.items()
+                                if k not in ("tier", "base")))
 
     def test_pull_request_defers_e2e_and_remote_while_merge_group_requires_them(self):
         scripts = WORKFLOW.parent.parent / "scripts"
@@ -1202,6 +1292,7 @@ class MainCliTest(unittest.TestCase):
             pr_needs = {
                 "scope": {"result": "success", "outputs": pr_written},
                 "fast": {"result": "skipped"},
+                "api": {"result": "success", "outputs": {"moved": "false"}},
                 **{
                     k: {"result": "success" if pr_written[k] == "true" else "skipped"}
                     for k in gate.PATHS
@@ -1234,6 +1325,7 @@ class MainCliTest(unittest.TestCase):
             mg_needs_skipped = {
                 "scope": {"result": "success", "outputs": mg_written},
                 "fast": {"result": "skipped"},
+                "api": {"result": "success", "outputs": {"moved": "false"}},
                 **{
                     k: {"result": "success" if mg_written[k] == "true" else "skipped"}
                     for k in gate.PATHS
