@@ -1126,6 +1126,18 @@ def test_the_session_may_keep_its_shell_in_the_rooms_task_checkouts(
     assert target["session_task_root"] == tasks
 
 
+def test_a_session_is_not_given_task_checkouts_it_would_make_on_this_host(
+    tmp_path, machine, monkeypatch
+):
+    """Here the executor's home is a directory of this host's own: the
+    session's namespace would make the checkouts in it, so it starts as
+    before, without them."""
+    launch, _ = _prepared(tmp_path, machine, monkeypatch)
+    assert "--add-dir" not in launch["command"]
+    target = json.loads(Path(launch["execution"]).read_text())
+    assert "session_task_root" not in target
+
+
 @pytest.mark.parametrize(
     ("task_root", "kept"),
     [
@@ -1135,6 +1147,7 @@ def test_the_session_may_keep_its_shell_in_the_rooms_task_checkouts(
         ("/srv/../home/.cheese/tasks", False),
         ("/proc/tasks", False),
         ("{seen}/tasks", False),
+        ("/executor/home", False),
     ],
 )
 def test_a_task_root_the_namespace_would_make_on_this_host_is_not_taken(
