@@ -583,3 +583,32 @@ unmatched_ignore_imports_alerting = warn
 # 笔（`topic -> block`），只是合并进仓库的树里记的模块路径不再是导入方了。
 # **2026-10-16**：为此手写的三条豁免已删——`check_boundaries.py` 现在自己认得这种
 # 改名（见 C3 那段），不必在声明里再写一遍。
+
+[importlinter:contract:platform-not-claude-code]
+# H1 — the platform side of the harness seam holds no Claude Code knowledge: it
+# gets finished `AgentEvent`s from the room's session path, and stores and
+# sends them; translating is the adapter's job (`docs/fusion-design.md`). Only
+# the session-core drivers and the adapter's outer edges import its door.
+# Direct imports only: reaching it through a driver is the seam working.
+name = H1 the platform side does not import the Claude Code adapter
+type = forbidden
+source_modules =
+    app.domain.agent.chat
+    app.domain.agent.chat_admission
+    app.domain.agent.chat_lifecycle
+    app.domain.agent.chat_live_input
+    app.domain.agent.chat_places
+    app.domain.agent.room
+    app.domain.agent.room_events
+    app.domain.agent.runtime
+    app.domain.agent.runtime_orphans
+    app.domain.agent.turn
+    app.domain.agent.turn_adoption
+    app.domain.agent.turn_counts
+    app.domain.agent.turn_inputs
+    app.domain.agent.turn_ledger
+    app.domain.agent.turn_speakers
+    app.domain.agent.turn_times
+    app.domain.agent.turn_usage
+forbidden_modules = app.domain.agent.harness.claude_code
+allow_indirect_imports = true

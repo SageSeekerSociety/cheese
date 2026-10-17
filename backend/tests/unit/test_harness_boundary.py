@@ -5,30 +5,11 @@
 的记录翻成房间事件的那一层、钉死版本并隔离配置的启动器、把它的工具转去房间执行机
 的 remote-execution 插件。第二个 harness 一样都不用付。
 
-所以边界就是全部的意义。**外面 import 包本身，不 import 它的子模块**，而
-``claude_code/__init__.py`` 的导出表就是「还有什么在跨界」的账本。
-
-## 账本是棘轮
-
-下面 ``_LEDGER`` 记的是每个跨界的生产模块和它拿走的名字。多一条会红（新的跨界），
-少一条也会红（还完了忘删）。所以：把某个模块从适配器上解开之后，必须回来删掉它那
-一行，红了就是提醒你删。
-
-写模块粒度而不是名字粒度是故意的：同一个文件从适配器里多拿一个名字，架构上还是同
-一处跨界，不值得再走一次 review；而某个文件**整个**不再需要适配器，才是真的还了债。
-
-## 这张表在说什么
-
-- **channels**（device）：拿走的是还没搬过缝的 Claude Code 知识——隧道探针
-  ``DEVICE_TUNNEL_PROBE``，和常驻执行机换版时要做的 ``resident_release``。「跑什么」
-  不在这张表里：那是 ``agent.launch`` 的 ``LaunchPlan``，通道只说「在哪」。
-- **平台侧（chat.py）：一行也没有。** 它只从房间读会话的那一路拿到已经拼好的
-  ``AgentEvent``，落库发帧是它的活，翻译不是。**这一行别再长回来。**
-- **会话核心**（``session_host`` 的驱动）：每个骨架怎么起、记录怎么读，写在它自己
-  的驱动里，所以驱动认得这几个名字。见得到零件的只有驱动。
-- **边缘**（``session_work`` 装执行机、``private_chat`` 找私聊的执行目标、功能矩阵
-  取 ``declaration``、``machine/enrollment`` 检查版本）：适配器有对外的边，边总得有
-  人站着；第二个 harness 自己带一条，而不是从这条挤进去。
+所以边界就是全部的意义。**外面 import 包本身，只拿它 ``__all__`` 里的名字**，
+``claude_code/__init__.py`` 的导出表就是「还有什么在跨界」的那一份声明。越过门口
+没有例外：直接 import 子模块（``from … import``、``import …`` 和相对 import 都算），
+从门口拿一个不在 ``__all__`` 里的名字（比如把子模块本身当名字拿走），或者把包本身
+当模块对象拿走（``from app.domain.agent.harness import claude_code``），一律红。
 """
 
 import ast
@@ -40,96 +21,75 @@ import pytest
 APP = Path(__file__).resolve().parents[2] / "app"
 PKG = "app.domain.agent.harness.claude_code"
 
-# 模块 → 它从适配器拿走的名字（排序后的元组）。见上面「账本是棘轮」。
-_LEDGER: dict[str, tuple[str, ...]] = {
-    # --- 边缘：适配器对外的那条边 ---
-    # Lazy acquisition installs the shared work executor, through its public door.
-    "app.domain.machine.session_work": ("executor_launch",),
-    "app.domain.agent.private_chat": ("private_execution_target",),
-    # 行为声明的汇总侧：三个骨架的门口各取一份 declaration()，拼成功能矩阵。
-    # 它只拿这一个名字，而且拿的是「这个 harness 自己说自己是什么」——不是
-    # 适配器的内部零件。
-    "app.domain.agent.capability.matrix": ("declaration",),
-    # Enrollment places the pinned build and checks it against the floor.
-    "app.domain.machine.enrollment": ("CLAUDE_MIN_VERSION", "CLAUDE_PINNED_VERSION"),
-    # A machine is told which build to fetch before its owner logs in their own
-    # Claude Code for the platform (`cheesehost claude login`, #2991).
-    "app.api.routes.installer": ("CLAUDE_PINNED_VERSION",),
-    # A machine is asked as it connects whether that login is good (#2991),
-    # and whether it can make the sandbox its install makes (`device.sandbox`).
-    "app.api.routes.connector.connections": ("executor_launch", "owner_login"),
-    "app.api.routes.connector.devices": ("executor_launch", "owner_login"),
-    # --- 会话核心：每个骨架的驱动在这里，驱动认得骨架的零件，也只在这里 ---
-    "app.domain.agent.session_host.claude_code": (
-        "ClaudeLaunch",
-        # How its runner says a launch never came up (`last_words`).
-        "NEVER_STARTED",
-        "Subscription",
-        "accepts_inputs",
-        "control_state",
-        "ended",
-    ),
-    # 私有执行环境按需先起：pi 和 Codex 的会话起之前，执行器由它启动。
-    "app.domain.agent.session_host.codex": ("executor_launch",),
-    "app.domain.agent.session_host.pi": ("executor_launch",),
-    # --- channels：还没搬过缝的 Claude Code 知识 ---
-    "app.domain.agent.device_provider": ("DEVICE_TUNNEL_PROBE", "resident_release"),
-}
-
 
 def _module_name(path: Path) -> str:
     return "app." + ".".join(path.relative_to(APP).with_suffix("").parts)
 
 
-def _crossings(package: str = PKG) -> tuple[dict[str, set[str]], list[str]]:
-    """Who imports the adapter, what they take, and who reached past the door."""
-    taken: dict[str, set[str]] = {}
-    through_a_submodule: list[str] = []
+def _exported(package: str) -> set[str]:
+    """The names the package's door lists in ``__all__``, read from source."""
+    door = APP.parent.joinpath(*package.split("."), "__init__.py")
+    for node in ast.parse(door.read_text()).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
+        ):
+            return set(ast.literal_eval(node.value))
+    raise AssertionError(f"{door} has no __all__")
+
+
+def _reached_past(package: str = PKG) -> list[str]:
+    """Every import outside the package that does not go through its door."""
+    exported = _exported(package)
+    found: list[str] = []
     for path in sorted(APP.rglob("*.py")):
         module = _module_name(path)
-        if module.startswith(package):
+        if module == package or module.startswith(package + "."):
             continue
+        # The package a relative import is resolved against (for an
+        # `__init__.py`, whose name ends in `.__init__`, that is its own).
+        here = module.split(".")[:-1]
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom) or not node.module:
-                continue
-            if node.module == package:
-                taken.setdefault(module, set()).update(a.name for a in node.names)
-            elif node.module.startswith(package + "."):
-                through_a_submodule.append(f"{module} → {node.module}")
-    return taken, through_a_submodule
+            if isinstance(node, ast.Import):
+                found += [
+                    f"{module} → {alias.name}"
+                    for alias in node.names
+                    if alias.name.startswith(package + ".")
+                ]
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if node.level:
+                    anchor = here[: len(here) - (node.level - 1)]
+                    base = ".".join(anchor + ([node.module] if node.module else []))
+                if base.startswith(package + "."):
+                    found.append(f"{module} → {base}")
+                elif base == package:
+                    found += [
+                        f"{module} → {package}.{alias.name} (not in __all__)"
+                        for alias in node.names
+                        if alias.name not in exported
+                    ]
+                else:
+                    # `from <parent> import <package>` hands over the package
+                    # object, whose submodules are attributes on it.
+                    found += [
+                        f"{module} → {package} (as a module object)"
+                        for alias in node.names
+                        if f"{base}.{alias.name}" == package
+                    ]
+    return found
 
 
 @pytest.mark.parametrize("package", [PKG, "app.domain.agent.harness.codex"])
 def test_nothing_outside_reaches_past_the_package_door(package):
-    """一个 harness 的内部结构不该是别人能依赖的东西。从包门口拿，门口那张表才
-    能当账本用；直接摸子模块，账本就不知道有这回事。"""
-    _, reached_past = _crossings(package)
+    """一个 harness 的内部结构不该是别人能依赖的东西。从包门口拿、只拿导出表里的
+    名字，门口那张表才是跨界的全部；直接摸子模块，那张表就不知道有这回事。"""
+    reached_past = _reached_past(package)
     assert not reached_past, (
-        "这些地方越过了 claude_code 的包门口，直接 import 了它的子模块。"
-        "要么从包本身 import，要么把名字加进 __init__ 的导出表：\n  "
+        f"这些地方越过了 {package} 的包门口。"
+        "要么从包本身 import 导出表里的名字，要么把名字加进 __init__ 的 __all__：\n  "
         + "\n  ".join(sorted(reached_past))
     )
-
-
-def test_the_ledger_says_exactly_who_still_depends_on_this_harness():
-    """新增一处跨界要写进账本（于是过一次 review），还完一处要删掉那一行。"""
-    taken, _ = _crossings()
-    actual = {module: tuple(sorted(names)) for module, names in taken.items()}
-    added = sorted(set(actual) - set(_LEDGER))
-    paid_off = sorted(set(_LEDGER) - set(actual))
-    assert not added, (
-        "新的模块开始依赖 Claude Code 适配器了。真的需要就加进 _LEDGER，"
-        f"顺便在 review 里说清为什么：{added}"
-    )
-    assert not paid_off, (
-        f"这些模块已经不依赖适配器了，把它们从 _LEDGER 里删掉：{paid_off}"
-    )
-    for module in sorted(actual):
-        assert actual[module] == _LEDGER[module], (
-            f"{module} 从适配器拿的名字变了。"
-            f"账本写着 {_LEDGER[module]}，实际是 {actual[module]}"
-        )
 
 
 # --- 骨架的名字只写在注册表里 -----------------------------------------------
@@ -159,9 +119,9 @@ _REGISTRY = "app/domain/agent/harness/__init__.py"
 #: 抓的正是「名字被写成了字面量」，拿被守的东西当判据等于放弃判据。
 _HARNESS_NAMES = ("claude-code", "codex", "pi")
 
-#: 今天还把自己名字原样打出来的地方：模块 → 它打出来的名字（排序后）。和上面的
-#: ``_LEDGER`` 同一个写法，也同样是棘轮——多一条会红（新长出来的字面量，得过一次
-#: review），少一条也会红（还完了忘删这一行）。
+#: 今天还把自己名字原样打出来的地方：模块 → 它打出来的名字（排序后）。这是一道
+#: 棘轮——多一条会红（新长出来的字面量，得过一次 review），少一条也会红（还完了
+#: 忘删这一行）。
 #:
 #: 清单上一条都不在领域层：全是 codex 和 pi 两个适配器自己目录里的，说的是「我是
 #: 谁」而不是「这一轮跑谁」——它们的门口还没有像 claude_code 那样从注册表 import
