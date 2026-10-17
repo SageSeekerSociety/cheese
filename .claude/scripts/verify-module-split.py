@@ -105,6 +105,17 @@ checked for package-qualified targets. The convention `tests replace this name
 on <module>` is compared with the adjacent import's source, not interpreted as
 an arbitrary natural-language claim about what tests actually do.
 
+WHOLE-FILE READS. A caller can depend on a module without naming anything in
+it: `Path(module.__file__).read_text()` ships the source of a module that runs
+on another machine, and `spec_from_file_location("a.b", ...)` builds a spec for
+it by module name. Both keep working after `a/b.py` becomes `a/b/__init__.py`,
+and both then answer with the package's `__init__.py` instead of the module —
+a silent wrong file rather than an ImportError. `--check-moves` scans the whole
+repository for these two shapes against every module the change turned into a
+package, following `import a.b`, `from a import b`, `import a.b as c` and
+`x = importlib.import_module("a.b")` to the module each names. A write to
+`__file__` is not a read and is left alone.
+
 This is an explicit CLI check, not an automatic CI gate. Dynamic patch
 targets, external object attributes and arbitrary prose are outside its static
 coverage. No application module is imported by the consumer check.
@@ -1176,10 +1187,8 @@ class ConsumerChecks(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def check_consumers(
-    repo: Path, old: ModuleFacts, package: Package, dotted: str, findings: Findings
-) -> None:
-    """Read tracked and new Python callers across the repo; never import their code."""
+def _repository_python_files(repo: Path) -> list[str]:
+    """Every tracked or new, unignored `.py` file in the repository."""
     proc = subprocess.run(
         [
             "git",
@@ -1196,6 +1205,13 @@ def check_consumers(
         text=True,
         check=True,
     )
+    return sorted(set(proc.stdout.split("\0")) - {""})
+
+
+def check_consumers(
+    repo: Path, old: ModuleFacts, package: Package, dotted: str, findings: Findings
+) -> None:
+    """Read tracked and new Python callers across the repo; never import their code."""
     logger_names: set[str] = set()
     # The table can be a whole package, so a module in it is named from the
     # package rather than from the module this check is about.
@@ -1209,7 +1225,7 @@ def check_consumers(
                 elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     logger_names.add(arg.value)
     scanned = 0
-    for relative in sorted(set(proc.stdout.split("\0")) - {""}):
+    for relative in _repository_python_files(repo):
         path = repo / relative
         if not path.is_file():
             continue  # a tracked pre-split file was removed in the working tree
@@ -1363,6 +1379,171 @@ def module_package(
     )
 
 
+class WholeFileReads(ast.NodeVisitor):
+    """Callers that read a module's own file instead of one of its names.
+
+    `Path(module.__file__).read_text()` ships or loads the module's source as
+    one piece; `spec_from_file_location("a.b", ...)` builds a spec for it by
+    module name. After `a/b.py` becomes `a/b/__init__.py`, neither call fails:
+    `__file__` is still a path that exists and the spec still builds, so the
+    caller silently reads the package's `__init__.py` — often empty — where it
+    meant to read the whole module. Nothing in the export, signature or import
+    checks sees this, because no name stopped resolving.
+    """
+
+    def __init__(
+        self,
+        split: dict[str, str],
+        path: str,
+        module: str,
+        findings: Findings,
+    ) -> None:
+        self.split = split
+        self.path = path
+        self.module = module
+        self.findings = findings
+        self.aliases: dict[str, str] = {}
+        self.reported: set[int] = set()
+
+    def resolved(self, node: ast.AST) -> str:
+        """The dotted module an expression denotes, or "" when it names none."""
+        if isinstance(node, ast.Name):
+            return self.aliases.get(node.id, "")
+        if isinstance(node, ast.Attribute):
+            parent = self.resolved(node.value)
+            return f"{parent}.{node.attr}" if parent else ""
+        return ""
+
+    def hit(self, node: ast.AST, dotted: str, detail: str) -> None:
+        line = getattr(node, "lineno", 0)
+        if line in self.reported:
+            return
+        self.reported.add(line)
+        self.findings.block(
+            f"{self.path}:{line}: 整份读取目标已拆包: {dotted}（{detail}）"
+        )
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            head = alias.name.split(".")[0]
+            self.aliases[alias.asname or head] = alias.name if alias.asname else head
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module = _absolute_module(self.module, node.level, node.module)
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            target = f"{module}.{alias.name}" if module else alias.name
+            self.aliases[alias.asname or alias.name] = target
+
+    def _alias_value(self, node: ast.AST) -> str:
+        """What `x = ...` binds, when the value names a module this can follow.
+
+        `x = importlib.import_module("a.b")` binds the module the string names,
+        which is how a spec reader gets its argument without importing `a.b`
+        at the top of the file.
+        """
+        if isinstance(node, ast.Call) and node.args:
+            if self.resolved(node.func).rsplit(".", 1)[-1] == "import_module":
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    return first.value
+        return self.resolved(node)
+
+    def visit_Assign(self, node: ast.Assign | ast.AnnAssign) -> None:
+        self.generic_visit(node)
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        value = (
+            self._alias_value(node.value)
+            if node.value and not isinstance(node.value, ast.Constant)
+            else ""
+        )
+        for target in targets:
+            for name in _target_names(target):
+                self.aliases[name] = value if isinstance(target, ast.Name) else ""
+
+    visit_AnnAssign = visit_Assign
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        previous, self.aliases = self.aliases, self.aliases.copy()
+        self.generic_visit(node)
+        self.aliases = previous
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        previous, self.aliases = self.aliases, self.aliases.copy()
+        self.generic_visit(node)
+        self.aliases = previous
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        # A write (`module.__file__ = ...`) sets the attribute and still works
+        # after the split; only a read sees the new path.
+        if node.attr == "__file__" and isinstance(node.ctx, ast.Load):
+            dotted = self.resolved(node.value)
+            if dotted in self.split:
+                self.hit(node, dotted, "__file__ 现在指向 __init__.py")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        function = self.resolved(node.func)
+        if function.rsplit(".", 1)[-1] == "spec_from_file_location":
+            name = node.args[0] if node.args else next(
+                (kw.value for kw in node.keywords if kw.arg == "name"), None
+            )
+            if (
+                isinstance(name, ast.Constant)
+                and isinstance(name.value, str)
+                and name.value in self.split
+            ):
+                self.hit(
+                    node,
+                    name.value,
+                    "spec_from_file_location 按名加载，现在加载 __init__.py",
+                )
+        self.generic_visit(node)
+
+
+def check_split_readers(
+    repo: Path, split: dict[str, str], findings: Findings
+) -> None:
+    """Scan every repository caller for a whole-file read of a now-package module.
+
+    The reader did not change and cannot have: the split is what turned its
+    `__file__` or its spec name into a different file. So this scans the whole
+    repository rather than the files the change touched, and it is the one
+    check here whose finding is about the split side, not about a name.
+    """
+    leaves = {dotted.rsplit(".", 1)[-1] for dotted in split}
+    scanned = 0
+    found = 0
+    for relative in _repository_python_files(repo):
+        path = repo / relative
+        if not path.is_file():
+            continue  # a tracked pre-split file was removed in the working tree
+        source = path.read_text(encoding="utf-8")
+        # Cheap sieve: a caller that names the module (or aliases it) and asks
+        # for the file. Relative imports need not spell the package at all, so
+        # the leaf name is what is looked for.
+        if not any(leaf in source for leaf in leaves):
+            continue
+        try:
+            tree = ast.parse(source, filename=relative)
+        except SyntaxError as exc:
+            raise ValueError(f"{relative}:{exc.lineno}: {exc.msg}") from exc
+        root = repo / "backend" if relative.startswith("backend/") else repo
+        module = _dotted_name(path, root)
+        if path.name == "__init__.py":
+            module += ".__init__"  # _absolute_module expects a file, not a package
+        before = len(findings.blockers)
+        WholeFileReads(split, relative, module, findings).visit(tree)
+        found += len(findings.blockers) - before
+        scanned += 1
+    findings.summary.append(
+        f"整份读取: 拆分 {len(split)} 个模块, 检查 {scanned} 个文件, 命中 {found} 处"
+    )
+
+
 def check_moves(
     repo_root: Path, directory: Path, base_ref: str, findings: Findings
 ) -> None:
@@ -1380,13 +1561,20 @@ def check_moves(
     where: dict[str, Path] = {}
     roots: dict[str, Path] = {}
     packages: dict[Path, Package] = {}
+    squashed: dict[str, str] = {}  # module -> the package's __init__.py path
     for relative in changed_module_paths(repo_root, base_ref, str(directory)):
         on_disk = repo_root / relative
-        if not on_disk.is_file() and (
-            repo_root / relative[: -len(".py")] / "__init__.py"
-        ).is_file():
+        init = repo_root / relative[: -len(".py")] / "__init__.py"
+        if not on_disk.is_file() and init.is_file():
             # A package stands where the file did: that is the facade check's
             # question, and a second answer here would read as a second break.
+            # The one thing that is this check's question is the caller that
+            # reads the file whole, because there is no name to go missing.
+            root = _import_root(on_disk.parent)
+            try:
+                squashed[_dotted_name(on_disk, root)] = str(init)
+            except ValueError:
+                pass
             continue
         # Per file, not per directory: `--check-moves backend` has to name the
         # same modules `app.foo` that `--check-moves backend/app` does, or a
@@ -1445,6 +1633,9 @@ def check_moves(
             findings,
         )
         checked += 1
+
+    if squashed:
+        check_split_readers(repo_root, squashed, findings)
 
     findings.summary.append(
         f"包内搬移: 对比 {len(before)} 个改动模块, 搬移 {moved} 个符号, "
