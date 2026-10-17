@@ -221,9 +221,9 @@ async def test_a_turn_the_session_was_woken_into_is_its_own_work(tmp_path):
 
 @pytest.mark.anyio
 async def test_a_person_heard_during_a_woken_turn_joins_it(tmp_path):
-    """While a turn a monitor woke has not spoken yet, the room knows of no
-    turn to steer into and sends a person's message as its own work: the
-    session takes it instead of refusing it."""
+    """A person's message that arrives with other work while a turn a monitor
+    woke is running goes into that turn instead of being refused, and the turn
+    stays the work the room saw start."""
     sent = []
 
     async def send(text):
@@ -240,17 +240,26 @@ async def test_a_person_heard_during_a_woken_turn_joins_it(tmp_path):
     )
     try:
         await runner.tell("<task-notification>line</task-notification>")
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "turn"}},
+            }
+        )
+        started = (await runner.dispatch("events", {}))["events"][-1]["record"]
         await runner.send("input", "from a person", work_id="platform-work")
         assert sent == ["<task-notification>line</task-notification>", "from a person"]
         await runner.record(
             {
-                "method": "item/completed",
-                "params": {"threadId": "thread", "turnId": "turn", "item": {}},
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {"id": "turn", "status": "interrupted"},
+                },
             }
         )
-        said = (await runner.dispatch("events", {}))["events"][-1]["record"]
-        assert said["cheese"]["work_id"] == "platform-work"
-        assert "unsolicited" not in said["cheese"]
+        ended = (await runner.dispatch("events", {}))["events"][-1]["record"]
+        assert ended["cheese"]["work_id"] == started["cheese"]["work_id"]
     finally:
         await runner.close()
 

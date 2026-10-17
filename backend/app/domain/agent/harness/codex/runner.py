@@ -246,23 +246,23 @@ class Runner(runner.Runner[Journal]):
             if work_id is not None:
                 thread_id = self.session.thread_id
                 previous = self.journal.recall(f"work:{thread_id}")
-                # A turn the session started for itself (`tell`) is not one the
-                # room has heard of until it speaks, so a person's message
-                # meanwhile comes with the room's own work: it goes into that
-                # turn, and the turn is that work from here on.
+                # A turn the session started for itself (`tell`) may not be one
+                # the room steers into yet, so a person's message can come with
+                # other work: it goes into that turn, which stays its own work
+                # — the room keeps the seat on the turn it saw start, and a
+                # message said mid-turn ends with that turn.
                 woken = (
-                    previous is not None
+                    self.session.turn_id is not None
+                    and previous is not None
                     and self.journal.recall(f"unsolicited:{previous}") is not None
                 )
-                if (
-                    self.session.turn_id is not None
-                    and previous != work_id
-                    and not woken
-                ):
-                    raise RuntimeError("A different room work item is still active")
-                # Persist attribution before the call: notifications can
-                # arrive before app-server acknowledges turn/start.
-                self.journal.remember(f"work:{thread_id}", work_id)
+                if self.session.turn_id is not None and previous != work_id:
+                    if not woken:
+                        raise RuntimeError("A different room work item is still active")
+                else:
+                    # Persist attribution before the call: notifications can
+                    # arrive before app-server acknowledges turn/start.
+                    self.journal.remember(f"work:{thread_id}", work_id)
             turn = (
                 await self.session.send(text, images=images)
                 if images
