@@ -1609,6 +1609,112 @@ def z(value):
 
 NESTED_CALLER = "from app.domain.x import z\n"
 
+#: The package's own `__init__.py` losing a name, while a caller reads a
+#: submodule through the package. `from app.helper import other` reads the file
+#: `app/helper.py`, which is in the package and not in the module: a view that
+#: carries only the module cannot walk down to it, and every caller naming a
+#: submodule of the package would read as broken.
+FACADE_BEFORE = '''\
+def gone(value):
+    return value
+'''
+
+FACADE_AFTER = ""
+
+FACADE_SUBMODULE_CALLER = "from app.helper import other\n"
+FACADE_NAME_CALLER = "from app import gone\n"
+
+#: A definition that left for a sibling while this module kept the name as a
+#: re-export. The import still binds, but the re-export preserves the object
+#: and not the globals dictionary the moved function reads: a patch spelled
+#: against this module no longer reaches the definition.
+PATCH_BEFORE_FOO = '''\
+from json import loads
+
+
+def decode():
+    return loads('{}')
+
+
+def gone(value):
+    return value
+'''
+
+PATCH_AFTER_FOO = '''\
+from .bar import decode, loads
+'''
+
+PATCH_BEFORE_BAR = '''\
+def other(value):
+    return value
+'''
+
+PATCH_AFTER_BAR = '''\
+from json import loads
+
+
+def decode():
+    return loads('{}')
+'''
+
+PATCH_CALLER = '''\
+def test_it(monkeypatch):
+    monkeypatch.setattr("app.foo.loads", fake)
+'''
+
+#: A name the module both imports and defines: the import is the fast path and
+#: the definition is the fallback, so a caller keeps working either way. A view
+#: that keeps the import in the module's own record but drops the file it names
+#: reads that caller's import as broken.
+FALLBACK_BEFORE_FOO = '''\
+try:
+    from .fast import shared
+except ImportError:
+    def shared(value):
+        return value
+
+
+def gone(value):
+    return value
+'''
+
+FALLBACK_AFTER_FOO = '''\
+try:
+    from .fast import shared
+except ImportError:
+    def shared(value):
+        return value
+'''
+
+FALLBACK_FAST = '''\
+def shared(value):
+    return value
+'''
+
+FALLBACK_CALLER = "from app.foo import shared\n"
+
+#: A package whose facade loses a name while a caller reads a name that is not
+#: there out of its submodule. The walk has to keep descending through the
+#: facade into `app/pkg/sub.py`, or the missing name reads as present.
+SUBPACKAGE_INIT_BEFORE = '''\
+def old_name(value):
+    return value
+
+
+from .sub import shared
+'''
+
+SUBPACKAGE_INIT_AFTER = '''\
+from .sub import shared
+'''
+
+SUBPACKAGE_SUB = '''\
+def shared(value):
+    return value
+'''
+
+SUBPACKAGE_CALLER = "from app.pkg.sub import gone\n"
+
 
 class MoveFixture:
     """A throwaway repository whose two modules are siblings under `app`."""
@@ -1827,6 +1933,99 @@ class MovedNameTests(unittest.TestCase):
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("调用方导入断裂", result.stdout)
+
+    def test_a_submodule_read_through_the_package_is_not_a_break(self) -> None:
+        """The module under inspection is the package's own `__init__.py` here,
+        and `from app.helper import other` reads the file `app/helper.py`: a
+        table holding only that module has nothing to walk down into, and every
+        caller that names a submodule of the package would read as broken."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-facade-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/__init__.py": FACADE_BEFORE,
+                "backend/app/helper.py": NAMESAKE_SIBLING,
+                "backend/scripts/tool.py": FACADE_SUBMODULE_CALLER,
+            },
+        )
+        fixture.rewrite("backend/app/__init__.py", FACADE_AFTER)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("调用方导入断裂", result.stdout)
+        # The name the facade itself gave up is still a break for its callers.
+        fixture.caller(FACADE_NAME_CALLER)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("调用方导入断裂: app.gone", result.stdout)
+
+    def test_a_patch_that_misses_the_definition_it_left_out_of_is_reported(
+        self,
+    ) -> None:
+        """The module kept `decode` as a re-export, so `app.foo.loads` still
+        binds and the patch target is not broken — but the re-export preserves
+        the object, not the globals dictionary `decode` reads, so the patch no
+        longer reaches it, and that is what this check is for."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-patch-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/foo.py": PATCH_BEFORE_FOO,
+                "backend/app/bar.py": PATCH_BEFORE_BAR,
+                "backend/tests/test_x.py": PATCH_CALLER,
+                "backend/scripts/tool.py": "",
+            },
+        )
+        fixture.rewrite("backend/app/foo.py", PATCH_AFTER_FOO)
+        fixture.rewrite("backend/app/bar.py", PATCH_AFTER_BAR)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "补丁不再作用于搬走的定义: app.foo.loads → decode", result.stdout
+        )
+
+    def test_a_name_both_imported_and_defined_is_not_a_break(self) -> None:
+        """`shared` is the fast import and the fallback definition at once, so
+        a caller keeps working whichever one runs: a view that still holds the
+        import while dropping the file it names calls that caller broken."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-fallback-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/foo.py": FALLBACK_BEFORE_FOO,
+                "backend/app/fast.py": FALLBACK_FAST,
+                "backend/scripts/tool.py": FALLBACK_CALLER,
+            },
+        )
+        fixture.rewrite("backend/app/foo.py", FALLBACK_AFTER_FOO)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("调用方导入断裂", result.stdout)
+
+    def test_a_missing_name_below_a_submodule_is_still_a_break(self) -> None:
+        """The caller reads through the facade and down into `app/pkg/sub.py`,
+        which does not hold the name: the walk has to keep descending there, or
+        the missing name reads as present and the break goes unreported."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-subpackage-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/pkg/__init__.py": SUBPACKAGE_INIT_BEFORE,
+                "backend/app/pkg/sub.py": SUBPACKAGE_SUB,
+                "backend/scripts/tool.py": SUBPACKAGE_CALLER,
+            },
+        )
+        fixture.rewrite("backend/app/pkg/__init__.py", SUBPACKAGE_INIT_AFTER)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("调用方导入断裂: app.pkg.sub.gone", result.stdout)
 
 
 class ShadowCopyTests(unittest.TestCase):

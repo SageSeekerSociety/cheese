@@ -128,7 +128,7 @@ import sys
 import tempfile
 import textwrap
 from collections import Counter
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 
 EXIT_OK, EXIT_DIFFERENT, EXIT_CANNOT_JUDGE = 0, 1, 2
@@ -514,6 +514,14 @@ class Package:
     root: Path
     #: "" is `__init__.py`; anything else is the dotted path inside the package
     modules: dict[str, ModuleFacts]
+    #: Which entry is the module under inspection, when the table is a whole
+    #: package. A caller's `from app.foo import x` walks down the table from
+    #: there — read as "from the top" it would take the module's own directory
+    #: siblings for submodules of it. Empty in facade mode, where the table is
+    #: the package and the module under inspection is its `""`.
+    key: str = ""
+    #: The package's dotted name, for naming the modules the table holds.
+    name: str = ""
 
     @property
     def facade(self) -> ModuleFacts:
@@ -540,7 +548,7 @@ def read_package(package_dir: Path, module_name: str = "") -> Package:
         )
     if "" not in modules:
         raise ValueError(f"{package_dir} has no __init__.py, so it is not a package")
-    return Package(root=package_dir, modules=modules)
+    return Package(root=package_dir, modules=modules, name=module_name)
 
 
 def _resolve(
@@ -973,7 +981,7 @@ def _target_exists(package: Package, dotted: str, target: str) -> bool:
     if not target.startswith(dotted + "."):
         return True
     parts = target[len(dotted) + 1 :].split(".")
-    key = ""
+    key = package.key
     while parts and ".".join(filter(None, (key, parts[0]))) in package.modules:
         key = ".".join(filter(None, (key, parts.pop(0))))
     if not parts:
@@ -1014,8 +1022,8 @@ def _moved_lookup(old: ModuleFacts, package: Package, name: str) -> str | None:
             before, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
         ):
             continue
-        hit = _resolve(package, "", public)
-        if not hit or not hit[0]:
+        hit = _resolve(package, package.key, public)
+        if not hit or hit[0] == package.key:
             continue
         after = package.modules[hit[0]].defined.get(hit[1])
         if after and name in _global_reads(before) & _global_reads(after):
@@ -1189,12 +1197,15 @@ def check_consumers(
         check=True,
     )
     logger_names: set[str] = set()
+    # The table can be a whole package, so a module in it is named from the
+    # package rather than from the module this check is about.
+    owner = package.name or dotted
     for key, facts in package.modules.items():
         for node in facts.defined.values():
             if _scaffolding(node) and node.value.args:
                 arg = node.value.args[0]
                 if isinstance(arg, ast.Name) and arg.id == "__name__":
-                    logger_names.add(dotted + ("." + key if key else ""))
+                    logger_names.add(owner + ("." + key if key else ""))
                 elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     logger_names.add(arg.value)
     scanned = 0
@@ -1314,39 +1325,6 @@ def _containing_package(path: Path, root: Path) -> Path | None:
     return top
 
 
-def _names_from_beside(real: Package, key: str, facts: ModuleFacts) -> set[str]:
-    """The names `facts` still offers by importing them from a neighbour.
-
-    The module's own facts memory such an import the way the file spells it
-    (`from .base import shared` is `("base", "shared")`), and only the package's
-    own table can say which file that lands on — a level or two up, or a
-    submodule of this one. The answer comes back as a name this module binds,
-    so the caller-facing view never has to carry a neighbour under a name of its
-    own.
-    """
-    here = real.modules.get(key)
-    if here is None:
-        return set()
-    names = set(here.relative_imports)
-    for star in here.star_imports:
-        star_facts = real.modules.get(star)
-        if star_facts is not None:
-            names |= set(star_facts.defined) | set(star_facts.imported)
-            names |= set(star_facts.all_list or ())
-    if key:
-        # A package hands out its own submodules: `from <package> import <sub>`.
-        names |= {
-            module[len(key) + 1 :]
-            for module in real.modules
-            if module.startswith(key + ".") and "." not in module[len(key) + 1 :]
-        }
-    return {
-        name
-        for name in names
-        if name not in facts.defined and _has_binding(real, key, name)
-    }
-
-
 def module_package(
     module_path: Path,
     root: Path,
@@ -1354,15 +1332,17 @@ def module_package(
     facts: ModuleFacts | None,
     cache: dict[Path, Package],
 ) -> Package:
-    """`_target_exists`'s view of one module: itself, and how it resolves names.
+    """`_target_exists`'s view of one module: the package it sits in, and where
+    the module is inside it.
 
-    The module is the whole of what a caller's `from app.foo import x` may
-    reach: nothing beside it belongs in this table under a bare name, or the
-    walk down `app.foo.x` finds the module `app/helper.py` and calls it a
-    submodule of `app.foo` that is not there. What this module still forwards
-    from a neighbour is resolved against the package it sits in — the one
-    reader that can place `from .base import shared` on a file — and handed
-    over as a name the module itself binds.
+    The table is the whole package's, because that is what a caller's import
+    walks down — `from app.foo import sub` and `from app.foo.sub import name`
+    both need `app/foo/sub.py` in the table — and because a name this module
+    re-exports has to be followed to the file it really comes from, which only
+    the package's own reader can place. The price is that the walk has to be
+    told which entry is the module under inspection: read from the top, it
+    would take the module's own directory siblings for its submodules and pass
+    a caller that imports a name the module no longer binds.
     """
     if facts is None:
         return Package(root=module_path.parent, modules={})
@@ -1373,22 +1353,13 @@ def module_package(
     if package_dir not in cache:
         cache[package_dir] = read_package(package_dir, package_name)
     inside = dotted[len(package_name) + 1 :] if package_name else dotted
-    resolved = _names_from_beside(cache[package_dir], inside, facts)
-    if not resolved:
+    if inside not in cache[package_dir].modules:
         return Package(root=module_path.parent, modules={"": facts})
     return Package(
         root=module_path.parent,
-        modules={
-            "": replace(
-                facts,
-                imported=facts.imported | resolved,
-                relative_imports={
-                    name: place
-                    for name, place in facts.relative_imports.items()
-                    if name not in resolved
-                },
-            )
-        },
+        modules=cache[package_dir].modules,
+        key=inside,
+        name=package_name,
     )
 
 
