@@ -22,6 +22,7 @@ import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.
 import TopicRailRootRow from '@/components/topic-sidebar/TopicRailRootRow.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
 import TopicRailTaskFold from '@/components/topic-sidebar/TopicRailTaskFold.vue'
+import TopicRailTaskRow from '@/components/topic-sidebar/TopicRailTaskRow.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
 
@@ -427,6 +428,22 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         },
         expect: '课程项目',
       },
+    ],
+  },
+  {
+    id: 'topic-rail-task-row',
+    title: 'TopicRailTaskRow',
+    about: '频道下面的任务行，与展开其余任务的文字左缘和竖向引导线对齐。',
+    file: 'src/components/topic-sidebar/TopicRailTaskRow.vue',
+    component: TopicRailTaskRow,
+    needs: UI,
+    args: {
+      task: { id: 'rail-task-demo', room_id: 'room-1', title: '频道行任务', title_source: 'human', status: 'open' },
+      selected: false,
+    },
+    states: [
+      { name: '频道下面的任务', props: { depth: 0 }, expect: '频道行任务' },
+      { name: '子频道下面的任务', props: { depth: 1 }, expect: '频道行任务' },
     ],
   },
   {

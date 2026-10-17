@@ -140,7 +140,6 @@
     "src/components/tasks/form/TaskFormContent.vue",
     "src/components/topic-sidebar/TopicRailBrowseRow.vue",
     "src/components/topic-sidebar/TopicRailMembers.vue",
-    "src/components/topic-sidebar/TopicRailTaskRow.vue",
     "src/components/usage/UsageDailyChart.vue",
     "src/components/usage/UsagePackList.vue",
     "src/components/usage/UsagePeriodCard.vue",

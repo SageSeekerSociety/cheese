@@ -30,6 +30,18 @@ test.describe('sidebar channel row geometry', () => {
     }
   }
 
+  // PinnedRows/RootRow render their own v-list (which carries the nav's horizontal
+  // padding); TopicRailRow is mounted as a bare v-list-item. Comparing absolute title
+  // x across frames would then charge that host padding to the row. Measure the title
+  // relative to the row it belongs to instead — no guessed pixel compensation.
+  async function titleOffsetInRow(title: Locator): Promise<number> {
+    return title.evaluate(el => {
+      const row = el.closest('.v-list-item');
+      if (!row) throw new Error('title is not inside a v-list-item');
+      return el.getBoundingClientRect().x - row.getBoundingClientRect().x;
+    });
+  }
+
   async function expectHitSurface(target: Locator) {
     // Check inside the whole button, not only its tiny icon at the centre.
     // A visually exposed but covered button is not a usable touch target.
@@ -43,22 +55,35 @@ test.describe('sidebar channel row geometry', () => {
     expect(hits).toEqual(Array(9).fill(true));
   }
 
-  async function catalogRow(page: Page, state: number, theme = 'light') {
+  // Any catalog entry, not only the channel row: the alignment contracts below compare
+  // independently rendered components, and each has its own frame id.
+  async function catalogFrame(page: Page, entry: string, state: number, theme = 'light') {
     // Dev/nginx rewrite /demo/* to demo.html; Vite preview has no such
     // middleware. Serve that same built document at the frame address in both
     // environments, preserving the pathname/query consumed by demo-main.ts.
-    await page.route('**/demo/catalog/topic-rail-row/frame/*', async route => {
+    await page.route(`**/demo/catalog/${entry}/frame/*`, async route => {
       if (route.request().resourceType() !== 'document') return route.continue();
       const url = new URL(route.request().url());
       url.pathname = '/demo.html';
       const response = await route.fetch({ url: url.href });
       await route.fulfill({ response });
     });
-    await page.goto(`/demo/catalog/topic-rail-row/frame/${state}?theme=${theme}&motion=off&bg=canvas`);
+    await page.goto(`/demo/catalog/${entry}/frame/${state}?theme=${theme}&motion=off&bg=canvas`);
+    await expect(page.locator('.frame-page')).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+  }
+
+  // Give the standalone frame the same constrained width as a sidebar rather than a
+  // whole desktop viewport.
+  async function narrowFrame(page: Page) {
+    await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+  }
+
+  async function catalogRow(page: Page, state: number, theme = 'light') {
+    await catalogFrame(page, 'topic-rail-row', state, theme);
     const row = page.locator('.frame-page .topic-row');
     await expect(row).toHaveCount(1);
     await expect(row).toBeVisible();
-    await page.evaluate(() => document.fonts.ready);
     return row;
   }
 
@@ -154,8 +179,10 @@ test.describe('sidebar channel row geometry', () => {
         ],
       });
 
-      const row = await catalogRow(page, 13);
-      await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+      // State 10 is the collapsed row with a yellow task light and menuOpen=false;
+      // state 13 stays untouched because it is the task-only alignment control.
+      const row = await catalogRow(page, 10);
+      await narrowFrame(page);
 
       expect(
         await page.evaluate(() => matchMedia('(hover: none)').matches),
@@ -172,7 +199,11 @@ test.describe('sidebar channel row geometry', () => {
       const more = row.locator('.row-actions__btn');
 
       await expect(actions).toHaveCSS('opacity', '1');
+      // The collapsed fixture really is collapsed and really carries its light;
+      // otherwise the geometry below would be measuring an expanded, lightless row.
       await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      await expect(light).toHaveCount(1);
+      await expect(light).toHaveClass(/row-light--yellow/);
       const boxes = await Promise.all([arrow, title, light, more].map(boxOf));
       expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x + 0.5);
       for (const target of [boxes[0], boxes[3]]) {
@@ -226,6 +257,74 @@ test.describe('sidebar channel row geometry', () => {
     const [glyphBox, arrowBox] = await Promise.all([boxOf(glyph), boxOf(arrow)]);
     expectSeparate(glyphBox, arrowBox);
   });
+
+  // 置顶层和频道层用的不是同一个组件，但「左边一列、文字一列」是同一条视觉契约：
+  // 总览、资料库、综合和普通频道的标题必须从同一条竖线开始。
+  test('pinned pages, 综合 and a normal channel share one title left edge', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const offsets: number[] = [];
+    const collect = async (titles: Locator[]) => {
+      for (const title of titles) offsets.push(await titleOffsetInRow(title));
+    };
+
+    await catalogFrame(page, 'topic-rail-pinned', 0);
+    await narrowFrame(page);
+    const pinned = page.locator('.frame-page .pinned-row .v-list-item-title');
+    await expect(pinned).toHaveCount(2); // 总览、资料库
+    await collect(await pinned.all());
+
+    await catalogFrame(page, 'topic-rail-root', 0);
+    await narrowFrame(page);
+    const root = page.locator('.frame-page .pinned-row .v-list-item-title');
+    await expect(root).toHaveCount(1);
+    await collect([root]);
+
+    const row = await catalogRow(page, 0);
+    await narrowFrame(page);
+    await collect([row.locator('.v-list-item-title')]);
+
+    expect(offsets).toHaveLength(4);
+    expect(
+      Math.max(...offsets) - Math.min(...offsets),
+      `title offsets inside their rows: ${offsets.join(', ')}`
+    ).toBeLessThanOrEqual(0.5);
+  });
+
+  // 任务行和「展开其余」那一行是同一块里的两种行：同一个深度上，字必须从同一个 x
+  // 开始。桌面宽度和触屏（hover:none 的真实媒体查询）各量一遍。
+  for (const mode of ['desktop', 'touch'] as const) {
+    test(`task and "more" rows share one left edge at each depth (${mode})`, async ({ page }) => {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      if (mode === 'touch') {
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send('Emulation.setEmulatedMedia', {
+          features: [
+            { name: 'hover', value: 'none' },
+            { name: 'pointer', value: 'coarse' },
+          ],
+        });
+      }
+
+      for (const depth of [0, 1]) {
+        // Catalog: more-tasks-row 0=depth0, 2=depth1; task-row 0=depth0, 1=depth1.
+        await catalogFrame(page, 'topic-rail-more-tasks-row', depth === 0 ? 0 : 2);
+        await narrowFrame(page);
+        const more = page.locator('.frame-page .rail-more__label');
+        await expect(more).toHaveCount(1);
+        const moreX = (await boxOf(more)).x;
+
+        await catalogFrame(page, 'topic-rail-task-row', depth);
+        await narrowFrame(page);
+        const task = page.locator('.frame-page .rail-task__title');
+        await expect(task).toHaveCount(1);
+        const taskX = (await boxOf(task)).x;
+
+        expect(Math.abs(moreX - taskX), `depth ${depth} (${mode}): more=${moreX}, task=${taskX}`).toBeLessThanOrEqual(
+          0.5
+        );
+      }
+    });
+  }
 });
 
 // 表单字段的几何不变量。
