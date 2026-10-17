@@ -132,7 +132,7 @@ function collectAliases(root, ctx) {
   const bind = (name, member) => {
     if (member && (member.root !== name || member.path.length)) ctx.aliases.set(name, member)
   }
-  const visit = (node) => {
+  const visit = (node, nested) => {
     if (ts.isVariableDeclaration(node) && node.initializer) {
       const member = memberPath(node.initializer, ctx)
       if (ts.isIdentifier(node.name)) bind(node.name.text, member)
@@ -143,7 +143,12 @@ function collectAliases(root, ctx) {
       else if (
         member &&
         ts.isObjectBindingPattern(node.name) &&
-        (member.root === 'props' || member.root === ctx.scopeParam)
+        (member.root === 'props' ||
+          member.root === ctx.scopeParam ||
+          // Inside a callback the destructuring runs again on every invocation, so the
+          // local names what the call returned that time: a live read, unlike the
+          // setup-time snapshot the same statement takes at the top level.
+          (nested && ctx.bindings?.has(member.root)))
       ) {
         for (const element of node.name.elements) {
           if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue
@@ -157,9 +162,14 @@ function collectAliases(root, ctx) {
         }
       }
     }
-    ts.forEachChild(node, visit)
+    // Only a function handed to a call runs again later: `watch(() => ...)`,
+    // `computed(() => ...)`. A helper declared and called once while the composable is
+    // set up keeps taking a snapshot.
+    const callback = (child) =>
+      ts.isCallExpression(node) && (ts.isArrowFunction(unwrap(child)) || ts.isFunctionExpression(unwrap(child)))
+    ts.forEachChild(node, (child) => visit(child, nested || callback(child)))
   }
-  visit(root)
+  visit(root, false)
 }
 
 function propertyName(node) {
@@ -262,9 +272,13 @@ function memberKeys(node, ctx) {
     // function is `undefined` and watches nothing — so those keys are dropped once
     // every call site hands that property as a getter. When no key survives, nothing is
     // watched through it, and the local namespace must not stand in for it.
-    const whole = path.length === 0
+    const bare = path.length === 0
     const keys =
-      whole || unwrapped?.has(0) ? binding.keys : readableKeys(binding.keys, (key) => binding.getterKeys?.has(key))
+      unwrapped?.has(0) || (bare && !ctx.inGetter)
+        ? binding.keys
+        : bare
+          ? new Set()
+          : readableKeys(binding.keys, (key) => binding.getterKeys?.has(key))
     return mapSegments(keys ?? new Set(), path, unwrapped)
   }
   // Local names get their own namespace: a ref called `topicId` must not stand in
@@ -417,10 +431,15 @@ function watchSourceItems(node, ctx) {
   node = unwrap(node)
   if (ts.isArrayLiteralExpression(node)) return node.elements.flatMap((element) => watchSourceItems(element, ctx))
   if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+    // Inside a getter a bare binding is returned, not read: nothing reactive is
+    // touched, so the watch tracks nothing. Only a transparent call on it reaches the
+    // value the call site handed over.
+    const getterCtx = { ...ctx, inGetter: true }
     if (!ts.isBlock(node.body)) {
       const body = unwrap(node.body)
-      if (ts.isArrayLiteralExpression(body)) return body.elements.flatMap((element) => watchSourceItems(element, ctx))
-      return keysToItems(canonical(body, ctx), body)
+      if (ts.isArrayLiteralExpression(body))
+        return body.elements.flatMap((element) => watchSourceItems(element, getterCtx))
+      return keysToItems(canonical(body, getterCtx), body)
     }
     // A getter that only names locals and returns one expression watches that
     // expression: `() => { const s = toValue(source); return [s.a, s.b] }`.
@@ -432,7 +451,7 @@ function watchSourceItems(node, ctx) {
       last.expression &&
       statements.slice(0, -1).every((statement) => ts.isVariableStatement(statement))
     ) {
-      return watchSourceItems(last.expression, ctx)
+      return watchSourceItems(last.expression, getterCtx)
     }
   }
   return keysToItems(canonical(node, ctx), node)
@@ -569,28 +588,11 @@ function isRefArgument(node) {
   return ts.isIdentifier(callee) && REF_FACTORIES.has(callee.text)
 }
 
+// Call sites are read per caller file: how the composable reads its parameter depends
+// on what *that* component hands over, so one component's call site must not decide
+// for another. The returned map is file -> the scope that file's calls build.
 function callSiteMappings(vueFiles, fnName, readHead) {
-  const scopeProps = new Map()
-  // Property -> its keys and whether every call site hands each one over as a
-  // function (a getter). A key one caller passes as a ref is read as written at that
-  // caller, so it is not dropped by another caller's getter.
-  const scopePropGetter = new Map()
-  const scopeValue = new Map()
-  let scopeWholeProps = false
-  const add = (key, keys, getter) => {
-    if (!scopeProps.has(key)) {
-      scopeProps.set(key, new Set())
-      scopePropGetter.set(key, new Map())
-    }
-    for (const value of keys) {
-      scopeProps.get(key).add(value)
-      // `!getter` counts, it is not left unknown: a plain property hands over whatever
-      // it holds, so one such call site keeps the key readable whichever file is read
-      // first.
-      const seen = scopePropGetter.get(key).get(value)
-      scopePropGetter.get(key).set(value, Boolean(getter) && seen !== false)
-    }
-  }
+  const byFile = new Map()
   for (const file of vueFiles) {
     let source
     try {
@@ -605,10 +607,31 @@ function callSiteMappings(vueFiles, fnName, readHead) {
     } catch {
       continue
     }
+    const scopeProps = new Map()
+    // Property -> its keys and whether every call in this file hands each one over as
+    // a function (a getter). A key this file passes as a ref is read as written here.
+    const scopePropGetter = new Map()
+    const scopeValue = new Map()
+    let scopeWholeProps = false
+    let called = false
+    const add = (key, keys, getter) => {
+      if (!scopeProps.has(key)) {
+        scopeProps.set(key, new Set())
+        scopePropGetter.set(key, new Map())
+      }
+      for (const value of keys) {
+        scopeProps.get(key).add(value)
+        // `!getter` counts, it is not left unknown: a plain property hands over
+        // whatever it holds, so one such call keeps the key readable.
+        const seen = scopePropGetter.get(key).get(value)
+        scopePropGetter.get(key).set(value, Boolean(getter) && seen !== false)
+      }
+    }
     for (const block of blocks) {
       const visit = (node) => {
         const callee = ts.isCallExpression(node) ? unwrap(node.expression) : null
         if (callee && ts.isIdentifier(callee) && callee.text === fnName && node.arguments.length) {
+          called = true
           const argument = unwrap(node.arguments[0])
           // A call site may hand over the scope as a getter: `fn(() => ({ x: props.x }))`
           // is the same scope as `fn({ x: () => props.x })`.
@@ -642,17 +665,18 @@ function callSiteMappings(vueFiles, fnName, readHead) {
       }
       visit(parseModule(block.text, file))
     }
+    if (called) byFile.set(file, { scopeProps, scopePropGetter, scopeWholeProps, scopeValue })
   }
-  return { scopeProps, scopePropGetter, scopeWholeProps, scopeValue }
+  return byFile
 }
 
-function analyzeComposable(file, source, vueFiles, readHead) {
+function analyzeComposable(file, source, caller, mappingFor) {
   const sourceFile = parseModule(source, file)
   const items = []
   const scopes = exportedFunctionRanges(sourceFile).map((found) => ({
     start: found.node.getStart(sourceFile),
     end: found.node.getEnd(),
-    ctx: scopeContext(found, callSiteMappings(vueFiles, found.name, readHead)),
+    ctx: scopeContext(found, mappingFor(found.name).get(caller) ?? {}),
   }))
   const ctxFor = (start) => scopes.find((scope) => start >= scope.start && start <= scope.end)?.ctx ?? {}
   collectScriptWatchers(sourceFile, {}, 1, ctxFor, items)
@@ -737,25 +761,49 @@ function check(options) {
   for (const { status, file } of changed) {
     if ((status === 'A' || status === 'M') && isComposableFile(file)) targets.add(file)
   }
-  const composableItems = new Map()
   const vueFiles = listVueFiles(repo, target, options.staged)
-  for (const file of targets) {
-    composableItems.set(file, analyzeComposable(file, readHead(file), vueFiles, readHead))
+  const mappingCache = new Map()
+  const mappingFor = (fnName) => {
+    if (!mappingCache.has(fnName)) mappingCache.set(fnName, callSiteMappings(vueFiles, fnName, readHead))
+    return mappingCache.get(fnName)
+  }
+  const composableItems = new Map()
+  const composableFor = (caller) => {
+    const out = new Map()
+    for (const file of targets) {
+      const key = `${caller}\0${file}`
+      if (!composableItems.has(key))
+        composableItems.set(key, analyzeComposable(file, readHead(file), caller, mappingFor))
+      out.set(file, composableItems.get(key))
+    }
+    return out
   }
 
-  const available = new Map()
-  const addAvailable = (file, items) => {
+  const headAvailable = new Map()
+  const addAvailable = (available, file, items) => {
     for (const item of items) if (!available.has(item.key)) available.set(item.key, { file, line: item.line })
   }
-  for (const [file, items] of headItems) addAvailable(file, items)
-  for (const [file, items] of composableItems) addAvailable(file, items)
+  for (const [file, items] of headItems) addAvailable(headAvailable, file, items)
+
+  // The composable is read the way the component whose watch is being judged calls
+  // it: a key one caller hands over as a getter does not exist for a caller that
+  // hands over the ref.
+  const availableCache = new Map()
+  const availableFor = (caller) => {
+    if (!availableCache.has(caller)) {
+      const available = new Map(headAvailable)
+      for (const [file, items] of composableFor(caller)) addAvailable(available, file, items)
+      availableCache.set(caller, available)
+    }
+    return availableCache.get(caller)
+  }
 
   const findings = []
   let checked = 0
   for (const [file, items] of baseItems) {
     for (const item of items) {
       checked++
-      if (isEquivalent(available, item.key)) continue
+      if (isEquivalent(availableFor(file), item.key)) continue
       if (isWaived(options.allows, file, item.key)) continue
       findings.push({ file, ...item })
     }
