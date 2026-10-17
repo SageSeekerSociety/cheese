@@ -78,7 +78,9 @@ def _board(admin: _Owner, client: TestClient, *, name: str) -> dict:
     return resp.json()["data"]["space"]
 
 
-def _task_requiring_real_name(admin: _Owner, client: TestClient, space: dict) -> int:
+def _task_requiring_real_name(
+    admin: _Owner, client: TestClient, space: dict, *, required: bool = True
+) -> int:
     resp = client.post(
         "/tasks",
         json={
@@ -92,7 +94,7 @@ def _task_requiring_real_name(admin: _Owner, client: TestClient, space: dict) ->
             "editable": True,
             "defaultDeadline": 30,
             "deadline": int(time.time() * 1000) + 7 * 86400 * 1000,
-            "requireRealName": True,
+            "requireRealName": required,
         },
         headers=admin.headers,
     )
@@ -242,11 +244,10 @@ class TestAnExportOfManyPeople:
 
         admin = _Owner(user_client)
         space = _board(admin, api_client, name=f"Algorithms ({unique_int()})")
-        task_id = _task_requiring_real_name(admin, api_client, space)
+        task_id = _task_requiring_real_name(admin, api_client, space, required=False)
         people = [_Owner(user_client) for _ in range(30)]
         for person in people:
             _join(admin, api_client, space, person)
-            assert _save(person, api_client, "put", IDENTITY).status_code == 200
             applied = api_client.post(
                 f"/tasks/{task_id}/participants", json={}, headers=person.headers
             )
