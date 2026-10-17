@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
@@ -13,7 +14,11 @@ from app.domain.agent.harness.codex.app_server import AppServer
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.codex.session import Session
 from app.domain.agent.harness.driven import runner
+from app.domain.agent.harness.driven.monitor import Monitors
 from app.domain.agent.harness.driven.runner import SessionStart
+
+# How long a person's message waits for an interrupted woken turn to end.
+WOKEN_TURN_END_S = 15.0
 
 # How long a new turn waits to see the project's skills as they are now before
 # it starts on what the session already has.
@@ -41,10 +46,15 @@ class Runner(runner.Runner[Journal]):
         self.on_tool = on_tool
         self.skills = skills
         self.syncing: asyncio.Future[bool] | None = None
+        # A woken turn is being ended for a person's message (`_end_woken_turn`).
+        self.ending_woken = False
         self.cwd = ""
         self.session: Session | None = None
         self.submit_lock = asyncio.Lock()
         self.continuing: asyncio.Future | None = None
+        # The session's monitors (`tools.RemoteTools.monitors`): what they
+        # print is said to the session through `tell`.
+        self.monitors: Monitors | None = None
 
     async def _catch_up(self) -> bool:
         """The project's skills as they are on the machine now; whether they
@@ -82,6 +92,10 @@ class Runner(runner.Runner[Journal]):
         owner = json.loads(self.journal.recall("owner") or "{}")
         if work:
             owner["work_id"] = work
+            if self.journal.recall(f"unsolicited:{work}"):
+                # A turn the session started for itself (`tell`): the room
+                # opens the books for it when it speaks.
+                owner["unsolicited"] = True
         if owner:
             event = {**event, "cheese": owner}
         ends = (
@@ -93,9 +107,14 @@ class Runner(runner.Runner[Journal]):
         # has nothing that keeps a turn open, so its ending is held back and a
         # new turn in the same work carries the reminder. The room sees one
         # piece of work, ending when that turn does.
+        # A woken turn ended for a person's message is not held to their
+        # reply, and does not settle it: their own turn, next, owes it.
+        handed_on = ends and self.ending_woken
         reason = (
             self.insist()
-            if ends and (params.get("turn") or {}).get("status") == "completed"
+            if ends
+            and not handed_on
+            and (params.get("turn") or {}).get("status") == "completed"
             else None
         )
         if reason is None:
@@ -107,7 +126,8 @@ class Runner(runner.Runner[Journal]):
         elif ends:
             # Codex takes a message said mid-turn into that turn (`turn/steer`
             # needs one in progress), so a finished turn has read every one.
-            self.reply_settled()
+            if not handed_on:
+                self.reply_settled()
             self.turn_ended()
 
     async def _hold_to_reply(self, reason: str, ending: dict) -> None:
@@ -119,6 +139,20 @@ class Runner(runner.Runner[Journal]):
             print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
             self.journal.append(ending)
             self.reply_settled()
+
+    async def tell(self, text: str) -> None:
+        """Say something to the session on the platform's behalf: into the
+        turn it is in (`turn/steer`), or as a turn of its own when it is idle —
+        the way Claude Code hears what a monitor it started printed."""
+        session = self.session
+        if session is None or session.thread_id is None:
+            return
+        async with self.submit_lock:
+            if session.turn_id is None:
+                work = str(uuid.uuid4())
+                self.journal.remember(f"unsolicited:{work}", "1")
+                self.journal.remember(f"work:{session.thread_id}", work)
+            await session.send(text)
 
     async def start(
         self,
@@ -227,7 +261,20 @@ class Runner(runner.Runner[Journal]):
             if work_id is not None:
                 thread_id = self.session.thread_id
                 previous = self.journal.recall(f"work:{thread_id}")
-                if self.session.turn_id is not None and previous != work_id:
+                # A turn the session started for itself (`tell`) that the room
+                # has not steered into: the room sends a person's message then
+                # as work of its own, and closes each work by the records that
+                # name it. So that turn is stopped and ends as its own work,
+                # and the message starts the room's turn.
+                woken = (
+                    previous is not None
+                    and self.journal.recall(f"unsolicited:{previous}") is not None
+                )
+                if (
+                    self.session.turn_id is not None
+                    and previous != work_id
+                    and not (woken and await self._end_woken_turn())
+                ):
                     raise RuntimeError("A different room work item is still active")
                 # Persist attribution before the call: notifications can
                 # arrive before app-server acknowledges turn/start.
@@ -239,6 +286,28 @@ class Runner(runner.Runner[Journal]):
             )
         return {"turn_id": turn, "input_id": identifier}
 
+    async def _end_woken_turn(self) -> bool:
+        """Interrupt the turn a monitor woke and wait for its ending, which
+        `record` journals under that turn's own work; whether it ended."""
+        session = self.session
+        assert session is not None
+        self.ending_woken = True
+        try:
+            await session.interrupt()
+            deadline = asyncio.get_running_loop().time() + WOKEN_TURN_END_S
+            while session.turn_id is not None:
+                left = deadline - asyncio.get_running_loop().time()
+                if left <= 0:
+                    return False
+                news = self.news
+                try:
+                    await asyncio.wait_for(news.wait(), min(left, 0.2))
+                except TimeoutError:
+                    pass
+            return True
+        finally:
+            self.ending_woken = False
+
     async def yield_foreground(self) -> None:
         """Nothing to send: the session's Bash waits in this process
         (`tools.RemoteTools`), which watches the file the debt was just written
@@ -248,7 +317,15 @@ class Runner(runner.Runner[Journal]):
         return bool(
             (self.session is not None and self.session.turn_id is not None)
             or (self.continuing is not None and not self.continuing.done())
+            # A watch still running is the session's own work: letting the
+            # session go would end it unheard.
+            or (self.monitors is not None and self.monitors.count() > 0)
         )
+
+    async def close(self) -> None:
+        if self.monitors is not None:
+            await self.monitors.close()
+        await super().close()
 
     async def dispatch(self, method: str, params: dict) -> dict:
         if method == "configure":

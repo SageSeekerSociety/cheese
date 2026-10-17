@@ -13,7 +13,7 @@ The hosts, the pool and the tool call here are the ones of
 client does.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -23,6 +23,7 @@ from app.domain.agent import execution
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.identity.services import IdentityService
+from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import CloudHost
 from tests.executor_release import running
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
@@ -141,6 +142,10 @@ def test_the_machine_left_for_its_disk_is_not_dialed_again(cloud, monkeypatch):
     own refusal again, which ``_install`` records against the host this attempt
     was placed on. The healthy host was marked as one that ran out of space and
     the session's call failed, over a machine that had nothing wrong with it."""
+    # What the whole check does each time the hands are asked for again: the
+    # window in which hands just checked are handed out unchecked is not
+    # what this is about (`session_work.VERIFIED_FOR`).
+    monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     _two_rooms_on_two_hosts(cloud, monkeypatch)
     _enrolled(cloud, "host-a", "host-b")
     seat = cloud.seats[0]
@@ -180,6 +185,10 @@ def test_a_machine_that_ran_out_of_space_is_left_and_takes_no_new_sandbox(
     and no new sandbox is offered the full host until a reading finds room
     again — the disk guard's own mark (`disk_full_since`, read and cleared
     every minute)."""
+    # What the whole check does each time the hands are asked for again: the
+    # window in which hands just checked are handed out unchecked is not
+    # what this is about (`session_work.VERIFIED_FOR`).
+    monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     _two_rooms_on_two_hosts(cloud, monkeypatch)
     seat, other, third = cloud.seats
     full = host_of(cloud, seat).id

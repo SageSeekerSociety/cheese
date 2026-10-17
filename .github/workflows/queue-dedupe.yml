@@ -13,6 +13,8 @@ on:
 permissions:
   actions: write
   contents: read
+  # Read the PR's current merge queue entry over GraphQL.
+  pull-requests: read
 
 jobs:
   cancel-superseded:
