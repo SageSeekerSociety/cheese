@@ -50,6 +50,12 @@ MACHINE_OUT_OF_REACH = (
 # 台机器上的执行器比后端旧 —— 手好好的，下一次工具调用照样通。把它们也说成够不着，
 # agent 会照着这句话放弃这一轮全部文件与命令操作、并向人报告机器掉线，而那是假话。
 OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
+# How long after the platform handed out a session's hands a Bash command's
+# start goes on that admission (`RemoteClient.call`). Its permission check
+# takes them a moment before the build starts the command; this only has to
+# outlast that gap, and is short so a start never runs on an admission another
+# call's failure has since put in doubt.
+ADMISSION_REUSE_S = 10
 # The connection owner's mark on a call it turned away because it is being
 # released (`device_connection_app.DRAINING_HEADER`): like a refused connect,
 # nothing was dispatched, so the same call is sent again.
@@ -816,6 +822,9 @@ class RemoteClient:
             print(result["notice"], file=preparing, flush=True)
         changed_lease = self.config.get("generation") != target.get("generation")
         self.config.update(target)
+        # Wall-clock, beside the target: the command start this admits runs in
+        # another process (`shell_prefix`), which reads it from there (`call`).
+        self.config["admitted_at"] = time.time()
         token_file = self.config.get("token_file")
         if token_file:
             _replace_file(token_file, result["token"])
@@ -934,7 +943,33 @@ class RemoteClient:
         """``abandoned`` says the caller has given the operation up (a cancelled
         tool call). Acquiring hands can wait for a machine being prepared; an
         operation given up during that wait is never started. ``preparing`` is
-        the text stream told when that wait starts (`acquire`)."""
+        the text stream told when that wait starts (`acquire`).
+
+        A Bash command's start right after the hands were taken — for its own
+        permission check, which `proxy.js` makes just before (`permission`) —
+        goes on that admission instead of asking the platform again. Should it
+        fail for any reason, the hands are taken again and the start is sent
+        once more: the command id makes a repeated start the same start."""
+        admitted = self.config.get("admitted_at")
+        if (
+            self.config.get("lease_path")
+            and self.config.get("kind") == "device"
+            and method == "control"
+            and (params or {}).get("subtype") == "shell"
+            and (params or {}).get("operation") == "start"
+            and (params or {}).get("kind") == "bash"
+            and isinstance(admitted, (int, float))
+            and 0 <= time.time() - admitted < ADMISSION_REUSE_S
+        ):
+            try:
+                return self._call(method, params, admitted=True)
+            except Exception:  # noqa: BLE001 — retried below on new hands
+                self.config.pop("admitted_at", None)
+        return self._call(method, params, abandoned=abandoned, preparing=preparing)
+
+    def _call(
+        self, method, params=None, *, abandoned=None, preparing=None, admitted=False
+    ):
         asked = params or {}
         if asked.get("server") in self.remote_servers():
             if method in {"invoke", "mcp"}:
@@ -953,7 +988,9 @@ class RemoteClient:
                     "mcp", {"server": asked["server"], "method": "tools/list"}
                 )
         operation_deadline = time.monotonic() + 660
-        if self.config.get("lease_path") and (
+        # A start on an admission just taken does not take the hands (`call`).
+        lease_path = None if admitted else self.config.get("lease_path")
+        if lease_path and (
             method in {"invoke", "mcp", "project_tools"}
             # Starting a command acquires hands; reading one that runs does not.
             or (

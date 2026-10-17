@@ -18,10 +18,12 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -116,23 +118,98 @@ def native_binary(name):
     return str(target)
 
 
+# A credential is kept for the invocations after the one that fetched it until
+# this long before it expires. The platform hands a GitHub token out with at
+# least 20 minutes left (`github_app._REFRESH_MARGIN_S`), so a kept one still has
+# ten when it is dropped: enough for any command started on it.
+CREDENTIAL_MARGIN_S = 600
+# How long one probe of the forge's API decides how the next invocations reach
+# it. A wrong "not directly" only sends them through the platform's tunnel,
+# which works, so that answer is kept longer; a wrong "directly" fails them, so
+# that one is asked again sooner.
+REACH_KEPT_S = {True: 120, False: 600}
+
+
+def _kept(name):
+    """A file under this machine's forge state, private to its user."""
+    root = Path.home() / ".cheese" / "forge-auth"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return root / name
+
+
+def _keep(path, value):
+    partial = path.with_name(f"{path.name}.{os.getpid()}.part")
+    with open(partial, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
+        json.dump(value, output)
+    partial.replace(path)
+
+
+def _recall(path):
+    """What `_keep` left at ``path`` while it is still good, else None."""
+    with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
+        kept = json.loads(path.read_text())
+        if kept["until"] > time.time():
+            return kept["value"]
+    return None
+
+
 def credentials():
+    """The project's forge credential for this session, fetched from the
+    platform once and reused until near its expiry. Kept by the session's
+    own credential, so another session, or this one relaunched, fetches its
+    own. Not kept: a read-only one (a 支线 that becomes a task needs its
+    write credential on its next call) and one the platform revokes early
+    rather than the provider expiring it (Forgejo's read-only tokens)."""
+    secret = os.environ["CHEESE_TOKEN"]
+    path = _kept(
+        "credential-" + hashlib.sha256(secret.encode()).hexdigest()[:32] + ".json"
+    )
+    kept = _recall(path)
+    if kept is not None:
+        return kept
     api = os.environ["CHEESE_API"].rstrip("/")
     request = urllib.request.Request(
         f"{api}/sandbox/forge-token",
-        headers={"X-Cheese-Token": os.environ["CHEESE_TOKEN"]},
+        headers={"X-Cheese-Token": secret},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response)["data"]
+        data = json.load(response)["data"]
+    if (
+        data.get("expires_at")
+        and data.get("expiry_enforcement") == "provider"
+        and data.get("read_only") is False
+    ):
+        expires = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
+        _keep(path, {"until": expires.timestamp() - CREDENTIAL_MARGIN_S, "value": data})
+    return data
+
+
+def reaches(url):
+    """Whether this machine reaches ``url`` without the platform, as one probe
+    answered within ``REACH_KEPT_S``. An HTTP error over TLS is a route:
+    GitHub's API answers an anonymous caller over its rate limit 403, and
+    that is the forge talking, not a network that cannot reach it. Over plain
+    HTTP the answer may be a proxy's in between, so there it is not."""
+    path = _kept("reach-" + hashlib.sha256(url.encode()).hexdigest()[:32] + ".json")
+    kept = _recall(path)
+    if isinstance(kept, bool):
+        return kept
+    try:
+        with urllib.request.urlopen(url, timeout=5):
+            pass
+        reached = True
+    except urllib.error.HTTPError:
+        reached = urllib.parse.urlsplit(url).scheme == "https"
+    except (OSError, urllib.error.URLError):
+        reached = False
+    _keep(path, {"until": time.time() + REACH_KEPT_S[reached], "value": reached})
+    return reached
 
 
 @contextlib.contextmanager
 def github_transport(data, env):
     """Choose a route before invoking the CLI, never replay a native mutation."""
-    try:
-        with urllib.request.urlopen(data["api_url"], timeout=5):
-            pass
-    except (OSError, urllib.error.URLError):
+    if not reaches(data["api_url"]):
         helper = runpy.run_path(str(Path.home() / ".cheese/cheese-tunnel.py"))
         api = urllib.parse.urlsplit(os.environ["CHEESE_API"].rstrip("/"))
         tunnel = urllib.parse.urlunsplit(

@@ -320,3 +320,128 @@ def test_bad_checksum_never_installs_binary(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="checksum mismatch"):
         forge_cli.native_binary("fj")
     assert not (tmp_path / ".cheese/native/fj-0.6.0-cheese.2/fj").exists()
+
+
+def _probes(monkeypatch, answer):
+    """Every probe of the forge's API, answered by ``answer``."""
+    probes = []
+
+    def urlopen(url, *args, **kwargs):
+        probes.append(url)
+        return answer()
+
+    monkeypatch.setattr(forge_cli.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(
+        forge_cli.runpy, "run_path", lambda *_: {"handle_connection": lambda *_: None}
+    )
+    monkeypatch.setenv("CHEESE_API", "https://platform.invalid/api")
+    monkeypatch.setenv("CHEESE_TOKEN", "scoped-test-token")
+    # gh reaching the forge directly runs with no proxy of the platform's.
+    for name in ("HTTPS_PROXY", "https_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    return probes
+
+
+def test_gh_reaches_a_forge_that_refuses_an_anonymous_probe_directly(
+    invocation, monkeypatch
+):
+    """GitHub answers an anonymous caller over its rate limit 403: the forge is
+    reachable, and gh goes to it directly rather than through the platform."""
+    _, captured = invocation
+
+    def refused():
+        raise forge_cli.urllib.error.HTTPError(
+            "https://forge.invalid", 403, "rate limit exceeded", {}, None
+        )
+
+    _probes(monkeypatch, refused)
+    assert forge_cli.run("gh", ["pr", "list"]) == 7
+    assert json.loads(captured.read_text())["proxy"] is None
+
+
+@pytest.mark.parametrize("reachable", [True, False])
+def test_one_probe_decides_how_gh_reaches_the_forge_for_a_while(
+    invocation, monkeypatch, reachable
+):
+    _, captured = invocation
+
+    def answer():
+        if reachable:
+            return io.BytesIO()
+        raise forge_cli.urllib.error.URLError("unreachable")
+
+    probes = _probes(monkeypatch, answer)
+    clock = [1000.0]
+    monkeypatch.setattr(forge_cli.time, "time", lambda: clock[0])
+    for _ in range(3):
+        assert forge_cli.run("gh", ["pr", "list"]) == 7
+        assert (json.loads(captured.read_text())["proxy"] is None) is reachable
+    assert len(probes) == 1
+    clock[0] += max(forge_cli.REACH_KEPT_S.values())
+    forge_cli.run("gh", ["pr", "list"])
+    assert len(probes) == 2
+
+
+def _platform(monkeypatch, tmp_path, **credential):
+    """The platform's forge-token route: the session credential of each call."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("CHEESE_API", "https://platform.invalid/api")
+    monkeypatch.setenv("CHEESE_TOKEN", "session-one")
+    minted = []
+
+    def urlopen(request, *args, **kwargs):
+        minted.append(request.headers["X-cheese-token"])
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "data": {
+                        "kind": "github_app",
+                        "token": f"forge-token-{len(minted)}",
+                        "expires_at": "2026-10-16T13:00:00+00:00",
+                        "expiry_enforcement": "provider",
+                        "read_only": False,
+                        **credential,
+                    }
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(forge_cli.urllib.request, "urlopen", urlopen)
+    clock = [1_792_148_400.0]  # 2026-10-16T11:00:00Z, two hours before expiry
+    monkeypatch.setattr(forge_cli.time, "time", lambda: clock[0])
+    return minted, clock
+
+
+def test_gh_keeps_its_credential_until_shortly_before_it_expires(monkeypatch, tmp_path):
+    minted, clock = _platform(monkeypatch, tmp_path)
+    assert forge_cli.credentials()["token"] == "forge-token-1"
+    assert forge_cli.credentials()["token"] == "forge-token-1"
+    assert minted == ["session-one"]
+    (kept,) = (tmp_path / ".cheese/forge-auth").glob("credential-*")
+    if sys.platform != "win32":
+        assert kept.stat().st_mode & 0o777 == 0o600
+    # Ten minutes before it expires it is fetched again.
+    clock[0] += 2 * 3600 - 600
+    assert forge_cli.credentials()["token"] == "forge-token-2"
+    # Another session's credential fetches its own.
+    monkeypatch.setenv("CHEESE_TOKEN", "session-two")
+    forge_cli.credentials()
+    assert minted == ["session-one", "session-one", "session-two"]
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        {"read_only": True},
+        {"expiry_enforcement": "platform"},
+        {"expires_at": None},
+    ],
+    ids=["read-only", "revoked by the platform", "no expiry given"],
+)
+def test_a_credential_that_may_change_under_it_is_fetched_every_time(
+    monkeypatch, tmp_path, credential
+):
+    minted, _ = _platform(monkeypatch, tmp_path, **credential)
+    forge_cli.credentials()
+    forge_cli.credentials()
+    assert len(minted) == 2
