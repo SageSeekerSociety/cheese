@@ -842,10 +842,14 @@ import sys
 from pathlib import Path
 
 
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
 def main(argv):
     if "--self-test" in argv:
         return self_test()
-    return 0
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
 
 
 def self_test():
@@ -1003,6 +1007,95 @@ fi
 scan "${1:-.}"
 '''
 
+
+#: The verdict sits right after `then`. Reading a word as a command only at the
+#: start of the line or after `;|&({` misses it, leaves `exit 1` untouched, and
+#: downgrades a guard that really bites to "unverified".
+SHELL_CONTROL_WORD_VERDICT = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+scan() {
+  echo "找到 .bad；修法：删掉" >&2
+  if find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q .; then return 1; fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  scan "$tmp" && { echo "SELF-TEST FAIL: .bad 必须被报出" >&2; exit 1; }
+  echo "PASS: .bad 被报出"
+  exit 0
+fi
+
+scan "${1:-.}"
+'''
+
+
+#: `dead` answers 1, but the call sits after `return 0` and never runs. Following
+#: calls past the flow end puts it on the verdict path, so a guard whose only
+#: non-zero signal is dead code is reported as "does not bite" instead of
+#: "unverified".
+SHELL_DEAD_CODE_AFTER_RETURN = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+dead() {
+  return 1
+}
+
+scan() {
+  echo clean
+  return 0
+  dead "$1"
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  scan "$tmp"
+  echo "PASS: 干净目录不报错"
+  exit 0
+fi
+
+scan "${1:-.}"
+'''
+
+
+#: The `--self-test` branch hands the work to `check`, whose name says nothing
+#: about self-testing. Reading only the branch body sees no spawn, so a copy
+#: that never reaches `test_wrapper.py` is reported as a bite that did not happen.
+PY_DELEGATES_THROUGH_WRAPPER = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_wrapper.py"))]
+    )
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return check()
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+WRAPPER_SIBLING = '''#!/usr/bin/env python3
+print("PASS: 旁置测试跑通了")
+'''
 
 #: The scan path shells out to `helper.py`; the self-test re-runs this very
 #: file, so mutating it reaches the process that judges. Only the self-test
@@ -1241,6 +1334,32 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         )
         self.assertEqual(code, 0, output)
         self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_self_test_branch_that_calls_an_oddly_named_helper_is_followed(self) -> None:
+        """The branch says `return check()`, and `check` does the delegating.
+
+        Following only functions named like a self-test sees no spawn and calls
+        this a guard that does not bite, when the honest answer is that nothing
+        here can judge the copy.
+        """
+        code, guard, output = self._only(
+            {"wrapper.py": PY_DELEGATES_THROUGH_WRAPPER}, {"test_wrapper.py": WRAPPER_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_verdict_after_a_control_word_is_still_the_verdict(self) -> None:
+        """`then exit 1` is a command in command position, not another word of the test."""
+        code, guard, output = self._only({"control.sh": SHELL_CONTROL_WORD_VERDICT})
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_call_after_the_flow_end_is_not_part_of_the_verdict_path(self) -> None:
+        """`dead` never runs, so its `return 1` proves nothing about this guard."""
+        code, guard, output = self._only({"deadcode.sh": SHELL_DEAD_CODE_AFTER_RETURN})
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
 
     def test_a_fi_inside_a_heredoc_does_not_end_the_self_test_block(self) -> None:
         """The self-test writes a sample containing `fi`; that line is data.

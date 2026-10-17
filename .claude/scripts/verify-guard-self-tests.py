@@ -57,9 +57,11 @@ A copy that goes green on a *silenced* guard is reported as a finding — unless
 the guard hands the work to another script file: a `.py` name that is not its
 own in the command position of a spawn *on the self-test path* (the program a
 `subprocess`/`os.exec*` call runs, `-m`/`-c` included — a command list held in a
-variable is resolved back to its assignment). There the mutation never reaches
-the process that judges. A `.py` the normal scan path runs is that path's own
-business and does not make the self-test foreign. Arguments *after* the
+variable is resolved back to its assignment). The path is the named self-test
+function, what it calls, and whatever an `if "--self-test"` branch calls, so a
+branch that hands off to a helper called `check` is followed as well. There the
+mutation never reaches the process that judges. A `.py` the normal scan path
+runs is that path's own business and does not make the self-test foreign. Arguments *after* the
 program are the guard's own command line — a `.py` fixture passed as input does
 not make the guard foreign — and a guard that re-runs *itself*
 (`Path(__file__)`) is judged normally: the copy is what runs, so the mutation
@@ -374,14 +376,31 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
 
     A guard's normal scan may run another `.py` helper quite legitimately; only a
     spawn on the self-test path decides whether mutating this file reaches the
-    process that judges it.
+    process that judges it. A branch that hands the work to a helper named
+    anything at all — `if "--self-test" in argv: return check()` — puts that
+    helper on the path too, so the calls in the branch seed the walk exactly like
+    the named self-test functions do.
     """
     functions = {
         node.name: node
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    roots = [name for name in functions if name in _SELF_TEST_FUNCTIONS]
+    branches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If) and _mentions_string(node.test, "--self-test")
+    ]
+    roots = {name for name in functions if name in _SELF_TEST_FUNCTIONS}
+    for branch in branches:
+        for statement in branch.body:
+            for node in ast.walk(statement):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id in functions
+                ):
+                    roots.add(node.func.id)
     reachable = set(roots)
     queue = list(roots)
     while queue:
@@ -398,9 +417,8 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
     scoped: list[ast.AST] = []
     for name in reachable:
         scoped.extend(ast.walk(functions[name]))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.If) and _mentions_string(node.test, "--self-test"):
-            scoped.extend(ast.walk(node))
+    for branch in branches:
+        scoped.extend(ast.walk(branch))
     return scoped
 
 
@@ -1175,6 +1193,8 @@ def self_test() -> int:
         "shell-biting-guard.sh": "ok",
         "shell-heredoc-fi-guard.sh": "ok",
         "shell-trailing-if-guard.sh": "ok",
+        "shell-control-word-guard.sh": "ok",
+        "shell-dead-code-guard.sh": "unverified",
         "shell-quoted-heredoc-guard.sh": "ok",
         "shell-self-fail-outside-guard.sh": "ok",
         "foreign-spawn-in-scan-guard.py": "ok",
@@ -1210,7 +1230,8 @@ def self_test() -> int:
         "元组返回、裸 return、模块级命名常量、SystemExit、SystemExit(调用)、shell 的 exit/return、"
         "经末尾 if 转交的状态；谓词里的 return 1、echo 的参数 exit 1 和打印记录里的 exit 1 都不算结论；"
         "heredoc 里的 fi 不结束自测块、引号里的 <<EOF 不算 heredoc；块外的 self_fail 不动；"
-        "参数里的 .py 不算委派、存进变量的命令也会还原、只有自测路径上的外派才判委派；"
+        "参数里的 .py 不算委派、存进变量的命令也会还原、只有自测路径上的外派才判委派、"
+        "自测分支调到的普通函数也会跟下去；控制词后面的判定算判定、return 之后的死代码不算；"
         "只查干净夹具的假绿被检出（Python 与 shell 各一）、空转假绿被检出、缺自测与没变绿各自报出、"
         "委派给旁置测试文件的判不了）"
     )
@@ -1683,16 +1704,25 @@ fi
 scan "${1:-.}"
 ''',
     "variable-command-guard.py": '''#!/usr/bin/env python3
-"""The hand-off command is built into a variable before it is run."""
+"""The hand-off command is built into a variable before it is run.
+
+The scan path has a real failure signal of its own: without it the copy would
+be judged "nothing to silence" whichever way the variable is read, and the
+guard would prove nothing about resolving it.
+"""
 import subprocess
 import sys
 from pathlib import Path
 
 
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
 def main(argv):
     if "--self-test" in argv:
         return self_test()
-    return 0
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
 
 
 def self_test():
@@ -1768,6 +1798,53 @@ if [ "$SELF_TEST" = 1 ]; then
 fi
 
 run "${1:-.}"
+''',
+    "shell-control-word-guard.sh": '''#!/usr/bin/env bash
+# The verdict sits right after `then`, on the same line.
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+scan() {
+  echo "找到 .bad；修法：删掉" >&2
+  if find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q .; then return 1; fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  scan "$tmp" && { echo "SELF-TEST FAIL: .bad 必须被报出" >&2; exit 1; }
+  echo "PASS: .bad 被报出"
+  exit 0
+fi
+
+scan "${1:-.}"
+''',
+    "shell-dead-code-guard.sh": '''#!/usr/bin/env bash
+# The only non-zero signal sits after `return 0` and never runs.
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+dead() {
+  return 1
+}
+
+scan() {
+  echo clean
+  return 0
+  dead "$1"
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  scan "$tmp"
+  echo "PASS: 干净目录不报错"
+  exit 0
+fi
+
+scan "${1:-.}"
 ''',
     "shell-quoted-heredoc-guard.sh": '''#!/usr/bin/env bash
 # `grep '<<EOF'` searches for the text; it opens no heredoc.
