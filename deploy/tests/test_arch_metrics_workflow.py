@@ -25,8 +25,31 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/arch-metrics.yml"
 BASH = shutil.which("bash") or "/bin/bash"
 
+
 # Stands in for the collector: writes a snapshot only when asked, then exits
 # with whatever the case under test needs. Nothing here reads the repository.
+def hours_per_day(field):
+    """The hours a cron's hour field fires at, whatever shape it is written in.
+
+    A schedule is a frequency, so the test asks how often it fires and not which
+    spelling was chosen: `*/3`, `0,3,6`, `0-21/3` and `*` all answer the same
+    question, and a weekly cron answers it with one hour.
+    """
+    hours = set()
+    for part in field.split(","):
+        if part == "*":
+            hours.update(range(24))
+        elif part.startswith("*/"):
+            hours.update(range(0, 24, int(part[2:])))
+        elif "-" in part:
+            span, _, step = part.partition("/")
+            low, _, high = span.partition("-")
+            hours.update(range(int(low), int(high) + 1, int(step or 1)))
+        else:
+            hours.add(int(part))
+    return hours
+
+
 STUB = """\
 import os
 import sys
@@ -71,12 +94,16 @@ class RatchetCollectionTest(unittest.TestCase):
         schedule = self.triggers.get("schedule")
         self.assertTrue(schedule, "no schedule: nothing collects on a clock")
         crons = [entry["cron"] for entry in schedule]
-        # Five fields, of which the minute and the hour decide how often a
-        # collection happens: a bare `0 0 * * *` would be once a day, not the
-        # interval the snapshot series is sized for.
+        # Four collections a day is the floor: the page's 60 points would cover
+        # less than a fortnight at that rate, and a weekly cron would put one
+        # point on the series per week whatever the job does.
         self.assertTrue(
-            any(len(cron.split()) == 5 and cron.split()[1].startswith("*/") for cron in crons),
-            f"no recurring schedule among {crons}",
+            any(
+                len(hours_per_day(cron.split()[1])) >= 4
+                for cron in crons
+                if len(cron.split()) == 5
+            ),
+            f"no schedule that collects at least four times a day among {crons}",
         )
         self.assertTrue(
             self.triggers.get("workflow_dispatch") is not None,
@@ -147,9 +174,7 @@ class RatchetCollectionTest(unittest.TestCase):
         self.assertIn("exit code: 2", record.read_text())
 
     def test_a_successful_collection_leaves_no_failure_record(self):
-        result, out, _ = self.run_step(
-            self.collect, os.environ["PATH"], writes=True
-        )
+        result, out, _ = self.run_step(self.collect, os.environ["PATH"], writes=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((out / "ratchet-snapshot.json").exists())
         self.assertFalse((out / "ratchet-snapshot.failed.txt").exists())
