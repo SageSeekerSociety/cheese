@@ -25,11 +25,14 @@ import json
 import os
 import sys
 import urllib.error
-import urllib.request
 
-API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
-USER = os.environ.get("OKCHEESE_USER", "wangchangxin")
+from platform_api import USER, call, login, unwrap
+
 WINDOWS = ("24h", "7d", "30d")
+
+#: The throughput endpoint aggregates a whole window's rows, so it is the slow call of
+#: the two callers and asks for its own budget. The shared client defaults to 30.
+TIMEOUT = 60
 
 #: 表头就是接口吐的字段名（`SeatRateOut` 的字段），不另起简称。另起过一次，
 #: `output` / `secs` 这两个假名对不上 `output_tokens` / `turn_seconds`，那两列
@@ -46,30 +49,6 @@ COLUMNS = (
     ("turn_seconds", 13),
     ("window_tps", 13),
 )
-
-
-def call(method, path, token=None, body=None, timeout=60):
-    """One platform call. Raises OSError/HTTPError; returns the parsed JSON body."""
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(API + path, data=data, method=method)
-    req.add_header("Content-Type", "application/json")
-    if token:
-        req.add_header("Authorization", "Bearer " + token)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", "replace")
-    return json.loads(raw) if raw.strip() else {}
-
-
-def unwrap(x):
-    """The payload of a platform response: `{"data": …}`, however many times nested."""
-    while isinstance(x, dict) and "data" in x:
-        x = x["data"]
-    return x
-
-
-def login(user, password):
-    return unwrap(call("POST", "/users/auth/login",
-                       body={"username": user, "password": password}))["accessToken"]
 
 
 def fmt(value, width, numeric=False):
@@ -185,10 +164,10 @@ def main(argv):
         print("OKCHEESE_PASS is not set", file=sys.stderr)
         return 2
     try:
-        token = login(USER, password)
+        token = login(USER, password, timeout=TIMEOUT)
         data = unwrap(call("GET",
                            f"/throughput/seats?topic={topic}&window={window}",
-                           token))
+                           token, timeout=TIMEOUT))
     except urllib.error.HTTPError as exc:
         print(f"the platform refused the call: {exc.code} {exc.read()[:400]!r}",
               file=sys.stderr)
