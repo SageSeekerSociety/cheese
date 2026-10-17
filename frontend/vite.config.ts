@@ -392,7 +392,14 @@ export default defineConfig({
       autoImport: true,
       // Vuetify writes `Roboto` into `html` and every `.text-*` typography
       // class. This file points both at the app's own font stack.
-      styles: { configFile: 'src/styles/vuetify-settings.scss' },
+      //
+      // Under Vitest the stylesheets are dropped instead: tests process no CSS
+      // (`test.css` is off), and the configFile form answers each Vuetify
+      // `.css` import with a virtual module whose content the plugin only
+      // remembers while resolving that import. A transform served from
+      // `fsModuleCache` skips the resolve, so the next run fails with
+      // "Cannot find module '/@id/virtual:plugin-vuetify:…'".
+      styles: process.env.VITEST ? 'none' : { configFile: 'src/styles/vuetify-settings.scss' },
     }),
     // Prism 不用 vite-plugin-prismjs 注入。该插件把 `import Prism from 'prismjs'`
     // 展开成一串「引用全局 Prism」的脚本导入，而 prism-core 是 CJS、在 Rolldown 下被
@@ -777,6 +784,7 @@ export default defineConfig({
     // 24.5 秒，而 collect 累计是 142 / 257 / 461 / 1908 秒。过了 16 再加只换回来
     // 几秒墙上时间，代价是成倍的总开销，不限则会超时。
     maxWorkers: maxForks,
+    fsModuleCache: true,
   },
   optimizeDeps: {
     // **每一个新组件第一次上屏时都会被现学现卖**：`vite-plugin-vuetify` 的 autoImport

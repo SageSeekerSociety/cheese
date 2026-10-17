@@ -31,6 +31,7 @@ import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
@@ -129,14 +130,11 @@ os.environ["REDIS_URL"] = settings.redis_url
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB_NAME}")
 
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
-from app.api.deps import get_broker, get_chat_service, get_work_runner  # noqa: E402
 from app.core.db import Base, get_db  # noqa: E402
 from app.core.db import engine as app_engine  # noqa: E402
 from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.central_provider import Placed  # noqa: E402
-from app.domain.agent.chat import ChatService  # noqa: E402
-from app.domain.agent.compute import ComputePool  # noqa: E402
 from app.domain.agent.device_hub import DeviceCallError  # noqa: E402
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef  # noqa: E402
 from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
@@ -153,6 +151,14 @@ from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
 # `client` or `TestClient` at all. The two fixtures that drive the app
 # (`client`, `python_client`) import it inside their own bodies, so only a run
 # that actually asks for one of them pays for it.
+#
+# The chat service and the route dependencies (`app.api.deps`,
+# `app.domain.agent.chat`, `app.domain.agent.compute`) are deferred the same
+# way, into the helpers and fixtures that call them: together they are about a
+# third of what this file costs to import without bytecode — a fresh checkout,
+# a review worktree — and a pure test never touches them.
+if TYPE_CHECKING:
+    from app.domain.agent.compute import ComputePool
 from tests.support.collab import install as install_collab  # noqa: E402
 from tests.support.seat_channel import SeatChannel  # noqa: E402
 
@@ -260,6 +266,8 @@ def wait_work_idle() -> None:
     combined once to hide the suite's largest single cost: a test that stranded
     a turn paid the whole ceiling here and left no trace but a slower run.
     """
+    from app.api.deps import get_work_runner
+
     runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
         moving = len(runner._tasks) or len(_topics_with_pending_records())
@@ -951,9 +959,11 @@ async def finish_turn(service, topic_id) -> None:
     await close_topic_subscriptions(service, topic_id)
 
 
-def stub_compute(channel: StubChannel | None = None) -> ComputePool:
+def stub_compute(channel: StubChannel | None = None) -> "ComputePool":
     """A pool holding one screen, for the many tests that build a ChatService
     by hand. Pass the channel when the test asserts against it."""
+    from app.domain.agent.compute import ComputePool
+
     screen = channel or StubChannel()
     return ComputePool([screen.runtime])
 
@@ -1434,6 +1444,9 @@ def client(
     # Assembling the app is the expensive part of starting a pytest process, so
     # it happens here rather than at conftest import: only tests that actually
     # ask for `client` pay for it.
+    from app.api.deps import get_broker, get_chat_service, get_work_runner
+    from app.domain.agent.chat import ChatService
+    from app.domain.agent.compute import ComputePool
     from app.main import app
 
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
@@ -2486,6 +2499,7 @@ async def business_db_factory(db_factory, stub_project_forge):
     installs. Keep this separate so live Forgejo and empty-database contract
     tests retain their deliberately narrower fixture.
     """
+    from app.api.deps import get_broker
     from app.domain.identity.services import IdentityService
 
     get_broker().reset()
@@ -2540,6 +2554,9 @@ async def python_client(
     awaitable inside anyio tests."""
     from httpx import ASGITransport, AsyncClient
 
+    from app.api.deps import get_broker, get_chat_service, get_work_runner
+    from app.domain.agent.chat import ChatService
+    from app.domain.agent.compute import ComputePool
     from app.main import app
 
     engine = _production_test_engine(TEST_DATABASE_URL)
