@@ -1884,6 +1884,101 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 '''
 
+#: `main(sys.argv[1:])` leaves one word, so `len(argv) == 1` holds during the
+#: self-test: the exit runs, the handler catches it and runs the sibling. Reading
+#: argv as the untrimmed command line calls the gate false and drops that spawn.
+PY_TRIMMED_ARGV_HANDOFF = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
+#: The same trimmed argv, a gate that really is false under it: `len(argv) > 1`
+#: never holds, so the guard prints PASS without measuring anything. Trimming
+#: argv must not excuse this shape as unverifiable.
+PY_TRIMMED_ARGV_FALSE_GATE = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) > 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return check()
+        return 1 if violations_in(argv[1]) else 0
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
+#: The entry point is handed the full command line, but `main` trims `argv`
+#: itself. The call site alone would keep two words and judge the gate false.
+PY_REBOUND_ARGV = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    argv = argv[1:]
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
 PY_UNREADABLE_COUNT = '''#!/usr/bin/env python3
 import subprocess
 import sys
@@ -2623,6 +2718,35 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         """A false outer gate rules out the whole block, handler included."""
         code, guard, output = self._only(
             {"falsetail.py": PY_FALSE_GATE_TAIL},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_length_gate_over_a_trimmed_argv_keeps_the_hand_off(self) -> None:
+        """`main(sys.argv[1:])` leaves one word, so `len(argv) == 1` is true."""
+        code, guard, output = self._only(
+            {"trimmed.py": PY_TRIMMED_ARGV_HANDOFF},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_an_argv_the_guard_trims_itself_keeps_the_hand_off(self) -> None:
+        """`argv = argv[1:]` inside `main`: the call site alone cannot settle it."""
+        code, guard, output = self._only(
+            {"rebound.py": PY_REBOUND_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_gate_the_trimmed_argv_really_falsifies_still_bites(self) -> None:
+        """Trimmed argv does not make every condition unsettled: this one is false."""
+        code, guard, output = self._only(
+            {"trimmedfalse.py": PY_TRIMMED_ARGV_FALSE_GATE},
             {"test_counted.py": ELSE_SIBLING},
         )
         self.assertEqual(code, 1, output)

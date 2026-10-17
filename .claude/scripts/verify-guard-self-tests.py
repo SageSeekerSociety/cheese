@@ -496,20 +496,81 @@ def _constants_at(
 #: running the guard.
 _SELF_TEST_ARGV = ["guard.py", "--self-test"]
 
+
+def _self_test_argv(tree: ast.Module) -> list[str] | None:
+    """The argv the guard's entry point receives from the `--self-test` command.
+
+    Most guards hand `main` the whole `sys.argv`. `main(sys.argv[1:])` is the
+    other common idiom and leaves just `["--self-test"]`; a guard that rebinds
+    `argv = argv[1:]` inside itself trims whatever it was given. Reading the
+    guard path into a trimmed argv would make `len(argv) == 1` look false and
+    drop a block the self-test really runs, so an argv this function cannot pin
+    down is `None`: every condition on it stays unsettled, and the block stays
+    on the path instead of a finding being invented from it.
+    """
+    nodes = list(ast.walk(tree))
+    trimmed = any(
+        isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Subscript)
+        and any(
+            isinstance(target, ast.Name) and target.id == "argv" for target in node.targets
+        )
+        for node in nodes
+    )
+    for node in nodes:
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "main"
+        ):
+            continue
+        if trimmed:
+            return None
+        if not node.args:
+            return ["--self-test"]
+        argument = node.args[0]
+        if (
+            isinstance(argument, ast.Attribute)
+            and argument.attr == "argv"
+            and isinstance(argument.value, ast.Name)
+            and argument.value.id == "sys"
+        ):
+            return _SELF_TEST_ARGV
+        if (
+            isinstance(argument, ast.Subscript)
+            and isinstance(argument.value, ast.Attribute)
+            and argument.value.attr == "argv"
+            and isinstance(argument.value.value, ast.Name)
+            and argument.value.value.id == "sys"
+            and isinstance(argument.slice, ast.Slice)
+            and argument.slice.upper is None
+            and argument.slice.step is None
+            and isinstance(argument.slice.lower, ast.Constant)
+            and argument.slice.lower.value == 1
+        ):
+            return ["--self-test"]
+        return None
+    if trimmed:
+        return None
+    return _SELF_TEST_ARGV
+
 _UNKNOWN = object()
 
 
-def _settled(node: ast.AST):
+def _settled(node: ast.AST, argv: list[str] | None = _SELF_TEST_ARGV):
     """The value of a small expression under the `--self-test` invocation.
 
-    Only what that invocation fixes is known: the script name and the flag.
-    Anything else — a file read, a platform check, a helper call — is
-    `_UNKNOWN`, and a block guarded by it cannot be shown to run.
+    Only what that invocation fixes is known: the command line it passes and
+    the flag. `argv` is that command line as the guard's own call site trims
+    it; `None` means the guard's entry point cannot be read, so anything
+    mentioning argv stays unknown. Anything else — a file read, a platform
+    check, a helper call — is `_UNKNOWN`, and a block guarded by it cannot be
+    shown to run.
     """
     if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, ast.Name) and node.id == "argv":
-        return _SELF_TEST_ARGV
+        return _UNKNOWN if argv is None else argv
     if (
         isinstance(node, ast.Attribute)
         and node.attr == "argv"
@@ -517,30 +578,30 @@ def _settled(node: ast.AST):
         and node.value.id == "sys"
     ):
         # The same command line: `main(sys.argv)` hands `argv` its own value.
-        return _SELF_TEST_ARGV
+        return _UNKNOWN if argv is None else argv
     if isinstance(node, (ast.List, ast.Tuple)):
-        items = [_settled(item) for item in node.elts]
+        items = [_settled(item, argv) for item in node.elts]
         if any(item is _UNKNOWN for item in items):
             return _UNKNOWN
         return items
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        value = _settled(node.operand)
+        value = _settled(node.operand, argv)
         return _UNKNOWN if value is _UNKNOWN else not value
     if isinstance(node, ast.BoolOp):
-        values = [_settled(value) for value in node.values]
+        values = [_settled(value, argv) for value in node.values]
         if any(value is _UNKNOWN for value in values):
             return _UNKNOWN
         return any(values) if isinstance(node.op, ast.Or) else all(values)
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len":
         if len(node.args) == 1 and not node.keywords:
-            value = _settled(node.args[0])
+            value = _settled(node.args[0], argv)
             if isinstance(value, (list, tuple, str)):
                 return len(value)
         return _UNKNOWN
     if isinstance(node, ast.Compare):
-        left = _settled(node.left)
+        left = _settled(node.left, argv)
         for op, comparator in zip(node.ops, node.comparators, strict=True):
-            right = _settled(comparator)
+            right = _settled(comparator, argv)
             if left is _UNKNOWN or right is _UNKNOWN:
                 return _UNKNOWN
             try:
@@ -573,7 +634,9 @@ def _compare(op: ast.cmpop, left, right) -> bool:
     raise TypeError(type(op).__name__)
 
 
-def _branch_is_proven_reached(branch: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
+def _branch_is_proven_reached(
+    branch: ast.AST, parents: dict[ast.AST, ast.AST], argv: list[str] | None = _SELF_TEST_ARGV
+) -> bool:
     """True when the `--self-test` invocation provably reaches this branch.
 
     The walk collects what follows the branch on the assumption that the branch
@@ -590,7 +653,7 @@ def _branch_is_proven_reached(branch: ast.AST, parents: dict[ast.AST, ast.AST]) 
         ):
             return True
         if isinstance(holder, ast.If):
-            value = _settled(holder.test)
+            value = _settled(holder.test, argv)
             if value is _UNKNOWN or bool(value) != (node in holder.body):
                 return False
             node = holder
@@ -605,7 +668,9 @@ def _branch_is_proven_reached(branch: ast.AST, parents: dict[ast.AST, ast.AST]) 
             return False
 
 
-def _statement_may_run(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
+def _statement_may_run(
+    node: ast.AST, parents: dict[ast.AST, ast.AST], argv: list[str] | None = _SELF_TEST_ARGV
+) -> bool:
     """False only when an enclosing statement provably does not run.
 
     `_branch_is_proven_reached` answers a stricter question: it is False for a
@@ -621,7 +686,7 @@ def _statement_may_run(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
         ):
             return True
         if isinstance(holder, ast.If):
-            value = _settled(holder.test)
+            value = _settled(holder.test, argv)
             if value is not _UNKNOWN and bool(value) != (node in holder.body):
                 return False
         node = holder
@@ -697,7 +762,9 @@ def _system_exit_is_swallowed(
         node = holder
 
 
-def _runs_last(statement: ast.stmt) -> ast.stmt | None:
+def _runs_last(
+    statement: ast.stmt, argv: list[str] | None = _SELF_TEST_ARGV
+) -> ast.stmt | None:
     """The last statement this one really runs, following a settled `if`.
 
     An `elif` is a nested `if` inside the previous one's `orelse`, and its test
@@ -708,7 +775,7 @@ def _runs_last(statement: ast.stmt) -> ast.stmt | None:
     """
     current: ast.stmt = statement
     while isinstance(current, ast.If):
-        value = _settled(current.test)
+        value = _settled(current.test, argv)
         if value is _UNKNOWN:
             return current
         side = current.body if value else current.orelse
@@ -719,7 +786,9 @@ def _runs_last(statement: ast.stmt) -> ast.stmt | None:
 
 
 def _caught_handler_body(
-    statement: ast.stmt, parents: dict[ast.AST, ast.AST]
+    statement: ast.stmt,
+    parents: dict[ast.AST, ast.AST],
+    argv: list[str] | None = _SELF_TEST_ARGV,
 ) -> list[ast.stmt] | None:
     """The `except` body control enters, when this statement's exit lands there.
 
@@ -728,7 +797,7 @@ def _caught_handler_body(
     the path even when the handler itself returns: the hand-off may sit in the
     return expression, as in `except SystemExit: return check()`.
     """
-    statement = _runs_last(statement)
+    statement = _runs_last(statement, argv)
     if statement is None or isinstance(statement, ast.Return):
         return None
     if isinstance(statement, ast.Raise):
@@ -766,7 +835,9 @@ def _caught_handler_body(
         node = holder
 
 
-def _abandons_the_run(statement: ast.stmt, parents: dict[ast.AST, ast.AST]) -> bool:
+def _abandons_the_run(
+    statement: ast.stmt, parents: dict[ast.AST, ast.AST], argv: list[str] | None = _SELF_TEST_ARGV
+) -> bool:
     """True when control cannot continue past this statement.
 
     A `return` ends the path outright. `exit`/`sys.exit` and `raise
@@ -775,7 +846,7 @@ def _abandons_the_run(statement: ast.stmt, parents: dict[ast.AST, ast.AST]) -> b
     `try`. A bare `raise` never counts: whatever it raises, an enclosing
     handler may catch it.
     """
-    statement = _runs_last(statement)
+    statement = _runs_last(statement, argv)
     if statement is None:
         return False
     if isinstance(statement, ast.Return):
@@ -853,6 +924,7 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             named.setdefault(node.name, []).append(node)
+    argv = _self_test_argv(tree)
     parents: dict[ast.AST, ast.AST] = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
@@ -878,7 +950,7 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
         # Only a side that provably runs can take the rest of the function off
         # the path. Inside a loop that may run zero times, or under a test this
         # invocation does not settle, the `return` in it is not the end.
-        trusted = _branch_is_proven_reached(branch, parents)
+        trusted = _branch_is_proven_reached(branch, parents, argv)
         if for_self_test is None:
             trusted = False
         taken = (
@@ -890,7 +962,7 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
         # follows it: nothing inside it is on the self-test's path, and reading
         # a spawn out of it would hide a finding. `_statement_may_run` answers
         # exactly that, and stays True for a block that merely may run.
-        branch_runs = _statement_may_run(branch, parents)
+        branch_runs = _statement_may_run(branch, parents, argv)
         for side in taken:
             if not branch_runs:
                 break
@@ -900,10 +972,10 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
             # by returning. While it is unsettled whether the side runs, the
             # handler may still be entered, so collect it: `unverified` is the
             # honest verdict there, and inventing a finding is not.
-            if side and (landed := _caught_handler_body(side[-1], parents)) is not None:
+            if side and (landed := _caught_handler_body(side[-1], parents, argv)) is not None:
                 sides.append(landed)
         side = taken[0]
-        if trusted and side and _abandons_the_run(side[-1], parents):
+        if trusted and side and _abandons_the_run(side[-1], parents, argv):
             continue
         # Whichever side was taken, execution falls through to what follows the
         # branch. The branch may sit in an `elif`, a `try`, a `with`, an
@@ -919,11 +991,11 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
             # its handler may be entered, so collect it rather than miss a
             # spawn; a block a settled gate rules out runs neither the branch
             # nor anything after it in the same block.
-            if _statement_may_run(node, parents):
+            if _statement_may_run(node, parents, argv):
                 sides.append(tail)
-                if tail and (landed := _caught_handler_body(tail[-1], parents)) is not None:
+                if tail and (landed := _caught_handler_body(tail[-1], parents, argv)) is not None:
                     sides.append(landed)
-            if trusted and tail and _abandons_the_run(tail[-1], parents):
+            if trusted and tail and _abandons_the_run(tail[-1], parents, argv):
                 # The self-test leaves inside a block that provably runs, so
                 # nothing further out can be on its path; collecting it would
                 # only invent a spawn.
@@ -1791,6 +1863,9 @@ def self_test() -> int:
         "unreadable-body-handoff-guard.py": "unverified",
         "proven-false-gate-guard.py": "self-test-does-not-bite",
         "false-gate-tail-guard.py": "self-test-does-not-bite",
+        "trimmed-argv-handoff-guard.py": "unverified",
+        "trimmed-argv-false-gate-guard.py": "self-test-does-not-bite",
+        "rebound-argv-guard.py": "unverified",
         "elif-exit-handler-guard.py": "unverified",
         "sys-argv-branch-guard.py": "self-test-does-not-bite",
         "gated-handler-arm-guard.py": "unverified",
@@ -1818,6 +1893,8 @@ def self_test() -> int:
         "控制词后面的判定算判定、return 之后的死代码不算；分支落在循环体里不算离开、"
         "被捕获的 raise 不算离开、sys.exit 才算；分支落在 else、match case 里照样跟下去，"
         "落在 with、finally 和已定的条件里才算离开；条件判为假时，分支和它后面的处理器都不在路上；"
+        "argv 按守卫自己交给入口点的形态读，`main(sys.argv[1:])` 只留一个词，"
+        "裁剪后仍判为假的门照样算离开；"
         "被 except SystemExit 吞掉的退出不算离开、"
         "处理器再抛出才算；带注解的模块常量也读得出；读的是本函数里的局部常量；"
         "退出落进处理器时处理器的 return 也在路上；裸的 exit 调用同样算离开；"
@@ -3768,6 +3845,113 @@ def main(argv):
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
+''',
+    "trimmed-argv-handoff-guard.py": '''#!/usr/bin/env python3
+"""The hand-off sits behind a length gate, and `main` is given a trimmed argv.
+
+`main(sys.argv[1:])` leaves `["--self-test"]`, so `len(argv) == 1` is true and
+the body runs: it exits, the handler catches the exit and runs the sibling test
+file in another process. Reading argv as the untrimmed command line calls that
+gate false and drops the sibling spawn, turning an honest `unverified` into the
+finding that this guard measures nothing.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+''',
+    "rebound-argv-guard.py": '''#!/usr/bin/env python3
+"""The guard trims `argv` inside itself, so the call site alone misleads.
+
+`main(sys.argv)` hands over the whole command line, but the first statement
+drops the guard path. Reading only the call site keeps two words and calls
+`len(argv) == 1` false, dropping the handler that runs the sibling; an argv that
+is reassigned this way is one the tool cannot pin down, so it must stay on the
+path.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    argv = argv[1:]
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "trimmed-argv-false-gate-guard.py": '''#!/usr/bin/env python3
+"""The gate really is false for the trimmed argv, so the finding stands.
+
+`main(sys.argv[1:])` leaves one element and `len(argv) > 1` is false, so the
+body never runs and the guard prints PASS without measuring anything. Trimming
+argv must not turn every condition into an unsettled one: this shape has to keep
+being reported rather than excused as `unverified`.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) > 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return check()
+        return 1 if violations_in(argv[1]) else 0
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
 ''',
     "negated-count-guard.py": '''#!/usr/bin/env python3
 """The count is negated against a `LIMIT` whose value cannot be read.
