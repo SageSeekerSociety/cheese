@@ -567,3 +567,28 @@ async def test_an_api_answering_json_is_read_not_skipped_as_binary(monkeypatch):
     got = await layers.rung_plain_http("https://api.example.org/paper/1")
 
     assert got.ok and '"title"' in got.text
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["text/csv", "text/x-python", "application/javascript", "application/yaml"],
+)
+async def test_a_text_file_that_is_not_a_page_is_read_not_skipped_as_binary(
+    monkeypatch, content_type
+):
+    """A data file or a source file is text: only bodies that are not text at
+    all (a PDF, an image) are binary."""
+    import httpx
+
+    body = "name,year\nA paper,2018\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=body.encode(), headers={"content-type": content_type}
+        )
+
+    _serve(monkeypatch, handler)
+
+    got = await layers.rung_plain_http("https://files.example.org/data")
+
+    assert got.ok and "A paper,2018" in got.text, got.note
