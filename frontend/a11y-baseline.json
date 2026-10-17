@@ -1,25 +1,4 @@
 {
   "_comment": "Frozen eslint-plugin-vuejs-accessibility violations per file. The ratchet blocks any NEW one; these are pre-existing and may only go down. Regenerate with `pnpm run lint:a11y:update`. The rules are in eslint.a11y.config.mjs.",
-  "files": {
-    "src/commands/palette/CommandPalette.vue": 2,
-    "src/commands/palette/PaletteActions.vue": 2,
-    "src/commands/palette/PaletteResults.vue": 4,
-    "src/views/account/recover/password/VerifyView.vue": 1,
-    "src/views/home/JoinSpaceDialog.vue": 1,
-    "src/views/home/LandingFilm.vue": 2,
-    "src/views/home/LandingShell.vue": 3,
-    "src/views/home/LandingUseCases.vue": 1,
-    "src/views/home/Solutions.vue": 1,
-    "src/views/library/LibraryNameDialog.vue": 1,
-    "src/views/library/LibraryRows.vue": 3,
-    "src/views/MyDevicesView.vue": 2,
-    "src/views/ProjectLibraryView.vue": 3,
-    "src/views/spaces/detail/PublishTaskView.vue": 1,
-    "src/views/spaces/detail/settings/BasicInfoView.vue": 1,
-    "src/views/tasks/components/TaskDialogs.vue": 2,
-    "src/views/user/settings/ProfileView.vue": 1,
-    "src/views/user/settings/SecurityView.vue": 1,
-    "src/views/workspace/ProjectMembersView.vue": 3,
-    "src/views/workspace/TopicView.vue": 3
-  }
+  "files": {}
 }

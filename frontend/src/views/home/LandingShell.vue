@@ -74,6 +74,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main id="top" class="landing" :class="{ 'menu-open': menuOpen }" :lang="i18n.global.locale.value">
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- Escape bubbles here from the menu button or a link in the open menu and closes it; a role here would cost the header its banner landmark -->
     <header ref="siteBar" class="site-bar" @keydown.esc="closeMenu">
       <router-link class="brand" :to="homeHref" :aria-label="t('publicSite.cheeseHome')">
         <BrandLockup />
@@ -83,6 +84,7 @@ onBeforeUnmount(() => {
            separate site (docsUrl), so that one is a real navigation. The same
            element is the phone disclosure panel; a click closes it so the panel
            does not stay over the page the router just opened. -->
+      <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- a link chosen in the open phone menu closes it; Enter on a link is a click, so this covers the keyboard too -->
       <nav id="site-menu" class="site-nav" :aria-label="t('publicSite.mainNavigation')" @click="menuOpen = false">
         <router-link
           :to="page === 'home' ? { hash: '#story' } : homeHref"
