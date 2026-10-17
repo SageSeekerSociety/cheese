@@ -1304,6 +1304,47 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertNotEqual(mg_fail.returncode, 0)
 
 
+    def test_required_ci_checks_backend_shard_coverage_exactly_once(self):
+        """Every collected backend case ran on exactly one shard — checked by
+        test.yml's own `test-complete` job, or, when Required CI turns that job
+        off, by `CI required` itself. Never by neither."""
+        jobs = jobs_of(self.text)
+        delegated = "coverage-job: false" in jobs["backend"]["text"]
+        test_jobs = jobs_of((WORKFLOW.parent / "test.yml").read_text())
+        self.assertIn("inputs.coverage-job", test_jobs["test-complete"]["if"])
+        self.assertEqual(
+            "assert_shards_complete" in jobs["required"]["text"], delegated,
+            "CI required must run the shard-coverage check exactly when it "
+            "turns test.yml's test-complete off",
+        )
+        if not delegated:
+            return
+        body = run_body_containing(self.text, "assert_shards_complete")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            args_log = tmp / "args"
+            env = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "RUNNER_TEMP": str(tmp),
+                "ARGS_LOG": str(args_log),
+            }
+            for verdict, expect_ok in ((0, True), (1, False)):
+                _stub(bindir, "python3", f'printf "%s\\n" "$*" > "$ARGS_LOG"\nexit {verdict}\n')
+                done = subprocess.run(
+                    ["bash", "-e", "-c", body], env=env, cwd=tmp,
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(done.returncode == 0, expect_ok, done.stderr)
+                self.assertEqual(
+                    args_log.read_text().split(),
+                    ["-m", "scripts.assert_shards_complete",
+                     f"{tmp}/backend-artifacts", "--plan", "backend-expected"],
+                )
+
+
 class MainCliTest(unittest.TestCase):
     """The ``scope``/``check`` wiring that the runner actually invokes."""
 
