@@ -11,7 +11,7 @@ import uuid
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from app.core.config import settings
 from app.domain.library import records as library_records
@@ -181,6 +181,70 @@ def test_http_export_is_offline_readable_and_checksums_match(
     assert (
         offline / catalog[0]["versions"][0]["path"]
     ).read_bytes() == b"Retained artifact\n"
+
+
+def _select_count_of_export(client, data, extra_tasks: int, first: int = 0) -> int:
+    """Add tasks (each with a document and an artifact delivered once), then count
+    the SELECTs one export request sends."""
+
+    async def seed():
+        async with client.test_factory() as db:
+            for i in range(first, first + extra_tasks):
+                doc = Document(
+                    project_id=data["pid"],
+                    author="export-owner",
+                    content=f"# Extra {i}\n",
+                    version=1,
+                )
+                artifact = ProjectArtifact(
+                    project_id=data["pid"], name=f"Extra {i}", about="Extra fixture"
+                )
+                db.add_all([doc, artifact])
+                await db.flush()
+                db.add_all(
+                    [
+                        Task(
+                            project_id=data["pid"],
+                            room_id=data["room"],
+                            title=f"Extra task {i}",
+                            document_id=doc.id,
+                        ),
+                        AcceptCard(
+                            topic_id=data["room"],
+                            reviewer_handle="export-owner",
+                            artifact_id=artifact.id,
+                            status=AcceptStatus.accepted,
+                            deliverable_kind=DeliverableKind.link,
+                            deliverable_url=f"https://example.invalid/{i}",
+                        ),
+                    ]
+                )
+            await db.commit()
+
+    asyncio.run(seed())
+    seen: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        seen.append(statement)
+
+    engine = client.test_app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        response = client.get(
+            f"/projects/{data['pid']}/export", headers=data["headers"]
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert response.status_code == 200, response.text[:500]
+    return sum(1 for sql in seen if sql.lstrip().upper().startswith("SELECT"))
+
+
+def test_export_query_count_does_not_grow_with_the_number_of_tasks(
+    client, exported_project
+):
+    few = _select_count_of_export(client, exported_project, 2)
+    many = _select_count_of_export(client, exported_project, 9, first=2)
+    assert many == few
 
 
 def test_export_requires_real_project_access_even_with_dev_auth_off(
