@@ -381,8 +381,10 @@ function putEntry(entries, entry) {
 function expandEntries(node, resolve, depth, seen, memo) {
   // One recursion per spread followed. A chain of more spreads than this is a
   // generated file, not a component, and reading the names under it is not
-  // worth a stack overflow that would take the whole check down with it.
-  if (depth > 512) return NO_ENTRIES
+  // worth a stack overflow that would take the whole check down with it. What
+  // is read here is not kept: a node met this deep has only been read in part,
+  // and the same node met near the top still has to be read to the end.
+  if (depth > 512) return CUT_ENTRIES
   const value = unassert(node)
   if (!value) return NO_ENTRIES
   if (value.type === 'Identifier') {

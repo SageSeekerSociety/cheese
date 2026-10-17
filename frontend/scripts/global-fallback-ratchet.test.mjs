@@ -813,6 +813,32 @@ describe('findGlobalFallbacks', () => {
       [['open', TEMPLATE]],
       'kept a container a later property overrides'
     )
+    // And every source `Object.assign` is given is written, not just the last:
+    // these are the same two objects, in the same order, as that spread.
+    for (const [index, [lines, expected]] of [
+      [["const base = { props: ['open'] }", 'export default { ...base, props: [] }'], [['open', TEMPLATE]]],
+      [
+        ["const base = { props: ['open'] }", 'export default Object.assign({}, base, { props: [] })'],
+        [['open', TEMPLATE]],
+      ],
+      // The name comes from a source that is not the last one, and no later
+      // source mentions it: a walk that read only the last argument would
+      // report this component, which binds it.
+      [["const base = { props: ['open'] }", 'export default Object.assign({}, base, { other: 1 })'], []],
+      [
+        [
+          'const base = { props: [] }',
+          "export default Object.assign({}, Object.assign({}, base, { props: ['open'] }), { props: [] })",
+        ],
+        [['open', TEMPLATE]],
+      ],
+    ].entries()) {
+      assert.deepEqual(
+        found(exported(...lines)).map((hit) => [hit.name, hit.where]),
+        expected,
+        `read a different set of sources than the call writes (case ${index}):\n${lines.join('\n')}`
+      )
+    }
   })
 
   // A namespace hands its members out as `NS.member`; the name is not a
@@ -879,8 +905,10 @@ describe('findGlobalFallbacks', () => {
     // legal 6 KB component. Nothing at the top of the graph decides what the
     // names are — the answer is what the bottom of the graph ends up with, and
     // the whole assertion depends on reading through all eight levels.
-    const graph = ({ binds, writes, viaAssign }) => {
-      const lines = [`const l0_0 = { props: ${binds ? "['open']" : '[]'} }`]
+    const graph = ({ binds, writes, viaAssign, opaque }) => {
+      // `opaque` starts the graph at a name this file does not resolve — an
+      // import, a parameter — which has no entries and nothing more to say.
+      const lines = [opaque ? 'const l0_0 = base' : `const l0_0 = { props: ${binds ? "['open']" : '[]'} }`]
       for (let i = 1; i < WIDTH; i += 1) lines.push(`const l0_${i} = l0_0`)
       for (let level = 1; level <= LEVELS; level += 1) {
         const sources = Array.from({ length: WIDTH }, (_, j) => `l${level - 1}_${j}`)
@@ -911,19 +939,33 @@ describe('findGlobalFallbacks', () => {
       ].join('\n')
     const hits = (shape) => found(component(graph(shape))).map((hit) => [hit.name, hit.where])
 
-    assert.deepEqual(hits({ binds: true }), [], 'followed the spreads down to the prop that binds `open`')
-    assert.deepEqual(hits({ binds: false }), [['open', TEMPLATE]], 'read a graph that binds nothing')
-    assert.deepEqual(hits({ binds: false, writes: 4 }), [], 'kept the write the graph ends up with')
-    assert.deepEqual(
+    const started = Date.now()
+    const answers = [
+      hits({ binds: true }),
+      hits({ binds: false }),
+      hits({ binds: false, writes: 4 }),
       hits({ binds: false, viaAssign: true }),
-      [['open', TEMPLATE]],
-      'read the same graph built by Object.assign'
-    )
-    assert.deepEqual(
       hits({ binds: false, writes: 4, viaAssign: true }),
-      [],
-      'kept the Object.assign source written last'
+      hits({ opaque: true }),
+      hits({ opaque: true, viaAssign: true }),
+    ]
+    const elapsed = Date.now() - started
+
+    assert.deepEqual(answers[0], [], 'followed the spreads down to the prop that binds `open`')
+    assert.deepEqual(answers[1], [['open', TEMPLATE]], 'read a graph that binds nothing')
+    assert.deepEqual(answers[2], [], 'kept the write the graph ends up with')
+    assert.deepEqual(answers[3], [['open', TEMPLATE]], 'read the same graph built by Object.assign')
+    assert.deepEqual(answers[4], [], 'kept the Object.assign source written last')
+    assert.deepEqual(
+      answers[5],
+      [['open', TEMPLATE]],
+      'read a graph that starts from a name this file does not resolve'
     )
+    assert.deepEqual(answers[6], [['open', TEMPLATE]], 'read the same graph built by Object.assign')
+    // The cost is part of what the walk promises: the check runs on every
+    // component in `src`, and this fixture is one of them. A walk that answers
+    // each route through the graph instead of each name took 94 s here.
+    assert.ok(elapsed < 15_000, `walked a legal 6 KB component in ${elapsed} ms`)
   })
 
   // A chain of spreads is a legal shape and can be arbitrarily long, so the
@@ -943,7 +985,28 @@ describe('findGlobalFallbacks', () => {
       )
 
     assert.deepEqual(found(component(chain(300, "{ props: ['open'] }"))), [], 'stopped short of a chain it could read')
-    assert.doesNotThrow(() => found(component(chain(4000, "{ props: ['open'] }"))), 'overflowed the call stack')
+    assert.doesNotThrow(() => found(component(chain(20000, "{ props: ['open'] }"))), 'overflowed the call stack')
+  })
+
+  // A route that runs past the walk's bound reads only part of the node it
+  // stopped at. Keeping that answer would make the same object read as empty
+  // for every route that met it near the top: the two components below differ
+  // only in which spread is written first, and both bind the prop.
+  it('does not keep the half-read answer a deep route stops at', () => {
+    const lines = ["const leaf = { props: ['open'] }", 'const m = { ...leaf }']
+    for (let i = 1; i <= 511; i += 1) lines.push(`const p${i} = { ...${i === 1 ? 'm' : `p${i - 1}`} }`)
+    const component = (exported) =>
+      [
+        '<script lang="ts">',
+        ...lines,
+        `export default ${exported}`,
+        '</script>',
+        '<template><button @click="open()">x</button></template>',
+        '',
+      ].join('\n')
+
+    assert.deepEqual(found(component('{ ...p511, ...m }')), [], 'kept what a route at the bound had read of `m`')
+    assert.deepEqual(found(component('{ ...m, ...p511 }')), [], 'read `m` before the long route reached it')
   })
 
   // The value a name holds follows execution, and execution is not the order
