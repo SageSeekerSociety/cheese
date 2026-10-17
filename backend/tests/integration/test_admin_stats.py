@@ -22,10 +22,12 @@ import json
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select, update
 
+from app.api.routes import admin_stats
 from app.core.config import settings
 from app.domain.device.models import DeviceRow
 from app.domain.feedback.models import Feedback, FeedbackStatus, FeedbackTimeline
@@ -658,6 +660,84 @@ def test_performance_reads_the_metrics_the_middleware_now_writes(client, as_admi
     # 除了它自己之外没有任何请求在飞 —— 报 0 才是真的 0，报 1 会让空闲的平台看着像
     # 「有一条请求一直没处理完」。
     assert after.json()["data"]["active_requests"] == 0
+
+
+# --- 会话主机的内存与会话数（#1824 第二轮的补测量） ----------------------------
+
+
+class _SessionHost:
+    """一条只回答会话主机两件事的假 hub：开着的屏幕，和一次 ``cat meminfo``。"""
+
+    def __init__(self, *, screens=(), stdout=None, raises=None):
+        self._screens = list(screens)
+        self._stdout = stdout
+        self._raises = raises
+
+    def all_online_screens(self):
+        return self._screens
+
+    async def exec(self, device_id, argv, *, timeout=None):
+        assert device_id == "session-host"
+        assert argv == ["cat", "/proc/meminfo"]
+        if self._raises is not None:
+            raise self._raises
+        return {"exit": 0, "stdout": self._stdout}
+
+
+def _screen_on(device_id: str):
+    return SimpleNamespace(device_id=device_id)
+
+
+def test_performance_carries_the_session_hosts_memory_and_open_sessions(
+    client, as_admin, monkeypatch
+):
+    """读得到主机时，三个字段就是主机自己报的两个数加它上面开着的会话数。
+
+    `sessions_active` 的口径是一个屏幕 = 一个会话，所以落在这台设备上的屏幕才数；
+    别的设备上的不数。
+    """
+    monkeypatch.setattr(settings, "agent_session_device_id", "session-host")
+    monkeypatch.setattr(
+        admin_stats,
+        "device_hub",
+        _SessionHost(
+            screens=[
+                _screen_on("session-host"),
+                _screen_on("session-host"),
+                _screen_on("somewhere-else"),
+            ],
+            stdout="MemTotal:       16252928 kB\nMemAvailable:    6291456 kB\n",
+        ),
+    )
+
+    data = client.get(
+        "/admin/stats/performance", headers=session_auth_headers(as_admin)
+    ).json()["data"]
+
+    assert data["session_host"] == {
+        "mem_total_mib": 15872,
+        "mem_available_mib": 6144,
+        "sessions_active": 2,
+    }
+
+
+def test_performance_answers_unknown_memory_when_the_session_host_will_not_say(
+    client, as_admin, monkeypatch
+):
+    """主机连不上时内存字段是 `null`，请求照样 200 —— 读不到不是看板坏了。"""
+    monkeypatch.setattr(settings, "agent_session_device_id", "session-host")
+    monkeypatch.setattr(
+        admin_stats, "device_hub", _SessionHost(raises=OSError("no link"))
+    )
+
+    r = client.get("/admin/stats/performance", headers=session_auth_headers(as_admin))
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["session_host"] == {
+        "mem_total_mib": None,
+        "mem_available_mib": None,
+        "sessions_active": 0,
+    }
 
 
 # --- 上一窗口合计（prev）：环比差的数据源 -------------------------------------
