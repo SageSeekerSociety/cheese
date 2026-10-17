@@ -39,10 +39,11 @@ fixture of its own broke, not because the failure signal was taken away — a re
 that proves nothing, and the tool would bless a self-test that never looks at a
 violation. The entry point is left alone on purpose: silencing it would stop the
 self-test from running at all, which reads as red without the self-test having
-noticed anything. A shell guard gets a `return 0` at the top of each `name() {`
-rule function, which is how its rules stop firing; the whole file from
-`if … SELF_TEST …; then` onward is left untouched, so its own `self_fail` helper
-still reports the red.
+noticed anything. A shell guard's non-zero `exit`/`return` lines are rewritten
+to `exit 0`/`return 0` instead — the same rule applied without an AST — and its
+whole `if … SELF_TEST …; then` block, `self_fail` included, is left untouched.
+A verdict written as a variable (`exit "$CODE"`) offers no literal to rewrite
+and is reported as UNVERIFIED rather than guessed at.
 
 A copy that goes green on a *silenced* guard is reported as a finding — unless
 the guard hands the work to another script file: a `.py` name that is not its
@@ -104,7 +105,7 @@ HINTS = {
         "自测在当前树上没有打印 PASS 或退出了非 0；先把它修绿，再谈咬合力。"
     ),
     "self-test-does-not-bite": (
-        "把守卫的失败信号（非 0 的 return、sys.exit、SystemExit）静音之后，自测仍然绿着——"
+        "把守卫的失败信号（非 0 的 return、exit、sys.exit、SystemExit）静音之后，自测仍然绿着——"
         "它没有在看守卫报不报违规。让它喂进一个故意违规的夹具，断言守卫真的以非 0 退出码报错并印出修法。"
     ),
     "unverified": (
@@ -118,12 +119,13 @@ _SUBPROCESS_CALLS = frozenset({"run", "call", "check_call", "check_output", "Pop
 #: Names that run a Python script: `python`, `python3`, `python3.12`.
 _PYTHON_RE = re.compile(r"^python(\d+(\.\d+)?)?$")
 
-#: A shell function definition, at the start of a line: `name() {`.
-_SHELL_FUNC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{\s*$")
-
 #: The line that opens a shell guard's self-test block; everything from here on
 #: belongs to the self-test itself and is left as it is.
 _SHELL_SELF_TEST_RE = re.compile(r"^\s*if\b.*\bSELF_TEST\b.*;\s*then\b")
+
+#: A shell guard's verdict: a non-zero `exit` or `return`. Silencing the verdict
+#: leaves the scan — and anything it prints or writes — exactly where it was.
+_SHELL_NONZERO_RE = re.compile(r"(?<![\w$])(exit|return)\s+([1-9]\d*)\b")
 
 
 @dataclass
@@ -475,27 +477,48 @@ def mutate_python(source: str) -> tuple[str | None, str]:
 
 
 def mutate_shell(source: str) -> tuple[str | None, str]:
-    """A copy of a shell guard whose rule functions return clean immediately.
+    """A copy of a shell guard that reaches every conclusion and returns clean.
 
-    Only the rule functions are silenced: the file is left as it is from the line
-    that opens the self-test block onward, so the guard's own `self_fail` helper
-    and its fixture set-up still run and can notice that the rules went quiet.
+    Only the failure verdict is rewritten: a non-zero `exit` or `return` becomes
+    `exit 0` / `return 0`. The scan runs to the end, so everything it prints,
+    records or accumulates still happens — a self-test that only looks at those
+    keeps passing, which is exactly what has to be reported as toothless. The
+    self-test block itself, and its `self_fail` helper, are left untouched.
     """
     lines = source.splitlines(keepends=True)
-    limit = next(
-        (index for index, line in enumerate(lines) if _SHELL_SELF_TEST_RE.match(line)),
-        len(lines),
-    )
+    block = _shell_self_test_span(lines)
+    if block is None:
+        return None, "找不到 `if … SELF_TEST …; then` 自测块，静音不了守卫的结论"
+    start, end = block
     out: list[str] = []
     count = 0
     for index, line in enumerate(lines):
+        if not start <= index <= end and not line.lstrip().startswith("#"):
+            line, replaced = _SHELL_NONZERO_RE.subn(r"\1 0", line)
+            count += replaced
         out.append(line)
-        if index < limit and _SHELL_FUNC_RE.match(line.rstrip("\n")):
-            out.append("  return 0\n")
-            count += 1
     if count == 0:
-        return None, "自测块之前没有可以静音的函数（没有形如 `name() {` 的行）"
+        return None, "自测块之外没有非 0 的 exit/return，静音不了守卫的结论"
     return "".join(out), ""
+
+
+def _shell_self_test_span(lines: list[str]) -> tuple[int, int] | None:
+    """The line range of the `if … SELF_TEST …; then` block, both ends inclusive.
+
+    The block owns its own failure reporting (`self_fail`, inline `exit 1`), so
+    none of it may be rewritten. It ends at the `fi` written at the same
+    indentation as its `if`; a missing `fi` runs to the end of the file, where
+    declining to silence anything is still honest.
+    """
+    for start, line in enumerate(lines):
+        if not _SHELL_SELF_TEST_RE.match(line):
+            continue
+        indent = len(line) - len(line.lstrip())
+        for end in range(start + 1, len(lines)):
+            if lines[end].strip() == "fi" and len(lines[end]) - len(lines[end].lstrip()) == indent:
+                return start, end
+        return start, len(lines) - 1
+    return None
 
 
 def _prints_success(text: str) -> bool:
@@ -651,6 +674,7 @@ def self_test() -> int:
         "fake-green-guard.py": "self-test-does-not-bite",
         "shell-fake-green-guard.sh": "self-test-does-not-bite",
         "clean-only-self-test-guard.py": "self-test-does-not-bite",
+        "shell-clean-only-self-test-guard.sh": "self-test-does-not-bite",
         "no-self-test-guard.py": "missing-self-test",
         "not-green-guard.py": "self-test-not-green",
         "delegating-guard.py": "unverified",
@@ -669,8 +693,9 @@ def self_test() -> int:
         return 1
     print(
         "PASS: verify-guard-self-tests self-test（失败信号的每种写法都判得出咬合力——条件返回、"
-        "元组返回、裸 return、模块级命名常量、SystemExit；参数里的 .py 不算委派；"
-        "只查干净夹具的假绿被检出、空转假绿被检出、缺自测与没变绿各自报出、委派给旁置测试文件的判不了）"
+        "元组返回、裸 return、模块级命名常量、SystemExit、shell 的 exit/return；参数里的 .py 不算委派；"
+        "只查干净夹具的假绿被检出（Python 与 shell 各一）、空转假绿被检出、缺自测与没变绿各自报出、"
+        "委派给旁置测试文件的判不了）"
     )
     return 0
 
@@ -1004,6 +1029,52 @@ if [ "$SELF_TEST" = 1 ]; then
 fi
 
 scan "${1:-.}"
+''',
+    "shell-clean-only-self-test-guard.sh": '''#!/usr/bin/env bash
+# A shell guard whose --self-test only ever asserts the clean path and the
+# --json record. Its red under a whole-function mutation came from the record
+# disappearing, not from the verdict being taken away.
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+FAILED=0
+
+counts() {
+  find "$1" -name '*.bad' -print 2>/dev/null | grep -c . || true
+}
+
+record() {
+  printf '{"files": %s}\\n' "$(counts "$1")"
+}
+
+scan() {
+  local n
+  n="$(counts "$1")"
+  if [ "$n" -gt 0 ]; then
+    echo "$n 个 .bad 文件：修法：删掉它们" >&2
+    FAILED=1
+  fi
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  self_fail() { echo "SELF-TEST FAIL: $*" >&2; exit 1; }
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  scan "$tmp"
+  [ "$FAILED" = 0 ] || self_fail "合成：干净树必须通过"
+  out="$(record "$tmp")"
+  case "$out" in
+    *'"files": 0'*) ;;
+    *) self_fail "合成：记录里要有文件数（得到 $out）" ;;
+  esac
+  echo "PASS: 合成 shell 守卫自测（干净树通过，记录成立）"
+  exit 0
+fi
+
+scan "${1:-.}"
+record "${1:-.}"
+[ "$FAILED" = 1 ] && exit 1
+exit 0
 ''',
     "clean-only-self-test-guard.py": '''#!/usr/bin/env python3
 """A guard whose --self-test only ever checks that a clean scan comes back.

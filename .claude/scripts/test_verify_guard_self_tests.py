@@ -255,8 +255,9 @@ scan "${1:-.}"
 '''
 
 #: A shell guard whose rules sit *after* its self-test block, which re-runs the
-#: script in a child (`bash "$0"`). There is no function before the block, so
-#: nothing can be silenced soundly and the tool declines instead of guessing.
+#: script in a child (`bash "$0"`). The verdict is still a literal `return 1`
+#: outside the block, so it can be silenced soundly — and the child re-run
+#: notices, because the child runs the silenced copy as well.
 PASSES_LATE_SHELL = '''#!/usr/bin/env bash
 set -u
 SELF_TEST=0
@@ -282,6 +283,85 @@ scan() {
 }
 
 scan "${1:-.}"
+'''
+
+#: A shell guard whose verdict is a variable (`exit "$CODE"`). Rewriting it means
+#: knowing what every assignment path holds, which this tool does not attempt.
+NAMED_SHELL_VERDICT = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+CODE=0
+
+scan() {
+  local root="$1" bad
+  bad="$(find "$root" -name '*.bad' -print 2>/dev/null || true)"
+  [ -z "$bad" ] && return 0
+  echo "$bad: 修法：删掉它" >&2
+  CODE=1
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  self_fail() { echo "SELF-TEST FAIL: $*" >&2; exit 1; }
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  scan "$tmp"
+  [ "$CODE" = 1 ] || self_fail "一个 .bad 文件必须报错"
+  echo "PASS: 「.bad」被报出"
+  exit 0
+fi
+
+scan "${1:-.}"
+exit "$CODE"
+'''
+
+#: A shell guard whose self-test only ever asserts the clean path and the record
+#: it emits. Silencing the rule must leave both intact — if it does not, the red
+#: comes from the record vanishing, not from the missing verdict.
+CLEAN_ONLY_SHELL = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+FAILED=0
+
+counts() {
+  find "$1" -name '*.bad' -print 2>/dev/null | grep -c . || true
+}
+
+record() {
+  printf '{"files": %s}\\n' "$(counts "$1")"
+}
+
+scan() {
+  local n
+  n="$(counts "$1")"
+  if [ "$n" -gt 0 ]; then
+    echo "$n 个 .bad 文件：修法：删掉它" >&2
+    FAILED=1
+  fi
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  self_fail() { echo "SELF-TEST FAIL: $*" >&2; exit 1; }
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  scan "$tmp"
+  [ "$FAILED" = 0 ] || self_fail "干净树必须通过"
+  out="$(record "$tmp")"
+  case "$out" in
+    *'"files": 0'*) ;;
+    *) self_fail "记录里要有文件数（得到 $out）" ;;
+  esac
+  echo "PASS: 干净树通过，记录成立"
+  exit 0
+fi
+
+scan "${1:-.}"
+record "${1:-.}"
+[ "$FAILED" = 1 ] && exit 1
+exit 0
 '''
 
 FAKE_GREEN = '''#!/usr/bin/env python3
@@ -556,12 +636,30 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertEqual(guard["status"], "ok", guard)
 
-    def test_silencing_stops_at_the_shell_self_test_block(self) -> None:
-        """A rule defined inside the block must keep firing, or its red is lost."""
+    def test_a_shell_guard_defined_below_its_self_test_is_still_judged(self) -> None:
+        """The rule sits after the block and the child re-run still sees the silenced copy."""
         code, guard, output = self._only({"lateshell.sh": PASSES_LATE_SHELL})
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_shell_guard_whose_verdict_is_a_variable_is_unverified(self) -> None:
+        """`exit "$CODE"` carries no literal to rewrite; declining beats guessing."""
+        code, guard, output = self._only({"namedshell.sh": NAMED_SHELL_VERDICT})
         self.assertEqual(code, 2, output)
         self.assertEqual(guard["status"], "unverified", guard)
-        self.assertIn("自测块之前没有可以静音的函数", guard["detail"])
+        self.assertIn("自测块之外没有非 0 的 exit/return", guard["detail"])
+
+    def test_silencing_a_shell_guard_keeps_its_scan_and_its_record(self) -> None:
+        """The shell twin of the blocker: a red made by the record vanishing is not a bite.
+
+        Silencing the whole rule function also stopped `record()` from writing
+        the `--json` line, so the self-test failed for the wrong reason and the
+        guard was blessed as biting. Rewriting only the verdict leaves the record
+        in place, and this self-test stays green — which is the truth about it.
+        """
+        code, guard, output = self._only({"cleanonly.sh": CLEAN_ONLY_SHELL})
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
 
     def test_a_guard_that_marks_success_with_OK_is_green(self) -> None:
         """unittest prints `OK`, not `PASS`; that is still a green self-test."""
