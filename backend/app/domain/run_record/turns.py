@@ -40,7 +40,7 @@
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 from sqlalchemy import (
@@ -57,6 +57,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.run_record.admin import WINDOWS
+from app.domain.run_record.repository import RunRecordRepository
 
 #: 一轮一行（`agent.models.AgentTurn`，表 `agent_turns`）。只读这四列。
 _turns = table(
@@ -134,6 +135,11 @@ class TurnOut(BaseModel):
     #: （`block.repositories.BlockRepository.forget_prompted_turn`）—— 失败的那一轮
     #: 恰恰最常读回空。批次的总次数还留在消息块上，但没有指针指回这一轮。
     prompt_attempts: int | None = None
+    #: 这一轮的会话最近发出一帧的种类，和那是多久以前。只由路由补在**还没结束**的
+    #: 轮次上（见 `api.routes.run_records._add_frames`）；空 = 不知道，不是 0 ——
+    #: 本进程不读这个会话，或者跑它的进程已经不在了，都是不知道。
+    last_frame_kind: str | None = None
+    last_frame_age_s: float | None = None
 
 
 class TurnListOut(BaseModel):
@@ -144,6 +150,28 @@ class TurnListOut(BaseModel):
     #: 这一窗口里一共有多少轮 —— 这一页只是它前面的 `limit` 行。
     total: int
     turns: list[TurnOut]
+
+
+class TurnRecordOut(BaseModel):
+    """这一轮落到运行记录里的一件事（`run_records` 的一行）。"""
+
+    id: str
+    kind: str
+    severity: str
+    content: str
+    at: str
+
+
+class TurnDetailOut(TurnOut):
+    """一轮的下钻：它怎么了，和它落到运行记录里的那几件事。"""
+
+    #: `failed` = 有一条终态失败事件；`unfinished` = 没有。
+    #:
+    #: **`stopped_at` 有值也不代表成功。** 成功不写事件（模块 docstring），这个
+    #: 读法只能证明平台没有为它落过终态失败事件，不能证明它做完了什么。所以没有
+    #: 事件时这里说的是 `unfinished`，不是 `done`。
+    status: Literal["failed", "unfinished"]
+    records: list[TurnRecordOut]
 
 
 def _event_type():
@@ -211,6 +239,56 @@ async def _prompt_attempts(
         except ValueError:  # 认领不是个轮次号 —— 不是这个读法的东西，跳过
             continue
     return found
+
+
+async def of_turn(session: AsyncSession, turn_id: uuid.UUID) -> dict[str, Any] | None:
+    """One turn by its full id, with what it left in the run records.
+
+    Reuses the same two reads as the window (`_failure_events`,
+    `_prompt_attempts`) so a turn's failure identity is answered the same way
+    whether it is found in a list or asked for on its own. ``None`` means
+    `agent_turns` has no row with this id — not that it never ran: rows are
+    closed, not deleted, so a turn from outside every retention window is
+    still found here.
+    """
+    row = (
+        await session.execute(
+            select(
+                _turns.c.id,
+                _turns.c.conversation_id,
+                _turns.c.started_at,
+                _turns.c.stopped_at,
+            ).where(_turns.c.id == turn_id)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    failures = await _failure_events(session, [turn_id])
+    attempts = await _prompt_attempts(session, [turn_id])
+    failure = failures.get(turn_id)
+    records = await RunRecordRepository(session).of_turns([turn_id])
+    return {
+        "turn_id": str(row.id),
+        "conversation_id": str(row.conversation_id),
+        "started_at": row.started_at.isoformat(),
+        "stopped_at": row.stopped_at.isoformat() if row.stopped_at else None,
+        "failure_event": failure,
+        # No terminal failure event is "nothing was recorded", not success.
+        # `stopped_at` is when the row closed, not evidence it finished: the
+        # only two answers this read gives are `failed` and `unfinished`.
+        "status": "failed" if failure else "unfinished",
+        "prompt_attempts": attempts.get(turn_id),
+        "records": [
+            {
+                "id": str(record.id),
+                "kind": record.kind,
+                "severity": record.severity,
+                "content": record.content,
+                "at": record.created_at.isoformat(),
+            }
+            for record in records
+        ],
+    }
 
 
 async def in_window(
