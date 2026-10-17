@@ -279,6 +279,22 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(config["compilerOptions"]["baseUrl"], str(frontend))
         self.assertEqual(config["compilerOptions"]["paths"], {"@/*": ["src/*"]})
         self.assertIn(f"{frontend}/env.d.ts", config["include"])
+        self.assertIn(f"{frontend}/src/**/*.d.ts", config["include"])
+        # The parent config carries `references`; leaving them in would pull the
+        # referenced projects' whole trees back into this run.
+        self.assertEqual(config["references"], [])
+        self.assertEqual(config["exclude"], [])
+        self.assertIs(config["compilerOptions"]["noEmit"], True)
+
+    def test_a_filename_containing_a_newline_is_one_target(self):
+        # The target list crosses a process boundary, so its separator has to be
+        # one a filename cannot contain. Newline-joined paths split a file named
+        # "a\nb.ts" into two targets, and both are compiled as names that do not
+        # exist.
+        (self.root / "frontend" / "src" / "a\nb.ts").write_text("export const x = 1\n")
+        result = self.run_script("frontend/src/a\nb.ts")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("checking 1 file(s)", result.stderr)
 
     def test_compiler_diagnostics_are_a_failure(self):
         # The one compiler status that is a verdict on the targets. vue-tsc
@@ -360,6 +376,45 @@ class SelectionTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("could not resolve the target paths", result.stderr)
+
+    def test_a_python_that_cannot_write_the_config_is_cannot_judge(self):
+        # The first python3 call resolves the target paths; the second writes the
+        # throwaway config. A python3 that survives the first and dies on the
+        # second must not leave the script reporting a type error either.
+        (self.root / "frontend" / "src" / "a.ts").write_text("export const x = 1\n")
+        bindir = Path(self.scratch.name) / "bin"
+        bindir.mkdir()
+        shim = bindir / "python3"
+        shim.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "-c" ]; then exec ' + sys.executable + ' "$@"; fi\n'
+            "exit 1\n"
+        )
+        shim.chmod(0o755)
+        result = self.run_script(
+            "frontend/src/a.ts",
+            env={"PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"},
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("could not write the throwaway tsconfig", result.stderr)
+
+    def test_a_failed_symlink_is_cannot_judge_not_a_failure(self):
+        # Without the link into frontend/node_modules the temp config resolves no
+        # types; the run stops rather than let a bare `ln` failure under `set -e`
+        # come out as "the targets have type errors".
+        (self.root / "frontend" / "src" / "a.ts").write_text("export const x = 1\n")
+        bindir = Path(self.scratch.name) / "bin"
+        bindir.mkdir()
+        broken = bindir / "ln"
+        broken.write_text("#!/bin/sh\nexit 1\n")
+        broken.chmod(0o755)
+        result = self.run_script(
+            "frontend/src/a.ts",
+            env={"PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"},
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("could not link", result.stderr)
+        self.assert_temp_clean()
 
     def test_help_prints_the_script_header(self):
         result = self.run_script("--help")

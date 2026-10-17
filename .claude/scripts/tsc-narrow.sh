@@ -173,9 +173,16 @@ trap 'rm -rf "$tmp"' EXIT
 
 # The symlink is what lets `types: ["vitest/globals", "vue/jsx", "vuetify"]` and
 # the `@/*` paths of frontend/tsconfig.json resolve from the temp config.
-ln -s "$FRONTEND/node_modules" "$tmp/node_modules"
+if ! ln -s "$FRONTEND/node_modules" "$tmp/node_modules"; then
+  echo "tsc-narrow.sh: could not link frontend/node_modules into $tmp;" >&2
+  echo "              nothing was judged." >&2
+  exit 2
+fi
 
-python3 - "$tmp/tsconfig.json" "$FRONTEND" "${targets[@]}" <<'PY'
+# Guarded like the rest: a bare command here runs under `set -e`, and its own
+# status 1 would leave the script as "the targets have type errors" with no
+# message — a verdict on targets the compiler never saw.
+if ! python3 - "$tmp/tsconfig.json" "$FRONTEND" "${targets[@]}" <<'PY'
 import json, sys
 
 out, frontend = sys.argv[1], sys.argv[2]
@@ -198,6 +205,11 @@ config = {
 with open(out, "w") as handle:
     json.dump(config, handle, indent=2)
 PY
+then
+  echo "tsc-narrow.sh: could not write the throwaway tsconfig in $tmp;" >&2
+  echo "              nothing was judged." >&2
+  exit 2
+fi
 
 # The API types are generated, not committed: a fresh checkout lacks them, and
 # without them every target that imports the API layer reports TS2307 for
