@@ -14,7 +14,12 @@ runs there with nothing of ours importable, like that one.
   were last written before ``grace_s`` — homes whose sandbox no longer exists
   (``disk_guard``). With ``walk``, also what each home holds (its /tmp is
   inside it) and the directory that holds most of it: a walk of every file,
-  which is why the guard asks for it far less often than for the rest.
+  which is why the guard asks for it far less often than for the rest. Also
+  what the machine itself uses — its memory, the CPU time its processes have
+  taken, its load — and what each sandbox's cgroup holds in memory now and at
+  most (``machine``, ``sandboxes``), for the admin machines page
+  (``readings``). A reading this machine cannot give, on one with no /proc or
+  no sandbox cgroups, is left out, not guessed.
 
 Answers one line of JSON.
 """
@@ -32,6 +37,11 @@ from pathlib import Path
 WALK_S = 60
 #: How deep the directory a home's usage is reported under goes.
 TOP_DEPTH = 4
+#: The machine's cgroup root, and where the sandbox helper puts each sandbox:
+#: a cgroup named after its home (``sandbox_host.CGROUP``, a copy held to this
+#: by test_footprint_root.py). Its files are readable by every user.
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+SANDBOX_CGROUPS = CGROUP_ROOT / "cheese-sandboxes"
 
 
 def destroy(cleanup, project, resource) -> dict:
@@ -123,6 +133,65 @@ def usage(root: Path, deadline: float) -> dict:
     }
 
 
+# Unannotated: this runs on a person's computer too, macOS's own Python 3.9
+# among them, which cannot evaluate `int | None`.
+def _number(path, field=None):
+    """An integer a kernel file holds — the whole file, or the value after
+    ``field`` on one of its lines — or None where there is none."""
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+    if field is None:
+        text = text.strip()
+        return int(text) if text.isdigit() else None
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == field and parts[1].isdigit():
+            return int(parts[1])
+    return None
+
+
+def machine() -> dict:
+    """What this machine uses: its memory from /proc/meminfo, which in a
+    MicroCloud LXC is the container's own (lxcfs); the CPU time its processes
+    have taken, from its cgroup root, a counter the platform turns into a
+    share between two readings; its one-minute load."""
+    found = {}
+    total = _number(Path("/proc/meminfo"), "MemTotal:")
+    available = _number(Path("/proc/meminfo"), "MemAvailable:")
+    if total and available is not None:
+        found["memory"] = total * 1024
+        found["memory_available"] = available * 1024
+    usage = _number(CGROUP_ROOT / "cpu.stat", "usage_usec")
+    if usage is not None:
+        found["cpu_usage_usec"] = usage
+    try:
+        found["load1"] = round(os.getloadavg()[0], 2)
+    except OSError:
+        pass
+    return found
+
+
+def sandboxes() -> list:
+    """Each sandbox the helper gave a cgroup: its home's name, and the memory
+    it holds now and has held at most since it started."""
+    found = []
+    groups = sorted(SANDBOX_CGROUPS.iterdir()) if SANDBOX_CGROUPS.is_dir() else []
+    for group in groups:
+        memory = _number(group / "memory.current") if group.is_dir() else None
+        if memory is None:
+            continue
+        found.append(
+            {
+                "resource": group.name,
+                "memory": memory,
+                "memory_peak": _number(group / "memory.peak"),
+            }
+        )
+    return found
+
+
 def disk(cleanup, live, grace_s, walk=True) -> dict:
     """What the homes on this machine hold, and the sandbox homes left behind.
 
@@ -157,6 +226,8 @@ def disk(cleanup, live, grace_s, walk=True) -> dict:
         "filesystem": filesystem(root if root.is_dir() else Path.home()),
         "homes": homes,
         "left_behind": left_behind,
+        "machine": machine(),
+        "sandboxes": sandboxes(),
     }
 
 

@@ -23,6 +23,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -363,6 +364,68 @@ class RetainedHomeArchive(UuidPk, Timestamps, Base):
     delete_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # When the conversation was told the archive is kept until then.
     told_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class HostReading(UuidPk, Base):
+    """What one platform host used at one disk check (``disk_guard``): its
+    disk and inodes, its memory, the CPU time its processes had taken and its
+    load, and how many sandboxes it was running. Written once a check, kept
+    for ``readings.KEEP``: the admin machines page shows the last and the
+    shape of the hours before it. A value the host could not give is NULL."""
+
+    __tablename__ = "host_readings"
+    __table_args__ = (Index("ix_host_readings_host_id_read_at", "host_id", "read_at"),)
+
+    host_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "cloud_hosts.id",
+            ondelete="CASCADE",
+            name="fk_host_readings_host_id_cloud_hosts",
+        )
+    )
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    disk_bytes: Mapped[int] = mapped_column(BigInteger)
+    disk_free_bytes: Mapped[int] = mapped_column(BigInteger)
+    inodes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    inodes_free: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_available_bytes: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    # A counter since the host started: what share of its cores it kept busy
+    # is the difference between two readings.
+    cpu_usage_usec: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    load1: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sandboxes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class SandboxUsage(Base):
+    """What one sandbox on a platform host holds, as last read: its memory,
+    now and at most, every disk check, and its home's bytes and inodes every
+    walk (``disk_guard``). One row a sandbox, gone with it. Apart from
+    ``sandbox_homes``, whose rows the sandbox lifecycle locks: a write every
+    minute there would queue behind it."""
+
+    __tablename__ = "sandbox_usages"
+
+    home_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "sandbox_homes.id",
+            ondelete="CASCADE",
+            name="fk_sandbox_usages_home_id_sandbox_homes",
+        ),
+        primary_key=True,
+    )
+    memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_peak_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    disk_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    disk_inodes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    disk_read_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
