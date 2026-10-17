@@ -884,7 +884,7 @@ def render_markdown(board: dict[str, Any], compare: dict[str, Any] | None = None
     # is `frozen` in the ratchet snapshot rather than a count of what somebody
     # wrote down. It used to be read from here, which is why the two disagreed
     # the moment a pull request stopped carrying the list.
-    out.append("| debt behind the nine contracts | per commit, in the ratchet snapshot |")
+    out.append("| debt behind the ten contracts | per commit, in the ratchet snapshot |")
     files = backend["files"]
     out.append(f"| imports inside a function | {backend['deferred_imports']} |")
     out.append(f"| files over 1000 lines (`backend/app`) | {files['files_over_1000']} |")
@@ -1610,7 +1610,7 @@ def self_test() -> int:
         return 1
     print(
         "PASS: arch-metrics self-test (grades A/B/C/D incl. a transitive api reach, "
-        "exceptions written beside the nine contracts, imports inside a function, cap offenders and "
+        "exceptions written beside the ten contracts, imports inside a function, cap offenders and "
         "excess lines, hotspot churn and fix share, same-day parallel edits, "
         "conflicting merges of main split registry-only vs code, a missing or "
         "unvouched PR ref set reported as missing rather than zero, and a compare "
