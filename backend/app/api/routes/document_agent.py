@@ -71,7 +71,7 @@ async def _blank_overview(db, doc) -> bool:
     return overview is not None and overview.id == doc.id and not doc.content.strip()
 
 
-@router.post("/{document_id}/agent")
+@router.post("/{document_id}/agent", dependencies=[ROUTE_DECIDES])
 async def ask_agent(
     document_id: uuid.UUID,
     body: AgentAskIn,

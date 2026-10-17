@@ -80,6 +80,7 @@ async def get_team_membership_service(
 @router.delete(
     "/me/team-requests/{requestId}",
     summary="Cancel my pending join request",
+    dependencies=[ROUTE_DECIDES],
 )
 async def cancel_my_join_request(
     request_id: Annotated[int, Path(ge=1, alias="requestId")],
@@ -115,6 +116,7 @@ async def leave_team(
 @router.post(
     "/me/team-invitations/{invitationId}/accept",
     summary="Accept a team invitation",
+    dependencies=[ROUTE_DECIDES],
 )
 async def accept_team_invitation(
     invitation_id: Annotated[int, Path(ge=1, alias="invitationId")],

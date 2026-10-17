@@ -104,7 +104,7 @@ from app.domain.webhook import service as webhook_service
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("")
+@router.post("", dependencies=[ROUTE_DECIDES])
 async def create_topic(
     body: TopicCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
