@@ -29,26 +29,32 @@ root through `__file__`, a distinct dot-prefixed name so no existing file is
 touched — and the copy is removed in a `finally`. A Python guard is silenced by
 AST-guided edits to the statements *inside functions* other than `self_test()`
 and the `__main__` block, and only to the statements that *emit* a failure: a
-`return` of a non-zero code becomes `return 0` — an int, a tuple whose first
-element is the code (`return 1, lines, record`), or a conditional
-(`return 0 if verdict.ok else 1`) — and `sys.exit(<non-zero>)` /
-`raise SystemExit(<non-zero>)` become their zero form. Collectors
-(`findings.append(…)`, `lines.extend(…)`) are deliberately left alone: nulling
-one also breaks the guard's own scan, so the self-test goes red because a *clean*
-fixture of its own broke, not because the failure signal was taken away — a red
-that proves nothing, and the tool would bless a self-test that never looks at a
-violation. The entry point is left alone on purpose: silencing it would stop the
-self-test from running at all, which reads as red without the self-test having
-noticed anything. A shell guard's non-zero `exit`/`return` lines are rewritten
-to `exit 0`/`return 0` instead — the same rule applied without an AST — and its
-whole `if … SELF_TEST …; then` block, `self_fail` included, is left untouched.
-A verdict written as a variable (`exit "$CODE"`) offers no literal to rewrite
-and is reported as UNVERIFIED rather than guessed at.
+non-zero `sys.exit` / `raise SystemExit`, and a `return` whose value reaches the
+process exit status — `main`'s, and whatever `main` returns straight through
+(`return judge(root)`, `code, _ = report(root); return code`). A `return 1` in a
+helper that answers a yes/no question — `is_good(line)`, read as
+`if not is_good(line)` — never becomes the exit status, and rewriting it would
+invert the helper and break a clean fixture: the self-test would go red for the
+mutation's own damage, which proves nothing. Collectors
+(`findings.append(…)`, `lines.extend(…)`) are left alone for the same reason.
+The entry point is left alone on purpose: silencing it would stop the self-test
+from running at all, which reads as red without the self-test having noticed
+anything. A shell guard's verdict is rewritten the same way: a non-zero `exit`
+anywhere (it ends the script) and a non-zero `return` inside a function whose
+status is the script's own exit status — the function invoked by the script's
+last line, or invoked last inside such a function. `return 1` in a grep-style
+predicate (`has_bad`, read as `if has_bad "$1"`) is not a verdict. Only words in
+command position count, so an `exit 1` written into a record the guard prints —
+in quotes or a heredoc — is left as printed. Its whole `if … SELF_TEST …; then`
+block, `self_fail` included, is left untouched, and a `fi` inside a heredoc does
+not end that block. A verdict written as a variable (`exit "$CODE"`) offers no
+literal to rewrite and is reported as UNVERIFIED rather than guessed at.
 
 A copy that goes green on a *silenced* guard is reported as a finding — unless
 the guard hands the work to another script file: a `.py` name that is not its
 own in the command position of a spawn (the program a `subprocess`/`os.exec*`
-call runs, `-m`/`-c` included), or a spawn under a self-test condition. There
+call runs, `-m`/`-c` included — a command list held in a variable is resolved
+back to its assignment), or a spawn under a self-test condition. There
 the mutation never reaches the process that judges. Arguments *after* the
 program are the guard's own command line — a `.py` fixture passed as input does
 not make the guard foreign — and a guard that re-runs *itself*
@@ -123,9 +129,16 @@ _PYTHON_RE = re.compile(r"^python(\d+(\.\d+)?)?$")
 #: belongs to the self-test itself and is left as it is.
 _SHELL_SELF_TEST_RE = re.compile(r"^\s*if\b.*\bSELF_TEST\b.*;\s*then\b")
 
-#: A shell guard's verdict: a non-zero `exit` or `return`. Silencing the verdict
-#: leaves the scan — and anything it prints or writes — exactly where it was.
-_SHELL_NONZERO_RE = re.compile(r"(?<![\w$])(exit|return)\s+([1-9]\d*)\b")
+#: A heredoc opener. Its body is data — a record the guard prints, a generated
+#: sample — so nothing in it is the guard's own verdict.
+_HEREDOC_RE = re.compile(r"<<-?\s*(?P<quote>['\"]?)(?P<word>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)")
+
+#: A shell function definition that opens a block: `name() {` on a line of its
+#: own. A one-line `name() { …; }` has no body range worth tracking.
+_SHELL_FUNCTION_RE = re.compile(r"^(?P<name>[A-Za-z_][\w-]*)\s*\(\)\s*\{\s*(?:#.*)?$")
+
+#: A line that is a bare invocation of one of the guard's functions.
+_SHELL_BARE_CALL_RE = re.compile(r"^(?P<name>[A-Za-z_][\w-]*)(?:\s|$)")
 
 
 @dataclass
@@ -251,7 +264,14 @@ def delegated_self_test(tree: ast.Module, source: str) -> bool:
 
 
 def _spawned_script(node: ast.Call) -> ast.AST | None:
-    """The expression naming the file a spawn call executes, if it runs one.
+    """The expression naming the file a spawn call executes, if it runs one."""
+    if not isinstance(node, ast.Call) or not node.args:
+        return None
+    return _script_position(node.args[0])
+
+
+def _script_position(command: ast.expr) -> ast.AST | None:
+    """The expression naming the file a spawn command executes, if it runs one.
 
     Only the program in the command position counts. Everything after it is the
     guard's own command line — a `--root <dir>` and any fixture name ending in
@@ -259,9 +279,6 @@ def _spawned_script(node: ast.Call) -> ast.AST | None:
     `git ls-files '*.py'` runs no script at all. For `python -m` / `python -c`
     the constant itself comes back, since what runs is a module or inline code.
     """
-    if not isinstance(node, ast.Call) or not node.args:
-        return None
-    command = node.args[0]
     if not isinstance(command, (ast.List, ast.Tuple)):
         return command
     parts = list(command.elts)
@@ -312,6 +329,28 @@ def _runs_foreign_script(script: ast.AST | None, own_name: str) -> bool:
     return False
 
 
+def _assigned_commands(tree: ast.Module) -> dict[str, ast.AST]:
+    """Command lists bound to a name, so `cmd = [...]` / `subprocess.call(cmd)` resolves.
+
+    Without this the call site sees only a bare name, decides the guard re-runs
+    itself, and reports a bite that never happened against a guard whose
+    self-test actually lives in the file that variable names.
+    """
+    assigned: dict[str, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets = [target for target in node.targets if isinstance(target, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target]
+        else:
+            continue
+        if not isinstance(node.value, (ast.List, ast.Tuple)):
+            continue
+        for target in targets:
+            assigned.setdefault(target.id, node.value)
+    return assigned
+
+
 def spawns_foreign_file(tree: ast.Module, own_name: str) -> bool:
     """Does the guard run another script file, rather than re-running itself?
 
@@ -321,11 +360,16 @@ def spawns_foreign_file(tree: ast.Module, own_name: str) -> bool:
     `python -m unittest` — runs the real script in a fresh process where the
     mutation does not exist, so its green says nothing of this copy.
     """
-    return any(
-        _runs_foreign_script(_spawned_script(node), own_name)
-        for node in ast.walk(tree)
-        if _spawn_target(node)
-    )
+    assigned = _assigned_commands(tree)
+    for node in ast.walk(tree):
+        if not _spawn_target(node):
+            continue
+        command = node.args[0] if node.args else None
+        if isinstance(command, ast.Name) and command.id in assigned:
+            command = assigned[command.id]
+        if _runs_foreign_script(_script_position(command) if command is not None else None, own_name):
+            return True
+    return False
 
 
 def _exit_code_names(tree: ast.Module) -> set[str]:
@@ -399,6 +443,79 @@ def _exit_arg(call: ast.AST) -> tuple[ast.expr, tuple[int, int]] | None:
     return arg, (arg.col_offset, arg.end_col_offset)
 
 
+def _own_nodes(root: ast.AST):
+    """Descendants of `root` that are not inside a nested function or class."""
+    stack = list(ast.iter_child_nodes(root))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _verdict_return_lines(tree: ast.Module) -> set[int]:
+    """Line numbers of `return`s whose value becomes the process exit status.
+
+    A guard reports through `sys.exit(main(...))` / `raise SystemExit(main(...))`,
+    so only `main`'s value — and whatever `main` returns straight through — is
+    the verdict. A `return 1` in a helper that answers a yes/no question, like
+    `is_good(line)` read as `if not is_good(line)`, never reaches the exit
+    status; rewriting it breaks the clean path instead of silencing the verdict,
+    and the resulting red proves nothing about the self-test.
+    """
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    lines: set[int] = set()
+    seen: set[str] = set()
+
+    def follow(name: str) -> None:
+        if name in seen or name == "self_test":
+            return
+        seen.add(name)
+        function = functions.get(name)
+        if function is None:
+            return
+        returned: set[str] = set()
+        for node in _own_nodes(function):
+            if not isinstance(node, ast.Return) or node.value is None:
+                continue
+            lines.add(node.lineno)
+            value = node.value
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+                follow(value.func.id)
+            elif isinstance(value, ast.Name):
+                returned.add(value.id)
+        # `code, _ = report(root); return code` — the code is the verdict, so
+        # whatever produced it carries the verdict too.
+        for node in _own_nodes(function):
+            if not isinstance(node, ast.Assign) or not returned:
+                continue
+            if not isinstance(node.value, ast.Call) or not isinstance(node.value.func, ast.Name):
+                continue
+            targets: set[str] = set()
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    targets.add(target.id)
+                elif isinstance(target, ast.Tuple):
+                    targets.update(elt.id for elt in target.elts if isinstance(elt, ast.Name))
+            if targets & returned:
+                follow(node.value.func.id)
+
+    for node in ast.walk(tree):
+        entry = node.exc if isinstance(node, ast.Raise) else node
+        found = _exit_arg(entry) if isinstance(entry, ast.Call) else None
+        if found is None:
+            continue
+        arg, _ = found
+        if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name):
+            follow(arg.func.id)
+
+    return lines
+
+
 def _python_edits(
     tree: ast.Module, source: str, skip: set[int]
 ) -> dict[int, list[tuple[int, int, bytes | None]]]:
@@ -408,7 +525,8 @@ def _python_edits(
     is left working, so a copy that dies did so while running, not on import —
     and an outer node chosen for replacement stops the walk so a nested call is
     not also rewritten. What gets rewritten is only where the guard *emits* its
-    verdict: `return`s of a non-zero code and non-zero `sys.exit`/`SystemExit`.
+    verdict: a non-zero `sys.exit`/`SystemExit`, and a `return` whose value
+    reaches the exit status through `main` (see `_verdict_return_lines`).
     An exit argument that is a call — `raise SystemExit(main(argv))` — keeps
     running and only its result is discarded: replacing it with `0` would delete
     whatever that call printed or wrote, and a red caused by that proves nothing.
@@ -416,6 +534,7 @@ def _python_edits(
     edits: dict[int, list[tuple[int, int, bytes]]] = {}
     skipped = skip | _main_block_lines(tree, source)
     codes = frozenset(_exit_code_names(tree))
+    verdicts = _verdict_return_lines(tree)
 
     def record(node: ast.AST, span: tuple[int, int], replacement: bytes | None = b"0") -> None:
         # `None` means "wrap the original in place": it still runs, its result is
@@ -442,7 +561,11 @@ def _python_edits(
                     arg, span = found
                     record(node, span, b"0" if isinstance(arg, ast.Constant) else None)
                     return
-            if isinstance(node, ast.Return) and node.value is not None:
+            if (
+                isinstance(node, ast.Return)
+                and node.value is not None
+                and node.lineno in verdicts
+            ):
                 span = _code_span(node.value, codes)
                 if span is not None:
                     record(node, span)
@@ -491,42 +614,210 @@ def mutate_python(source: str) -> tuple[str | None, str]:
 def mutate_shell(source: str) -> tuple[str | None, str]:
     """A copy of a shell guard that reaches every conclusion and returns clean.
 
-    Only the failure verdict is rewritten: a non-zero `exit` or `return` becomes
-    `exit 0` / `return 0`. The scan runs to the end, so everything it prints,
-    records or accumulates still happens — a self-test that only looks at those
-    keeps passing, which is exactly what has to be reported as toothless. The
-    self-test block itself, and its `self_fail` helper, are left untouched.
+    Only the failure verdict is rewritten: a non-zero `exit` — anywhere, since
+    it ends the script — and a non-zero `return` inside a function whose status
+    is the script's own exit status. Everything else is left alone, including
+    `return 1` in a helper that answers a yes/no question (`has_bad`, read as
+    `if has_bad "$1"`) and any `exit 1` written into a record it prints. The
+    scan runs to the end, so what it prints, records or accumulates still
+    happens — a self-test that only looks at those keeps passing, which is
+    exactly what has to be reported as toothless. The self-test block itself,
+    and its `self_fail` helper, are left untouched.
     """
     lines = source.splitlines(keepends=True)
-    block = _shell_self_test_span(lines)
+    heredocs = _shell_heredoc_lines(lines)
+    ranges = _shell_function_ranges(lines)
+    block = _shell_self_test_span(lines, heredocs)
     if block is None:
         return None, "找不到 `if … SELF_TEST …; then` 自测块，静音不了守卫的结论"
+    owners = _shell_line_owners(lines, ranges)
+    verdicts = _shell_verdict_functions(lines, ranges, owners, heredocs, block)
     start, end = block
     out: list[str] = []
     count = 0
     for index, line in enumerate(lines):
-        if not start <= index <= end and not line.lstrip().startswith("#"):
-            line, replaced = _SHELL_NONZERO_RE.subn(r"\1 0", line)
-            count += replaced
+        if start <= index <= end or index in heredocs or line.lstrip().startswith("#"):
+            out.append(line)
+            continue
+        line, replaced = _silence_shell_line(line, owners[index] in verdicts)
+        count += replaced
         out.append(line)
     if count == 0:
         return None, "自测块之外没有非 0 的 exit/return，静音不了守卫的结论"
     return "".join(out), ""
 
 
-def _shell_self_test_span(lines: list[str]) -> tuple[int, int] | None:
+def _silence_shell_line(line: str, allow_return: bool) -> tuple[str, int]:
+    """Rewrite a non-zero `exit` (and, where allowed, `return`) to 0.
+
+    Only a word in command position, outside quotes and comments, counts: a
+    verdict written into printed text — `"… exit 1 signals violations"` — is
+    output, not an exit status, and rewriting it changed what the guard said.
+    """
+    out: list[str] = []
+    index = 0
+    quote = ""
+    count = 0
+    length = len(line)
+    while index < length:
+        char = line[index]
+        if quote:
+            if char == "\\" and quote == '"':
+                out.append(line[index : index + 2])
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+            out.append(char)
+            index += 1
+            continue
+        if char == "\\":
+            out.append(line[index : index + 2])
+            index += 2
+            continue
+        if char in "'\"":
+            quote = char
+            out.append(char)
+            index += 1
+            continue
+        if char == "#" and (index == 0 or line[index - 1] in " \t;|&({"):
+            out.append(line[index:])
+            break
+        word = next(
+            (candidate for candidate in ("return", "exit") if line.startswith(candidate, index)),
+            None,
+        )
+        at_command = index == 0 or line[index - 1] in " \t;|&({"
+        if (
+            word is not None
+            and at_command
+            and (word != "return" or allow_return)
+            and line[index + len(word) : index + len(word) + 1] in (" ", "\t")
+        ):
+            after = index + len(word)
+            match = re.match(r"[ \t]+([1-9]\d*)(?=\s|;|$)", line[after:])
+            if match is not None:
+                out.append(word)
+                out.append(match.group(0)[: match.start(1)])
+                out.append("0")
+                index = after + match.end(1)
+                count += 1
+                continue
+        out.append(char)
+        index += 1
+    return "".join(out), count
+
+
+def _shell_heredoc_lines(lines: list[str]) -> set[int]:
+    """Line indices inside a heredoc body, its terminator included."""
+    inside: set[int] = set()
+    pending: list[str] = []
+    for index, line in enumerate(lines):
+        if pending:
+            inside.add(index)
+            if line.strip() == pending[0]:
+                pending.pop(0)
+            continue
+        if line.lstrip().startswith("#"):
+            continue
+        pending.extend(match.group("word") for match in _HEREDOC_RE.finditer(line))
+    return inside
+
+
+def _shell_function_ranges(lines: list[str]) -> dict[str, tuple[int, int]]:
+    """`name() {` … `}` ranges, both ends inclusive, keyed by function name."""
+    ranges: dict[str, tuple[int, int]] = {}
+    for start, line in enumerate(lines):
+        match = _SHELL_FUNCTION_RE.match(line.strip())
+        if match is None:
+            continue
+        name = match.group("name")
+        indent = len(line) - len(line.lstrip())
+        for candidate in range(start + 1, len(lines)):
+            closing = lines[candidate]
+            if closing.strip() == "}" and len(closing) - len(closing.lstrip()) == indent:
+                ranges[name] = (start, candidate)
+                break
+    return ranges
+
+
+def _shell_line_owners(lines: list[str], ranges: dict[str, tuple[int, int]]) -> list[str | None]:
+    owners: list[str | None] = [None] * len(lines)
+    for name, (start, end) in ranges.items():
+        for index in range(start, end + 1):
+            owners[index] = name
+    return owners
+
+
+def _bare_call(line: str, names: set[str]) -> str | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    match = _SHELL_BARE_CALL_RE.match(stripped)
+    if match is None or match.group("name") not in names:
+        return None
+    return match.group("name")
+
+
+def _shell_verdict_functions(
+    lines: list[str],
+    ranges: dict[str, tuple[int, int]],
+    owners: list[str | None],
+    heredocs: set[int],
+    block: tuple[int, int],
+) -> set[str]:
+    """Functions whose status is the script's exit status.
+
+    The script's status is its last command's, so only the function invoked by
+    that last line — and functions invoked last inside it — can carry the
+    verdict. A helper read as a condition (`if has_bad "$1"`) never does.
+    """
+    names = set(ranges)
+    start, end = block
+    verdicts: set[str] = set()
+    for index in range(len(lines) - 1, -1, -1):
+        if owners[index] is not None or index in heredocs or start <= index <= end:
+            continue
+        name = _bare_call(lines[index], names)
+        if name is not None:
+            verdicts.add(name)
+            break
+    queue = list(verdicts)
+    while queue:
+        name = queue.pop()
+        first, last = ranges[name]
+        for index in range(last - 1, first, -1):
+            stripped = lines[index].strip()
+            if not stripped or stripped.startswith("#") or index in heredocs:
+                continue
+            callee = _bare_call(lines[index], names)
+            if callee is not None and callee != name and callee not in verdicts:
+                verdicts.add(callee)
+                queue.append(callee)
+            break
+    return verdicts
+
+
+def _shell_self_test_span(
+    lines: list[str], heredocs: set[int] | None = None
+) -> tuple[int, int] | None:
     """The line range of the `if … SELF_TEST …; then` block, both ends inclusive.
 
     The block owns its own failure reporting (`self_fail`, inline `exit 1`), so
     none of it may be rewritten. It ends at the `fi` written at the same
-    indentation as its `if`; a missing `fi` runs to the end of the file, where
-    declining to silence anything is still honest.
+    indentation as its `if`; a `fi` that only appears inside a heredoc — a
+    generated sample the self-test writes — is data, not the block's end. A
+    missing `fi` runs to the end of the file, where declining to silence
+    anything is still honest.
     """
+    heredocs = heredocs or set()
     for start, line in enumerate(lines):
         if not _SHELL_SELF_TEST_RE.match(line):
             continue
         indent = len(line) - len(line.lstrip())
         for end in range(start + 1, len(lines)):
+            if end in heredocs:
+                continue
             if lines[end].strip() == "fi" and len(lines[end]) - len(lines[end].lstrip()) == indent:
                 return start, end
         return start, len(lines) - 1
@@ -707,8 +998,9 @@ def self_test() -> int:
     print(
         "PASS: verify-guard-self-tests self-test（失败信号的每种写法都判得出咬合力——条件返回、"
         "元组返回、裸 return、模块级命名常量、SystemExit、SystemExit(调用)、shell 的 exit/return；"
-        "参数里的 .py 不算委派；只查干净夹具的假绿被检出（Python 与 shell 各一）、空转假绿被检出、"
-        "缺自测与没变绿各自报出、委派给旁置测试文件的判不了）"
+        "谓词里的 return 1 和打印记录里的 exit 1 都不算结论；heredoc 里的 fi 不结束自测块；"
+        "参数里的 .py 不算委派、存进变量的命令也会还原；只查干净夹具的假绿被检出（Python 与 shell 各一）、"
+        "空转假绿被检出、缺自测与没变绿各自报出、委派给旁置测试文件的判不了）"
     )
     return 0
 

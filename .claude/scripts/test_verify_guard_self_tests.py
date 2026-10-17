@@ -517,6 +517,201 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 '''
 
+#: A guard whose helper answers a yes/no question with 1 for *good*. Silencing
+#: that `return 1` inverts the helper and breaks the clean path, so a red would
+#: be the mutation's doing, not the self-test's.
+PY_PREDICATE = '''#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+GOOD = "ok"
+
+
+def is_good(line):
+    return 1 if line.strip() == GOOD else 0
+
+
+def scan(root):
+    bad = []
+    for path in sorted(Path(root).rglob("*.txt")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not is_good(line):
+                bad.append(f"{path.name}: {line}")
+    return bad
+
+
+def judge(root):
+    bad = scan(root)
+    for item in bad:
+        print(f"{item}: 修法：每行都写成 {GOOD}", file=sys.stderr)
+    return 1 if bad else 0
+
+
+def self_test():
+    import tempfile
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "a.txt").write_text("ok\\n", encoding="utf-8")
+        if scan(root) != []:
+            print("SELF-TEST FAIL: 干净夹具被报成违规", file=sys.stderr)
+            return 1
+    print("PASS: 干净夹具")
+    return 0
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    return judge(Path(argv[1]) if len(argv) > 1 else Path("."))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The shell twin: `has_bad` returns 1 when nothing is wrong, exactly the
+#: convention `grep -q` uses. Rewriting it inverts the rule instead of
+#: silencing it.
+SHELL_PREDICATE = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+has_bad() {
+  find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q . && return 0
+  return 1
+}
+
+scan() {
+  if has_bad "$1"; then
+    echo "找到 .bad 文件；修法：删掉它" >&2
+    exit 1
+  fi
+  echo "clean"
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  out="$(scan "$tmp" 2>&1)"
+  [ "$out" = "clean" ] || { echo "SELF-TEST FAIL: 干净扫描输出 $out" >&2; exit 1; }
+  echo "PASS: 干净扫描"
+  exit 0
+fi
+
+scan "${1:-.}"
+'''
+
+#: A guard that prints its verdict as part of a record. `exit 1` written into
+#: that text is output, not an exit status; rewriting it changes what the guard
+#: says and makes the record assertion fail for the wrong reason.
+SHELL_RECORD_TEXT = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+count_bad() { find "$1" -name '*.bad' -type f 2>/dev/null | wc -l | tr -d ' '; }
+
+record() {
+  local n; n="$(count_bad "$1")"
+  printf '{"bad": %s, "hint": "删掉它们；exit 1 表示违规"}\\n' "$n"
+}
+
+scan() {
+  local n; n="$(count_bad "$1")"
+  record "$1"
+  if [ "$n" -gt 0 ]; then
+    echo "$n 个违规；修法：删掉它们" >&2
+    return 1
+  fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  scan "$tmp" || { echo "SELF-TEST FAIL: 干净夹具被拒" >&2; exit 1; }
+  rec="$(record "$tmp")"
+  want='{"bad": 0, "hint": "删掉它们；exit 1 表示违规"}'
+  [ "$rec" = "$want" ] || { echo "SELF-TEST FAIL: 记录是 $rec" >&2; exit 1; }
+  echo "PASS: 干净扫描与记录"
+  exit 0
+fi
+
+scan "${1:-.}"
+'''
+
+#: The same record, written through a heredoc instead of `printf`. The heredoc
+#: body is data too, and its `exit 1` must survive the mutation untouched.
+SHELL_HEREDOC_RECORD = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+count_bad() { find "$1" -name '*.bad' -type f 2>/dev/null | wc -l | tr -d ' '; }
+
+record() {
+  local n; n="$(count_bad "$1")"
+  cat <<EOF
+{"bad": $n}
+{"hint": "违规会让钩子 exit 1"}
+EOF
+}
+
+scan() {
+  local n; n="$(count_bad "$1")"
+  record "$1"
+  if [ "$n" -gt 0 ]; then echo "$n 个违规；修法：删掉" >&2; return 1; fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  scan "$tmp" || { echo "SELF-TEST FAIL: 干净夹具被拒" >&2; exit 1; }
+  rec="$(record "$tmp")"
+  want='{"bad": 0}
+{"hint": "违规会让钩子 exit 1"}'
+  [ "$rec" = "$want" ] || { echo "SELF-TEST FAIL: 记录是 $rec" >&2; exit 1; }
+  echo "PASS: 干净扫描与记录"
+  exit 0
+fi
+
+scan "${1:-.}"
+'''
+
+#: The self-test writes a sample containing a `fi` at column 0. That `fi` is
+#: data, not the end of the self-test block; treating it as the end hides the
+#: self-test's own `exit 1` and turns a biting guard into an unverified one.
+SHELL_HEREDOC_FI = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+has_bad() { find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q .; }
+
+scan() {
+  if has_bad "$1"; then
+    echo "找到 .bad 文件；修法：删掉它" >&2
+    return 1
+  fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  cat > "$tmp/sample.sh" <<'EOF'
+if [ -n "$x" ]; then
+  echo ok
+fi
+EOF
+  scan "$tmp" >/dev/null 2>&1
+  [ $? -ne 0 ] || { echo "SELF-TEST FAIL: .bad 文件必须被报出" >&2; exit 1; }
+  echo "PASS: .bad 文件被报出"
+  exit 0
+fi
+
+scan "${1:-.}"
+'''
+
 NO_SELF_TEST = '''#!/usr/bin/env python3
 import sys
 
@@ -635,6 +830,49 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+'''
+
+
+#: The same hand-off, with the command built into a variable first. Reading
+#: only the call site sees a bare name, decides the guard re-runs itself, and
+#: reports a bite that never happened against a sibling test it never ran.
+DELEGATING_VARIABLE = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    return 0
+
+
+def self_test():
+    command = [sys.executable, str(Path(__file__).with_name("test_handoff.py"))]
+    code = subprocess.call(command)
+    if code != 0:
+        print("SELF-TEST FAIL: 旁置测试失败", file=sys.stderr)
+        return 1
+    print("PASS: 旁置测试跑通了")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+DELEGATING_VARIABLE_SIBLING = '''#!/usr/bin/env python3
+import unittest
+
+
+class HandoffTest(unittest.TestCase):
+    def test_ok(self):
+        self.assertTrue(True)
+
+
+if __name__ == "__main__":
+    unittest.main()
 '''
 
 
@@ -759,6 +997,42 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
 
+    def test_a_python_predicate_that_answers_yes_is_not_the_verdict(self) -> None:
+        """`return 1` for a *good* line is not the exit status; rewriting it inverts the rule."""
+        code, guard, output = self._only({"predicate.py": PY_PREDICATE})
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_shell_predicate_that_answers_yes_is_not_the_verdict(self) -> None:
+        """`has_bad`'s `return 1` is the grep convention, not the guard's verdict."""
+        code, guard, output = self._only({"predicate.sh": SHELL_PREDICATE})
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_silencing_a_shell_guard_leaves_printed_text_alone(self) -> None:
+        """`exit 1` inside a record the guard prints is output, not an exit status.
+
+        Rewriting it changes the record, so a record assertion fails and the
+        guard looks like it bites. This self-test only checks the clean path.
+        """
+        for name, source in (
+            ("record.sh", SHELL_RECORD_TEXT),
+            ("heredoc-record.sh", SHELL_HEREDOC_RECORD),
+        ):
+            code, guard, output = self._only({name: source})
+            self.assertEqual(code, 1, output)
+            self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_fi_inside_a_heredoc_does_not_end_the_self_test_block(self) -> None:
+        """The self-test writes a sample containing `fi`; that line is data.
+
+        Reading it as the block's end leaves the self-test's own `exit 1`
+        rewritten, so a guard that really bites was reported as unverified.
+        """
+        code, guard, output = self._only({"heredocfi.sh": SHELL_HEREDOC_FI})
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
     def test_a_guard_that_marks_success_with_OK_is_green(self) -> None:
         """unittest prints `OK`, not `PASS`; that is still a green self-test."""
         code, guard, output = self._only({"okline.py": OK_LINE})
@@ -768,6 +1042,15 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
     def test_a_guard_that_hands_its_self_test_off_is_not_called_a_bite(self) -> None:
         """The copy is not the file such a test reads, so neither verdict is earned."""
         code, guard, output = self._only({"delegating.py": DELEGATING}, {"test_delegating.py": DELEGATING_SIBLING})
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_hand_off_built_into_a_variable_is_still_unverified(self) -> None:
+        """The command is in `command`; the call site alone says the guard re-runs itself."""
+        code, guard, output = self._only(
+            {"handoff.py": DELEGATING_VARIABLE}, {"test_handoff.py": DELEGATING_VARIABLE_SIBLING}
+        )
         self.assertEqual(code, 2, output)
         self.assertEqual(guard["status"], "unverified", guard)
         self.assertIn("测试文件", guard["detail"])
