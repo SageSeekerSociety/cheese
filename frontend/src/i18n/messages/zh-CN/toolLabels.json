@@ -105,5 +105,6 @@
   "bashKill": "终止后台任务",
   "bashList": "列出后台任务",
   "cheeseSkillDraft": "起草技能",
-  "cheeseSkillUpdate": "提议修改技能"
+  "cheeseSkillUpdate": "提议修改技能",
+  "codemode": "运行脚本"
 }

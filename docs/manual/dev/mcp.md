@@ -15,7 +15,7 @@ covers:
 
 芝士在房间里做的事——发消息、创建任务、递卡、写文档——都是调用平台工具。这一页讲这张表长什么样、它怎么变成三种骨架各自手里的工具，以及机器够不着时会发生什么。
 
-> 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己声明的 MCP 服务，见[项目自定义 MCP](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
+> 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己的 MCP 服务器，见[项目的 MCP 服务器](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
 
 ## 一张表，45 样 {#table}
 
@@ -63,13 +63,13 @@ covers:
 | Codex | 后端把表当 `dynamicTools` 发过去（`harness/codex/tools.py` 的 `platform_tools()`、`RemoteTools.discover`），调用按 `PLATFORM` 这条路由原地执行 | `chat_send` |
 | pi | 平台给 pi 的 extension（`harness/pi/platform.ts` 的 `registerPlatformTools`）把目录注册成工具；目录由 `harness/pi/catalog.py` 读随 runner 一起送到中心机的那份 CLI 文件生成 | `chat_send` |
 
-**Claude Code 的约定**：服务器注册名固定叫 `native`，项目自己的 MCP 服务不许叫这个名字，撞上直接报错；写 `mcp.json` 时用 `--strict-mcp-config --mcp-config <路径>` 钉住这一次的清单。`native` 底下不全是平台工具：`invoke` 是这个 harness 搬运读写与命令的通道（Read / Edit / Bash 都从它过），`project_tools` 是项目 MCP 的入口（见[项目自定义 MCP](/dev/remote-mcp)），`send_user_file` 替内置的 SendUserFile 交文件。
+**Claude Code 的约定**：服务器注册名固定叫 `native`，项目自己的 MCP 服务不许叫这个名字，撞上直接报错；写 `mcp.json` 时用 `--strict-mcp-config --mcp-config <路径>` 钉住这一次的清单。`native` 底下不全是平台工具：`invoke` 是这个 harness 搬运读写与命令的通道（Read / Edit / Bash 都从它过），`send_user_file` 替内置的 SendUserFile 交文件。项目自己的服务器不在 `native` 底下：它们是 Claude Code 自己的 HTTP 服务器，连在会话的网关上（见[项目的 MCP 服务器](/dev/remote-mcp#gateway)）。
 
-Codex 那条路走 `RemoteTools.discover`：先向执行器问 `native` 和各个项目服务的 `tools/list`，`native` 底下的只留 `NATIVE_TOOLS` 那九个，项目服务的一律写成 `mcp__<服务>__<工具>`，最后把平台表整个并进来；命重当场报错，不猜谁该赢。调用时按路由分两路：平台工具走 `run_platform_tool` 原地打后端，项目工具走执行器的 `invoke`。
+Codex 那条路走 `RemoteTools.discover`：向执行器问 `native` 的 `tools/list`，只留 `NATIVE_TOOLS` 那九个，再把平台表整个并进来；命重当场报错，不猜谁该赢。调用时按路由分两路：平台工具走 `run_platform_tool` 原地打后端，执行器自己的工具走 `invoke`。项目的 MCP 服务器不在这张表里，由 Codex 自己的 MCP 客户端连会话的网关。
 
-**pi 自己没有 MCP 客户端**，平台工具因此不走 MCP，而是作为 extension 工具注册进去（`platform.ts` 的 `registerPlatformTools`）。送到的是它们由来的那个文件：平台的 `cheese`（`backend/sandbox/cheese`），既带平台工具表也带 CLI 的命令树，随 runner 的归档一起送到中心机（`pi/bundle.py`）。`catalog.tools()` = `PLATFORM_TOOLS.schemas()` + `cli_worker._tools(parser)`。一次调用经 socket 回到 runner（`runner.py` 的 `run_cli`）：平台表里的工具在 runner 里原地打后端，要从机器上取的东西（文件内容、推送）才去房间的执行机；其余的是 CLI 命令，在执行机上、在工作区里跑。`catalog.argv()` 把调用翻回命令行并交给 argparse 复核，`SystemExit` 转成 `ValueError`：不管它，`SystemExit` 会从 socket 处理器里走出去，把 runner 的事件循环一起带走。
+平台工具在 pi 里作为 extension 工具注册进去（`platform.ts` 的 `registerPlatformTools`）。送到的是它们由来的那个文件：平台的 `cheese`（`backend/sandbox/cheese`），既带平台工具表也带 CLI 的命令树，随 runner 的归档一起送到中心机（`pi/bundle.py`）。`catalog.tools()` = `PLATFORM_TOOLS.schemas()` + `cli_worker._tools(parser)`。一次调用经 socket 回到 runner（`runner.py` 的 `run_cli`）：平台表里的工具在 runner 里原地打后端，要从机器上取的东西（文件内容、推送）才去房间的执行机；其余的是 CLI 命令，在执行机上、在工作区里跑。`catalog.argv()` 把调用翻回命令行并交给 argparse 复核，`SystemExit` 转成 `ValueError`：不管它，`SystemExit` 会从 socket 处理器里走出去，把 runner 的事件循环一起带走。
 
-项目的 MCP 服务器由 runner 充当 pi 的 MCP 客户端（`harness/pi/mcp.py`），走另外两个骨架同一个 `RemoteClient`：检出里 `.mcp.json` 的 stdio 服务器和队友类型声明的 stdio 服务器由执行机上的执行器起，执行器在调用两边跑项目的 PreToolUse / PostToolUse 钩子；远程服务器经后端的 `/topics/{id}/mcp/{name}` 调用，凭据只在后端。它们的工具在开场时列一次，以 `mcp__<服务>__<工具>` 的名字由 `platform.ts` 的 `registerMcpTools` 注册，调用回到 runner 再转给对应的服务器。
+项目的 MCP 服务器由 pi 自己的 MCP 客户端（`builtin:mcp`）连会话的网关，扩展只负责把它们一个个注册给 pi（`registerMcpServers`）；pi 开着 codemode，模型可以写一段脚本一次调好几个工具，脚本调过哪些工具记在那一步上（`meta.calls`）。见[项目的 MCP 服务器](/dev/remote-mcp#gateway)。
 
 ## 一个文件两种用法 {#file}
 

@@ -146,9 +146,15 @@ class SessionHost:
         screens: "DeviceChannel | None" = None,
         session_factory=None,
         mirrors: Path | None = None,
+        on_alive: Callable[[uuid.UUID], None] | None = None,
     ):
         self._hub = hub
         self._memory = memory
+        #: Told the conversation of a session whose runner answered a read, on
+        #: every pass that heard one: proof that its turn is still there, which
+        #: no frame carries (`_pump`). The rail's red light reads it, through
+        #: `realtime.broker.note_alive`.
+        self._on_alive = on_alive
         #: Where this backend keeps its copies of the sessions' journals.
         self._mirrors = mirrors or Path(settings.workspace_root) / ".harness"
         self._screens = screens
@@ -498,6 +504,14 @@ class SessionHost:
                 await hand(
                     Read(live.get("work_id"), Writing(tuple(live.get("blocks") or ())))
                 )
+            if heard.get("alive") is True and self._on_alive is not None:
+                # The runner answered. It may have had nothing to answer with:
+                # a turn that is thinking, or running a long command, writes no
+                # record for the whole of it. The answer itself is the only
+                # thing that can be said about such a turn, and saying it is
+                # what keeps a quiet turn from reading as a stopped one.
+                if (seat := running.seat) is not None:
+                    self._on_alive(seat.conversation_id)
             if not heard.get("alive", True) and running.launched is launched:
                 self._forget(ref, running)
                 said = await driver.last_words(

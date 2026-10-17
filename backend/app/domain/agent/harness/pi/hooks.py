@@ -4,8 +4,8 @@ A repository writes `PreToolUse` and `PostToolUse` hooks in `.claude/settings.js
 for plain Claude Code, which fires them around every tool call. pi fires none, so
 the extension asks before and after each of its own calls (`platform.ts`), and
 the room's machine runs them by the executor's own rules — the machine holds the
-project, its settings and whatever the hooks run. The project's MCP calls have
-theirs run around them by the same executor (`mcp.py`).
+project, its settings and whatever the hooks run. A project MCP tool's call is
+one of pi's own (its MCP client's), asked about the same way.
 
 A hook's matcher and its `tool_input` are written against Claude Code's tools.
 On Codex nothing is renamed, because the executor serves Codex its tools under
@@ -16,6 +16,8 @@ pi runs it. A tool with no equivalent keeps its own name.
 """
 
 import asyncio
+
+from app.domain.agent.pr_creation import REFUSAL, opens_pull_request
 
 
 class Denied(PermissionError):
@@ -114,6 +116,14 @@ async def run(
     """Run the project's `event` hooks for one pi call to `tool` on the room's
     machine (`Machine.hooks`); return the arguments it proceeds with, in pi's
     shape. Raises `Denied` when a hook blocks it, or any part of it."""
+    # The platform's own rule, ahead of the project's hooks: it opens the
+    # task's PR itself (`pr_creation`).
+    if (
+        event == "PreToolUse"
+        and AS_CLAUDE_CODE.get(tool, ("",))[0] == "Bash"
+        and opens_pull_request(str(args.get("command") or ""))
+    ):
+        raise Denied(REFUSAL)
     if not machine.taken and tool not in REACH_THE_MACHINE:
         # The project's hooks are the machine's; a session that has not
         # needed it yet has none to run, as a Claude Code room before its

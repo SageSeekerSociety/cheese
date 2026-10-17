@@ -1,0 +1,30 @@
+name: Queue dedupe
+
+# A rebuilt merge queue gives a pull request a new merge branch and a new
+# Required CI run, but the run on its old branch keeps going: Required CI groups
+# merge_group runs by sha, so nothing replaces it. This cancels those runs as
+# soon as the new entry's event arrives. Which runs, and why each condition, is
+# .github/scripts/queue-dedupe.py. It never fails: a missed cancel costs one
+# superseded run, which is what happened before it existed.
+on:
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel-superseded:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Cancel this PR's Required CI runs on older queue branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: python3 .github/scripts/queue-dedupe.py

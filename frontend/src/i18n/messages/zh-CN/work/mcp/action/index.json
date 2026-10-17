@@ -3,5 +3,11 @@
   "connect": "连接",
   "disconnect": "断开",
   "reconnect": "重新连接",
-  "save": "保存"
+  "save": "保存",
+  "add": "添加服务器",
+  "edit": "编辑",
+  "remove": "删除",
+  "log": "查看日志",
+  "fill": "填写",
+  "values": "修改值"
 }
