@@ -23,8 +23,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -119,11 +117,6 @@ def native_binary(name):
     return str(target)
 
 
-# A credential is kept for the invocations after the one that fetched it until
-# this long before it expires. The platform hands a GitHub token out with at
-# least 20 minutes left (`github_app._REFRESH_MARGIN_S`), so a kept one still has
-# ten when it is dropped: enough for any command started on it.
-CREDENTIAL_MARGIN_S = 600
 # How long one probe of the forge's API decides how the next invocations reach
 # it. A wrong "not directly" only sends them through the platform's tunnel,
 # which works, so that answer is kept longer; a wrong "directly" fails them, so
@@ -164,48 +157,13 @@ def _recall(path):
 
 
 def credentials():
-    """The project's forge credential for this session, fetched from the
-    platform once and reused until near its expiry. Kept by the session's
-    own credential, so another session, or this one relaunched, fetches its
-    own. Not kept: a read-only one (a 支线 that becomes a task needs its
-    write credential on its next call) and one the platform revokes early
-    rather than the provider expiring it (Forgejo's read-only tokens)."""
-    secret = os.environ["CHEESE_TOKEN"]
-    path = _kept(
-        "credential-" + hashlib.sha256(secret.encode()).hexdigest()[:32] + ".json"
-    )
-    kept = _recall(path)
-    if kept is not None:
-        return kept
     api = os.environ["CHEESE_API"].rstrip("/")
     request = urllib.request.Request(
         f"{api}/sandbox/forge-token",
-        headers={"X-Cheese-Token": secret},
+        headers={"X-Cheese-Token": os.environ["CHEESE_TOKEN"]},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
-        data = json.load(response)["data"]
-        said = (getattr(response, "headers", None) or {}).get("Date")
-    if (
-        data.get("expires_at")
-        and data.get("expiry_enforcement") == "provider"
-        and data.get("read_only") is False
-    ):
-        expires = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
-        # How long it has left is read on the platform's clock and counted on
-        # this machine's: a machine whose clock is behind would otherwise go
-        # on presenting a token the forge has already expired.
-        platform_now = time.time()
-        if said:
-            with contextlib.suppress(TypeError, ValueError):
-                said_at = parsedate_to_datetime(said)
-                # An HTTP date is GMT whatever it is spelled with (RFC 9110).
-                # timezone.utc, not datetime.UTC: this runs on the machine's
-                # own Python, which may predate 3.11.
-                utc = timezone.utc  # noqa: UP017
-                platform_now = said_at.replace(tzinfo=said_at.tzinfo or utc).timestamp()
-        left = expires.timestamp() - platform_now
-        _keep(path, {"until": time.time() + left - CREDENTIAL_MARGIN_S, "value": data})
-    return data
+        return json.load(response)["data"]
 
 
 def reaches(url):

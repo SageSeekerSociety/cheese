@@ -1,7 +1,6 @@
 """Native CLI calls receive project credentials without changing shell state."""
 
 import contextlib
-import email.utils
 import hashlib
 import io
 import json
@@ -9,7 +8,6 @@ import os
 import sys
 import tarfile
 import threading
-import time
 import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -382,104 +380,3 @@ def test_one_probe_decides_how_gh_reaches_the_forge_for_a_while(
     clock[0] += max(forge_cli.REACH_KEPT_S.values())
     forge_cli.run("gh", ["pr", "list"])
     assert len(probes) == 2
-
-
-def _platform(monkeypatch, tmp_path, **credential):
-    """The platform's forge-token route: the session credential of each call."""
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    monkeypatch.setenv("CHEESE_API", "https://platform.invalid/api")
-    monkeypatch.setenv("CHEESE_TOKEN", "session-one")
-    minted = []
-
-    def urlopen(request, *args, **kwargs):
-        minted.append(request.headers["X-cheese-token"])
-        return io.BytesIO(
-            json.dumps(
-                {
-                    "data": {
-                        "kind": "github_app",
-                        "token": f"forge-token-{len(minted)}",
-                        "expires_at": "2026-10-16T13:00:00+00:00",
-                        "expiry_enforcement": "provider",
-                        "read_only": False,
-                        **credential,
-                    }
-                }
-            ).encode()
-        )
-
-    monkeypatch.setattr(forge_cli.urllib.request, "urlopen", urlopen)
-    clock = [1_792_148_400.0]  # 2026-10-16T11:00:00Z, two hours before expiry
-    monkeypatch.setattr(forge_cli.time, "time", lambda: clock[0])
-    return minted, clock
-
-
-def test_gh_keeps_its_credential_until_shortly_before_it_expires(monkeypatch, tmp_path):
-    minted, clock = _platform(monkeypatch, tmp_path)
-    assert forge_cli.credentials()["token"] == "forge-token-1"
-    assert forge_cli.credentials()["token"] == "forge-token-1"
-    assert minted == ["session-one"]
-    (kept,) = (tmp_path / ".cheese/forge-auth").glob("credential-*")
-    if sys.platform != "win32":
-        assert kept.stat().st_mode & 0o777 == 0o600
-    # Ten minutes before it expires it is fetched again.
-    clock[0] += 2 * 3600 - 600
-    assert forge_cli.credentials()["token"] == "forge-token-2"
-    # Another session's credential fetches its own.
-    monkeypatch.setenv("CHEESE_TOKEN", "session-two")
-    forge_cli.credentials()
-    assert minted == ["session-one", "session-one", "session-two"]
-
-
-@pytest.fixture
-def east_of_utc(monkeypatch):
-    """A machine whose local time is eight hours ahead of UTC."""
-    monkeypatch.setenv("TZ", "Asia/Shanghai")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="time.tzset is POSIX-only")
-@pytest.mark.parametrize("gmt", [True, False], ids=["GMT", "-0000"])
-def test_a_machine_whose_clock_is_behind_does_not_keep_an_expired_credential(
-    monkeypatch, tmp_path, gmt, east_of_utc
-):
-    """The platform said what time it was when it handed the credential out;
-    a machine whose clock is a quarter of an hour behind drops it as early, by
-    the token's own lifetime, as one whose clock is right — in any time zone,
-    however the date is spelled."""
-    minted, clock = _platform(monkeypatch, tmp_path)
-    platform_now = clock[0]
-    clock[0] -= 15 * 60
-    real = forge_cli.urllib.request.urlopen
-
-    def dated(request, *args, **kwargs):
-        response = real(request, *args, **kwargs)
-        response.headers = {"Date": email.utils.formatdate(platform_now, usegmt=gmt)}
-        return response
-
-    monkeypatch.setattr(forge_cli.urllib.request, "urlopen", dated)
-    forge_cli.credentials()
-    clock[0] += 2 * 3600 - 600
-    forge_cli.credentials()
-    assert len(minted) == 2
-
-
-@pytest.mark.parametrize(
-    "credential",
-    [
-        {"read_only": True},
-        {"expiry_enforcement": "platform"},
-        {"expires_at": None},
-    ],
-    ids=["read-only", "revoked by the platform", "no expiry given"],
-)
-def test_a_credential_that_may_change_under_it_is_fetched_every_time(
-    monkeypatch, tmp_path, credential
-):
-    minted, _ = _platform(monkeypatch, tmp_path, **credential)
-    forge_cli.credentials()
-    forge_cli.credentials()
-    assert len(minted) == 2
