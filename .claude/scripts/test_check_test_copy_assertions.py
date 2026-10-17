@@ -212,12 +212,16 @@ expect(actual).not.toBe("This explanatory sentence should be checked by its impo
             self._write(
                 root,
                 "backend/tests/unit/test_sql_copy.py",
-                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING the deleted row and then continue"',
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING the deleted row and then continue"\n'
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING deleted rows for display"\n'
+                'assert text == "UPDATE logs SET status = $1 WHERE before < now() RETURNING id::text"\n',
             )
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("test_sql_copy.py:1", result.stderr)
+        self.assertIn("test_sql_copy.py:2", result.stderr)
+        self.assertNotIn("test_sql_copy.py:3", result.stderr)
 
     def test_explicit_root_is_scanned_when_scanner_script_is_shallow(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -263,12 +267,13 @@ assert actual == "deleted_at IS NULL AND completion_status IN ({})"
 assert actual == "登录状态已失效，请重新登录后再发言"
 assert actual == "Upload failed: the file is too large: remove it, then try again"
 assert actual == "step one failed, please retry after the environment starts"
+assert actual == "Note: this file is read-only, Action: choose another location and try again"
 ''',
             )
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        for line in (*range(2, 18), 20, 21):
+        for line in (*range(2, 18), 20, 21, 22):
             self.assertIn(f"test_copy.py:{line}", result.stderr)
         self.assertNotIn("test_copy.py:18", result.stderr)
         self.assertNotIn("test_copy.py:19", result.stderr)

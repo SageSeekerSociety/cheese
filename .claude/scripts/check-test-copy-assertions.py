@@ -86,7 +86,11 @@ ABSOLUTE_PATH_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?[\\/][^\r\n]*[\\/][^\r\n]*$
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 COMMIT_TITLE_RE = re.compile(r"^(?:feat|fix|chore|docs|refactor|test|build|ci)(?:\([^)]*\))?: ", re.IGNORECASE)
 KEY_VALUE_RE = re.compile(r"\b[\w-]+=\S+")
-STRUCTURED_LABEL_LIST_RE = re.compile(r"^[A-Za-z][\w-]*:\s*[^,:]+(?:,\s*[A-Za-z][\w-]*:\s*[^,:]+)+$")
+STRUCTURED_ACTION_LABEL = r"(?:read|write|admin|export|create|update|delete|manage|execute|list|view|invite|approve|download|upload|deploy|access|run|edit|review|import|share)"
+STRUCTURED_LABEL_LIST_RE = re.compile(
+    rf"^{STRUCTURED_ACTION_LABEL}:\s*[^,:]+(?:,\s*{STRUCTURED_ACTION_LABEL}:\s*[^,:]+)+$",
+    re.IGNORECASE,
+)
 IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
 STATUS_CODES_RE = re.compile(r"(?:HTTP\s*)?\d{3}(?:\s+\d{3})*\Z", re.IGNORECASE)
 STEP_DIAGNOSTIC_RE = re.compile(
@@ -150,7 +154,11 @@ SQL_PREDICATE_PATTERN = (
     rf"BETWEEN\s+{SQL_VALUE_PATTERN}\s+AND\s+{SQL_VALUE_PATTERN}|"
     rf"{SQL_JSON_OPERATOR_PATTERN}\s*{SQL_VALUE_PATTERN})"
 )
-SQL_RETURNING_PATTERN = r"(?:\s+RETURNING\s+[\w.* ,]+)?"
+SQL_RETURNING_ITEM_PATTERN = rf"(?:\*|{SQL_COLUMN_PATTERN}(?:\s*::\s*[\w.]+)?)"
+SQL_RETURNING_PATTERN = (
+    rf"(?:\s+RETURNING\s+{SQL_RETURNING_ITEM_PATTERN}"
+    rf"(?:\s*,\s*{SQL_RETURNING_ITEM_PATTERN})*)?"
+)
 SQL_UPDATE_RE = re.compile(
     rf"UPDATE\s+[\w.]+\s+SET\s+[\w.]+\s*=\s*{SQL_VALUE_PATTERN}"
     rf"(?:\s*,\s*[\w.]+\s*=\s*{SQL_VALUE_PATTERN})*\s+WHERE\s+{SQL_COLUMN_PATTERN}\s*{SQL_PREDICATE_PATTERN}"
@@ -254,10 +262,10 @@ def _is_sql_value(value: str) -> bool:
         sql_text,
         flags=re.IGNORECASE,
     )
-    if SQL_PROSE_WORD_RE.search(sql_text):
-        return False
     if SQL_UPDATE_RE.fullmatch(value) or SQL_DELETE_RE.fullmatch(value) or SQL_INSERT_RE.fullmatch(value):
         return True
+    if SQL_PROSE_WORD_RE.search(sql_text):
+        return False
     if SQL_WITH_QUERY_RE.fullmatch(sql_text) or SQL_JSON_QUERY_RE.fullmatch(value):
         return True
     select = SQL_SELECT_PREFIX_RE.match(value)
