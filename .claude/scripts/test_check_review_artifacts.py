@@ -326,6 +326,42 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         )
         self.assertEqual(self._run(root).returncode, 0)
 
+    def test_an_angled_link_with_a_space_and_parentheses_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/report (final).pdf": b"%PDF-1.4",
+                "note.md": '[报告](<artifacts/report (final).pdf> "预览")\n',
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_truncated_angled_link_does_not_name_a_shorter_artifact(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/2026": b"%PDF-1.4",
+                "note.md": "[另一份](<artifacts/2026 review.pdf>)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_percent_encoded_path_before_a_sentence_period_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/2026 review.pdf": b"%PDF-1.4",
+                "note.md": "see artifacts/2026%20review.pdf.\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_percent_encoded_path_beside_literal_chinese_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/报告 v2.pdf": b"%PDF-1.4",
+                "note.md": "见 artifacts/报告%20v2.pdf 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
     def test_a_plain_link_with_balanced_parentheses_passes(self) -> None:
         root = self._tree(
             {
