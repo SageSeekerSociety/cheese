@@ -32,6 +32,28 @@ const maxForks =
     ? envMaxForks
     : Math.max(1, Math.min(16, os.availableParallelism() - 1, Math.floor(os.totalmem() / 3 / 1024 ** 3)))
 
+// `test.fsModuleCache` keys a transformed module by its own source, the config
+// and the plugin names. A component whose `defineProps`/`defineEmits` (or
+// `defineModel`/`defineSlots`) takes a type argument compiles to runtime props
+// that @vitejs/plugin-vue reads out of that type, wherever it is declared:
+// change only the imported interface and the cached component keeps its old
+// props. Those components are transformed afresh on every run. The compile also
+// reads the tsconfig files, so their contents are part of every key.
+const TYPED_SFC_MACRO = /\bdefine(?:Props|Emits|Model|Slots)\s*</
+function fsModuleCacheKeys(): Plugin {
+  return {
+    name: 'cheese-fs-module-cache-keys',
+    configureVitest({ defineCacheKeyGenerator }) {
+      const tsconfig = ['tsconfig.json', 'tsconfig.app.json']
+        .map((name) => readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), 'utf8'))
+        .join('\0')
+      defineCacheKeyGenerator(({ id, sourceCode }) =>
+        id.split('?')[0].endsWith('.vue') && TYPED_SFC_MACRO.test(sourceCode) ? false : tsconfig
+      )
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 // /demo/<名字> 是演示页（demo.html），不是应用。线上由 nginx.conf 那条 location 分开，
 // 开发服务器上由这里分开：不然它落到应用的兜底 index.html 上，打开的是整个平台。
@@ -379,6 +401,7 @@ function chunkName(id: string): string | null {
 
 export default defineConfig({
   plugins: [
+    fsModuleCacheKeys(),
     demoPages(),
     vuetifyDeepImports(),
     mdiFont(),
