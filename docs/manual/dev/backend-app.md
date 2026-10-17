@@ -137,7 +137,7 @@ covers:
 
 ## 周期任务清单 {#periodic}
 
-`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 34 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
+`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 35 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
 
 登记名称重复、清单缺项或出现未列出的任务都会报错，防止巡检漏接后静默缺席。
 
@@ -159,6 +159,7 @@ covers:
 | notification email drain / push drain | `notification_email_drain_interval_s` / `notification_push_drain_interval_s` | 那两条 Redis 队列的唯一消费者，不跑就一封邮件、一条推送都不发 |
 | delivery resend | `delivery_resend_interval_s` | 投递账本上「记下了没发出去」的行 |
 | docs question retention | 固定 86400s | 清过期的问芝士记录 |
+| turn resumes | 固定 30s | 因模型服务临时故障（限流、5xx、流中断）失败的轮次，到点把「接着做」记上投递账本（`agent/turn_resume.py`），由下一项派发 |
 | timed deliveries | 固定 30s | 定时投递到点派发 |
 | overdue deliveries | `delivery_overdue_check_interval_s` | 给 AI 的投递记下超过 30 分钟还没送出去，就发告警（同一个问题一小时一条） |
 | routines | 固定 30s | 周期任务与事件触发的一次执行 |

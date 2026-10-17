@@ -33,6 +33,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     Uuid,
@@ -163,3 +164,62 @@ class GatewayAdminAudit(UuidPk, Timestamps, Base):
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class TurnResume(UuidPk, Base):
+    """A resume the platform owes one seat after its turn failed on a transient
+    model-service error (`agent.turn_resume`).
+
+    It is not the agent's own alarm (`delivery.models.TimedDelivery`, set by a
+    participant) and not a delivery (`deliveries`, an event that already
+    happened): it is the platform's decision to start this seat again later,
+    the reason it decided so, and how many times in a row it already has.
+    When it falls due it either becomes one instruction on the delivery ledger
+    (``handed_at``) or is dropped with the reason it no longer applies
+    (``dropped_at``/``dropped_reason``): a person spoke, the seat already ran
+    again, the conversation closed, the streak used up its attempts. Rows are
+    kept: they record why an agent started by itself, and the streak count
+    reads them back.
+    """
+
+    __tablename__ = "turn_resumes"
+    __table_args__ = (
+        # One owed resume per seat and conversation, whichever process or
+        # failure asks: a second failure while one waits keeps the first.
+        Index(
+            "uq_turn_resumes_owed",
+            "conversation_id",
+            "recipient_handle",
+            unique=True,
+            postgresql_where=text("handed_at IS NULL AND dropped_at IS NULL"),
+        ),
+        Index(
+            "ix_turn_resumes_due",
+            "due_at",
+            postgresql_where=text("handed_at IS NULL AND dropped_at IS NULL"),
+        ),
+        Index("ix_turn_resumes_seat", "conversation_id", "recipient_handle"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    # The room or task the failed turn ran in; the resume runs there too.
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    # The seat, as the delivery ledger names it (`agent_instance_handle`).
+    recipient_handle: Mapped[str] = mapped_column(String(64))
+    agent_instance_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    failed_turn_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    # A `resumable_failures` kind: rate_limited, overloaded, stream_ended, …
+    reason: Mapped[str] = mapped_column(String(32))
+    # The service's own words, credentials masked, so the row says why.
+    said: Mapped[str] = mapped_column(Text, default="")
+    # 1 for the first resume after a failure, n for the n-th in a row.
+    attempt: Mapped[int] = mapped_column(Integer)
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    handed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dropped_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dropped_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
