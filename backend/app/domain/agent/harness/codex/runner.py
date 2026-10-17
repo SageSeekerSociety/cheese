@@ -266,10 +266,12 @@ class Runner(runner.Runner[Journal]):
                     previous is not None
                     and self.journal.recall(f"unsolicited:{previous}") is not None
                 )
-                if self.session.turn_id is not None and previous != work_id:
-                    if not woken:
-                        raise RuntimeError("A different room work item is still active")
-                    await self._end_woken_turn()
+                if (
+                    self.session.turn_id is not None
+                    and previous != work_id
+                    and not (woken and await self._end_woken_turn())
+                ):
+                    raise RuntimeError("A different room work item is still active")
                 # Persist attribution before the call: notifications can
                 # arrive before app-server acknowledges turn/start.
                 self.journal.remember(f"work:{thread_id}", work_id)
@@ -280,9 +282,9 @@ class Runner(runner.Runner[Journal]):
             )
         return {"turn_id": turn, "input_id": identifier}
 
-    async def _end_woken_turn(self) -> None:
+    async def _end_woken_turn(self) -> bool:
         """Interrupt the turn a monitor woke and wait for its ending, which
-        `record` journals under that turn's own work."""
+        `record` journals under that turn's own work; whether it ended."""
         session = self.session
         assert session is not None
         self.ending_woken = True
@@ -292,12 +294,13 @@ class Runner(runner.Runner[Journal]):
             while session.turn_id is not None:
                 left = deadline - asyncio.get_running_loop().time()
                 if left <= 0:
-                    raise RuntimeError("A different room work item is still active")
+                    return False
                 news = self.news
                 try:
                     await asyncio.wait_for(news.wait(), min(left, 0.2))
                 except TimeoutError:
                     pass
+            return True
         finally:
             self.ending_woken = False
 
