@@ -25,6 +25,9 @@ SANDBOX_MEMORY_LIMIT_BYTES = 3 * GIB
 # is the line reported.
 MEMORY_HEADROOM_RATIO = 0.1
 CGROUP_ROOT = Path("/sys/fs/cgroup")
+PROC_SELF_CGROUP = Path("/proc/self/cgroup")
+PROC_CPUINFO = Path("/proc/cpuinfo")
+PROC_STAT = Path("/proc/stat")
 
 # Runnable processes beyond the CPUs are queued, and steal time says the box's
 # neighbours are spending the vCPUs this run was promised.
@@ -99,9 +102,6 @@ def storage_snapshot(data, meminfo):
         "filesystem_used_bytes": (usage.f_blocks - usage.f_bfree) * usage.f_frsize,
         "filesystem_available_bytes": usage.f_bavail * usage.f_frsize,
         "mem_available_bytes": available_kb * 1024,
-        # The cgroup counts this box only; /proc/meminfo counts the host, and
-        # on a runner that is where every other job's memory shows up too.
-        "mem_used_bytes": cgroup_memory_usage(),
     }
 
 
@@ -141,6 +141,19 @@ def sample_disks(paths):
         except Exception as error:
             record(sys.stdout, error=type(error).__name__)
         time.sleep(5)
+
+
+def sample_memory():
+    # The cgroup counts this box's own pages, including the children, which is
+    # the only number a container cap can be compared with. Sampling here keeps
+    # the peak out of the storage sampler, which needs a Postgres to exist.
+    record(sys.stdout, event="sampler_started", pid=os.getpid(), interval_seconds=1)
+    while True:
+        try:
+            record(sys.stdout, mem_used_bytes=cgroup_memory_usage())
+        except Exception as error:
+            record(sys.stdout, error=type(error).__name__)
+        time.sleep(1)
 
 
 def observed_disks():
@@ -215,22 +228,25 @@ def read_mem_total(meminfo):
     return None
 
 
-def memory_peak_bytes(storage_samples, vmstat_rows, mem_total_bytes):
+def memory_peak_bytes(
+    memory_samples, storage_samples, vmstat_rows, mem_total_bytes, limit_bytes
+):
     """The highest memory use any sample saw, or None if none measured it."""
     container_peaks = [
         sample["mem_used_bytes"]
-        for sample in storage_samples
+        for sample in memory_samples
         if isinstance(sample.get("mem_used_bytes"), int)
     ]
     if container_peaks:
         # A cgroup sample is this box's own use; host-wide numbers would make
         # a container cap meaningless.
         return max(container_peaks)
-    if mem_total_bytes is not None and cgroup_memory_limit(mem_total_bytes):
-        # The box is capped below the machine's memory, so no surviving sample
-        # speaks for it; the cgroup's current use is the only scoped number.
-        return cgroup_memory_usage()
     if mem_total_bytes is None:
+        return None
+    if limit_bytes < mem_total_bytes:
+        # The box is capped below the machine's memory and no scoped sample
+        # survived: host-wide numbers would judge the neighbours, and the
+        # cgroup's use right now is not the peak. Leave it unjudged.
         return None
     peaks = [
         max(0, mem_total_bytes - (row["free"] + row["buff"] + row["cache"]) * 1024)
@@ -248,10 +264,35 @@ def cpu_peak(vmstat_rows):
     """The runnable queue and the steal share at their worst."""
     if not vmstat_rows:
         return None, None
-    return (
-        max(row["r"] for row in vmstat_rows),
-        float(max(row["st"] for row in vmstat_rows)),
+    # `r` is instantaneous in every report, so all of them describe this run.
+    runnable = max(row["r"] for row in vmstat_rows)
+    # The steal percentage in the first report averages since boot, not this
+    # run. A run that ends inside one second only ever has that report, and
+    # its steal says nothing about the run, so it stays unknown.
+    later = vmstat_rows[1:]
+    steal = float(max(row["st"] for row in later)) if later else None
+    return runnable, steal
+
+
+def processor_count():
+    """How many CPUs the machine vmstat measures has, as the kernel reports it.
+
+    `os.cpu_count()` follows the process's affinity mask, so on a shared box it
+    counts the cores this run may use, while `vmstat`'s queue counts the whole
+    machine. The queue is only meaningful against the machine's own count.
+    """
+    processors = sum(
+        1
+        for line in read_text(PROC_CPUINFO).splitlines()
+        if line.startswith("processor")
     )
+    if not processors:
+        processors = sum(
+            1
+            for line in read_text(PROC_STAT).splitlines()
+            if line.startswith("cpu") and line[3:4].isdigit()
+        )
+    return processors or os.cpu_count() or 1
 
 
 def database_peak(postgres_samples):
@@ -286,12 +327,33 @@ def database_peak(postgres_samples):
     return peak, limit
 
 
+def cgroup_dirs():
+    """This process's own cgroup first, then the hierarchy root.
+
+    A sandbox usually does not own the cgroup namespace, so the files under
+    `/sys/fs/cgroup` describe the host; only the path named in
+    `/proc/self/cgroup` is the box's own.
+    """
+    directories = []
+    for line in read_text(PROC_SELF_CGROUP).splitlines():
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        hierarchy, controllers, relative = parts
+        if hierarchy == "0" or "memory" in controllers.split(","):
+            directories.append(CGROUP_ROOT / relative.strip("/"))
+    directories.append(CGROUP_ROOT)
+    return directories
+
+
 def _cgroup_int(relative):
-    try:
-        value = (CGROUP_ROOT / relative).read_text().strip()
-    except OSError:
-        return None
-    return int(value) if value.isdigit() else None
+    for directory in cgroup_dirs():
+        try:
+            value = (directory / relative).read_text().strip()
+        except OSError:
+            continue
+        return int(value) if value.isdigit() else None
+    return None
 
 
 def cgroup_memory_usage():
@@ -333,22 +395,32 @@ def summarize(output):
     lifecycle = read_jsonl(output / "lifecycle.jsonl")
     start = next((event for event in lifecycle if event.get("event") == "start"), {})
     storage = read_jsonl(output / "storage.log")
+    memory = read_jsonl(output / "memory.log")
     vmstat_rows = parse_vmstat(read_text(output / "vmstat.log"))
     postgres = read_jsonl(output / "postgres.log")
     mem_total_bytes = read_mem_total(output / "meminfo")
+    limit_bytes = memory_limit_bytes(mem_total_bytes)
     runnable_peak, steal_peak = cpu_peak(vmstat_rows)
     backends_peak, connection_limit = database_peak(postgres)
     return {
-        "cpu_count": start.get("cpu_count") or os.cpu_count() or 1,
+        # vmstat counts runnable processes across the whole machine, so the
+        # queue is judged against that machine, not this box's affinity.
+        "cpu_count": (
+            start.get("processors") or start.get("cpu_count") or os.cpu_count() or 1
+        ),
         "memory_total_bytes": mem_total_bytes,
-        "memory_peak_bytes": memory_peak_bytes(storage, vmstat_rows, mem_total_bytes),
-        "memory_limit_bytes": memory_limit_bytes(mem_total_bytes),
+        "memory_peak_bytes": memory_peak_bytes(
+            memory, storage, vmstat_rows, mem_total_bytes, limit_bytes
+        ),
+        "memory_limit_bytes": limit_bytes,
+        "postgres_watched": start.get("postgres", True),
         "runnable_peak": runnable_peak,
         "steal_peak_percent": steal_peak,
         "client_backends_peak": backends_peak,
         "db_connection_limit": connection_limit,
         "samples": {
             "storage": len(storage),
+            "memory": len(memory),
             "vmstat": len(vmstat_rows),
             "postgres": len(postgres),
         },
@@ -362,16 +434,18 @@ def _state(observed, threshold):
 
 
 def _conclusion(total, crossed, unknown):
-    if crossed:
-        return f"{len(crossed)} of {total} checks crossed: {', '.join(crossed)}"
     if len(unknown) == total:
         return "not judged: no sample for any threshold"
+    if crossed:
+        verdict = f"{len(crossed)} of {total} checks crossed: {', '.join(crossed)}"
+    else:
+        verdict = "no threshold crossed"
     if unknown:
-        return f"no threshold crossed; not judged: {', '.join(unknown)}"
-    return "no threshold crossed"
+        return f"{verdict}; not judged: {', '.join(unknown)}"
+    return verdict
 
 
-def _next_steps(crossed, unknown):
+def _next_steps(crossed, unknown, postgres_watched=True):
     steps = []
     if "memory" in crossed:
         steps.append("narrow the run: fewer selected files or workers")
@@ -381,9 +455,12 @@ def _next_steps(crossed, unknown):
         steps.append("narrow the run or raise the database's connection budget")
     if crossed:
         steps.append("hand the run to CI when the local box is shared")
-    if not crossed and unknown:
+    # A pure-layer run never starts Postgres, so it can never collect that
+    # sample; asking it to is advice with no way to follow it.
+    missing = [metric for metric in unknown if metric != "database" or postgres_watched]
+    if missing:
         steps.append("collect a sample before judging the missing checks")
-    if not crossed and not unknown:
+    if not steps:
         steps.append("no action needed")
     return steps
 
@@ -433,7 +510,9 @@ def evaluate(summary):
         "crossed": crossed,
         "unknown": unknown,
         "conclusion": _conclusion(len(checks), crossed, unknown),
-        "next_steps": _next_steps(crossed, unknown),
+        "next_steps": _next_steps(
+            crossed, unknown, summary.get("postgres_watched", True)
+        ),
     }
 
 
@@ -499,12 +578,13 @@ def observe(output, command, *, postgres=True):
     streams = []
     command_process = None
     previous_handlers = {}
-    cpu_count = os.cpu_count()
     with (output / "lifecycle.jsonl").open("x") as events:
         record(
             events,
             event="start",
-            cpu_count=cpu_count,
+            processors=processor_count(),
+            cpu_count=os.cpu_count(),
+            postgres=postgres,
             machine=platform.machine(),
             system=platform.system(),
             release=platform.release(),
@@ -536,7 +616,10 @@ def observe(output, command, *, postgres=True):
             disks = [
                 arg for path in observed_disks() for arg in ("--sample-disk", path)
             ]
-            commands = [("disks", [*module, *disks])]
+            commands = [
+                ("disks", [*module, *disks]),
+                ("memory", [*module, "--sample-memory"]),
+            ]
             if postgres:
                 commands.append(("postgres", [*module, "--sample-postgres"]))
             if postgres_pid := os.environ.get("CHEESE_CI_POSTGRES_PID"):
@@ -615,6 +698,7 @@ def observe(output, command, *, postgres=True):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sample-postgres", action="store_true")
+    parser.add_argument("--sample-memory", action="store_true")
     parser.add_argument("--sample-storage", type=int)
     parser.add_argument("--sample-disk", action="append")
     parser.add_argument(
@@ -627,6 +711,8 @@ def main():
     args = parser.parse_args()
     if args.sample_postgres:
         asyncio.run(sample_postgres())
+    elif args.sample_memory:
+        sample_memory()
     elif args.sample_storage:
         sample_storage(args.sample_storage)
     elif args.sample_disk:

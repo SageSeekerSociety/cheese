@@ -22,15 +22,17 @@ def isolate_storage_observer(monkeypatch, tmp_path):
     monkeypatch.delenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", raising=False)
     # Never read the host's cgroup: a test that needs one builds it with _cgroup.
     monkeypatch.setattr(observer, "CGROUP_ROOT", tmp_path / "no-cgroup")
+    monkeypatch.setattr(observer, "PROC_SELF_CGROUP", tmp_path / "no-proc-self-cgroup")
+    # The host's own CPU list would otherwise decide the queue's threshold.
+    monkeypatch.setattr(observer, "PROC_CPUINFO", tmp_path / "no-cpuinfo")
+    monkeypatch.setattr(observer, "PROC_STAT", tmp_path / "no-proc-stat")
 
 
 def test_storage_sample_counts_whole_filesystem_and_available_memory(
     tmp_path, monkeypatch
 ):
-    from scripts import observe_ci_resources as observer
     from scripts.observe_ci_resources import storage_snapshot
 
-    monkeypatch.setattr(observer, "cgroup_memory_usage", lambda: 1234567)
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemTotal: 16384 kB\nMemFree: 512 kB\nMemAvailable: 4096 kB\n")
     monkeypatch.setattr(
@@ -45,7 +47,6 @@ def test_storage_sample_counts_whole_filesystem_and_available_memory(
         "filesystem_used_bytes": 1228800,
         "filesystem_available_bytes": 2457600,
         "mem_available_bytes": 4194304,
-        "mem_used_bytes": 1234567,
     }
 
 
@@ -105,7 +106,7 @@ def test_sigterm_stops_command_and_monitors(tmp_path):
         pids = [int(pidfile.read_text())] + [
             event["pid"] for event in events if event["event"] == "monitor_started"
         ]
-        assert len(pids) == 4
+        assert len(pids) == 5
         for pid in pids:
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
@@ -126,10 +127,12 @@ def test_command_result_and_monitor_cleanup(tmp_path, exit_code):
     command = tmp_path / "command.py"
     command.write_text(
         "import time\nfrom pathlib import Path\n"
-        f"log = Path({str(output / 'postgres.log')!r})\n"
+        f"postgres = Path({str(output / 'postgres.log')!r})\n"
+        f"memory = Path({str(output / 'memory.log')!r})\n"
         "deadline = time.monotonic() + 5\n"
         "while time.monotonic() < deadline:\n"
-        "    if log.exists() and log.stat().st_size:\n"
+        "    sampled = memory.exists() and 'mem_used_bytes' in memory.read_text()\n"
+        "    if postgres.exists() and postgres.stat().st_size and sampled:\n"
         "        break\n"
         "    time.sleep(0.01)\n"
         f"raise SystemExit({exit_code})\n"
@@ -161,8 +164,13 @@ def test_command_result_and_monitor_cleanup(tmp_path, exit_code):
         for line in (output / "lifecycle.jsonl").read_text().splitlines()
     ]
     started = [event for event in events if event["event"] == "monitor_started"]
-    assert {event["monitor"] for event in started} == {"vmstat", "postgres", "disks"}
-    assert len([event for event in events if event["event"] == "monitor_stopped"]) == 3
+    assert {event["monitor"] for event in started} == {
+        "vmstat",
+        "postgres",
+        "disks",
+        "memory",
+    }
+    assert len([event for event in events if event["event"] == "monitor_stopped"]) == 4
     for event in started:
         with pytest.raises(ProcessLookupError):
             os.kill(event["pid"], 0)
@@ -172,6 +180,7 @@ def test_command_result_and_monitor_cleanup(tmp_path, exit_code):
     assert len(summaries) == 1
     assert summaries[0]["verdict"]["conclusion"]
     assert summaries[0]["summary"]["samples"]["postgres"] >= 1
+    assert summaries[0]["summary"]["samples"]["memory"] >= 1
     assert "resources:" in result.stdout
     assert events[-1]["event"] == "finished"
     assert "ConnectionRefusedError" in (output / "postgres.log").read_text()
@@ -207,6 +216,8 @@ def _write_observation(
     mem_available_bytes=None,
     mem_used_bytes=None,
     cpu_count=2,
+    processors=None,
+    postgres_watched=None,
     vmstat_rows=(),
     postgres_samples=(),
 ):
@@ -214,16 +225,20 @@ def _write_observation(
     output = tmp_path / "resources"
     output.mkdir()
     (output / "meminfo").write_text(f"MemTotal: {mem_total_kb} kB\n")
-    (output / "lifecycle.jsonl").write_text(
-        json.dumps({"event": "start", "cpu_count": cpu_count}) + "\n"
-    )
-    sample = {}
+    start = {"event": "start", "cpu_count": cpu_count}
+    if processors is not None:
+        start["processors"] = processors
+    if postgres_watched is not None:
+        start["postgres"] = postgres_watched
+    (output / "lifecycle.jsonl").write_text(json.dumps(start) + "\n")
     if mem_available_bytes is not None:
-        sample["mem_available_bytes"] = mem_available_bytes
+        (output / "storage.log").write_text(
+            json.dumps({"mem_available_bytes": mem_available_bytes}) + "\n"
+        )
     if mem_used_bytes is not None:
-        sample["mem_used_bytes"] = mem_used_bytes
-    if sample:
-        (output / "storage.log").write_text(json.dumps(sample) + "\n")
+        (output / "memory.log").write_text(
+            json.dumps({"mem_used_bytes": mem_used_bytes}) + "\n"
+        )
     if vmstat_rows:
         header = (
             "procs -----------memory---------- ---swap-- -----io---- "
@@ -263,10 +278,10 @@ def test_memory_near_the_sandbox_cap_is_reported_with_a_next_step(
     from scripts import observe_ci_resources as observer
 
     monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
-    mem_total = 8 * observer.GIB
     output = _write_observation(
         tmp_path,
-        mem_available_bytes=mem_total - int(2.95 * observer.GIB),
+        # The box's own cgroup says it is using 2.95 GiB of the 3 GiB cap.
+        mem_used_bytes=int(2.95 * observer.GIB),
         vmstat_rows=[
             _vmstat_row(
                 runnable=1,
@@ -286,6 +301,7 @@ def test_normal_samples_report_no_threshold_crossed(tmp_path, monkeypatch):
     mem_total = 8 * observer.GIB
     output = _write_observation(
         tmp_path,
+        mem_used_bytes=2 * observer.GIB,
         mem_available_bytes=mem_total - 2 * observer.GIB,
         cpu_count=2,
         vmstat_rows=[
@@ -324,10 +340,9 @@ def test_cpu_queue_and_connection_pressure_are_named(tmp_path, monkeypatch):
     from scripts import observe_ci_resources as observer
 
     monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
-    mem_total = 8 * observer.GIB
     output = _write_observation(
         tmp_path,
-        mem_available_bytes=mem_total - 2 * observer.GIB,
+        mem_used_bytes=2 * observer.GIB,
         cpu_count=2,
         vmstat_rows=[
             _vmstat_row(
@@ -362,7 +377,7 @@ def test_a_missing_database_sample_is_not_judged_green(tmp_path, monkeypatch):
     monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
     output = _write_observation(
         tmp_path,
-        mem_available_bytes=6 * observer.GIB,
+        mem_used_bytes=observer.GIB,
         vmstat_rows=[
             _vmstat_row(
                 runnable=1,
@@ -385,10 +400,9 @@ def test_the_over_limit_assertion_goes_red_when_evaluation_ignores_the_cap(
     from scripts import observe_ci_resources as observer
 
     monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
-    mem_total = 8 * observer.GIB
     output = _write_observation(
         tmp_path,
-        mem_available_bytes=mem_total - int(2.95 * observer.GIB),
+        mem_used_bytes=int(2.95 * observer.GIB),
     )
 
     def always_ok(_summary):
@@ -429,6 +443,7 @@ def test_the_cap_comes_from_the_container_not_a_fixed_number(tmp_path, monkeypat
     _cgroup(tmp_path, monkeypatch, maximum=str(4 * observer.GIB))
     output = _write_observation(
         tmp_path,
+        # A cgroup cap is in force, so the box's own use is what is judged.
         mem_used_bytes=int(3.8 * observer.GIB),
         cpu_count=2,
         vmstat_rows=[_vmstat_row(runnable=1, steal=0, free_kib=7 * 1024 * 1024)],
@@ -471,19 +486,224 @@ def test_steal_time_alone_names_cpu_contention(tmp_path, monkeypatch):
         tmp_path,
         mem_used_bytes=observer.GIB,
         cpu_count=2,
-        vmstat_rows=[_vmstat_row(runnable=2, steal=9, free_kib=6 * 1024 * 1024)],
+        # The first report's steal is an average since boot; the second one
+        # covers a second of this run.
+        vmstat_rows=[
+            _vmstat_row(runnable=2, steal=0, free_kib=6 * 1024 * 1024),
+            _vmstat_row(runnable=2, steal=9, free_kib=6 * 1024 * 1024),
+        ],
     )
-    verdict = observer.evaluate(observer.summarize(output))
+    summary = observer.summarize(output)
+    verdict = observer.evaluate(summary)
+    assert summary["steal_peak_percent"] == 9.0
     assert verdict["crossed"] == ["cpu"]
-    assert "cpu: over" in "\n".join(
-        observer.report_lines(observer.summarize(output), verdict)
-    )
+    assert "cpu: over" in "\n".join(observer.report_lines(summary, verdict))
 
 
-def test_vmstat_sees_a_memory_spike_a_slow_storage_sample_missed(tmp_path, monkeypatch):
+def test_a_single_vmstat_report_cannot_measure_steal(tmp_path, monkeypatch):
+    """Its steal percentage averages since boot, so it says nothing about the run."""
     from scripts import observe_ci_resources as observer
 
     monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
+    output = _write_observation(
+        tmp_path,
+        mem_used_bytes=observer.GIB,
+        cpu_count=2,
+        vmstat_rows=[_vmstat_row(runnable=2, steal=9, free_kib=6 * 1024 * 1024)],
+    )
+    summary = observer.summarize(output)
+    verdict = observer.evaluate(summary)
+    assert summary["runnable_peak"] == 2
+    assert summary["steal_peak_percent"] is None
+    assert verdict["crossed"] == []
+    assert verdict["checks"][1]["state"] == "ok"
+
+
+def test_the_queue_is_judged_against_the_machines_cpus_not_the_affinity(
+    tmp_path, monkeypatch
+):
+    """vmstat counts the whole machine; a 4-core view would call 20 runnable over."""
+    from scripts import observe_ci_resources as observer
+
+    monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
+    output = _write_observation(
+        tmp_path,
+        mem_used_bytes=observer.GIB,
+        cpu_count=4,
+        processors=64,
+        vmstat_rows=[
+            _vmstat_row(runnable=20, steal=0, free_kib=6 * 1024 * 1024),
+            _vmstat_row(runnable=20, steal=0, free_kib=6 * 1024 * 1024),
+        ],
+    )
+    summary = observer.summarize(output)
+    verdict = observer.evaluate(summary)
+    assert summary["cpu_count"] == 64
+    assert verdict["checks"][1]["state"] == "ok"
+
+
+def test_the_processor_count_comes_from_the_kernel_view(monkeypatch, tmp_path):
+    from scripts import observe_ci_resources as observer
+
+    cpuinfo = tmp_path / "cpuinfo"
+    cpuinfo.write_text(
+        "".join(f"processor\t: {index}\nmodel name\t: x\n" for index in range(7))
+    )
+    monkeypatch.setattr(observer, "PROC_CPUINFO", cpuinfo)
+    assert observer.processor_count() == 7
+
+
+def test_the_processor_count_falls_back_to_proc_stat(monkeypatch, tmp_path):
+    from scripts import observe_ci_resources as observer
+
+    stat = tmp_path / "stat"
+    stat.write_text(
+        "cpu  1 2 3 4 5 6 7 8 9 10\n"
+        "cpu0 1 2 3 4 5 6 7 8 9 10\n"
+        "cpu1 1 2 3 4 5 6 7 8 9 10\n"
+        "intr 0\n"
+    )
+    monkeypatch.setattr(observer, "PROC_STAT", stat)
+    assert observer.processor_count() == 2
+
+
+def test_the_cap_is_read_from_the_processes_own_cgroup(tmp_path, monkeypatch):
+    """The sandbox's root shows the host; only its own subtree states the cap."""
+    from scripts import observe_ci_resources as observer
+
+    root = tmp_path / "cgroup"
+    own = root / "cheese-sandboxes" / "box"
+    own.mkdir(parents=True)
+    (root / "memory.max").write_text("max\n")
+    (own / "memory.max").write_text(str(3 * observer.GIB))
+    (own / "memory.current").write_text(str(512 * 1024 * 1024))
+    proc_self = tmp_path / "proc-self-cgroup"
+    proc_self.write_text("0::/cheese-sandboxes/box\n")
+    monkeypatch.setattr(observer, "CGROUP_ROOT", root)
+    monkeypatch.setattr(observer, "PROC_SELF_CGROUP", proc_self)
+
+    assert observer.memory_limit_bytes(8 * observer.GIB) == 3 * observer.GIB
+    assert observer.cgroup_memory_usage() == 512 * 1024 * 1024
+
+
+def test_an_unlimited_cgroup_is_not_a_cap(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    _cgroup(tmp_path, monkeypatch, maximum="max\n")
+    assert observer.memory_limit_bytes(8 * observer.GIB) == 8 * observer.GIB
+
+
+def test_the_v1_unlimited_sentinel_is_not_a_cap(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    root = _cgroup(tmp_path, monkeypatch)
+    (root / "memory").mkdir()
+    (root / "memory" / "memory.limit_in_bytes").write_text(str(2**63 - 4096))
+    assert observer.memory_limit_bytes(8 * observer.GIB) == 8 * observer.GIB
+
+
+def test_a_capped_box_without_a_scoped_sample_is_left_unjudged(tmp_path, monkeypatch):
+    """Host numbers against a container cap would judge the neighbours."""
+    from scripts import observe_ci_resources as observer
+
+    monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
+    output = _write_observation(
+        tmp_path,
+        mem_available_bytes=observer.GIB,  # the host is busy: 7 of 8 GiB used
+        vmstat_rows=[_vmstat_row(runnable=1, steal=0, free_kib=1024 * 1024)],
+    )
+    summary = observer.summarize(output)
+    verdict = observer.evaluate(summary)
+    assert summary["memory_peak_bytes"] is None
+    assert verdict["checks"][0]["state"] == "unknown"
+    assert "not judged: memory" in verdict["conclusion"]
+
+
+def test_a_box_sample_beats_host_wide_numbers(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
+    output = _write_observation(
+        tmp_path,
+        mem_used_bytes=observer.GIB,
+        mem_available_bytes=observer.GIB,  # host-wide says 7 GiB in use
+        vmstat_rows=[_vmstat_row(runnable=1, steal=0, free_kib=1024 * 1024)],
+    )
+    summary = observer.summarize(output)
+    assert summary["memory_peak_bytes"] == observer.GIB
+    assert observer.evaluate(summary)["checks"][0]["state"] == "ok"
+
+
+def test_a_pure_run_is_not_advised_to_collect_a_database_sample(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
+    output = _write_observation(
+        tmp_path,
+        mem_used_bytes=observer.GIB,
+        cpu_count=2,
+        postgres_watched=False,
+        vmstat_rows=[_vmstat_row(runnable=1, steal=0, free_kib=6 * 1024 * 1024)],
+    )
+    verdict = observer.evaluate(observer.summarize(output))
+    assert verdict["unknown"] == ["database"]
+    assert verdict["next_steps"] == ["no action needed"]
+
+
+def test_memory_sampling_records_the_boxs_own_usage(monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    class StopSampling(Exception):
+        pass
+
+    class Sink:
+        def __init__(self):
+            self.text = ""
+
+        def write(self, text):
+            self.text += text
+
+        def flush(self):
+            pass
+
+    sink = Sink()
+    monkeypatch.setattr(observer, "cgroup_memory_usage", lambda: 12345)
+    monkeypatch.setattr(observer.time, "sleep", _raise(StopSampling))
+    monkeypatch.setattr(observer.sys, "stdout", sink)
+    with pytest.raises(StopSampling):
+        observer.sample_memory()
+    records = [json.loads(line) for line in sink.text.splitlines()]
+    assert records[0]["event"] == "sampler_started"
+    assert records[1]["mem_used_bytes"] == 12345
+
+
+def _raise(error):
+    def wait(_seconds):
+        raise error
+
+    return wait
+
+
+def test_the_memory_sampler_is_a_command_of_its_own(monkeypatch):
+    """The observer starts it as a child process, so main must dispatch it."""
+    from scripts import observe_ci_resources as observer
+
+    class Started(Exception):
+        pass
+
+    def started():
+        raise Started
+
+    monkeypatch.setattr(observer, "sample_memory", started)
+    monkeypatch.setattr(sys, "argv", ["observe_ci_resources", "--sample-memory"])
+    with pytest.raises(Started):
+        observer.main()
+
+
+def test_vmstat_sees_a_memory_spike_a_slow_storage_sample_missed(tmp_path):
+    from scripts import observe_ci_resources as observer
+
+    # The box is the whole machine here, so host-wide samples are its own.
     mem_total = 8 * observer.GIB
     output = _write_observation(
         tmp_path,
