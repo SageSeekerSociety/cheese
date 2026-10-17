@@ -338,9 +338,18 @@ async def test_a_stranded_turn_is_announced_with_its_turn_id(db_factory, monkeyp
     whose only failure event has no `turn_id` looks like it never failed."""
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
-    # A re-send that the deploy interrupted: nothing will re-send it again, so
-    # the room is handed the decision instead of a silent retry.
-    turn = await open_turn(
+    # Two re-sends the deploy interrupted: nothing will re-send either again, so
+    # the room is handed the decision instead of a silent retry. The notice is
+    # about the NEWEST of them, which is the one the verdict was read from.
+    await open_turn(
+        db_factory,
+        topic,
+        content="更早的一轮",
+        age_s=600,
+        is_resume=True,
+        resendable=False,
+    )
+    newest = await open_turn(
         db_factory,
         topic,
         content="重发的一轮",
@@ -355,7 +364,7 @@ async def test_a_stranded_turn_is_announced_with_its_turn_id(db_factory, monkeyp
     await _drain(chat, rounds=50)
     assert chat.converse_calls == []  # no automatic re-run
     assert len(chat.events) == 1
-    assert chat.turn_ids == [turn]
+    assert chat.turn_ids == [newest]
 
 
 @pytest.mark.parametrize(
