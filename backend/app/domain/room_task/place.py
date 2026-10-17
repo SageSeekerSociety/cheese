@@ -9,6 +9,14 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_session.models import AgentSession
 from app.domain.living_doc.services import Documents
+
+# `Task`, `TaskStatus` and `TopicStatus` are part of the answer this seam gives
+# about a place — which row an id names, whether its work is still open, whether
+# its room is archived — so they are re-exported for the routes that ask:
+# `routes/workspace.py` takes them from here, not from `room_task.models` or
+# `topic.models` (C2 in `backend/.importlinter`). They are the place's
+# vocabulary, not a model read — the seam still makes every query. Renaming or
+# moving one of them carries the routes that read it here.
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic, TopicStatus

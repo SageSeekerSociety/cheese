@@ -1,4 +1,6 @@
 {
+  "acceptConflict": "Accept stopped: PR #{pr} conflicts with its target branch",
+  "acceptConflictDetail": "{url}\nThe conflict cannot be resolved by accepting: GitHub cannot merge this PR now. The poll hands it to the agent, which merges the target branch in the task directory, resolves it and pushes again. Accept again once the conflict is gone and the checks are green.",
   "acceptDismissed": "PR #{pr} has new commits; its existing approvals were dismissed",
   "acceptDismissedDetail": "Dismissed approvals: {voided}.\nNew commits dismiss existing approvals (project branch protection, on by default). Look at this PR again before accepting it.\n{url}",
   "acceptDone": "{actor} accepted this change; PR #{pr} {how}",

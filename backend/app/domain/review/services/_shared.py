@@ -25,6 +25,9 @@ from app.core.errors import ValidationError
 from app.core.sentences import NoticeText, say
 from app.domain.block.repositories import BlockRepository as BlockRepository
 from app.domain.notice_meta import (
+    EVENT_ACCEPT_CONFLICT as EVENT_ACCEPT_CONFLICT,
+)
+from app.domain.notice_meta import (
     EVENT_ACCEPT_DISMISSED as EVENT_ACCEPT_DISMISSED,
 )
 from app.domain.notice_meta import (

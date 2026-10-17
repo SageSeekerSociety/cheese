@@ -277,7 +277,6 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/preview_sessions.py": 3,
     "app/api/routes/project_channels.py": 2,
     "app/api/routes/project_context.py": 1,
-    "app/api/routes/project_environment.py": 3,
     "app/api/routes/project_export.py": 1,
     "app/api/routes/project_skills.py": 1,
     "app/api/routes/projects.py": 6,
@@ -380,7 +379,13 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/harness/claude_code/remote_execution/private.py": 12,
     "app/domain/agent/harness/claude_code/remote_execution/private_egress.py": 4,
     "app/domain/agent/harness/claude_code/remote_execution/release.py": 3,
-    "app/domain/agent/harness/claude_code/remote_execution/runtime.py": 40,
+    # 2026-10-16，`runtime.py` 拆成同级模块那一笔把 34 句英文拒绝搬了家：
+    # 项目上下文 13、工具调用 10、命令 8、原语 3，runtime.py 40 → 6。总数没变。
+    "app/domain/agent/harness/claude_code/remote_execution/runtime.py": 6,
+    "app/domain/agent/harness/claude_code/remote_execution/runtime_calls.py": 10,
+    "app/domain/agent/harness/claude_code/remote_execution/runtime_commands.py": 8,
+    "app/domain/agent/harness/claude_code/remote_execution/runtime_context.py": 13,
+    "app/domain/agent/harness/claude_code/remote_execution/runtime_core.py": 3,
     "app/domain/agent/harness/claude_code/remote_execution/sandbox_host.py": 14,
     "app/domain/agent/harness/claude_code/remote_execution/send_user_file.py": 2,
     "app/domain/agent/harness/claude_code/remote_execution/session_transfer.py": 9,
@@ -477,7 +482,8 @@ _BASELINE: dict[str, int] = {
     "app/domain/oauth/services/connections.py": 2,
     "app/domain/oauth/services/providers.py": 1,
     "app/domain/passkey/services.py": 5,
-    "app/domain/project/environment.py": 2,
+    # Includes the three unchanged refusals moved out of the environment route.
+    "app/domain/project/environment.py": 5,
     "app/domain/project/forge_migration.py": 20,
     "app/domain/project/forgejo_tokens.py": 7,
     "app/domain/project/github_app.py": 5,
@@ -523,7 +529,9 @@ _BASELINE: dict[str, int] = {
     "app/domain/room_task/dispatch.py": 2,
     "app/domain/room_task/place.py": 1,
     "app/domain/topic/services.py": 11,
-    "app/domain/topic_membership/services.py": 10,
+    # 2026-10-16：`topic_membership/services.py` 变成一个包，门面在 `__init__.py`。
+    # 说拒绝的那一半一行没搬，10 句还是 10 句，只是换了路径。
+    "app/domain/topic_membership/services/__init__.py": 10,
     "app/domain/usage/ledger.py": 1,
     "app/domain/user/mail_quota.py": 1,
     "app/domain/user/passwords.py": 2,

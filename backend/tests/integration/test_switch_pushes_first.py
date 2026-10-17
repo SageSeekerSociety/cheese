@@ -30,6 +30,7 @@ from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness.claude_code.remote_execution import launch
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.adapters import platform_line
 from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -560,6 +561,7 @@ async def test_an_archived_rooms_cleanup_checkpoints_once_and_goes_on(
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
             close_tasks=close_room_tasks,
+            events=platform_line,
         )
         await db.commit()
     entry = {

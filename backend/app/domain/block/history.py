@@ -99,6 +99,10 @@ class HistoryQueries:
         thing in the topic" means here exactly what the reader sees at the
         bottom of the conversation — which is what makes a stall verdict built
         on it checkable by hand.
+
+        `topic` reads the same row through a bare table
+        (`topic/repositories/latest.py`), because it sits in layer 2 and this
+        one is in layer 4. Two spellings of one query: change them together.
         """
         stmt = (
             select(Block)

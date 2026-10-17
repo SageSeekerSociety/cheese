@@ -355,7 +355,10 @@ def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, app_wo
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422, r.text
-    assert "dirty" in r.json()["message"]
+    # 这句话要说清是冲突：旧的「现在不能采纳（合并态：dirty）」把判据说给读者
+    # 听，读不出下一步该做什么（2026-10-16）。
+    assert "冲突" in r.json()["message"]
+    assert "现在不能采纳" not in r.json()["message"]
     assert _cards(client, tid)[0]["status"] == "pending"
     assert fake.merge_calls == []
 

@@ -14,8 +14,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.api.deps import get_work_runner
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.main import app
 from tests.integration.conftest import post_project
 

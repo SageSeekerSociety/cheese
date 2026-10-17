@@ -347,6 +347,7 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
     recorded the home on that host when it took its inventory — the rooms
     PR #2749 left waiting on "device … is offline". Returns what one sweep of
     room cleanups answered."""
+    from app.domain.block.adapters import platform_line
     from app.domain.delivery.ledger import settle_card
     from app.domain.room_cleanup import retire
     from app.domain.topic.services import TopicService
@@ -361,6 +362,7 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
                 settle_card=settle_card,
                 cards=close_cards_for_archived_topic,
                 close_tasks=close_room_tasks,
+                events=platform_line,
             )
             await db.commit()
 

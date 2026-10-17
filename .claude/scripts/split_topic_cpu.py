@@ -172,7 +172,9 @@ def resolve(dotted: str):
 #: Patched on ``app.api.routes.topics`` for the names that module imported by
 #: value (``_actor_in_place``, ``moving_topics``, …), on the class otherwise.
 TOPIC_LEAVES = [
-    ("place_or_404", "app.api.routes.topics.TopicService.place_or_404"),
+    # 2026-10-16：`place_or_404` 随开活那批函数搬去了 `room_task.place`，路由按名字
+    # 取进自己的模块 —— 缝在模块属性上，不在 `TopicService` 上。
+    ("place_or_404", "app.api.routes.topics.place_or_404"),
     ("last_activity", "app.api.routes.topics.TopicService.last_activity_for_topics"),
     ("relevance", "app.api.routes.topics.TopicService.relevance_for_topics"),
     ("live_cards", "app.api.routes.topics.topics_signals.live_cards"),

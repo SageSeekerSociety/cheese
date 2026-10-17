@@ -103,7 +103,7 @@ Until then an operator fetches one with `python -m scripts.retained_files homes`
 
 Sandboxes are disposable: what counts is what was pushed. So the pool also gives up on an
 enrolled host the provider reports in `error`, and on one whose connector has been away for
-ten minutes (`services.LOST_AFTER`, counted by the sweep in `cloud_hosts.offline_since`) while
+ten minutes (`reaper.LOST_AFTER`, counted by the sweep in `cloud_hosts.offline_since`) while
 another host of the pool is online. With none online, the sweep takes the outage for the
 platform's own (a restart, a cut link) and gives up on nothing. Each session that worked on
 the host is placed in a new sandbox on its next tool call; that call's result tells the agent,

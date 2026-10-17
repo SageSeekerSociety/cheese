@@ -95,7 +95,7 @@ _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (ser
 # The runner slot this run is on, empty everywhere but a pool machine with more
 # than one. Two runs sharing a machine otherwise share every name below, and the
 # harness drops its databases WITH (FORCE) — see tests/isolation.py.
-_SLOT = os.environ.get("CHEESE_CI_SLOT", "")
+_SLOT = os.environ.get("CHEESEX_TEST_SLOT", os.environ.get("CHEESE_CI_SLOT", ""))
 _INTG_DB_NAME, _CLIENT_DB_NAME = isolation.database_names(_XDIST_WORKER, _SLOT)
 # Postgres server root (no database). Defaults to the TEST server the repo-root
 # docker-compose.yml publishes on :5433 (separate from the dev database on
@@ -116,7 +116,13 @@ settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
 # block of them so two runs sharing a machine cannot land on the same index.
 _REDIS_BASE = re.sub(r"/\d*$", "", os.environ.get("REDIS_URL", settings.redis_url))
 _REDIS_DB = isolation.redis_database(
-    _XDIST_WORKER, int(os.environ.get("CHEESE_CI_REDIS_BASE_DB", "0"))
+    _XDIST_WORKER,
+    int(os.environ.get("CHEESE_CI_REDIS_BASE_DB", "0")),
+    database_count=int(
+        os.environ.get(
+            "CHEESEX_REDIS_DB_COUNT", os.environ.get("CHEESE_CI_VALKEY_DATABASES", "16")
+        )
+    ),
 )
 settings.redis_url = f"{_REDIS_BASE}/{_REDIS_DB}"
 os.environ["REDIS_URL"] = settings.redis_url
@@ -138,7 +144,15 @@ from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
 )
 from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL  # noqa: E402
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
-from app.main import app  # noqa: E402
+
+# NOTE: `app.main` is deliberately NOT imported at module scope. Importing it
+# assembles the whole FastAPI app (`_discover_routers()` imports every module
+# under `app/api/routes/`, which costs ~20s), and a conftest import is paid by
+# every pytest process that collects anything under `tests/` — the pure layer
+# included, where 445 of the 572 files under `tests/unit/` never mention
+# `client` or `TestClient` at all. The two fixtures that drive the app
+# (`client`, `python_client`) import it inside their own bodies, so only a run
+# that actually asks for one of them pays for it.
 from tests.support.collab import install as install_collab  # noqa: E402
 from tests.support.seat_channel import SeatChannel  # noqa: E402
 
@@ -987,6 +1001,46 @@ def fast_timings(monkeypatch) -> FastTimings:
     return FastTimings(monkeypatch).apply()
 
 
+#: The machine's own git configuration, neutralized. `os.devnull` rather than the
+#: literal `/dev/null`: the suite runs on Windows too.
+_HOST_GIT_VARS: tuple[tuple[str, str], ...] = (
+    ("GIT_CONFIG_GLOBAL", os.devnull),
+    ("GIT_CONFIG_SYSTEM", os.devnull),
+    ("GIT_TERMINAL_PROMPT", "0"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _host_git_and_pre_commit_isolated(monkeypatch, tmp_path_factory) -> None:
+    """No test reads the machine's git configuration, and no two tests share
+    pre-commit's store.
+
+    A `~/.gitconfig` or `/etc/gitconfig` that sets `commit.gpgsign` — or a
+    signer of its own — fails every `git commit` the suite makes in a throwaway
+    repository (`tests/support/git_store.ensure_repo` is the first consumer, not
+    the only one), in a test whose subject never mentions git. The strip above
+    removes *inherited* `GIT_*` variables, not the files git reads without them,
+    which is where that setting lives; the null device for both leaves git with
+    no global or system configuration at all.
+
+    `PRE_COMMIT_HOME` is the same leak one layer out: pre-commit keeps its hook
+    environments and a sqlite store under it (default `~/.cache/pre-commit`),
+    and two runs on one machine as one user — the self-hosted runners, or a hook
+    beside a test on a laptop — lock each other out of the one store
+    (`.github/AGENTS.md`; `scripts/test_ci_fast.py` does this for its harness).
+    Each test gets one under this worker's temp instead.
+
+    A test that means to run git or pre-commit against a configuration of its
+    own sets the variable itself, in its own fixture or body: that lands after
+    this one and wins.
+    """
+    for name, value in _HOST_GIT_VARS:
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv(
+        "PRE_COMMIT_HOME", str(tmp_path_factory.mktemp("pre-commit-home"))
+    )
+
+
 @pytest.fixture(autouse=True)
 def _metering_proxy_ca(monkeypatch, tmp_path_factory) -> None:
     """A machine has one launch shape, and it reaches a model only through the
@@ -1377,6 +1431,11 @@ def stub_project_forge(monkeypatch, tmp_path):
 def client(
     _pg_schema, stub_hooks: StubChannel, tmp_path, stub_project_forge, monkeypatch
 ) -> Iterator[TestClient]:
+    # Assembling the app is the expensive part of starting a pytest process, so
+    # it happens here rather than at conftest import: only tests that actually
+    # ask for `client` pay for it.
+    from app.main import app
+
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
     # is defined by the alembic migrations (create_all can't build the pg ENUMs).
@@ -2304,7 +2363,19 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
 
 
 @pytest.fixture(scope="session")
-def _pg_schema():
+def _database_slot(testrun_uid):
+    """Only DB users claim resources; xdist workers share this run's identity."""
+    with isolation.claim_slot(
+        slot=_SLOT,
+        owner=testrun_uid,
+        postgres_urls=(settings.database_url, TEST_DATABASE_URL),
+        redis_url=settings.redis_url,
+    ):
+        yield
+
+
+@pytest.fixture(scope="session")
+def _pg_schema(_database_slot):
     """Create + migrate THIS worker's two dedicated databases once per session:
     the integration DB (settings.database_url, bound by the app engines) and the
     client/python_client DB (TEST_DATABASE_URL). Reached via the ``_pg_schema_gate``
@@ -2468,6 +2539,8 @@ async def python_client(
     it. Same postgres test DB + truncate isolation + agent seed as `client`, but
     awaitable inside anyio tests."""
     from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
 
     engine = _production_test_engine(TEST_DATABASE_URL)
     test_factory = async_sessionmaker(engine, expire_on_commit=False)

@@ -12,7 +12,8 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.project.models import Project
 from app.domain.run_record.models import RunRecord
 from app.domain.thread.models import Thread

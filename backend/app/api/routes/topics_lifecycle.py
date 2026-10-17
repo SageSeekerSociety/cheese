@@ -20,6 +20,7 @@ from app.core.errors import ForbiddenError
 from app.core.sentences import say
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.adapters import platform_line
 from app.domain.delivery.ledger import settle_card
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_task.archive import close_room_tasks
@@ -51,6 +52,7 @@ async def archive_topic(
         settle_card=settle_card,
         cards=close_cards_for_archived_topic,
         close_tasks=close_room_tasks,
+        events=platform_line,
     )
     out = TopicOut.model_validate(topic).model_dump(mode="json")
     await db.commit()
@@ -98,7 +100,10 @@ async def unarchive_topic(
         raise ForbiddenError(say("unarchiveSignIn"))
     await TopicMemberService(db).require_administrator(topic_id, actor.handle)
     topic = await TopicService(db).unarchive(
-        topic_id, by=actor.handle, sessions=AgentSessionService(db)
+        topic_id,
+        by=actor.handle,
+        sessions=AgentSessionService(db),
+        events=platform_line,
     )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
@@ -129,6 +134,7 @@ async def delete_topic(
         settle_card=settle_card,
         cards=close_cards_for_archived_topic,
         close_tasks=close_room_tasks,
+        events=platform_line,
     )
     await db.commit()
     await tell_project(topic_id, TOPICS)

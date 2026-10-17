@@ -697,7 +697,9 @@ class AcceptService:
     async def _void_closed_pr_card(self, *, card: AcceptCard, topic: Topic) -> None:
         return await _accept._void_closed_pr_card(self, card=card, topic=topic)
 
-    async def _record_task_nudge(self, *, topic, task, content, headline, meta):
+    async def _record_task_nudge(
+        self, *, topic, task, content, headline, meta, replaces=None
+    ):
         return await notices._record_task_nudge(
             self,
             topic=topic,
@@ -705,6 +707,7 @@ class AcceptService:
             content=content,
             headline=headline,
             meta=meta,
+            replaces=replaces,
         )
 
     async def _note_merge_blocked(
@@ -816,6 +819,9 @@ class AcceptService:
         return await _accept._stop_accept_pr_unavailable(
             self, card=card, topic=topic, reason=reason
         )
+
+    async def _stop_accept_conflict(self, card: AcceptCard, topic: Topic) -> NoReturn:
+        return await _accept._stop_accept_conflict(self, card=card, topic=topic)
 
     async def _stop_accept_title_disagrees(
         self, card: AcceptCard, topic: Topic, pr_title: str

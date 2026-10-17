@@ -180,7 +180,11 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/integration/mail.py", "ValidationError"): 2,
     ("app/domain/integration/service.py", "ValidationError"): 18,
     ("app/domain/library/service.py", "ValidationError"): 9,
-    ("app/domain/machine/services.py", "ValidationError"): 4,
+    # `machine/services.py` 拆出了这一处引用（2026-10-16）：池子的后台巡检整段
+    # 搬去 `reaper.py`，`_fail` 里那个 `except` 跟着它走。总数没变，只是发起方
+    # 换了文件。
+    ("app/domain/machine/reaper.py", "ValidationError"): 1,
+    ("app/domain/machine/services.py", "ValidationError"): 3,
     ("app/domain/machine/supply.py", "ValidationError"): 2,
     ("app/domain/machine/warm.py", "ValidationError"): 2,
     ("app/domain/membership/services.py", "ValidationError"): 8,
@@ -235,7 +239,9 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/textfile.py", "ValidationError"): 1,
     ("app/domain/thread/services.py", "ValidationError"): 2,
     ("app/domain/topic/services.py", "ValidationError"): 10,
-    ("app/domain/topic_membership/services.py", "ValidationError"): 10,
+    # 2026-10-16：`topic_membership/services.py` 变成一个包，门面在 `__init__.py`。
+    # 带 `raise` 的那一半一行没搬，10 处还是 10 处，只是换了路径。
+    ("app/domain/topic_membership/services/__init__.py", "ValidationError"): 10,
     ("tests/integration/test_accept_pr.py", "ValidationError"): 2,
     ("tests/integration/test_accept_pr_publish.py", "GatewayUnavailableError"): 1,
     ("tests/integration/test_chat_realtime.py", "ValidationError"): 1,

@@ -20,7 +20,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import settings
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.memory.reads import body_reads, is_body_read
 from tests.integration.conftest import project_service, registered, session_auth_headers
 

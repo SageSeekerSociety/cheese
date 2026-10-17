@@ -17,8 +17,11 @@ black box. 这一条路由就是那一面：读 `memory_files` 那棵树（`file
 """
 
 import uuid
+from datetime import datetime
+from typing import Protocol
 
 from fastapi import APIRouter
+from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
@@ -32,13 +35,32 @@ from app.domain.memory.files import (
     parse_memory_file,
 )
 from app.domain.memory.files_store import MemoryFileStore
-from app.domain.memory.models import MemoryFileRecord
 from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
 
-def _entry_out(row: MemoryFileRecord) -> dict:
+# `MemoryFileStore` 交回来的行，这一页只读属性。形状写在这里、不导入
+# `app.domain.memory.models`，是架构守卫 C2 对路由的要求：路由手上就有会话和 ORM，
+# 读得到另一张表的模型，而它跳过的是那个领域自己的存取层。成员声明成 `Mapped[...]`，
+# 和模型里写的一模一样——pyright 拿调用方的 `MemoryFileRecord` 跟这里的**类成员**
+# 比对，写 `uuid.UUID` 这样的裸类型接不住 `Mapped[uuid.UUID]`；从实例上读出来仍是
+# 被包住的那个值。和 `routes/spaces.py` 的 `SpaceMemberRow`、`routes/projects.py` 的
+# `ProjectRow` 同一形状。
+class MemoryFileRow(Protocol):
+    id: Mapped[uuid.UUID]
+    project_id: Mapped[uuid.UUID]
+    scope: Mapped[MemoryFileScope]
+    owner_handle: Mapped[str]
+    path: Mapped[str]
+    content: Mapped[str]
+    version: Mapped[int]
+    updated_by: Mapped[str]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+
+def _entry_out(row: MemoryFileRow) -> dict:
     """一条记忆，照人读的形状给。
 
     给的是**正文**：文件头上那三行 frontmatter（`name` / `description` / `type`）
@@ -120,7 +142,8 @@ async def delete_memory(
     except ValueError as exc:
         raise ValidationError(say("memoryEntryIdInvalid")) from exc
     missing = NotFoundError(say("memoryEntryNotFound"))
-    entry = await db.get(MemoryFileRecord, row_id)
+    store = MemoryFileStore(db)
+    entry = await store.get_by_id(row_id)
     if entry is None or entry.path == INDEX_NAME:
         raise missing
     try:
@@ -135,7 +158,7 @@ async def delete_memory(
         raise missing from exc
     if entry.scope is MemoryFileScope.private and entry.owner_handle != actor.handle:
         raise missing
-    await MemoryFileStore(db).forget(
+    await store.forget(
         project_id=entry.project_id,
         scope=entry.scope,
         owner_handle=entry.owner_handle,

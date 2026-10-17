@@ -28,7 +28,12 @@ from app.domain.project.repositories import (
 )
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicKind
-from app.domain.topic.ports import ArchivedCards, CloseRoomTasks, SessionStore
+from app.domain.topic.ports import (
+    ArchivedCards,
+    CloseRoomTasks,
+    PlatformLine,
+    SessionStore,
+)
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.models import User
@@ -85,6 +90,7 @@ class ProjectService:
         cards: ArchivedCards | None = None,
         sessions: SessionStore | None = None,
         close_tasks: CloseRoomTasks | None = None,
+        events: PlatformLine | None = None,
         seat_mentors: SeatMentors | None = None,
     ):
         """``settle_card``：归档项目要把房间里等验收人的那几句话一起收掉，
@@ -103,10 +109,11 @@ class ProjectService:
         ``create`` 和 ``_accept_task_protocol`` 这两条路要它，同样走到那里没递进来
         就当场炸掉。
 
-        ``cards``、``sessions`` 和 ``close_tasks``：归档项目会顺手做三件本包够不着
-        的事 —— 把房间里还没结的验收卡收掉（第 4 层 `review`），把房间里的活结束掉
-        （第 4 层 `room_task`），把取消归档的房间记着的会话令牌忘掉（第 3 层
-        `agent_session`）。三样都只在 ``archive`` / ``unarchive`` 这两条路上用，
+        ``cards``、``sessions``、``close_tasks`` 和 ``events``：归档项目会顺手做
+        四件本包够不着的事 —— 把房间里还没结的验收卡收掉（第 4 层 `review`），把
+        房间里的活结束掉（第 4 层 `room_task`），把取消归档的房间记着的会话令牌忘掉
+        （第 3 层 `agent_session`），以及把「这个房间归档了」那句话落进总览
+        （第 4 层 `block`）。四样都只在 ``archive`` / ``unarchive`` 这两条路上用，
         所以也不给也能构造，走到那里没递进来就当场炸掉。
 
         ``overview``：新项目要说的话（用户写的意图、或者这道赛题的要求）是**一份文档**
@@ -134,6 +141,7 @@ class ProjectService:
         self._cards = cards
         self._sessions = sessions
         self._close_tasks = close_tasks
+        self._events = events
         self._seat_mentors = seat_mentors
 
     async def _seed_default_teammate(
@@ -463,6 +471,9 @@ class ProjectService:
         if self._close_tasks is None:  # pragma: no cover - 接线漏了才会走到
             # i18n-exempt: developer miswiring, not a refusal a reader can act on
             raise RuntimeError("close_tasks was not handed in")
+        if self._events is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("events was not handed in")
         project.archived_at = datetime.now(UTC)
         await TopicService(self._session).archive_with_project(
             project_id,
@@ -470,6 +481,7 @@ class ProjectService:
             settle_card=self._settle_card,
             cards=self._cards,
             close_tasks=self._close_tasks,
+            events=self._events,
         )
         await self._session.flush()
         return project
@@ -486,8 +498,11 @@ class ProjectService:
         if self._sessions is None:  # pragma: no cover - 接线漏了才会走到
             # i18n-exempt: developer miswiring, not a refusal a reader can act on
             raise RuntimeError("sessions was not handed in")
+        if self._events is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("events was not handed in")
         await TopicService(self._session).unarchive_with_project(
-            project_id, by=by, sessions=self._sessions
+            project_id, by=by, sessions=self._sessions, events=self._events
         )
         project.archived_at = None
         await self._session.flush()

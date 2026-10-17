@@ -29,8 +29,8 @@ from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
 from app.domain.agent.announce import settle_proposal
 from app.domain.agent.staleness import announce_stale
-from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.memory.files import (

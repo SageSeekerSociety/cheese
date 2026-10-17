@@ -47,14 +47,15 @@ from app.domain.addressing import (
 )
 from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.about import EventAbout, landing
 from app.domain.block.asked import asked_of, settled, skipped_by
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
 from app.domain.delivery.ledger import deliver, settle
 from app.domain.delivery_events import DeliveryEvent
+from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import (
     SEVERITY_INFO,

@@ -22,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.topics_deps import BlockRepository
 from app.domain.block.documents import DOC_CARD_KEY
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import recipient_seat
 from app.domain.identity.services import IdentityService
 from app.domain.room_task.models import Task

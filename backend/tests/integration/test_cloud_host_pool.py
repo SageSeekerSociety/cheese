@@ -24,7 +24,7 @@ from app.domain.device.models import DeviceProjectRow, DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.machine import owner_reads, services
+from app.domain.machine import owner_reads, reaper, services
 from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
@@ -222,7 +222,9 @@ def pool(client, monkeypatch):
 
 
 def _later(monkeypatch, by: timedelta) -> None:
-    """The pool's clock reads ``by`` later than now from here on."""
+    """The pool's clock reads ``by`` later than now from here on. Its sweep
+    reads the clock from ``reaper`` and the rest of the pool from ``services``,
+    so both modules have to be moved forward."""
 
     class Later(datetime):
         @classmethod
@@ -230,6 +232,7 @@ def _later(monkeypatch, by: timedelta) -> None:
             return datetime.now(tz) + by
 
     monkeypatch.setattr(services, "datetime", Later)
+    monkeypatch.setattr(reaper, "datetime", Later)
 
 
 def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]:

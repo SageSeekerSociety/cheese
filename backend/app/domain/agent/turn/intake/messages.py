@@ -42,6 +42,7 @@ from app.domain.agent.turn.intake.ports import (
 )
 from app.domain.agent.turn.state.execution import ExecutionState
 from app.domain.agent.turn_ledger import project_pool
+from app.domain.delivery.agent import DeliveryTargetChanged
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.handles import names_a_person, recipient_seat
 from app.domain.notice_meta import (
@@ -635,6 +636,18 @@ class RunnerIntake:
         # is streaming yet.
         await self._wait_to_start()
         await self._wait_for_replay(chat_service, topic_id, turn_id)
+        if delivery_id is not None:
+            # A ledger delivery joins the turn its seat is already running
+            # here, as a person's mid-turn message does, instead of waiting for
+            # a turn of its own behind it (`join_running_turn`). Taken, or of
+            # unknown outcome, it is that turn's now; not taken, it goes on to
+            # be admitted and refused like any attempt, and is retried.
+            try:
+                joined = await chat_service.join_running_turn(delivery_id, turn_id)
+            except DeliveryTargetChanged:
+                return
+            if joined is not None and joined is not False:
+                return
         admit_started = time.monotonic()
         verdict, gate = await self._admit(
             chat_service,

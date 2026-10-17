@@ -197,10 +197,6 @@ PROBE_PRESETS: dict[str, tuple[int, int]] = {
 _CELL_RE = re.compile(r"^(?P<task>[a-z0-9-]+):(?P<lang>en|zh)$")
 
 
-def make_cell_id(task_id: str, lang: str) -> str:
-    return f"{task_id}:{lang}"
-
-
 def parse_cell_id(cell_id: str) -> tuple[str, str]:
     match = _CELL_RE.match(cell_id)
     if match is None:

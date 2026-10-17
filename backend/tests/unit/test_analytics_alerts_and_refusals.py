@@ -30,6 +30,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+# Assemble the app up front: this file drives the app stack, and conftest now does
+# that only for `client`/`python_client` (the layer ceiling counts wall clock).
+import app.main  # noqa: F401
 from app.core.errors import BadRequestError
 from app.domain.space.analytics_compute import (
     APPROVED_MAP,
@@ -224,20 +227,54 @@ async def _alerts(ctx: _Context) -> dict:
     return await build_service(ctx).get_alerts(space_id=SPACE_ID)
 
 
+#: The six counts ``build_context`` puts behind the bar, one bucket each. Pinned
+#: rather than recomputed, and no two of them the same: the pinned payload is
+#: what catches a swap, and all six differing is what keeps it able to.
+EXPECTED_ALERTS = {
+    "pendingTaskApprovalCount": 1,
+    "pendingParticipantApprovalCount": 4,
+    "pendingSubmissionReviewCount": 6,
+    "stalledTaskCount": 2,
+    "overdueUnreviewedSubmissionCount": 5,
+    "inactivePublisherCount": 3,
+}
+
+
+def _assert_alerts(payload: dict) -> None:
+    """The six counts, each under its own name, and no two of them equal.
+
+    A payload that swapped two of them, or that lost the threshold behind one,
+    is a report that says something else about the same space. Two buckets
+    holding one count would be two buckets such a swap could hide in, so the
+    pair of assertions is the point: the pinned payload tells a swap from the
+    truth, and it only can while every count differs.
+    """
+    assert payload == EXPECTED_ALERTS
+    assert len(set(payload.values())) == len(payload)
+
+
 @pytest.mark.anyio
 async def test_the_alerts_bar_counts_a_different_number_of_each_thing():
     """Six numbers, all different: a payload that swapped two of them, or that
     lost one, is a report that says something else about the same space."""
-    alerts = await _alerts(build_context())
+    _assert_alerts(await _alerts(build_context()))
 
-    assert alerts == {
-        "pendingTaskApprovalCount": 1,
-        "pendingParticipantApprovalCount": 4,
-        "pendingSubmissionReviewCount": 6,
-        "stalledTaskCount": 2,
-        "overdueUnreviewedSubmissionCount": 5,
-        "inactivePublisherCount": 3,
-    }
+
+@pytest.mark.anyio
+async def test_swapping_two_counts_is_a_payload_the_alerts_assertion_rejects():
+    """Two buckets swapped is the change the pinned payload must not survive:
+    1 under 待审核题目 and 4 under 待审核报名 is the same six numbers in the wrong
+    places, and a fixture whose two buckets held equal counts would let exactly
+    that pass. This holds that the pair above goes red when it happens.
+    """
+    payload = dict(await _alerts(build_context()))
+    payload["pendingTaskApprovalCount"], payload["pendingParticipantApprovalCount"] = (
+        payload["pendingParticipantApprovalCount"],
+        payload["pendingTaskApprovalCount"],
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_alerts(payload)
 
 
 @pytest.mark.anyio

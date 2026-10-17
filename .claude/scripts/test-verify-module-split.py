@@ -17,10 +17,12 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -52,6 +54,32 @@ ENV = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_TERMINAL_PROMPT": "0",
 }
+
+#: Scratch directories this suite parks copies of its fixtures in. A run that
+#: dies before its cleanup leaves one behind, and that copy holds a fixture's
+#: text under the package name the tool refuses to compare past — so it would
+#: block every later run of this suite, and a `TMPDIR` of the suite's own does
+#: not help, because the tool looks in `/tmp` as well. Anything older than a
+#: run is cleared first; a copy young enough to belong to a concurrent run is
+#: left alone.
+SCRATCH_PREFIXES = ("shadow-copy-", "shadow-other-")
+SCRATCH_STALE_SECONDS = 900
+
+
+def _clear_stale_scratch() -> None:
+    now = time.time()
+    for prefix in SCRATCH_PREFIXES:
+        for directory in Path(tempfile.gettempdir()).glob(prefix + "*"):
+            try:
+                age = now - directory.stat().st_mtime
+            except OSError:
+                continue
+            if age > SCRATCH_STALE_SECONDS:
+                shutil.rmtree(directory, ignore_errors=True)
+
+
+def setUpModule() -> None:
+    _clear_stale_scratch()
 
 #: The module as it stood before the split. `json` and `Any` are imported at
 #: the top level: a real module brings things in for its own use, and the tool
@@ -248,6 +276,318 @@ class Fixture:
     def split_and_run(self, files: dict[str, str], *extra: str):
         self.apply_split(files)
         return self.run_tool(*extra)
+
+
+class CallerContractTests(unittest.TestCase):
+    """Each broken consumer must fail even when the facade-only checks pass."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="split-callers-")
+        self.addCleanup(tmp.cleanup)
+        self.fixture = Fixture(Path(tmp.name) / "repo", "from json import loads\n")
+        # Exercise the actual app import root, not a backend.app lookalike.
+        root = self.fixture.root
+        (root / "backend").mkdir()
+        (root / "pkgroot").rename(root / "backend/app")
+        _git(root, "add", "pkgroot", "backend/app")
+        _git(root, "commit", "-qm", "put the fixture under the app import root")
+        self.fixture.base = _git(root, "rev-parse", "HEAD").strip()
+        self.fixture.package_dir = root / "backend/app/impl/foo"
+        (root / "backend/app/impl/foo.py").unlink()
+        self.write_package({"__init__.py": "", "worker.py": "from json import loads\n"})
+
+    def write_package(self, files: dict[str, str]) -> None:
+        for path, source in files.items():
+            self.fixture._write("backend/app/impl/foo/" + path, source)
+
+    def assert_result(self, code: int, *messages: str) -> None:
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+        for message in messages:
+            self.assertIn(message, result.stdout + result.stderr)
+
+    def test_cross_package_imports_fail_and_retargeting_repairs_them(self) -> None:
+        for directory in ("cli", "backend/scripts", ".claude/scripts", "scripts"):
+            with self.subTest(directory=directory):
+                path = directory + "/consumer.py"
+                self.fixture._write(path, "from app.impl.foo import loads as decode\n")
+                self.assert_result(1, "调用方导入断裂", path, "loads")
+                self.fixture._write(
+                    path, "from app.impl.foo.worker import loads as decode\n"
+                )
+                self.assert_result(0)
+
+    def test_reexport_of_an_imported_name_still_serves_callers(self) -> None:
+        self.fixture._write("cli/consumer.py", "from app.impl.foo import loads\n")
+        self.write_package({"__init__.py": "from .worker import loads\n"})
+        self.assert_result(0)
+        self.write_package(
+            {"__init__.py": "from .worker import nonexistent as loads\n"}
+        )
+        self.assert_result(1, "调用方导入断裂", "loads")
+
+    def test_private_imports_and_relative_imports_are_checked(self) -> None:
+        self.fixture._write(
+            "backend/app/impl/consumer.py", "from .foo import _decode\n"
+        )
+        self.assert_result(1, "调用方导入断裂", "_decode")
+        self.write_package({"__init__.py": "from .worker import loads as _decode\n"})
+        self.assert_result(0)
+
+    def test_old_reason_on_a_retargeted_import_fails_then_passes(self) -> None:
+        path = "backend/tests/test_decode.py"
+        source = (
+            "def decode():\n"
+            "    # deferred-import: tests replace this name on app.impl.foo\n"
+            "    from app.impl.foo.worker import loads\n"
+            "    return loads('{}')\n"
+        )
+        self.fixture._write(path, source)
+        self.assert_result(1, "理由句失指", path)
+        self.fixture._write(
+            path,
+            source.replace("name on app.impl.foo\n", "name on app.impl.foo.worker\n"),
+        )
+        self.assert_result(0)
+
+    def test_reason_strings_and_comments_name_a_removed_patch_target(self) -> None:
+        path = "backend/tests/test_decode.py"
+        for source in (
+            'reason = "tests patch app.impl.foo.loads"\n',
+            "# tests replace app.impl.foo.loads\n",
+        ):
+            self.fixture._write(path, source)
+            self.assert_result(1, "理由句失指", path)
+            self.fixture._write(path, source.replace("foo.loads", "foo.worker.loads"))
+            self.assert_result(0)
+
+    def test_missing_patch_paths_fail_and_new_paths_pass(self) -> None:
+        path = "backend/tests/test_decode.py"
+        for source in (
+            'monkeypatch.setattr("app.impl.foo.loads", fake)\n',
+            'from app.impl import foo\nsetattr(foo, "loads", fake)\n',
+            'import app.impl.foo as old\nmonkeypatch.setattr(old, "loads", fake)\n',
+            'from unittest.mock import patch\npatch("app.impl.foo.loads", fake)\n',
+        ):
+            with self.subTest(source=source):
+                self.fixture._write(path, source)
+                self.assert_result(1, "补丁目标断裂", path, "loads")
+                self.fixture._write(
+                    path,
+                    source.replace("app.impl.foo", "app.impl.foo.worker").replace(
+                        "import foo\n",
+                        "import foo\nfrom app.impl.foo import worker as foo\n",
+                    ),
+                )
+                self.assert_result(0)
+
+    def test_reexported_globals_do_not_keep_patches_effective(self) -> None:
+        self.write_package(
+            {
+                "__init__.py": "from .worker import loads, decode\n",
+                "worker.py": "from json import loads\ndef decode():\n    return loads('{}')\n",
+            }
+        )
+        # The old callable looked up loads in the old module's globals.
+        old = self.fixture.root / "backend/app/impl/foo.py"
+        old.write_text(
+            "from json import loads\ndef decode():\n    return loads('{}')\n"
+        )
+        _git(self.fixture.root, "add", "backend/app/impl/foo.py")
+        _git(self.fixture.root, "commit", "-qm", "record the old callable")
+        self.fixture.base = _git(self.fixture.root, "rev-parse", "HEAD").strip()
+        old.unlink()
+        path = "backend/tests/test_decode.py"
+        self.fixture._write(path, 'monkeypatch.setattr("app.impl.foo.loads", fake)\n')
+        self.assert_result(1, "补丁不再作用于搬走的定义", "decode", "loads")
+        self.fixture._write(
+            path, 'monkeypatch.setattr("app.impl.foo.worker.loads", fake)\n'
+        )
+        self.assert_result(0)
+
+    def test_logger_selection_fails_when_the_emitter_name_moves(self) -> None:
+        path = "backend/tests/test_logging.py"
+        self.write_package(
+            {"worker.py": "import logging\nLOG = logging.getLogger(__name__)\n"}
+        )
+        self.fixture._write(
+            path,
+            'import logging\nmonkeypatch.setattr(logging.getLogger("app.impl.foo"), "warning", fake)\n',
+        )
+        self.assert_result(1, "日志名称已迁移", path)
+        self.fixture._write(
+            path,
+            'import logging\nmonkeypatch.setattr(logging.getLogger("app.impl.foo.worker"), "warning", fake)\n',
+        )
+        self.assert_result(0)
+        self.write_package(
+            {"worker.py": 'import logging\nLOG = logging.getLogger("app.impl.foo")\n'}
+        )
+        self.fixture._write(
+            path,
+            'import logging\nmonkeypatch.setattr(logging.getLogger("app.impl.foo"), "warning", fake)\n',
+        )
+        self.assert_result(0)
+
+    def test_unrelated_strings_and_logger_hierarchies_are_not_patches(self) -> None:
+        self.fixture._write("cli/consumer.py", 'text = "app.impl.foo.loads"\n')
+        self.write_package(
+            {"worker.py": "import logging\nLOG = logging.getLogger(__name__)\n"}
+        )
+        self.fixture._write(
+            "backend/tests/test_logging.py",
+            'import logging\nlogging.getLogger("app.impl")\n',
+        )
+        self.assert_result(0)
+
+    def test_nested_reexports_resolve_relative_to_their_own_package(self) -> None:
+        self.write_package(
+            {
+                "__init__.py": "from .nested import loads\n",
+                "nested/__init__.py": "from ..worker import loads\n",
+            }
+        )
+        self.fixture._write("cli/consumer.py", "from app.impl.foo import loads\n")
+        self.assert_result(0)
+        self.write_package(
+            {"nested/__init__.py": "from ..worker import missing as loads\n"}
+        )
+        self.assert_result(1, "调用方导入断裂", "cli/consumer.py")
+
+    def test_parameter_and_reassignment_shadow_a_module_alias(self) -> None:
+        self.fixture._write(
+            "backend/tests/test_decode.py",
+            (
+                "from app.impl import foo\n"
+                "def first(foo, monkeypatch):\n"
+                "    monkeypatch.setattr(foo, 'loads', fake)\n"
+                "def second(monkeypatch):\n"
+                "    foo = object()\n"
+                "    monkeypatch.setattr(foo, 'loads', fake)\n"
+            ),
+        )
+        self.assert_result(0)
+        self.fixture._write(
+            "backend/tests/test_decode.py",
+            (
+                "from app.impl import foo\n"
+                "def first(foo, monkeypatch):\n"
+                "    monkeypatch.setattr(foo, 'loads', fake)\n"
+                "def second(monkeypatch):\n"
+                "    monkeypatch.setattr(foo, 'loads', fake)\n"
+            ),
+        )
+        self.assert_result(1, "补丁目标断裂")
+
+    def test_local_names_do_not_turn_reexports_into_broken_patches(self) -> None:
+        old = self.fixture.root / "backend/app/impl/foo.py"
+        source = "from json import loads\ndef decode(loads):\n    return loads('{}')\n"
+        old.write_text(source)
+        _git(self.fixture.root, "add", "backend/app/impl/foo.py")
+        _git(
+            self.fixture.root, "commit", "-qm", "record a parameter with the same name"
+        )
+        self.fixture.base = _git(self.fixture.root, "rev-parse", "HEAD").strip()
+        old.unlink()
+        self.write_package(
+            {"__init__.py": "from .worker import loads, decode\n", "worker.py": source}
+        )
+        self.fixture._write(
+            "backend/tests/test_decode.py",
+            'monkeypatch.setattr("app.impl.foo.loads", fake)\n',
+        )
+        self.assert_result(0)
+
+    def test_logger_aliases_are_checked_but_parent_handlers_remain_valid(self) -> None:
+        self.write_package(
+            {"worker.py": "import logging\nLOG = logging.getLogger(__name__)\n"}
+        )
+        path = "backend/tests/test_logging.py"
+        self.fixture._write(
+            path,
+            (
+                "from logging import getLogger as logger_for\n"
+                'logger = logger_for("app.impl.foo")\n'
+                'monkeypatch.setattr(logger, "warning", fake)\n'
+            ),
+        )
+        self.assert_result(1, "日志名称已迁移")
+        self.fixture._write(
+            path,
+            ('import logging\nlogging.getLogger("app.impl.foo").addHandler(handler)\n'),
+        )
+        self.assert_result(0)
+
+    def test_package_relative_imports_do_not_need_the_package_name_in_source(
+        self,
+    ) -> None:
+        for relative, source in (
+            ("consumer.py", "from . import loads\n"),
+            ("nested/__init__.py", "from .. import loads\n"),
+        ):
+            with self.subTest(relative=relative):
+                self.write_package({"__init__.py": "", relative: source})
+                self.assert_result(1, "调用方导入断裂", "app.impl.foo.loads")
+                self.write_package({"__init__.py": "from .worker import loads\n"})
+                self.assert_result(0)
+
+    def test_patch_object_can_supply_the_mock_without_a_third_argument(self) -> None:
+        path = "backend/tests/test_decode.py"
+        for extra in ("", ", return_value={}"):
+            with self.subTest(extra=extra):
+                self.write_package({"__init__.py": ""})
+                source = (
+                    "from app.impl import foo\n"
+                    "from unittest.mock import patch\n"
+                    f"with patch.object(foo, 'loads'{extra}):\n    pass\n"
+                )
+                self.fixture._write(path, source)
+                self.assert_result(1, "补丁目标断裂", "app.impl.foo.loads")
+                self.write_package({"__init__.py": "from .worker import loads\n"})
+                self.assert_result(0)
+
+    def test_patching_parent_logger_handlers_still_captures_child_records(self) -> None:
+        self.write_package(
+            {
+                "__init__.py": "from .worker import emit\n",
+                "worker.py": (
+                    "import logging\nLOG = logging.getLogger(__name__)\n"
+                    "def emit():\n    LOG.warning('hello')\n"
+                ),
+            }
+        )
+        source = (
+            "import logging\nfrom unittest.mock import patch\n"
+            "from app.impl.foo import emit\n"
+            "seen = []\n"
+            "class Capture(logging.Handler):\n"
+            "    def emit(self, record):\n        seen.append(record.getMessage())\n"
+            "with patch.object(logging.getLogger('app.impl.foo'), 'handlers', [Capture()]):\n"
+            "    emit()\n"
+            "assert seen == ['hello'], seen\n"
+        )
+        self.fixture._write("scripts/consumer.py", source)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import sys; sys.path.insert(0, sys.argv[1]); " + source,
+                str(self.fixture.root / "backend"),
+            ],
+            capture_output=True,
+            text=True,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_result(0)
+
+    def test_an_unreadable_relevant_caller_is_not_a_pass(self) -> None:
+        self.fixture._write(
+            "cli/consumer.py",
+            "from app.impl.foo import loads\nthis is invalid python\n",
+        )
+        self.assert_result(2, "cannot judge", "cli/consumer.py")
 
 
 class SplitVerificationTests(unittest.TestCase):
@@ -1143,6 +1483,626 @@ def _load_by_path(name: str, path: Path):
     return module
 
 
+#: Two sibling modules of one directory, before and after a name walks from the
+#: first to the second. `keep` and `other` stay put so the change is a move and
+#: not a rewrite, and `_helper` is the private name the 2026-10-08 move carried.
+MOVE_BEFORE_FOO = '''\
+def keep(value):
+    return value
+
+
+def _helper(value):
+    return value + 1
+'''
+
+MOVE_AFTER_FOO = '''\
+def keep(value):
+    return value
+'''
+
+MOVE_BEFORE_BAR = '''\
+def other(value):
+    return value
+'''
+
+MOVE_AFTER_BAR = '''\
+def other(value):
+    return value
+
+
+def _helper(value):
+    return value + 2
+'''
+
+#: A script outside the package, reading the moved name from the file it left.
+#: `backend/scripts/` is the directory `[tool.pyright]`'s `include = ["app"]`
+#: leaves unchecked, which is why nothing local saw the 2026-10-08 move.
+STALE_CALLER = "from app.foo import _helper\n"
+MOVED_CALLER = "from app.bar import _helper\n"
+
+#: A module that forwards a sibling's name and also loses one of its own. The
+#: caller reads `shared` through `app.foo` and keeps working after the change,
+#: so a check that resolves only what the file itself types into a break about
+#: an import that never stopped being valid.
+EXPORT_BEFORE_FOO = '''\
+from .base import shared
+
+
+def keep(value):
+    return value
+
+
+def removed(value):
+    return value
+'''
+
+EXPORT_AFTER_FOO = '''\
+from .base import shared
+
+
+def keep(value):
+    return value
+'''
+
+EXPORT_BASE = '''\
+def shared(value):
+    return value
+'''
+
+SHARED_CALLER = "from app.foo import shared\n"
+
+#: A name that also happens to be a module beside the file it leaves. The package
+#: holds a module named `helper`, so a view that copies every neighbour in under
+#: its bare name lets `from app.foo import helper` walk into `app.helper` and pass
+#: a name `app.foo` no longer offers.
+NAMESAKE_BEFORE_FOO = '''\
+def keep(value):
+    return value
+
+
+def helper(value):
+    return value
+'''
+
+NAMESAKE_AFTER_FOO = '''\
+def keep(value):
+    return value
+'''
+
+NAMESAKE_SIBLING = '''\
+"""`app/helper.py`: a module, and not a name `app.foo` hands out."""
+
+
+def other(value):
+    return value
+'''
+
+NAMESAKE_CALLER = "from app.foo import helper\n"
+
+#: A module two levels under the package root, forwarding a sibling's name. The
+#: file spells that import `y`, which is a name only the package around it can
+#: place on a file — `app/domain/y.py` here, not `app/y.py`.
+NESTED_BEFORE_X = '''\
+from .y import z
+
+
+def keep(value):
+    return value
+
+
+def removed(value):
+    return value
+'''
+
+NESTED_AFTER_X = '''\
+from .y import z
+
+
+def keep(value):
+    return value
+'''
+
+NESTED_SIBLING = '''\
+def z(value):
+    return value
+'''
+
+NESTED_CALLER = "from app.domain.x import z\n"
+
+#: The package's own `__init__.py` losing a name, while a caller reads a
+#: submodule through the package. `from app.helper import other` reads the file
+#: `app/helper.py`, which is in the package and not in the module: a view that
+#: carries only the module cannot walk down to it, and every caller naming a
+#: submodule of the package would read as broken.
+FACADE_BEFORE = '''\
+def gone(value):
+    return value
+'''
+
+FACADE_AFTER = ""
+
+FACADE_SUBMODULE_CALLER = "from app.helper import other\n"
+FACADE_NAME_CALLER = "from app import gone\n"
+
+#: A definition that left for a sibling while this module kept the name as a
+#: re-export. The import still binds, but the re-export preserves the object
+#: and not the globals dictionary the moved function reads: a patch spelled
+#: against this module no longer reaches the definition.
+PATCH_BEFORE_FOO = '''\
+from json import loads
+
+
+def decode():
+    return loads('{}')
+
+
+def gone(value):
+    return value
+'''
+
+PATCH_AFTER_FOO = '''\
+from .bar import decode, loads
+'''
+
+PATCH_BEFORE_BAR = '''\
+def other(value):
+    return value
+'''
+
+PATCH_AFTER_BAR = '''\
+from json import loads
+
+
+def decode():
+    return loads('{}')
+'''
+
+PATCH_CALLER = '''\
+def test_it(monkeypatch):
+    monkeypatch.setattr("app.foo.loads", fake)
+'''
+
+#: A name the module both imports and defines: the import is the fast path and
+#: the definition is the fallback, so a caller keeps working either way. A view
+#: that keeps the import in the module's own record but drops the file it names
+#: reads that caller's import as broken.
+FALLBACK_BEFORE_FOO = '''\
+try:
+    from .fast import shared
+except ImportError:
+    def shared(value):
+        return value
+
+
+def gone(value):
+    return value
+'''
+
+FALLBACK_AFTER_FOO = '''\
+try:
+    from .fast import shared
+except ImportError:
+    def shared(value):
+        return value
+'''
+
+FALLBACK_FAST = '''\
+def shared(value):
+    return value
+'''
+
+FALLBACK_CALLER = "from app.foo import shared\n"
+
+#: A package whose facade loses a name while a caller reads a name that is not
+#: there out of its submodule. The walk has to keep descending through the
+#: facade into `app/pkg/sub.py`, or the missing name reads as present.
+SUBPACKAGE_INIT_BEFORE = '''\
+def old_name(value):
+    return value
+
+
+from .sub import shared
+'''
+
+SUBPACKAGE_INIT_AFTER = '''\
+from .sub import shared
+'''
+
+SUBPACKAGE_SUB = '''\
+def shared(value):
+    return value
+'''
+
+SUBPACKAGE_CALLER = "from app.pkg.sub import gone\n"
+
+
+class MoveFixture:
+    """A throwaway repository whose two modules are siblings under `app`."""
+
+    def __init__(
+        self,
+        root: Path,
+        commit_bar: bool = True,
+        relative_export: bool = False,
+        files: dict[str, str] | None = None,
+    ) -> None:
+        self.root = root
+        written = {
+            "backend/app/__init__.py": "",
+            "backend/app/foo.py": (
+                EXPORT_BEFORE_FOO if relative_export else MOVE_BEFORE_FOO
+            ),
+            "backend/scripts/tool.py": (
+                SHARED_CALLER if relative_export else STALE_CALLER
+            ),
+        }
+        if relative_export:
+            written["backend/app/base.py"] = EXPORT_BASE
+        if commit_bar:
+            written["backend/app/bar.py"] = MOVE_BEFORE_BAR
+        written.update(files or {})
+        for relative, text in written.items():
+            self._write(relative, text)
+        _git(root, "init", "-q", "-b", "main")
+        for key, value in (
+            ("user.email", "self-test@example.invalid"),
+            ("user.name", "verify-module-split self-test"),
+            ("commit.gpgsign", "false"),
+            ("tag.gpgsign", "false"),
+            ("gc.auto", "0"),
+        ):
+            _git(root, "config", key, value)
+        _git(root, "add", *written)
+        _git(root, "commit", "-q", "-m", "both modules before the move")
+        self.base = _git(root, "rev-parse", "HEAD").strip()
+
+    def _write(self, relative: str, text: str) -> None:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def caller(self, source: str) -> None:
+        self._write("backend/scripts/tool.py", source)
+
+    def move(self) -> None:
+        self._write("backend/app/foo.py", MOVE_AFTER_FOO)
+        self._write("backend/app/bar.py", MOVE_AFTER_BAR)
+
+    def drop(self) -> None:
+        """A name deleted outright: no sibling takes it, so only the loss shows."""
+        self._write("backend/app/foo.py", EXPORT_AFTER_FOO)
+
+    def rewrite(self, relative: str, text: str) -> None:
+        """One file as it stands after the change, for the shapes of their own."""
+        self._write(relative, text)
+
+    def run_tool(
+        self, directory: str = "backend/app"
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(TOOL),
+                "--check-moves",
+                directory,
+                "--base-ref",
+                self.base,
+                "--repo-root",
+                str(self.root),
+            ],
+            capture_output=True,
+            text=True,
+            env=ENV,
+            cwd=str(self.root),
+        )
+
+
+class MovedNameTests(unittest.TestCase):
+    """A name that left one file for a sibling while a caller still reads it
+    where it used to be: the shape no gate in this repository caught on
+    2026-10-08, when `ClaudeLaunch` moved between two harness modules and only
+    CI's acceptance job went red."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-")
+        self.addCleanup(tmp.cleanup)
+        self.fixture = MoveFixture(Path(tmp.name) / "repo")
+
+    def test_a_caller_of_the_name_it_left_is_blocked(self) -> None:
+        self.fixture.move()
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("backend/scripts/tool.py:1", result.stdout + result.stderr)
+        self.assertIn("调用方导入断裂", result.stdout)
+        self.assertIn("app.foo._helper", result.stdout)
+
+    def test_the_report_names_the_sibling_that_took_the_name(self) -> None:
+        """A deletion reads as a deletion; the destination is what makes it a move."""
+        self.fixture.move()
+        result = self.fixture.run_tool()
+        self.assertIn("符号搬移: app.foo._helper → app.bar", result.stdout)
+
+    def test_retargeting_the_caller_clears_it(self) -> None:
+        self.fixture.move()
+        self.fixture.caller(MOVED_CALLER)
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("结论: 通过", result.stdout)
+
+    def test_a_destination_not_committed_yet_is_still_the_destination(self) -> None:
+        """The move is read before anyone commits it, which is when it is cheap
+        to fix: the new sibling file is untracked and must count all the same."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-new-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(Path(tmp.name) / "repo", commit_bar=False)
+        fixture.move()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("backend/scripts/tool.py:1", result.stdout + result.stderr)
+        self.assertIn("符号搬移: app.foo._helper → app.bar", result.stdout)
+
+    def test_a_directory_that_is_not_there_cannot_be_judged(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(TOOL),
+                "--check-moves",
+                "backend/app/nowhere",
+                "--repo-root",
+                str(self.fixture.root),
+            ],
+            capture_output=True,
+            text=True,
+            env=ENV,
+            cwd=str(self.fixture.root),
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("cannot judge", result.stderr)
+
+    def test_a_relative_re_export_is_not_a_break(self) -> None:
+        """`from .base import shared` still resolves after a sibling name is
+        deleted, and the caller reading `shared` through this module keeps
+        working: the package the module sits in is what answers for it."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-export-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo", commit_bar=False, relative_export=True
+        )
+        fixture.drop()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("调用方导入断裂", result.stdout)
+
+    def test_a_wider_directory_finds_the_same_break(self) -> None:
+        """`--check-moves backend` has to name the same modules `app.foo` that
+        `--check-moves backend/app` does: given one level too wide, the run must
+        not pass over the break in silence."""
+        self.fixture.move()
+        for directory in ("backend", "."):
+            with self.subTest(directory=directory):
+                result = self.fixture.run_tool(directory)
+                self.assertEqual(
+                    result.returncode, 1, result.stdout + result.stderr
+                )
+                self.assertIn("调用方导入断裂: app.foo._helper", result.stdout)
+
+    def test_a_name_that_is_also_a_module_beside_it_is_still_a_break(self) -> None:
+        """`app/helper.py` is a module of the package, not a submodule of the
+        file `app/foo.py`: a view that copies every neighbour in under its bare
+        name walks down `app.foo.helper` and passes a name the file gave up."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-namesake-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/foo.py": NAMESAKE_BEFORE_FOO,
+                "backend/app/helper.py": NAMESAKE_SIBLING,
+                "backend/scripts/tool.py": NAMESAKE_CALLER,
+            },
+        )
+        fixture.rewrite("backend/app/foo.py", NAMESAKE_AFTER_FOO)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("调用方导入断裂: app.foo.helper", result.stdout)
+        # One step further, the file itself is gone and `app/helper.py` stands
+        # where it was: still not an answer for `app.foo.helper`.
+        (fixture.root / "backend/app/foo.py").unlink()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("调用方导入断裂: app.foo.helper", result.stdout)
+
+    def test_a_re_export_from_a_sibling_down_a_level_is_not_a_break(self) -> None:
+        """`from .y import z` written by a module that is not the package's only
+        level: the short name in the file means `app/domain/y.py`, and a view
+        that puts the package's own keys in the module's place reads the
+        caller's import as broken while it still resolves."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-nested-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/domain/__init__.py": "",
+                "backend/app/domain/x.py": NESTED_BEFORE_X,
+                "backend/app/domain/y.py": NESTED_SIBLING,
+                "backend/scripts/tool.py": NESTED_CALLER,
+            },
+        )
+        fixture.rewrite("backend/app/domain/x.py", NESTED_AFTER_X)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("调用方导入断裂", result.stdout)
+
+    def test_a_submodule_read_through_the_package_is_not_a_break(self) -> None:
+        """The module under inspection is the package's own `__init__.py` here,
+        and `from app.helper import other` reads the file `app/helper.py`: a
+        table holding only that module has nothing to walk down into, and every
+        caller that names a submodule of the package would read as broken."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-facade-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/__init__.py": FACADE_BEFORE,
+                "backend/app/helper.py": NAMESAKE_SIBLING,
+                "backend/scripts/tool.py": FACADE_SUBMODULE_CALLER,
+            },
+        )
+        fixture.rewrite("backend/app/__init__.py", FACADE_AFTER)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("调用方导入断裂", result.stdout)
+        # The name the facade itself gave up is still a break for its callers.
+        fixture.caller(FACADE_NAME_CALLER)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("调用方导入断裂: app.gone", result.stdout)
+
+    def test_a_patch_that_misses_the_definition_it_left_out_of_is_reported(
+        self,
+    ) -> None:
+        """The module kept `decode` as a re-export, so `app.foo.loads` still
+        binds and the patch target is not broken — but the re-export preserves
+        the object, not the globals dictionary `decode` reads, so the patch no
+        longer reaches it, and that is what this check is for."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-patch-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/foo.py": PATCH_BEFORE_FOO,
+                "backend/app/bar.py": PATCH_BEFORE_BAR,
+                "backend/tests/test_x.py": PATCH_CALLER,
+                "backend/scripts/tool.py": "",
+            },
+        )
+        fixture.rewrite("backend/app/foo.py", PATCH_AFTER_FOO)
+        fixture.rewrite("backend/app/bar.py", PATCH_AFTER_BAR)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "补丁不再作用于搬走的定义: app.foo.loads → decode", result.stdout
+        )
+
+    def test_a_name_both_imported_and_defined_is_not_a_break(self) -> None:
+        """`shared` is the fast import and the fallback definition at once, so
+        a caller keeps working whichever one runs: a view that still holds the
+        import while dropping the file it names calls that caller broken."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-fallback-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/foo.py": FALLBACK_BEFORE_FOO,
+                "backend/app/fast.py": FALLBACK_FAST,
+                "backend/scripts/tool.py": FALLBACK_CALLER,
+            },
+        )
+        fixture.rewrite("backend/app/foo.py", FALLBACK_AFTER_FOO)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("调用方导入断裂", result.stdout)
+
+    def test_a_missing_name_below_a_submodule_is_still_a_break(self) -> None:
+        """The caller reads through the facade and down into `app/pkg/sub.py`,
+        which does not hold the name: the walk has to keep descending there, or
+        the missing name reads as present and the break goes unreported."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-subpackage-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/pkg/__init__.py": SUBPACKAGE_INIT_BEFORE,
+                "backend/app/pkg/sub.py": SUBPACKAGE_SUB,
+                "backend/scripts/tool.py": SUBPACKAGE_CALLER,
+            },
+        )
+        fixture.rewrite("backend/app/pkg/__init__.py", SUBPACKAGE_INIT_AFTER)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("调用方导入断裂: app.pkg.sub.gone", result.stdout)
+
+
+class ShadowCopyTests(unittest.TestCase):
+    """A second module under the name this run is about: Python resolves a
+    module by name, so the copy answers for the package in `--runtime-identity`,
+    and every check that walks the tree reads it as part of the change."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="split-shadow-")
+        self.addCleanup(tmp.cleanup)
+        self.fixture = Fixture(Path(tmp.name) / "repo")
+
+    def scratch(self) -> Path:
+        """The copy a parity harness parks: `<tempdir>/<dir>/<module>.py`."""
+        directory = Path(tempfile.mkdtemp(prefix="shadow-copy-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        copy = directory / "foo.py"
+        copy.write_text(OLD_SOURCE, encoding="utf-8")
+        return copy
+
+    def stranger(self) -> Path:
+        """Somebody else's file under the same name: not a copy of this module."""
+        directory = Path(tempfile.mkdtemp(prefix="shadow-other-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        path = directory / "foo.py"
+        path.write_text("# somebody else's scratch file\nX = 1\n", encoding="utf-8")
+        return path
+
+    def test_a_same_named_file_that_is_not_a_copy_is_left_alone(self) -> None:
+        """A name is not a module: `/tmp/foo.py` is an ordinary name for an
+        ordinary file, and a run that refused on it refused whenever anybody
+        else on the machine had one — 62 of the 68 cases in this file went red
+        on exactly that, from one unrelated `/tmp/foo.py` on 2026-10-16."""
+        self.fixture.apply_split(SPLIT)
+        stranger = self.stranger()
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn(str(stranger), result.stderr)
+
+    def test_an_empty_file_is_not_a_copy_of_an_empty_module(self) -> None:
+        """A package's blank module is the commonest file in the repository, and
+        its text says nothing about anybody else's blank `<name>.py`: matched on
+        it, one empty file on the machine would refuse the run."""
+        self.fixture.apply_split({**SPLIT, "blank.py": ""})
+        directory = Path(tempfile.mkdtemp(prefix="shadow-other-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        stranger = directory / "foo.py"
+        stranger.write_text("", encoding="utf-8")
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn(str(stranger), result.stderr)
+
+    def test_a_copy_in_the_temp_directory_blocks_the_run(self) -> None:
+        self.fixture.apply_split(SPLIT)
+        copy = self.scratch()
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("duplicate module shadow in sys.path", result.stderr)
+        self.assertIn(str(copy), result.stderr)
+        copy.unlink()
+        self.assertEqual(self.fixture.run_tool().returncode, 0)
+
+    def test_a_pre_split_file_left_beside_the_package_blocks_the_run(self) -> None:
+        """What the 2026-10-16 eslint run found: the leftover is not a difference
+        the change introduced, so the run says which copy to delete instead of
+        reporting on two modules at once."""
+        self.fixture.apply_split(SPLIT)
+        left = self.fixture.root / "pkgroot" / "impl" / "foo.py"
+        self.fixture._write("pkgroot/impl/foo.py", OLD_SOURCE)
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("duplicate module shadow in sys.path", result.stderr)
+        self.assertIn(str(left), result.stderr)
+        left.unlink()
+        self.assertEqual(self.fixture.run_tool().returncode, 0)
+
+
 class UsageTests(unittest.TestCase):
     def test_a_missing_check_facade_cannot_be_judged(self) -> None:
         result = subprocess.run(
@@ -1163,6 +2123,29 @@ class UsageTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("cannot judge", result.stderr)
+
+    def test_two_modes_at_once_cannot_be_judged(self) -> None:
+        """Two answers in one exit code: the reader cannot tell which one it is.
+
+        The assertion is on the refusal's own words, not on the exit code: a
+        directory that does not exist exits 2 as well, and a test that accepted
+        either would pass with the refusal taken out.
+        """
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(TOOL),
+                "--check-facade",
+                "whatever",
+                "--check-moves",
+                "whatever",
+            ],
+            capture_output=True,
+            text=True,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("pass exactly one of", result.stderr)
 
     def test_the_dash_dash_self_test_flag_runs_this_file(self) -> None:
         if os.environ.get(INNER_MARK):
@@ -1187,6 +2170,9 @@ def main(argv: list[str] | None = None) -> int:
     args, extra = parser.parse_known_args(argv)
     suite = unittest.TestLoader().loadTestsFromTestCase(SplitVerificationTests)
     suite.addTests(unittest.TestLoader().loadTestsFromTestCase(RuntimeShapeTests))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(CallerContractTests))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(MovedNameTests))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(ShadowCopyTests))
     suite.addTests(
         unittest.TestLoader().loadTestsFromTestCase(DeferredRuleAgreementTests)
     )

@@ -16,10 +16,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say, with_keys
-from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.agent import instance_for_seat, record_agent
 from app.domain.delivery_events import DeliveryEvent
+from app.domain.event_author import AuthorType
 from app.domain.feedback import triage as feedback_triage
 from app.domain.notice_meta import (
     EVENT_ROUTINE_RUN,

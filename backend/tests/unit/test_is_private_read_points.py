@@ -30,7 +30,9 @@ BASELINE = {
     # 1: `seats_only`. The policy's parameter is named for what it decides
     # (a private chat or a private channel), not for this flag.
     "app/auth/audience.py": 1,
-    "app/api/routes/project_environment.py": 2,
+    # Environment data access owns the route's two private-chat filters.
+    "app/api/routes/project_environment.py": 0,
+    "app/domain/project/environment.py": 2,
     # 0：项目这一侧本来有一处，现在推回 `_is_dm` 那一类了（结论 19）。留着这一行
     # 是把它钉在 0，谁再加一处回来，红的就是这条。
     "app/api/routes/projects.py": 0,
@@ -60,8 +62,9 @@ BASELINE = {
     "app/domain/topic/repositories/unread.py": 2,
     "app/domain/topic/repositories/writes.py": 2,
     # 频道能加入、退出、要加入才能在主线说话，私聊是两席、不走这些：`_public`
-    # 是这个文件唯一读那个布尔的地方。
-    "app/domain/topic_membership/services.py": 1,
+    # 是唯一读那个布尔的地方。2026-10-16 `topic_membership/services.py` 拆成包时
+    # `_public` 跟着搬进了 `housekeeping.py`，位置变了、数没变。
+    "app/domain/topic_membership/services/housekeeping.py": 1,
 }
 
 _APP = pathlib.Path(__file__).resolve().parents[2] / "app"
