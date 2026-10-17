@@ -176,18 +176,20 @@ def check_definition(path: Path, rel: str) -> list[Finding]:
         return [Finding(rel, 1, "没有 `---` 围起来的 frontmatter：补上 name 和 description 两行，"
                                 "如 `name: <文件名>`、`description: <这个类型什么时候该用>`")]
 
-    # A fix that is itself refused is no fix: when the file name is not a slug either,
-    # naming it as the one to write sends the reader straight at a second finding.
+    # A fix that is itself refused is no fix: when the file name is not a slug either, or
+    # is one the reserved-name rule refuses below (`model-*`), naming it as the one to
+    # write sends the reader straight at a second finding.
+    stem_is_free = bool(NAME_RE.match(path.stem)) and not path.stem.startswith("model-")
     slug_fix = (
         f"改成 `name: {path.stem}`"
-        if NAME_RE.match(path.stem)
+        if stem_is_free
         else f"这个名字和文件名 {path.name} 都要改：两边都只能用小写字母、数字和连字符"
     )
     name = keys.get("name")
     if name is None or not has_text(name):
         hint = (
             f"补一行 `name: {path.stem}`"
-            if NAME_RE.match(path.stem)
+            if stem_is_free
             else f"补一行 `name: <slug>`，并把文件名 {path.name} 一起改成同一个 slug"
         )
         findings.append(Finding(rel, 1, "缺 `name`：它就是这个定义的 subagent_type，" + hint))

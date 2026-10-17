@@ -214,6 +214,21 @@ class AgentDefinitionGuardTests(unittest.TestCase):
             "平台生成的模型目录",
         )
 
+    def test_a_reserved_file_name_is_not_offered_as_the_fix(self) -> None:
+        """A `model-*` file with a bad `name` gets two findings, and the hint of the first
+        must not name the stem the second one refuses: following it leaves the file red."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._tree(root)
+            self._write(
+                root, "agents/model-zz.md",
+                GOOD_DEFINITION.replace("name: check-runner", "name: Bad Name"),
+            )
+            result = self._run(root)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertNotIn("name: model-zz", result.stderr)
+            self.assertIn("平台生成的模型目录", result.stderr)
+
     def test_an_empty_tools_line_is_reported(self) -> None:
         self._reject_definition(
             "check-runner.md",
