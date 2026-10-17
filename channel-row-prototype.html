@@ -108,7 +108,7 @@
     menu.style.left=Math.max(8,Math.min(rect.right-width,window.innerWidth-width-8))+'px';menu.style.top=Math.max(8,Math.min(up?rect.top-height-5:rect.bottom+5,window.innerHeight-height-8))+'px';menu.dataset.direction=up?'up':'down';
   }
   function openMenu(id,trigger){if(menuChannel===id&&!menu.hidden){closeMenu();return;}closeMenu();const c=byId(id);menuChannel=id;menuTrigger=trigger;trigger.setAttribute('aria-expanded','true');$('menuTitle').textContent=c.name;$('pinLabel').textContent=c.pinned?'取消置顶':'置顶频道';$('muteLabel').textContent=c.muted?'取消静音':'静音频道';menu.hidden=false;positionMenu();announce('已打开 '+c.name+' 的操作菜单');}
-  function modal(title,copy){closeMenu();modalReturn=document.activeElement;$('modalTitle').textContent=title;$('modalCopy').textContent=copy;$('modalShade').hidden=false;$('closeModal').focus();}
+  function modal(title,copy){modalReturn=menuTrigger||document.activeElement;closeMenu();$('modalTitle').textContent=title;$('modalCopy').textContent=copy;$('modalShade').hidden=false;$('closeModal').focus();}
   function closeModal(){$('modalShade').hidden=true;modalReturn?.focus();}
   $('closeModal').addEventListener('click',closeModal);$('modalShade').addEventListener('click',e=>{if(e.target===$('modalShade'))closeModal();});
   function setPreset(value){
@@ -124,19 +124,19 @@
     if(!e.target.closest('#menu'))closeMenu();
     if(!b)return;
     if(b.dataset.preset){setPreset(b.dataset.preset);return;}
-    if(b.dataset.channel){selected=b.dataset.channel;tab='chat';renderChannels();renderMain();announce('已切换到 '+byId(selected).name);return;}
+    if(b.dataset.channel){selected=b.dataset.channel;tab='chat';renderChannels();renderMain();document.querySelector(`[data-channel="${selected}"]`).focus();announce('已切换到 '+byId(selected).name);return;}
     if(b.dataset.fold){const id=b.dataset.fold;expanded.has(id)?expanded.delete(id):expanded.add(id);renderChannels();document.querySelector(`[data-fold="${id}"]`).focus();announce((expanded.has(id)?'已展开':'已收起')+' '+byId(id).name+' 的任务');return;}
     if(b.dataset.task){const [id,index]=b.dataset.task.split(':');modal(byId(id).tasks[Number(index)][0],'这是任务详情的演示入口。实际任务内容和运行状态不会随原型变化。');return;}
     if(b.dataset.shell){modal(b.dataset.shell,'此入口属于完整界面背景，当前原型只调整频道行。');return;}
     if(b.dataset.nav){modal(b.dataset.nav,b.dataset.nav==='总览'?'演示总览入口；本次只评审频道行。':'演示资料库入口；本次只评审频道行。');return;}
     if(b.dataset.tab){tab=b.dataset.tab;renderMain();return;}
   });
-  menu.addEventListener('click',e=>{const b=e.target.closest('[data-menu]');if(!b||!menuChannel)return;const c=byId(menuChannel),action=b.dataset.menu;if(action==='members'){modal(c.name+' · 成员',c.members.length+' 位演示成员。成员信息集中在频道顶部，侧栏不再重复展示头像。');return;}if(action==='read')c.unread=0;if(action==='pin')c.pinned=!c.pinned;if(action==='mute')c.muted=!c.muted;closeMenu();renderChannels();announce(action==='read'?c.name+' 已标为已读（仅原型）':action==='pin'?'置顶状态已切换（仅原型）':'静音状态已切换（仅原型）');});
+  menu.addEventListener('click',e=>{const b=e.target.closest('[data-menu]');if(!b||!menuChannel)return;const c=byId(menuChannel),action=b.dataset.menu;if(action==='members'){modal(c.name+' · 成员',c.members.length+' 位演示成员。成员信息集中在频道顶部，侧栏不再重复展示头像。');return;}if(action==='read')c.unread=0;if(action==='pin')c.pinned=!c.pinned;if(action==='mute')c.muted=!c.muted;closeMenu();renderChannels();document.querySelector(`[data-more="${c.id}"]`).focus();announce(action==='read'?c.name+' 已标为已读（仅原型）':action==='pin'?'置顶状态已切换（仅原型）':'静音状态已切换（仅原型）');});
   $('membersButton').addEventListener('click',()=>modal(byId(selected).name+' · 成员',byId(selected).members.length+' 位演示成员。侧栏不显示头像，完整成员信息从这里查看。'));
   document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){if(!$('modalShade').hidden)closeModal();else if(!menu.hidden)closeMenu(true);return;}
     if(!menu.hidden&&e.target.closest('#menu')&&['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();const buttons=[...menu.querySelectorAll('[role=menuitem]')],i=buttons.indexOf(document.activeElement);buttons[e.key==='Home'?0:e.key==='End'?buttons.length-1:(i+(e.key==='ArrowDown'?1:buttons.length-1))%buttons.length].focus();}
-    if(e.key==='ArrowDown'&&e.target.matches('[data-more]')){e.preventDefault();if(menu.hidden)openMenu(e.target.dataset.more,e.target);menu.querySelector('[role=menuitem]').focus();}
+    if(e.key==='ArrowDown'&&e.target.matches('[data-more]')){e.preventDefault();if(menu.hidden||menuChannel!==e.target.dataset.more)openMenu(e.target.dataset.more,e.target);menu.querySelector('[role=menuitem]').focus();}
     if(e.key==='Tab'&&!$('modalShade').hidden){e.preventDefault();$('closeModal').focus();}
   });
   $('theme').addEventListener('click',()=>{const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';$('theme').setAttribute('aria-pressed',String(dark));$('theme').textContent=dark?'切换浅色':'切换深色';});
@@ -149,11 +149,19 @@
     console.assert([...document.querySelectorAll('.channel-row')].every(row=>row.querySelectorAll('.lamp').length<=1),'一个频道行出现多盏灯');
     console.assert(rowLight(byId('active'))==='yellow'&&rowLight(byId('test'))==='green','蓝灯覆盖了更高优先级的提示');
     const beforeRead=byId('active').unread;
+    const unreadWeight=Number(getComputedStyle(document.querySelector('[data-channel="active"]')).fontWeight);
     document.querySelector('[data-more="active"]').click();menu.querySelector('[data-menu="read"]').click();
-    console.assert(!document.querySelector('[data-id="active"] .channel-row').classList.contains('unread'),'标为已读后名称仍加粗');
+    const readWeight=Number(getComputedStyle(document.querySelector('[data-channel="active"]')).fontWeight);
+    console.assert(unreadWeight>readWeight,'未读与已读名称没有字重差别');
+    console.assert(document.activeElement===document.querySelector('[data-more="active"]'),'菜单操作后没有恢复可见焦点');
     byId('active').unread=beforeRead;renderChannels();
     const fold=document.querySelector('[data-fold="front"]');fold.click();console.assert($('tasks-front').hidden,'收起失败');document.querySelector('[data-fold="front"]').click();console.assert(!$('tasks-front').hidden,'展开失败');
-    document.querySelector('[data-channel="active"]').click();console.assert($('channelTitle').textContent==='active-agent','频道切换失败');document.querySelector('[data-channel="front"]').click();
+    document.querySelector('[data-channel="active"]').click();console.assert($('channelTitle').textContent==='active-agent','频道切换失败');
+    console.assert(document.activeElement===document.querySelector('[data-channel="active"]'),'切换频道后没有恢复可见焦点');
+    document.querySelector('[data-channel="front"]').click();
+    document.querySelector('[data-more="front"]').click();
+    const activeMore=document.querySelector('[data-more="active"]');activeMore.focus();activeMore.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
+    console.assert($('menuTitle').textContent==='active-agent'&&document.activeElement===menu.querySelector('[role=menuitem]'),'键盘打开了另一个频道的菜单');closeMenu();
     const more=document.querySelector('[data-more="slack"]');more.click();console.assert(!menu.hidden&&more.getAttribute('aria-expanded')==='true','打开菜单失败');closeMenu();console.assert(menu.hidden&&more.getAttribute('aria-expanded')==='false','关闭菜单失败');
     setPreset('narrow');console.assert(app.classList.contains('narrow'),'窄侧栏控件未绑定');setPreset('touch');console.assert(app.classList.contains('touch'),'触屏控件未绑定');setPreset('normal');
     document.querySelectorAll('.channel-row').forEach(row=>{const nodes=[...row.children],bounds=nodes.map(n=>n.getBoundingClientRect());console.assert(bounds.every((r,i)=>i===0||r.left>=bounds[i-1].right-.5),'频道四段发生重叠');});
