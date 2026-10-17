@@ -1652,6 +1652,149 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 '''
 
+#: The zero is a local in `main`, the function that reads it — not a module
+#: constant. Reading only module-level names sends the scan branch to the
+#: self-test side and drops the `check` that follows it.
+PY_SHADOW_ZERO = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    zero = 0
+    if argv.count("--self-test") == zero:
+        return 1 if violations_in(argv[1] if len(argv) > 1 else ".") else 0
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The hand-off is the return expression of the handler that catches the
+#: self-test's own exit: `except SystemExit: return check()`.
+PY_HANDLER_RETURN_HANDOFF = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    try:
+        if "--self-test" not in argv:
+            return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+        print("PASS: 什么都没测")
+        sys.exit(0)
+    except SystemExit:
+        return check()
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The branch side itself ends through `exit(0)` and the enclosing handler
+#: returns the hand-off. The handler body is reached from the side, not from
+#: what follows the branch.
+PY_HANDLER_RETURN_INSIDE = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    try:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            exit(0)
+        else:
+            return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+    except SystemExit:
+        return check()
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The branch side leaves by `raise SystemExit(0)` into a handler that returns
+#: the hand-off — the `raise` spelling of the same exit.
+PY_HANDLER_RETURN_RAISED = PY_HANDLER_RETURN_INSIDE.replace(
+    "            exit(0)", "            raise SystemExit(0)"
+)
+
+#: The self-test ends through the bare builtin `exit(0)`, so `check` below is
+#: dead. Missing that call keeps the hand-off on the path.
+PY_BARE_EXIT = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if "--self-test" in argv:
+        print("PASS: 什么都没测")
+        exit(0)
+    if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")):
+        return 1
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
 #: The scan path shells out to `helper.py`; the self-test re-runs this very
 #: file, so mutating it reaches the process that judges. Only the self-test
 #: path decides whether a spawn makes the mutation unreachable.
@@ -2043,6 +2186,53 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(code, 2, output)
         self.assertEqual(guard["status"], "unverified", guard)
         self.assertIn("测试文件", guard["detail"])
+
+    def test_a_zero_bound_in_the_reading_function_is_read(self) -> None:
+        """`zero = 0` inside `main` is the constant the branch in `main` reads."""
+        code, guard, output = self._only(
+            {"shadowzero.py": PY_SHADOW_ZERO}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_hand_off_in_the_handlers_return_is_reached(self) -> None:
+        """`except SystemExit: return check()` runs the sibling, so `check` is on the path."""
+        code, guard, output = self._only(
+            {"handlerreturn.py": PY_HANDLER_RETURN_HANDOFF},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_hand_off_in_a_handler_reached_from_the_branch_side_is_found(self) -> None:
+        """The branch side exits into a handler; its return runs the sibling."""
+        code, guard, output = self._only(
+            {"handlerinside.py": PY_HANDLER_RETURN_INSIDE},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_hand_off_in_a_handler_reached_from_a_raised_exit_is_found(self) -> None:
+        """`raise SystemExit(0)` lands in the handler the same way an `exit` call does."""
+        code, guard, output = self._only(
+            {"handlerraised.py": PY_HANDLER_RETURN_RAISED},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_bare_exit_call_ends_the_path(self) -> None:
+        """The builtin `exit(0)` ends the run just as `sys.exit(0)` does."""
+        code, guard, output = self._only(
+            {"bareexit.py": PY_BARE_EXIT}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
 
     def test_an_annotated_module_zero_is_read_as_the_scan(self) -> None:
         """`ZERO: int = 0` is the same operand as `ZERO = 0`."""
