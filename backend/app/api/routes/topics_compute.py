@@ -286,7 +286,9 @@ class WorkLeaseRequest(BaseModel):
     tells_agent: bool = False
 
 
-@router.post("/{topic_id}/sessions/{session_id}/work-lease")
+@router.post(
+    "/{topic_id}/sessions/{session_id}/work-lease", dependencies=[ROUTE_DECIDES]
+)
 async def acquire_session_work_lease(
     topic_id: uuid.UUID,
     session_id: uuid.UUID,

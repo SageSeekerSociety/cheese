@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_chat_service
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.core import AuthUserInfo
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import notice_keys, say
@@ -146,7 +147,7 @@ async def get_environment(project_id: uuid.UUID, db: DbSession, user: AuthUser) 
     )
 
 
-@router.put("")
+@router.put("", dependencies=[ROUTE_DECIDES])
 async def save_environment(
     project_id: uuid.UUID, body: EnvironmentConfig, db: DbSession, user: AuthUser
 ) -> dict:
@@ -230,7 +231,7 @@ async def reset_idle_room(db: AsyncSession, topic_id: uuid.UUID, project_id: uui
         await device_hub.close_screen(screen.device_id, screen.sid)
 
 
-@router.post("/rooms/{topic_id}/apply")
+@router.post("/rooms/{topic_id}/apply", dependencies=[ROUTE_DECIDES])
 async def apply_environment(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
@@ -286,7 +287,7 @@ async def apply_environment(
     )
 
 
-@router.post("/rooms/{topic_id}/diagnose")
+@router.post("/rooms/{topic_id}/diagnose", dependencies=[ROUTE_DECIDES])
 async def diagnose_environment(
     project_id: uuid.UUID, topic_id: uuid.UUID, db: DbSession, user: AuthUser
 ) -> dict:

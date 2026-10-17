@@ -55,6 +55,7 @@ from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import _actor_in_place
 from app.api.topics_file_sources import source_bytes
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import (
     ConflictError,
@@ -93,7 +94,7 @@ from app.domain.textfile import content_version
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("/{topic_id}/documents/recalc")
+@router.post("/{topic_id}/documents/recalc", dependencies=[ROUTE_DECIDES])
 async def recalc_spreadsheet(
     topic_id: uuid.UUID,
     body: dict,
@@ -130,7 +131,7 @@ async def recalc_spreadsheet(
     )
 
 
-@router.post("/{topic_id}/documents/convert")
+@router.post("/{topic_id}/documents/convert", dependencies=[ROUTE_DECIDES])
 async def convert_document(
     topic_id: uuid.UUID,
     body: dict,
@@ -205,7 +206,7 @@ async def list_document_revisions(
     )
 
 
-@router.post("/{topic_id}/documents/revisions")
+@router.post("/{topic_id}/documents/revisions", dependencies=[ROUTE_DECIDES])
 async def decide_document_revisions(
     topic_id: uuid.UUID,
     body: dict,

@@ -24,6 +24,7 @@ from app.api.doc_access import asked_of, frozen, reach
 from app.api.doc_identity import human_operation_actor
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.background import spawn
 from app.core.errors import (
     ForbiddenError,
@@ -184,7 +185,7 @@ async def _answer(questions: Consumptions, work: str, after: str = "0"):
         yield _sse(event, data, position)
 
 
-@router.post("/{document_id}/agent/{conversation}/stop")
+@router.post("/{document_id}/agent/{conversation}/stop", dependencies=[ROUTE_DECIDES])
 async def stop_agent(
     document_id: uuid.UUID,
     conversation: uuid.UUID,
@@ -203,7 +204,10 @@ async def stop_agent(
     return ok({})
 
 
-@router.post("/{document_id}/agent/{conversation}/reply/{thread_id}")
+@router.post(
+    "/{document_id}/agent/{conversation}/reply/{thread_id}",
+    dependencies=[ROUTE_DECIDES],
+)
 async def reply_in_thread(
     document_id: uuid.UUID,
     conversation: uuid.UUID,
