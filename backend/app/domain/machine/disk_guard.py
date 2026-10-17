@@ -31,6 +31,11 @@ minutes), and at once on any check that finds the disk below a floor.
   session moved away (``HostPool.leave``) — is deleted. A sandbox is
   destroyed with its home, so no home is meant to outlive its row; one that
   does holds a disk nobody will free.
+
+Every platform host is read, those with no sandbox too, and what a host's
+reading found — its disk, memory and CPU, and each sandbox's memory and disk —
+is kept for the admin machines page (``readings``), which also tells the alert
+group of a host running short. A person's computer's reading is not kept.
 """
 
 import logging
@@ -39,12 +44,13 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.agent.device_hub import device_hub
-from app.domain.machine import lifecycle, sandbox_home
+from app.domain.machine import lifecycle, readings, sandbox_home
 from app.domain.machine.lifecycle import STOP_HOLD, SandboxLifecycle
 from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import tell_disk_full, tell_over_budget
@@ -149,9 +155,9 @@ class DiskGuard:
         return counts
 
     async def _machines(self) -> list[str]:
-        """Every machine holding a sandbox, and every platform host still
-        marked full: a host whose last sandbox went is read once more to take
-        the mark off."""
+        """Every machine holding a sandbox, and every platform host in the
+        pool, holding one or not: its reading is what the machines page shows,
+        and one still marked full has the mark taken off by it."""
         device = func.coalesce(CloudHost.device_id, SandboxHome.device_id)
         holding = await self._session.scalars(
             select(device)
@@ -168,14 +174,15 @@ class DiskGuard:
             )
             .distinct()
         )
-        marked = await self._session.scalars(
+        pool = await self._session.scalars(
             select(CloudHost.device_id).where(
-                CloudHost.disk_full_since.is_not(None),
                 CloudHost.device_id.is_not(None),
                 CloudHost.released_at.is_(None),
+                CloudHost.whole_machine.is_(False)
+                | CloudHost.disk_full_since.is_not(None),
             )
         )
-        machines = sorted({device for device in (*holding, *marked) if device})
+        machines = sorted({device for device in (*holding, *pool) if device})
         await self._session.commit()
         return machines
 
@@ -217,6 +224,9 @@ class DiskGuard:
             reading = await self._read(device_id, live, walk=True)
             filesystem = reading["filesystem"]
             full = below_floor(filesystem)
+        # When the values were true, for the machines page: the evictions below
+        # can take minutes, and a reading stamped after them looks newer than it is.
+        read_at = datetime.now(UTC)
         if walk:
             _walked[device_id] = now
         await self._mark(device_id, full, filesystem)
@@ -262,6 +272,17 @@ class DiskGuard:
                 device_id, home["project"], home["resource"]
             ):
                 removed += 1
+        if host is not None and not host.whole_machine:
+            # Last, so keeping the reading for the machines page can never stand
+            # between a full disk and the eviction that frees it.
+            try:
+                await readings.record(self._session, host, reading, live, read_at)
+            except SQLAlchemyError:
+                # The machines page and the capacity alert go without this
+                # reading; that is an error a person should hear of, and still
+                # not one that stops the guard from reading the next machine.
+                await self._session.rollback()
+                logger.exception("keeping the reading of %s failed", device_id)
         return {"read": 1, "walked": int(walk), "evicted": evicted, "removed": removed}
 
     async def _read(self, device_id: str, live: list, *, walk: bool) -> dict:
