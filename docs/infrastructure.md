@@ -489,7 +489,7 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   gh, jq or node, so those jobs must not call them. #2257 did this on 09-30 and
   #2439 reverted it because two slots on one box shared the `ci` user's
   pre-commit cache ("database is locked"); these four jobs never run
-  `uvx pre-commit` (`guards` does, and stays hosted). Anything added to them
+  `uvx pre-commit` (`guards` does, and stays hosted). Anything someone adds to them
   that writes under `~/.cache` must point its cache at `$RUNNER_TEMP`.
 - **Memory**: 8G per box, shared by its two runner slots, plus 4G of swap
   (`/swapfile`, in `/etc/fstab`, applied by `runner-swap.yml`). Without the swap
