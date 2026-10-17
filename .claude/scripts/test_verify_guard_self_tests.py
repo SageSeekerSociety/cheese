@@ -2617,6 +2617,49 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 '''
 
+#: A closure that collects the arguments in `*argv` binds the name itself, so
+#: a gate read from it says nothing about the value `main` was handed. The call
+#: passes no arguments, so the gate is true at run time and the self-test does
+#: fork; settling it from main's parameter would prune that hand-off.
+PY_NESTED_VARARG = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    def inner(*argv):
+        if len(argv) == 0:
+            if "--self-test" in argv:
+                print("PASS: 测过了")
+            try:
+                sys.exit(1)
+            except SystemExit:
+                return check()
+        print("PASS: 什么都没测")
+        return 0
+
+    inner()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The keyword counterpart: `**argv` collects keyword arguments into a dict,
+#: which is no more the entry value than `*argv` is.
+PY_NESTED_KWARG = PY_NESTED_VARARG.replace(
+    "    def inner(*argv):",
+    "    def inner(**argv):",
+)
+
 #: `sys.argv[1:1]` is empty, not the trimmed command line: only a slice with
 #: no upper bound and no step is the `[1:]` idiom.
 PY_SLICE_EMPTY = '''#!/usr/bin/env python3
@@ -3636,6 +3679,24 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         """`main(*argv)` collects the arguments; it is not the argument."""
         code, guard, output = self._only(
             {"star.py": PY_MAIN_VARARG},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_a_nested_variadic_parameter_binds_its_own_name(self) -> None:
+        """A closure's `*argv` is its own tuple; main's parameter does not reach it."""
+        code, guard, output = self._only(
+            {"nested.py": PY_NESTED_VARARG},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_a_nested_keyword_variadic_parameter_binds_its_own_name(self) -> None:
+        """`**argv` collects keywords into a dict — also not the entry value."""
+        code, guard, output = self._only(
+            {"nested.py": PY_NESTED_KWARG},
             {"test_counted.py": ELSE_SIBLING},
         )
         self.assertEqual(code, 2, output)
