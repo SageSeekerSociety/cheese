@@ -15,7 +15,8 @@
 //
 // It extends eslint.config.mjs rather than restating it, so the parser setup
 // (TypeScript inside <script lang="ts">) and the ignores cannot drift between
-// the two. The rule set is the plugin's `flat/recommended`, unmodified.
+// the two. The rule set is the plugin's `flat/recommended`, with one option
+// changed below (label-has-for).
 import a11y from 'eslint-plugin-vuejs-accessibility'
 
 import base from './eslint.config.mjs'

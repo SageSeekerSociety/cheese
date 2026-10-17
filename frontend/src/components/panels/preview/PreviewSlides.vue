@@ -299,8 +299,9 @@ onBeforeUnmount(() => {
         :cancel-paint="cancelPaint"
         @select="go"
       />
-      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the pointer half of quoting a selection; @keyup.shift is the keyboard half -->
-      <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote" @keyup.shift="quote">
+      <!-- The stage never holds keyboard focus (the reader around it does), so only the pointer selects here. -->
+      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a mouse selection on the slide is quoted; a keyboard selection has no counterpart yet -->
+      <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote">
         <div ref="sheet" class="slides__sheet" :data-page="current" />
       </div>
     </div>
