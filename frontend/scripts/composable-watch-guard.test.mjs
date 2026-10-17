@@ -443,6 +443,124 @@ export function usePanel(scope: { topicId: string; other: string }) {
   assert.equal(whole.status, 0, whole.output)
 })
 
+test('matches a scope property the call site wraps in computed', (t) => {
+  const head = `import { computed } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ topicId: string; other: string }>()
+const { loading } = usePanel({ topicId: computed(() => props.topicId), other: () => props.other })`
+  const carried = split(t, {
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: import('vue').ComputedRef<string>; other: () => string }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.topicId), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(carried.status, 0, carried.output)
+
+  const dropped = split(t, { head, composableSource: droppedComposable }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+})
+
+test('matches a destructured parameter when the call site passes props whole', (t) => {
+  const head = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ topicId: string; other: string }>()
+const { loading } = usePanel(props)`
+  const carried = split(t, {
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel({ topicId, other }: { topicId: string; other: string }) {
+  const loading = ref(false)
+  watch(() => toValue(topicId), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(carried.status, 0, carried.output)
+})
+
+test('matches a parameter that is a ref watched through .value', (t) => {
+  const script = `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel(topicId)`
+  const carried = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, watch, type Ref } from 'vue'
+
+export function usePanel(sid: Ref<string>) {
+  const loading = ref(false)
+  watch(() => sid.value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(carried.status, 0, carried.output)
+
+  const dropped = split(t, { script, head, composableSource: undefined }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /local to the component/)
+})
+
+test('keeps a ref held inside a prop unwrapped', (t) => {
+  // DocEditLayer watches `props.rewrite.phase.value`: only the first `value` names a
+  // prop, the deeper one unwraps a ref.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ rewrite: { phase: { value: string } } }>()
+const loading = ref(false)
+watch(() => props.rewrite.phase.value, () => { loading.value = false })`
+  const head = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ rewrite: { phase: { value: string } } }>()
+const { loading } = usePanel({ rewrite: () => props.rewrite })`
+  const carried = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { rewrite: () => { phase: { value: string } } }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.rewrite).phase.value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(carried.status, 0, carried.output)
+})
+
+test('follows a prop destructured into a local before watching it', (t) => {
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ topicId: string }>()
+const { topicId } = props
+const loading = ref(false)
+watch(() => topicId, () => { loading.value = false })`
+  const carried = split(t, {
+    script,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string; other: () => string }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.topicId), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(carried.status, 0, carried.output)
+
+  const dropped = split(t, { script, composableSource: droppedComposable }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+})
+
 test('--composable names a target that did not change', (t) => {
   const target = 'frontend/src/lib/panel-helper.ts'
   const fixtureRun = split(t, { head: panelHead, composableSource: undefined })

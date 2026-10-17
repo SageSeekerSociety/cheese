@@ -16,9 +16,9 @@
 // Equivalence is bounded, not general expression equivalence: both sides are
 // canonicalized to prop paths. `props.x` and `toValue(scope.x)` match when the call
 // site maps `x: () => props.x`, or passes the scope as `() => ({ x: props.x })`; a
-// composable taking the value itself (`fn(() => props.x)`) matches `toValue(x)`; refs
-// and local aliases (`const s = toValue(scope)`) are unwrapped, and array sources are
-// compared element by element. A ref's `.value` is dropped, but a prop or scope
+// composable taking the value itself (`fn(() => props.x)`) matches `toValue(x)`; refs,
+// `computed(() => props.x)` and local aliases (`const s = toValue(scope)`) are
+// unwrapped, and array sources are compared element by element. A ref's `.value` is dropped, but a prop or scope
 // property literally named `value` is kept. Keys rooted outside props and the scope
 // live under `$local.`, so a local ref never stands in for a lost prop. A renamed or
 // restructured source can be reported even though it survived; waive that one with
@@ -77,10 +77,13 @@ function memberPath(node, ctx = {}) {
     const callee = unwrap(node.expression)
     if (
       ts.isIdentifier(callee) &&
-      (callee.text === 'toValue' || callee.text === 'unref') &&
+      (callee.text === 'toValue' || callee.text === 'unref' || callee.text === 'computed') &&
       node.arguments.length === 1
     ) {
-      return memberPath(node.arguments[0], ctx)
+      // `computed(() => props.x)` watches the same thing `computed` does.
+      const argument = unwrap(node.arguments[0])
+      const value = ts.isArrowFunction(argument) || ts.isFunctionExpression(argument) ? unwrap(argument.body) : argument
+      return memberPath(value, ctx)
     }
     return null
   }
@@ -107,10 +110,25 @@ function memberPath(node, ctx = {}) {
 // Local `const x = <member chain>` declarations inside a scope, so a getter that
 // names the scope once and reads it through locals still resolves.
 function collectAliases(root, ctx) {
+  const bind = (name, member) => {
+    if (member && (member.root !== name || member.path.length)) ctx.aliases.set(name, member)
+  }
   const visit = (node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+    if (ts.isVariableDeclaration(node) && node.initializer) {
       const member = memberPath(node.initializer, ctx)
-      if (member && (member.root !== node.name.text || member.path.length)) ctx.aliases.set(node.name.text, member)
+      if (ts.isIdentifier(node.name)) bind(node.name.text, member)
+      // `const { topicId } = props` names the prop path too.
+      else if (
+        member &&
+        ts.isObjectBindingPattern(node.name) &&
+        (member.root === 'props' || member.root === ctx.scopeParam)
+      ) {
+        for (const element of node.name.elements) {
+          if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue
+          const key = element.propertyName ? propertyName(element.propertyName) : element.name.text
+          if (key !== null) bind(element.name.text, { root: member.root, path: [...member.path, key] })
+        }
+      }
     }
     ts.forEachChild(node, visit)
   }
@@ -135,12 +153,13 @@ function memberKeys(node, ctx) {
   const member = memberPath(node, ctx)
   if (!member) return null
   const { root } = member
-  // `.value` unwraps a ref. It never unwraps `props` (props are plain values) or the
-  // first segment of the scope (that segment names a scope property), so a prop or
-  // scope property named `value` keeps its name.
-  const scopeRoot = root === ctx.scopeParam || ctx.bindings?.has(root)
+  // `.value` unwraps a ref, except in the two positions where it names a value that
+  // happens to be called `value`: the first segment of `props` (`props.value`) and the
+  // first segment of a scope property the call site maps (`scope.value`). Deeper
+  // segments are refs held inside a prop (`props.rewrite.phase.value`).
+  const scopeValueHead = root === ctx.scopeParam && (ctx.scopeProps?.has('value') || ctx.scopeWholeProps === true)
   const segments = member.path.filter(
-    (segment, index) => segment !== 'value' || root === 'props' || (scopeRoot && index === 0)
+    (segment, index) => segment !== 'value' || ((root === 'props' || scopeValueHead) && index === 0)
   )
   if (root === 'props') return new Set([segments.length ? segments.join('.') : 'props'])
   if (ctx.scopeParam && root === ctx.scopeParam) {
@@ -426,8 +445,12 @@ function scopeContext(found, callSites) {
       for (const element of param.name.elements) {
         if (!ts.isIdentifier(element.name)) continue
         const source = element.propertyName ? propertyName(element.propertyName) : element.name.text
+        if (source === null) continue
         const mapped = callSites.scopeProps?.get(source)
         if (mapped) ctx.bindings.set(element.name.text, mapped)
+        // A call site that hands over the whole props object destructures the prop
+        // itself, so the local name is the prop path.
+        else if (callSites.scopeWholeProps) ctx.bindings.set(element.name.text, new Set([source]))
       }
     }
   }
