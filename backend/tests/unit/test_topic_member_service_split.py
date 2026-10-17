@@ -140,15 +140,28 @@ def _imported_modules(module) -> set[str]:
     return modules
 
 
+def _definitions(tree: ast.Module):
+    """模块顶层的函数，加上顶层类直接挂着的方法——只下探一层，不递归。
+
+    `ast.walk` 会把类里的方法一并收上来，写成模块级函数的样子；接缝守卫拦的就是
+    这种写法。这里要的正好是门面那个类上的方法，所以按顶层节点各看一层。
+    """
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node
+        elif isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    yield child
+
+
 def _forward_call(method):
     """一行转发的那句调用：`return [await] housekeeping.<name>(...)`。
 
     不是转发就 None。函数体多一句都不算——判断只许住在新模块里。
     """
     tree = ast.parse(pathlib.Path(inspect.getsourcefile(method)).read_text())
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
+    for node in _definitions(tree):
         if node.name != method.__name__:
             continue
         if len(node.body) != 1 or not isinstance(node.body[0], ast.Return):
