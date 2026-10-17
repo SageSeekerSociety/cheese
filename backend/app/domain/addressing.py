@@ -202,3 +202,17 @@ def address(event: Event, next_hand: Hand) -> Addressed:
         seen.add(name)
         pointed.append(Recipient(handle=name, reason=reason))
     return Addressed(tuple(pointed))
+
+
+def addressed_to_agent(handle: str | None) -> Addressed:
+    """这个房间的 agent 席位被点名了 —— 调用点最常要的那一条寻址。
+
+    `asked` 而不是别的关系：房间里有人说了话、有人按了「叫它看一下」、一条活的
+    检查红了，共同点都是「芝士停在这里，接下来只有它能往下走」。
+
+    住在这里而不是 `agent.runtime`：它是寻址词汇本身的一条常答法，只用到本模块的
+    `Event`/`Hand`/`address`/`NOBODY`。`delivery` 反过头 import `agent` 就是为了拿
+    它（`delivery/agent.py` 的 `dispatch_pending` 要它算 `addressed=`），那就是
+    C3 说的一条环；放到底层，两边都从这儿拿。
+    """
+    return address(Event(asked=handle), Hand.participant) if handle else NOBODY
