@@ -112,12 +112,20 @@ async def _card_actor(
 
 
 async def _task_actor(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    *,
+    writes: bool = False,
 ) -> tuple[Actor, uuid.UUID, uuid.UUID]:
-    """Who acts on the task ``topic_id`` names, its room and the task."""
+    """Who acts on the task ``topic_id`` names, its room and the task.
+    ``writes``: handing the task's work in, or changing the review it waits
+    on, is the task side of the project (#3830), as deciding a card is."""
     place, actor, task = await task_conversation(db, resolver, topic_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError()
+    if writes:
+        await require_role(db, actor, place.project_id, Permission.tasks)
     return actor, place.room_id, task.id
 
 
@@ -158,7 +166,7 @@ async def create_accept_card(
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """Hand a task's change in for review; ``topic_id`` is the task's."""
-    actor, room_id, task_id = await _task_actor(topic_id, db, resolver)
+    actor, room_id, task_id = await _task_actor(topic_id, db, resolver, writes=True)
     topic_id = room_id
     svc = _accept_service(db)
     card = await svc.create_card(
@@ -209,7 +217,7 @@ async def push_fix(
     resolver: ActorResolverDep,
     drop_dependency: bool = False,
 ) -> dict:
-    _actor, _room, task_id = await _task_actor(topic_id, db, resolver)
+    _actor, _room, task_id = await _task_actor(topic_id, db, resolver, writes=True)
     result = await _accept_service(db).push_fix(
         task_id, drop_dependency=drop_dependency
     )
@@ -221,7 +229,7 @@ async def push_fix(
 async def mark_ready(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    _actor, room_id, task_id = await _task_actor(topic_id, db, resolver)
+    _actor, room_id, task_id = await _task_actor(topic_id, db, resolver, writes=True)
     result = await _accept_service(db).mark_ready(room_id, task_id)
     await db.commit()
     return ok(result)
@@ -244,7 +252,7 @@ async def describe_card(
     署名（`Cheese-Task:`）没有这样的入口，而且不该有：见
     `AcceptService.redescribe` 的 docstring。
     """
-    actor, _room, task_id = await _task_actor(topic_id, db, resolver)
+    actor, _room, task_id = await _task_actor(topic_id, db, resolver, writes=True)
     card = await _accept_service(db).redescribe(
         task_id,
         actor=actor.handle,
