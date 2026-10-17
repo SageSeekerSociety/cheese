@@ -729,6 +729,58 @@ def test_save_refuses_when_the_backup_directory_cannot_be_scanned(
     assert "换机后接回来" not in result.stdout
 
 
+def test_save_syncs_when_the_set_aside_is_there_and_the_work_is_uncommitted(
+    machine: Machine,
+) -> None:
+    """有没提交的改动要存时，不能因为快照没取回来就拒掉这次备份。"""
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+    machine.wipe()
+    refused(
+        machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1"),
+        3,
+        ".cheese/recovered",
+    )
+    # 未提交的改动：这次同步确实有东西要存。
+    (machine.worktree / "step.py").write_text("print(2)\n")
+    mark = machine.tmp / "sync-ran"
+
+    result = machine.run("save", FAKE_SYNC_MARK=str(mark))
+
+    out = ran(result)
+    assert mark.exists(), "有未提交的改动，这次同步应当发生"
+    assert "那份快照里的改动不会" in result.stderr
+    assert "要自己取" in out
+
+
+def test_save_treats_an_unreadable_status_as_work_to_save(machine: Machine) -> None:
+    """读不出工作区状态时，当成有东西要存；当成干净会拒掉一次本该发生的备份。"""
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+    machine.wipe()
+    refused(
+        machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1"),
+        3,
+        ".cheese/recovered",
+    )
+    real_git = shutil.which("git")
+    fake_git = machine.bin / "git"
+    fake_git.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "status" ]; then exit 1; fi\n'
+        f'exec "{real_git}" "$@"\n'
+    )
+    fake_git.chmod(0o755)
+    mark = machine.tmp / "sync-ran"
+
+    result = machine.run("save", FAKE_SYNC_MARK=str(mark))
+
+    out = ran(result)
+    assert mark.exists(), "读不出状态时不能因此跳过这次同步"
+    assert "那份快照里的改动不会" in result.stderr
+    assert "要自己取" in out
+
+
 def test_restore_still_refuses_after_a_set_aside_the_run_before(
     machine: Machine,
 ) -> None:

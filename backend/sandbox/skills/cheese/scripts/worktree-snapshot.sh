@@ -176,8 +176,11 @@ read_set_aside() {
 # 的 turn-end 同步会跳过这种检出（backend/sandbox/cheese 的 _has_work_to_sync），
 # 只有这里显式跑的 sync 才会照样做一份新的备份。
 nothing_to_sync() {
-  local branch pushed
-  [ -z "$(git status --porcelain 2>/dev/null)" ] || return 1
+  local branch pushed status
+  # 读不出工作区状态时要当成「有东西要存」：平台的 _has_work_to_sync 也是这么保守
+  # 处理的，反过来说「没东西可存」会让 save 拒掉一次本该发生的备份。
+  status=$(git status --porcelain 2>/dev/null) || return 1
+  [ -z "$status" ] || return 1
   branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return 1
   pushed=$(git rev-parse --verify -q "refs/remotes/origin/$branch") || return 1
   git merge-base --is-ancestor HEAD "$pushed" 2>/dev/null
