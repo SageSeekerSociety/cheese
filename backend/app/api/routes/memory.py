@@ -26,6 +26,7 @@ from sqlalchemy.orm import Mapped
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.memory.files import (
@@ -123,7 +124,7 @@ async def list_memory(
     return ok(page(entries, len(entries)))
 
 
-@router.delete("/{entry_id}")
+@router.delete("/{entry_id}", dependencies=[ROUTE_DECIDES])
 async def delete_memory(
     entry_id: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

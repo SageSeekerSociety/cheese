@@ -55,6 +55,7 @@ from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
 from app.api.topics_deps import _actor_in_place
 from app.api.topics_file_sources import source_bytes
+from app.api.write_access import ROUTE_DECIDES
 from app.core import raster_images, video_files
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
@@ -174,7 +175,7 @@ async def list_attachments(
     return ok(page(rows, len(rows)))
 
 
-@router.post("/{topic_id}/attachments")
+@router.post("/{topic_id}/attachments", dependencies=[ROUTE_DECIDES])
 async def upload_attachment(
     topic_id: uuid.UUID,
     db: DbSession,
