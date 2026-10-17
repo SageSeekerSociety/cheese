@@ -14,7 +14,7 @@
 // 这一页自己的样式在 `profile/profile.css`。
 import type { ProfileProject, ProfileProjectRole } from '@/cx_types'
 
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { useProfileNotes } from './profile/useProfileNotes'
@@ -45,11 +45,61 @@ const { mdAndUp } = useDisplay()
 const compact = computed(() => !mdAndUp.value)
 const isSelf = computed(() => myHandle() === props.handle)
 
-const { data, pageKey, loading, error, refresh, profile, member, missing, displayName, avatarUrl, locale, joined } =
-  useProfilePage(
-    () => props.handle,
-    () => props.projectId
-  )
+const {
+  data,
+  pageKey,
+  loading,
+  error,
+  refresh,
+  profile,
+  member,
+  missing,
+  remark,
+  originalName,
+  displayName,
+  saveRemark,
+  avatarUrl,
+  locale,
+  joined,
+} = useProfilePage(
+  () => props.handle,
+  () => props.projectId
+)
+
+const editingRemark = ref(false)
+const remarkDraft = ref('')
+const remarkSaving = ref(false)
+const remarkError = ref<string | null>(null)
+watch(
+  () => props.handle,
+  () => {
+    editingRemark.value = false
+    remarkError.value = null
+  }
+)
+function startRemarkEdit() {
+  remarkDraft.value = remark.value
+  remarkError.value = null
+  editingRemark.value = true
+}
+function cancelRemarkEdit() {
+  editingRemark.value = false
+  remarkError.value = null
+}
+async function submitRemark(nextValue?: string | Event) {
+  if (remarkSaving.value) return
+  const raw = typeof nextValue === 'string' ? nextValue : remarkDraft.value
+  remarkSaving.value = true
+  remarkError.value = null
+  try {
+    await saveRemark(raw.trim())
+    editingRemark.value = false
+  } catch (e) {
+    remarkError.value = e instanceof Error && e.message ? e.message : t('users.profile.remark.saveFailed')
+  } finally {
+    remarkSaving.value = false
+  }
+}
 const { selectedWeek, weekPending, pickWeek, clearWeek, topicsTitle, topics, topicsFailed, topicsEmpty } =
   useProfileTopics(
     () => props.handle,
@@ -151,8 +201,67 @@ const dmRoute = computed(() => {
           <div class="profile__who">
             <UserAvatar :avatar="avatarUrl" :name="displayName" :size="compact ? 64 : 96" class="profile__avatar" />
             <div class="profile__names">
-              <h1 class="t-page-title profile__name">{{ displayName }}</h1>
-              <div class="t-meta-read profile__handle">{{ handle }}</div>
+              <div class="profile__name-row">
+                <h1 class="t-page-title profile__name" data-user-content>{{ displayName }}</h1>
+                <button
+                  v-if="!isSelf && !editingRemark"
+                  type="button"
+                  class="profile__remark-btn"
+                  data-testid="profile-remark-trigger"
+                  :title="remark ? t('users.profile.remark.edit') : t('users.profile.remark.add')"
+                  :aria-label="remark ? t('users.profile.remark.edit') : t('users.profile.remark.add')"
+                  @click="startRemarkEdit"
+                >
+                  <v-icon size="14" icon="mdi-pencil-outline" aria-hidden="true" />
+                  <span v-if="!remark">{{ t('users.profile.remark.add') }}</span>
+                </button>
+              </div>
+              <div v-if="remark && originalName && originalName !== remark" class="t-meta-read profile__original-name">
+                <span data-user-content>{{ t('users.profile.remark.originalName', { name: originalName }) }}</span>
+                <span> · </span>
+                <span class="profile__handle">{{ handle }}</span>
+              </div>
+              <div v-else class="t-meta-read profile__handle">{{ handle }}</div>
+              <form v-if="!isSelf && editingRemark" class="profile__remark-form" @submit.prevent="submitRemark()">
+                <input
+                  v-model="remarkDraft"
+                  type="text"
+                  autocomplete="off"
+                  maxlength="32"
+                  class="profile__remark-input t-body"
+                  data-testid="profile-remark-input"
+                  :aria-label="t('users.profile.remark.placeholder')"
+                  :placeholder="t('users.profile.remark.placeholder')"
+                  :disabled="remarkSaving"
+                  @keydown.esc.prevent="cancelRemarkEdit"
+                />
+                <div class="profile__remark-actions">
+                  <BaseButton
+                    type="submit"
+                    size="sm"
+                    :loading="remarkSaving"
+                    data-testid="profile-remark-save"
+                    @click="submitRemark()"
+                  >
+                    {{ t('users.profile.remark.save') }}
+                  </BaseButton>
+                  <BaseButton
+                    v-if="remark"
+                    type="button"
+                    kind="ghost"
+                    size="sm"
+                    :disabled="remarkSaving"
+                    data-testid="profile-remark-clear"
+                    @click="submitRemark('')"
+                  >
+                    {{ t('users.profile.remark.clear') }}
+                  </BaseButton>
+                  <BaseButton type="button" kind="ghost" size="sm" :disabled="remarkSaving" @click="cancelRemarkEdit">
+                    {{ t('users.profile.remark.cancel') }}
+                  </BaseButton>
+                </div>
+                <p v-if="remarkError" class="t-meta profile__remark-error" role="alert">{{ remarkError }}</p>
+              </form>
               <div v-if="roleInProject" class="profile__role">
                 <ExternalTag v-if="roleInProject === 'external'" />
                 <span v-else class="chip-neutral">{{ roleLabel(roleInProject) }}</span>

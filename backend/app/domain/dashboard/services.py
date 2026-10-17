@@ -40,6 +40,7 @@ from app.domain.team.services import team_service
 from app.domain.team.summary import team_summary
 from app.domain.topic.models import Topic, TopicStatus, room_ref
 from app.domain.topic.repositories import TopicRepository, readable_by, seen_by
+from app.domain.user.services import remark_for_handle
 
 if TYPE_CHECKING:
     from app.domain.project.models import Project
@@ -429,6 +430,7 @@ class DashboardService:
             # Merged schema: display name is UserProfile.nickname, bio is
             # UserProfile.intro.
             "name": profile.nickname if profile else handle,
+            "remark": await remark_for_handle(self._s, viewer, handle),
             "bio": profile.intro if profile else "",
             "avatar_id": chosen_avatar_id,
             "joined_at": user.created_at.isoformat() if user else None,

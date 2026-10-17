@@ -601,6 +601,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/credits", auth: "dashboard.team.member", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/contributions", auth: "actor.project", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/users/{handle}/profile", auth: "dashboard.person", owner: "dashboard"}
+  - {protocol: "http", method: "PUT", path: "/users/{handle}/remark", auth: "dashboard.person", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/users/{handle}/topics", auth: "dashboard.person", owner: "dashboard"}
   - {protocol: "http", method: "DELETE", path: "/users/me/understanding/{entry_id}", auth: "dashboard.person", owner: "memory"}
   # app.api.routes.doc_agent

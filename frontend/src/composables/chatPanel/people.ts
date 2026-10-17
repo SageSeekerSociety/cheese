@@ -26,6 +26,7 @@ export function usePanelPeople(deps: {
   // Chips are drawn in the row components (../lib/renderMessage); here we only fill the
   // maps they draw with (`refMaps`, below the roster, which decides `reachable`).
   const mentionNames = reactive<Record<string, string>>({})
+  const mentionTitles = reactive<Record<string, string>>({})
   const topicTitles = reactive<Record<string, string>>({})
 
   // 名册、座位、显示名、头像 —— 见 room/composables/useRoomRoster。
@@ -36,7 +37,7 @@ export function usePanelPeople(deps: {
     author: deps.author,
     onError: deps.onError,
   })
-  const refMaps = reactive({ mentionNames, topicTitles, reachable: roster.reachable })
+  const refMaps = reactive({ mentionNames, mentionTitles, topicTitles, reachable: roster.reachable })
 
   // 谁在这间房说话、界面上怎么称呼它、@ 渲染成谁的名字 —— 见 useAgentNaming。
   const naming = useAgentNaming({
@@ -44,9 +45,10 @@ export function usePanelPeople(deps: {
     pool: roster.mentionPool,
     nameOf: roster.agentNameOf,
     names: mentionNames,
+    titles: mentionTitles,
     agentHandle: deps.agentHandle,
     alwaysSummon: deps.alwaysSummon,
   })
 
-  return { refMaps, mentionNames, topicTitles, roster, naming }
+  return { refMaps, mentionNames, mentionTitles, topicTitles, roster, naming }
 }

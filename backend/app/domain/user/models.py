@@ -307,3 +307,25 @@ class UserTrustedDevice(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class UserTeammateRemark(Base):
+    """A personal remark (alias) ``viewer_handle`` set for ``target_handle``.
+
+    Keyed by handle so it applies uniformly across projects to both human
+    teammates and AI teammates (``cheese-<hex>``), and is visible only to
+    ``viewer_handle``. Clearing a remark deletes its row.
+    """
+
+    __tablename__ = "user_teammate_remarks"
+
+    viewer_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    target_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    remark: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+

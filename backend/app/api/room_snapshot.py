@@ -63,7 +63,7 @@ async def room_snapshot(
     room = place.room
     viewer = actor.handle if actor.authenticated else None
     snapshot: dict = {
-        "members": await roster_rows(db, room),
+        "members": await roster_rows(db, room, viewer=viewer),
         "feedback_proposals": await ProposalService(db).live_cards(conversation_id),
         "skill_proposals": await proposals_in_room(db, place.project_id, place.room_id),
     }

@@ -46,6 +46,7 @@ from app.domain.membership.services import (
     RoleService,
 )
 from app.domain.project_permissions import PERMISSION_ORDER, Role
+from app.domain.user.services import remarks_by_handles
 
 router = APIRouter(prefix="", tags=["members"])
 
@@ -93,6 +94,10 @@ async def list_members(
     row_of = {m.user_handle: m for m in members}
     people = await roster(db, project_id, team=project_team)
     seated = await seats(db, project_id, [m.handle for m in people if not m.agent])
+    viewer_handle = actor.handle if actor.authenticated else None
+    remarks = await remarks_by_handles(
+        db, viewer_handle, [m.handle for m in people]
+    )
     items = []
     for member in people:
         row = row_of.get(member.handle)
@@ -101,6 +106,7 @@ async def list_members(
             "id": str(row.id) if row is not None else None,
             "project_id": str(project_id),
             "user_handle": member.handle,
+            "remark": remarks.get(member.handle),
         }
         if not member.agent:
             held = seated.get(member.handle)

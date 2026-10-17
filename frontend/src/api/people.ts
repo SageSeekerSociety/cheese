@@ -52,3 +52,11 @@ export function getUserTopics(
 export function deleteUnderstanding(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/users/me/understanding/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
+
+// Set or clear the signed-in viewer's personal remark for a teammate.
+export function setUserRemark(handle: string, remark: string): Promise<{ handle: string; remark: string | null }> {
+  return request<{ handle: string; remark: string | null }>(`/users/${encodeURIComponent(handle)}/remark`, {
+    method: 'PUT',
+    body: JSON.stringify({ remark }),
+  })
+}

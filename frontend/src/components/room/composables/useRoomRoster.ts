@@ -15,7 +15,7 @@ import { computed, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { t } from '../../../i18n'
-import { agentNames, memberName } from '../../../lib/agentNames'
+import { agentNames, memberHoverTitle, memberName, memberOriginalName } from '../../../lib/agentNames'
 import { isAgentBlock } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
 import { isAvatarKnownFailed, rememberAvatarFailure } from '../../../utils/avatarFailures'
@@ -75,6 +75,7 @@ export function useRoomRoster(options: {
   type RosterRow = {
     name?: string
     name_source?: string
+    remark?: string | null
     handle?: string
     member_handle?: string
     user_handle?: string
@@ -124,6 +125,7 @@ export function useRoomRoster(options: {
       .map((m) => ({
         handle: m.member_handle,
         label: memberName(m) || m.member_handle,
+        originalName: m.remark ? memberOriginalName(m) || null : null,
         // 房间名册这一行就带着「他自己挑过的头像」；@ 菜单原来只配色块，所以同一个人
         // 在菜单里只有首字母、在消息行里却有真图。没挑过就是 null，交给首字母。
         avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
@@ -143,7 +145,8 @@ export function useRoomRoster(options: {
       .filter((m) => !inRoom.has(m.user_handle) && (!m.agent || (m.owner_handle && mayCall(m))) && m.active !== false)
       .map((m) => ({
         handle: m.user_handle,
-        label: m.name || m.user_handle,
+        label: memberName(m) || m.user_handle,
+        originalName: m.remark ? memberOriginalName(m) || null : null,
         avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
         agent: !!m.agent,
         external: isExternalMember(m),
@@ -197,7 +200,11 @@ export function useRoomRoster(options: {
   }
   function displayName(m: Block): string {
     if (isAgentBlock(m)) return agentDisplayName(m.author)
-    return memberByHandle.value.get(m.author)?.name || m.author
+    return memberName(memberByHandle.value.get(m.author)) || m.author
+  }
+  function authorTitle(m: Block): string | null {
+    if (isAgentBlock(m)) return null
+    return memberHoverTitle(memberByHandle.value.get(m.author), m.author)
   }
   // 真头像加载失败过的 URL —— 退回彩色首字母，不留破图。
   //
@@ -238,6 +245,7 @@ export function useRoomRoster(options: {
     agentNameOf,
     agentDisplayName,
     displayName,
+    authorTitle,
     isExternal,
     avatarSrc,
     onAvatarError,
