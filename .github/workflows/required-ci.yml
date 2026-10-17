@@ -82,7 +82,17 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          # Every selected suite waits on this fetch, so one transient network
+          # error here reddens the whole run. Retry it; the selection below is
+          # unchanged.
+          for attempt in 1 2 3; do
+            if git fetch --no-tags --depth=1 origin "$BASE_SHA"; then break; fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::git fetch of $BASE_SHA failed on all $attempt attempts" >&2
+              exit 1
+            fi
+            sleep 2
+          done
           python3 .github/scripts/required-ci.py scope "$BASE_SHA"
 
   # The DRAFT tier: a bounded local-evidence run, inline so a draft adds no
@@ -409,15 +419,35 @@ jobs:
           HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         # curl + python3, not gh + jq: the cheese-ci boxes have neither gh nor jq
         # (python3, git and curl only), and both calls are plain GETs.
+        #
+        # A TLS reset on one of those GETs reddened a merge-queue entry (#4144:
+        # curl 35 and a JSONDecodeError), so retry transient network errors and,
+        # when the read really fails, name the status instead of handing python
+        # an empty string to parse. -f is what makes an HTTP error a failed
+        # transfer at all, so --retry covers 5xx too.
         run: |
           set -o pipefail
           api() {
-            curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/$1"
+            local out code rc
+            out="$(mktemp)"
+            code="$(curl -fsS --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
+              -o "$out" -w '%{http_code}' \
+              -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/$1")" && rc=0 || rc=$?
+            if [ "$rc" -ne 0 ] || [ "${code:0:1}" != 2 ]; then
+              echo "::error::GitHub API GET $1 failed: curl exit $rc, HTTP ${code:-none}" >&2
+              rm -f "$out"
+              return 1
+            fi
+            cat "$out"
+            rm -f "$out"
           }
           if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
-            api "compare/$BASE_SHA...$HEAD_SHA" \
-              | python3 -c 'import json,sys; [print(c["commit"]["message"].split("\n")[0]) for c in json.load(sys.stdin)["commits"]]' \
+            # Read the response into a file first: a failed read exits here (the
+            # runner's shell runs with errexit) instead of feeding python "".
+            api "compare/$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/compare.json"
+            python3 -c 'import json,sys; [print(c["commit"]["message"].split("\n")[0]) for c in json.load(sys.stdin)["commits"]]' \
+              < "$RUNNER_TEMP/compare.json" \
               | python3 .github/scripts/check-commit-title.py
           else
             api "pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
