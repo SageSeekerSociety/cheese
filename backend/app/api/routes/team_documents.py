@@ -33,7 +33,7 @@ from app.domain.living_doc.services import Documents
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.services import ProjectService
 from app.domain.team.services import team_service
-from app.domain.user.repositories import UserRepository
+from app.domain.user.services import user_by_handle
 
 teams = APIRouter(prefix="/teams", tags=["team-documents"])
 documents = APIRouter(prefix="/documents", tags=["team-documents"])
@@ -45,7 +45,7 @@ async def _member(db, resolver, team_id: int):
     resolver.reject_failed_credential(actor)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("docTeamMembersOnly"))
-    user = await UserRepository(db).get_by_username(actor.handle)
+    user = await user_by_handle(db, actor.handle)
     if (
         actor.via == "cheese"
         or user is None
@@ -143,7 +143,7 @@ async def document_places(
     """Where the caller may move this document: their own documents, and each
     team they are in with its projects that are not archived."""
     reached = await _movable(db, resolver, document_id)
-    user = await UserRepository(db).get_by_username(reached.actor.handle)
+    user = await user_by_handle(db, reached.actor.handle)
     if user is None:
         raise ForbiddenError(say("docMoveAuthorOrAdmin"))
     teams_of = team_service(db)

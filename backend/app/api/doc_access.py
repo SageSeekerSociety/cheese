@@ -46,7 +46,7 @@ from app.domain.room_task.place import Place, place_or_404, require_doc_writable
 from app.domain.room_task.services import TaskService
 from app.domain.task import teaching
 from app.domain.team.services import team_service
-from app.domain.user.repositories import UserRepository
+from app.domain.user.services import user_by_handle
 
 
 @dataclass(frozen=True)
@@ -127,12 +127,12 @@ async def _team_reader(
 
 
 async def is_team_member(db: AsyncSession, team_id: int, handle: str) -> bool:
-    user = await UserRepository(db).get_by_username(handle)
+    user = await user_by_handle(db, handle)
     return user is not None and await team_service(db).is_team_member(team_id, user.id)
 
 
 async def is_team_admin(db: AsyncSession, team_id: int, handle: str) -> bool:
-    user = await UserRepository(db).get_by_username(handle)
+    user = await user_by_handle(db, handle)
     return user is not None and await team_service(db).is_team_at_least_admin(
         team_id, user.id
     )
