@@ -318,7 +318,7 @@ function read(file: LibraryFile) {
     :topic-list="workspace.topics"
     @titled="titled"
     @delete="confirmingDoc = openDocument"
-    @open-topic="(id: string) => router.push(refRoute(projectId, id))"
+    @open-topic="(id: string, block?: string) => router.push(refRoute(projectId, id, block))"
   />
   <AppPage v-else :title="selected && !mdAndUp ? selected.path : t('navigation.project.library')" width="full">
     <div

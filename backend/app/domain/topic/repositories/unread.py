@@ -37,7 +37,6 @@ from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
 )
-from app.domain.project.models import Project
 from app.domain.topic.models import (
     NotifyLevel,
     Topic,
@@ -272,6 +271,7 @@ async def private_unread_counts(
     user_handle: str,
     *,
     seats: dict[str, str],
+    default_agent_instance_id: uuid.UUID | None,
 ) -> dict[str, int]:
     """Unread count per 私聊, keyed by the OTHER party.
 
@@ -303,13 +303,12 @@ async def private_unread_counts(
     是 `agent_instance`（第 5 层），本包在第 2 层，够不着它的表
     （``app.domain.topic.ports.SeatHandles``）。
     """
-    project = await repo._session.get(Project, project_id)
     default_handle = CHEESE_HANDLE
-    if project is not None and project.default_agent_instance_id is not None:
+    if default_agent_instance_id is not None:
         # 项目自己的芝士也在 `seats` 里（它是这个项目的一个实例），所以这一问
         # 是一次查表，不是第二次读库。
         default_handle = seats.get(
-            agent_instance_handle(project.default_agent_instance_id), CHEESE_HANDLE
+            agent_instance_handle(default_agent_instance_id), CHEESE_HANDLE
         )
     mine = aliased(TopicMembership)
     theirs = aliased(TopicMembership)

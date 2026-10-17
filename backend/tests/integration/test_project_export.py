@@ -18,7 +18,8 @@ from app.domain.deliverables.export import _versions_of
 from app.domain.library import records as library_records
 from app.domain.library.service import artifact_snapshot_path
 from app.domain.living_doc.models import Document, DocumentNode
-from app.domain.project.models import ProjectArtifact, ProjectForge
+from app.domain.project.models import Project, ProjectArtifact, ProjectForge
+from app.domain.project.services import ProjectService
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from app.domain.room_task.models import Task
 from app.domain.topic.repositories import TopicRepository
@@ -57,9 +58,23 @@ def exported_project(client, monkeypatch, tmp_path):
 
     async def seed():
         async with client.test_factory() as db:
-            room = await TopicRepository(db).add(project_id=pid, title="Public room")
+            # A channel's number and its environment are the project's to hand
+            # out, so this test asks it the same way the service does.
+            project = await db.get(Project, pid)
+            start = ProjectService(db).channel_start
+            number, environment = await start(project)
+            room = await TopicRepository(db).add(
+                project_id=pid,
+                number=number,
+                environment=environment,
+                title="Public room",
+            )
+            private_number, environment = await start(project)
             private = await TopicRepository(db).add(
-                project_id=pid, title="Other person's private room"
+                project_id=pid,
+                number=private_number,
+                environment=environment,
+                title="Other person's private room",
             )
             private.is_private = True
             binding = await db.scalar(
@@ -255,8 +270,13 @@ def test_export_batches_keep_versions_numbering_hidden_rooms_and_node_order(
 
     async def seed():
         async with client.test_factory() as db:
+            project = await db.get(Project, data["pid"])
+            number, environment = await ProjectService(db).channel_start(project)
             hidden = await TopicRepository(db).add(
-                project_id=data["pid"], title="Members only"
+                project_id=data["pid"],
+                number=number,
+                environment=environment,
+                title="Members only",
             )
             hidden.members_only = True
             artifact = await db.scalar(

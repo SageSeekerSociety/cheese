@@ -59,5 +59,10 @@
   "titlePlaceholder": "标题",
   "undo": "撤销",
   "untitled": "未命名文档",
-  "you": "你"
+  "you": "你",
+  "backlinks": {
+    "title": "被引用",
+    "edited": "{name} {when}编辑",
+    "count": "共 {count} 条"
+  }
 }

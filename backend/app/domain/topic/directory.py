@@ -13,12 +13,11 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.membership.services import MemberService
+from app.auth.project_roles import may
 from app.domain.project_permissions import Permission
 from app.domain.topic.models import TopicKind, TopicStatus
-from app.domain.topic.ports import OpenTaskCounts, ProjectTeam
+from app.domain.topic.ports import OpenTaskCounts, ProjectTeam, TopicMembership
 from app.domain.topic.repositories import TopicRepository
-from app.domain.topic_membership.services import TopicMemberService
 
 
 async def channel_directory(
@@ -28,14 +27,12 @@ async def channel_directory(
     *,
     team: ProjectTeam,
     counts: OpenTaskCounts,
+    members: TopicMembership,
 ) -> dict:
-    members = TopicMemberService(session)
     repo = TopicRepository(session)
     topics = await repo.list_for_project(project_id)
     seen = {t.id for t in await members.seen(topics, viewer, team=team)}
-    manages_project = await MemberService(session).manages(
-        project_id, viewer, Permission.manage_channels
-    )
+    manages_project = await may(session, project_id, viewer, Permission.manage_channels)
     listed = [t for t in topics if t.id in seen or manages_project]
     ids = [t.id for t in listed]
     joined = await members.joined_topic_ids(listed, viewer, team=team)

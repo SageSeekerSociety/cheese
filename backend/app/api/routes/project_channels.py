@@ -60,6 +60,7 @@ async def list_channels(
             actor.handle,
             team=project_team,
             counts=TaskService(db),
+            members=TopicMemberService(db),
         )
     )
 
