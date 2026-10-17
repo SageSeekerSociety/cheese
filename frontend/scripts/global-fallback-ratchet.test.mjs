@@ -518,6 +518,26 @@ describe('findGlobalFallbacks', () => {
       // was destructured out of.
       "const src = { options: { props: ['open'] }, props: [] }\nconst { options } = src\nexport default options",
       "const src = { options: { props: ['open'] } }\nconst { options: config } = src\nexport default config",
+      "const { options = { props: ['open'] } } = useThing()\nexport default options",
+      "const src = { a: { options: { props: ['open'] } } }\nconst { a: { options } } = src\nexport default options",
+      "const deep = { a: { b: { options: { props: ['open'] } } } }\nconst { a: { b: { options } } } = deep\nexport default options",
+      // The source may be written with an assertion around it, reached through
+      // a binding of its own.
+      "const base = { options: { props: ['open'] } } as const\nconst src = base\nconst { options } = src\nexport default options",
+      // A write runs when its function does, not where its text sits: an
+      // assignment inside a function that never runs does not replace the
+      // value, and a module-level declaration below the component still runs
+      // before the component's `setup` is called.
+      "const options = { props: ['open'] }\nfunction reset() { options = { props: [] } }\nvoid reset\nexport default options",
+      "export default { setup() { return vm } }\nconst vm = { 'open': () => {} }",
+      // Writes that may keep the value they already have, and copies that
+      // carry every name the original had.
+      "let options = { props: ['open'] }\noptions ??= { props: [] }\nexport default options",
+      "const options = { props: ['open'] }\noptions = { ...options }\nexport default options",
+      "const options = { props: ['open'] }\noptions = Object.assign({}, options)\nexport default options",
+      "const base = { props: ['open'] }\nexport default { ...base }",
+      "const shared = { 'open': () => {} }\nexport default { methods: { ...shared } }",
+      "const shared = { 'open': () => {} }\nexport default { setup() { return { ...shared } } }",
     ]) {
       assert.deepEqual(found(component(script)), [], `reported options that reach the template:\n${script}`)
     }
@@ -626,26 +646,40 @@ describe('findGlobalFallbacks', () => {
     }
   })
 
-  // A namespace hands its members out as `NS.member`; the name is not a
-  // module-level binding, and `export default options` cannot name it.
   // Everything the module hands over, not the name as it stands at the end:
-  // `export default options` hands over what `options` holds there, even if
-  // an assignment near the bottom would read the property more loosely.
+  // `export default options` hands over what `options` holds there, even if an
+  // assignment near the bottom would change it.
   it('reads the value a name holds where it is handed over', () => {
-    const script = [
-      '<script lang="ts">',
-      "let options = { props: ['open'] }",
-      'export default options',
-      'options = { props: [] }',
-      '</script>',
-      '<template>',
-      '  <button @click="open()">x</button>',
-      '</template>',
-      '',
-    ].join('\n')
-    assert.deepEqual(found(script), [], 'read a value assigned after the export')
+    const exported = (...lines) =>
+      [
+        '<script lang="ts">',
+        ...lines,
+        '</script>',
+        '<template>',
+        '  <button @click="open()">x</button>',
+        '</template>',
+        '',
+      ].join('\n')
+    // The export hands over the value at its own line. An assignment above it
+    // is what that value is — reading the declaration's initializer instead
+    // answers clean on a call the template cannot resolve.
+    assert.deepEqual(
+      found(exported("let options = { props: ['open'] }", 'options = { props: [] }', 'export default options')).map(
+        (hit) => [hit.name, hit.where]
+      ),
+      [['open', TEMPLATE]],
+      'read the initializer instead of the value the export hands over'
+    )
+    // And an assignment below it changes nothing.
+    assert.deepEqual(
+      found(exported("let options = { props: ['open'] }", 'export default options', 'options = { props: [] }')),
+      [],
+      'read a value assigned after the export'
+    )
   })
 
+  // A namespace hands its members out as `NS.member`; the name is not a
+  // module-level binding, and `export default options` cannot name it.
   it('does not read a namespace member as a module binding', () => {
     const code = [
       '<script lang="ts">',

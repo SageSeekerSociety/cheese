@@ -337,14 +337,20 @@ function unassert(node) {
 }
 
 /** The names an object literal spells in quotes: `{ 'open': … }`, `{ ['open']: … }`. */
-function quotedKeys(node) {
+function quotedKeys(node, resolve = () => undefined, seen = new Set()) {
   const object = unassert(node)
-  if (object?.type !== 'ObjectExpression') return []
-  return object.properties.flatMap((property) =>
-    property.type === 'Property' && property.key?.type === 'Literal' && typeof property.key.value === 'string'
+  if (object?.type !== 'ObjectExpression' || seen.has(object)) return []
+  seen.add(object)
+  return object.properties.flatMap((property) => {
+    // `{ ...options }` keeps every name the object it copies has.
+    // `resolveValue` records what it resolved in its own cycle set, so it gets
+    // a fresh one: sharing this set would make it look like a cycle and drop
+    // the object it just resolved.
+    if (property.type === 'SpreadElement') return quotedKeys(resolveValue(property.argument, resolve), resolve, seen)
+    return property.type === 'Property' && property.key?.type === 'Literal' && typeof property.key.value === 'string'
       ? [property.key.value]
       : []
-  )
+  })
 }
 
 /** The name a property is written under, quoted or not. */
@@ -352,6 +358,24 @@ function propertyName(key) {
   if (key?.type === 'Identifier') return key.name
   if (key?.type === 'Literal' && typeof key.value === 'string') return key.value
   return undefined
+}
+
+/**
+ * Whether an expression copies an object that already exists — `{ ...x }` or
+ * `Object.assign({}, x)`. The names it carries are the earlier value's, so a
+ * binding assigned one keeps the value it had.
+ */
+function copiesValue(node) {
+  if (node?.type === 'ObjectExpression') return node.properties?.some((entry) => entry.type === 'SpreadElement')
+  if (node?.type !== 'CallExpression') return false
+  const callee = node.callee
+  return (
+    callee?.type === 'MemberExpression' &&
+    callee.object?.type === 'Identifier' &&
+    callee.object.name === 'Object' &&
+    callee.property?.type === 'Identifier' &&
+    callee.property.name === 'assign'
+  )
 }
 
 /**
@@ -382,19 +406,56 @@ function bindingResolver(scopeManager) {
       if (reference.identifier) bindings.set(reference.identifier, reference.resolved ?? null)
     }
   }
+  const isFunction = (node) =>
+    node?.type === 'FunctionDeclaration' ||
+    node?.type === 'FunctionExpression' ||
+    node?.type === 'ArrowFunctionExpression'
+
+  /** The functions a node sits in, innermost first; module level is empty. */
+  const functionsAround = (node) => {
+    const around = []
+    for (let current = node?.parent; current; current = current.parent) {
+      if (isFunction(current)) around.push(current)
+    }
+    return around
+  }
+
+  /** Whether a write's functions are the read's own or one it runs inside. */
+  const before = (writeFunctions, readFunctions) => {
+    if (writeFunctions.length > readFunctions.length) return false
+    const offset = readFunctions.length - writeFunctions.length
+    return writeFunctions.every((fn, index) => fn === readFunctions[offset + index])
+  }
+
   const valueOf = (identifier, depth = 0) => {
-    if (depth > 4) return null
+    if (depth > 8) return null
     const variable = bindings.get(identifier)
     if (!variable) return undefined
     const readAt = identifier.range?.[0] ?? Number.POSITIVE_INFINITY
+    const readFunctions = functionsAround(identifier)
     let value
     let writtenAt = Number.NEGATIVE_INFINITY
+    // A write that may not replace the value: `x ??= { … }` keeps the left
+    // when it is there, and `{ ...x }` copies it. Used only if nothing else
+    // gave a value.
+    let fallback = null
     const written = (node) => {
-      const at = node?.range?.[0] ?? Number.NEGATIVE_INFINITY
-      if (node && at < readAt && at > writtenAt) {
+      if (!node) return
+      const at = node.range?.[0] ?? Number.NEGATIVE_INFINITY
+      const writeFunctions = functionsAround(node)
+      if (!before(writeFunctions, readFunctions)) return
+      // In the read's own function, source order is execution order. In a
+      // function the read runs inside — module level included — the write has
+      // already happened by the time that function is called, wherever it
+      // sits in the file.
+      if (writeFunctions.length === readFunctions.length && at >= readAt) return
+      if (at > writtenAt) {
         value = node
         writtenAt = at
       }
+    }
+    const kept = (node) => {
+      if (node && !fallback) fallback = node
     }
     for (const def of variable.defs ?? []) {
       if (def.type === 'Variable' && def.node?.init) written(declaredValue(def.node, variable.name, depth))
@@ -403,9 +464,15 @@ function bindingResolver(scopeManager) {
     // declaration, and only an assignment to this binding counts.
     for (const reference of variable.references ?? []) {
       const parent = reference.identifier?.parent
-      if (parent?.type === 'AssignmentExpression' && parent.left === reference.identifier) written(parent.right)
+      if (parent?.type !== 'AssignmentExpression' || parent.left !== reference.identifier) continue
+      const target = parent.right
+      // `{ ...options }` and `Object.assign({}, options)` copy what was there;
+      // the names they carry are the earlier value's, so it stays readable.
+      const copies = copiesValue(target)
+      if (copies || parent.operator !== '=') kept(target)
+      else written(target)
     }
-    return value ?? null
+    return value ?? fallback
   }
 
   /**
@@ -414,7 +481,7 @@ function bindingResolver(scopeManager) {
    */
   const objectValue = (node, depth) => {
     let current = unassert(node)
-    for (let step = depth; step < 4 && current?.type === 'Identifier'; step += 1) {
+    for (let step = depth; step < 8 && current?.type === 'Identifier'; step += 1) {
       current = unassert(valueOf(current, step + 1))
     }
     return current?.type === 'ObjectExpression' ? current : undefined
@@ -433,19 +500,42 @@ function bindingResolver(scopeManager) {
     const init = declarator.init
     if (!init) return null
     if (declarator.id?.type === 'Identifier') return init
-    if (declarator.id?.type !== 'ObjectPattern') return null
-    const binding = declarator.id.properties?.find(
-      (candidate) =>
-        candidate.type === 'Property' &&
-        (candidate.value?.type === 'Identifier' ? candidate.value.name : propertyName(candidate.key)) === name
-    )
-    if (!binding) return null
-    const key = propertyName(binding.key)
+    return destructuredValue(declarator.id, init, name, depth) ?? null
+  }
+
+  /**
+   * The value one name of an object pattern takes from the object it is
+   * destructured out of: `{ options }`, `{ a: options }`, `{ a: { options } }`
+   * and `{ options = … }` all name the property they take, and the property is
+   * what the name holds. `undefined` means this pattern does not bind the name.
+   */
+  const destructuredValue = (pattern, init, name, depth) => {
+    if (pattern?.type !== 'ObjectPattern' || depth > 8) return undefined
     const source = objectValue(init, depth + 1)
-    const property = source?.properties?.find(
-      (candidate) => candidate.type === 'Property' && propertyName(candidate.key) === key
-    )
-    return property?.value ?? null
+    for (const property of pattern.properties ?? []) {
+      // `{ [key]: options }` names a property this cannot know; a numeric key
+      // is not the name either.
+      if (property.type !== 'Property' || property.computed) continue
+      const key = propertyName(property.key)
+      const value = property.value
+      if (value?.type === 'ObjectPattern') {
+        const nested = source?.properties?.find(
+          (candidate) => candidate.type === 'Property' && propertyName(candidate.key) === key
+        )
+        const found = destructuredValue(value, nested?.value, name, depth + 1)
+        if (found !== undefined) return found
+        continue
+      }
+      const bound = value?.type === 'AssignmentPattern' ? value.left?.name : value?.name
+      if (bound !== name || key === undefined) continue
+      const matched = source?.properties?.find(
+        (candidate) => candidate.type === 'Property' && propertyName(candidate.key) === key
+      )
+      if (matched) return matched.value
+      // `const { options = { … } } = src` falls back to the default.
+      return value?.type === 'AssignmentPattern' ? value.right : null
+    }
+    return undefined
   }
 
   return (identifier) => valueOf(identifier)
@@ -519,7 +609,7 @@ function componentOptions(body, resolve) {
 /** The names an options container declares: a list of names, or an object's keys. */
 function containerNames(node, resolve) {
   const value = resolveValue(node, resolve)
-  const names = quotedKeys(value)
+  const names = quotedKeys(value, resolve)
   if (value?.type === 'ArrayExpression') {
     for (const element of value.elements) {
       if (element?.type === 'Literal' && typeof element.value === 'string') names.push(element.value)
@@ -539,7 +629,7 @@ function returnedNames(node, resolve) {
   // `setup() { const vm = { 'open': … }; return vm }` resolves through the
   // binding; a name the function does not declare is the module's, and the
   // scope manager already knows which of the two this read is.
-  return returned.flatMap((expression) => quotedKeys(resolveValue(expression, resolve)))
+  return returned.flatMap((expression) => quotedKeys(resolveValue(expression, resolve), resolve))
 }
 
 const OPTION_CONTAINERS = new Set(['props', 'methods', 'computed', 'inject'])
@@ -549,6 +639,12 @@ function collectOptions(options, into, resolve, seen) {
   if (seen.has(options)) return
   seen.add(options)
   for (const property of options.properties) {
+    // `export default { ...base }` keeps every name the spread object has.
+    if (property.type === 'SpreadElement') {
+      const spread = resolveValue(property.argument, resolve)
+      if (spread?.type === 'ObjectExpression') collectOptions(spread, into, resolve, seen)
+      continue
+    }
     if (property.type !== 'Property') continue
     const name = propertyName(property.key)
     if (name === undefined) continue
