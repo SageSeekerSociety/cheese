@@ -30,7 +30,9 @@ BASELINE = {
     # 1: `seats_only`. The policy's parameter is named for what it decides
     # (a private chat or a private channel), not for this flag.
     "app/auth/audience.py": 1,
-    "app/api/routes/project_environment.py": 2,
+    # Environment data access owns the route's two private-chat filters.
+    "app/api/routes/project_environment.py": 0,
+    "app/domain/project/environment.py": 2,
     # 0：项目这一侧本来有一处，现在推回 `_is_dm` 那一类了（结论 19）。留着这一行
     # 是把它钉在 0，谁再加一处回来，红的就是这条。
     "app/api/routes/projects.py": 0,
