@@ -24,11 +24,85 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PATH_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9_./-])(?:\.\.?[/\\]|/)?[A-Za-z0-9_.@+-](?:[A-Za-z0-9_./@+-]|\\\\)*"
+    r"(?<![A-Za-z0-9_./-])(?:\.\.?[/\\]|/)?[A-Za-z0-9_.@+-][A-Za-z0-9_./@+\-㐀-鿿]*"
 )
 NEW_MARKER = re.compile(
-    r"(?:新建|新增|(?<![A-Za-z])new(?:\s+file)?(?![A-Za-z]))\s*[:：]?\s*",
+    r"(?<![A-Za-z0-9_./-])(?:新建|新增)(?=[ \t:：`]|[A-Za-z0-9_.-])"
+    r"|(?<![A-Za-z0-9_./-])new(?:[ \t]+file)?(?=[ \t:：`])",
     re.IGNORECASE,
+)
+FILE_SUFFIXES = frozenset(
+    {
+        ".bat",
+        ".c",
+        ".cfg",
+        ".conf",
+        ".cpp",
+        ".css",
+        ".csv",
+        ".cs",
+        ".docx",
+        ".go",
+        ".h",
+        ".html",
+        ".ipynb",
+        ".java",
+        ".js",
+        ".json",
+        ".jsx",
+        ".kt",
+        ".lock",
+        ".log",
+        ".md",
+        ".mdx",
+        ".mjs",
+        ".patch",
+        ".pdf",
+        ".php",
+        ".py",
+        ".pyi",
+        ".rb",
+        ".rs",
+        ".rst",
+        ".scss",
+        ".sh",
+        ".sql",
+        ".svg",
+        ".swift",
+        ".toml",
+        ".ts",
+        ".tsx",
+        ".tsv",
+        ".txt",
+        ".vue",
+        ".xml",
+        ".yaml",
+        ".yml",
+    }
+)
+NEW_DESCRIPTORS = frozenset(
+    {
+        "api", "cli", "file", "files", "helper", "http", "mcp", "module",
+        "path", "paths", "文件", "接口", "模块", "路径",
+    }
+)
+ROOT_FILENAME_STOPWORDS = frozenset(
+    {
+        "api", "change", "ci", "cli", "db", "e2e", "feature", "http", "id",
+        "mcp", "modify", "pr", "project", "python", "sql", "ts", "ui", "update",
+        "url", "user", "ux", "version",
+    }
+)
+ROOT_FILENAME_NAMES = frozenset(
+    {"authors", "changelog", "codeowners", "contributing", "copying", "license", "notice", "readme", "security"}
+)
+ROOT_PATH_REFERENCE = re.compile(
+    r"(?:(?i:update|modify|edit|touch|create|remove)\s+|(?:修改|更新|编辑|创建|删除|新增|新建)\s*)"
+    r"(?P<path>[A-Z][A-Za-z0-9_-]+)\b"
+)
+ROOT_UNICODE_PATH_REFERENCE = re.compile(
+    r"(?:(?i:update|modify|edit|touch|create|remove)\s+|(?:修改|更新|编辑|创建|删除|新增|新建)\s*)"
+    r"(?P<path>[㐀-鿿][A-Za-z0-9_.@+\-㐀-鿿]*\.[A-Za-z]{1,10})(?=$|[\s,;，；。！？!?㐀-鿿])"
 )
 
 
@@ -43,6 +117,66 @@ def normalize_path(value: str) -> str | None:
     return path.as_posix()
 
 
+def _is_root_filename(token: str) -> bool:
+    lower = token.lower()
+    return (
+        lower not in ROOT_FILENAME_STOPWORDS
+        and (token.isupper() and len(token) > 3 or lower in ROOT_FILENAME_NAMES or lower.endswith("file"))
+    )
+
+
+def _is_path_token(token: str, known_paths: set[str]) -> bool:
+    if token in known_paths or "/" in token or token.startswith("."):
+        return True
+    if "@" in token or token.lower() in {"e.g", "i.e"}:
+        return False
+    if re.fullmatch(r"[vV]?\d+(?:\.\d+)+", token):
+        return False
+    return Path(token).suffix.lower() in FILE_SUFFIXES
+
+
+def _trim_trailing_prose(token: str) -> str:
+    lowered = token.lower()
+    for suffix in sorted(FILE_SUFFIXES, key=len, reverse=True):
+        end = lowered.rfind(suffix) + len(suffix)
+        if end >= len(suffix) and all(
+            not char.isascii() or not (char.isalnum() or char in "_./-")
+            for char in token[end:]
+        ):
+            return token[:end]
+    return token
+
+
+def _marker_gap_is_valid(gap: str) -> bool:
+    gap = gap.strip(" \t`'\"()[]{}:：")
+    if not gap or re.fullmatch(r"\d+\s*(?:个|份|项)?(?:\s*(?:文件|路径|接口|模块|files?|paths?))?", gap, re.I):
+        return True
+    words = re.findall(r"[A-Za-z]+|[㐀-鿿]+", gap)
+    return bool(words) and all(word.lower() in NEW_DESCRIPTORS for word in words) and not re.search(
+        r"[^A-Za-z㐀-鿿\s]", gap
+    )
+
+
+def _is_list_separator(gap: str) -> bool:
+    return gap.strip(" \t`'\"").lower() in {",", "，", "、", "and", "和", ", and", "，和"}
+
+
+def _unicode_path_candidates(line: str, known_paths: set[str]):
+    for path in known_paths:
+        if path.isascii():
+            continue
+        start = 0
+        while (start := line.find(path, start)) >= 0:
+            end = start + len(path)
+            before = line[start - 1] if start else ""
+            after = line[end] if end < len(line) else ""
+            if not (before and before.isascii() and (before.isalnum() or before in "_./-")) and not (
+                after and after.isascii() and (after.isalnum() or after in "_./-")
+            ):
+                yield start, end, path
+            start = end
+
+
 def extract_brief_paths(
     text: str, known_paths: set[str] | None = None
 ) -> tuple[dict[str, bool], list[str]]:
@@ -51,31 +185,66 @@ def extract_brief_paths(
     unsafe: list[str] = []
     known_paths = known_paths or set()
     for line in text.splitlines():
-        matches = list(PATH_TOKEN.finditer(line))
         markers = list(NEW_MARKER.finditer(line))
-        for match in matches:
-            token = match.group().rstrip(".,;:!?")
-            marked_new = any(
-                marker.end() <= match.start()
-                and not any(marker.end() <= prior.start() < match.start() for prior in matches)
-                and (
-                    marker.group().startswith(("新建", "新增"))
-                    or "file" in marker.group().lower()
-                    or token[:1].isupper()
-                    or "/" in token
-                    or "." in token
-                    or token in known_paths
-                )
+        candidates: dict[tuple[int, int, str], None] = {}
+        unicode_paths = list(_unicode_path_candidates(line, known_paths))
+        for marker in markers:
+            rest = line[marker.end():]
+            start_offset = len(rest) - len(rest.lstrip(" \\t`'\"([{ :："))
+            marked = rest[start_offset:]
+            match = re.match(r"[^\s,;，；。！？!?`'\"()]+", marked)
+            if not match:
+                continue
+            token = _trim_trailing_prose(match.group().rstrip(".,;:!?"))
+            if (
+                not token.isascii() and ("/" in token or "." in token)
+            ) or _is_root_filename(token) or "file" in marker.group().lower():
+                start = marker.end() + start_offset
+                if token.isascii():
+                    candidates[(start, start + len(token), token)] = None
+                else:
+                    unicode_paths.append((start, start + len(token), token))
+        unicode_spans = [(start, end) for start, end, _ in unicode_paths]
+        for match in PATH_TOKEN.finditer(line):
+            token = _trim_trailing_prose(match.group().rstrip(".,;:!?"))
+            end = match.start() + len(token)
+            if any(start <= match.start() and end <= span_end for start, span_end in unicode_spans):
+                continue
+            before = line[match.start() - 1] if match.start() else ""
+            if "/" not in token and before and not before.isascii():
+                continue
+            if token.endswith(("/", "\\")):
+                continue
+            if _is_path_token(token, known_paths):
+                candidates[(match.start(), end, token)] = None
+        for start, end, path in unicode_paths:
+            candidates[(start, end, path)] = None
+        for match in ROOT_PATH_REFERENCE.finditer(line):
+            token = match.group("path")
+            if _is_root_filename(token):
+                candidates[(match.start("path"), match.end("path"), token)] = None
+        for match in ROOT_UNICODE_PATH_REFERENCE.finditer(line):
+            token = match.group("path")
+            candidates[(match.start("path"), match.end("path"), token)] = None
+        ordered = sorted(candidates)
+        marked_paths: dict[tuple[int, int, str], bool] = {}
+        for start, end, token in ordered:
+            is_new = any(
+                marker.end() <= start
+                and _marker_gap_is_valid(line[marker.end():start])
                 for marker in markers
             )
-            looks_like_root_file = token in known_paths or marked_new
-            if "/" not in token and "." not in token and not looks_like_root_file:
-                continue
+            if not is_new:
+                is_new = any(
+                    was_new and prior_end <= start and _is_list_separator(line[prior_end:start])
+                    for (_, prior_end, _), was_new in marked_paths.items()
+                )
+            marked_paths[(start, end, token)] = is_new
             path = normalize_path(token)
             if path is None:
                 unsafe.append(token)
             else:
-                paths[path] = paths.get(path, False) or marked_new
+                paths[path] = paths.get(path, False) or is_new
     return paths, unsafe
 
 

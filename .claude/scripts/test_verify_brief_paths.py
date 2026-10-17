@@ -27,10 +27,14 @@ class VerifyBriefPathsTests(unittest.TestCase):
         self.git("config", "user.email", "test@example.invalid")
         self.git("config", "user.name", "Test")
         (self.root / "src").mkdir()
+        (self.root / "docs").mkdir()
         (self.root / "src/existing.py").write_text("present\n", encoding="utf-8")
         (self.root / "src/overlap.py").write_text("present\n", encoding="utf-8")
+        (self.root / "docs/说明.md").write_text("present\n", encoding="utf-8")
+        (self.root / "docs/config.md").write_text("present\n", encoding="utf-8")
+        (self.root / "后台管理布局统一-方案B.pdf").write_text("present\n", encoding="utf-8")
         (self.root / "Makefile").write_text("all:\n\ttrue\n", encoding="utf-8")
-        self.git("add", "src", "Makefile")
+        self.git("add", "src", "docs", "Makefile", "后台管理布局统一-方案B.pdf")
         self.git("commit", "-qm", "initial")
         self.initial = self.git("rev-parse", "HEAD").strip()
         self.git("update-ref", "refs/remotes/origin/main", self.initial)
@@ -76,6 +80,37 @@ class VerifyBriefPathsTests(unittest.TestCase):
 
     def test_chinese_adjacent_to_path_does_not_corrupt_it(self):
         result, output, errors = self.run_tool("修改src/existing.py中的函数。\n")
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 1 brief path", output)
+
+    def test_existing_unicode_paths_are_extracted_as_whole_paths(self):
+        result, output, errors = self.run_tool(
+            "Update 后台管理布局统一-方案B.pdf and 修改docs/说明.md中的段落。\n"
+        )
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 2 brief path", output)
+
+        result, _, errors = self.run_tool(
+            "Update 后台管理布局统一-方案B.pdf\n",
+            "--in-flight-actual", "后台管理布局统一-方案B.pdf",
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("后台管理布局统一-方案B.pdf", errors)
+
+    def test_missing_unicode_path_adjacent_to_prose_is_reported(self):
+        result, _, errors = self.run_tool("修改docs/不存在.md中的段落。\n")
+        self.assertEqual(result, 1)
+        self.assertIn("docs/不存在.md", errors)
+        self.assertIn("path does not exist", errors)
+
+    def test_missing_root_unicode_path_adjacent_to_prose_is_reported(self):
+        result, _, errors = self.run_tool("Update 不存在.pdf中的说明\n")
+        self.assertEqual(result, 1)
+        self.assertIn("不存在.pdf", errors)
+        self.assertIn("path does not exist", errors)
+
+    def test_new_unicode_path_is_extracted_as_a_whole_path(self):
+        result, output, errors = self.run_tool("新建 docs/新文件.md\n")
         self.assertEqual(result, 0, errors)
         self.assertIn("verified 1 brief path", output)
 
@@ -130,9 +165,30 @@ class VerifyBriefPathsTests(unittest.TestCase):
         self.assertIn("OK:", output)
         self.assertEqual(errors, "")
 
-    def test_new_in_prose_does_not_mark_an_unrelated_word_as_a_path(self):
-        result, _, errors = self.run_tool("A new feature uses src/existing.py.\n")
+    def test_new_prose_does_not_mark_a_later_path(self):
+        result, output, errors = self.run_tool("A new feature uses src/existing.py.\n")
         self.assertEqual(result, 0, errors)
+        self.assertIn("verified 1 brief path", output)
+
+    def test_new_substring_inside_another_word_is_not_a_marker(self):
+        result, output, errors = self.run_tool("Please renew src/existing.py.\n")
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 1 brief path", output)
+
+    def test_dotted_prose_is_not_treated_as_repository_paths(self):
+        result, output, errors = self.run_tool(
+            "Run tests e.g. on Python 3.12; contact dev@example.com; update UI; use src/existing.py.\n"
+        )
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 1 brief path", output)
+
+    def test_missing_root_extensionless_path_is_reported(self):
+        for brief in ("Update CONTRIBUTING\n", "修改 CONTRIBUTING\n"):
+            with self.subTest(brief=brief):
+                result, _, errors = self.run_tool(brief)
+                self.assertEqual(result, 1)
+                self.assertIn("CONTRIBUTING", errors)
+                self.assertIn("path does not exist", errors)
 
     def test_root_extensionless_paths_are_extracted_and_checked(self):
         result, _, errors = self.run_tool("Update Makefile\n")
@@ -145,8 +201,32 @@ class VerifyBriefPathsTests(unittest.TestCase):
         self.assertIn("Makefile", errors)
 
     def test_new_marker_extracts_untracked_extensionless_path(self):
-        result, _, errors = self.run_tool("新建 Dockerfile\n")
+        result, output, errors = self.run_tool("新建 Dockerfile\n")
         self.assertEqual(result, 0, errors)
+        self.assertIn("verified 1 brief path", output)
+
+    def test_new_marker_is_local_and_supports_path_lists(self):
+        result, output, errors = self.run_tool(
+            "新增 API src/new-api.py\n"
+        )
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 1 brief path", output)
+
+        result, output, errors = self.run_tool(
+            "新增 2 个文件 src/new-a.py, src/new-b.py\n"
+        )
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 2 brief path", output)
+
+        result, output, errors = self.run_tool(
+            "新建 docs/new-a.md, docs/new-b.md；修改 docs/config.md\n"
+        )
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 3 brief path", output)
+
+        result, output, errors = self.run_tool("新增了缓存层，修改 src/existing.py\n")
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 1 brief path", output)
 
     def test_new_marker_for_existing_path_is_red(self):
         result, _, errors = self.run_tool("新建 src/existing.py\n")
@@ -161,6 +241,18 @@ class VerifyBriefPathsTests(unittest.TestCase):
                 )
                 self.assertEqual(result, 2)
                 self.assertIn("stdin cannot be used for both", errors)
+
+    def test_file_backed_in_flight_lists_are_read(self):
+        for option in ("--in-flight-actual-list", "--in-flight-declared-list"):
+            with self.subTest(option=option):
+                list_file = self.root / f"{option[2:]}.txt"
+                list_file.write_text("# changed files\nsrc/overlap.py\n", encoding="utf-8")
+                result, _, errors = self.run_tool(
+                    "Use src/overlap.py\n", option, str(list_file)
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("overlaps in-flight", errors)
+                self.assertIn("src/overlap.py", errors)
 
     def test_traversal_is_rejected(self):
         for path in ("../outside.py", r"..\outside.py"):
