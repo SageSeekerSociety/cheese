@@ -42,6 +42,7 @@ import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
+import { createSuggestMode, setSuggesting } from '../../../lib/docSuggestMode'
 import { refsVersion } from '../../../lib/refDirectory'
 import { createTokenChips, tokenChipsKey } from '../../../lib/tokenChips'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
@@ -54,10 +55,16 @@ import DocLinkCallout from './DocLinkCallout.vue'
 import DocOverlays from './DocOverlays.vue'
 import DocProse from './DocProse.vue'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     /** 能不能改。只读时 tiptap 收键盘，浮层里的控件也不出场。 */
     editable: boolean
+    /** 建议模式：打的字记成修订，不直接改正文（lib/docSuggestMode.ts）。 */
+    suggesting?: boolean
+    /** 记在修订上的作者：自己的 handle。 */
+    author?: string
     /** 正文还在路上：画骨架，编辑器让位。 */
     loading: boolean
     /** 这一篇的协同文档；还没打开时是 null。 */
@@ -112,6 +119,8 @@ const props = withDefaults(
     scrollTick: 0,
     agentHandle: null,
     canvas: null,
+    suggesting: false,
+    author: '',
     title: '',
     placeholder: '',
   }
@@ -315,6 +324,10 @@ function buildEditor(session: DocSession): DocEditor {
       }),
       createCommentHighlights({ open: () => props.openThreads, active: () => props.activeThread ?? null }),
       createEditMarks(),
+      createSuggestMode({
+        author: () => props.author,
+        onRefused: () => emit('error', t('work.room.doc.mode.blockRefused')),
+      }),
       createEmptyLineHint(),
       createSlashCommands({
         onStart: showSlashMenu,
@@ -378,6 +391,15 @@ function poke(key: PluginKey) {
 watch(
   () => props.editable,
   (v) => editor.value?.setEditable(v, false)
+)
+
+// 建议模式跟着外面的开关走；编辑器重建（换了一份文档）时也照着它开好。
+watch(
+  [() => props.suggesting, editor],
+  ([on, ed]) => {
+    if (ed) setSuggesting(ed, on)
+  },
+  { immediate: true }
 )
 
 /** 编辑器里现在这一版正文（markdown）。 */

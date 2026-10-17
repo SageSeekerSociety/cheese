@@ -79,5 +79,14 @@
     "none": "No matches",
     "pick": "Choose where to put it",
     "failed": "Move failed"
+  },
+  "mode": {
+    "label": "Editing mode",
+    "edit": "Editing",
+    "editHint": "Change the text directly",
+    "suggest": "Suggesting",
+    "suggestHint": "Changes become suggestions others accept or reject",
+    "suggestOnly": "You can only suggest changes; someone who can edit this document accepts or rejects them",
+    "blockRefused": "Whole paragraphs can't be added or removed as suggestions; change the text inside a paragraph"
   }
 }

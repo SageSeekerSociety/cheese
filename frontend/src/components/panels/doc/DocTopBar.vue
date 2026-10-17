@@ -45,6 +45,10 @@ const props = defineProps<{
   findOpen: boolean
   /** 「⋯」里给不给「删除文档」：只有项目资料库里的文档能单独删。 */
   deletable?: boolean
+  /** 只能提修改建议（导师）：固定在「建议」，没有切换。 */
+  suggestOnly?: boolean
+  /** 打的字记成修订（建议），还是直接改正文（编辑）。 */
+  suggesting?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'toggle-suggestions'): void
@@ -58,6 +62,8 @@ const emit = defineEmits<{
   (e: 'delete'): void
   /** 「移动到…」：挪到自己名下、团队或团队的一个项目，挪之前页面先问。 */
   (e: 'move'): void
+  /** 切到建议（true）或编辑（false）。 */
+  (e: 'set-suggesting', on: boolean): void
 }>()
 
 // 对整篇：菜单里先是输入框，交出去以后是那张卡。菜单关上就收起这一次（正在做的不收）。
@@ -149,6 +155,36 @@ function pickHeading(pos: number) {
       >
         <v-icon size="17">mdi-magnify</v-icon>
       </button>
+      <span v-if="editable && suggestOnly" class="doc-top-bar__mode" :title="t('work.room.doc.mode.suggestOnly')">
+        <v-icon size="16">mdi-file-document-edit-outline</v-icon>{{ t('work.room.doc.mode.suggest') }}
+      </span>
+      <v-menu v-else-if="editable" location="bottom end" offset="6">
+        <template #activator="{ props: menuProps }">
+          <button v-bind="menuProps" type="button" class="doc-top-bar__btn" data-testid="doc-mode">
+            <v-icon size="16">{{ suggesting ? 'mdi-file-document-edit-outline' : 'mdi-pencil-outline' }}</v-icon>
+            {{ suggesting ? t('work.room.doc.mode.suggest') : t('work.room.doc.mode.edit') }}
+            <v-icon size="14">mdi-chevron-down</v-icon>
+          </button>
+        </template>
+        <v-list density="compact" role="menu" :aria-label="t('work.room.doc.mode.label')">
+          <v-list-item
+            role="menuitemradio"
+            :aria-checked="!suggesting"
+            :title="t('work.room.doc.mode.edit')"
+            :subtitle="t('work.room.doc.mode.editHint')"
+            prepend-icon="mdi-pencil-outline"
+            @click="emit('set-suggesting', false)"
+          />
+          <v-list-item
+            role="menuitemradio"
+            :aria-checked="!!suggesting"
+            :title="t('work.room.doc.mode.suggest')"
+            :subtitle="t('work.room.doc.mode.suggestHint')"
+            prepend-icon="mdi-file-document-edit-outline"
+            @click="emit('set-suggesting', true)"
+          />
+        </v-list>
+      </v-menu>
       <button
         v-if="suggestionCount > 0"
         type="button"
@@ -245,6 +281,15 @@ function pickHeading(pos: number) {
 </template>
 
 <style scoped>
+.doc-top-bar__mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .doc-top-bar {
   display: flex;
   min-width: 0;
