@@ -184,7 +184,8 @@ class PlatformHealth:
 
     def answered(self, route, status):
         state = self.read()
-        routes = state.get("routes") if isinstance(state.get("routes"), dict) else {}
+        kept = state.get("routes")
+        routes: dict = kept if isinstance(kept, dict) else {}
         if status not in _BREAKER_STATUSES:
             if route in routes:
                 del routes[route]
