@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import delete, select
 
-from app.core.config import settings
+from app.core.config import Settings, settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
@@ -537,6 +537,30 @@ def test_the_pool_adds_a_host_before_its_free_slots_run_out(pool, monkeypatch):
     # Idle past the hold, but releasing it would leave fewer free slots than
     # the floor: it stays, and no third host is asked for.
     assert pool.host(spare).released_at is None
+    assert len(pool.cloud.created) == 2
+
+
+def test_the_pool_adds_a_host_while_three_of_four_slots_are_free(pool, monkeypatch):
+    """A host of the default size runs four sandboxes. One session on it
+    leaves three free — less than a whole host's worth — so the sweep adds a
+    host then, instead of waiting until the pool is full and the next session
+    has to wait for it."""
+    monkeypatch.setattr(settings, "cloud_host_slots_per_core", 2)
+    monkeypatch.setattr(settings, "microcloud_default_memory_mb", 16384)
+    monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 3072)
+    # The fixture turns pre-scaling off; this is what a deployment that leaves
+    # `cloud_pool_min_free_slots` alone gets.
+    monkeypatch.setattr(
+        settings,
+        "cloud_pool_min_free_slots",
+        Settings.model_fields["cloud_pool_min_free_slots"].default,
+    )
+    [alice] = pool.room("alice", 1)
+    host_id = pool.place("alice", alice)
+    pool.up(host_id)
+
+    pool.pool("maintain")
+
     assert len(pool.cloud.created) == 2
 
 
