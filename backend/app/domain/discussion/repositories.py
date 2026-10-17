@@ -1,8 +1,10 @@
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.domain.discussion.models import (
     Discussion,
@@ -75,17 +77,22 @@ class DiscussionRepository:
         result = await self._session.execute(stmt)
         entity = result.scalar_one_or_none()
         if entity is not None:
-            # transient attr; not a mapped column (loaded from join table)
-            ids = await self._load_mentioned_user_ids(entity.id)
-            entity.mentioned_user_ids = ids  # type: ignore[attr-defined]
+            await self._load_mentions([entity])
         return entity
 
-    async def _load_mentioned_user_ids(self, discussion_id: int) -> list[int]:
-        stmt = select(DiscussionMentionedUser.user_id).where(
-            DiscussionMentionedUser.discussion_id == discussion_id
-        )
+    async def _load_mentions(self, discussions: Sequence[Discussion]) -> None:
+        if not discussions:
+            return
+        mentions: dict[int, list[int]] = {row.id: [] for row in discussions}
+        stmt = select(
+            DiscussionMentionedUser.discussion_id, DiscussionMentionedUser.user_id
+        ).where(DiscussionMentionedUser.discussion_id.in_(mentions))
         result = await self._session.execute(stmt)
-        return [row[0] for row in result.all()]
+        for discussion_id, user_id in result.all():
+            mentions[discussion_id].append(user_id)
+        for row in discussions:
+            # transient attr; not a mapped column (loaded from join table)
+            row.mentioned_user_ids = mentions[row.id]  # type: ignore[attr-defined]
 
     async def find_all(
         self,
@@ -122,10 +129,7 @@ class DiscussionRepository:
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
 
-        for row in rows:
-            # transient attr; not a mapped column (loaded from join table)
-            ids = await self._load_mentioned_user_ids(row.id)
-            row.mentioned_user_ids = ids  # type: ignore[attr-defined]
+        await self._load_mentions(rows)
 
         count_stmt = select(func.count(Discussion.id)).where(
             Discussion.deleted_at.is_(None)
@@ -161,6 +165,48 @@ class DiscussionRepository:
         entity.deleted_at = datetime.now(UTC)
         await self._session.flush()
         return True
+
+    async def children_for(
+        self, parent_ids: list[int], *, limit: int
+    ) -> tuple[dict[int, int], dict[int, list[Discussion]]]:
+        if not parent_ids:
+            return {}, {}
+        visible = (
+            Discussion.parent_id.in_(parent_ids),
+            Discussion.deleted_at.is_(None),
+        )
+        count_result = await self._session.execute(
+            select(Discussion.parent_id, func.count(Discussion.id))
+            .where(*visible)
+            .group_by(Discussion.parent_id)
+        )
+        counts = {parent_id: int(count) for parent_id, count in count_result.all()}
+        ranked = (
+            select(
+                Discussion,
+                func.row_number()
+                .over(
+                    partition_by=Discussion.parent_id,
+                    order_by=(Discussion.created_at.desc(), Discussion.id.desc()),
+                )
+                .label("position"),
+            )
+            .where(*visible)
+            .subquery()
+        )
+        child = aliased(Discussion, ranked)
+        result = await self._session.execute(
+            select(child)
+            .where(ranked.c.position <= limit)
+            .order_by(child.parent_id, ranked.c.position)
+        )
+        rows = list(result.scalars().all())
+        await self._load_mentions(rows)
+        examples: dict[int, list[Discussion]] = {}
+        for row in rows:
+            assert row.parent_id is not None  # selected by parent_id IN parent_ids
+            examples.setdefault(row.parent_id, []).append(row)
+        return counts, examples
 
     async def count_children(self, parent_id: int) -> int:
         stmt = select(func.count(Discussion.id)).where(
@@ -286,6 +332,38 @@ class DiscussionReactionRepository:
         existing.updated_at = now
         await self._session.flush()
         return True
+
+    async def summaries_for(
+        self,
+        discussion_ids: list[int],
+        *,
+        current_user_id: int | None,
+    ) -> dict[int, dict[int, tuple[int, bool]]]:
+        stmt = (
+            select(
+                DiscussionReaction.discussion_id,
+                DiscussionReaction.reaction_type_id,
+                func.count(DiscussionReaction.id),
+                func.count(DiscussionReaction.id).filter(
+                    DiscussionReaction.user_id == current_user_id
+                ),
+            )
+            .where(
+                DiscussionReaction.discussion_id.in_(discussion_ids),
+                DiscussionReaction.deleted_at.is_(None),
+            )
+            .group_by(
+                DiscussionReaction.discussion_id, DiscussionReaction.reaction_type_id
+            )
+        )
+        result = await self._session.execute(stmt)
+        summaries: dict[int, dict[int, tuple[int, bool]]] = {}
+        for discussion_id, type_id, count, reacted in result.all():
+            summaries.setdefault(discussion_id, {})[type_id] = (
+                int(count),
+                bool(reacted),
+            )
+        return summaries
 
     async def count_by_discussion(self, discussion_id: int) -> dict[int, int]:
         stmt = (
