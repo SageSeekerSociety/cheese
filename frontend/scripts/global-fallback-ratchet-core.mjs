@@ -239,7 +239,14 @@ export function internalDeclarations(code) {
     }
   }
 
-  for (const node of walk(ast)) internal.push(...declaredNames(node))
+  // A namespace body is not read. `TeamsApi.create` is reached as a member of
+  // the exported namespace, never as a bare name, so no template call can land
+  // on one — while reading them in lists every exported member of the eleven
+  // `src/api` namespaces as a name the module "keeps to itself", which is the
+  // opposite of true and would name an inapplicable repair.
+  for (const node of walk(ast, (visited) => visited.type === 'TSModuleDeclaration')) {
+    internal.push(...declaredNames(node))
+  }
 
   // One module declares a name many times over once the nested scopes are read
   // (`const host` inside five functions); the index this feeds lists a module
@@ -264,17 +271,25 @@ export function collectDefinitions(modules) {
   return definitions
 }
 
-/** Depth-first walk over an AST, which carries `parent` links back up. */
-function* walk(node) {
+/**
+ * Depth-first walk over an AST, which carries `parent` links back up.
+ *
+ * A node `past` says true for is yielded and not descended into: the one
+ * caller that prunes is `internalDeclarations`, over a namespace body.
+ */
+function* walk(node, past = () => false) {
   if (!node || typeof node !== 'object') return
   if (Array.isArray(node)) {
-    for (const child of node) yield* walk(child)
+    for (const child of node) yield* walk(child, past)
     return
   }
-  if (typeof node.type === 'string') yield node
+  if (typeof node.type === 'string') {
+    yield node
+    if (past(node)) return
+  }
   for (const [key, value] of Object.entries(node)) {
     if (key === 'parent' || key === 'references' || key === 'tokens' || key === 'comments') continue
-    if (value && typeof value === 'object') yield* walk(value)
+    if (value && typeof value === 'object') yield* walk(value, past)
   }
 }
 
@@ -312,15 +327,30 @@ function scriptMentions(body) {
  * counts the unquoted key and the type form, whose keys are identifiers.
  *
  * A string anywhere else is not a declaration. `defineEmits(['open'])` names
- * an event — `defineModel('open')` a model, and neither makes `open` a name
- * this component's template can call — and a label, an i18n key or a value in
- * a lookup table only happens to spell it. Counting those would hide exactly
- * the call this rule is for.
+ * an event — you cannot call an event — and a label, an i18n key or a value in
+ * a lookup table only happens to spell the name. Counting those would hide
+ * exactly the call this rule is for.
  */
+/** What a TypeScript assertion wraps: `['open'] as const` is still an array. */
+function unassert(node) {
+  let current = node
+  while (
+    current?.type === 'TSAsExpression' ||
+    current?.type === 'TSSatisfiesExpression' ||
+    current?.type === 'TSNonNullExpression' ||
+    current?.type === 'TSTypeAssertion'
+  ) {
+    current = current.expression
+  }
+  return current
+}
+
 function stringBindings(body) {
   const names = new Set()
-  const addStrings = (elements) => {
-    for (const element of elements ?? []) {
+  const addStrings = (node) => {
+    const array = unassert(node)
+    if (array?.type !== 'ArrayExpression') return
+    for (const element of array.elements) {
       if (element?.type === 'Literal' && typeof element.value === 'string') names.add(element.value)
     }
   }
@@ -328,21 +358,22 @@ function stringBindings(body) {
     if (node.type === 'Property' && node.key?.type === 'Literal' && typeof node.key.value === 'string') {
       names.add(node.key.value)
       // `props: ['open']` — the Options API declares its names this way.
-      if (node.key.value === 'props' && node.value?.type === 'ArrayExpression') addStrings(node.value.elements)
+      if (node.key.value === 'props') addStrings(node.value)
       continue
     }
-    if (
-      node.type === 'Property' &&
-      node.key?.type === 'Identifier' &&
-      node.key.name === 'props' &&
-      node.value?.type === 'ArrayExpression'
-    ) {
-      addStrings(node.value.elements)
+    if (node.type === 'Property' && node.key?.type === 'Identifier' && node.key.name === 'props') {
+      addStrings(node.value)
       continue
     }
-    if (node.type === 'CallExpression' && node.callee?.type === 'Identifier' && node.callee.name === 'defineProps') {
-      const [first] = node.arguments ?? []
-      if (first?.type === 'ArrayExpression') addStrings(first.elements)
+    if (node.type !== 'CallExpression' || node.callee?.type !== 'Identifier') continue
+    const [first] = node.arguments ?? []
+    if (node.callee.name === 'defineProps') addStrings(first)
+    // `defineModel('open')` declares a prop named `open` (and the emit beside
+    // it), so the template's `open()` reaches that prop and is bound. The
+    // alternative spelling, `defineModel()`, names the model after the
+    // variable it is assigned to, which `scriptMentions` already counts.
+    if (node.callee.name === 'defineModel' && first?.type === 'Literal' && typeof first.value === 'string') {
+      names.add(first.value)
     }
   }
   return names

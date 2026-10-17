@@ -163,6 +163,14 @@ describe('internalDeclarations', () => {
     assert.deepEqual(internalDeclarations(code), ['blur', 'close'])
   })
 
+  // A namespace's members are reached as `NS.member`, never bare, so they are
+  // not names this rule may index: every one of them is exported, and listing
+  // them would have the report blame a module for keeping a name it hands out.
+  it('leaves a namespace body out of the index', () => {
+    assert.deepEqual(internalDeclarations('export namespace TeamsApi {\n  export function create() {}\n}\n'), [])
+    assert.deepEqual(internalDeclarations('namespace Hidden {\n  function open() {}\n}\n'), [])
+  })
+
   // What hands a name out is an `export` of that name and nothing else. The
   // composable above returns `close`, and this file exports `outer`, whose body
   // declares `focus`: neither makes the nested name reachable from another
@@ -387,6 +395,8 @@ describe('findGlobalFallbacks', () => {
       "const props = defineProps({ ['open']: Function })",
       'const props = defineProps({ open: Function })',
       'const props = defineProps<{ open: () => void }>()',
+      "const props = defineProps(['open'] as const)",
+      "const props = defineProps(['open'] satisfies string[])",
     ]) {
       const code = [
         '<script setup lang="ts">',
@@ -420,21 +430,20 @@ describe('findGlobalFallbacks', () => {
     assert.deepEqual(found(component('methods: { open() {} }')), [])
   })
 
-  // The other macros' arguments are names of things, not bindings: an emit name
-  // and a model name do not make a callable `open` in the template, and a rule
-  // that counted their strings would answer "clean" to exactly the call it was
-  // written to find.
-  it('does not let an emit name, a model name or any other string bind the call', () => {
+  // An emit's name is not a binding: the template emits through `emit(...)`,
+  // never by calling the name. Counting it would answer "clean" to exactly the
+  // call this rule was written to find.
+  it('does not let an emit name or any other string bind the call', () => {
     const code = [
       '<script setup lang="ts">',
       "const emit = defineEmits(['open'])",
-      "const modelValue = defineModel('open')",
       "const label = 'open'",
       "const route = { name: 'open' }",
+      "const list = ['open']",
       'void emit',
-      'void modelValue',
       'void label',
       'void route',
+      'void list',
       '</script>',
       '<template>',
       '  <button @click="open()">x</button>',
@@ -446,6 +455,22 @@ describe('findGlobalFallbacks', () => {
       hits.map((hit) => [hit.name, hit.where]),
       [['open', TEMPLATE]]
     )
+  })
+
+  // A model, unlike an emit, *is* a prop: `defineModel('open')` compiles to a
+  // prop named `open`, so the template's `open()` reaches it and is bound.
+  it('counts the name a model is declared under', () => {
+    const code = [
+      '<script setup lang="ts">',
+      "const modelValue = defineModel('open')",
+      'void modelValue',
+      '</script>',
+      '<template>',
+      '  <button @click="open()">x</button>',
+      '</template>',
+      '',
+    ].join('\n')
+    assert.deepEqual(found(code), [])
   })
 
   it('leaves a v-for alias alone even when a module keeps that name', () => {
