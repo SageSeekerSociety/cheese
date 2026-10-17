@@ -981,6 +981,38 @@ def test_a_reopen_after_a_failed_install_installs_again(device):
     assert (work / "installs").read_text() == before + "ran\n"
 
 
+def test_a_reopen_after_an_open_killed_mid_install_installs_again(device):
+    """An open killed while it installs (the machine reclaimed, a timeout)
+    never gets to say the install failed."""
+    cli, tasks, _, home = device
+    _prepared_room(
+        home,
+        "echo ran >> installs\n"
+        # The `cheese worktree` that started this install, killed outright.
+        'test ! -f kill-open || kill -9 "$(ps -o ppid= -p "$PPID")"\n'
+        "sleep 1",
+    )
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "uv.lock").write_text("half installed\n")
+    (work / "kill-open").touch()
+    killed = subprocess.run(
+        [sys.executable, str(CLI), "worktree", task],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert killed.returncode == -9, killed.stderr
+    (work / "uv.lock").unlink()
+    (work / "kill-open").unlink()
+    before = (work / "installs").read_text()
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == before + "ran\n"
+
+
 def test_a_reopen_installs_again_when_asked_to(device):
     cli, tasks, _, home = device
     _prepared_room(home, "echo ran >> installs")
