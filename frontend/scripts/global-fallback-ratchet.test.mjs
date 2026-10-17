@@ -1026,7 +1026,10 @@ describe('findGlobalFallbacks', () => {
     // length that puts a chain of spreads there. Measured off the bound for
     // the same reason as the test above.
     const lines = ["const leaf = { props: ['open'] }", 'const m = Object.assign({}, leaf)']
-    for (let i = 1; i < MAX_SPREAD_DEPTH / 2; i += 1) {
+    // Rounded down, not halved: an odd bound must still produce a chain of
+    // whole identifiers rather than a name like `p254.5` the parser rejects.
+    const half = Math.floor(MAX_SPREAD_DEPTH / 2)
+    for (let i = 1; i < half; i += 1) {
       lines.push(`const p${i} = Object.assign({}, ${i === 1 ? 'm' : `p${i - 1}`})`)
     }
     const component = (exported) =>
@@ -1039,7 +1042,7 @@ describe('findGlobalFallbacks', () => {
         '',
       ].join('\n')
 
-    const last = MAX_SPREAD_DEPTH / 2 - 1
+    const last = half - 1
     assert.deepEqual(
       found(component(`Object.assign({}, p${last}, m)`)),
       [],
