@@ -260,6 +260,10 @@ def _query_root(node: ast.Call) -> ast.Call | None:
             return current if func.id == "select" else None
         if not isinstance(func, ast.Attribute):
             return None
+        # `sqlalchemy.select(...)` and `sa.select(...)` are the same query as
+        # the bare import; only the name it is reached through differs.
+        if func.attr == "select":
+            return current
         current = func.value
     return None
 
@@ -381,7 +385,7 @@ def _query_narrows(node: ast.Call) -> bool:
     Matching `.id` anywhere in the filter would read that pin as narrowing.
     """
     filters: list[ast.AST] = []
-    keywords: list[str] = []
+    keywords: list[ast.keyword] = []
     current: ast.AST = node
     while isinstance(current, ast.Call):
         func = current.func
@@ -390,27 +394,70 @@ def _query_narrows(node: ast.Call) -> bool:
         if func.attr in ("where", "filter_by", "filter"):
             filters.extend(current.args)
             keywords.extend(
-                keyword.arg
+                keyword
                 for keyword in current.keywords
                 if keyword.arg is not None
             )
         current = func.value
-    if any(name in NARROWING for name in keywords):
-        return True
+    for keyword in keywords:
+        # `filter_by(kind="event")` names the same slice as `.where(…)` does,
+        # and the event slice is not narrowing: announcements land there.
+        if keyword.arg in NARROWING and not _narrows_to_events(
+            ast.unparse(keyword.value)
+        ):
+            return True
     for argument in filters:
         for inner in ast.walk(argument):
-            if isinstance(inner, ast.Compare) and _narrowing_column(inner.left):
+            if isinstance(inner, ast.Compare) and _narrowing_column_on_either_side(
+                inner
+            ):
                 if not _narrows_to_events(ast.unparse(inner)):
                     return True
             if (
                 isinstance(inner, ast.Call)
                 and isinstance(inner.func, ast.Attribute)
-                and inner.func.attr in ("in_", "notin_", "is_", "is_not")
+                and inner.func.attr in _FILTER_METHODS
                 and _narrowing_column(inner.func.value)
                 and not _narrows_to_events(ast.unparse(inner))
             ):
                 return True
     return False
+
+
+#: Methods SQLAlchemy turns into a `WHERE` clause. Matched on the column, so
+#: `Block.content.startswith(…)` narrows by content while `topic.id.in_(…)`
+#: (the conversation pin itself) stays a pin.
+_FILTER_METHODS = frozenset(
+    {
+        "in_",
+        "notin_",
+        "is_",
+        "is_not",
+        "startswith",
+        "endswith",
+        "ilike",
+        "like",
+        "contains",
+        "between",
+    }
+)
+
+
+def _narrowing_column_on_either_side(node: ast.Compare) -> bool:
+    """Whether this comparison filters on a row key.
+
+    `Block.kind == "message"` and `"message" == Block.kind` are the same
+    filter. A key on the RIGHT is usually an argument (`Block.conversation_id
+    == topic.id`, where `topic.id` is not a filter at all), so only a literal
+    on the left earns the reversed reading.
+    """
+    if _narrowing_column(node.left):
+        return True
+    return (
+        isinstance(node.left, ast.Constant)
+        and bool(node.comparators)
+        and _narrowing_column(node.comparators[0])
+    )
 
 
 def _own_returns(func: ast.AST) -> list[ast.Return]:
@@ -451,6 +498,12 @@ class _Readers:
 
     def __init__(self) -> None:
         self._seen: dict[int, bool] = {}
+        #: Definitions being classified further up the stack right now. Called
+        #: again from inside, the answer is provisional and never cached.
+        self._evaluating: set[int] = set()
+        #: Every definition met, with the scope it was judged in, so a later
+        #: pass can ask again with the answers that have changed.
+        self._defs: dict[int, tuple[ast.AST, dict[str, ast.AST]]] = {}
 
     def names(self, scope: dict[str, ast.AST]) -> frozenset[str]:
         """The names in this scope that are bound to a reader."""
@@ -464,16 +517,48 @@ class _Readers:
         key = id(func)
         if key in self._seen:
             return self._seen[key]
-        # A definition that reaches itself through a call is not a reader;
-        # leaving False in place also stops the recursion.
-        self._seen[key] = False
+        if key in self._evaluating:
+            # A definition that reaches itself through a call is not a reader.
+            # This answer is provisional: it is not cached, because it depends
+            # on a classification that has not finished yet.
+            return False
+        self._defs.setdefault(key, (func, scope))
+        self._evaluating.add(key)
+        try:
+            result = self._classify(func, scope)
+        finally:
+            self._evaluating.discard(key)
+        self._seen[key] = result
+        return result
+
+    def _classify(self, func: ast.AST, scope: dict[str, ast.AST]) -> bool:
         local = {**scope, **_nested_functions(func)}
         readers = self.names(local)
         held = _held_names(func, readers)
-        self._seen[key] = any(
+        return any(
             self._returns(ret, held, readers, local) for ret in _own_returns(func)
         )
-        return self._seen[key]
+
+    def settle(self) -> None:
+        """Re-ask every "no" until no answer turns into a "yes".
+
+        "Is a reader" only ever turns from False to True, and it is only ever
+        consulted positively: returning another helper's result is returning
+        the conversation. So a single pass can leave a helper False purely
+        because the helper it delegates to was still being classified at the
+        time — which made the guard depend on the order the two are defined in.
+        Asking the False answers again until none changes removes that: a
+        delegating helper is a reader wherever it is written.
+        """
+        changed = True
+        while changed:
+            changed = False
+            for key, (func, scope) in list(self._defs.items()):
+                if self._seen.get(key):
+                    continue
+                self._seen.pop(key, None)
+                if self.is_reader(func, scope):
+                    changed = True
 
     def _returns(
         self,
@@ -489,10 +574,19 @@ class _Readers:
             return True
         # `asyncio.run(read())`: the value comes from a reader defined inside
         # this very function, so the definition beside it is what decides.
-        for node in ast.walk(value):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+        # Only the calls that BUILD the returned value are followed, and only
+        # through arguments handed on unchanged. A reader called deeper inside
+        # — in a comprehension's filter, say — was narrowed before it was
+        # returned, which `_derives_from_conversation` has already judged.
+        if isinstance(value, ast.Await):
+            value = value.value
+        if not isinstance(value, ast.Call):
+            return False
+        handed_on = [value, *(arg for arg in value.args if isinstance(arg, ast.Call))]
+        for call in handed_on:
+            if not isinstance(call.func, ast.Name):
                 continue
-            inner = local.get(node.func.id)
+            inner = local.get(call.func.id)
             if inner is not None and self.is_reader(inner, local):
                 return True
         return False
@@ -506,7 +600,12 @@ class _Readers:
 #: `response.status_code` is a field of the response, not blocks, and following
 #: it turns every `assert response.status_code == 200` into a false positive.
 #: `set(rows)` and `sorted(rows)` hand the blocks on just as `list(rows)` does.
-WRAPPER_CALLS = frozenset({"json", "scalars", "all", "items", "list", "set", "tuple", "sorted"})
+#: Builtins are listed apart because `all(rows)` is a bool, not the blocks: the
+#: predicate reading them has already said which blocks it means.
+BUILTIN_WRAPPERS = frozenset({"list", "set", "tuple", "sorted", "reversed"})
+WRAPPER_CALLS = frozenset(
+    {"json", "scalars", "all", "items", "copy", "list", "set", "tuple", "sorted"}
+)
 
 #: Where the response envelope keeps the blocks. A subscript with any other
 #: string key reads a field beside them (`page["has_more"]`), which is not the
@@ -561,11 +660,11 @@ def _derives_from_conversation(node: ast.AST, held: set[str], readers: set[str])
             )
         if (
             isinstance(node.func, ast.Name)
-            and node.func.id in WRAPPER_CALLS
-            and len(node.args) == 1
-            and not node.keywords
+            and node.func.id in BUILTIN_WRAPPERS
+            and node.args
         ):
-            # The builtin `list(rows)`; the method spellings are below.
+            # The builtin `list(rows)`; `sorted(rows, key=…)` reorders the same
+            # blocks and hands all of them on. The method spellings are below.
             return _derives_from_conversation(node.args[0], held, readers)
         if (
             isinstance(node.func, ast.Attribute)
@@ -605,15 +704,30 @@ def _derives_from_conversation(node: ast.AST, held: set[str], readers: set[str])
     return False
 
 
-def _held_names(func: ast.AST, readers: set[str]) -> set[str]:
+def _held_names(
+    func: ast.AST, readers: set[str], inherited: set[str] | None = None
+) -> set[str]:
     """Names in this function bound to a conversation read.
 
     Read IN SOURCE ORDER (`_own_nodes` yields that way) so a name is only held
     once the statement that binds it has been seen, and a chain of aliases
     resolves however many lines it is split over: `conv = _history(...)`, then
     `rows = conv["data"]`, then `assert rows[0]`.
+
+    A nested function starts from the outer bindings it can see through the
+    closure, but rebinding one of them — a parameter of the same name, `rows =
+    [1, 2]` — ends it here too. Unioning the inherited set in afterwards would
+    keep the outer conversation held under a name the inner function reuses.
     """
-    held: set[str] = set()
+    held: set[str] = set(inherited) if inherited else set()
+    # A parameter of the same name shadows the outer conversation just as a
+    # rebinding does; the signature is not part of `_own_nodes`.
+    args = getattr(func, "args", None)
+    if isinstance(args, ast.arguments):
+        for group in (args.posonlyargs, args.args, args.kwonlyargs, [args.vararg, args.kwarg]):
+            for arg in group:
+                if arg is not None:
+                    held.discard(arg.arg)
     for node in _own_nodes(func):
         targets: list[ast.AST] = []
         if isinstance(node, ast.Assign):
@@ -788,16 +902,23 @@ def _scopes(
     is judged rather than skipped.
     """
 
+    # Answer every definition before judging any of them: a helper defined
+    # later in the file is classified just as carefully as one defined earlier,
+    # and `settle` then settles the helpers that delegate to each other.
+    # `names()` skips `test_*` definitions, so they are asked directly.
+    for func in _nested_functions(tree).values():
+        engine.is_reader(func, module_scope)
+    engine.settle()
+
     def walk(node: ast.AST, inherited: set[str], scope: dict[str, ast.AST]):
         held = inherited
-        readers = engine.names(scope)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             scope = {**scope, **_nested_functions(node)}
             readers = engine.names(scope)
-            held = inherited | _held_names(node, readers)
+            held = _held_names(node, readers, inherited)
             yield node, held, readers
         elif isinstance(node, (ast.Module, ast.Lambda)):
-            yield node, held, readers
+            yield node, held, engine.names(scope)
         for child in ast.iter_child_nodes(node):
             yield from walk(child, held, scope)
 

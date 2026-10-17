@@ -204,16 +204,184 @@ def test_counts_the_blocks(session, topic):
         # `page[field]` cannot be told from `blocks[i]` by shape. Reading it as
         # the collection keeps the empty-comparison finding; reading it as a
         # position would report an index that is not there.
-        self._assert_rejected(
-            """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write(
+                root,
+                READERS
+                + """
 def test_the_page_is_empty(client, topic, field):
     page = _history(client, topic)
     rows = page[field]
     assert rows == []
 """,
-            kind="whole",
-            repair="拿整段对话跟一个固定的东西比",
+            )
+            result = _run(root)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("whole:", result.stderr)
+        self.assertNotIn("index:", result.stderr)
+
+    def test_a_helper_defined_before_the_one_it_delegates_to_is_still_a_reader(
+        self,
+    ) -> None:
+        # Reading a reader's result is reading the conversation. When the
+        # delegate is written above, classifying it used to reach the helper
+        # while the delegate was still being classified; the helper then got
+        # cached as an ordinary function and every test using it went unseen.
+        self._assert_rejected(
+            """
+def _fetch(client, topic):
+    return client.get(f"/topics/{topic}/history").json()["data"]
+
+
+def _read(client, topic):
+    return _fetch(client, topic)
+
+
+def test_takes_the_first_block(client, topic):
+    rows = _read(client, topic)
+    assert rows[0]["id"]
+""",
+            kind="index",
+            repair="按位置取块",
         )
+
+    def test_a_qualified_select_is_still_a_read_of_the_conversation(self) -> None:
+        # `sqlalchemy.select(Block)` is the same query as `select(Block)`; only
+        # the name it is reached through differs.
+        self._assert_rejected(
+            """
+import sqlalchemy
+from backend.models import Block
+
+
+def test_takes_the_first_block(session, topic):
+    rows = session.scalars(
+        sqlalchemy.select(Block).where(Block.topic_id == topic)
+    ).all()
+    assert rows[0]["id"]
+""",
+            kind="index",
+            repair="按位置取块",
+        )
+
+    def test_testing_every_block_is_not_the_whole_conversation(self) -> None:
+        # `all(...)` is a bool. Reading it as the collection would report a
+        # repair — the predicate has already said which blocks it means.
+        findings = self._dump(
+            """
+def test_no_platform_block_is_a_message(client, topic):
+    rows = _history(client, topic)["data"]
+    assert not all(b["kind"] == "message" for b in rows)
+"""
+        )
+        self.assertEqual(findings, [])
+
+    def test_a_helper_that_narrows_a_reader_is_not_a_reader(self) -> None:
+        # The returned comprehension filtered the blocks, so the helper does
+        # not hand back the timeline. Reading a reader somewhere inside the
+        # returned expression is not the same as returning its result.
+        findings = self._dump(
+            """
+def _proposals(client, topic):
+    return [
+        b for b in _history(client, topic)["data"] if b.get("event_type") == "proposal"
+    ]
+
+
+def test_makes_one_proposal(client, topic):
+    proposals = _proposals(client, topic)
+    assert len(proposals) == 1
+"""
+        )
+        self.assertEqual(findings, [])
+
+    def test_rebinding_a_name_in_a_nested_function_ends_the_conversation(
+        self,
+    ) -> None:
+        # The inner function shadows the outer `rows`; the outer conversation
+        # is not what its assertions are about.
+        findings = self._dump(
+            """
+def test_inner_rows_are_not_the_conversation(client, topic):
+    rows = _history(client, topic)["data"]
+    def check(rows):
+        assert rows[0] == 1
+    check([1, 2])
+"""
+        )
+        self.assertEqual(findings, [])
+
+    def test_reordering_the_blocks_keeps_them_held(self) -> None:
+        # `sorted(rows, key=…)` hands the same blocks on, reordered. Dropping
+        # the name here would stop seeing the positional read on the next line.
+        self._assert_rejected(
+            """
+def test_first_by_id(client, topic):
+    rows = _history(client, topic)["data"]
+    rows = sorted(rows, key=lambda block: block["id"])
+    assert rows[0]["id"]
+""",
+            kind="index",
+            repair="按位置取块",
+        )
+
+    def test_a_filter_on_the_event_kind_is_not_narrowing(self) -> None:
+        # `filter_by(kind="event")` names exactly the slice announcements land
+        # in, so the count is pinned to how much the platform says.
+        self._assert_rejected(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_counts_the_events(session, topic):
+    rows = session.scalars(
+        select(Block)
+        .where(Block.conversation_id == topic)
+        .filter_by(kind="event")
+    ).all()
+    assert len(rows) == 2
+""",
+            kind="length",
+            repair="钉死了这段对话里有几个块",
+        )
+
+    def test_a_content_filter_narrows_the_query(self) -> None:
+        findings = self._dump(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_finds_the_message(session, topic):
+    rows = session.scalars(
+        select(Block).where(
+            Block.conversation_id == topic,
+            Block.content.startswith("B 组第 7 行"),
+        )
+    ).all()
+    assert len(rows) == 1
+"""
+        )
+        self.assertEqual(findings, [])
+
+    def test_a_reversed_key_comparison_narrows_the_query(self) -> None:
+        # `"message" == Block.kind` is the same filter as `Block.kind == …`.
+        findings = self._dump(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_finds_the_message(session, topic):
+    rows = session.scalars(
+        select(Block).where(Block.conversation_id == topic, "message" == Block.kind)
+    ).all()
+    assert len(rows) == 1
+"""
+        )
+        self.assertEqual(findings, [])
 
     def test_a_test_file_that_will_not_parse_is_not_a_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
