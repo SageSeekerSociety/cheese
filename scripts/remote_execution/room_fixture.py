@@ -116,7 +116,9 @@ class RoomExecutor:
         }
         result = subprocess.run(
             [sys.executable, "-"],
-            input=script(project, resource, env, sandbox=False, platform_machine=False),
+            # A platform machine: only there do turns snapshot their tasks, and
+            # the acceptance recovers that snapshot (`private_terminal`).
+            input=script(project, resource, env, sandbox=False, platform_machine=True),
             env={**os.environ, "HOME": str(self.owner)},
             capture_output=True,
             text=True,

@@ -345,6 +345,12 @@ _MODEL_FAILURE_TYPES = frozenset(
 #: deployment at a rate far below the burst threshold below, indefinitely.
 _ACTIONABLE_MODEL_FAILURES = frozenset({"http_auth", "egress_offline"})
 
+#: What `cheese sync` reports when a task's platform snapshot did not go
+#: through. The snapshot is what moving a room or rebuilding a platform machine
+#: restores from, and its failure is told to no room, so this alert is the only
+#: place a person hears of it.
+TASK_BACKUP_FAILED = "TaskBackupFailed"
+
 #: How many model failures inside how long make an alert. One failed model call
 #: is not news: across 2026-10-12..15 the gateway carried ~1,300 calls per 30
 #: minutes and 0.75% of them failed — upstream overload (OpenAI "servers are
@@ -562,6 +568,18 @@ async def record(
                     # the gateway outage (unreachable) that follows it.
                     key=f"model-failure-burst:{max(counts, key=counts.__getitem__)}",
                 )
+        if err.exc_type == TASK_BACKUP_FAILED:
+            alerting.send(
+                "AI 队友的任务快照没备份上",
+                [
+                    scrub_secrets(err.message),
+                    f"项目：{project}",
+                    f"对话：{conversation}",
+                ],
+                # Per step ("cheese sync:backup", ":snapshot"): storage out of
+                # reach and a bundle git cannot build are different problems.
+                key=f"task-backup:{err.where}",
+            )
         verdict = intake.admit(
             str(project or ""),
             fingerprint(err),

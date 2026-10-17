@@ -10,7 +10,6 @@ import struct
 import subprocess
 import sys
 import threading
-import urllib.error
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
@@ -18,7 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import environment_runner
+from app.domain.agent import environment_runner, resource_cleanup
+from app.domain.backend_log import TASK_BACKUP_FAILED
 from app.domain.project.environment import EnvironmentConfig
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox/cheese"
@@ -84,6 +84,14 @@ def device(tmp_path, monkeypatch):
                         )
                         + "\n"
                     )
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"data": {}}')
+                return
+            if self.path == "/backend-errors":
+                # What the platform's operators are told.
+                with (home / "operators.jsonl").open("a") as told:
+                    told.write(payload.decode() + "\n")
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b'{"data": {}}')
@@ -411,7 +419,7 @@ def test_failed_push_leaves_work_and_a_durable_failure_log(device):
     with pytest.raises(RuntimeError):
         cli._sync_task(task)
     log = Path(git(work, "rev-parse", "--absolute-git-dir")) / "cheese-sync.log"
-    assert "failed RuntimeError" in log.read_text()
+    assert "failed step=push RuntimeError" in log.read_text()
     assert "test-secret" not in log.read_text()
     assert (work / "draft.txt").read_text() == "keep me"
 
@@ -433,7 +441,7 @@ def test_failed_push_is_told_to_the_room(device):
     ]
     assert report["path"] == f"/topics/{os.environ['CHEESE_TOPIC']}/messages"
     assert report["token"] == "test-secret"
-    assert tasks[task]["branch"] in report["body"]["content"]
+    assert report["body"]["content"]
     assert report["body"]["request_id"]
 
 
@@ -896,8 +904,11 @@ def test_a_backup_refused_once_is_rebuilt_against_the_base_it_has_now(device):
     git(work, "add", "small.txt")
     git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "small file")
 
-    with pytest.raises(urllib.error.HTTPError):
-        cli._sync_task(task)
+    # Everything it holds is committed, so the push carries it all regardless.
+    cli._sync_task(task)
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == git(
+        work, "rev-parse", "HEAD"
+    )
 
     # The large commit reaches the base another way, and the checkout sees it.
     git(work, "push", "-q", "origin", f"{large}:refs/heads/main")
@@ -1032,7 +1043,7 @@ def test_a_new_commit_the_forge_cannot_take_is_still_reported(device):
     with pytest.raises(RuntimeError):
         cli._sync_task(task)
 
-    assert tasks[task]["branch"] in (home / "posted.jsonl").read_text()
+    assert len(_told_the_room(home)) == 1
 
 
 def test_commits_after_the_pr_joined_the_merge_queue_are_kept_not_pushed(device):
@@ -1066,9 +1077,9 @@ def test_commits_after_the_pr_joined_the_merge_queue_are_kept_not_pushed(device)
 
 def test_a_connection_reset_once_is_tried_again_within_the_same_sync(device):
     """A reset connection is the network, not the work: the sync tries once
-    more before calling the task failed and warning the room. Twice in a row
-    is reported, so a request that can never go through is not retried
-    forever."""
+    more before calling the snapshot failed. Twice in a row is reported to
+    the platform's operators, so a request that can never go through is not
+    retried forever."""
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
@@ -1086,9 +1097,9 @@ def test_a_connection_reset_once_is_tried_again_within_the_same_sync(device):
 
     (work / "draft.txt").write_text("changed again\n")
     (home / "resets").write_text("2")
-    with pytest.raises(OSError):  # the reset itself, or urllib's URLError around it
-        cli._sync_task(task)
-    assert (home / "posted.jsonl").exists()
+    cli._sync_task(task)
+    assert not (home / "posted.jsonl").exists()
+    assert len(_told_operators(home)) == 1
 
 
 @pytest.mark.parametrize("left_on", ["a detached HEAD", "another branch"])
@@ -1170,12 +1181,15 @@ def test_sync_all_names_a_closed_task_it_could_not_back_up_as_closed(device, cap
     """The platform weighs a closed task's failed backup differently from an
     open task's failed push when a room leaves this machine, so the line that
     names the task says which of the two it is."""
-    cli, tasks, _remote, home = device
+    cli, tasks, remote, home = device
     closed, open_task = tasks
-    for task in tasks:
-        (cli._task_worktree(task) / "draft.txt").write_text(f"{task}\n")
+    (cli._task_worktree(closed) / "draft.txt").write_text(f"{closed}\n")
     tasks[closed]["closed"] = True
     (home / "upload-limit").write_text("1")
+    _commit(cli._task_worktree(open_task), "a.txt", "work\n")
+    reject = remote / "hooks/pre-receive"
+    reject.write_text("#!/bin/sh\nexit 1\n")
+    reject.chmod(0o755)
 
     with pytest.raises(SystemExit):
         cli._sync_all_tasks()
@@ -1190,8 +1204,8 @@ def test_a_closed_tasks_failed_backup_leaves_the_room_notice_to_the_platform(
 ):
     """A closed task has no turn whose work went missing. When its backup
     fails as a room leaves this machine, the platform tells the room which
-    task stayed behind and why; a second message from the machine saying the
-    turn's work was not pushed would only repeat it, and wrongly."""
+    task stayed behind and why; the machine says nothing to the room, and an
+    open task's failed snapshot is no business of the room's either."""
     cli, tasks, _remote, home = device
     closed, open_task = tasks
     for task in tasks:
@@ -1202,13 +1216,8 @@ def test_a_closed_tasks_failed_backup_leaves_the_room_notice_to_the_platform(
     with pytest.raises(SystemExit):
         cli._sync_all_tasks()
 
-    told = [
-        json.loads(line)["body"]["content"]
-        for line in (home / "posted.jsonl").read_text().splitlines()
-    ]
-    assert len(told) == 1
-    assert open_task in told[0]
-    assert closed not in told[0]
+    assert _told_the_room(home) == []
+    assert closed in json.dumps(_told_operators(home))
 
 
 def test_a_backup_leaves_out_generated_and_oversized_untracked_files_and_says_so(
@@ -1252,43 +1261,428 @@ def test_a_backup_leaves_out_generated_and_oversized_untracked_files_and_says_so
     assert "node_modules/" in told_recoverer
 
 
-def test_the_room_hears_once_of_each_large_file_a_backup_leaves_behind(
+def test_large_files_a_snapshot_leaves_out_are_not_told_to_the_room(
     device, monkeypatch, capsys
 ):
-    """A large file nobody committed may be hours of work, and it goes with the
-    machine, so the room is told. A generated directory comes back with an
-    install, and a file the room has already heard of is not news at every
-    sync. The push before a switch stays silent about either: the platform
-    reads everything it prints as a failure."""
+    """What a snapshot carries is the platform's business, not the room's: the
+    agent that synced reads what was left out (see the test above), and the
+    push before a switch stays silent about it, since the platform reads
+    everything it prints as a failure."""
     cli, tasks, _remote, home = device
     monkeypatch.setattr(cli, "_UNTRACKED_BACKUP_BUDGET", 1000)
     task = next(iter(tasks))
     work = cli._task_worktree(task)
+    (work / "model.bin").write_bytes(b"m" * 3000)
 
-    def told():
-        posted = home / "posted.jsonl"
-        if not posted.exists():
-            return []
-        return [
-            json.loads(line)["body"]["content"]
-            for line in posted.read_text().splitlines()
-        ]
-
-    (work / "node_modules").mkdir()
-    (work / "node_modules" / "big.js").write_bytes(b"x" * 5000)
     cli._sync_all_tasks()
-    assert told() == []
+
+    assert _told_the_room(home) == []
+    assert capsys.readouterr().err == ""
+
+
+def _told_operators(home):
+    told = home / "operators.jsonl"
+    if not told.exists():
+        return []
+    return [
+        error
+        for line in told.read_text().splitlines()
+        for error in json.loads(line)["errors"]
+    ]
+
+
+def _sync_log(cli, task):
+    work = cli._task_worktree(task)
+    return (
+        Path(git(work, "rev-parse", "--absolute-git-dir")) / "cheese-sync.log"
+    ).read_text()
+
+
+def _reject_pushes(remote):
+    reject = remote / "hooks/pre-receive"
+    reject.write_text("#!/bin/sh\nexit 1\n")
+    reject.chmod(0o755)
+    return reject
+
+
+def test_a_backup_that_fails_still_delivers_the_commits(device):
+    """The platform's storage out of reach must not keep committed work off
+    its branch. The snapshot is the platform's: its failure is told to the
+    operators with the step it failed at, and to no room."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    head = _commit(work, "a.txt", "committed\n")
+    (work / "draft.txt").write_text("not committed\n")
+    (home / "upload-limit").write_text("1")
+
+    cli._sync_task(task)
+
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    assert _told_the_room(home) == []
+    (told,) = _told_operators(home)
+    assert told["exc_type"] == TASK_BACKUP_FAILED
+    assert told["where"] == "cheese sync:backup"
+    assert head not in told["message"]  # one failure, one fingerprint
+    assert "snapshot failed step=backup" in _sync_log(cli, task)
+
+
+def test_a_snapshot_not_yet_restored_does_not_hold_back_the_push(device):
+    """A fresh checkout whose platform snapshot could not be brought in is not
+    snapshotted over it, and its commits still go to the branch."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    admin = Path(git(work, "rev-parse", "--absolute-git-dir"))
+    (admin / cli._RESTORE_PENDING).touch()
+    backups = home / "backups" / task
+    backups.mkdir(parents=True)
+    # A snapshot the platform lists but cannot hand over.
+    (backups / "latest.json").write_text(
+        json.dumps(
+            {
+                "id": "gone",
+                "snapshot_sha": "ab" * 20,
+                "head_sha": "cd" * 20,
+                "digest": "0" * 64,
+            }
+        )
+    )
+    head = _commit(work, "a.txt", "committed\n")
+
+    cli._sync_task(task)
+
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    assert (admin / cli._RESTORE_PENDING).exists()
+    assert "PUT " not in (home / "requests.log").read_text()
+    assert _told_the_room(home) == []
+
+
+def test_a_persons_own_machine_is_not_snapshotted(device, monkeypatch):
+    cli, tasks, remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    head = _commit(work, "a.txt", "committed\n")
+    (work / "draft.txt").write_text("not committed\n")
+
+    cli._sync_task(task)
+
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
     assert "PUT " not in (home / "requests.log").read_text()
 
-    (work / "model.bin").write_bytes(b"m" * 3000)
-    cli._sync_all_tasks()
-    cli._sync_all_tasks()
-    (work / "export.bin").write_bytes(b"e" * 4000)
-    cli._sync_all_tasks()
 
-    first, second = told()
-    assert "model.bin" in first
-    assert tasks[task]["branch"] in first
-    assert "export.bin" in second
-    assert "model.bin" not in second
-    assert capsys.readouterr().err == ""
+def test_a_failed_push_is_told_to_the_agent_and_logged_by_step(
+    device, monkeypatch, capsys
+):
+    """The agent that committed reads that its push did not land, so it can
+    retry or fix it; the log names the step, so failures can be counted by
+    step."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    _commit(work, "a.txt", "committed\n")
+    _reject_pushes(remote)
+    monkeypatch.setattr(sys, "argv", ["cheese", "sync", "--task", task])
+
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+
+    assert exited.value.code == 1
+    assert task in capsys.readouterr().err
+    assert "failed step=push" in _sync_log(cli, task)
+
+
+def test_a_backup_that_fails_does_not_fail_the_agents_command(device, monkeypatch):
+    """The acceptance card and `push-fix` sync the task first and read its
+    branch: a snapshot that did not go through must not stop them."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    head = _commit(work, "a.txt", "committed\n")
+    (work / "draft.txt").write_text("not committed\n")
+    (home / "upload-limit").write_text("1")
+    monkeypatch.setattr(sys, "argv", ["cheese", "sync", "--task", task])
+
+    cli.main()
+
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+
+
+def test_a_lasting_push_failure_is_told_once_until_it_changes(device):
+    """A sync runs at every turn and every commit, and an agent retries a
+    push that failed; a failure that lasts is news once. The same failure
+    after a sync that went through is news again."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    reject = _reject_pushes(remote)
+    for turn in range(3):
+        _commit(work, f"turn{turn}.txt", "work\n")
+        with pytest.raises(RuntimeError):
+            cli._sync_task(task)
+    assert len(_told_the_room(home)) == 1
+
+    # The PR joins the merge queue: a different failure, told.
+    tasks[task]["merge_queued_pr"] = 17
+    _commit(work, "queued.txt", "work\n")
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+    assert len(_told_the_room(home)) == 2
+    del tasks[task]["merge_queued_pr"]
+
+    reject.unlink()
+    cli._sync_task(task)
+    _reject_pushes(remote)
+    _commit(work, "again.txt", "work\n")
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+    first, _queued, third = _told_the_room(home)
+    assert third == first
+
+
+def test_a_lasting_push_failure_is_told_again_after_a_while(device, monkeypatch):
+    cli, tasks, remote, home = device
+    monkeypatch.setattr(cli, "_SYNC_FAILURE_RETELL_S", 0)
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    _reject_pushes(remote)
+    _commit(work, "a.txt", "work\n")
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            cli._sync_task(task)
+    assert len(_told_the_room(home)) == 2
+
+
+def test_a_failure_the_room_never_received_is_told_at_the_next_sync(device):
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    _reject_pushes(remote)
+    _commit(work, "a.txt", "work\n")
+    (home / "reject-messages").touch()
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+    (home / "reject-messages").unlink()
+
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+
+    assert len(_told_the_room(home)) == 1
+
+
+@pytest.mark.parametrize(("supply", "kept"), [("self_hosted", True), ("cloud", False)])
+def test_a_closed_tasks_work_only_on_a_persons_machine_survives_the_sweep(
+    device, monkeypatch, supply, kept
+):
+    """A person's own machine takes no snapshot, so a closed task's checkout
+    there that holds work its branch does not have is the only copy, and the
+    sweep of closed tasks' checkouts leaves it. On the platform's machines the
+    snapshot holds it and the checkout goes."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", supply)
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("only here\n")
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert (work / "draft.txt").exists() is kept
+
+
+def test_a_sync_refused_by_a_conflicting_landed_step_still_snapshots(device, tmp_path):
+    """A checkout whose unlanded work conflicts with the step that landed
+    cannot follow it, and every sync is refused until the agent resolves it;
+    the work it holds meanwhile is exactly what the snapshot keeps."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    info = tasks[task]
+    work = cli._task_worktree(task)
+    (work / "same.txt").write_text("step one\n")
+    git(work, "add", "same.txt")
+    git(work, "commit", "-m", "feat: step one")
+    _land(remote, tmp_path, info, 1)
+    land = tmp_path / "land"
+    (land / "same.txt").write_text("theirs\n")
+    git(land, "commit", "-qam", "other work")
+    git(land, "push", "-q", "origin", "main")
+    (work / "same.txt").write_text("mine\n")
+    (work / "precious.txt").write_text("only here\n")
+
+    with pytest.raises(SystemExit):
+        cli._sync_task(task)
+
+    latest = json.loads((home / "backups" / task / "latest.json").read_text())
+    bundle = home / "backups" / task / f"{latest['id']}.bundle"
+    recovered = home / "recovered"
+    git(home, "clone", "-q", str(remote), str(recovered))
+    git(recovered, "fetch", "-q", str(bundle), f"refs/cheese/snapshots/{task}")
+    assert git(recovered, "show", "FETCH_HEAD:precious.txt") == "only here"
+
+
+def test_a_closed_checkout_holding_only_an_install_is_swept_on_a_persons_machine(
+    device, monkeypatch
+):
+    """A dependency install comes back with the next install, so it is not
+    work only this machine holds, and the closed task's checkout still goes."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "node_modules" / "pkg").mkdir(parents=True)
+    (work / "node_modules" / "pkg" / "index.js").write_text("module.exports = 1\n")
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert not work.exists()
+
+
+def test_a_closed_checkout_whose_work_is_all_pushed_is_swept_on_a_persons_machine(
+    device, monkeypatch
+):
+    """What only a person's machine holds is judged after the push: a commit
+    that went up is on the branch, and the closed task's checkout goes."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    _commit(work, "a.txt", "pushed\n")
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert not work.exists()
+
+
+def test_a_failed_sync_with_nothing_unpushed_tells_the_room_nothing(device):
+    """Review is behind only when committed work is missing from the branch."""
+    cli, tasks, _remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("not committed\n")
+    info = tasks.pop(task)  # the platform cannot answer for the task
+
+    with pytest.raises(SystemExit):
+        cli._sync_task(task)
+
+    tasks[task] = info
+    assert _told_the_room(home) == []
+
+
+def test_a_closed_tasks_failed_snapshot_does_not_fail_the_agents_command(
+    device, monkeypatch
+):
+    cli, tasks, _remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("not committed\n")
+    tasks[task]["closed"] = True
+    (home / "upload-limit").write_text("1")
+    monkeypatch.setattr(sys, "argv", ["cheese", "sync", "--task", task])
+
+    cli.main()
+
+    assert _told_the_room(home) == []
+
+
+def test_an_edit_to_a_tracked_file_in_an_install_directory_is_kept_on_a_persons_machine(
+    device, monkeypatch
+):
+    """A repository may commit its `node_modules`; an edit to a file it tracks
+    there is work like any other, and the closed task's checkout stays."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "node_modules").mkdir()
+    _commit(work, "node_modules/vendored.js", "v1\n")
+    cli._sync_task(task)
+    (work / "node_modules" / "vendored.js").write_text("v2, not committed\n")
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert (work / "node_modules" / "vendored.js").read_text() == "v2, not committed\n"
+
+
+def test_a_followed_step_pushes_the_commits_on_the_latest_code(device, tmp_path):
+    """After a step lands, the sync that follows it delivers and snapshots the
+    checkout as it now is, on the latest code, not the history the landed step
+    had."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    info = tasks[task]
+    work = cli._task_worktree(task)
+    _commit(work, "same.txt", "step one\n")
+    cli._sync_task(task)
+    _land(remote, tmp_path, info, 1)
+    _commit(work, "later.txt", "step two\n")
+
+    cli._sync_task(task)
+
+    head = git(work, "rev-parse", "HEAD")
+    assert git(remote, "rev-parse", info["branch"]) == head
+    latest = json.loads((home / "backups" / task / "latest.json").read_text())
+    assert latest["head_sha"] == head
+
+
+def test_a_checkout_git_cannot_describe_is_kept_on_a_persons_machine(
+    device, monkeypatch
+):
+    """A file name git prints in bytes that are not UTF-8 (an archive unpacked
+    from another locale) leaves the sync unable to tell what is unsaved; in
+    doubt the closed task's checkout stays, since it may be the only copy."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("not committed\n")
+    blob = subprocess.run(
+        ["git", "-C", str(work), "hash-object", "-w", "--stdin"],
+        input=b"x\n",
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(
+        [
+            b"git",
+            b"-C",
+            str(work).encode(),
+            b"update-index",
+            b"--add",
+            b"--cacheinfo",
+            b"100644," + blob + b",caf\xe9.txt",
+        ],
+        check=True,
+    )
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert (work / "draft.txt").exists()
+
+
+def test_untracked_work_a_persons_git_config_hides_is_kept_on_their_machine(
+    device, monkeypatch
+):
+    """`status.showUntrackedFiles=no` in a person's git config hides new files
+    from `git status`; they are work all the same, and the checkout stays."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    (home / ".gitconfig").write_text("[status]\n\tshowUntrackedFiles = no\n")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("not committed\n")
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert (work / "draft.txt").exists()
