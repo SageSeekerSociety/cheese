@@ -479,8 +479,14 @@ def shell(self, params):
     if operation == "start":
         inputs = {
             key: params.get(key)
-            for key in ("kind", "body", "cwd", "env", "merge", "stdin")
+            for key in ("kind", "body", "cwd", "env", "merge", "stdin", "keep")
         }
+        # A kept record holds the command's output for a later command to read
+        # (`shell_prefix.task_outputs`); `drop` names those the session let go.
+        held = {"held": str(record / "out")} if params.get("keep") else {}
+        for dropped in params.get("drop") or []:
+            with contextlib.suppress(ValueError):
+                shell(self, {"operation": "forget", "command_id": dropped})
         digest = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
         with self.command_lock:
             if record.exists():
@@ -491,7 +497,7 @@ def shell(self, params):
                     return {"started": False}
                 if meta.get("digest") != digest:
                     raise ValueError("Command ID already belongs to different input")
-                return {"started": True}
+                return {"started": True, **held}
             cwd = Path(native_path(params.get("cwd") or str(self.root)))
             if not cwd.is_dir():
                 # Gone since the session last looked: its own reset.
@@ -523,9 +529,13 @@ def shell(self, params):
                 merge=bool(params.get("merge")),
                 stdin=None if stdin is None else base64.b64decode(stdin),
                 watched=True,
-                meta={"digest": digest, "command": params["body"][-2000:]},
+                meta={
+                    "digest": digest,
+                    "command": params["body"][-2000:],
+                    "kept": bool(held),
+                },
             )
-        return {"started": True}
+        return {"started": True, **held}
     if operation == "read":
         return self.read_command(
             command_id,

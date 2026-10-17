@@ -51,7 +51,10 @@ concurrency:
 
 jobs:
   scope:
-    runs-on: ubuntu-latest
+    # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
+    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
+    # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.scope.outputs.backend }}
@@ -377,7 +380,10 @@ jobs:
       contents: read
       pull-requests: read
     needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
-    runs-on: ubuntu-latest
+    # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
+    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
+    # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -401,13 +407,20 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        # curl + python3, not gh + jq: the cheese-ci boxes have neither gh nor jq
+        # (python3, git and curl only), and both calls are plain GETs.
         run: |
+          set -o pipefail
+          api() {
+            curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/$1"
+          }
           if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
-            gh api "repos/$GITHUB_REPOSITORY/compare/$BASE_SHA...$HEAD_SHA" \
-              --jq '.commits[].commit.message | split("\n")[0]' \
+            api "compare/$BASE_SHA...$HEAD_SHA" \
+              | python3 -c 'import json,sys; [print(c["commit"]["message"].split("\n")[0]) for c in json.load(sys.stdin)["commits"]]' \
               | python3 .github/scripts/check-commit-title.py
           else
-            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
+            api "pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
             python3 .github/scripts/check-commit-title.py --pull-request "$RUNNER_TEMP/pull.json"
           fi
 
@@ -417,7 +430,10 @@ jobs:
     permissions:
       contents: read
     needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
-    runs-on: ubuntu-latest
+    # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
+    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
+    # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

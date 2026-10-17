@@ -9,14 +9,18 @@ entry's run does not replace it, and its six jobs hold concurrency slots for a
 commit the queue will never merge. queue-dedupe.yml runs this on every
 `merge_group` event to cancel them.
 
-A run is cancelled only when all of these hold: it is a Required CI run of event
-`merge_group`, not yet completed, its head branch is a queue branch of
-the same base and the same pull request number as this entry, its head sha is
-not this entry's, and it was created before this entry's own runs. The last one
-keeps an older entry's job that starts late from cancelling the newer entry's
-run: both runs of one event are created together, so the newer entry's run is
-older than the late job's own. It relies on GitHub creating the runs of two
-events in the order of the events.
+A job acts only for the pull request's current queue entry: it first asks
+GitHub (GraphQL `pullRequest.mergeQueueEntry.headCommit`) which merge commit
+the queue holds for this PR now, and does nothing unless that is this event's
+head sha. A late-delivered event of an older entry therefore never cancels the
+newer entry's run, whatever order GitHub created the runs in.
+
+The job that does act cancels a run only when all of these hold: it is a
+Required CI run of event `merge_group`, not yet completed, its head branch is a
+queue branch of the same base and the same pull request number, its head sha
+is not the current entry's, and it was created before this entry's own runs.
+The last one covers a rebuild that lands between the GraphQL answer and the
+cancel: the next entry's runs are newer than this one's.
 
 Nothing here turns red: a ref it cannot read, an API call that fails, a run
 object it cannot parse or a run that finished before its cancel arrived is
@@ -102,6 +106,30 @@ def active_runs(api, repo):
     return runs
 
 
+CURRENT_ENTRY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { mergeQueueEntry { headCommit { oid } } }
+  }
+}
+"""
+
+
+def current_entry_sha(api, repo, number):
+    """The head sha of the PR's merge queue entry right now, or None."""
+    owner, name = repo.split("/", 1)
+    answer = api(
+        "graphql",
+        "-f", f"query={CURRENT_ENTRY}",
+        "-f", f"owner={owner}",
+        "-f", f"name={name}",
+        "-F", f"number={number}",
+    )
+    pull = ((answer or {}).get("data") or {}).get("repository") or {}
+    entry = (pull.get("pullRequest") or {}).get("mergeQueueEntry") or {}
+    return (entry.get("headCommit") or {}).get("oid")
+
+
 def cancel_superseded(api, env):
     """Cancel what this entry supersedes; returns the lines to print."""
     head_ref = env.get("HEAD_REF", "")
@@ -111,6 +139,12 @@ def cancel_superseded(api, env):
         return [f"Not a merge queue ref ({head_ref!r}, sha {head_sha!r}); nothing to cancel."]
     base, number = entry
     repo = env["GITHUB_REPOSITORY"]
+    current = current_entry_sha(api, repo, number)
+    if current != head_sha:
+        return [
+            f"PR #{number}'s queue entry is now {current!r}, not {head_sha[:8]}; "
+            "this event is not the current entry, nothing to cancel."
+        ]
     before = _created(api(f"repos/{repo}/actions/runs/{env['GITHUB_RUN_ID']}"))
     runs = active_runs(api, repo)
     # This entry's own Required CI run is created by the same event; when it is
