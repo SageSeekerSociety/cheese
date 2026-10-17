@@ -468,7 +468,8 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 ## CI runner pool (cheese-ci)
 
 Every suite Required CI selects runs on GitHub-hosted Ubuntu runners, including
-the CLI boot e2e and remote-execution acceptance. The organisation is on the
+the CLI boot e2e and remote-execution acceptance; only the serial aggregation
+jobs listed in the bullet below take the pool. The organisation is on the
 Free plan, whose documented limit is 20 concurrent hosted jobs; this repository
 is not held to it. Historical measurements from 2026-09-30/10-01 observed up to
 61 hosted jobs running concurrently and a 0.1-minute p90 runner wait for
@@ -486,7 +487,9 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `[self-hosted, cheese-ci]` for same-repo PRs and the merge queue, and stay on
   `ubuntu-latest` for fork PRs. They run seconds of work and used to wait 7-12
   min in the shared hosted queue. The boxes have python3, git and curl but no
-  gh, jq or node, so those jobs must not call them. #2257 did this on 09-30 and
+  gh, jq or node on PATH (JS actions use the runner's bundled node), so those
+  jobs' `run:` steps must not call them. Every other event (deploy-prod's x86
+  run of `test.yml`) keeps `Backend coverage complete` on hosted machines. #2257 did this on 09-30 and
   #2439 reverted it because two slots on one box shared the `ci` user's
   pre-commit cache ("database is locked"); these four jobs never run
   `uvx pre-commit` (`guards` does, and stays hosted). Anything someone adds to them

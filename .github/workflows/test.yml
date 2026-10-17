@@ -1,6 +1,8 @@
 name: Backend Test
 
-# Every job here runs on a GitHub-hosted runner: the repository is public, so
+# Every job here but the last (`test-complete`, a seconds-long aggregation that
+# takes the cheese-ci pool for same-repo PRs and the merge queue) runs on a
+# GitHub-hosted runner: the repository is public, so
 # hosted minutes are free and unlimited. Postgres and Valkey come as service
 # containers on the same images and host ports the cheese-ci pool's resident
 # pair use (deploy/ci-runner/resident-services.sh), so the test settings do not
@@ -581,8 +583,9 @@ jobs:
     if: ${{ !cancelled() }}
     # Seconds-long serial job: on a GitHub machine it waits 7-12 min in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
-    # cheese-ci pool (docs/infrastructure.md); fork PRs stay on GitHub's machines.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-latest"]' || '["self-hosted","cheese-ci"]') }}
+    # cheese-ci pool (docs/infrastructure.md); fork PRs, a deleted fork and every
+    # other caller (deploy-prod's x86 run) stay on GitHub's machines.
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

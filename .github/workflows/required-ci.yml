@@ -53,8 +53,9 @@ jobs:
   scope:
     # Seconds-long serial job: on a GitHub machine it waits 7-12 min in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
-    # cheese-ci pool (docs/infrastructure.md); fork PRs stay on GitHub's machines.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-latest"]' || '["self-hosted","cheese-ci"]') }}
+    # cheese-ci pool (docs/infrastructure.md); fork PRs, a deleted fork and every
+    # other caller (deploy-prod's x86 run) stay on GitHub's machines.
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.scope.outputs.backend }}
@@ -379,8 +380,9 @@ jobs:
     needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
     # Seconds-long serial job: on a GitHub machine it waits 7-12 min in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
-    # cheese-ci pool (docs/infrastructure.md); fork PRs stay on GitHub's machines.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-latest"]' || '["self-hosted","cheese-ci"]') }}
+    # cheese-ci pool (docs/infrastructure.md); fork PRs, a deleted fork and every
+    # other caller (deploy-prod's x86 run) stay on GitHub's machines.
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -429,8 +431,9 @@ jobs:
     needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
     # Seconds-long serial job: on a GitHub machine it waits 7-12 min in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
-    # cheese-ci pool (docs/infrastructure.md); fork PRs stay on GitHub's machines.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-latest"]' || '["self-hosted","cheese-ci"]') }}
+    # cheese-ci pool (docs/infrastructure.md); fork PRs, a deleted fork and every
+    # other caller (deploy-prod's x86 run) stay on GitHub's machines.
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
