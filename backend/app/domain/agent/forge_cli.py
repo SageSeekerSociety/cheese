@@ -24,6 +24,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -138,10 +139,19 @@ def _kept(name):
 
 
 def _keep(path, value):
+    """Best effort: a write that loses to another invocation (on Windows, a
+    file another process has open cannot be replaced) only means the next
+    invocation asks again, never that this one fails."""
     partial = path.with_name(f"{path.name}.{os.getpid()}.part")
-    with open(partial, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
-        json.dump(value, output)
-    partial.replace(path)
+    try:
+        with open(
+            partial, "w", opener=lambda p, flags: os.open(p, flags, 0o600)
+        ) as output:
+            json.dump(value, output)
+        partial.replace(path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            partial.unlink()
 
 
 def _recall(path):
@@ -174,13 +184,22 @@ def credentials():
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         data = json.load(response)["data"]
+        said = (getattr(response, "headers", None) or {}).get("Date")
     if (
         data.get("expires_at")
         and data.get("expiry_enforcement") == "provider"
         and data.get("read_only") is False
     ):
         expires = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
-        _keep(path, {"until": expires.timestamp() - CREDENTIAL_MARGIN_S, "value": data})
+        # How long it has left is read on the platform's clock and counted on
+        # this machine's: a machine whose clock is behind would otherwise go
+        # on presenting a token the forge has already expired.
+        try:
+            platform_now = parsedate_to_datetime(said).timestamp()
+        except (TypeError, ValueError):
+            platform_now = time.time()
+        left = expires.timestamp() - platform_now
+        _keep(path, {"until": time.time() + left - CREDENTIAL_MARGIN_S, "value": data})
     return data
 
 

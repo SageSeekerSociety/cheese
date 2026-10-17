@@ -1,6 +1,7 @@
 """Native CLI calls receive project credentials without changing shell state."""
 
 import contextlib
+import email.utils
 import hashlib
 import io
 import json
@@ -427,6 +428,29 @@ def test_gh_keeps_its_credential_until_shortly_before_it_expires(monkeypatch, tm
     monkeypatch.setenv("CHEESE_TOKEN", "session-two")
     forge_cli.credentials()
     assert minted == ["session-one", "session-one", "session-two"]
+
+
+def test_a_machine_whose_clock_is_behind_does_not_keep_an_expired_credential(
+    monkeypatch, tmp_path
+):
+    """The platform said what time it was when it handed the credential out;
+    a machine whose clock is a quarter of an hour behind drops it as early, by
+    the token's own lifetime, as one whose clock is right."""
+    minted, clock = _platform(monkeypatch, tmp_path)
+    platform_now = clock[0]
+    clock[0] -= 15 * 60
+    real = forge_cli.urllib.request.urlopen
+
+    def dated(request, *args, **kwargs):
+        response = real(request, *args, **kwargs)
+        response.headers = {"Date": email.utils.formatdate(platform_now, usegmt=True)}
+        return response
+
+    monkeypatch.setattr(forge_cli.urllib.request, "urlopen", dated)
+    forge_cli.credentials()
+    clock[0] += 2 * 3600 - 600
+    forge_cli.credentials()
+    assert len(minted) == 2
 
 
 @pytest.mark.parametrize(

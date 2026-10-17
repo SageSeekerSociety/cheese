@@ -24,7 +24,9 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select, update
 
+from app.core.device_failures import LinkInterrupted
 from app.domain.agent import execution
+from app.domain.agent.device_contract import DeviceUnreachable
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
@@ -181,12 +183,22 @@ async def test_an_ask_during_an_archival_comes_before_it_or_is_refused(
     remote.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        DeviceCallError("executor is not running"),
+        DeviceUnreachable("dev"),
+        LinkInterrupted("dev"),
+        TimeoutError("no answer"),
+    ],
+    ids=["the executor failed", "unreachable", "link dropped mid-call", "no answer"],
+)
 async def test_a_call_that_failed_on_the_machine_sends_the_next_ask_through_the_check(
-    client, monkeypatch
+    client, monkeypatch, failure
 ):
     room, _ = await _checked(client, monkeypatch)
     answer = _ask(client, room).json()["data"]
-    remote = _machine(monkeypatch, failing=DeviceCallError("executor is not running"))
+    remote = _machine(monkeypatch, failing=failure)
     failed = client.post(
         f"/topics/{room.topic_id}/execution/{room.lease['room_resource_id']}",
         headers={"X-Cheese-Token": answer["token"]},
