@@ -643,7 +643,7 @@ class ActorResolver:
             if room is not None and room.members_only:
                 # Someone outside a private channel is not told it exists: the
                 # answer is the one a channel that was never made gets.
-                raise NotFoundError(say("topicNotFound"))
+                raise NotFoundError("Topic not found")
             raise ForbiddenError(say("topicMemberOnly"))
 
     async def can_access_topic(

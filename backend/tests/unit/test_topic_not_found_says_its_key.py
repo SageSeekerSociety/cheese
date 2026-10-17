@@ -5,7 +5,8 @@ words, without ``error.i18n``, and with 「Topic」, a word the product no longe
 uses. The catalog (``apiError``) has ``topicNotFound`` for it; every new
 refusal says that.
 
-The files below still carry the old line: they only come down.
+The files below still carry the old line: they only come down. Where one answers
+for a channel that does not exist, its words must stay the same as the others'.
 """
 
 import ast
@@ -20,6 +21,9 @@ LEGACY = "Topic not found"
 # Occurrences still left, per file relative to ``backend/app``. A count may fall
 # (delete the entry at zero); it may not rise, and no other file may appear.
 BASELINE = {
+    # Says what a channel that was never made says, so a private channel is not
+    # given away by a different answer (test_private_channels.py).
+    "api/auth/resolver.py": 1,
     "api/routes/execution.py": 1,
     "api/routes/project_context.py": 1,
     "api/routes/project_skills.py": 1,
