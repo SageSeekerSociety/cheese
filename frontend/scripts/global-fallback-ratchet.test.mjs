@@ -413,22 +413,75 @@ describe('findGlobalFallbacks', () => {
   })
 
   // The Options API declares the same names in a different place, and a
-  // component written that way gets the same answer.
+  // component written that way gets the same answer however its options object
+  // reaches the default export.
   it('reads the Options API forms of the same declarations', () => {
-    const component = (options) =>
+    const component = (script) =>
       [
         '<script lang="ts">',
-        `export default { ${options} }`,
+        script,
         '</script>',
         '<template>',
         '  <button @click="open()">x</button>',
         '</template>',
         '',
       ].join('\n')
-    assert.deepEqual(found(component("props: ['open']")), [])
-    assert.deepEqual(found(component("props: { 'open': Function }")), [])
-    assert.deepEqual(found(component('props: { open: Function }')), [])
-    assert.deepEqual(found(component('methods: { open() {} }')), [])
+    for (const options of [
+      "props: ['open']",
+      "props: { 'open': Function }",
+      'props: { open: Function }',
+      'methods: { open() {} }',
+      // A quoted key is the same key as an unquoted one, in any container the
+      // template reaches through the component's own options.
+      "methods: { 'open'() {} }",
+      "computed: { 'open': () => true }",
+      "inject: { 'open': 'openKey' }",
+      "data() { return { 'open': 1 } }",
+      "setup() { return { 'open': () => {} } }",
+      "mixins: [{ props: ['open'] }]",
+      "extends: { props: ['open'] }",
+    ]) {
+      assert.deepEqual(
+        found(component(`export default { ${options} }`)),
+        [],
+        `reported an option this declares:\n${options}`
+      )
+    }
+    for (const script of [
+      "export default defineComponent({ props: ['open'] })",
+      "export default defineComponent({ methods: { 'open'() {} } })",
+      "export default { props: ['open'] } satisfies ComponentOptions",
+      "export default { props: ['open'] } as const",
+      "const options = { props: ['open'] }\nexport default options",
+      "const options = defineComponent({ props: ['open'] })\nexport default options",
+    ]) {
+      assert.deepEqual(
+        found(component(`${script}\nvoid defineComponent`)),
+        [],
+        `reported options that reach the default export:\n${script}`
+      )
+    }
+  })
+
+  // A component registered under `components:` declares its own props, which
+  // are that component's render context — not this component's. Reading them as
+  // bindings would answer "clean" to a call this template cannot resolve.
+  it("does not read another component's props as this one's", () => {
+    const code = [
+      '<script lang="ts">',
+      "const Local = defineComponent({ props: ['open'] })",
+      'export default { components: { Local } }',
+      'void defineComponent',
+      '</script>',
+      '<template>',
+      '  <button @click="open()">x</button>',
+      '</template>',
+      '',
+    ].join('\n')
+    assert.deepEqual(
+      found(code).map((hit) => [hit.name, hit.where]),
+      [['open', TEMPLATE]]
+    )
   })
 
   // An emit's name is not a binding: the template emits through `emit(...)`,

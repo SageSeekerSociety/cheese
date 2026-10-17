@@ -60,11 +60,11 @@
 // a call that binds nothing reads as bound whenever some string in the file
 // happens to spell it, and the rule answers "clean" to exactly the call it
 // exists to find. Excluding those costs nothing on today's tree — 0 findings
-// either way, measured. `stringBindings` reads the two places a string can be
-// one: the argument of the props macro, as a list (`defineProps(['open'])`) or
-// as an object with quoted keys, and the same two forms in the Options API's
-// `props:` option. An unquoted key was already a mention, as every identifier
-// is. What stays loose is a name merely mentioned.
+// either way, measured. `stringBindings` reads the places a string can be one:
+// the argument of the props macro, as a list (`defineProps(['open'])`) or as an
+// object with quoted keys; the name a model is declared under; and the quoted
+// names in this component's own options object. An unquoted key was already a
+// mention, as every identifier is. What stays loose is a name merely mentioned.
 //
 // Note on which files are read: the two halves are one DSL read twice, so the
 // module and component globs, and the ignored spec files, are declared here
@@ -347,62 +347,123 @@ function quotedKeys(node) {
   )
 }
 
+/** The name a property is written under, quoted or not. */
+function propertyName(key) {
+  if (key?.type === 'Identifier') return key.name
+  if (key?.type === 'Literal' && typeof key.value === 'string') return key.value
+  return undefined
+}
+
+/** The object literal a name in this file is initialised with. */
+function initializerOf(name, body) {
+  for (const node of walk(body)) {
+    if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier' && node.id.name === name && node.init) {
+      return node.init
+    }
+  }
+  return undefined
+}
+
 /**
- * Whether this is the `props` option of a component's options object — either
- * the default export, or the argument of the two macros that take one.
+ * The object literals that are *this* component's options: the one the default
+ * export hands over, and the one `defineOptions` wraps.
  *
- * The position matters: `{ props: ['open'] }` anywhere else is an ordinary
- * object, and an ordinary object's key names nothing the template can call.
- * Reading every `props` key in the file made `const cfg = { props: ['open'] }`
- * bind `open` and answer "clean" to a call that binds nothing.
+ * The default export hands it over plainly (`export default { … }`), through a
+ * variable in this file, or through a call that builds a component from it
+ * (`defineComponent`, aliased or on a namespace, or `Vue.extend`) — and any of
+ * those may carry an assertion. Nothing else is this component's options:
+ * `{ props: […] }` in a component registered under `components:` is another
+ * component's, and its props are not names this template can call.
  */
-function isOptionsProps(node) {
-  const key = node.key
-  const name = key?.type === 'Identifier' ? key.name : key?.type === 'Literal' ? key.value : undefined
-  if (name !== 'props') return false
-  const options = node.parent?.parent
-  return (
-    options?.type === 'ExportDefaultDeclaration' ||
-    (options?.type === 'CallExpression' &&
-      options.callee?.type === 'Identifier' &&
-      (options.callee.name === 'defineOptions' || options.callee.name === 'defineComponent'))
-  )
+function componentOptions(body) {
+  const options = []
+  const take = (node) => {
+    let current = unassert(node)
+    if (current?.type === 'Identifier') current = unassert(initializerOf(current.name, body))
+    if (current?.type === 'CallExpression') current = unassert((current.arguments ?? [])[0])
+    if (current?.type === 'ObjectExpression') options.push(current)
+  }
+  for (const node of Array.isArray(body) ? body : body.body ?? []) {
+    if (node.type === 'ExportDefaultDeclaration') take(node.declaration)
+  }
+  for (const node of walk(body)) {
+    if (node.type === 'CallExpression' && node.callee?.type === 'Identifier' && node.callee.name === 'defineOptions') {
+      take((node.arguments ?? [])[0])
+    }
+  }
+  return options
+}
+
+/** The names an options container declares: a list of names, or an object's keys. */
+function containerNames(node) {
+  const value = unassert(node)
+  const names = quotedKeys(value)
+  if (value?.type === 'ArrayExpression') {
+    for (const element of value.elements) {
+      if (element?.type === 'Literal' && typeof element.value === 'string') names.push(element.value)
+    }
+  }
+  return names
+}
+
+/** The keys of what a `data` or `setup` function hands back. */
+function returnedNames(node) {
+  const fn = unassert(node)
+  if (fn?.type !== 'FunctionExpression' && fn?.type !== 'ArrowFunctionExpression') return []
+  const returned =
+    fn.body?.type === 'BlockStatement'
+      ? fn.body.body.flatMap((statement) => (statement.type === 'ReturnStatement' ? [statement.argument] : []))
+      : [fn.body]
+  return returned.flatMap((expression) => quotedKeys(expression))
+}
+
+const OPTION_CONTAINERS = new Set(['props', 'methods', 'computed', 'inject'])
+
+/** The quoted names an options object declares to its template. */
+function collectOptions(options, into) {
+  for (const property of options.properties) {
+    if (property.type !== 'Property') continue
+    const name = propertyName(property.key)
+    if (name === undefined) continue
+    if (OPTION_CONTAINERS.has(name)) {
+      for (const declared of containerNames(property.value)) into.add(declared)
+    } else if (name === 'data' || name === 'setup') {
+      for (const declared of returnedNames(property.value)) into.add(declared)
+    } else if (name === 'mixins' || name === 'extends') {
+      // A mixin's props merge into this component's, so the template can call
+      // them; one written inline here is the only spelling this can see.
+      const value = unassert(property.value)
+      const mixins = value?.type === 'ArrayExpression' ? value.elements : [value]
+      for (const mixin of mixins) {
+        const object = unassert(mixin)
+        if (object?.type === 'ObjectExpression') collectOptions(object, into)
+      }
+    }
+  }
 }
 
 /**
  * The names a string may still stand for, and only where one is declared: the
- * argument of the props macro, in either of its runtime forms (a list of names,
- * or an object whose keys are the names), and the Options API `props:` option
- * spelled the same two ways. `scriptMentions` already counts the unquoted key
- * and the type form, whose keys are identifiers.
+ * argument of `defineProps`, as a list of names or as an object whose keys are
+ * the names; `defineModel('open')`, which compiles to a prop of that name; and
+ * the same names in the component's own options object — the quoted keys of its
+ * `props`, `methods`, `computed` and `inject`, what `data` or `setup` hands
+ * back, and the props of a mixin or an extended component.
  *
- * A string anywhere else is not a declaration. `defineEmits(['open'])` names
- * an event — you cannot call an event — and a label, an i18n key, a key in a
- * lookup table or the source side of a quoted destructuring pattern only
- * happens to spell the name. Counting those would hide exactly the call this
- * rule is for.
+ * A string anywhere else is not a declaration. `defineEmits(['open'])` names an
+ * event — you cannot call an event — and a label, an i18n key, a key in a
+ * lookup table, the source side of a quoted destructuring pattern or another
+ * component's props only happen to spell the name. Counting those would hide
+ * exactly the call this rule is for.
  */
 function stringBindings(body) {
   const names = new Set()
-  const addDeclared = (node) => {
-    const argument = unassert(node)
-    if (argument?.type === 'ArrayExpression') {
-      for (const element of argument.elements) {
-        if (element?.type === 'Literal' && typeof element.value === 'string') names.add(element.value)
-      }
-      return
-    }
-    for (const name of quotedKeys(argument)) names.add(name)
-  }
   for (const node of walk(body)) {
-    if (node.type === 'Property') {
-      // `props: ['open']` — the Options API declares its names this way.
-      if (isOptionsProps(node)) addDeclared(node.value)
-      continue
-    }
     if (node.type !== 'CallExpression' || node.callee?.type !== 'Identifier') continue
     const [first] = node.arguments ?? []
-    if (node.callee.name === 'defineProps') addDeclared(first)
+    if (node.callee.name === 'defineProps') {
+      for (const declared of containerNames(first)) names.add(declared)
+    }
     // `defineModel('open')` declares a prop named `open` (and the emit beside
     // it), so the template's `open()` reaches that prop and is bound. The
     // alternative spelling, `defineModel()`, names the model after the
@@ -412,6 +473,7 @@ function stringBindings(body) {
       if (name?.type === 'Literal' && typeof name.value === 'string') names.add(name.value)
     }
   }
+  for (const options of componentOptions(body)) collectOptions(options, names)
   return names
 }
 
