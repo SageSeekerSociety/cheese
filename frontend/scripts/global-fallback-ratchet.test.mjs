@@ -9,10 +9,13 @@
 //      fixtures and a declarations map;
 //   3. the plant — a composable that keeps a function to itself and a component
 //      that calls it by bare name are written into the real tree, and the real
-//      check is required to go red on that pair, and green once the `export`
-//      and the `import` are there. A rule nobody has watched fire is not a
-//      rule, and this one's whole subject is a failure that is silent: the
-//      call does not throw, it reaches `window.open`.
+//      check is required to go red on that pair, and green once the name is
+//      handed out and taken. Both shapes are planted, because the refactor this
+//      rule exists for took the second: a function at module level that was
+//      never exported, and — the #1618 shape — a function inside the
+//      composable's own body that was never put in its `return`. A rule nobody
+//      has watched fire is not a rule, and this one's whole subject is a failure
+//      that is silent: the call does not throw, it reaches `window.open`.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { rmSync, writeFileSync } from 'node:fs'
@@ -23,14 +26,14 @@ import { fileURLToPath } from 'node:url'
 import { ESLint } from 'eslint'
 
 import {
-  SCRIPT,
-  TEMPLATE,
   collectDefinitions,
   collectFiles,
   countByFile,
   findGlobalFallbacks,
   formatGlobalFallbackReport,
   internalDeclarations,
+  SCRIPT,
+  TEMPLATE,
   unboundCalls,
 } from './global-fallback-ratchet-core.mjs'
 import { compare } from './tsc-ratchet-core.mjs'
@@ -47,6 +50,36 @@ const MODULE = 'src/composables/useProbe.ts'
 
 const script = (code) => `<script setup lang="ts">\n${code}</script>\n<template><div /></template>\n`
 const template = (body) => `<script setup lang="ts">\nconst n = 1\nvoid n\n</script>\n<template>${body}</template>\n`
+
+/**
+ * The composable a refactor leaves behind in two shapes, both of which keep the
+ * two functions to themselves.
+ *
+ * `module level`: declared at the top and never exported — the shape the first
+ * version of this rule could see. `inside the composable`: declared in the
+ * body and never put in the `return` — the shape #1618 actually took, and the
+ * one a rule reading only top-level statements judged clean.
+ *
+ * `scrollToBottom` is not a browser global; calling it unbound throws.
+ * `open` is one, so calling it unbound does nothing at all — the failure this
+ * rule exists to end.
+ */
+const composable = {
+  'module level': [
+    'function scrollToBottom() { window.scrollTo(0, 0) }',
+    'function open() {}',
+    'export function useScrollProbe() {}',
+    '',
+  ].join('\n'),
+  'inside the composable': [
+    'export function useScrollProbe() {',
+    '  function scrollToBottom() { window.scrollTo(0, 0) }',
+    '  function open() {}',
+    '  return {}',
+    '}',
+    '',
+  ].join('\n'),
+}
 
 // ---------------------------------------------------------------------------
 // 1. What a module keeps to itself, and which files are read at all.
@@ -81,8 +114,35 @@ describe('internalDeclarations', () => {
     }
   })
 
-  it('lists every internal name, in declaration order', () => {
+  it('lists every internal name, in declaration order, each once', () => {
     assert.deepEqual(internalDeclarations('const b = 1\nfunction a() {}\nconst b2 = () => b\n'), ['b', 'a', 'b2'])
+  })
+
+  // The #1618 shape, and the reason the walk reads the whole module rather than
+  // its top-level statements: `blur` sat in the body of `useDesignViewport`,
+  // was never put in its `return`, and a rule that read `ast.body` alone judged
+  // that very file clean. `close` is here beside it because a `return` is not an
+  // export: a component calling `close()` bare is the same bug as `blur()`.
+  it('keeps a declaration made inside a function too', () => {
+    const code = [
+      'export function useDesignViewport() {',
+      '  function blur() {}',
+      '  const close = () => {}',
+      '  return { close }',
+      '}',
+      '',
+    ].join('\n')
+    assert.deepEqual(internalDeclarations(code), ['blur', 'close'])
+  })
+
+  // What hands a name out is an `export` of that name and nothing else. The
+  // composable above returns `close`, and this file exports `outer`, whose body
+  // declares `focus`: neither makes the nested name reachable from another
+  // module, so a component calling either one bare is still the call this rule
+  // is for.
+  it('hands out only the names an export names, never the ones under them', () => {
+    const code = ['function outer() {', '  function focus() {}', '  return focus', '}', 'export { outer }'].join('\n')
+    assert.deepEqual(internalDeclarations(code), ['focus'])
   })
 })
 
@@ -121,7 +181,10 @@ describe('collectFiles', () => {
   it('leaves a spec component out of the call sites', () => {
     const all = collectFiles(['src/**/*.vue'], { root: ROOT })
     const withoutSpecs = collectFiles(['src/**/*.vue'], { root: ROOT, ignores: ['**/*.spec.vue'] })
-    assert.deepEqual(withoutSpecs, all.filter((path) => !path.endsWith('.spec.vue')))
+    assert.deepEqual(
+      withoutSpecs,
+      all.filter((path) => !path.endsWith('.spec.vue'))
+    )
   })
 })
 
@@ -143,7 +206,7 @@ describe('countByFile and the report', () => {
     }
     const text = formatGlobalFallbackReport(result(countByFile([violation])), [violation])
     assert.match(text, /Probe\.vue:2:1 {2}open\(\) {2}\[script setup\]/)
-    assert.match(text, /useProbe\.ts declares it and exports it to nobody/)
+    assert.match(text, /useProbe\.ts declares it and never hands it out/)
     assert.match(text, /total: 1 call\(s\)/)
   })
 
@@ -159,14 +222,23 @@ describe('countByFile and the report', () => {
 // ---------------------------------------------------------------------------
 
 describe('findGlobalFallbacks', () => {
-  const definitions = declaring({ path: MODULE, code: 'function open() {}\nfunction close() {}\nfunction blur() {}\nfunction scrollToBottom() {}\nfunction rowTo() {}\nfunction nameOf() {}' })
+  const definitions = declaring({
+    path: MODULE,
+    code: 'function open() {}\nfunction close() {}\nfunction blur() {}\nfunction scrollToBottom() {}\nfunction rowTo() {}\nfunction nameOf() {}',
+  })
   const found = (code, file = COMPONENT) => findGlobalFallbacks(code, file, definitions)
 
   it('fires on a bare call in <script setup>', () => {
     const hits = found(script('open()\n'))
     assert.equal(hits.length, 1)
     assert.deepEqual(
-      { name: hits[0].name, line: hits[0].line, where: hits[0].where, definedIn: hits[0].definedIn, file: hits[0].file },
+      {
+        name: hits[0].name,
+        line: hits[0].line,
+        where: hits[0].where,
+        definedIn: hits[0].definedIn,
+        file: hits[0].file,
+      },
       { name: 'open', line: 2, where: SCRIPT, definedIn: MODULE, file: COMPONENT }
     )
   })
@@ -175,10 +247,13 @@ describe('findGlobalFallbacks', () => {
   // conditional, not at the top of setup.
   it('fires on a call inside a branch, and names every one of them', () => {
     const hits = found(script('const on = ref(false)\nfunction toggle() {\n  if (!on.value) blur()\n  close()\n}\n'))
-    assert.deepEqual(hits.map((hit) => [hit.name, hit.line, hit.where]), [
-      ['blur', 4, SCRIPT],
-      ['close', 5, SCRIPT],
-    ])
+    assert.deepEqual(
+      hits.map((hit) => [hit.name, hit.line, hit.where]),
+      [
+        ['blur', 4, SCRIPT],
+        ['close', 5, SCRIPT],
+      ]
+    )
   })
 
   it('fires on a bare call in the template', () => {
@@ -194,10 +269,13 @@ describe('findGlobalFallbacks', () => {
   // import rather than a `window.`.
   it('fires on a template call inside a directive value and an interpolation alike', () => {
     const hits = found(template('<div v-if="open()">{{ close() }}</div>'))
-    assert.deepEqual(hits.map((hit) => [hit.name, hit.where]), [
-      ['open', TEMPLATE],
-      ['close', TEMPLATE],
-    ])
+    assert.deepEqual(
+      hits.map((hit) => [hit.name, hit.where]),
+      [
+        ['open', TEMPLATE],
+        ['close', TEMPLATE],
+      ]
+    )
   })
 
   it('leaves a spell-out global alone', () => {
@@ -254,6 +332,52 @@ describe('findGlobalFallbacks', () => {
     assert.deepEqual(found(code), [])
   })
 
+  // The runtime form of the one macro whose argument names are bindings:
+  // `defineProps(['open'])` makes `open` a name the template can call, the same
+  // way the type form above does through its property keys.
+  it('leaves a prop declared with the runtime form of defineProps alone', () => {
+    const code = [
+      '<script setup lang="ts">',
+      "const props = defineProps(['open', 'close'])",
+      'void props',
+      '</script>',
+      '<template>',
+      '  <button @click="open()">x</button>',
+      '</template>',
+      '',
+    ].join('\n')
+    assert.deepEqual(found(code), [])
+  })
+
+  // The other macros' arguments are names of things, not bindings: an emit name
+  // and a model name do not make a callable `open` in the template, and a rule
+  // that counted their strings would answer "clean" to exactly the call it was
+  // written to find. This is the false negative the string-literal allowance
+  // used to leave in 140 components.
+  it('does not let an emit name, a model name or any other string bind the call', () => {
+    const code = [
+      '<script setup lang="ts">',
+      "const emit = defineEmits(['open'])",
+      "const modelValue = defineModel('open')",
+      "const label = 'open'",
+      "const route = { name: 'open' }",
+      'void emit',
+      'void modelValue',
+      'void label',
+      'void route',
+      '</script>',
+      '<template>',
+      '  <button @click="open()">x</button>',
+      '</template>',
+      '',
+    ].join('\n')
+    const hits = found(code)
+    assert.deepEqual(
+      hits.map((hit) => [hit.name, hit.where]),
+      [['open', TEMPLATE]]
+    )
+  })
+
   it('leaves a v-for alias alone even when a module keeps that name', () => {
     const code = template('<li v-for="open in items" :key="open" @click="open()">{{ open }}</li>')
     assert.deepEqual(found(code), [])
@@ -266,7 +390,10 @@ describe('findGlobalFallbacks', () => {
 
   it('does not fire twice on the same call', () => {
     const hits = found(template('<div @click="open()">{{ open() }}</div>'))
-    assert.deepEqual(hits.map((hit) => hit.line), [5, 5])
+    assert.deepEqual(
+      hits.map((hit) => hit.line),
+      [5, 5]
+    )
     assert.notEqual(hits[0].column, hits[1].column)
   })
 
@@ -291,10 +418,13 @@ describe('unboundCalls', () => {
       '',
     ].join('\n')
     const calls = unboundCalls(code, COMPONENT)
-    assert.deepEqual(calls.map((call) => [call.name, call.line, call.where]), [
-      ['open', 2, SCRIPT],
-      ['close', 5, TEMPLATE],
-    ])
+    assert.deepEqual(
+      calls.map((call) => [call.name, call.line, call.where]),
+      [
+        ['open', 2, SCRIPT],
+        ['close', 5, TEMPLATE],
+      ]
+    )
   })
 })
 
@@ -308,27 +438,17 @@ describe('the pair a refactor leaves behind', () => {
   const MODULE_FILE = resolve(ROOT, MODULE_PATH)
   const COMPONENT_FILE = resolve(ROOT, COMPONENT_PATH)
 
-  // The composable a refactor leaves behind: the two functions live here, and
-  // the module hands neither of them out. `scrollToBottom` is not a browser
-  // global — calling it unbound throws. `open` is, so calling it unbound does
-  // nothing at all, which is the failure this rule exists to end.
-  const composable = [
-    'export function useScrollProbe() { return [scrollToBottom, open] }',
-    'function scrollToBottom() { window.scrollTo(0, 0) }',
-    'function open() {}',
-    '',
-  ].join('\n')
-
-  const component = (call) => [
-    '<script setup lang="ts">',
-    'const n = 1',
-    'void n',
-    '</script>',
-    '<template>',
-    `  <button @click="${call}">x</button>`,
-    '</template>',
-    '',
-  ].join('\n')
+  const component = (call) =>
+    [
+      '<script setup lang="ts">',
+      'const n = 1',
+      'void n',
+      '</script>',
+      '<template>',
+      `  <button @click="${call}">x</button>`,
+      '</template>',
+      '',
+    ].join('\n')
 
   after(() => {
     rmSync(MODULE_FILE, { force: true })
@@ -346,23 +466,48 @@ describe('the pair a refactor leaves behind', () => {
     writeFileSync(COMPONENT_FILE, componentSource)
   }
 
-  it('refuses a component calling a composable function that was never exported', () => {
-    try {
-      write(composable, component('open()'))
+  // Both shapes, each in the tree, each required to go red. The second is the
+  // one #1618 took and the first version of this rule could not see; it is
+  // planted here so that reading only the module's top-level statements can
+  // never come back unnoticed.
+  for (const [shape, source] of Object.entries(composable)) {
+    it(`refuses a component calling a composable function that was never exported (${shape})`, () => {
+      try {
+        write(source, component('open()'))
 
-      const blocked = run()
-      assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
-      // The call site, the name, where in the component it is, and the file
-      // that forgot the export — the four things a reader needs to fix it.
-      assert.match(blocked.stdout, /__globalFallbackProbe\.vue:6:19 {2}open\(\) {2}\[template\]/)
-      assert.match(blocked.stdout, /__globalFallbackProbe\.ts declares it and exports it to nobody/)
-      assert.match(blocked.stdout, /Either export that name from the module and import it here/)
-      assert.match(blocked.stdout, /total: 1 call\(s\)/)
-    } finally {
-      rmSync(MODULE_FILE, { force: true })
-      rmSync(COMPONENT_FILE, { force: true })
-    }
-  })
+        const blocked = run()
+        assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
+        // The call site, the name, where in the component it is, and the file
+        // that keeps the name to itself — the four things a reader needs to fix it.
+        assert.match(blocked.stdout, /__globalFallbackProbe\.vue:6:19 {2}open\(\) {2}\[template\]/)
+        assert.match(blocked.stdout, /__globalFallbackProbe\.ts declares it and never hands it out/)
+        assert.match(blocked.stdout, /total: 1 call\(s\)/)
+      } finally {
+        rmSync(MODULE_FILE, { force: true })
+        rmSync(COMPONENT_FILE, { force: true })
+      }
+    })
+
+    it(`accepts that pair once the name is handed out and taken (${shape})`, () => {
+      try {
+        const handedOut =
+          shape === 'module level'
+            ? source.replace('function open()', 'export function open()')
+            : source.replace('  function open() {}', '  function open() {}\n  return { open }')
+        const imported = component('open()').replace(
+          'const n = 1',
+          "import { open } from '../composables/__globalFallbackProbe'\nvoid open"
+        )
+        write(handedOut, imported)
+        const clean = run()
+        assert.equal(clean.status, 0, `${clean.stdout}${clean.stderr}`)
+        assert.match(clean.stdout, /No call falls back/)
+      } finally {
+        rmSync(MODULE_FILE, { force: true })
+        rmSync(COMPONENT_FILE, { force: true })
+      }
+    })
+  }
 
   // `window.open` is why the pre-existing checks say nothing: eslint's config
   // injects the browser globals and turns `no-undef` off for TS. This is the
@@ -386,7 +531,7 @@ describe('the pair a refactor leaves behind', () => {
 
   it('refuses a call in <script setup> too, and counts both halves', () => {
     try {
-      write(composable, component('open()').replace('const n = 1\nvoid n', 'scrollToBottom()'))
+      write(composable['inside the composable'], component('open()').replace('const n = 1\nvoid n', 'scrollToBottom()'))
 
       const blocked = run()
       assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
@@ -398,26 +543,11 @@ describe('the pair a refactor leaves behind', () => {
     }
   })
 
-  it('accepts the same pair once the export and the import are there', () => {
-    try {
-      write(
-        composable.replace('function open()', 'export function open()'),
-        component('open()').replace('const n = 1', "import { open } from '../composables/__globalFallbackProbe'\nvoid open")
-      )
-      const clean = run()
-      assert.equal(clean.status, 0, `${clean.stdout}${clean.stderr}`)
-      assert.match(clean.stdout, /No call falls back/)
-    } finally {
-      rmSync(MODULE_FILE, { force: true })
-      rmSync(COMPONENT_FILE, { force: true })
-    }
-  })
-
   // The other correct spelling: the call was always meant to be the global, so
   // it says so. A rule that refused this would be `no-undef` under another name.
   it('accepts the call once the component says `window.`', () => {
     try {
-      write(composable, component('window.open()'))
+      write(composable['module level'], component('window.open()'))
       const clean = run()
       assert.equal(clean.status, 0, `${clean.stdout}${clean.stderr}`)
     } finally {
@@ -432,7 +562,7 @@ describe('the pair a refactor leaves behind', () => {
   // the one thing a collector reads both of.
   it('reports one JSON record whose status agrees with the exit code', () => {
     try {
-      write(composable, component('open()'))
+      write(composable['module level'], component('open()'))
       const failed = run('--json')
       assert.equal(failed.status, 1, `${failed.stdout}${failed.stderr}`)
       const record = JSON.parse(failed.stdout)
@@ -446,7 +576,7 @@ describe('the pair a refactor leaves behind', () => {
       ])
       // The human report goes to stderr under --json, so a failing run still
       // names the call and the fix to whoever reads the log.
-      assert.match(failed.stderr, /__globalFallbackProbe\.ts declares it and exports it to nobody/)
+      assert.match(failed.stderr, /__globalFallbackProbe\.ts declares it and never hands it out/)
     } finally {
       rmSync(MODULE_FILE, { force: true })
       rmSync(COMPONENT_FILE, { force: true })
@@ -471,7 +601,7 @@ describe('the pair a refactor leaves behind', () => {
     ]
     try {
       for (const broken of unreadable) {
-        write(composable, broken)
+        write(composable['module level'], broken)
         const refused = run()
         assert.equal(refused.status, 2, `${refused.stdout}${refused.stderr}`)
         assert.match(refused.stderr, /could not be parsed/)

@@ -19,7 +19,8 @@
 //
 // On 2026-10-16 (#1618) `blur()` — which drops the space bar a panel was
 // holding down — moved into `src/components/panels/preview/useDesignViewport.ts`
-// without being exported. `DesignImage.vue`'s `if (!on) blur()` called
+// and was never handed back out of it: the function sits in the body of
+// `useDesignViewport`. `DesignImage.vue`'s `if (!on) blur()` called
 // `window.blur`, did nothing, and no check and no test said a word.
 //
 // WHY THE CALL, NOT EVERY IDENTIFIER. The binding that gets lost is always a
@@ -30,34 +31,48 @@
 //
 // WHY THE SAME-TREE CONDITION. A bare call is only worth reporting when some
 // module in this repo declares that name and does not hand it out — which is
-// both what makes the finding actionable (the report names the file that
-// forgot the `export`) and what keeps the rule from re-stating `no-undef` over
+// both what makes the finding actionable (the report names the file that kept
+// the name to itself) and what keeps the rule from re-stating `no-undef` over
 // every browser global. A name no module here declares is either a global the
 // author meant, or a typo in a component that never had the binding; neither
 // is the confusion this rule exists to end.
 //
-// WHY THE TEMPLATE HALF IS LOOSE ON PURPOSE. A template resolves a name that
-// is not a `<script setup>` binding through the render context, which reaches
-// props, data, methods and computed — declared in the script but not as module
-// bindings. So a name the script mentions anywhere counts as bound. Read
-// strictly instead — by what the script binds — the tree would report 2 template
-// calls on 2026-10-16: `isMine` in ChatTimeline.vue and `rowTo` in
-// TasksView.vue, each a prop of the calling component's own
-// `defineProps<{ … }>()`. The hole the allowance leaves is a props type named
-// elsewhere instead of written as a literal (21 components today); that costs
-// nothing today — the tree has 0 findings — and the same-name condition is what
-// keeps it narrow.
+// At any depth in that module, not only at its top level. The refactor this
+// rule is about declared the function inside the composable it moved to, so a
+// rule reading the module's top-level statements judged the file it was written
+// about clean — measured, not assumed: with the top-level reading only, the
+// #1618 pair above reports nothing, and the same declarations moved to module
+// level report both names. Everything is read instead, and a name is "kept to
+// itself" exactly when no `export` hands it out.
+//
+// WHY THE TEMPLATE HALF IS LOOSE, BUT NOT BLANKET. A template resolves a name
+// that is not a `<script setup>` binding through the render context, which
+// reaches props, data, methods and computed — declared in the script but not as
+// module bindings — and whatever the app registers for templates besides. So a
+// name the script mentions counts as bound. Read strictly instead — by what the
+// script binds — and the tree reports `isMine(m)` in ChatTimeline.vue and
+// `rowTo(task)` in TasksView.vue, each a function prop of the component's own
+// `defineProps<{ … }>()`.
+//
+// What a mention must not be is a string. Every literal in the script would
+// qualify, and labels, i18n keys and event lists all spell these names: a call
+// that binds nothing reads as bound whenever some string in the file happens to
+// spell it, and the rule answers "clean" to exactly the call it exists to find.
+// Excluding literals costs nothing on today's tree — 0 findings either way,
+// measured. The macros that really do bind a name for the template to call are
+// read for what they are instead (`defineProps(['open'])` — see
+// `definePropsNames`); what stays loose is a name merely mentioned.
 //
 // Note on which files are read: the two halves are one DSL read twice, so the
 // module and component globs, and the ignored spec files, are declared here
 // next to the rule rather than only in the runner.
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { parser as tsParser } from 'typescript-eslint'
 import vueParser from 'vue-eslint-parser'
+import { parser as tsParser } from 'typescript-eslint'
 
 /** Where a call can be: the template, or `<script setup>`. */
 export const TEMPLATE = 'template'
@@ -164,7 +179,7 @@ function patternNames(node, out) {
   return out
 }
 
-/** The names a top-level declaration statement declares; nothing for an erased one. */
+/** The names one declaration statement declares; nothing for an erased one. */
 function declaredNames(node) {
   const out = []
   switch (node.type) {
@@ -186,15 +201,22 @@ function declaredNames(node) {
 }
 
 /**
- * The names a module declares at its top level and never hands out: not by
- * naming them on a declaration (`export function f`), and not through a later
- * `export { f }`.
+ * The names a module declares and never hands out: not by naming them on a
+ * declaration (`export function f`), and not through a later `export { f }`.
+ *
+ * Every declaration in the module counts, at any depth — not only the ones at
+ * the top level. The refactor this rule exists for (#1618) put the function
+ * inside the composable it moved to, so `blur` sits in the body of
+ * `useDesignViewport`, not at module level; a rule that read `ast.body` alone
+ * judged that very file clean. A name inside a function is no less "a name this
+ * module keeps to itself": an `export` is still the only way any of them
+ * leaves the module.
  *
  * A default export counts as handed out — `export default function f()` is a
  * binding a caller can hold under another name. `export default f` hands out
  * the expression, so `f` itself stays internal unless a specifier names it.
  * @param {string} code the module source
- * @returns {string[]} the internal names, in declaration order
+ * @returns {string[]} the internal names, in declaration order, each once
  */
 export function internalDeclarations(code) {
   const { ast } = tsParser.parseForESLint(code, { sourceType: 'module', ecmaVersion: 'latest' })
@@ -213,10 +235,14 @@ export function internalDeclarations(code) {
       if (node.declaration?.id?.name) exported.add(node.declaration.id.name)
       continue
     }
-    internal.push(...declaredNames(node))
   }
 
-  return internal.filter((name) => !exported.has(name))
+  for (const node of walk(ast)) internal.push(...declaredNames(node))
+
+  // One module declares a name many times over once the nested scopes are read
+  // (`const host` inside five functions); the index this feeds lists a module
+  // once per name it declares.
+  return [...new Set(internal)].filter((name) => !exported.has(name))
 }
 
 /**
@@ -257,15 +283,44 @@ function* walk(node) {
  * The template half needs this because a template's render context is not the
  * module scope — see the note at the top. "The script mentions it" is what
  * this rule reads as "the component has something for the template to call".
+ *
+ * What it deliberately does not count is a string. Every literal in the script
+ * would read as a mention, and labels, i18n keys and event lists all spell
+ * these names: a call that binds nothing reads as bound whenever some string in
+ * the file happens to spell it. The runtime macros that really do bind a name
+ * for the template are read for what they are, in `definePropsNames`.
  */
 function scriptMentions(body) {
   const names = new Set()
   for (const node of walk(body)) {
     if (node.type === 'Identifier' && node.name) names.add(node.name)
-    if (node.type === 'Literal' && typeof node.value === 'string') names.add(node.value)
     if (node.type === 'TSPropertySignature' && node.key) {
       const key = node.key.name ?? node.key.value
       if (typeof key === 'string') names.add(key)
+    }
+  }
+  return names
+}
+
+/**
+ * The names `defineProps(['open'])` binds in the render context — the runtime
+ * form of the one macro whose argument names are bindings. `scriptMentions`
+ * already counts the type form, whose property keys are identifiers in the
+ * script.
+ *
+ * `defineEmits(['open'])` names an event and `defineModel('open')` names a
+ * model: neither makes `open` a name this component's template can call, so
+ * counting them would hide exactly the call this rule is for.
+ */
+function definePropsNames(body) {
+  const names = new Set()
+  for (const node of walk(body)) {
+    if (node.type !== 'CallExpression' || node.callee?.type !== 'Identifier') continue
+    if (node.callee.name !== 'defineProps') continue
+    const [first] = node.arguments ?? []
+    if (first?.type !== 'ArrayExpression') continue
+    for (const element of first.elements) {
+      if (element?.type === 'Literal' && typeof element.value === 'string') names.add(element.value)
     }
   }
   return names
@@ -367,6 +422,7 @@ export function unboundCalls(code, file) {
   if (templateBody) {
     const bound = scriptMentions(ast.body)
     for (const name of templateLocals(templateBody)) bound.add(name)
+    for (const name of definePropsNames(ast.body)) bound.add(name)
     for (const node of walk(templateBody)) {
       if (node.type !== 'CallExpression') continue
       const callee = node.callee
@@ -424,7 +480,11 @@ export function countByFile(violations) {
  * @param {{root?: string, sources?: string[], components?: string[]}} [options]
  * @returns {{definitions: Map<string, string[]>, violations: object[], unjudged: {path: string, message: string}[]}}
  */
-export function judgeTree({ root = FRONTEND_ROOT, sources = GLOBAL_FALLBACK_SOURCES, components = GLOBAL_FALLBACK_FILES } = {}) {
+export function judgeTree({
+  root = FRONTEND_ROOT,
+  sources = GLOBAL_FALLBACK_SOURCES,
+  components = GLOBAL_FALLBACK_FILES,
+} = {}) {
   const unjudged = []
   const read = (path) => {
     try {
@@ -488,14 +548,16 @@ export function formatGlobalFallbackReport(result, details = []) {
   for (const violation of details) {
     lines.push(
       `  ${violation.file}:${violation.line}:${violation.column}  ${violation.name}()  [${violation.where}]` +
-        ` — ${violation.definedIn} declares it and exports it to nobody`
+        ` — ${violation.definedIn} declares it and never hands it out`
     )
   }
   lines.push('')
-  lines.push('Either export that name from the module and import it here, or — if the')
-  lines.push('call was meant to be a browser global — say so as `window.foo()`. Left as')
-  lines.push('it is, the call reaches whatever global shares the name, or throws a')
-  lines.push('ReferenceError, and nothing between the two files says which.')
+  lines.push('Three ways out: export that name from the module and import it here; hand')
+  lines.push('it back from the composable this component calls, and take it out of the')
+  lines.push('returned object; or, if the call was meant to be a browser global, say so')
+  lines.push('as `window.foo()`. Left as it is, the call reaches whatever global shares')
+  lines.push('the name, or throws a ReferenceError, and nothing between the two files')
+  lines.push('says which.')
   lines.push('The rule and its messages live in scripts/global-fallback-ratchet-core.mjs.')
   lines.push('')
   lines.push(`total: ${result.currentTotal} call(s)`)

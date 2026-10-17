@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A component calls a bare name it binds nothing for, and a module in this tree
-// declares that name and exports it to nobody: the call does not fail — it
+// declares that name and never hands it out: the call does not fail — it
 // reaches a browser global of the same name and does nothing. Why no other
 // check in this repo sees it is the first half of
 // global-fallback-ratchet-core.mjs.
@@ -21,7 +21,7 @@
 //
 // The rule and the parsing live in global-fallback-ratchet-core.mjs; the cases
 // that must fire and the ones that must not are in
-// test-global-fallback-ratchet.mjs, which `pnpm run test:ratchet` runs.
+// global-fallback-ratchet.test.mjs, which `pnpm run test:ratchet` runs.
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -29,8 +29,10 @@ import { compare, countByFile, formatGlobalFallbackReport, judgeTree } from './g
 import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-// The id the snapshot collector and this check's own CI step know it by. Only
-// reached in --json mode; the human run is this file and nothing else.
+// The id a `--json` record carries, so a collector added later can tell this
+// record from the ones beside it. Nothing reads it today — the snapshot
+// collector has no entry for it and the CI step runs the human form — but a
+// record without one would be the odd one out among the gates in this directory.
 const ID = 'fe-global-fallback'
 
 /** Every value after `name`, up to the next flag: `--files a.vue b.vue`. */

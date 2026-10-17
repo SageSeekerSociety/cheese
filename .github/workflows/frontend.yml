@@ -340,8 +340,9 @@ jobs:
       # silence. Read-only. Its tests, including the plant that requires this
       # command to fail on a composable that keeps a function to itself and a
       # component that calls it by bare name, are in
-      # scripts/test-global-fallback-ratchet.mjs, run by the Ratchet unit tests
-      # step below. Measured over the tree on one work-machine sandbox: ~34 s.
+      # scripts/global-fallback-ratchet.test.mjs, run by the Ratchet unit tests
+      # step below. Roughly 40 s over the tree, and it moves with the machine:
+      # the same tree took 34 s on one sandbox and 47 s on another.
       - name: Global fallbacks (a bare call to a module's own name)
         run: pnpm run lint:global-fallback
 

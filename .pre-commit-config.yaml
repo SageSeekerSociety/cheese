@@ -201,13 +201,13 @@ repos:
       # modules on 2026-10-16, so there is nothing to freeze and no baseline to
       # edit — a baseline's one use is to let a finding stand, and this rule is
       # about a call that fails in silence. Read-only; its tests are
-      # scripts/test-global-fallback-ratchet.mjs in `pnpm run test:ratchet`.
+      # scripts/global-fallback-ratchet.test.mjs in `pnpm run test:ratchet`.
       - id: global-fallback
         name: bare calls to a name a module keeps to itself (headless parser)
         entry: bash -c 'cd frontend && pnpm run lint:global-fallback'
         language: system
         pass_filenames: false
-        files: ^frontend/(src/.*\.(vue|ts)|package\.json|scripts/(check-global-fallback-ratchet|global-fallback-ratchet-core|test-global-fallback-ratchet|tsc-ratchet-core|ratchet-report)\.mjs)$
+        files: ^frontend/(src/.*\.(vue|ts)|package\.json|scripts/(check-global-fallback-ratchet|global-fallback-ratchet-core|global-fallback-ratchet\.test|tsc-ratchet-core|ratchet-report)\.mjs)$
 
       # Every page the router reaches and every SFC under
       # src/components/panels/ has to render with no backend, no route and no
