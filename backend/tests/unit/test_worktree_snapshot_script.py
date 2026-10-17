@@ -446,6 +446,8 @@ def test_save_says_the_set_aside_backup_will_not_be_the_latest_one(
     assert mark.exists(), "这次同步没有跑"
     assert ".cheese/recovered" in result.stderr
     assert "那份快照里的改动不会" in result.stderr
+    # 同步前就看到的目录，不能又说成是同步时放下的。
+    assert "同步时平台把一份快照原样放到了" not in result.stderr
     assert "要自己取" in out
 
 
