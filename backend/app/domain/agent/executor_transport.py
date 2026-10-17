@@ -1200,7 +1200,7 @@ class RemoteClient:
         ):
             try:
                 return self._call(method, params, admitted=True)
-            except Exception:  # noqa: BLE001 — retried below on new hands
+            except Exception:  # Any failure: retried below on new hands.
                 self.config.pop("admitted_at", None)
         return self._call(method, params, abandoned=abandoned, preparing=preparing)
 

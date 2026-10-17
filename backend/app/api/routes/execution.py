@@ -353,7 +353,7 @@ async def _distrust(
         return
     try:
         await session_work.distrust(db, session_id, lease.get("generation"))
-    except Exception:  # noqa: BLE001 — see `_settle`: the call's outcome stands
+    except Exception:  # See `_settle`: the call's outcome stands.
         logger.exception("hands of session %s not marked for a check", session_id)
 
 
