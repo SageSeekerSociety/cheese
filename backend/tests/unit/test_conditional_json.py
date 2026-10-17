@@ -6,7 +6,9 @@ envelope held the loop for the full encode — 227 ms on the 60,000-row case
 """
 
 import asyncio
+import gc
 import hashlib
+import itertools
 import json
 
 import pytest
@@ -91,7 +93,7 @@ async def test_no_more_than_the_threshold_of_chunks_run_between_two_yields(
     seen.append(produced)
 
     assert produced > 10 * conditional.YIELD_EVERY_CHUNKS
-    gaps = [b - a for a, b in zip(seen, seen[1:])]
+    gaps = [b - a for a, b in itertools.pairwise(seen)]
     assert max(gaps) <= conditional.YIELD_EVERY_CHUNKS
 
 
@@ -100,9 +102,13 @@ async def test_the_loop_lag_probe_sees_no_long_stall_while_encoding() -> None:
     data = _rows(60_000)
     loop_lag._worst = 0.0
     loop_lag._recent = 0.0
-    probe = asyncio.create_task(
-        loop_lag.watch_loop_lag(interval_s=0.002, stall_s=10.0)
-    )
+    # The collector is held off for the measurement: a full collection over the
+    # 60,000 rows this test just built is itself ~100 ms on a CI box, and it lands
+    # wherever the allocation count tips over. That pause is the heap's, not the
+    # encoder's, and would make this test say nothing about the yields.
+    gc.collect()
+    gc.disable()
+    probe = asyncio.create_task(loop_lag.watch_loop_lag(interval_s=0.002, stall_s=10.0))
     try:
         await asyncio.sleep(0.01)
         await conditional.conditional_json(data, None)
@@ -111,6 +117,7 @@ async def test_the_loop_lag_probe_sees_no_long_stall_while_encoding() -> None:
         worst_ms = loop_lag.lag_status()["worst_ms"]
     finally:
         probe.cancel()
+        gc.enable()
         loop_lag._worst = 0.0
         loop_lag._recent = 0.0
     assert worst_ms < 50, worst_ms
