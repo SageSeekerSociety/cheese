@@ -497,26 +497,70 @@ def _constants_at(
 _SELF_TEST_ARGV = ["guard.py", "--self-test"]
 
 
+def _name_is_reassigned(scope: ast.AST, name: str) -> bool:
+    """True when this function's own body assigns `name`, nested functions aside.
+
+    A parameter is an `ast.arg`, not a stored `ast.Name`, so this finds only the
+    rebindings: `argv = argv[1:]`, an annotated or augmented assignment, a
+    walrus, a `for argv in ...`. Those change what the name holds, and the
+    entry call alone cannot say what is left.
+    """
+    for child in ast.iter_child_nodes(scope):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        if isinstance(child, ast.Name) and child.id == name and isinstance(child.ctx, ast.Store):
+            return True
+        if _name_is_reassigned(child, name):
+            return True
+    return False
+
+
+def _argv_from_argument(node: ast.expr) -> str | None:
+    """`full` for `sys.argv`, `trimmed` for `sys.argv[1:]`, `None` for anything else."""
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr == "argv"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "sys"
+    ):
+        return "full"
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "argv"
+        and isinstance(node.value.value, ast.Name)
+        and node.value.value.id == "sys"
+        and isinstance(node.slice, ast.Slice)
+        and node.slice.upper is None
+        and node.slice.step is None
+        and isinstance(node.slice.lower, ast.Constant)
+        and node.slice.lower.value == 1
+    ):
+        return "trimmed"
+    return None
+
+
 def _self_test_argv(tree: ast.Module) -> list[str] | None:
     """The argv the guard's entry point receives from the `--self-test` command.
 
     Most guards hand `main` the whole `sys.argv`. `main(sys.argv[1:])` is the
-    other common idiom and leaves just `["--self-test"]`; a guard that rebinds
-    `argv = argv[1:]` inside itself trims whatever it was given. Reading the
-    guard path into a trimmed argv would make `len(argv) == 1` look false and
-    drop a block the self-test really runs, so an argv this function cannot pin
-    down is `None`: every condition on it stays unsettled, and the block stays
-    on the path instead of a finding being invented from it.
+    other common idiom and leaves just `["--self-test"]`. The reading is only
+    usable when the entry call can be identified: a helper that also calls
+    `main` may be the one this function finds, `main()` hands over no argv at
+    all, and a `main` that reassigns `argv` replaces whatever it was given.
+    Each of those comes back `None`, and the name `argv` then stays unsettled —
+    an unsettled gate keeps the block on the path instead of inventing a
+    finding from it. `sys.argv` is not affected: it is the process command
+    line, the same two words whatever the entry call passes.
     """
     nodes = list(ast.walk(tree))
-    trimmed = any(
-        isinstance(node, ast.Assign)
-        and isinstance(node.value, ast.Subscript)
-        and any(
-            isinstance(target, ast.Name) and target.id == "argv" for target in node.targets
-        )
+    if any(
+        _name_is_reassigned(node, "argv")
         for node in nodes
-    )
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "main"
+    ):
+        return None
+    shapes: set[str] = set()
     for node in nodes:
         if not (
             isinstance(node, ast.Call)
@@ -524,35 +568,13 @@ def _self_test_argv(tree: ast.Module) -> list[str] | None:
             and node.func.id == "main"
         ):
             continue
-        if trimmed:
-            return None
-        if not node.args:
-            return ["--self-test"]
-        argument = node.args[0]
-        if (
-            isinstance(argument, ast.Attribute)
-            and argument.attr == "argv"
-            and isinstance(argument.value, ast.Name)
-            and argument.value.id == "sys"
-        ):
-            return _SELF_TEST_ARGV
-        if (
-            isinstance(argument, ast.Subscript)
-            and isinstance(argument.value, ast.Attribute)
-            and argument.value.attr == "argv"
-            and isinstance(argument.value.value, ast.Name)
-            and argument.value.value.id == "sys"
-            and isinstance(argument.slice, ast.Slice)
-            and argument.slice.upper is None
-            and argument.slice.step is None
-            and isinstance(argument.slice.lower, ast.Constant)
-            and argument.slice.lower.value == 1
-        ):
-            return ["--self-test"]
+        keyword = next((word.value for word in node.keywords if word.arg == "argv"), None)
+        argument = node.args[0] if node.args else keyword
+        shapes.add(_argv_from_argument(argument) if argument is not None else "unknown")
+    if len(shapes) != 1:
         return None
-    if trimmed:
-        return None
-    return _SELF_TEST_ARGV
+    return {"full": _SELF_TEST_ARGV, "trimmed": ["--self-test"]}.get(shapes.pop())
+
 
 _UNKNOWN = object()
 
@@ -560,10 +582,10 @@ _UNKNOWN = object()
 def _settled(node: ast.AST, argv: list[str] | None = _SELF_TEST_ARGV):
     """The value of a small expression under the `--self-test` invocation.
 
-    Only what that invocation fixes is known: the command line it passes and
-    the flag. `argv` is that command line as the guard's own call site trims
-    it; `None` means the guard's entry point cannot be read, so anything
-    mentioning argv stays unknown. Anything else — a file read, a platform
+    Only what that invocation fixes is known: the command line and the flag.
+    `argv` is that command line as the guard's own entry call trims it, and
+    `None` means the call could not be pinned down, so the name stays unknown;
+    `sys.argv` is the process command line and settles either way. Anything else — a file read, a platform
     check, a helper call — is `_UNKNOWN`, and a block guarded by it cannot be
     shown to run.
     """
@@ -577,8 +599,9 @@ def _settled(node: ast.AST, argv: list[str] | None = _SELF_TEST_ARGV):
         and isinstance(node.value, ast.Name)
         and node.value.id == "sys"
     ):
-        # The same command line: `main(sys.argv)` hands `argv` its own value.
-        return _UNKNOWN if argv is None else argv
+        # The process command line, whatever the entry call hands the function:
+        # `main(sys.argv[1:])` trims the parameter, not `sys.argv`.
+        return _SELF_TEST_ARGV
     if isinstance(node, (ast.List, ast.Tuple)):
         items = [_settled(item, argv) for item in node.elts]
         if any(item is _UNKNOWN for item in items):
@@ -1866,6 +1889,8 @@ def self_test() -> int:
         "trimmed-argv-handoff-guard.py": "unverified",
         "trimmed-argv-false-gate-guard.py": "self-test-does-not-bite",
         "rebound-argv-guard.py": "unverified",
+        "sys-argv-flat-guard.py": "unverified",
+        "unrelated-rebind-guard.py": "self-test-does-not-bite",
         "elif-exit-handler-guard.py": "unverified",
         "sys-argv-branch-guard.py": "self-test-does-not-bite",
         "gated-handler-arm-guard.py": "unverified",
@@ -1894,7 +1919,7 @@ def self_test() -> int:
         "被捕获的 raise 不算离开、sys.exit 才算；分支落在 else、match case 里照样跟下去，"
         "落在 with、finally 和已定的条件里才算离开；条件判为假时，分支和它后面的处理器都不在路上；"
         "argv 按守卫自己交给入口点的形态读，`main(sys.argv[1:])` 只留一个词，"
-        "裁剪后仍判为假的门照样算离开；"
+        "`sys.argv` 不受影响；裁剪后仍判为假的门照样算离开；"
         "被 except SystemExit 吞掉的退出不算离开、"
         "处理器再抛出才算；带注解的模块常量也读得出；读的是本函数里的局部常量；"
         "退出落进处理器时处理器的 return 也在路上；裸的 exit 调用同样算离开；"
@@ -3910,6 +3935,90 @@ def main(argv):
             sys.exit(1)
         except SystemExit:
             return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "sys-argv-flat-guard.py": '''#!/usr/bin/env python3
+"""The entry call trims `argv`, but the gate reads `sys.argv`.
+
+`main(sys.argv[1:])` leaves one word in the parameter while `sys.argv` is still
+the whole command line, so `len(sys.argv) > 1` holds, the exit runs, and the
+handler hands off to the sibling. Reading `sys.argv` through the trimmed
+parameter calls the gate false, drops the spawn and reports a finding against a
+guard that does measure something.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(sys.argv) > 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+''',
+    "unrelated-rebind-guard.py": '''#!/usr/bin/env python3
+"""An unrelated function rebinds a local named `argv`, and the gate is false.
+
+The entry call hands over the whole command line, so `len(argv) == 1` is false
+and the self-test never measures anything: the finding stands. A rebinding of
+the same name inside a helper says nothing about `main`'s argv, and treating it
+as unreadable would excuse the finding.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def helper(items):
+    argv = items[1:]
+    return argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) == 1:
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    problems = violations_in(argv[1] if len(argv) > 1 else ".")
+    if "--self-test" in argv:
+        print("PASS: 什么都没测")
+        return 0
+    for name in problems:
+        print(f"{name}: 修法：删掉它", file=sys.stderr)
+    if problems:
+        return 1
     print("PASS: 什么都没测")
     return 0
 

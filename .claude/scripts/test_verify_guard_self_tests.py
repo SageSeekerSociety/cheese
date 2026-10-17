@@ -1979,6 +1979,173 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 '''
 
+#: The entry call trims the parameter, but the gate reads the process command
+#: line: `sys.argv` keeps both words, so the gate holds and the hand-off runs.
+PY_SYS_ARGV_FLAT = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(sys.argv) > 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
+#: A helper rebinds its own `argv`; the entry call hands over everything, so
+#: the gate on `main`'s argv really is false and the finding must stand.
+PY_UNRELATED_REBIND = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def helper(items):
+    argv = items[1:]
+    return argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) == 1:
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    problems = violations_in(argv[1] if len(argv) > 1 else ".")
+    if "--self-test" in argv:
+        print("PASS: 什么都没测")
+        return 0
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: An annotated assignment rebinds `argv` just as a plain one does; the
+#: annotation is not an `ast.Assign` node, so a detector that only knows plain
+#: assignments would read the full command line here.
+PY_ANNOTATED_REBIND = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    argv: list[str] = argv[1:]
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The entry call passes the command line as a keyword argument; it is the same
+#: full argv as `main(sys.argv)`, so the gate on it is false during a self-test.
+PY_KEYWORD_ENTRY = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(argv=sys.argv))
+'''
+
+#: Two call sites disagree: the entry trims, a helper passes the command line
+#: whole. Taking the helper's shape alone would judge the gate false and bless
+#: the hand-off as a no-op; neither call may settle it.
+PY_TWO_ENTRY_SHAPES = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+def run():
+    main(sys.argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
 PY_UNREADABLE_COUNT = '''#!/usr/bin/env python3
 import subprocess
 import sys
@@ -2733,10 +2900,58 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(guard["status"], "unverified", guard)
         self.assertIn("测试文件", guard["detail"])
 
+    def test_sys_argv_is_not_the_trimmed_parameter(self) -> None:
+        """`main(sys.argv[1:])` trims the parameter; `sys.argv` keeps both words."""
+        code, guard, output = self._only(
+            {"flatargv.py": PY_SYS_ARGV_FLAT},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_rebinding_in_another_function_does_not_excuse_the_gate(self) -> None:
+        """Only `main`'s own rebinding makes its argv unreadable."""
+        code, guard, output = self._only(
+            {"unrelated.py": PY_UNRELATED_REBIND},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
     def test_an_argv_the_guard_trims_itself_keeps_the_hand_off(self) -> None:
         """`argv = argv[1:]` inside `main`: the call site alone cannot settle it."""
         code, guard, output = self._only(
             {"rebound.py": PY_REBOUND_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_an_annotated_assignment_is_a_rebinding_too(self) -> None:
+        """`argv: list[str] = ...` stores the name even though it is not `ast.Assign`."""
+        code, guard, output = self._only(
+            {"annotated.py": PY_ANNOTATED_REBIND},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_keyword_entry_call_is_read_like_a_positional_one(self) -> None:
+        """`main(argv=sys.argv)` hands over the full command line, so the gate is false."""
+        code, guard, output = self._only(
+            {"kentry.py": PY_KEYWORD_ENTRY},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_call_sites_that_disagree_leave_the_argv_unsettled(self) -> None:
+        """One call trims and one does not; taking either alone would invent an answer."""
+        code, guard, output = self._only(
+            {"shapes.py": PY_TWO_ENTRY_SHAPES},
             {"test_counted.py": ELSE_SIBLING},
         )
         self.assertEqual(code, 2, output)
