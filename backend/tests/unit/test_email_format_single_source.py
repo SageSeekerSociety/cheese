@@ -6,9 +6,13 @@ shared rule (a length cap, a tighter domain) leaves the copy accepting what the
 rest reject: an address can be registered that signing in then refuses, and a
 recovery mail can go to an address the other entrances no longer take.
 
-The guard is object identity, not an equal pattern: a second compile is exactly
-what it exists to catch, even if its source happens to match today. A static
-scan beside it catches a copy made under any other name.
+Two checks, because neither alone covers the case: a copy whose source still
+equals the shared one passes the identity check (``re.compile`` hands back the
+same object for an identical source) and is caught by the scan, and a copy whose
+source has since drifted fails identity but no longer spells the shared literal,
+so the scan misses it. That is why the scan's literal is read from the shared
+object rather than written out here — a third copy of the rule would retire
+itself the moment the rule changed.
 """
 
 import ast
@@ -21,8 +25,8 @@ from app.core import email as core_email
 APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 HOME = APP_ROOT / "core" / "email.py"
 
-# What a copy would be made of.
-PATTERN = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+# What a copy would be made of: the shared rule itself, not a second copy of it.
+PATTERN = core_email.EMAIL_FORMAT.pattern
 
 
 def spelled_out(source: str) -> list[int]:
@@ -45,7 +49,11 @@ def test_no_other_module_spells_the_pattern_out() -> None:
     offenders = {
         path.relative_to(APP_ROOT).as_posix(): lines
         for path in sorted(APP_ROOT.rglob("*.py"))
-        if path != HOME and (lines := spelled_out(path.read_text()))
+        # An address pattern cannot name an address without an "@"; skip the
+        # rest of the tree rather than parsing it.
+        if path != HOME
+        and "@" in (text := path.read_text())
+        and (lines := spelled_out(text))
     }
     assert offenders == {}, (
         "Import EMAIL_FORMAT from app.core.email instead of compiling the "
