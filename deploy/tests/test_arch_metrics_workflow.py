@@ -26,41 +26,6 @@ WORKFLOW = ROOT / ".github/workflows/arch-metrics.yml"
 BASH = shutil.which("bash") or "/bin/bash"
 
 
-def field_values(field, limit):
-    """The values a cron field fires at, whatever shape it is written in.
-
-    `*`, `*/N`, `a-b`, `a-b/N` and comma lists all name a set of values; a
-    schedule is a frequency, so the test asks how often it fires rather than
-    which spelling was chosen.
-    """
-    values = set()
-    for part in field.split(","):
-        if part == "*":
-            values.update(range(limit))
-        elif part.startswith("*/"):
-            values.update(range(0, limit, int(part[2:])))
-        elif "-" in part:
-            span, _, step = part.partition("/")
-            low, _, high = span.partition("-")
-            values.update(range(int(low), int(high) + 1, int(step or 1)))
-        else:
-            values.add(int(part))
-    return values
-
-
-def collections_per_day(cron):
-    """How often a five-field cron fires on a day it runs on.
-
-    A cron restricted to one weekday fires on that day and no other, so it is
-    zero here: the weekly schedule this workflow used to have must not read as
-    eight collections because its hour field happens to be a frequency.
-    """
-    minute, hour, day, month, weekday = cron.split()
-    if day != "*" or month != "*" or weekday != "*":
-        return 0
-    return len(field_values(minute, 60)) * len(field_values(hour, 24))
-
-
 # Stands in for the collector: writes a snapshot only when asked, then exits
 # with whatever the case under test needs. Nothing here reads the repository.
 STUB = """\
@@ -98,24 +63,22 @@ class RatchetCollectionTest(unittest.TestCase):
             if step.get("with", {}).get("name") == "ratchet-snapshot"
         )
 
-    def test_something_runs_this_workflow(self):
-        """Every other test here reads a step, so a `run:` body could be perfect
-        and the series still stop receiving points: a trigger that never fires is
-        a collection nobody makes. This is the case that has to be red when the
-        `on:` block is emptied or its schedule lost."""
-        self.assertTrue(self.triggers, "the workflow has no trigger at all")
-        schedule = self.triggers.get("schedule")
-        self.assertTrue(schedule, "no schedule: nothing collects on a clock")
-        crons = [entry["cron"] for entry in schedule]
-        # Four collections a day is the floor: at that rate the page's 60 points
-        # still cover 15 days, and a weekly cron would put one point on the
-        # series per week whatever the job does.
-        self.assertTrue(
-            any(
-                len(cron.split()) == 5 and collections_per_day(cron) >= 4
-                for cron in crons
-            ),
-            f"no schedule that collects at least four times a day among {crons}",
+    def test_the_collection_cadence_is_three_hourly_on_main(self):
+        """Every other test here reads a step of the job, so the `on:` block is
+        the part nothing else guards: replacing it with `on: {}` leaves them all
+        green while the snapshot series silently stops receiving points.
+
+        The cadence is pinned rather than described in the abstract. It is a
+        decision — the page's 60 points are 7.5 days at one collection per three
+        hours, and 53.8 job minutes per three-hour window at one per merge is
+        what this trigger replaced — so a different cadence is a different
+        decision and updates this test with it.
+        """
+        self.assertIn("schedule", self.triggers, "no schedule: nothing collects")
+        self.assertEqual(
+            [entry["cron"] for entry in self.triggers["schedule"]],
+            ["23 */3 * * *"],
+            "the collection cadence changed; if that was intended, change this test",
         )
         self.assertIn(
             "workflow_dispatch",
