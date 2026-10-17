@@ -325,8 +325,9 @@ def _sync_by_hand(work, *args):
 
 def test_a_sync_by_hand_after_the_commits_own_is_done_without_asking_anyone(device):
     """Agents often run `cheese sync` right after `git commit`, whose hook has
-    just delivered the commit. With nothing new it is done at once: no call to
-    the platform, and nothing to say."""
+    just delivered the commit. With nothing new it is done once the platform
+    says the task is still on that branch: no backup asked after, and nothing
+    to say."""
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
@@ -341,7 +342,52 @@ def test_a_sync_by_hand_after_the_commits_own_is_done_without_asking_anyone(devi
     done = _sync_by_hand(work)
 
     assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
-    assert not (home / "requests.log").exists()
+    assert (home / "requests.log").read_text().splitlines() == [
+        f"GET /projects/{os.environ['CHEESE_PROJECT']}/git/tasks/{task}"
+    ]
+
+
+def test_a_sync_by_hand_still_restores_a_snapshot_waiting_for_its_checkout(device):
+    """A replaced sandbox's checkout, clean and at its branch's tip, may still
+    be owed the work the platform's snapshot holds: a sync asks for it."""
+    cli, tasks, _, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    admin = Path(git(work, "rev-parse", "--absolute-git-dir"))
+    (admin / cli._RESTORE_PENDING).write_text("")
+    (home / "requests.log").unlink(missing_ok=True)
+
+    done = _sync_by_hand(work, "--task", task)
+
+    assert done.returncode == 0, done.stderr
+    assert f"/git/tasks/{task}/snapshots/latest" in (home / "requests.log").read_text()
+
+
+def test_a_sync_by_hand_after_a_step_landed_delivers_on_the_next_branch(
+    device, tmp_path
+):
+    """The hand-off (`cheese_accept_request`) syncs the task this way. A
+    checkout whose every commit is on the branch of a step that has since
+    landed still has work for the next one: the sync carries it over and
+    delivers it there."""
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    info = tasks[task]
+    work = cli._task_worktree(task)
+    (work / "same.txt").write_text("step one\n")
+    git(work, "add", "same.txt")
+    git(work, "commit", "-m", "feat: step one")
+    earlier = info["branch"]
+    _land(remote, tmp_path, info, 1)
+    _commit(work, "later.txt", "step two\n")
+    git(work, "push", "-q", "origin", f"HEAD:refs/heads/{earlier}")
+    git(work, "fetch", "-q", "origin", f"{earlier}:refs/remotes/origin/{earlier}")
+
+    done = _sync_by_hand(work, "--task", task)
+
+    assert done.returncode == 0, done.stderr
+    assert git(work, "symbolic-ref", "--short", "HEAD") == info["branch"]
+    assert git(remote, "log", "-1", "--format=%s", info["branch"]) == "edit later.txt"
 
 
 @pytest.mark.parametrize("left", ["a commit not pushed", "a file not committed"])

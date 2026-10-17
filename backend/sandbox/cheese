@@ -4824,17 +4824,27 @@ def _has_work_to_sync(worktree: Path) -> bool:
         return True
 
 
-def _synced_already(worktree: Path) -> bool:
+def _synced_already(task_id: str) -> bool:
     """Whether the task's checkout here has nothing a sync would deliver or
-    back up (`_has_work_to_sync`), and no platform snapshot still waiting to
-    come back into it, which a sync would try to restore."""
+    back up (`_has_work_to_sync`), no platform snapshot still waiting to come
+    back into it, and is on the task's current branch.
+
+    The branch is the platform's to say: once a step lands the task moves on
+    to a new one, and the full sync carries the checkout over to it
+    (`_task_worktree`) and delivers there. One call, and no forge probe."""
+    worktree = _task_root() / task_id
     if not (worktree / ".git").exists() or _has_work_to_sync(worktree):
         return False
     try:
         admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
+        if (admin / _RESTORE_PENDING).exists():
+            return False
+        branch = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
     except RuntimeError:
         return False
-    return not (admin / _RESTORE_PENDING).exists()
+    project = _need("CHEESE_PROJECT", PROJECT)
+    data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
+    return data["closed"] or data["branch"] == branch
 
 
 def _sync_all_tasks() -> None:
@@ -5522,9 +5532,9 @@ def main() -> None:
             # Run by hand right after a commit, whose own hook has just synced
             # it, this used to ask the platform and probe the forge again to
             # find nothing to do (dev, 10-12..10-17: 169 such calls, 5.2 s at
-            # the median). A checkout with nothing to deliver or back up is
-            # done as `sync --all` finds it done.
-            if not _synced_already(_task_root() / task):
+            # the median). A checkout on the task's branch with nothing to
+            # deliver or back up is done after asking only for that branch.
+            if not _synced_already(task):
                 _print_left_out(task, _sync_task(task))
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
