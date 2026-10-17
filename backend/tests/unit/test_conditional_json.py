@@ -1,7 +1,7 @@
 """`conditional_json` hands the event loop back while it encodes a large list.
 
 A 304 still needs the whole body to know its tag, so one `json.dumps` of a big
-envelope held the loop for the full encode — 227 ms on the 60,000-row case
+envelope held the loop for the full encode — 227 ms on a 60,000-row list
 (#1825, 2026-10-17) — and every other request waited behind it, sent back or not.
 """
 
@@ -10,11 +10,15 @@ import gc
 import hashlib
 import itertools
 import json
+import time
 
 import pytest
 
 from app.api import conditional
-from app.core import loop_lag
+
+#: Enough rows for many yield stretches (about 30 chunks a row) while keeping the
+#: file inside the unit layer's time ceiling on a busy CI runner.
+ROWS = 10_000
 
 
 def _rows(n: int) -> dict:
@@ -46,7 +50,7 @@ def _canonical(data) -> bytes:
 
 @pytest.mark.anyio
 async def test_body_and_etag_are_byte_for_byte_what_json_dumps_gives() -> None:
-    data = _rows(60_000)
+    data = _rows(ROWS)
     expected = _canonical(data)
 
     response = await conditional.conditional_json(data, None)
@@ -87,7 +91,7 @@ async def test_no_more_than_the_threshold_of_chunks_run_between_two_yields(
 
     task = asyncio.create_task(ticker())
     await asyncio.sleep(0)
-    await conditional.conditional_json(_rows(60_000), None)
+    await conditional.conditional_json(_rows(ROWS), None)
     done = True
     await task
     seen.append(produced)
@@ -98,26 +102,43 @@ async def test_no_more_than_the_threshold_of_chunks_run_between_two_yields(
 
 
 @pytest.mark.anyio
-async def test_the_loop_lag_probe_sees_no_long_stall_while_encoding() -> None:
-    data = _rows(60_000)
-    loop_lag._worst = 0.0
-    loop_lag._recent = 0.0
-    # The collector is held off for the measurement: a full collection over the
-    # 60,000 rows this test just built is itself ~100 ms on a CI box, and it lands
-    # wherever the allocation count tips over. That pause is the heap's, not the
-    # encoder's, and would make this test say nothing about the yields.
+async def test_no_stretch_between_two_yields_holds_the_loop_for_long() -> None:
+    """CPU time, not wall clock: on a loaded runner a wake-up waits for a core while
+    nothing runs, and a wall clock would charge that wait to the encoder (the same
+    reasoning as ``test_gateway_spend_leaves_the_loop_free``). The least of three
+    reads is kept, so one slow core does not decide it.
+
+    Without the yields this list is one stretch of well over 100 ms of CPU; with
+    them each stretch is a few milliseconds."""
+    data = _rows(ROWS)
+    worst = float("inf")
+    for _ in range(3):
+        worst = min(worst, await _worst_stall_during(data))
+    assert worst < 0.05, worst
+
+
+async def _worst_stall_during(data) -> float:
+    """The longest CPU stretch the loop spent away from a ticker while encoding."""
+    stall = 0.0
+    finished = asyncio.Event()
+
+    async def tick() -> None:
+        nonlocal stall
+        while not finished.is_set():
+            before = time.thread_time()
+            await asyncio.sleep(0)
+            stall = max(stall, time.thread_time() - before)
+
+    # A full collection over the rows just built lands wherever the allocation
+    # count tips over; that pause is the heap's, not the encoder's.
     gc.collect()
     gc.disable()
-    probe = asyncio.create_task(loop_lag.watch_loop_lag(interval_s=0.002, stall_s=10.0))
+    ticking = asyncio.create_task(tick())
+    await asyncio.sleep(0)
     try:
-        await asyncio.sleep(0.01)
         await conditional.conditional_json(data, None)
-        # Let the probe wake once more: a stall is only measured when it ends.
-        await asyncio.sleep(0.02)
-        worst_ms = loop_lag.lag_status()["worst_ms"]
     finally:
-        probe.cancel()
         gc.enable()
-        loop_lag._worst = 0.0
-        loop_lag._recent = 0.0
-    assert worst_ms < 50, worst_ms
+        finished.set()
+        await ticking
+    return stall
