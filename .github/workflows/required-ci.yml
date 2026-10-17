@@ -66,6 +66,7 @@ jobs:
       remote: ${{ steps.scope.outputs.remote }}
       cifast: ${{ steps.scope.outputs.cifast }}
       tier: ${{ steps.scope.outputs.tier }}
+      branch_heavy: ${{ steps.scope.outputs.branch_heavy }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Only the cheap selection/aggregation self-test runs here: every product
@@ -290,6 +291,8 @@ jobs:
     needs: scope
     if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.backend == 'true'
     uses: ./.github/workflows/test.yml
+    with:
+      integration: ${{ needs.scope.outputs.branch_heavy == 'true' }}
 
   # ci-fast's black-box tests are their own suite: they used to run inside
   # scope, which put their ~65–121s on the serial path of every Required run.
