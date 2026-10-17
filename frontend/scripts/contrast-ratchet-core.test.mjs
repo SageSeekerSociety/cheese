@@ -493,6 +493,31 @@ describe('the --faint rung', () => {
     assert.match(sibling, /cannot read/)
     assert.doesNotMatch(sibling, /Do not deepen the token/)
   })
+
+  it('says it once where a key is below its floor and partly unreadable', () => {
+    // The readable instance is below its floor and a sibling of the same
+    // selector sits on a picture, so compare() reports the key under both
+    // headings. Only the first is a contrast failure: repainting the words as
+    // the fix says leaves the gate red, which is what the second heading is
+    // about.
+    const report = formatContrastReport(compare({}, withHidden(1, { faint: true })))
+    const unmeasurable = report.indexOf('Runs the check cannot measure:')
+    assert.ok(unmeasurable > -1, 'the key is also reported as one the check cannot measure')
+    assert.match(report.slice(0, unmeasurable), /Do not deepen the token/)
+    assert.doesNotMatch(report.slice(unmeasurable), /Do not deepen the token/)
+  })
+
+  it('hands a key reported only for the instance it cannot read no colour fix', () => {
+    // Frozen at the ratio it still measures, and an instance of the key has
+    // since appeared on a gradient. Nothing left in the report is a contrast
+    // failure, so there is nothing for a colour fix to answer.
+    const result = compare(frozen(4.33), withHidden(1, { faint: true }))
+    assert.equal(result.added.length + result.worse.length, 0)
+    const report = formatContrastReport(result)
+    assert.match(report, /Runs the check cannot measure:/)
+    assert.match(report, /cannot read/)
+    assert.doesNotMatch(report, /Do not deepen the token/)
+  })
 })
 
 describe('tightenedBaseline', () => {

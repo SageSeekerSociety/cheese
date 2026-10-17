@@ -345,7 +345,7 @@ const FAINT_FIX = [
  */
 export function formatContrastReport(result) {
   const lines = []
-  const detail = ({ key, was, run }) => {
+  const detail = ({ key, was, run }, answerable) => {
     const sample = run ? run.text : was && was.sample
     const where = run ? `${run.selector}${run.pseudo || ''} "${sample}"` : key
     const measured = run
@@ -355,21 +355,21 @@ export function formatContrastReport(result) {
       : ''
     const from = was && typeof was.ratio === 'number' ? ` (baseline froze ${was.ratio}:1)` : ''
     const blind = run && run.unreadable ? `, and ${run.unreadable} instance(s) of it the walker cannot read` : ''
-    // Only where there is a ratio below its floor to answer for: a tagged run
-    // the walker cannot measure, or one reported because a sibling of the same
-    // selector sits on a picture, is not a contrast failure and gets no colour
-    // fix.
-    const faint = run && run.faint && !run.unjudged && run.ratio < run.need ? FAINT_FIX : ''
+    // Only where the run is reported for its own ratio. Under "the check cannot
+    // measure" a tagged run is there for the instances the ratio does not speak
+    // for — the run itself, or a sibling of the same selector on a picture — and
+    // repainting the text is not the answer to that: it leaves the gate red.
+    const faint = answerable && run && run.faint && !run.unjudged && run.ratio < run.need ? FAINT_FIX : ''
     return `  ${key}\n    ${where}${measured}${blind}${from}${faint}`
   }
-  for (const [title, rows] of [
-    ['New runs below their contrast floor:', result.added],
-    ['Frozen runs that are below their floor:', result.worse],
-    ['Runs the check cannot measure:', result.unjudged],
+  for (const [title, rows, answerable] of [
+    ['New runs below their contrast floor:', result.added, true],
+    ['Frozen runs that are below their floor:', result.worse, true],
+    ['Runs the check cannot measure:', result.unjudged, false],
   ]) {
     if (!rows.length) continue
     lines.push(title)
-    for (const row of rows) lines.push(detail(row))
+    for (const row of rows) lines.push(detail(row, answerable))
     lines.push('')
   }
   if (!result.ok) {
@@ -548,9 +548,12 @@ export function collectRuns() {
       weight,
       icon,
       need,
-      // Whether the run is painted with the named decorative token, which
-      // changes the fix a failure quotes and nothing else.
-      faint: show(fg) === faintToken,
+      // Whether the run is painted with the named decorative token at full
+      // strength, which changes the fix a failure quotes and nothing else. A run
+      // dimmed by its own opacity, or painted in a translucent colour that
+      // rounds to the token's channels, is not the token reading too faint, so
+      // it is not tagged and no fix can blame the token for it.
+      faint: alpha === 1 && show(fg) === faintToken,
       ratio: Math.round(ratioOf(painted, ground) * 100) / 100,
       unjudged: blind ? 'a background image or gradient sits between the run and its ground' : '',
     })
