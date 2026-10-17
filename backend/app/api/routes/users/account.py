@@ -52,6 +52,7 @@ from app.api.routes.users._common import (
     _own_email,
     _send_email_code,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.core.client_address import resolved_client_address
 from app.domain.passkey.services import PasskeyService
 from app.domain.user.login_security import TOTPService
@@ -138,6 +139,7 @@ async def _account_without_email(
 @router.post(
     "/me/email/code",
     summary="Send a code to the address an account without one is adding",
+    dependencies=[ROUTE_DECIDES],
 )
 async def send_add_email_code(
     payload: AddEmailCodeRequest,
@@ -158,6 +160,7 @@ async def send_add_email_code(
 @router.post(
     "/me/email",
     summary="Add a verified email to an account that has none",
+    dependencies=[ROUTE_DECIDES],
 )
 async def add_email(
     payload: AddEmailRequest,
@@ -218,6 +221,7 @@ async def get_my_auth_methods(
 @router.post(
     "/me/sudo/email-code",
     summary="Mail a code that confirms the signed-in user's identity",
+    dependencies=[ROUTE_DECIDES],
 )
 async def request_sudo_email_code(
     request: Request,
@@ -276,8 +280,7 @@ async def get_user(
 
 
 @router.patch(
-    "/{userId}",
-    summary="Update user profile (partial)",
+    "/{userId}", summary="Update user profile (partial)", dependencies=[ROUTE_DECIDES]
 )
 async def patch_user_profile(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
@@ -297,8 +300,7 @@ async def patch_user_profile(
 
 
 @router.put(
-    "/{userId}",
-    summary="Update user profile (full)",
+    "/{userId}", summary="Update user profile (full)", dependencies=[ROUTE_DECIDES]
 )
 async def put_user_profile(
     user_id: Annotated[int, Path(ge=0, alias="userId")],

@@ -18,6 +18,7 @@ from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.crypto import Purpose, keyed_digest, keyed_digests
 from app.core.errors import (
@@ -172,7 +173,7 @@ async def my_integrations(db: DbSession, resolver: ActorResolverDep) -> dict:
     return ok(page(items, len(items)))
 
 
-@router.post("/me/integrations/mail")
+@router.post("/me/integrations/mail", dependencies=[ROUTE_DECIDES])
 async def connect_mail(body: MailIn, db: DbSession, resolver: ActorResolverDep) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
@@ -261,7 +262,7 @@ async def update_integration(
     return ok(public(row))
 
 
-@router.post("/me/integrations/{integration_id}/check")
+@router.post("/me/integrations/{integration_id}/check", dependencies=[ROUTE_DECIDES])
 async def check_integration(
     integration_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -430,7 +431,7 @@ def _mail_outcome(draft: MailDraft, by: str) -> Block | None:
     )
 
 
-@router.post("/me/mail-drafts/{draft_id}/send")
+@router.post("/me/mail-drafts/{draft_id}/send", dependencies=[ROUTE_DECIDES])
 async def send_draft(
     draft_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -449,7 +450,7 @@ async def send_draft(
     return ok(result)
 
 
-@router.post("/me/mail-drafts/{draft_id}/discard")
+@router.post("/me/mail-drafts/{draft_id}/discard", dependencies=[ROUTE_DECIDES])
 async def discard_draft(
     draft_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -491,7 +492,7 @@ async def project_integrations(
     return ok(page(items, len(items)))
 
 
-@router.post("/integrations/{integration_id}/mail/search")
+@router.post("/integrations/{integration_id}/mail/search", dependencies=[ROUTE_DECIDES])
 async def mail_search(
     integration_id: uuid.UUID,
     body: SearchIn,
@@ -549,7 +550,7 @@ async def mail_attachment(
     )
 
 
-@router.post("/integrations/{integration_id}/mail/drafts")
+@router.post("/integrations/{integration_id}/mail/drafts", dependencies=[ROUTE_DECIDES])
 async def mail_draft(
     integration_id: uuid.UUID,
     body: DraftIn,
@@ -646,7 +647,9 @@ async def mail_draft(
     )
 
 
-@router.post("/integrations/{integration_id}/feishu/search")
+@router.post(
+    "/integrations/{integration_id}/feishu/search", dependencies=[ROUTE_DECIDES]
+)
 async def feishu_search(
     integration_id: uuid.UUID,
     body: FeishuSearchIn,

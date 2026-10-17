@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Protocol
 
 from anyio.to_thread import run_sync
-from sqlalchemy import Uuid, column, select, table
+from sqlalchemy import DateTime, String, Uuid, column, select, table, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -29,7 +29,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_rooms, room_column
 from app.domain.deliverables import artifacts
 from app.domain.identity.actor import Actor
-from app.domain.living_doc.services import Documents
+from app.domain.living_doc.models import Document, DocumentNode
 from app.domain.project import forge
 from app.domain.project.ports import FileStore, LibraryFiles
 from app.domain.topic.models import Topic
@@ -43,12 +43,64 @@ _tasks = table(
 # The cards filed in each room. Bare for the same sibling reason: ``review``
 # reads this package (the list of what a room has delivered), so reading its
 # model back from here would close a cycle (``.importlinter``, C3).
-_cards = table("accept_cards", column("id", Uuid), column("topic_id", Uuid))
+_cards = table(
+    "accept_cards",
+    column("id", Uuid),
+    column("topic_id", Uuid),
+    column("artifact_id", Uuid),
+    column("status", String),
+    column("change_subject", String),
+    column("decided_by", String),
+    column("decided_at", DateTime(timezone=True)),
+    column("created_at", DateTime(timezone=True)),
+    column("deliverable_kind", String),
+    column("deliverable_name", String),
+    column("deliverable_url", String),
+    column("pr_head_sha", String),
+)
 
 # The goals document a project names. Also bare, so the read below sees a
 # pointer written by ``living_doc.overview``: that write goes through the table,
 # so a ``Project`` row this session already holds still says None.
 _projects = table("projects", column("id", Uuid), column("overview_document_id", Uuid))
+
+
+async def _versions_of(
+    db: AsyncSession, artifact_ids: Sequence[uuid.UUID], hidden: set[uuid.UUID]
+) -> dict[uuid.UUID, list[artifacts.ArtifactVersion]]:
+    """每一项交付过的每一版，一次查回来再按项分组 —— ``artifacts.versions`` 的批量版，
+    同样的筛选和排序，版号在各自那一项里从 1 数起。"""
+    grouped: dict[uuid.UUID, list[artifacts.ArtifactVersion]] = {
+        artifact_id: [] for artifact_id in artifact_ids
+    }
+    if not artifact_ids:
+        return grouped
+    found = await db.execute(
+        select(_cards)
+        .where(
+            _cards.c.artifact_id.in_(list(artifact_ids)),
+            _cards.c.status == "accepted",
+            _cards.c.topic_id.not_in(list(hidden)) if hidden else true(),
+        )
+        .order_by(_cards.c.decided_at, _cards.c.created_at)
+    )
+    for row in found.all():
+        bucket = grouped[row.artifact_id]
+        bucket.append(
+            artifacts.ArtifactVersion(
+                number=len(bucket) + 1,
+                card_id=row.id,
+                subject=row.change_subject,
+                delivered_at=row.decided_at,
+                decided_by=row.decided_by,
+                kind=row.deliverable_kind,
+                filename=row.deliverable_name,
+                url=row.deliverable_url,
+                revision=row.pr_head_sha,
+                room_id=row.topic_id,
+            )
+        )
+    return grouped
 
 
 def _json(path: Path, value) -> None:
@@ -251,7 +303,6 @@ async def create_archive(
     # The project's goals and the living documents of the tasks in the
     # channels the caller reads, with their node trees: a document is `doc`,
     # its blocks are `doc_node` under it.
-    living = Documents(db)
     # The pointer, read from the table rather than off the row (the bare-table
     # comment above says why), and not through ``living_doc.overview``: that
     # module is one layer up, and this import would be a new upward edge.
@@ -260,14 +311,33 @@ async def create_archive(
             select(_projects.c.overview_document_id).where(_projects.c.id == project_id)
         )
     ).scalar_one()
-    overview = await living.get(pointed) if pointed is not None else None
+    overview = await db.get(Document, pointed) if pointed is not None else None
     kept: list[tuple] = [(overview, None, None)] if overview else []
-    for task_id, room_id, document_id in await db.execute(
-        select(_tasks.c.id, _tasks.c.room_id, _tasks.c.document_id)
-        .where(_tasks.c.room_id.in_(visible), _tasks.c.document_id.is_not(None))
-        .order_by(_tasks.c.id)
+    task_rows = (
+        await db.execute(
+            select(_tasks.c.id, _tasks.c.room_id, _tasks.c.document_id)
+            .where(_tasks.c.room_id.in_(visible), _tasks.c.document_id.is_not(None))
+            .order_by(_tasks.c.id)
+        )
+    ).all()
+    # One query for every task's document and one for all their node trees,
+    # not a pair per task.
+    doc_ids = [document_id for _, _, document_id in task_rows]
+    found_docs = {
+        doc.id: doc
+        for doc in await db.scalars(select(Document).where(Document.id.in_(doc_ids)))
+    }
+    if overview:
+        doc_ids.append(overview.id)
+    nodes_of: dict[uuid.UUID, list[DocumentNode]] = {}
+    for node in await db.scalars(
+        select(DocumentNode)
+        .where(DocumentNode.document_id.in_(doc_ids))
+        .order_by(DocumentNode.position)
     ):
-        if (doc := await living.get(document_id)) is not None:
+        nodes_of.setdefault(node.document_id, []).append(node)
+    for task_id, room_id, document_id in task_rows:
+        if (doc := found_docs.get(document_id)) is not None:
             kept.append((doc, room_id, task_id))
     docs: list[dict] = []
     for doc, room_id, task_id in kept:
@@ -294,7 +364,7 @@ async def create_archive(
                 "struct_parent": doc.id,
                 "struct_order": node.position,
             }
-            for node in await living.nodes(doc)
+            for node in nodes_of.get(doc.id, [])
         )
     docs.extend(
         {
@@ -315,11 +385,11 @@ async def create_archive(
     catalog = []
     copies = []
     unseen = {topic.id for topic in topics if topic.members_only} - set(visible)
-    for artifact in await artifacts.list_for_project(db, project_id, hidden=unseen):
+    listed = await artifacts.list_for_project(db, project_id, hidden=unseen)
+    every_version = await _versions_of(db, [a.id for a in listed], unseen)
+    for artifact in listed:
         versions = [
-            asdict(v)
-            for v in await artifacts.versions(db, artifact.id, hidden=unseen)
-            if v.card_id in allowed_cards
+            asdict(v) for v in every_version[artifact.id] if v.card_id in allowed_cards
         ]
         row = asdict(artifact)
         row["versions"] = versions
