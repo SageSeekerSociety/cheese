@@ -62,7 +62,8 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'open-topic', topicId: string): void
+  /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
+  (e: 'open-topic', topicId: string, blockId?: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   (e: 'titled', title: string): void
@@ -110,7 +111,7 @@ defineExpose({
     :bare="props.bare"
     :bar-to="props.barTo"
     :flow="props.flow"
-    @open-topic="emit('open-topic', $event)"
+    @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
     @titled="emit('titled', $event)"

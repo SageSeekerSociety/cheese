@@ -18,5 +18,7 @@
   "today": "Today",
   "typing": "Typing…",
   "waitingConnection": "Waiting for connection",
-  "yesterday": "Yesterday"
+  "yesterday": "Yesterday",
+  "refUnreadable": "No access",
+  "refUnreadableHint": "You don't have access to the document referenced here"
 }

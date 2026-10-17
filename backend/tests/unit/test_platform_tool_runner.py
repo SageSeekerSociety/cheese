@@ -323,6 +323,7 @@ def test_a_turn_in_a_room_reads_and_writes_the_rooms_document():
     assert [(p["method"], p["path"]) for p in host.requests] == [
         ("GET", f"/topics/{_ROOM}/document"),
         ("GET", f"/documents/{_DOC}"),
+        ("GET", f"/documents/{_DOC}/links"),
         ("GET", f"/topics/{_ROOM}/document"),
         ("PUT", f"/documents/{_DOC}"),
     ]
@@ -336,6 +337,7 @@ def test_a_session_opened_on_a_document_needs_no_room():
     run("cheese_doc_set", {"content": "# 我写的"}, host)
     assert [(p["method"], p["path"]) for p in host.requests] == [
         ("GET", f"/documents/{_DOC}"),
+        ("GET", f"/documents/{_DOC}/links"),
         ("PUT", f"/documents/{_DOC}"),
     ]
     assert _puts(host)[-1]["expected_version"] == 7
@@ -809,3 +811,34 @@ def test_a_new_version_of_an_app_not_yet_in_the_document_says_which_version_to_p
     said = run("cheese_app_save", {"code": "<p>y</p>", "app": "k1"}, host)
 
     assert ":::app k1@2" in said
+
+
+def test_reading_a_document_names_what_links_to_it_and_what_it_links_to():
+    """芝士 reading a document learns what is around it by title — what it
+    references and what references it — and reads only the one that matters."""
+    host = _doc_host()
+    host.answers[("GET", f"/documents/{_DOC}/links")] = {
+        "links_to": [{"id": "d1", "number": 3, "title": "数据集说明"}],
+        "linked_from": [
+            {"kind": "document", "id": "d2", "number": 7, "title": "标注规范 v2"},
+            {
+                "kind": "conversation",
+                "conversation": {"kind": "room", "id": "r1", "title": "课题组周会"},
+                "count": 3,
+            },
+        ],
+    }
+
+    said = run("cheese_doc_get", {}, host)
+
+    assert "它引用的文档：文档 3《数据集说明》" in said
+    assert "引用它的文档：文档 7《标注规范 v2》" in said
+    assert "引用它的对话：#课题组周会（3 条）" in said
+
+
+def test_a_document_nothing_links_reads_as_before():
+    host = _doc_host()
+
+    said = run("cheese_doc_get", {}, host)
+
+    assert "链接" not in said

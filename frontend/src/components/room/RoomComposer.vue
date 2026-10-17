@@ -16,6 +16,7 @@
 import type { RowRefs } from '@/composables/useChatComposer'
 import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { ChatAttachment, Topic } from '../../cx_types'
+import type { LinkableDocument } from '../../lib/docMentionMenu'
 import type { RefNames } from '../../lib/refChip'
 
 import { computed, nextTick, ref } from 'vue'
@@ -34,6 +35,7 @@ import {
   withAgentMention as addAgentMention,
 } from '../../lib/composerMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
+import { linkableDocuments } from '../../lib/linkableDocuments'
 import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
@@ -195,12 +197,33 @@ const mentionMenu = ref<InstanceType<typeof MentionMenu> | null>(null)
 
 // @ 补全那一整套（候选、两级菜单、资料库、高亮）在 composable 里；这里只把光标
 // 还给它，和把「挑中的是一份文件」转成往上发的那件事。
+// 打 # 时能引用的文档：项目里的，第一次打 # 时按项目取一次。取不到就只列频道。
+const linkable = ref<LinkableDocument[]>([])
+let linkableFor: string | null = null
+function documentList(): LinkableDocument[] {
+  const projectId = props.topic?.project_id
+  if (projectId && linkableFor !== projectId) {
+    linkableFor = projectId
+    linkable.value = []
+    linkableDocuments(projectId)
+      .then((docs) => {
+        if (linkableFor === projectId) linkable.value = docs
+      })
+      .catch(() => {
+        // 引用文档是输入时的一个便利，不是这条消息发不出去的理由。
+        if (linkableFor === projectId) linkableFor = null
+      })
+  }
+  return linkable.value
+}
+
 const picker = useRoomMentionPicker({
   draft: beforeCaret,
   writeTokens: true,
   topic: () => props.topic,
   mentionPool: () => props.mentionPool,
   topicList: () => props.topicList,
+  documentList,
   focus: () => composerInput.value?.focus?.(),
   onAddLibraryFile: (path) => emit('add-library-file', path),
   // 资料库那一级的数据从这里进去：这个件本来就够得着接口层（它还要发、还要传，

@@ -2010,7 +2010,7 @@ def _doc_get(args: dict, host) -> str:
     host.doc_versions[document["CHEESE_DOCUMENT"]] = version
     if not doc.get("content"):
         return "这份文档还是空的；cheese_doc_set 会写下第一版。"
-    lines = [doc["content"]]
+    lines = _doc_links(document["CHEESE_DOCUMENT"], host) + [doc["content"]]
     pending = doc.get("pending_suggestions") or []
     if pending:
         # 建议还不是正文：上面读到的是没有它们的文本。列出来，免得再提一遍。
@@ -2110,6 +2110,54 @@ def _made_canvases(answer: dict) -> list[str]:
 #: How much of one canvas `cheese_doc_get` shows after the document; the rest
 #: is a `cheese_canvas_get` away.
 _DOC_CANVAS_CHARS = 6000
+
+
+def _doc_links(document: str, host) -> list[str]:
+    """Which documents this one links to and which documents and conversations
+    link to it, by title, ahead of its text: what is around it, for reading
+    only the one that matters. Nothing when there are none, or when the
+    platform could not say."""
+    try:
+        found = host.request({"method": "GET", "path": f"/documents/{document}/links"})
+    except Exception:  # noqa: BLE001 — the document reads without its links
+        return []
+    data = found.get("data") or {}
+
+    def doc_name(row: dict) -> str:
+        title = row.get("title") or "无标题"
+        if row.get("number"):
+            return f"文档 {row['number']}《{title}》"
+        return f"《{title}》（<#{row['id']}>）"
+
+    def place_name(row: dict) -> str:
+        where = row["conversation"]
+        if where["kind"] == "room":
+            name = f"#{where['title']}"
+        elif where["kind"] == "task":
+            name = f"任务「{where['title']}」"
+        else:
+            name = f"支线「{where['title']}」"
+        return f"{name}（{row.get('count', 1)} 条）"
+
+    to = [doc_name(r) for r in data.get("links_to") or []]
+    by_docs = [
+        doc_name(r) for r in data.get("linked_from") or [] if r["kind"] == "document"
+    ]
+    by_talk = [
+        place_name(r)
+        for r in data.get("linked_from") or []
+        if r["kind"] == "conversation"
+    ]
+    if not (to or by_docs or by_talk):
+        return []
+    lines = ["--- 链接（只有标题；要读哪份用 cheese_doc_get(document=编号)）"]
+    if to:
+        lines.append("它引用的文档：" + "、".join(to))
+    if by_docs:
+        lines.append("引用它的文档：" + "、".join(by_docs))
+    if by_talk:
+        lines.append("引用它的对话：" + "、".join(by_talk))
+    return [*lines, "---", ""]
 
 
 def _doc_canvases(document: str, host) -> list[str]:
