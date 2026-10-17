@@ -166,8 +166,10 @@ class KnownFlake:
     一条被改写过断言的用例会借着旧档案溜走；只看签名不核用例，别的用例撞上同一句
     话也会被认领。两边都收窄，错了才是「多查一次」，而不是「漏一条真故障」。
 
-    `tests` 留空 = 运行级档案：认领整轮运行（按 `events`），给的是这一轮该怎么读，
-    而不是「哪条用例是偶发」—— 那个问题一条运行答不了，也就没有判据可套。
+    `tests` 留空 = 运行级档案：按 `events` 圈出可能说起的那几轮运行，给的是这一轮
+    该怎么读，而不是「哪条用例是偶发」—— 那个问题一条运行答不了。所以它只圈范围，
+    判定在 `judge_known_flakes` 里另做：一轮运行要被列出来，还得真红在一条**坐实**的
+    用例上。光按事件认领会把合出来的真故障也挂进「红在无关偶发上」。
     """
 
     id: str
@@ -188,6 +190,11 @@ class KnownFlake:
         )
 
     def matches_run(self, run: Run) -> bool:
+        """这一轮运行属不属于这条运行级档案**可能说起**的范围（事件对得上）。
+
+        对得上不等于认领：`judge_known_flakes` 还要这轮真红在一条坐实的用例上才
+        列出来。这里只圈范围，别把判定的活挪进来。
+        """
         return not self.tests and run.event in self.events
 
 
@@ -252,7 +259,7 @@ KNOWN_FLAKES: tuple[KnownFlake, ...] = (
     ),
     KnownFlake(
         id="merge-group-synthetic-run",
-        title="合并队列的合成运行红在无关偶发上，PR 被移出队列",
+        title="合并队列的合成运行被无关偶发拖红时，PR 被移出队列",
         events=("merge_group",),
         action=(
             "别 push-fix 加提交（「修好提交后再推」那句话不是这个意思，照做只会清掉已"
@@ -306,28 +313,14 @@ def judge_known_flakes(runs: list[Run]) -> dict:
     """把命中档案的红灯按同入场判据判一遍，返回两段。
 
     `cases` 是用例级档案的判定，一条一行：红过的入场、坐实的入场（同名还有一次
-    绿的那些）、以及坐实与否。`runs` 是运行级档案命中的那些运行 —— 它不带判定，
-    判据问的是「这条用例是不是偶发」，一条整轮运行答不了这个问题，它给的是处置。
+    绿的那些）、以及坐实与否。`runs` 是运行级档案要说的那几轮运行，而且**有证据
+    才列**：这一轮得真红在一条坐实的用例上。只见过红、没同入场绿的轮次不列 —— 它
+    可能就是这次合出来的真故障，挂到「红在无关偶发上」下面正是这个脚本要拦的误读。
     """
     matches: dict[tuple[str, str], list[Run]] = defaultdict(list)
-    run_rows: dict[str, dict] = {}
     for run in runs:
         if run.conclusion not in FAILED_RUN:
             continue
-        for flake in KNOWN_FLAKES:
-            if flake.matches_run(run):
-                row = run_rows.setdefault(
-                    flake.id,
-                    {
-                        "flake": flake.id,
-                        "title": flake.title,
-                        "action": flake.action,
-                        "seen": flake.seen,
-                        "runs": [],
-                    },
-                )
-                if run.id not in row["runs"]:
-                    row["runs"].append(run.id)
         for job in run.jobs:
             if job.conclusion not in FAILED_JOB:
                 continue
@@ -340,9 +333,12 @@ def judge_known_flakes(runs: list[Run]) -> dict:
                     bucket.append(run)
 
     case_rows = []
+    evidenced: set[int] = set()
     for (flake_id, node), reds in matches.items():
         flake = _KNOWN_BY_ID[flake_id]
         greens = same_sha_green(runs, reds)
+        if greens:
+            evidenced.update(run.id for run in reds)
         case_rows.append(
             {
                 "flake": flake_id,
@@ -358,6 +354,26 @@ def judge_known_flakes(runs: list[Run]) -> dict:
         )
     # 坐实的先看：它才是「这条红可以放下」的那一类。
     case_rows.sort(key=lambda row: (row["verdict"] != "confirmed", row["case"]))
+
+    run_rows: dict[str, dict] = {}
+    for run in runs:
+        if run.conclusion not in FAILED_RUN or run.id not in evidenced:
+            continue
+        for flake in KNOWN_FLAKES:
+            if not flake.matches_run(run):
+                continue
+            row = run_rows.setdefault(
+                flake.id,
+                {
+                    "flake": flake.id,
+                    "title": flake.title,
+                    "action": flake.action,
+                    "seen": flake.seen,
+                    "runs": [],
+                },
+            )
+            if run.id not in row["runs"]:
+                row["runs"].append(run.id)
     return {"cases": case_rows, "runs": [run_rows[key] for key in sorted(run_rows)]}
 
 
@@ -495,7 +511,12 @@ def render(report: dict) -> str:
         lines.append(f"          依据 {_clip(row['seen'], 96)}")
     for row in flakes["runs"]:
         lines.append(f"  [运行级档案] {row['flake']} — {row['title']}")
-        lines.append(f"          命中运行 {', '.join(str(run_id) for run_id in row['runs'])}")
+        lines.append(
+            f"          这些轮里有坐实的偶发 {', '.join(str(run_id) for run_id in row['runs'])}"
+        )
+        lines.append(
+            "          一轮里可能还有别的红；上面那些坐实的用例才判得了，别把它整轮放过"
+        )
         lines.append(f"          处置 {row['action']}")
     return "\n".join(lines)
 
@@ -536,13 +557,23 @@ def _unique(payloads: list[dict]) -> list[dict]:
 def _run_fields(raw: dict) -> dict:
     """gh 的运行对象 → Run 那几个来源字段。
 
-    样本是 `--jq` 挑过字段抓下来的话，这几个可能缺；缺就留空串，不编：判据拿空
-    提交号当「证不出来」，走未坐实那一侧，这是安全的方向。
+    `head_sha`/`head_branch`/`event` 缺就留空串，不编：判据拿空提交号当「证不出来」，
+    走未坐实那一侧，这是安全的方向。
+
+    `workflow` 不留空 —— 判据拿它当「同一条 workflow」那一半 key，空串会让不相干的
+    运行全部归到一处，坐实就成了假的，这跟其余几个字段是反方向。所以宁可当场报错：
+    `path` 和 `name` 都没有，说明取数那一步被改窄了，这时候出的榜整段不可信。
     """
+    workflow = raw.get("path") or raw.get("name")
+    if not workflow:
+        raise RuntimeError(
+            f"运行 {raw.get('id')} 没有 path/name，取不到 workflow；"
+            "取数那一步挑字段挑窄了，整张榜不可信，先修取数"
+        )
     return {
         "head_sha": raw.get("head_sha") or "",
         "head_branch": raw.get("head_branch") or "",
-        "workflow": raw.get("path") or raw.get("name") or "",
+        "workflow": workflow,
         "event": raw.get("event") or "",
     }
 
@@ -942,11 +973,14 @@ def _self_test_flake_criterion() -> None:
     assert sibling_case["verdict"] == "unproven", sibling_case
     assert sibling_case["reds"] == [f"pr-4011-{head}"], sibling_case
 
-    # 运行级档案认的是整轮运行：给的是这一轮怎么读，没有「哪条用例是偶发」的判定。
+    # 运行级档案只列有证据的轮次：这一轮得真红在一条坐实的用例上。运行 5 就是那
+    # 一轮（planner 用例在 pr-4010 上红绿都有），运行 3 也红在已知用例上，但
+    # orphan 那条只红过、没同入场绿，不许把它挂进「被无关偶发拖红」下面。
     assert [row["flake"] for row in judged["runs"]] == ["merge-group-synthetic-run"], (
         judged
     )
     assert judged["runs"][0]["runs"] == [5], judged["runs"]
+
     # 不在档案里的用例不许被认领。
     assert known_flake_for_case("tests/b.py::test_other", "AssertionError: x") is None
     # 用例对上、签名对不上，是同一个用例的另一种红：借旧档案溜走就是漏一条真故障。
@@ -961,12 +995,19 @@ def _self_test_flake_criterion() -> None:
         assert fragment in text, text
 
     def judged_with(criterion, sample: list[Run] | None = None) -> dict:
-        """换掉判据再判一遍 —— 用来证明下面每份样本都真的区分得开。"""
+        """换掉判据再判一遍，整份判定都交回来 —— 证明下面每份样本区分得开。
+
+        两段都要：用例级看 `cases`，运行级那一行也吃同一条判据（它只列坐实过的
+        轮次），只交 cases 就验不到运行级那道闸。
+        """
         real = same_sha_green
         globals()["same_sha_green"] = criterion
         try:
-            judged_again = judge_known_flakes(sample if sample is not None else runs)
-            return {row["flake"]: row for row in judged_again["cases"]}
+            by_flake = {}
+            payload = judge_known_flakes(sample if sample is not None else runs)
+            by_flake["cases"] = {row["flake"]: row for row in payload["cases"]}
+            by_flake["runs"] = payload["runs"]
+            return by_flake
         finally:
             globals()["same_sha_green"] = real
 
@@ -1020,7 +1061,7 @@ def _self_test_flake_criterion() -> None:
         (merge_commit, runs, "indexed-rows-planner-assertion"),
         (base_sha_only, siblings, "indexed-rows-planner-assertion"),
     ):
-        mutated = judged_with(criterion, sample)[flake_id]["verdict"]
+        mutated = judged_with(criterion, sample)["cases"][flake_id]["verdict"]
         plain = {
             row["flake"]: row for row in judge_known_flakes(sample)["cases"]
         }[flake_id]["verdict"]
@@ -1028,6 +1069,24 @@ def _self_test_flake_criterion() -> None:
             f"变异「{criterion.__name__}」没让 {flake_id} 的判定变样：这份样本区分"
             "不开它，也就证明不了判据在拦它"
         )
+
+    # 运行级那一行不是按事件认领整轮：一轮 merge_group 只红在**未坐实**的用例上，
+    # 就不许列出来 —— 它可能正是这次合出来的真故障。按事件认领（少了这道闸）
+    # 这里会返回 [12]。
+    lone = [
+        failed(
+            12,
+            52,
+            "7" * 40,
+            orphan,
+            "assert False",
+            head_branch=f"gh-readonly-queue/main/pr-4013-{head}",
+            event="merge_group",
+        )
+    ]
+    lone_judged = judge_known_flakes(lone)
+    assert lone_judged["runs"] == [], lone_judged["runs"]
+    assert lone_judged["cases"][0]["verdict"] == "unproven", lone_judged["cases"]
 
 
 def self_test() -> int:
