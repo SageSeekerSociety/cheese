@@ -58,6 +58,7 @@ const emit = defineEmits<{
       </BaseButton>
       <span class="t-title">{{ titleOverride || topicTitle(topic) }}</span>
       <v-spacer />
+      <slot name="actions" />
       <span
         class="status-dot"
         :class="connected ? 'status-dot--ok' : 'status-dot--muted'"

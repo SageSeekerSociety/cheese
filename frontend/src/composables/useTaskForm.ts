@@ -32,6 +32,8 @@ export interface TaskFormProps {
   domainGroups?: DomainGroup[]
   /** 一次发好几道：名称和描述逐道在外面填，这张表只管共用的那些。 */
   parametersOnly?: boolean
+  /** 新发一道题时导师默认是谁：出题人自己。 */
+  defaultMentor?: string
 }
 
 /** 富文本那一份内容：编辑器的 JSON 文档（`description` 这个 ref 装的就是它）。 */
@@ -179,6 +181,14 @@ export function useTaskForm(
   // 新发一道题和改一道本来就不限的题时勾着：那是它真实的状态。
   const participantLimitUnlimited = ref(!((props.initialData?.participantLimit ?? 0) > 0))
 
+  // 导师（#3830）：勾上「把导师加入领取者的项目」才带上这份名单。新发的题默认是出题人
+  // 自己，改题时是这道题现在的那几位。
+  const initialMentors = props.initialData?.mentors ?? []
+  const mentorsJoin = ref(initialMentors.length > 0)
+  const mentors = ref<string[]>(
+    initialMentors.length ? [...initialMentors] : props.defaultMentor ? [props.defaultMentor] : []
+  )
+
   watch(participantLimitUnlimited, (unlimited) => {
     if (unlimited) participantLimit.value = null
   })
@@ -228,6 +238,7 @@ export function useTaskForm(
       teamLockingPolicy: submitterType.value === 'TEAM' ? teamLockingPolicy.value : undefined,
       accessControlEnabled: accessControlEnabled.value,
       accessDomainGroupIds: accessControlEnabled.value ? accessDomainGroupIds.value : undefined,
+      mentors: mentorsJoin.value ? mentors.value : [],
     }
     emit('submit', submissionData)
   }
@@ -282,6 +293,8 @@ export function useTaskForm(
     accessControlEnabled,
     accessDomainGroupIds,
     participantLimitUnlimited,
+    mentorsJoin,
+    mentors,
     description,
     isSubmitting,
     submitForm,

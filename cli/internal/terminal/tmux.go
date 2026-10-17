@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -119,7 +120,8 @@ func Present() error {
 // writes a tiny config that keeps a pane after its program exits: read when the
 // server first starts (via -f), so it applies before any command can run and a
 // program that dies instantly still leaves its output and a dead marker on
-// screen instead of tearing the server down.
+// screen instead of tearing the server down. Kept for someone to read, not for
+// good: the host closes a screen once it has been dead a while (`Exited`).
 func NewManager() (*Manager, error) {
 	bin, err := findTmux()
 	if err != nil {
@@ -172,14 +174,31 @@ func (m *Manager) Adopt(name string) *Session {
 }
 
 // SaveIdentity keeps recovery data with the session that owns the process.
+//
+// The data is the launch message, credentials included, so it reaches tmux on
+// stdin as a command file rather than as an argument: an argument is on the
+// tmux client's command line, which every local user can read in `ps`.
 func (m *Manager) SaveIdentity(name, owner, data string) error {
-	if out, err := m.tmux("set-option", "-t", name, "@cheese-owner", owner).CombinedOutput(); err != nil {
-		return fmt.Errorf("terminal: save owner: %w: %s", err, out)
-	}
-	if out, err := m.tmux("set-option", "-t", name, "@cheese-screen", data).CombinedOutput(); err != nil {
+	commands := fmt.Sprintf("set-option -t %s @cheese-owner %s\nset-option -t %s @cheese-screen %s\n",
+		tmuxQuote(name), tmuxQuote(owner), tmuxQuote(name), tmuxQuote(data))
+	cmd := m.tmux("source-file", "-")
+	cmd.Stdin = strings.NewReader(commands)
+	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("terminal: save identity: %w: %s", err, out)
 	}
 	return nil
+}
+
+// tmuxQuote makes s one word of tmux's command syntax that tmux reads back as
+// exactly s. Single quotes, because inside them tmux expands nothing (`$`, `~`
+// and `\` are taken literally by every tmux with this parser, while what a
+// backslash escape means inside double quotes differs between releases). The
+// characters single quotes cannot hold — a single quote, and a line break,
+// which would end the command — go in double-quoted pieces of the same word.
+func tmuxQuote(s string) string {
+	return "'" + strings.NewReplacer(
+		"'", `'"'"'`, "\n", `'"\n"'`, "\r", `'"\r"'`,
+	).Replace(s) + "'"
 }
 
 func (m *Manager) Identities(owner string) (map[string]string, error) {
@@ -198,6 +217,44 @@ func (m *Manager) Identities(owner string) (map[string]string, error) {
 		}
 	}
 	return identities, nil
+}
+
+// Exited names the sessions owner launched whose every pane has been dead for
+// at least `after`, as of now. A pane whose death time tmux does not report
+// is never counted: what cannot be dated is not known to be finished.
+func (m *Manager) Exited(owner string, after time.Duration, now time.Time) ([]string, error) {
+	identities, err := m.Identities(owner)
+	if err != nil || len(identities) == 0 {
+		return nil, err
+	}
+	out, err := m.tmux("list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}\t#{pane_dead_time}").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("terminal: list panes: %w: %s", err, out)
+	}
+	finished := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		name := parts[0]
+		if _, ours := identities[name]; !ours {
+			continue
+		}
+		died, err := strconv.ParseInt(parts[2], 10, 64)
+		done := parts[1] == "1" && err == nil && now.Sub(time.Unix(died, 0)) >= after
+		if previous, seen := finished[name]; seen {
+			done = done && previous
+		}
+		finished[name] = done
+	}
+	var names []string
+	for name, done := range finished {
+		if done {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 // Session is one hosted program: a tmux session polled for screen changes.
@@ -243,9 +300,15 @@ func atLeastUsable(cols, rows int) (int, int) {
 }
 
 // Spawn launches argv in a fresh tmux session sized cols x rows, with env (a
-// list of KEY=VALUE) present in the program's environment. Env is applied by
-// exec'ing the program through `env`, which is both portable and inherited by
+// list of KEY=VALUE) present in the program's environment and inherited by
 // every child process in the session.
+//
+// The environment carries the session's credentials, so none of it may be an
+// argument: whatever is on a command line — the tmux client's, the tmux server
+// it starts (which keeps that command line for as long as it runs), a wrapper
+// like `env` — is readable by every local user in `ps`. It goes into a file
+// only this user can read, which the session's shell loads, deletes and then
+// replaces itself with argv; nothing is left on disk once the program runs.
 func (m *Manager) Spawn(name string, argv, env []string, cols, rows int) (*Session, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("terminal: empty command")
@@ -258,8 +321,13 @@ func (m *Manager) Spawn(name string, argv, env []string, cols, rows int) (*Sessi
 	}
 	cols, rows = atLeastUsable(cols, rows)
 	launch := argv
+	envFile := ""
 	if len(env) > 0 {
-		launch = append(append([]string{"env"}, env...), argv...)
+		var err error
+		if envFile, err = m.writeEnvFile(env); err != nil {
+			return nil, err
+		}
+		launch = append([]string{"/bin/sh", "-c", loadEnvAndExec, envFile}, argv...)
 	}
 	args := []string{"new-session", "-d", "-s", name,
 		"-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)}
@@ -268,9 +336,45 @@ func (m *Manager) Spawn(name string, argv, env []string, cols, rows int) (*Sessi
 	cmd := m.tmux(args...)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if envFile != "" {
+			_ = os.Remove(envFile)
+		}
 		return nil, fmt.Errorf("terminal: spawn %q: %w: %s", name, err, stderr.String())
 	}
 	return &Session{m: m, name: name, stop: make(chan struct{})}, nil
+}
+
+// loadEnvAndExec is the session's first program: $0 is the environment file,
+// the rest is the command. The file is deleted whether or not it loaded.
+const loadEnvAndExec = `. "$0"; loaded=$?; rm -f -- "$0"; [ "$loaded" -eq 0 ] || exit "$loaded"; exec "$@"`
+
+// envName is what a shell accepts as a variable name.
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// writeEnvFile writes env as shell exports into a new file in the manager's
+// private runtime dir (0700), readable by this user alone.
+func (m *Manager) writeEnvFile(env []string) (string, error) {
+	var script strings.Builder
+	for _, kv := range env {
+		key, value, _ := strings.Cut(kv, "=")
+		if !envName.MatchString(key) {
+			return "", fmt.Errorf("terminal: environment variable name %q is not one a shell accepts", key)
+		}
+		script.WriteString("export " + key + "='" + strings.ReplaceAll(value, "'", `'\''`) + "'\n")
+	}
+	f, err := os.CreateTemp(filepath.Dir(m.sock), "env-*") // created 0600
+	if err != nil {
+		return "", fmt.Errorf("terminal: environment file: %w", err)
+	}
+	_, err = f.WriteString(script.String())
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(f.Name())
+		return "", fmt.Errorf("terminal: environment file: %w", err)
+	}
+	return f.Name(), nil
 }
 
 // Snapshot returns the last polled screen contents.
@@ -463,12 +567,20 @@ func (s *Session) Close() error {
 	// the retiring agent's still-live prompt socket.
 	killAndWait := func(socket, session string) error {
 		args := []string{"-S", socket}
-		out, err := exec.Command(s.m.bin, append(args, "list-panes", "-t", "="+session, "-F", "#{pane_pid}")...).CombinedOutput()
+		out, err := exec.Command(s.m.bin, append(args, "list-panes", "-t", "="+session, "-F", "#{pane_dead} #{pane_pid}")...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("terminal: list pane processes: %w: %s", err, out)
 		}
 		var processes []*os.Process
-		for _, value := range strings.Fields(string(out)) {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			dead, value, _ := strings.Cut(line, " ")
+			// A dead pane's pid is a number the kernel has already handed
+			// back, and may have handed to anything since: waiting on it and
+			// then killing its group would take down whatever holds it now —
+			// another screen's helper, after the weeks a dead pane can sit.
+			if dead != "0" {
+				continue
+			}
 			pid, err := strconv.Atoi(value)
 			if err != nil {
 				return err

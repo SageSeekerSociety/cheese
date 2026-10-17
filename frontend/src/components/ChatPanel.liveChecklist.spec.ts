@@ -12,7 +12,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, render } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 // 重连之后，置顶和支线那几行也要重读一次（断线期间它们的通知丢了）：这里都没有。
@@ -34,6 +34,7 @@ import { listBlocks } from '../api'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const sockets: TestSocket[] = []
 class TestSocket {
@@ -120,6 +121,7 @@ const turning = (view: ReturnType<typeof render>) => view.container.querySelecto
 
 async function scrollUp(view: ReturnType<typeof render>) {
   const pane = view.container.querySelector<HTMLElement>('.messages')!
+  pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) // the reader scrolls (useChatScroll tells that from layout)
   pane.scrollTop = 0
   pane.dispatchEvent(new Event('scroll'))
   await settle()
@@ -142,6 +144,8 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('a running checklist, after you leave the room and come back', () => {
   for (const order of ['replay lands before history', 'replay lands after history'] as const) {

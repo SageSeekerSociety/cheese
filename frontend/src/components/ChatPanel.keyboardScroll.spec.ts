@@ -14,7 +14,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
 
@@ -36,6 +36,7 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic: Topic = {
   id: 'keyboard-scroll-topic',
@@ -144,6 +145,8 @@ beforeEach(() => {
   listBlocks.mockResolvedValue({ data: [block], has_more: false })
 })
 
+beforeAll(loadMarkdownReader)
+
 describe('键盘挤矮聊天容器', () => {
   it('容器变矮时把停在底部的人重新钉到底部', async () => {
     const { pane } = await mount()
@@ -164,6 +167,7 @@ describe('键盘挤矮聊天容器', () => {
 
     // 从底部上滚过，`atBottom` 因此是假的。
     pane.dispatchEvent(new Event('scroll'))
+    pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) // the reader scrolls (useChatScroll tells that from layout)
     m.scrollTop = 100
     pane.dispatchEvent(new Event('scroll'))
     await flush()

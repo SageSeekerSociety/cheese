@@ -6,6 +6,7 @@ import type { CommentSpot } from '../lib/docCommentSpots'
 import { computed, effectScope, markRaw, onScopeDispose, reactive, watch } from 'vue'
 
 import { t } from '@/i18n'
+import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
 
 /** 发出一条评论；评的是 `spot` 那几个字（整篇时 quote 是空的）。 */
 export type SendDocComment = (topicId: string, content: string, spot: CommentSpot) => Promise<unknown>
@@ -22,27 +23,28 @@ function topicDrafts(topicId: string, author: string): TopicDrafts {
   const existing = cache.get(key)
   if (existing) return existing
   let initial: TopicDrafts = { active: null, hidden: false, drafts: {} }
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(key) || 'null')
-    if (saved && typeof saved.drafts === 'object' && saved.drafts !== null) {
-      for (const [id, value] of Object.entries(saved.drafts)) {
-        const item = value as Partial<Draft>
-        const target = item.target
-        if (typeof item.text !== 'string' || typeof target?.quote !== 'string') continue
-        if (typeof target.from !== 'number' || typeof target.to !== 'number') continue
-        initial.drafts[id] = {
-          target: { quote: target.quote, from: target.from, to: target.to, rel: null },
-          text: item.text,
-          revision: 0,
-          sending: false,
-          error: null,
-        }
+  // A record that will not parse is dropped by the module; one that parses but is not
+  // shaped like drafts is only ignored. Either way the reader keeps a working draft
+  // in memory: a storage failure must not prevent commenting — including one entry
+  // that is not a draft at all, which is skipped like a wrong-shaped record.
+  const saved = storageGetJson<Partial<TopicDrafts>>(key, 'session')
+  if (saved && typeof saved.drafts === 'object' && saved.drafts !== null) {
+    for (const [id, value] of Object.entries(saved.drafts)) {
+      if (value === null || typeof value !== 'object') continue
+      const item = value as Partial<Draft>
+      const target = item.target
+      if (typeof item.text !== 'string' || typeof target?.quote !== 'string') continue
+      if (typeof target.from !== 'number' || typeof target.to !== 'number') continue
+      initial.drafts[id] = {
+        target: { quote: target.quote, from: target.from, to: target.to, rel: null },
+        text: item.text,
+        revision: 0,
+        sending: false,
+        error: null,
       }
-      if (typeof saved.active === 'string' && initial.drafts[saved.active]) initial.active = saved.active
-      initial.hidden = saved.hidden === true
     }
-  } catch {
-    // A storage failure must not prevent commenting or discard the in-memory draft.
+    if (typeof saved.active === 'string' && initial.drafts[saved.active]) initial.active = saved.active
+    initial.hidden = saved.hidden === true
   }
   initial = reactive(initial)
   cache.set(key, initial)
@@ -50,17 +52,15 @@ function topicDrafts(topicId: string, author: string): TopicDrafts {
     watch(
       initial,
       () => {
-        try {
-          const drafts = Object.fromEntries(
-            Object.entries(initial.drafts).map(([id, d]) => [
-              id,
-              { target: { quote: d.target.quote, from: d.target.from, to: d.target.to }, text: d.text },
-            ])
-          )
-          sessionStorage.setItem(key, JSON.stringify({ active: initial.active, hidden: initial.hidden, drafts }))
-        } catch {
-          /* Keep the draft in memory when storage is unavailable. */
-        }
+        const drafts = Object.fromEntries(
+          Object.entries(initial.drafts).map(([id, d]) => [
+            id,
+            { target: { quote: d.target.quote, from: d.target.from, to: d.target.to }, text: d.text },
+          ])
+        )
+        // A failed write — no storage, a full quota, or a position that will not
+        // serialize — leaves the draft in memory, which is where it is being written.
+        storageSetJson(key, { active: initial.active, hidden: initial.hidden, drafts }, 'session')
       },
       { deep: true, flush: 'sync' }
     )

@@ -1,18 +1,25 @@
 """Frontend error reports → run records (see app.domain.frontend_log)."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.domain import frontend_log  # module import: tests swap the intake singleton
 from app.domain.frontend_log import FrontendErrorBatchIn
+from app.domain.project.services import ProjectService
 
 router = APIRouter(prefix="/frontend-errors", tags=["frontend-errors"])
 
 
 @router.post("")
-async def report_frontend_errors(body: FrontendErrorBatchIn, db: DbSession) -> dict:
+async def report_frontend_errors(
+    body: FrontendErrorBatchIn, db: DbSession, request: Request
+) -> dict:
     """Keep browser-side errors for the admin page. Dedup and rate-limiting
     happen in the intake — a dropped duplicate still returns 200, so the
     reporting client never retries."""
-    return ok(await frontend_log.record(db, body))
+    # The intake is in the bottom layer and reads no project table, so this is
+    # where a batch for a project that does not exist is refused.
+    await ProjectService(db).get_or_404(body.project_id)
+    origin = request.headers.get("origin")
+    return ok(await frontend_log.record(db, body, origin=origin))

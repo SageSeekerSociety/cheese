@@ -62,6 +62,7 @@ def test_private_human_chat_seeds_both_participants_and_rejects_outsiders(
 ):
     pid = _project(client)
     owner_headers = bearer("user-1")
+    join_project_team(client, pid, "alice")
     join_project_team(client, pid, "bob")
     private = client.get(
         f"/projects/{pid}/private-chat",
@@ -85,6 +86,48 @@ def test_private_human_chat_seeds_both_participants_and_rejects_outsiders(
     )
 
 
+def test_a_dm_cannot_bring_someone_outside_the_project_into_it(client, bearer):
+    """A DM is a room of the project: opening one with someone the project does
+    not have would give them a seat, and with it the project's door, without an
+    invitation they accepted."""
+    pid = _project(client)
+
+    opened = client.get(
+        f"/projects/{pid}/private-chat",
+        params={"user_handle": "user-1", "peer_handle": "carol"},
+        headers=bearer("user-1"),
+    )
+
+    assert opened.status_code in (400, 403)
+
+
+def test_a_dm_stays_between_its_two_people(client, bearer):
+    """Whoever is added to a DM reads everything said in it before, so a third
+    person never joins one, not even a member of the project."""
+    pid = _project(client)
+    join_project_team(client, pid, "alice")
+    join_project_team(client, pid, "bob")
+    owner_headers = bearer("user-1")
+    private = client.get(
+        f"/projects/{pid}/private-chat",
+        params={"user_handle": "user-1", "peer_handle": "alice"},
+        headers=owner_headers,
+    ).json()["data"]
+    post_message(client, private["id"], "user-1", {"content": "只说给 alice 听"})
+
+    added = client.post(
+        f"/topics/{private['id']}/members",
+        json={"handle": "bob"},
+        headers=owner_headers,
+    )
+
+    assert added.status_code in (403, 422)
+    assert (
+        client.get(f"/topics/{private['id']}/blocks", headers=bearer("bob")).status_code
+        == 403
+    )
+
+
 def test_member_summary(client, bearer):
     pid = _project(client)
     client.post(
@@ -99,6 +142,7 @@ def test_member_summary(client, bearer):
             "kind": "decision_request",
             "title": "等你定",
             "target_handle": "user-1",
+            "payload": {"options": ["A", "B"]},
         },
     )
 

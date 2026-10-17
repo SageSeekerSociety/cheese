@@ -25,13 +25,13 @@ from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import listing, say
 from app.core.storage import StorageBackend, get_storage_backend
-from app.domain.agent.skills import (
+from app.domain.project_skill import blobs
+from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
+from app.domain.skill_library import (
     RESERVED_SKILL_NAMES,
     SKILL_FILE_SUFFIXES,
     native_skill_files,
 )
-from app.domain.project_skill import blobs
-from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
 MAX_FILE_BYTES = 200_000

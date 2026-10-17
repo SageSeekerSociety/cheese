@@ -6,6 +6,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import { ensureDefaultAvatarId, isChosenAvatar } from './useChosenAvatar'
 
 import { UserAuthApi } from '@/api/userAuth'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
 import AccountService from '@/services/account'
 
 /**
@@ -36,8 +37,15 @@ export function useUserMenu() {
   // 交给 UserAvatar 即可。
 
   // 头像要判「这是不是那张全局默认图」，而那一行的 id 因环境而异，得问后端。
-  // 那个接口要登录，所以等登录了再问（已登录的话 immediate 当场就问）。
-  watch(loggedIn, (yes) => yes && ensureDefaultAvatarId(), { immediate: true })
+  // 那个接口要登录，所以等登录了再问；而且排在首帧之后（`lib/afterFirstPaint.ts`）——
+  // 它只决定头像那一格画真图还是画彩色首字母，晚几十毫秒改回来，比开页慢一拍划算。
+  watch(
+    [loggedIn, firstPaintDone],
+    ([yes, painted]) => {
+      if (yes && painted) ensureDefaultAvatarId()
+    },
+    { immediate: true }
+  )
 
   // 退出登录
   const onLogout = async () => {

@@ -126,7 +126,11 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
-          text="$(printf '站点探活失败：%s\n原因：%s\n这一轮：%s' \
+          # 【严重】 leads the line because this shares a group with the
+          # backend's error alerts, and on 2026-10-15 an 85-minute outage alert
+          # sat unread among them: a site-down message has to be told apart
+          # from the rest at a glance, before anyone reads past the first word.
+          text="$(printf '【严重】站点探活失败：%s\n原因：%s\n这一轮：%s' \
             "$HEALTH_URL" "${REASON:-两次探测都没有拿到 200}" "$RUN_URL")"
           # Never fail the job on the alert itself: the probe result is the
           # finding, and a webhook that is down must not hide it.

@@ -40,7 +40,6 @@ interface StoreSent {
   content: string | null
   actors: string[]
   suggestions: { id: string; author: string; old: string; new: string }[]
-  requested_by?: string | null
   edits?: { old: string; new: string; suggestion_id?: string }[] | null
   suggested?: boolean
 }
@@ -409,7 +408,6 @@ describe('the live document', () => {
 interface EditBody {
   edits: { old: string; new: string }[]
   actor: string
-  requested_by?: string | null
   mode: 'direct' | 'suggest'
   reason?: string | null
   editor_is_agent?: boolean
@@ -464,19 +462,18 @@ async function opened(seed = TWO) {
 }
 
 describe('an edit to part of the live document', () => {
-  it('changes that passage, stores it as the writer and for whoever asked, and reaches every editor', async () => {
+  it('changes that passage, stores it as the writer with the passages, and reaches every editor', async () => {
     const { backend, http, a } = await opened()
     const response = await edit(http, {
       edits: [{ old: '第二段讲范围。', new: '第二段讲范围和不做的事。' }],
       actor: 'cheese-agent',
-      requested_by: 'teacher',
       mode: 'direct',
     })
     expect(response.status).toBe(200)
     expect((await response.json()).edits).toEqual([{ old: '第二段讲范围。', new: '第二段讲范围和不做的事。' }])
     expect(backend.content).toBe('第一段讲目标。\n\n第二段讲范围和不做的事。')
     expect(backend.versions.at(-1)?.actors).toEqual(['cheese-agent'])
-    expect(backend.sent.at(-1)?.requested_by).toBe('teacher')
+    expect(backend.sent.at(-1)?.edits).toEqual([{ old: '第二段讲范围。', new: '第二段讲范围和不做的事。' }])
     await until(() => exportMarkdown(a.doc).includes('不做的事'))
   })
 

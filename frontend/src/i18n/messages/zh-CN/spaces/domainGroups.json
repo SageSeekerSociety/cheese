@@ -1,0 +1,14 @@
+{
+  "addDomain": "添加域名",
+  "confirmDelete": "确定要删除域名组 {name} 吗？",
+  "createGroup": "创建域名组",
+  "deleteGroup": "删除域名组",
+  "domainPlaceholder": "例如: example.com",
+  "domains": "域名列表",
+  "editGroup": "编辑域名组",
+  "groupDescription": "组描述",
+  "groupName": "组名称",
+  "invalidDomain": "请输入有效的域名格式",
+  "nameRequired": "填写域名组名称",
+  "noGroups": "暂无域名组"
+}

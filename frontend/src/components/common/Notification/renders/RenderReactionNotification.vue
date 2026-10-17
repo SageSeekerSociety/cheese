@@ -1,15 +1,13 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">
+    <div class="n-title">
       <i18n-t v-if="reactor" scope="global" keypath="notifications.REACTION.title" tag="span">
         <template #reactor><UserRef :handle="reactor.handle" :name="reactor.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>
+      <span v-if="reactionEmoji" class="n-emoji">{{ reactionEmoji }}</span>
     </div>
-    <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
-    <div v-if="reactionEmoji" class="text-body-2 text-medium-emphasis mt-2 emoji-box">
-      <span class="reaction-emoji">{{ reactionEmoji }}</span>
-    </div>
+    <div class="n-sub">{{ body }}</div>
   </div>
 </template>
 
@@ -54,25 +52,3 @@ defineExpose({
   content,
 })
 </script>
-
-<style scoped>
-.notification-content {
-  display: flex;
-  flex-direction: column;
-}
-
-.emoji-box {
-  background-color: rgba(var(--v-theme-surface-variant), 0.5);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin-top: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.reaction-emoji {
-  font-size: 24px;
-  line-height: 1;
-}
-</style>

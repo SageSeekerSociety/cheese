@@ -41,6 +41,12 @@ DEVICE_FEATURES_OFF = (
 
 
 def content_origin(project_id: uuid.UUID) -> str:
+    return content_host(project_id.hex)
+
+
+def content_host(label: str) -> str:
+    """The origin of ``label`` on the content domain, once the domain is one
+    that keeps content apart from the platform."""
     domain = settings.sites_domain.strip().lower()
     if not domain or not re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", domain):
         raise ValidationError(say("siteDomainUnset"))
@@ -58,7 +64,7 @@ def content_origin(project_id: uuid.UUID) -> str:
         # use distinct top-level domains instead of relying on a stale PSL.
         raise ValidationError(say("siteDomainNotIsolated"))
     port = f":{settings.sites_port}" if settings.sites_port else ""
-    return f"{settings.sites_scheme}://{project_id.hex}.{domain}{port}"
+    return f"{settings.sites_scheme}://{label}.{domain}{port}"
 
 
 #: The purpose these tokens are signed for (`app.core.scoped_jwt`).

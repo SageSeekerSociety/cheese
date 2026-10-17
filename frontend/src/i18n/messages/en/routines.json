@@ -16,7 +16,7 @@
   "trigger": {
     "schedule": "On a schedule",
     "library_file_added": "When a file is added to the library",
-    "task_closed": "When a task is done",
+    "task_closed": "When a task is closed",
     "card_accepted": "When a result is accepted"
   },
   "freq": {

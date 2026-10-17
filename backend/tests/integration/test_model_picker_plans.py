@@ -5,6 +5,10 @@ for one it does not, the first plan the administrator ranks that would, by its
 name; the tier itself is never the answer. Saving a model the plan does not
 allow is refused, as the project default, as the default for 分身 and as a teammate's
 own model.
+
+The models here are Claude's, which a team also needs an administrator's
+approval for (test_overseas_model_access.py), so every team below is approved
+first: what is under test is the plan.
 """
 
 import pytest
@@ -12,7 +16,7 @@ from sqlalchemy import update
 
 from app.core.config import settings
 from app.domain.agent import gateway_catalog
-from app.domain.usage.models import Plan
+from app.domain.usage.models import OverseasModelApproval, Plan
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project, put_on_plan
 
@@ -44,6 +48,15 @@ def _choices(client, pid: str, owner: dict) -> dict[str, dict]:
     return {c["id"]: c for c in r.json()["data"]["choices"]}
 
 
+def _approve(client, team_id: int) -> None:
+    async def run() -> None:
+        async with client.test_request_factory() as session:
+            session.add(OverseasModelApproval(team_id=team_id, approved_by="mp-admin"))
+            await session.commit()
+
+    client.portal.call(run)
+
+
 def _put_on_plan(client, team_id: int, key: str) -> None:
     async def run() -> None:
         async with client.test_request_factory() as session:
@@ -59,6 +72,7 @@ def test_a_free_team_sees_which_plan_a_premium_model_needs_and_cannot_save_it(
     owner = _auth("mp-owner", client)
     project = _shared_project(client, owner, "mplab")
     pid = project["id"]
+    _approve(client, project["team_id"])
 
     choices = _choices(client, pid, owner)
     assert choices["sonnet"]["allowed"] is False
@@ -93,7 +107,9 @@ def test_a_free_team_sees_which_plan_a_premium_model_needs_and_cannot_save_it(
 
 def test_the_plan_named_is_the_plans_own_name(client):
     owner = _auth("mp-renamer", client)
-    pid = _shared_project(client, owner, "mprename")["id"]
+    project = _shared_project(client, owner, "mprename")
+    pid = project["id"]
+    _approve(client, project["team_id"])
 
     async def rename() -> None:
         async with client.test_request_factory() as session:
@@ -111,6 +127,7 @@ def test_a_team_whose_plan_allows_the_model_picks_and_saves_it(client):
     owner = _auth("mp-reserve", client)
     project = _shared_project(client, owner, "mpreserve")
     pid = project["id"]
+    _approve(client, project["team_id"])
     _put_on_plan(client, project["team_id"], "reserve")
 
     choices = _choices(client, pid, owner)
@@ -140,6 +157,7 @@ def test_a_personal_team_is_not_told_of_a_plan_it_cannot_be_put_on(client):
     r = post_project(client, json={"name": "Mine"}, headers=owner)
     assert r.status_code == 200, r.text
     pid = r.json()["data"]["id"]
+    _approve(client, r.json()["data"]["team_id"])
 
     sonnet = _choices(client, pid, owner)["sonnet"]
     assert sonnet["allowed"] is False
@@ -150,7 +168,9 @@ def test_the_plan_named_is_the_first_the_administrator_ranks_that_allows_it(clie
     """Plans carry no price, so the administrator's order decides which plan a
     model is said to need, whatever each plan issues."""
     owner = _auth("mp-ranked", client)
-    pid = _shared_project(client, owner, "mpranked")["id"]
+    project = _shared_project(client, owner, "mpranked")
+    pid = project["id"]
+    _approve(client, project["team_id"])
 
     async def plans(pro_rank: int, team_rank: int) -> None:
         async with client.test_request_factory() as session:

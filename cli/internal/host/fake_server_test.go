@@ -43,6 +43,13 @@ func (f *fakeServer) send(t *testing.T, m link.Msg) {
 
 func hostOnAFakeServer(t *testing.T, sessions map[string]*sess) *fakeServer {
 	t.Helper()
+	return hostWithConfigOnAFakeServer(t, sessions, "")
+}
+
+// hostWithConfigOnAFakeServer is hostOnAFakeServer for a connector running
+// under the config at cfgPath.
+func hostWithConfigOnAFakeServer(t *testing.T, sessions map[string]*sess, cfgPath string) *fakeServer {
+	t.Helper()
 	f := &fakeServer{in: make(chan link.Msg, 16)}
 	up := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +78,7 @@ func hostOnAFakeServer(t *testing.T, sessions map[string]*sess) *fakeServer {
 	h := &Host{
 		conn:     link.New("ws"+strings.TrimPrefix(srv.URL, "http"), "", "", ""),
 		ctx:      ctx,
+		cfgPath:  cfgPath,
 		sessions: sessions,
 		execs:    map[string]context.CancelFunc{},
 	}

@@ -223,6 +223,10 @@ MEASURE_JS = r"""
 #: whole, and the PNG would dwarf everything else in the answer.
 MAX_SHOT_HEIGHT = 8000
 INSPECT_TIMEOUT_MS = 20_000
+#: How long a page may take to use itself (`InspectIn.exercise`), and how it
+#: is asked to: by the function it defines for it, if it defines one.
+EXERCISE_SECONDS = 15
+EXERCISE_JS = "() => window.__inspect_exercise ? window.__inspect_exercise() : null"
 
 
 class InspectIn(BaseModel):
@@ -240,6 +244,17 @@ class InspectIn(BaseModel):
     pdf_margin: str | None = Field(
         default=None, pattern=r"^[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?$"
     )
+    #: Picture this one element instead of the page, and say how tall it is: a
+    #: document's mini-app is the box its shell draws into, and the page around
+    #: it is at least the viewport tall. A selector, never script.
+    element: str | None = Field(
+        default=None, pattern=r"^[#.][A-Za-z][A-Za-z0-9_-]{0,63}$"
+    )
+    #: After the picture at the first width, let the page use itself the way
+    #: a reader would: when it defines ``window.__inspect_exercise`` (a
+    #: document's mini-app shell does), call it, wait for it, and report what
+    #: the console said meanwhile. The page's own code, never the caller's.
+    exercise: bool = False
 
 
 async def _print_pdf(browser, body: InspectIn) -> str:
@@ -287,6 +302,21 @@ async def _browser():
         return _inspector
 
 
+async def _element_shot(page, selector: str) -> tuple[bytes, int]:
+    """The picture of one element, and its height; empty and 0 when there is
+    no such element or it has no height."""
+    box = await page.locator(selector).first.bounding_box()
+    if not box or box["height"] < 1:
+        return b"", 0
+    height = min(round(box["height"]), MAX_SHOT_HEIGHT)
+    shot = await page.screenshot(
+        type="png",
+        full_page=True,
+        clip={"x": box["x"], "y": box["y"], "width": box["width"], "height": height},
+    )
+    return shot, round(box["height"])
+
+
 async def _inspect_at(browser, body: InspectIn, width: int) -> dict:
     context = await browser.new_context(
         viewport={"width": width, "height": 900},
@@ -306,21 +336,46 @@ async def _inspect_at(browser, body: InspectIn, width: int) -> dict:
         await page.set_content(body.html, wait_until="load", timeout=INSPECT_TIMEOUT_MS)
         await page.wait_for_timeout(int(body.settle_seconds * 1000))
         measured = await page.evaluate(MEASURE_JS)
-        height = min(measured["page_height"], MAX_SHOT_HEIGHT)
-        shot = await page.screenshot(
-            type="png",
-            full_page=height == measured["page_height"],
-            clip=None
-            if height == measured["page_height"]
-            else {"x": 0, "y": 0, "width": width, "height": height},
-        )
+        element_height = None
+        if body.element:
+            shot, element_height = await _element_shot(page, body.element)
+        else:
+            height = min(measured["page_height"], MAX_SHOT_HEIGHT)
+            shot = await page.screenshot(
+                type="png",
+                full_page=height == measured["page_height"],
+                clip=None
+                if height == measured["page_height"]
+                else {"x": 0, "y": 0, "width": width, "height": height},
+            )
+        # How many things the page did to itself (None: it has no way to, or
+        # was not asked), and what the console said while it did.
+        exercised = None
+        exercise_errors: list[str] = []
+        opened = list(console)
+        if body.exercise and width == body.widths[0]:
+            heard = len(console)
+            try:
+                exercised = await asyncio.wait_for(
+                    page.evaluate(EXERCISE_JS), EXERCISE_SECONDS
+                )
+            except TimeoutError:
+                # Unfinished says nothing either way about the page.
+                exercised = None
+            await page.wait_for_timeout(100)
+            exercise_errors = console[heard:][:10]
     finally:
         await context.close()
+    height = min(measured["page_height"], MAX_SHOT_HEIGHT)
     return {
         "width": width,
         **measured,
+        "element_height": element_height,
+        "exercised": exercised,
+        "exercise_errors": exercise_errors,
         "cut_at": height if height < measured["page_height"] else None,
-        "console_errors": console[:10],
+        # What the page said on its own, before it was used.
+        "console_errors": opened[:10],
         "failed_requests": failed[:10],
         "png_b64": base64.b64encode(shot).decode("ascii"),
     }

@@ -53,7 +53,7 @@ from app.domain.agent.preview_owner import inspect_owner
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.project.room_files import ARTIFACT_MIME, clean_artifact_path
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -67,7 +67,7 @@ async def get_preview(
     """This room's current preview (spec §7.1): the artifact 芝士 last pointed at,
     as {path, mime}. Null when none is set — the client may fall back to scanning
     the worktree. Content is fetched separately via the guarded file reader."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     # The conversation's own: a task's preview is what its session last showed.
     topic_id = place.conversation_id
@@ -141,7 +141,7 @@ async def preview_file(
     listing that does not contain it — including a `library/…` chip, which is
     what 芝士 writes once it has read something the project was given.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     if path:
         return ok(

@@ -58,13 +58,6 @@ async def _own_agent_and_laptop(factory, project_id, topic_id):
         )
         db.add(instance)
         await db.flush()
-        db.add(
-            OwnAgent(
-                instance_id=instance.id, owner_user_id=alice.id, harness="claude-code"
-            )
-        )
-        seat = await AgentInstanceService(db).ensure_identity(instance)
-        await TopicMemberService(db).ensure_agent_seat(topic_id, seat)
         devices = sql_device_service(db)
         code = await devices.start("laptop")
         laptop = (
@@ -80,6 +73,16 @@ async def _own_agent_and_laptop(factory, project_id, topic_id):
                 checked_at=datetime.now(UTC),
             )
         )
+        db.add(
+            OwnAgent(
+                instance_id=instance.id,
+                owner_user_id=alice.id,
+                harness="claude-code",
+                device_id=laptop,
+            )
+        )
+        seat = await AgentInstanceService(db).ensure_identity(instance)
+        await TopicMemberService(db).ensure_agent_seat(topic_id, seat)
         await db.commit()
         return instance.id, laptop
 

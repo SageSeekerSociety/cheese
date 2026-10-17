@@ -25,27 +25,40 @@ from app.api.deps import get_broker
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.auth.project_access import may_read_project
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
-from app.domain.notification.models import Notification
+from app.domain.agent_instance.adapters import project_team
+from app.domain.block.adapters import DecisionLine
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
     NotificationCreate,
     NotificationOut,
+    NotificationRow,
+    NotificationType,
     ResolveIn,
 )
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="", tags=["alerts"])
 
 
-def _dump(row: Notification) -> dict:
+def _options(body: NotificationCreate) -> list[str]:
+    """决策请求摆出来的那几个选项：非空的字符串才算。"""
+    listed = body.payload.get("options")
+    if not isinstance(listed, list):
+        return []
+    return [o for o in listed if isinstance(o, str) and o.strip()]
+
+
+def _dump(row: NotificationRow) -> dict:
     return NotificationOut.from_row(row).model_dump(mode="json")
 
 
-async def _acting_recipient(resolver: ActorResolver, notification: Notification) -> str:
+async def _acting_recipient(
+    resolver: ActorResolver, notification: NotificationRow
+) -> str:
     """能对这一条动手的那个验证过的调用者：它的收件人。
 
     并表之前还有第二档 —— 一条广播（没有收件人）任何验证过的调用者都能动。广播
@@ -80,6 +93,10 @@ async def create_notification(
     """
     if body.kind not in PROJECT_NOTIFICATION_KINDS:
         raise ValidationError(say("alertKindNotFromInbox"))
+    # 拍板就是从摆出来的选项里选一个：待办页那一行只给选项按钮，没有选项的决策
+    # 请求在那里一个按钮都没有，永远清不掉，角标就一直挂着它。
+    if body.kind == NotificationType.DECISION_REQUEST and len(_options(body)) < 2:
+        raise UnprocessableEntityError(say("decisionNeedsOptions"))
     actor = await resolver.require_verified_caller(
         project_id=project_id, topic_id=body.topic_id
     )
@@ -91,7 +108,7 @@ async def create_notification(
     conversation_id = None
     room_id = None
     if body.topic_id is not None:
-        place = await TopicService(db).place_or_404(body.topic_id)
+        place = await place_or_404(db, body.topic_id)
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
         conversation_id = place.conversation_id
@@ -116,7 +133,7 @@ async def create_notification(
             else await may_read_project(db, project_id=project_id, handle=target)
         ):
             raise ValidationError(say("alertRecipientOutside"))
-    rows = await ProjectNotificationService(db).create(
+    rows = await ProjectNotificationService(db, team=project_team).create(
         project_id=project_id,
         level=body.level,
         kind=body.kind,
@@ -260,6 +277,8 @@ async def resolve_notification(
         chosen=body.chosen,
         decided_by=handle,
         publish=get_broker().publish,
+        # 拍板那句话落在房间里，那一层 `notification` 够不着（`block/adapters.py`）。
+        decision_line=DecisionLine(db),
     )
     await db.commit()
     return ok(_dump(resolved))

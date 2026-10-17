@@ -26,7 +26,6 @@ import { isAgentBlock } from '../lib/authorship'
 import { replySnippet } from '../lib/blockDisplay'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { frozenQuote } from '../lib/quotedContext'
-import { editableText } from '../lib/renderMessage'
 
 import { t } from '@/i18n'
 
@@ -51,7 +50,7 @@ export interface ChatComposerDeps {
   awaitingReply: Ref<boolean>
   outbox: Ref<Outgoing[]>
   errorMsg: Ref<string | null>
-  agentSeat: () => { label?: string } | undefined
+  agentSeat: () => { handle: string; label: string } | undefined
   refs: RowRefs
   timeline: { find(id: string): Block | undefined; replace(block: Block): void }
   /** Client ids whose row is on its way out after an edit (see useChatPanel). */
@@ -106,7 +105,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
   async function saveEdit(m: Block, text: string) {
     const content = text.trim()
     if (editSaving.value || !content) return
-    if (content === editableText(m.content, refs).trim()) {
+    if (content === m.content.trim()) {
       editingId.value = null
       return
     }
@@ -203,7 +202,8 @@ export function useChatComposer(deps: ChatComposerDeps) {
     // 起手草稿里那个 @ 和按钮写进去的是同一个名字（见 `agentSeat`）：写错了的话，
     // 人点完一张起手卡发出去，屋里会动的那位不动，而草稿上明明 @ 着「芝士」。
     const agent = agentSeat()
-    draft.value = `${alwaysSummon() ? '' : `@${agent?.label ?? t('work.room.defaultAgentName')} `}${text}`
+    const summon = agent ? `<@${agent.handle}> ` : `@${t('work.room.defaultAgentName')} `
+    draft.value = `${alwaysSummon() ? '' : summon}${text}`
     composerRef.value?.focus()
   }
 

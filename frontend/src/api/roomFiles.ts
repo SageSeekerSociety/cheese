@@ -22,6 +22,43 @@ export function saveRoomOutputToLibrary(topicId: string, path: string): Promise<
   })
 }
 
+// ---- 这段对话里的附件和文档 (#3828) ----
+
+/** 这段对话里发过的一份附件。`in_library` 说它在不在资料库里。 */
+export interface RoomAttachment {
+  path: string
+  name: string
+  mime: string | null
+  added_by: string
+  added_at: string
+  in_library: boolean
+}
+
+/** 芝士在这段对话里写的一份文档。 */
+export interface RoomDocument {
+  id: string
+  number: number | null
+  title: string | null
+  author: string
+  created_at: string
+  in_library: boolean
+}
+
+/** 这个频道或私聊里发过的附件（连同它的任务和支线），新的在前。 */
+export function listRoomAttachments(topicId: string): Promise<ListPayload<RoomAttachment>> {
+  return request<ListPayload<RoomAttachment>>(`/topics/${encodeURIComponent(topicId)}/attachments`)
+}
+
+/** 芝士在这个频道或私聊里写的文档，新的在前。 */
+export function listRoomDocuments(topicId: string): Promise<ListPayload<RoomDocument>> {
+  return request<ListPayload<RoomDocument>>(`/topics/${encodeURIComponent(topicId)}/documents`)
+}
+
+/** 把一份文档保存到资料库：项目里的人从此都能看到它。 */
+export function keepDocument(documentId: string): Promise<RoomDocument> {
+  return request<RoomDocument>(`/documents/${encodeURIComponent(documentId)}/keep`, { method: 'POST' })
+}
+
 // ---- Chat attachments ----
 
 /** 把资料库里已有的一份文件附在这条消息上。返回的形状和一次上传相同。 */
@@ -40,22 +77,18 @@ export async function attachLibraryFile(topicId: string, libraryPath: string): P
   return envelope.data
 }
 
-// Upload a file into the project's 资料库, with a copy in this room.
+// Upload a file into this room: it stays in the conversation until someone saves
+// it to the 资料库 (#3828).
 //
 // The body goes up over XHR so the composer can draw a determinate bar from its
 // progress — `fetch` has no upload-progress event (see lib/xhrUpload.ts).
-//
-// `origin: 'clipboard'` 的那一份只留在这个房间：贴进来的截图没有名字（`image.png`
-// 是浏览器编的），而资料库是按名字寻址的 —— 见 attachments.ts 里给它现起的名字。
 export async function uploadAttachment(
   topicId: string,
   file: File,
-  origin: 'file' | 'clipboard' = 'file',
   onProgress?: (fraction: number) => void
 ): Promise<ChatAttachment> {
   const form = new FormData()
   form.append('file', file)
-  form.append('origin', origin)
   const url = `${BASE}/topics/${encodeURIComponent(topicId)}/attachments`
   const { status, body } = await postFormWithProgress<ApiEnvelope<ChatAttachment>>(url, form, authHeaders(), onProgress)
   if (status < 200 || status >= 300 || !body || body.code !== 200)
@@ -93,10 +126,25 @@ export async function attachmentImageUrl(topicId: string, path: string): Promise
 }
 
 /** A video object URL fetched with Authorization; the browser can then seek it. */
+/** The address a `<video>` plays a video attachment from, streaming it.
+ *
+ *  The element fetches the recording itself, one byte range at a time, and none
+ *  of those requests can carry Authorization. So this reads the first byte with
+ *  the header, and the response leaves a cookie scoped to this room's raw path
+ *  (backend `remember_for_media`); the element's own requests to the same URL
+ *  carry it. Nothing is downloaded up front, so a long recording starts playing
+ *  at once and seeking reads only the part it lands on. */
 export async function attachmentMediaUrl(topicId: string, path: string): Promise<string> {
-  const res = await fetch(attachmentRawUrl(topicId, path), { headers: authHeaders() })
+  const url = attachmentRawUrl(topicId, path)
+  // no-store: a cached answer would skip the response that renews the cookie,
+  // and once the old one expires the player's own range requests get 401.
+  const res = await fetch(url, {
+    headers: { ...authHeaders(), Range: 'bytes=0-0' },
+    cache: 'no-store',
+  })
   if (!res.ok) throw new Error(t('global.request.fileReadFailed', { status: res.status }))
-  return URL.createObjectURL(await res.blob())
+  await res.body?.cancel()
+  return url
 }
 
 /** A published file's bytes, for a viewer that draws them in the page. */
@@ -242,7 +290,7 @@ export function copyIntoRoom(
 /** 打开编辑器要的那份签过名的配置。`enabled` 为假时 `reason` 是为什么打不开的码。 */
 export interface RoomFileEditorSession {
   enabled: boolean
-  reason?: 'not_configured' | 'unsupported' | 'library_original'
+  reason?: 'not_configured' | 'unsupported' | 'library_original' | 'attachment_original'
   copyable?: boolean
   editable?: boolean
   api_url?: string
@@ -271,6 +319,8 @@ export interface RoomFile {
   author_kind: 'human' | 'agent' | 'unknown' | null
   /** 字节从哪条路进来：`upload`、`ai`、`editor`、`restore`、`scheduled`…… */
   source: string | null
+  /** 有人从这里把它保存到了资料库。 */
+  in_library: boolean
 }
 
 /** 这个房间的文件区：它自己的东西都在这一处——芝士交付的文档、定时任务交回的结果、有

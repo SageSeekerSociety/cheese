@@ -16,8 +16,8 @@
  *
  * 不登记 `ProjectSettingsView` 整页：它现在只剩接线（实例化那五个 composable、把
  * 把 `DeviceSessionsSwitch` 作为设备入口组件传入、按 `section` 门控取数），
- * 而且它在 `scene-baseline.json` 的 debt 里 —— 场景是路由页和 `components/panels/**`，
- * 整页不是给预览站单独画的。
+ * 而且它自己不是 A 级，在场景棘轮眼里是那棵树上的欠债 —— 场景是路由页和
+ * `components/panels/**`，整页不是给预览站单独画的。
  *
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `SETTINGS_DATA_ENTRIES`
  * 这个值，运行时不构成循环。
@@ -38,11 +38,13 @@ import {
   taskNamingState,
 } from './catalogSettingsDataFixtures'
 
+import MoveProjectDialog from '@/components/MoveProjectDialog.vue'
 import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '@/components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '@/components/ProjectEnvironmentSettings.vue'
 import ProjectMcpSettings from '@/components/ProjectMcpSettings.vue'
 import ProjectTaskNamingSettings from '@/components/ProjectTaskNamingSettings.vue'
+import ProjectRolesSettings from '@/components/settings/ProjectRolesSettings.vue'
 
 /** 五件都吃 vuetify。`ProjectMcpSettings` 多一样 i18n：它用 `<i18n-t>`，那一个由插件
  *  全局注册，不装就解析不了、挂起来会警告。 */
@@ -72,12 +74,6 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
         expect: '当前部署无法自动起名',
       },
       {
-        name: '只读',
-        note: '不能管理的人：两档都灰掉，底下写一句仅项目管理员可修改。',
-        props: { state: taskNamingState({ can_manage: false }), error: '', busy: false },
-        expect: '仅项目管理员可修改',
-      },
-      {
         name: '读失败',
         note: '还没读到就是 null：那两档不画，只在上面留一句后端原话。',
         props: { state: null, error: '加载任务命名设置失败', busy: false },
@@ -105,18 +101,6 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
           editing: true,
         },
         expect: '设备会话入口',
-      },
-      {
-        name: '只读',
-        note: '不能管理：没有「更换」那颗按钮，最底下写一句仅项目负责人可更换默认环境。',
-        props: {
-          projectId: 'demo',
-          state: computeState({ can_manage: false }),
-          error: '',
-          busy: false,
-          editing: false,
-        },
-        expect: '仅项目负责人可更换默认环境',
       },
       {
         name: '保存中',
@@ -390,6 +374,122 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
         note: '还没读到就是 null：只在上面留一句后端原话。',
         props: { list: null, error: '读取 MCP 服务器失败', busy: '', values: {} },
         expect: '读取 MCP 服务器失败',
+      },
+    ],
+  },
+  {
+    id: 'project-roles-settings',
+    title: 'ProjectRolesSettings',
+    about: '项目设置里的「角色和权限」：一张角色乘权限的表，所有人都看得到，只有管理员能勾选；管人和改角色两行锁定。',
+    file: 'src/components/settings/ProjectRolesSettings.vue',
+    component: ProjectRolesSettings,
+    needs: ['vuetify', 'i18n'],
+    states: [
+      {
+        name: '管理员看到的',
+        note: '默认值，能勾选；和默认一样所以没有「恢复默认」。',
+        props: {
+          grants: {
+            admin: [
+              'manage_members',
+              'change_roles',
+              'edit_settings',
+              'export_project',
+              'create_channels',
+              'manage_channels',
+              'speak',
+              'ask_agent',
+              'tasks',
+              'edit_content',
+              'comment',
+              'configure_agents',
+            ],
+            member: [
+              'export_project',
+              'create_channels',
+              'speak',
+              'ask_agent',
+              'tasks',
+              'edit_content',
+              'comment',
+              'configure_agents',
+            ],
+            mentor: ['speak', 'ask_agent', 'comment'],
+          },
+          editable: true,
+          agentName: '芝士',
+          isDefault: true,
+        },
+        expect: '修改项目设置',
+      },
+      {
+        name: '成员看到的',
+        note: '只能看，底下说只有管理员能修改。',
+        props: {
+          grants: {
+            admin: [
+              'manage_members',
+              'change_roles',
+              'edit_settings',
+              'export_project',
+              'create_channels',
+              'manage_channels',
+              'speak',
+              'ask_agent',
+              'tasks',
+              'edit_content',
+              'comment',
+              'configure_agents',
+            ],
+            member: [
+              'export_project',
+              'create_channels',
+              'speak',
+              'ask_agent',
+              'tasks',
+              'edit_content',
+              'comment',
+              'configure_agents',
+            ],
+            mentor: ['speak', 'ask_agent', 'comment'],
+          },
+          editable: false,
+          agentName: '芝士',
+          isDefault: true,
+        },
+        expect: '只有管理员能修改',
+      },
+    ],
+  },
+  {
+    id: 'move-project-dialog',
+    title: 'MoveProjectDialog',
+    about: '成员页右上角「移到团队」打开的对话框：所有者把个人项目移到自己管理的团队。',
+    file: 'src/components/MoveProjectDialog.vue',
+    component: MoveProjectDialog,
+    needs: ['vuetify', 'i18n'],
+    teleport: true,
+    states: [
+      {
+        name: '有可选的团队',
+        note: '挑一个团队，「移到这个团队」才按得下去。',
+        props: {
+          modelValue: true,
+          teams: [
+            { id: 1, name: '视觉课题组' },
+            { id: 2, name: '机器人社' },
+          ],
+          loading: false,
+          moving: false,
+          error: null,
+        },
+        expect: '项目会归到所选团队',
+      },
+      {
+        name: '没有你管理的团队',
+        note: '说清楚，不给选择框。',
+        props: { modelValue: true, teams: [], loading: false, moving: false, error: null },
+        expect: '暂无你管理的团队',
       },
     ],
   },

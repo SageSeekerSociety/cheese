@@ -91,6 +91,10 @@ class MachinePlace:
     #: with the login its owner gave the platform on this machine, not the
     #: platform's.
     own_login: bool = False
+    #: A member's own coding agent on a connection its owner's account holds
+    #: (#2991): it calls the model with that connection, which the session's
+    #: environment carries (`place.OWN_MODEL_*`), on the session host.
+    own_key: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,0 +1,6 @@
+{
+  "already_linked": "This GitHub account is linked to another account. Use a different GitHub account, or have its owner disconnect it first",
+  "github_unreachable": "The server couldn't reach GitHub. This isn't caused by anything you did. Come back later and choose Connect GitHub account again",
+  "invalid_state": "The authorization link has expired or been used. Come back to this page and choose Connect GitHub account again; don't reuse an old link",
+  "oauth_failed": "GitHub didn't accept this authorization; the code may have expired or been used. Come back to this page and choose Connect GitHub account again"
+}

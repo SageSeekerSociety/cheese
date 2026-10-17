@@ -38,14 +38,16 @@ const VISIBLE = /[\p{L}\p{N}]/gu
 // What only spells structure, line by line: quote markers, list and task
 // markers. The digits of an ordered list are its numbering, not its text.
 const LINE_SYNTAX = /^(?:\s*>)*\s*(?:\[![A-Za-z]+\]|(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?)?/
-// A container's opening and closing lines (with a chart's type), and a fold's tags.
-const BLOCK_SYNTAX = /^\s*:{3,}[a-z]*(?:[ \t]+[a-z]+)*\s*$|<\/?(?:details|summary)(?:\s+open)?>/g
+// A container's opening and closing lines (with a chart's type), a mini-app's
+// opener (its key, version and title are text, kept as attributes), and a
+// fold's tags.
+const BLOCK_SYNTAX = /^\s*:{3,}[a-z]*(?:[ \t]+[a-z]+)*\s*$|^\s*:{3,}app(?=[ \t])|<\/?(?:details|summary)(?:\s+open)?>/g
 // A canvas block's opening words: the board it names, not text a reader sees.
 const CANVAS_REF = /^\s*:{3,}canvas[ \t]+(?:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|new)\b/
 // An entity is one character on screen, whatever letters spell it.
 const ENTITY = /&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/gi
 // Attributes whose value a reader can see or follow.
-const TEXT_ATTRS = ['href', 'src', 'alt', 'title', 'language', 'source', 'latex', 'label', 'about']
+const TEXT_ATTRS = ['href', 'src', 'alt', 'title', 'language', 'source', 'latex', 'label', 'about', 'app', 'version']
 
 function count(text: string, into = new Map<string, number>()): Map<string, number> {
   for (const char of text.match(VISIBLE) ?? []) into.set(char, (into.get(char) ?? 0) + 1)
@@ -66,7 +68,7 @@ function documentChars(node: PMNode): Map<string, number> {
     if (child.isText) count(child.text ?? '', counts)
     for (const key of TEXT_ATTRS) {
       const value = child.attrs?.[key]
-      if (typeof value === 'string') count(value, counts)
+      if (typeof value === 'string' || typeof value === 'number') count(String(value), counts)
     }
     for (const mark of child.marks) {
       for (const key of TEXT_ATTRS) {

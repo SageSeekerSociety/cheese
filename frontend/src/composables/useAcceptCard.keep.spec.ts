@@ -100,6 +100,28 @@ describe('useAcceptCard keeps the card while it re-reads', () => {
     expect(api.acceptedCard.value).toBe(accepted)
   })
 
+  /* 采纳之后话题会跟着归档。话题行还没回来的那一拍就把卡换成 accepted，横条上的框
+   * 会先收走再长回来，所以写操作递进来的那份刷新必须真的被等。 */
+  it('an action waits for the topic row it asked for before swapping the card', async () => {
+    getAcceptCards.mockResolvedValue({ data: [card()] })
+    const api = host(reactive({ topicId: 't1', taskId: 'k1', topicStatus: 'active' }))
+    await flush()
+    const before = api.pendingCard.value
+
+    const row = deferred<void>()
+    useWorkspaceStore().refreshTopicRow = vi.fn(() => row.promise)
+    getAcceptCards.mockResolvedValue({ data: [card({ status: 'accepted' })] })
+
+    void api.onAcceptCard()
+    await flush()
+    expect(api.pendingCard.value).toBe(before)
+
+    row.resolve()
+    await flush()
+    expect(api.pendingCard.value).toBeNull()
+    expect(api.acceptedCard.value?.id).toBe('card-1')
+  })
+
   it('switching topics clears the old topic’s cards at once', async () => {
     getAcceptCards.mockResolvedValue({ data: [card()] })
     const props = reactive({ topicId: 't1', taskId: 'k1', topicStatus: 'active' })

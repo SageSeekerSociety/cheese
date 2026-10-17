@@ -18,7 +18,7 @@ main_sha="$("$ROOT/deploy/image-tag.sh" origin/main 2>/dev/null || "$ROOT/deploy
 echo "origin/main     : ${main_sha}"
 
 live="$(ssh -o ConnectTimeout=20 -o BatchMode=yes "$HOST" \
-  "docker ps -a --filter 'label=com.docker.compose.project=$PROJECT' \
+  "docker ps -a --no-trunc --filter 'label=com.docker.compose.project=$PROJECT' \
   --format '{{.Label \"com.docker.compose.service\"}}\t{{.Image}}\t{{.State}}\t{{.Status}}'" \
   2>/dev/null || true)"
 
@@ -32,7 +32,11 @@ echo "$live" | while IFS=$'\t' read -r service image state status; do
     "$service" "${image##*:}" "$state" "$status"
 done
 
-if printf '%s\n' "$live" | "$ROOT/deploy/check-app-tier.sh" "$main_sha"; then
+# The digests the last healthy deploy chose for collab and the event relay.
+pins="$(mktemp)"
+trap 'rm -f "$pins"' EXIT
+ssh -o ConnectTimeout=20 -o BatchMode=yes "$HOST" 'cat ~/ops/app-tier-pins 2>/dev/null' > "$pins" || true
+if printf '%s\n' "$live" | APP_TIER_PINS="$pins" "$ROOT/deploy/check-app-tier.sh" "$main_sha"; then
   echo "verdict         : live matches main"
 else
   echo "verdict         : DRIFTED — main is not what is running"

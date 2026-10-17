@@ -5,6 +5,8 @@
 
 import type { ThemePreference } from '@/theme'
 
+import { storageGetJson, storageRemove, storageSetJson } from '@/lib/browserStorage'
+
 /** What an app can do beyond the window itself; an older app lists fewer. */
 export type DesktopAbility = 'notices' | 'badge' | 'autostart' | 'links' | 'updates' | 'device' | 'modelService'
 
@@ -218,7 +220,10 @@ export type BrowserSignInEntry = 'signin' | 'signup' | 'recover'
 export async function signInInBrowser(entry: BrowserSignInEntry, target: string): Promise<string> {
   const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)))
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
-  localStorage.setItem(SIGN_IN_VERIFIER_KEY, JSON.stringify({ verifier, target }))
+  // If this does not land, the code that comes back has nothing to be traded
+  // with and the sign-in fails the way it does for a code this app did not ask
+  // for — a browser window the person can close.
+  storageSetJson(SIGN_IN_VERIFIER_KEY, { verifier, target })
   const query = new URLSearchParams({ entry, challenge: base64url(digest) })
   const url = new URL(`/account/oauth/app?${query}`, window.location.origin).href
   window.open(url, '_blank')
@@ -227,14 +232,11 @@ export async function signInInBrowser(entry: BrowserSignInEntry, target: string)
 
 /** The secret of the sign-in started last, and where it was headed; each is used at most once. */
 export function takeSignInVerifier(): { verifier: string; target: string } | null {
-  const raw = localStorage.getItem(SIGN_IN_VERIFIER_KEY)
-  localStorage.removeItem(SIGN_IN_VERIFIER_KEY)
-  try {
-    const kept = raw ? JSON.parse(raw) : null
-    return typeof kept?.verifier === 'string' ? { verifier: kept.verifier, target: String(kept.target ?? '/') } : null
-  } catch {
-    return null
-  }
+  // Removed whether or not it reads back as one: a secret is used at most once,
+  // so nothing must be left for a second try to find.
+  const kept = storageGetJson<{ verifier?: unknown; target?: unknown }>(SIGN_IN_VERIFIER_KEY)
+  storageRemove(SIGN_IN_VERIFIER_KEY)
+  return typeof kept?.verifier === 'string' ? { verifier: kept.verifier, target: String(kept.target ?? '/') } : null
 }
 
 /** The `cheese://` link that opens the app on `page`, a path in this web app. */

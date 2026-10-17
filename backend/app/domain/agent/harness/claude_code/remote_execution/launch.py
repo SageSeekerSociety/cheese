@@ -14,6 +14,7 @@ from app.domain.agent import (
     environment_runner,
     forge_cli,
     machine_tunnel,
+    package_mirrors,
     preview_tunnel,
     toolchain,
 )
@@ -28,8 +29,11 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     session_transfer,
 )
 from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetcher
-from app.domain.agent.skills import SKILLS_SHIPPED_BEFORE_THE_LIST, shipped_skill_names
 from app.domain.project_skill.service import project_skill_names, session_skill_files
+from app.domain.skill_library import (
+    SKILLS_SHIPPED_BEFORE_THE_LIST,
+    shipped_skill_names,
+)
 
 # What the session's Stop checkpoint runs on the executor (`runtime.control`):
 # every task checkout with something unpushed backed up and pushed.
@@ -154,6 +158,11 @@ def payload_for(
         "resource": str(resource_id),
         "env": values,
         "environment": environment,
+        # Where this room's package downloads come from. The addresses travel
+        # here rather than through `env`, which is the *session's* environment:
+        # this is the platform's own policy for the machine, and the executor
+        # decides from it, on the machine, which mirrors answer (`bootstrap`).
+        "package_mirrors": package_mirrors.configuration(settings),
         # Carried as content, not as a release file: the agent's shell runs on
         # THIS machine, and the skill text it was handed names
         # `$CLAUDE_CONFIG_DIR/skills/...` — a path that only resolves here. The

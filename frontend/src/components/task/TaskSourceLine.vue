@@ -34,7 +34,7 @@ const where = computed(() => {
 const quote = computed(() => {
   const source = props.source
   if (!source) return ''
-  const text = plainRefs(source.content, { mentionNames: props.memberNames, topicTitles: {} })
+  const text = plainRefs(source.content, { mentionNames: props.memberNames, topicTitles: {}, notified: true })
   return t('work.task.source.quote', { name: nameOf(source.author), text })
 })
 const madeHere = computed(() => {

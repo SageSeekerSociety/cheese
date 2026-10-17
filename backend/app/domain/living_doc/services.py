@@ -51,11 +51,27 @@ class Documents:
         return await self._repo.get(document_id)
 
     async def of_project(
-        self, project_id: uuid.UUID, *, after: Rank | None, limit: int
+        self,
+        project_id: uuid.UUID,
+        *,
+        after: Rank | None,
+        limit: int,
+        also_of_room: uuid.UUID | None = None,
     ) -> list[Document]:
         """The project's own documents, the latest changed first, a page at a
-        time."""
-        return await self._repo.of_project(project_id, after=after, limit=limit)
+        time; ``also_of_room`` adds the ones that conversation keeps."""
+        return await self._repo.of_project(
+            project_id, after=after, limit=limit, also_of_room=also_of_room
+        )
+
+    async def of_room(self, room_id: uuid.UUID) -> list[Document]:
+        """The documents 芝士 wrote in this channel or private chat (#3828)."""
+        return await self._repo.of_room(room_id)
+
+    async def keep(self, doc: Document) -> None:
+        """Save a conversation's document to the library, where the project's
+        people find it. One already the project's stays as it is."""
+        await self._repo.keep(doc)
 
     async def create(
         self,
@@ -64,13 +80,19 @@ class Documents:
         title: str | None = None,
         author: str = "system",
         number: int | None = None,
+        room_id: uuid.UUID | None = None,
     ) -> Document:
-        """A new document in no room, empty (version 0): the project's own
-        (which carries the project's next document ``number``), or one a task
-        points at. What it says is written the way every other write is,
-        through the service."""
+        """A new document, empty (version 0): the project's own (which carries
+        the project's next document ``number``), one a task points at, or one
+        written in the conversation ``room_id`` that stays there until someone
+        saves it to the library. What it says is written the way every other
+        write is, through the service."""
         return await self._repo.create(
-            project_id=project_id, title=title, author=author, number=number
+            project_id=project_id,
+            title=title,
+            author=author,
+            number=number,
+            room_id=room_id,
         )
 
     async def nodes(self, doc: Document) -> list[DocumentNode]:
@@ -223,7 +245,6 @@ class DocumentJournal:
         base_version: int | None,
         operation_id: uuid.UUID | None = None,
         event_id: uuid.UUID | None = None,
-        requested_by: str | None = None,
     ) -> None:
         self.session.add(
             DocumentVersion(
@@ -234,7 +255,6 @@ class DocumentJournal:
                 previous_version=version - 1 if version > 1 else None,
                 base_version=base_version,
                 actor=actor,
-                requested_by=requested_by,
                 operation_id=operation_id,
                 event_id=event_id,
             )
@@ -390,7 +410,6 @@ def _version_row(row: DocumentVersion) -> dict:
         "previous_version": row.previous_version,
         "base_version": row.base_version,
         "actor": row.actor,
-        "requested_by": row.requested_by,
         "operation_id": str(row.operation_id) if row.operation_id else None,
         "event_id": str(row.event_id) if row.event_id else None,
         "created_at": row.created_at.isoformat(),

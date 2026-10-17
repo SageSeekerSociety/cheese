@@ -22,7 +22,7 @@
          因为计数要登录）。 -->
     <!-- 桌面 app 的新版本下载好了、等一次重启时才出现；不点就不重启。 -->
     <DesktopUpdateReady />
-    <HelpAndFeedbackMenu />
+    <HelpAndFeedbackMenu :logged-in="loggedIn" />
     <!-- 登录后语言在「我」的菜单里（和外观并排）；没登录的人没有那个菜单，语言留在这儿。 -->
     <LanguageToggle v-if="!loggedIn" />
   </v-system-bar>
@@ -40,8 +40,12 @@ import ParentBackButton from './ParentBackButton.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import { t } from '@/i18n'
 import { titleBarOverlay } from '@/lib/desktopApp'
-import AccountService from '@/services/account'
 import { usePageTitleStore } from '@/stores/title'
+
+// 登录态由外壳传进来（`layouts/AppShell.vue` 本来就有它）：这个组件在
+// `src/components/**` 下，不能自己去读 `services/account`
+// （`.claude/rules/architecture.md`）。
+const props = defineProps<{ loggedIn: boolean }>()
 
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
@@ -62,7 +66,7 @@ const updateTitle = () => {
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })
 
-const loggedIn = computed(() => AccountService._loggedIn.value)
+const loggedIn = computed(() => props.loggedIn)
 </script>
 
 <style>

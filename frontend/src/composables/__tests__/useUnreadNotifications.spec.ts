@@ -24,8 +24,12 @@ const settle = async () => {
 
 /** 这个数在进程内是共享的一份（和首页那一格、待办页读的是同一份），所以每个用例都要
  *  重新 import 一次，不然上一个用例的数和「刚问过」的时刻会跟到下一个用例里。 */
-async function mountAt(path: string) {
+async function mountAt(path: string, { held = false } = {}) {
   vi.resetModules()
+  // 首帧这道门在测试里没人推：小点读的数排在它后面，不推就一次都不问（`@/test/firstPaint`）。
+  const fp = await import('@/test/firstPaint')
+  if (held) fp.holdFirstPaint()
+  else await fp.openFirstPaint()
   const { useUnreadNotifications } = await import('../useUnreadNotifications')
   const Probe = {
     setup() {
@@ -38,11 +42,17 @@ async function mountAt(path: string) {
     history: createMemoryHistory(),
     routes: [{ path: '/:any(.*)*', component: Blank }],
   })
-  await router.push(path)
+  // 门先攥着的用例要的是「挂载那一刻这一次打开还没落地」这个次序：起始停在 `/`，
+  // 跳转由用例自己推（`arrive`）。
+  if (!held) await router.push(path)
   const utils = render(Probe, { global: { plugins: [router] } })
   return {
     ...utils,
     router,
+    fp,
+    arrive: async () => {
+      await router.push(path)
+    },
     countText: () => utils.container.querySelector('[data-count]')?.textContent ?? '',
   }
 }
@@ -58,6 +68,35 @@ afterEach(() => {
 })
 
 describe('未读小点读的那个数', () => {
+  it('冷开就落在待办页上：首帧之前不问，门开了才问一次', async () => {
+    getUnreadCount.mockResolvedValue({ count: 2 })
+    const { arrive, fp, countText } = await mountAt('/inbox', { held: true })
+
+    // 这一次打开本身：挂载之后跳转才落地，看着像「走进待办页」。
+    await arrive()
+    await settle()
+    expect(getUnreadCount).not.toHaveBeenCalled()
+
+    await fp.releaseFirstPaint()
+    await waitFor(() => expect(countText()).toBe('2'))
+    expect(getUnreadCount).toHaveBeenCalledTimes(1)
+  })
+
+  it('冷开时窗口重新拿到焦点：首帧之前不问，门开了才问', async () => {
+    // 开机那一两秒里切走再切回来：`lastAt` 还是 0，节流挡不住这一下，不等门就会
+    // 首帧前问一次、门开了再问一次。
+    getUnreadCount.mockResolvedValue({ count: 2 })
+    const { fp, countText } = await mountAt('/projects/p-1', { held: true })
+
+    window.dispatchEvent(new Event('focus'))
+    await settle()
+    expect(getUnreadCount).not.toHaveBeenCalled()
+
+    await fp.releaseFirstPaint()
+    await waitFor(() => expect(countText()).toBe('2'))
+    expect(getUnreadCount).toHaveBeenCalledTimes(1)
+  })
+
   it('请求失败保留已经读到的非零计数', async () => {
     getUnreadCount.mockResolvedValueOnce({ count: 3 })
     const { router, countText } = await mountAt('/projects/p-1')

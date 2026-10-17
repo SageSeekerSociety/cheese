@@ -36,6 +36,10 @@ const props = withDefaults(
     parametersOnly?: boolean
     /** 这道题有没有单独写 AI 指导（「更多设置」收起时那一行要说）。 */
     teachingCustom?: boolean
+    /** 能当导师的人：出题人和空间管理员。 */
+    mentorOptions?: { title: string; value: string }[]
+    /** 新发一道题时导师默认是谁。 */
+    defaultMentor?: string
   }>(),
   {
     initialData: null,
@@ -45,6 +49,8 @@ const props = withDefaults(
     domainGroups: () => [],
     parametersOnly: false,
     teachingCustom: false,
+    mentorOptions: () => [],
+    defaultMentor: undefined,
   }
 )
 
@@ -98,6 +104,8 @@ const {
   accessControlEnabled,
   accessDomainGroupIds,
   participantLimitUnlimited,
+  mentorsJoin,
+  mentors,
   description,
   isSubmitting,
   submitForm,
@@ -136,6 +144,9 @@ defineExpose({
       v-model:team-locking-policy="teamLockingPolicy"
       v-model:min-team-size="minTeamSize"
       v-model:max-team-size="maxTeamSize"
+      v-model:mentors-join="mentorsJoin"
+      v-model:mentors="mentors"
+      :mentor-options="mentorOptions"
       :is-editing="isEditing"
       :submitter-type-control="submitterTypeProps"
       :rank-control="rankProps"

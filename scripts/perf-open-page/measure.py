@@ -2,8 +2,9 @@
 
 What it answers: when you click a nav entry, how many milliseconds pass before
 that page's own content is on screen — and how much of that time was waiting on
-the network, how many API requests the page fired, and whether any of them were
-serial (one request's answer deciding the next one's URL).
+the network, how many API requests the page fired, and whether they went out
+in one batch or in several (see `api_bursts` for what a later batch does and
+does not tell you).
 
     cd frontend && npx vite --port 3000 --strictPort     # or any running build
     uv run --with playwright python scripts/perf-open-page/measure.py \
@@ -111,7 +112,10 @@ class Sample:
     long_task_count: int = 0
     network_ms: float | None = None
     # API requests that ran as separate bursts, and the time spent in the bursts
-    # after the first: that time was spent waiting for an earlier request.
+    # after the first. A later burst only says a request started after the earlier
+    # ones had finished — not why. It may need their answer, or it may have been
+    # put off on purpose (an idle-time read) and wait for nothing; read the code
+    # before counting it as time a fix would save.
     api_bursts: int = 0
     api_serial_ms: float = 0.0
     # (path, start_ms, end_ms) — on the page clock, for anyone re-checking.
@@ -201,9 +205,11 @@ def _measure_one(
 
     # Requests fired together overlap, so they land in one burst. A request that
     # only starts once everything already in flight has come back opens a new
-    # burst: it was waiting on an earlier response. ``api_serial_ms`` is the time
-    # spent in those later bursts — the part that only goes away if the request
-    # turns out not to have needed what it waited for.
+    # burst. ``api_serial_ms`` is the time spent in those later bursts. It is an
+    # upper bound on what running them in parallel could save, not an estimate:
+    # a burst that was deferred on purpose (the channel roster reads the room's
+    # environment only once the browser is idle) waits on nothing, and running
+    # it earlier would only compete with the page's own reads.
     intervals = sorted((r["s"] - base, r["e"] - base) for r in api)
     bursts: list[list[float]] = []
     for start_at, end_at in intervals:
@@ -227,7 +233,10 @@ def _measure_one(
         api_bursts=len(bursts),
         api_serial_ms=round(serial_ms, 1),
         api_timeline=[
-            [r["n"].split("/api/", 1)[-1].split("?")[0], round(r["s"] - base, 1), round(r["e"] - base, 1)]
+            # Keep the query string: `/spaces?pageSize=50` (the nav) and
+            # `/spaces?pageSize=12` (the spaces page) are two different reads,
+            # and without it they look like one request fired twice.
+            [r["n"].split("/api/", 1)[-1], round(r["s"] - base, 1), round(r["e"] - base, 1)]
             for r in sorted(api, key=lambda r: r["s"])
         ],
     )

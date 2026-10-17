@@ -11,7 +11,6 @@ import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 import { isClosed } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
-import { useFeedbackStore } from '@/stores/feedback'
 
 // 反馈列表里的一**行**（不是一张卡）。
 //
@@ -57,10 +56,22 @@ import { useFeedbackStore } from '@/stores/feedback'
 // `.t-meta-read` 淡下去，读者先看到标题和摘要。不用等宽的 `.t-meta`：mono 栈没有
 // CJK 字形，「19小时前」会在一格里混两种字体，作者名也读着像代码；数字对齐由 `.t-num` 给。
 //
+// ## 支持这个动作**不在这里发**
+//
+// 「点一下支持」从前是这一件自己读反馈 store 调 `toggleSupport` 的（组件自己取数，它
+// 也就因此卡在 C 档，只能整页挂起来看）。现在它只把「有人按了支持」报上去：真正的请求
+// 由渲染它的页面发（`FeedbackCenterPage` / `FeedbackMinePage`，两页都在事件回来时调
+// `store.toggleSupport(item.id)`）。计数和「已支持」的样子仍**只来自数据**（`item.supports`
+// / `item.supported`），这一件不自己 ±1 —— 服务端回的是写完之后的人数，本地猜一个增量
+// 会在两个人同时点的时候渲染出一个从来没存在过的数字。
+//
 // 数据是 `FeedbackCard`（后端 `schemas.FeedbackCard`）本身，**不在这里转成第二种形状**。
 const props = defineProps<{ item: FeedbackCard }>()
 
-const store = useFeedbackStore()
+const emit = defineEmits<{
+  /** 支持 / 取消支持。带 id 是因为渲染它的那一页可能同时摆着好几行，得知道按的是哪一条。 */
+  support: [id: string]
+}>()
 
 /** 办完了的反馈在列表里不再喊人支持：它已经办完了。收尾有几种（修复、上线、不修复），
  *  判断走 lib/feedbackMeta 的 `isClosed`，别在这里再写一次「不是 resolved」。 */
@@ -140,7 +151,7 @@ const to = computed(() => ({ name: 'FeedbackDetail', params: { id: props.item.id
               : t('feedback.card.support')
             : t('feedback.closedHint')
         "
-        @click="store.toggleSupport(item.id)"
+        @click="emit('support', item.id)"
       >
         <v-icon size="16" start>{{ item.supported ? 'mdi-thumb-up' : 'mdi-thumb-up-outline' }}</v-icon>
         <!-- 数字一直在，包括 0：「还没有人支持」本身就是这一栏要读的信息。 -->

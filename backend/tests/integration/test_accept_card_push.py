@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.domain.review import live
+from app.domain.agent import live_notices
 from app.domain.review.models import AcceptCard
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import session_auth_headers
@@ -41,8 +41,14 @@ class _Told:
 
 @pytest.fixture
 def told(monkeypatch) -> _Told:
+    """A card's frames, wherever they leave for a page.
+
+    The card is queued where it is flushed and sent by the commit listener in
+    `agent/live_notices` — `review` sits a layer below the broker and queues
+    instead of publishing.
+    """
     broker = _Told()
-    monkeypatch.setattr(live, "get_broker", lambda: broker)
+    monkeypatch.setattr(live_notices, "get_broker", lambda: broker)
     return broker
 
 

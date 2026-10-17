@@ -14,10 +14,9 @@ import uuid
 import pytest
 
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 RETIRED = {"harness"}
 
@@ -28,7 +27,7 @@ async def test_one_type_two_instances_and_two_works_on_two_models(client):
     ids: dict[str, uuid.UUID] = {}
     async with client.test_factory() as session:
         await registered(session, "alice")
-        project = await ProjectService(session).create(name="P", owner_handle="alice")
+        project = await project_service(session).create(name="P", owner_handle="alice")
         room = await TopicService(session).create(
             project_id=project.id, title="房间", created_by="alice"
         )

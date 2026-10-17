@@ -1,0 +1,9 @@
+host loadavg: 45.20 63.89 67.92 13/8681 72858
+== Leg 1: in-process ASGI, 20 concurrent, 7 batches (median) ==
+channel detail             single wall    70.8 cpu   44.9 db  30.1 encode   0.1 | burst(20) wall  1276.5 cpu   865.6 (67.8% of wall, loop idle   410.9) worst  1269.8 pg    -1.0      1.8KiB rows=None
+channel blocks             single wall    33.6 cpu   24.3 db  10.4 encode   0.2 | burst(20) wall   492.7 cpu   385.4 (78.2% of wall, loop idle   107.3) worst   487.3 pg    -1.0     20.1KiB rows=50
+channel members            single wall    62.0 cpu   16.3 db   4.5 encode   0.1 | burst(20) wall   377.1 cpu   259.4 (68.8% of wall, loop idle   117.8) worst   372.7 pg    -1.0      0.1KiB rows=0
+channel pins               single wall    58.6 cpu   13.9 db   3.1 encode   0.1 | burst(20) wall   362.3 cpu   221.6 (61.2% of wall, loop idle   140.6) worst   357.4 pg    -1.0      0.0KiB rows=0
+channel threads            single wall    59.0 cpu   14.2 db   3.7 encode   0.1 | burst(20) wall   359.3 cpu   231.0 (64.3% of wall, loop idle   128.2) worst   354.2 pg    -1.0      0.0KiB rows=0
+project task list          single wall    92.6 cpu   32.6 db  22.7 encode   0.0 | burst(20) wall   767.7 cpu   569.4 (74.2% of wall, loop idle   198.4) worst   761.3 pg    -1.0     84.7KiB rows=82
+awaiting-me (reference)    single wall    55.4 cpu   37.9 db  24.2 encode   0.2 | burst(20) wall   927.4 cpu   690.8 (74.5% of wall, loop idle   236.6) worst   920.1 pg    -1.0     24.7KiB rows=60

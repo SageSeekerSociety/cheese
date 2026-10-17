@@ -1,0 +1,7 @@
+{
+  "hint": "When on, new commits credit the task requester as a co-author; the AI teammate stays the author. Existing commits are unchanged",
+  "label": "Credit the task requester as co-author",
+  "off": "Currently off",
+  "on": "Currently on",
+  "title": "Commit credit"
+}

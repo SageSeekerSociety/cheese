@@ -12,11 +12,12 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -68,6 +69,8 @@ function fileInputs(c: Element): HTMLInputElement[] {
   return Array.from(c.querySelectorAll<HTMLInputElement>('.composer-actions input[type="file"]'))
 }
 
+beforeAll(loadMarkdownReader)
+
 describe('输入区的上传入口', () => {
   it('文件选择框藏起来但没有被 display:none —— 那样 iOS 上按钮就点不动了', () => {
     const inputs = fileInputs(mount(390))
@@ -93,7 +96,7 @@ describe('输入区的上传入口', () => {
     const any = fileInputs(c).find((i) => !i.accept)
     expect(any).toBeTruthy()
     const opened = vi.spyOn(any!, 'click')
-    await fireEvent.click(c.querySelector('[title="上传文件（每个最大 10MB）"]')!)
+    await fireEvent.click(c.querySelector('[title="上传文件（每个最大 10MB，视频 200MB）"]')!)
     expect(opened).toHaveBeenCalled()
   })
 

@@ -51,6 +51,8 @@ class LibraryFileRecord(UuidPk, Base):
     room_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )
+    #: 从那个房间文件区里哪一份存过来的；那一份由此知道自己已经在资料库里了。
+    source_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     superseded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

@@ -30,12 +30,14 @@ vi.mock('../api', async () => {
     ...actual,
     getDocNodes: async () => ({ data: [] }),
     deleteMemory: vi.fn(),
+    getProject: vi.fn(),
   }
 })
 // 项目目标开的是那一份文档，面板会读它叫什么。
 vi.mock('../api/projectDocuments', async () => ({
   ...(await vi.importActual<typeof import('../api/projectDocuments')>('../api/projectDocuments')),
   getDocumentAbout: async (id: string) => ({ id, title: '项目目标' }),
+  getProjectOverview: vi.fn(),
 }))
 vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
 vi.mock('../api/docCollab', async () => ({
@@ -47,7 +49,8 @@ vi.mock('../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
 }))
 
-import { deleteMemory } from '../api'
+import { deleteMemory, getProject } from '../api'
+import { getProjectOverview } from '../api/projectDocuments'
 import { remoteEdit, seedRoom } from '../test/fakeDocCollab'
 
 import ProjectDocsView from './ProjectDocsView.vue'
@@ -148,6 +151,17 @@ describe('项目目标', () => {
     await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('每周二上课'))
     view.unmount()
   })
+
+  // 「总览是哪一份」只要项目 id：冷开这一面时它和项目本身一起去问，不排在项目后面。
+  it('冷开时总览和项目一起去问，不等项目回来', async () => {
+    vi.mocked(getProject).mockReturnValue(new Promise(() => {}))
+    vi.mocked(getProjectOverview).mockReturnValue(new Promise(() => {}))
+    render(ProjectDocsView, {
+      props: { projectId: 'cold', kind: 'charter' },
+      global: { plugins: [createVuetify()] },
+    })
+    await waitFor(() => expect(getProjectOverview).toHaveBeenCalledWith('cold'))
+  })
 })
 
 describe('称呼项目的 AI 队友用它自己的名字', () => {
@@ -230,6 +244,19 @@ describe('记忆', () => {
     await waitFor(() => expect(deleteMemory).toHaveBeenCalledWith('m1'))
     await waitFor(() => expect(view.queryByText('喜欢用 pnpm')).toBeNull())
     view.unmount()
+  })
+
+  it('不能配置 AI 队友的人删得了自己的记忆，删不了项目记忆', async () => {
+    const view = show('memory', { memoryEntries: [one, shared], changesSharedMemory: false })
+    await waitFor(() => expect(view.getByText('喜欢用 pnpm')).toBeTruthy())
+
+    expect(view.container.querySelectorAll('.memory-card__del')).toHaveLength(1)
+    view.unmount()
+
+    const manager = show('memory', { memoryEntries: [one, shared], changesSharedMemory: true })
+    await waitFor(() => expect(manager.getByText('喜欢用 pnpm')).toBeTruthy())
+    expect(manager.container.querySelectorAll('.memory-card__del')).toHaveLength(2)
+    manager.unmount()
   })
 
   it('说取消就不删，那条记忆还在', async () => {

@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from app.api.response import ok
 from app.core import background
 from app.core.errors import UnauthorizedError
 from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
@@ -35,7 +36,7 @@ async def trigger_storage_sweep(x_cheese_token: str = Header(default="")) -> dic
         sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
         name="archived-room cleanup",
     )
-    return {"code": 200, "data": {"scheduled": True}}
+    return ok({"scheduled": True})
 
 
 # The `cheese` platform-action CLI source, shipped to enrolled devices (the local

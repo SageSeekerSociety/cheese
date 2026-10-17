@@ -53,7 +53,9 @@ How to dig, chosen in round 9 of the gap research (library doc 9f19a6dc):
 merged PRs, first-push CI pass rate, CI rounds per PR, merge-queue drops,
 card wait split into waiting for CI and waiting for review, start to first
 PR, and unfinished turns by seat and reason. It needs `gh`; --room adds the
-platform half and uses the same credentials as the sweep.
+platform half and uses the same credentials as the sweep. `--cohort
+first-push` swaps the PR set: the ones CI first judged inside the window,
+merged or still open, instead of the ones merged inside it.
 """
 
 from __future__ import annotations

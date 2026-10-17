@@ -1,0 +1,11 @@
+{
+  "addFailed": "Couldn't add the file",
+  "fileSnippet": "[File]",
+  "imageSnippet": "[Image]",
+  "pastedName": "pasted-image-{time}",
+  "pastedTextName": "pasted-text-{time}",
+  "retry": "Retry uploading {name}",
+  "sendBlocked": "Retry or remove the failed attachments before sending",
+  "tooLarge": "{name} is over {mb}MB and can't be uploaded",
+  "tooMany": "A message can have at most 9 attachments"
+}

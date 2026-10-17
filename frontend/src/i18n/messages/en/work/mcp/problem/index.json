@@ -1,0 +1,4 @@
+{
+  "invalid": "Cannot read .mcp.json: invalid format",
+  "unreadable": "Cannot read .mcp.json from the repository. Try again later."
+}

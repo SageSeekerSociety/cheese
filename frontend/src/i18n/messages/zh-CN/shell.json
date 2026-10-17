@@ -54,7 +54,6 @@
   },
   "agentDefaultName": "芝士",
   "restore": {
-    "restoring": "正在恢复登录状态…",
     "unreachable": "连不上服务器，暂时确认不了登录状态",
     "unreachableHint": "网络恢复后会自动重试，也可以现在手动重试。",
     "retry": "重试",

@@ -263,7 +263,7 @@ def test_a_question_asked_on_a_card_awaits_on_its_channel(client):
     card = open_task(
         client, tid, "报名表单字段精简", owner="alice", contributors=["bob"]
     )
-    question_row(client, card["id"], asked="bob")
+    question_row(client, card["id"], asked=["bob"])
 
     assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is True
     # 题问的是 bob：这个点不为频道里其他任何人亮。
@@ -365,7 +365,7 @@ def test_replying_in_words_instead_of_a_button_ends_the_wait(client):
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
     # A person asks it, in the channel's main line: an answer wakes no agent.
-    question_row(client, tid, author="alice", question="按哪个口径", asked="bob")
+    question_row(client, tid, author="alice", question="按哪个口径", asked=["bob"])
     for who in ("bob", "carol"):
         joined = client.post(f"/topics/{tid}/join", headers=session_auth_headers(who))
         assert joined.status_code == 200, joined.text

@@ -1,0 +1,10 @@
+{
+  "collapse": "收起",
+  "empty": "暂无现场记录",
+  "expandAll": "展开全部（{count} 行）",
+  "live": "进行中",
+  "loadFailed": "加载失败",
+  "loadingOlder": "加载更早的现场…",
+  "older": "更早的现场",
+  "steps": "{count} 步"
+}

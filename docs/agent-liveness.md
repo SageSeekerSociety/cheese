@@ -9,7 +9,7 @@
 的话它不读）加一种明确的失败（API 拒绝）。跑得再久，只要还在干活，就不动它。
 
 前三种对每种骨架都一样判：进程没了由会话核心（`agent/session_host/host.py`）判，后两种由房间
-的会话账（`agent/room/sessions.py`）判。它们读的是房间自己的事件词汇
+的会话账（`agent/room/sessions/`）判。它们读的是房间自己的事件词汇
 （说了话、调了工具、工具返回、一轮结束），不读任何骨架私有的东西。第四种是骨架自己报的
 失败，平台只负责把它原话交给房间。
 
@@ -75,15 +75,15 @@ assistant 文本、也没有一次工具调用，就按「环境没起来」结�
 | `RUNNER_GONE_S`（常量） | 120 | 一轮开着时 runner 够不着多久算没了 |
 | `TALKING_S`（常量） | 300 | 多近的输出算「正在说话」 |
 
-数值和它们的取舍理由都写在 `backend/app/core/config.py` 各项的注释和 `room/sessions.py`
+数值和它们的取舍理由都写在 `backend/app/core/config.py` 各项的注释和 `room/sessions/`
 常量旁的注释里；改数值先读那段注释。
 
 ## 相关
 
 - `backend/app/domain/agent/session_host/host.py`：读循环，进程退出或 runner 够不着太久时交出
   `Ended`。
-- `backend/app/domain/agent/room/sessions.py`：`Clock`、`verdict`、`_died`，后两条判定和结束
-  一轮所在。
+- `backend/app/domain/agent/room/sessions/`：`Clock`（`records.py`）、`verdict`
+  （`books.py`）、`_died`（`reading.py`），后两条判定和结束一轮所在。
 - `backend/app/domain/agent/harness/driven/subscription.py`：`marks_of`，时钟读的标记。
 - `backend/app/domain/agent/harness/claude_code/events.py`：出错的 `result` 在这里翻译成一次
   失败的结束。

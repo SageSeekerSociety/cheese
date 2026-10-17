@@ -1,0 +1,14 @@
+{
+  "connect": "连接 GitHub 账号",
+  "connected": "已连接 {login}",
+  "connectedAt": "（{when}连接）",
+  "disconnect": "断开",
+  "expired": "GitHub 授权已过期，暂时无法以你的身份创建 PR。点「重新连接」刷新授权",
+  "hint": "用于识别你的提交署名，并以你的身份创建 GitHub PR。它和登录用的 GitHub 授权相互独立，可以连接不同的账号",
+  "loadFailed": "加载连接状态失败",
+  "loading": "加载连接状态中…",
+  "none": "暂无关联账号",
+  "reconnect": "重新连接",
+  "retry": "重试",
+  "title": "连接 GitHub 账号"
+}

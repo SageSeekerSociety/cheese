@@ -2,6 +2,8 @@ import { computed, type ComputedRef, readonly, ref } from 'vue'
 
 import { useCompactDesktop } from './useWorkspaceLayout'
 
+import { storageGet, storageSet } from '@/lib/browserStorage'
+
 // 二级侧栏（项目的话题列表、空间/首页/后台那一栏）在桌面窄档（960–1180）里是一只
 // 浮层：默认收起，靠 rail 顶上那颗开关打开，打开后压在正文上（不是把正文挤窄）。
 // 比它宽就是常驻侧栏，收不起来；比 960 窄是手机外壳，走各自那套抽屉（`navigation`
@@ -13,11 +15,7 @@ import { useCompactDesktop } from './useWorkspaceLayout'
 const KEY = 'cheesex.sidebarExpanded'
 
 function read(): boolean {
-  try {
-    return localStorage.getItem(KEY) === '1'
-  } catch {
-    return false
-  }
+  return storageGet(KEY) === '1'
 }
 
 // 用户的选择。多处（侧栏、rail 上的开关）读的是同一个 ref，所以两处看到的永远一致。
@@ -39,11 +37,8 @@ export function useSidebarCollapse(): {
     expanded.value = next
     // Esc 关掉的是这一次的浮层，不该把「我平时要它开着」这个选择也一起改掉。
     if (!persist) return
-    try {
-      localStorage.setItem(KEY, next ? '1' : '0')
-    } catch {
-      // 存不进去就只在这一次有效。
-    }
+    // 存不进去就只在这一次有效。
+    storageSet(KEY, next ? '1' : '0')
   }
 
   return {

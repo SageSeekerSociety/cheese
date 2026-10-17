@@ -33,6 +33,9 @@ import {
   teamRequestRejectedNotification,
 } from './catalogNotificationsFixtures'
 
+import InboxRow from '@/components/common/Notification/InboxRow.vue'
+import NotificationAvatar from '@/components/common/Notification/NotificationAvatar.vue'
+import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import RenderDeviceInUseNotification from '@/components/common/Notification/renders/RenderDeviceInUseNotification.vue'
 import RenderMentionNotification from '@/components/common/Notification/renders/RenderMentionNotification.vue'
 import RenderReactionNotification from '@/components/common/Notification/renders/RenderReactionNotification.vue'
@@ -44,6 +47,7 @@ import RenderTeamRequestApprovedNotification from '@/components/common/Notificat
 import RenderTeamRequestCanceledNotification from '@/components/common/Notification/renders/RenderTeamRequestCanceledNotification.vue'
 import RenderTeamRequestRejectedNotification from '@/components/common/Notification/renders/RenderTeamRequestRejectedNotification.vue'
 import RenderThreadReplyNotification from '@/components/common/Notification/renders/RenderThreadReplyNotification.vue'
+import WaitingList from '@/components/common/Notification/WaitingList.vue'
 
 /** 只画词条和人名（`UserRef` 认 props）：`useI18n` 那几件够了。 */
 const TEXT: CatalogNeed[] = ['i18n']
@@ -52,6 +56,140 @@ const TEXT: CatalogNeed[] = ['i18n']
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
 export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'notification-item',
+    title: 'NotificationItem',
+    about:
+      '动态里的一条：画成待办页那一种行，中间是这一类通知自己的渲染器，右边是时间；指针停上来时时间换成「标为已读」「删除」。',
+    file: 'src/components/common/Notification/NotificationItem.vue',
+    component: NotificationItem,
+    needs: UI_T,
+    args: { time: '14:20', onMarkAsRead: () => {}, onDelete: () => {} },
+    states: [
+      {
+        name: '没读过的 @',
+        note: '左边是 @ 你的那个人，标题加粗、最左边一颗琥珀小点；下面引着被 @ 的那句话。',
+        props: { notification: mentionNotification(true) },
+        expect: '下周三的课改到线上，有课件的提前发我。',
+        expectSelector: '.inbox-row--unread',
+      },
+      {
+        name: '读过的回复',
+        note: '读过以后小点不亮、标题不加粗，其余照旧。',
+        props: { notification: { ...replyNotification(true), read: true } },
+        expect: '我按你说的把第二节重写了一遍。',
+      },
+    ],
+  },
+  {
+    id: 'notification-avatar',
+    title: 'NotificationAvatar',
+    about:
+      '动态那一行左边那一格：有人发来的画那个人的头像（没挑过就是彩色首字母），没有人可画时画这一类事的淡色小图标。',
+    file: 'src/components/common/Notification/NotificationAvatar.vue',
+    component: NotificationAvatar,
+    needs: ['vuetify'],
+    states: [
+      {
+        name: '有人',
+        note: '@ 你的那个人：他没挑过头像，画的是他的首字母和他的颜色。',
+        props: { notification: mentionNotification(true) },
+        expectSelector: '.user-avatar-char',
+      },
+      {
+        name: '没有人可画',
+        note: '频道里的 @ 只带着名字、没有人的实体：画一个淡色的 @ 小图标，不垫色块。',
+        props: { notification: channelMessageNotification('MENTION') },
+        expectSelector: '.mdi-at',
+      },
+    ],
+  },
+  {
+    id: 'waiting-list',
+    title: 'WaitingList',
+    about: '待办页的「等你处理」：项目里的事按项目分组，邀请和加入申请按要加入的项目或团队分组，回答的按钮就在行上。',
+    file: 'src/components/common/Notification/WaitingList.vue',
+    component: WaitingList,
+    needs: ['vuetify', 'i18n'],
+    args: {
+      loading: false,
+      failed: false,
+      errorReason: '',
+      actionError: '',
+      acting: null,
+      clearing: null,
+      replying: null,
+    },
+    states: [
+      {
+        name: '一件拍板、一条邀请',
+        note: '要你拍板的，选项摆在问题下面；邀请的「接受」「拒绝」一直摆在右边，没有「标为已读」。',
+        props: {
+          items: [
+            {
+              kind: 'work',
+              projectId: 'p-1',
+              projectName: '课程平台',
+              topicId: 't-1',
+              topicTitle: '课程安排',
+              taskId: null,
+              taskTitle: null,
+              phrase: 'decision',
+              reason: 'decide',
+              alertId: 7,
+              headline: '知识库里导入的旧文档怎么处理',
+              options: ['全部保留', '只留最近一年'],
+              at: '2026-10-07T10:00:00Z',
+            },
+            {
+              kind: 'team_invite',
+              id: '42',
+              placeId: '7',
+              place: { name: '数据组', handle: 'data', avatarUrl: null },
+              person: { name: '林夏', handle: 'linxia', avatarUrl: null },
+              role: 'ADMIN',
+              message: '',
+              at: '2026-10-06T10:00:00Z',
+            },
+          ],
+        },
+        expect: '知识库里导入的旧文档怎么处理',
+      },
+      {
+        name: '没有要处理的',
+        note: '一件都没有时只说一句「暂无等你处理的事项」。',
+        props: { items: [] },
+        expect: '暂无等你处理的事项',
+      },
+    ],
+  },
+  {
+    id: 'inbox-row',
+    title: 'InboxRow',
+    about:
+      '待办页的一行：「等你处理」和「动态」共用。左边一格画人或小图标，中间标题和细节，右边是时间；未读点一颗琥珀小点，办完的标题退成次要色。',
+    file: 'src/components/common/Notification/InboxRow.vue',
+    component: InboxRow,
+    needs: [],
+    states: [
+      {
+        name: '未读',
+        note: '最左边那颗琥珀小点只在没读时亮，标题跟着加粗。',
+        props: { time: '14:20', unread: true },
+        slot: '侧栏那条竖条要不要跟项目色走',
+        expect: '侧栏那条竖条要不要跟项目色走',
+        expectSelector: '.inbox-row--unread',
+      },
+      {
+        name: '已办完',
+        note: '事情办完了，这一行还留着当记录：标题退成次要色，不再像在等人。',
+        props: { time: '昨天', done: true },
+        slot: '已回答：A 左侧白色竖条',
+        expect: '已回答：A 左侧白色竖条',
+        expectSelector: '.inbox-row--done',
+      },
+    ],
+  },
   {
     id: 'render-device-in-use-notification',
     title: 'RenderDeviceInUseNotification',

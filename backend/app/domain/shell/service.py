@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.shell.catalog import DEFAULT_SHELL_NAME, Shell, is_known, lookup
+from app.domain.shell_catalog import DEFAULT_SHELL_NAME, Shell, is_known, lookup
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
 from app.domain.task.protocol import resolve as resolve_protocol

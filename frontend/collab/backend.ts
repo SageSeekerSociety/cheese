@@ -21,8 +21,6 @@ export interface StoreBody {
   converted?: boolean
   /** Every suggestion still waiting for a decision, after this store. */
   suggestions: PendingSuggestion[]
-  /** An edit applied for someone: who asked for it. */
-  requested_by?: string | null
   /** An edit's passages, as the writer named them. */
   edits?: { old: string; new: string; suggestion_id?: string }[] | null
   /** The edit was proposed, not applied: the text did not change. */

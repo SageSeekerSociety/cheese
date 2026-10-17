@@ -1488,3 +1488,98 @@ async def test_a_wait_that_runs_out_on_the_rooms_lock_still_answers_preparing(
 
     assert response.status_code == 200, response.text
     assert response.json()["data"].get("preparing") is True
+
+
+async def test_a_machine_whose_environment_state_cannot_be_read_is_answered_in_words(
+    client, monkeypatch
+):
+    """The machine took the executor, but the project environment's state could
+    not be read there (its status check failed on the machine). The session is
+    told so as an answer it can hand to the agent, not with a server error, and
+    the next attempt takes the machine once the state reads."""
+    project = post_project(client, json={"name": "Own machine"}, owner="alice").json()[
+        "data"
+    ]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        owner = await db.scalar(select(User).where(User.username == "alice"))
+        agent = await IdentityService(db).ensure_room_agent_user(topic_id)
+        topic = await db.get(Topic, topic_id)
+        resource = str(topic.resource_id or topic_id)
+        device = await devices.approve(
+            await devices.start("laptop"),
+            owner_user_id=owner.id,
+            supply=Supply.self_hosted,
+        )
+        await devices.assign_to_project(
+            device.device_id, project_id, actor_user_id=owner.id
+        )
+        topic.default_environment = {
+            "kind": "sandbox",
+            "spec": f"devices_of:{owner.id}",
+        }
+        session = await AgentSessionService(db).ensure(
+            topic_id, "cheese", harness="claude-code"
+        )
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        session_id, device_id = session.id, device.device_id
+        token = bind_resource_token(
+            mint_scoped_token(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                agent_handle=agent.username,
+            ),
+            resource,
+            session_id=str(session_id),
+        )
+        await db.commit()
+
+    readable = {"state": False}
+
+    async def machine(device, argv, **kwargs):
+        if "CHEESE_STATUS_WAIT" in " ".join(argv):
+            if not readable["state"]:
+                return {"exit": 1, "stdout": "", "stderr": "python3: not found"}
+            return {"exit": 0, "stdout": json.dumps({"state": "ready"})}
+        return {
+            "exit": 0,
+            "stdout": json.dumps(
+                {"state": f"/{device}/state", "workspace": "/w", "mcp_servers": []}
+            ),
+        }
+
+    hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
+        is_online=lambda _device: True,
+        reconnecting=lambda _device: False,
+        exec=AsyncMock(side_effect=machine),
+    )
+    monkeypatch.setattr(work_lease, "device_hub", hub)
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+
+    def lease():
+        return client.post(
+            f"/topics/{topic_id}/sessions/{session_id}/work-lease",
+            headers={"X-Cheese-Token": token},
+            json={"env": {"CHEESE_ENVIRONMENT": '{"revision":"one"}'}},
+        )
+
+    unreadable = lease()
+    assert unreadable.status_code == 200, unreadable.text
+    assert unreadable.json()["data"]["unavailable"]
+    assert "target" not in unreadable.json()["data"]
+
+    readable["state"] = True
+    taken = lease()
+    assert taken.status_code == 200, taken.text
+    assert taken.json()["data"]["target"]["device_id"] == device_id

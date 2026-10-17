@@ -6,6 +6,8 @@ project that never had a skill leaves no trace."""
 
 import subprocess
 
+import pytest
+
 from app.domain.agent.harness.claude_code.device_launch import (
     platform_skill_prune,
     project_skill_prune,
@@ -90,3 +92,54 @@ def test_an_executor_drops_the_skills_it_is_no_longer_shipped(tmp_path):
         "cheese",
         "weekly-report",
     ]
+
+
+def test_a_prepare_that_changes_nothing_writes_nothing(tmp_path):
+    """清单没变就不写：每次工具调用都会重新装一次，而机器可能一个字节都写不进去。
+
+    A full disk and a filesystem out of inodes both answer a write the same
+    way, and the room cannot run a single tool — `echo ok` included — while
+    every call goes through a write that changes nothing. Say the machine
+    cannot be written to at all and the call has to go through anyway.
+    """
+    import json
+
+    from app.domain.agent.harness.claude_code.remote_execution.bootstrap import (
+        CONFIG_DIR,
+        PROJECT_SKILLS_MANIFEST,
+        prune_project_skills,
+    )
+
+    prune_project_skills(tmp_path, ["summary"], PLATFORM)
+    manifest = tmp_path / CONFIG_DIR / PROJECT_SKILLS_MANIFEST
+    assert json.loads(manifest.read_text()) == ["summary"]
+
+    skills = tmp_path / CONFIG_DIR / "skills"
+    skills.chmod(0o500)  # nothing more may be written in there
+    try:
+        prune_project_skills(tmp_path, ["summary"], PLATFORM)
+        # The list itself did change, so this one really has to write.
+        with pytest.raises(OSError):
+            prune_project_skills(tmp_path, ["summary", "weekly-report"], PLATFORM)
+    finally:
+        skills.chmod(0o700)
+
+    assert json.loads(manifest.read_text()) == ["summary"]
+
+
+def test_a_prepare_that_changes_nothing_writes_no_platform_list_either(tmp_path):
+    """平台那份清单同理，而报告里的报错正是它（`...platform-skills.json.next`）。"""
+    from app.domain.agent.harness.claude_code.remote_execution.bootstrap import (
+        CONFIG_DIR,
+        prune_platform_skills,
+    )
+
+    prune_platform_skills(tmp_path, PLATFORM, [], [])
+    skills = tmp_path / CONFIG_DIR / "skills"
+    skills.chmod(0o500)
+    try:
+        prune_platform_skills(tmp_path, PLATFORM, [], [])
+        with pytest.raises(OSError):
+            prune_platform_skills(tmp_path, [*PLATFORM, "weekly-report"], [], [])
+    finally:
+        skills.chmod(0o700)

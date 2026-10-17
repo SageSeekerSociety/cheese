@@ -23,6 +23,10 @@ touch "$test_repo/backend/app/main.py" "$test_repo/backend/sandbox/cheese" \
   "$test_repo/backend/sandbox/Dockerfile.private" \
   "$test_repo/$executor_dir/runtime.py" "$test_repo/$executor_dir/private.py" \
   "$test_repo/$executor_dir/mcp_process.py" "$test_repo/$executor_dir/private_egress.py" \
+  "$test_repo/$executor_dir/runtime_core.py" \
+  "$test_repo/$executor_dir/runtime_commands.py" \
+  "$test_repo/$executor_dir/runtime_context.py" \
+  "$test_repo/$executor_dir/runtime_calls.py" \
   "$test_repo/backend/app/domain/fetch/addresses.py"
 # The legacy workflow builds five images; the two added later have no job yet.
 mkdir -p "$test_repo/.github/workflows"
@@ -97,10 +101,16 @@ assert_plan 'backend=true,frontend=false,office_render=false,browser_render=fals
 
 # The backend renders notices from the frontend's sentence catalogs, and only
 # those: another namespace is the frontend's alone.
-for catalog in roomNotice apiError global; do
+git -C "$test_repo" switch -q --detach "$base_sha"
+mkdir -p "$test_repo/frontend/src/i18n/messages/en"
+commit_path frontend/src/i18n/messages/en/global.json
+assert_plan 'backend=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+# roomNotice and apiError are directories of shards now; any shard is still the
+# backend's.
+for catalog in roomNotice apiError; do
   git -C "$test_repo" switch -q --detach "$base_sha"
-  mkdir -p "$test_repo/frontend/src/i18n/messages/en"
-  commit_path "frontend/src/i18n/messages/en/$catalog.json"
+  mkdir -p "$test_repo/frontend/src/i18n/messages/en/$catalog"
+  commit_path "frontend/src/i18n/messages/en/$catalog/review.json"
   assert_plan 'backend=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 done
 git -C "$test_repo" switch -q --detach "$base_sha"
@@ -119,6 +129,8 @@ assert_plan 'backend=true,frontend=false,office_render=false,browser_render=fals
 
 for executor_file in "$executor_dir/runtime.py" "$executor_dir/private.py" \
   "$executor_dir/mcp_process.py" "$executor_dir/private_egress.py" \
+  "$executor_dir/runtime_core.py" "$executor_dir/runtime_commands.py" \
+  "$executor_dir/runtime_context.py" "$executor_dir/runtime_calls.py" \
   backend/app/domain/fetch/addresses.py; do
   git -C "$test_repo" switch -q --detach "$base_sha"
   commit_path "$executor_file"

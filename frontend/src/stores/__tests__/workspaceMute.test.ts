@@ -27,6 +27,7 @@ import type { TopicNotifySetting, TopicUnread } from '@/api'
 
 import { getTopicNotifyLevels, getTopicUnread, markAllTopicsRead, setTopicNotifyLevel } from '@/api'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { closeFirstPaint, openFirstPaint } from '@/test/firstPaint'
 
 async function flush() {
   for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 0))
@@ -35,6 +36,9 @@ async function flush() {
 const n = (count: number): TopicUnread => ({ count, new: true, messages: count })
 
 async function opened() {
+  // 档位和未读那几笔排在首帧之后（`lib/afterFirstPaint.ts`）：单测里没人画首帧，得先把
+  // 那道门推开，否则它们一次都不发。
+  await openFirstPaint()
   const store = useWorkspaceStore()
   store.openProject('p1')
   await flush()
@@ -58,6 +62,23 @@ describe('频道通知档位', () => {
       levels = next
       return Promise.resolve({})
     })
+  })
+
+  it('首帧之前不读档位：门开了才读', async () => {
+    // 这个文件里别的用例已经把门推开过，而门是全站一份状态、开着就一直开着（`@/test/firstPaint`）。
+    closeFirstPaint()
+    const store = useWorkspaceStore()
+    store.openProject('p1')
+    await flush()
+
+    expect(vi.mocked(getTopicNotifyLevels)).not.toHaveBeenCalled()
+    expect(store.levelOf('t2')).toBe('mentions')
+
+    await openFirstPaint()
+    await flush()
+
+    expect(vi.mocked(getTopicNotifyLevels)).toHaveBeenCalled()
+    expect(store.levelOf('t2')).toBe('mute')
   })
 
   it('没列出来的频道是默认档位，列出来的照列出来的算', async () => {

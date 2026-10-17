@@ -6,7 +6,6 @@ which tool no user here can answer — and none is about a transport.
 """
 
 import hashlib
-import os
 import subprocess
 from pathlib import Path
 
@@ -16,8 +15,8 @@ from app.domain.agent.harness.claude_code.session_launch import (
 )
 from app.domain.agent.harness.launch import MachinePlace
 from app.domain.agent.place import seat_dir
-from app.domain.agent.skills import native_skill_files
 from app.domain.project_skill.service import session_skill_bundle
+from app.domain.skill_library import native_skill_files
 
 STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"
 
@@ -130,29 +129,6 @@ def test_the_settings_add_no_claude_attribution_to_commits_or_prs():
     attribution = session_settings()["attribution"]
     assert attribution["commit"] == ""
     assert attribution["pr"] == ""
-
-
-def test_the_settings_sync_teammate_definitions_on_start_and_prompt():
-    """发现层：会话启动和每个提示都刷新一次队友分身定义文件 —— 主 agent 在
-    Agent 工具的可用清单里读到可指定谁（模型范围 = 项目 AI 队友，闸在准入）。"""
-    hooks = session_settings()["hooks"]
-    for event in ("SessionStart", "UserPromptSubmit"):
-        commands = [
-            hook["command"]
-            for group in hooks[event]
-            for hook in group["hooks"]
-            if hook["type"] == "command"
-        ]
-        assert commands == ["cheese sync-agents || true"]
-
-
-def test_sync_agents_hook_does_not_block_prompts_on_an_older_cli(tmp_path):
-    command = session_settings()["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
-    old_cli = tmp_path / "cheese"
-    old_cli.write_text("#!/bin/sh\nexit 2\n")
-    old_cli.chmod(0o755)
-    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
-    assert subprocess.run(command, shell=True, env=env, check=False).returncode == 0
 
 
 def test_the_plan_offers_its_resume_and_keeps_its_state_where_the_machine_said():

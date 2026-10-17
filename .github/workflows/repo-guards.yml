@@ -76,12 +76,35 @@ jobs:
 
       # The mining tools judge platform history, not the tree, so they are not
       # guards — but a regression in them prints a wrong report, and nothing
-      # else runs their self-tests. Both are offline: no token, no network.
+      # else runs their self-tests. All are offline: no token, no network.
       # `retro --self-test` is what reaches trace_retro.py's self-test.
       - name: Trace tooling self-test
         run: |
           python3 .claude/scripts/trace-sweep.py --self-test
           python3 .claude/scripts/trace-sweep.py retro --self-test
+          python3 .claude/scripts/orchestrator_actions.py --self-test
+          python3 .claude/scripts/orchestrator_metrics.py --self-test
+          python3 .claude/scripts/orchestrator_sweep.py --self-test
+          python3 .claude/scripts/orchestrator_remount.py --self-test
+          python3 .claude/scripts/wake_orchestrator.py --self-test
+          python3 .claude/scripts/test_pr_review.py
+          python3 .claude/scripts/orchestrator_autoaccept.py --self-test
+          python3 .claude/scripts/change_outcomes.py --self-test
+          python3 -m unittest discover -s .claude/scripts -p 'test_ci_rounds.py'
+
+      # The rest of the review tooling. test_pr_review.py above drives pr-review.sh
+      # end to end; these three are run by it and by prepare, and are not guards of
+      # the tree. tiers.py decides a change's review tier, ready.py decides whether a
+      # card may be delivered, and render.py refuses a result that names another
+      # commit, carries an unverified finding with nothing to confirm it, or has a
+      # field the schema does not know — so a regression in any of them lets a review
+      # that never happened through while every visible check stays green, the one
+      # failure mode nobody notices by reading the diff. All three are offline.
+      - name: PR review tooling self-test
+        run: |
+          python3 .claude/pr-review/tiers.py --self-test
+          python3 .claude/pr-review/ready.py --self-test
+          python3 .claude/pr-review/render.py --self-test
 
       # The docker-free test services: how start treats a port already held by
       # a server of ours from older pins, or by someone else (stand-in binaries).
@@ -185,6 +208,11 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           node-version: 22
+          # No cache here, deliberately. docs/site is three packages and the
+          # install is about two seconds on a hosted runner (2s in runs
+          # 38926053508 and 38927604231); and these guards never run on main,
+          # so a cache saved here would be visible to this ref alone — the
+          # converse of the `Restore only` note on setup-uv above.
 
       - name: Build the docs site
         if: ${{ !cancelled() && steps.docs_node.outcome == 'success' && steps.docs_tags.outcome == 'success' }}
@@ -194,5 +222,25 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run build
-          # The docs host's copy, at the root (docs/site/src/where.mjs).
-          DOCS_BASE= OUT="$OUT-host" npm run build
+          # The docs host's copy, at the root (docs/site/src/where.mjs): the
+          # same sources through the same build, with BASE empty. The same
+          # generators and the same per-page checks run either way; what BASE
+          # changes is where a link points, and this is the stricter of the two
+          # link checks — build.mjs anchors its href regex on BASE, so an
+          # absolute path with more than one segment, written by hand into
+          # docs content, is checked against the host's pages here and by the
+          # first build not at all. It is also the only run that reaches the
+          # `if (!BASE)` block, which is sitemap.xml and robots.txt — only a
+          # host's own root can serve those; manual.zip is built either way.
+          # So a PR that leaves docs/site alone gives up the earlier signal,
+          # not the check: the merge queue is a merge_group event and runs both
+          # builds whatever the PR changed, as does any pull_request that
+          # touches docs/site. `git diff --quiet` exits non-zero when it cannot
+          # answer (no origin/main, say), which runs the build rather than skip
+          # it.
+          if [ "${{ github.event_name }}" != "pull_request" ] \
+             || ! git -C "$GITHUB_WORKSPACE" diff --quiet origin/main...HEAD -- docs/site; then
+            DOCS_BASE= OUT="$OUT-host" npm run build
+          else
+            echo "docs/site is untouched by this PR; the docs-host build waits for the merge queue"
+          fi
