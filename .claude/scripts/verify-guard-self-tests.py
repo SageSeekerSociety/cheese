@@ -42,20 +42,24 @@ from running at all, which reads as red without the self-test having noticed
 anything. A shell guard's verdict is rewritten the same way: a non-zero `exit`
 anywhere (it ends the script) and a non-zero `return` inside a function whose
 status is the script's own exit status — the function invoked by the script's
-last line, or invoked last inside such a function. `return 1` in a grep-style
-predicate (`has_bad`, read as `if has_bad "$1"`) is not a verdict. Only words in
-command position count, so an `exit 1` written into a record the guard prints —
-in quotes or a heredoc — is left as printed. Its whole `if … SELF_TEST …; then`
-block, `self_fail` included, is left untouched, and a `fi` inside a heredoc does
-not end that block. A verdict written as a variable (`exit "$CODE"`) offers no
-literal to rewrite and is reported as UNVERIFIED rather than guessed at.
+last line, and the commands it hands that status on, including a trailing
+`if …; then scan; fi`. `return 1` in a grep-style predicate (`has_bad`, read as
+`if has_bad "$1"`) is not a verdict. Only words in command position count: an
+`exit 1` that is an argument to `echo`, or written into a record the guard
+prints (in quotes or a heredoc), is output and is left as printed. Its whole
+`if … SELF_TEST …; then` block is left untouched, along with any helper only
+that block calls (`self_fail` defined above it included); a `fi` inside a
+heredoc does not end the block, and a `<<EOF` inside quotes opens no heredoc. A
+verdict written as a variable (`exit "$CODE"`) offers no literal to rewrite and
+is reported as UNVERIFIED rather than guessed at.
 
 A copy that goes green on a *silenced* guard is reported as a finding — unless
 the guard hands the work to another script file: a `.py` name that is not its
-own in the command position of a spawn (the program a `subprocess`/`os.exec*`
-call runs, `-m`/`-c` included — a command list held in a variable is resolved
-back to its assignment), or a spawn under a self-test condition. There
-the mutation never reaches the process that judges. Arguments *after* the
+own in the command position of a spawn *on the self-test path* (the program a
+`subprocess`/`os.exec*` call runs, `-m`/`-c` included — a command list held in a
+variable is resolved back to its assignment). There the mutation never reaches
+the process that judges. A `.py` the normal scan path runs is that path's own
+business and does not make the self-test foreign. Arguments *after* the
 program are the guard's own command line — a `.py` fixture passed as input does
 not make the guard foreign — and a guard that re-runs *itself*
 (`Path(__file__)`) is judged normally: the copy is what runs, so the mutation
@@ -351,8 +355,57 @@ def _assigned_commands(tree: ast.Module) -> dict[str, ast.AST]:
     return assigned
 
 
+#: Function names guards give the code their `--self-test` path runs.
+_SELF_TEST_FUNCTIONS = frozenset(
+    {"self_test", "selftest", "run_self_test", "_self_test", "check_self_test", "run_selftest"}
+)
+
+
+def _mentions_string(node: ast.AST, needle: str) -> bool:
+    return any(
+        isinstance(sub, ast.Constant) and isinstance(sub.value, str) and needle in sub.value
+        for sub in ast.walk(node)
+    )
+
+
+def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
+    """The nodes on the `--self-test` path: the self-test function, what it calls,
+    and the body of any `if "--self-test" …` branch.
+
+    A guard's normal scan may run another `.py` helper quite legitimately; only a
+    spawn on the self-test path decides whether mutating this file reaches the
+    process that judges it.
+    """
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    roots = [name for name in functions if name in _SELF_TEST_FUNCTIONS]
+    reachable = set(roots)
+    queue = list(roots)
+    while queue:
+        name = queue.pop()
+        for node in ast.walk(functions[name]):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in functions
+                and node.func.id not in reachable
+            ):
+                reachable.add(node.func.id)
+                queue.append(node.func.id)
+    scoped: list[ast.AST] = []
+    for name in reachable:
+        scoped.extend(ast.walk(functions[name]))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and _mentions_string(node.test, "--self-test"):
+            scoped.extend(ast.walk(node))
+    return scoped
+
+
 def spawns_foreign_file(tree: ast.Module, own_name: str) -> bool:
-    """Does the guard run another script file, rather than re-running itself?
+    """Does the self-test run another script file, rather than re-running itself?
 
     A guard that spawns `Path(__file__)` re-runs the copy this tool silences, so
     the mutation travels into the child and the self-test still sees it. One that
@@ -361,7 +414,7 @@ def spawns_foreign_file(tree: ast.Module, own_name: str) -> bool:
     mutation does not exist, so its green says nothing of this copy.
     """
     assigned = _assigned_commands(tree)
-    for node in ast.walk(tree):
+    for node in _self_test_scope(tree):
         if not _spawn_target(node):
             continue
         command = node.args[0] if node.args else None
@@ -622,7 +675,7 @@ def mutate_shell(source: str) -> tuple[str | None, str]:
     scan runs to the end, so what it prints, records or accumulates still
     happens — a self-test that only looks at those keeps passing, which is
     exactly what has to be reported as toothless. The self-test block itself,
-    and its `self_fail` helper, are left untouched.
+    and any helper only the self-test calls, are left untouched.
     """
     lines = source.splitlines(keepends=True)
     heredocs = _shell_heredoc_lines(lines)
@@ -632,11 +685,17 @@ def mutate_shell(source: str) -> tuple[str | None, str]:
         return None, "找不到 `if … SELF_TEST …; then` 自测块，静音不了守卫的结论"
     owners = _shell_line_owners(lines, ranges)
     verdicts = _shell_verdict_functions(lines, ranges, owners, heredocs, block)
+    harness = _shell_harness_functions(lines, ranges, heredocs, block)
     start, end = block
     out: list[str] = []
     count = 0
     for index, line in enumerate(lines):
-        if start <= index <= end or index in heredocs or line.lstrip().startswith("#"):
+        if (
+            start <= index <= end
+            or index in heredocs
+            or owners[index] in harness
+            or line.lstrip().startswith("#")
+        ):
             out.append(line)
             continue
         line, replaced = _silence_shell_line(line, owners[index] in verdicts)
@@ -645,6 +704,28 @@ def mutate_shell(source: str) -> tuple[str | None, str]:
     if count == 0:
         return None, "自测块之外没有非 0 的 exit/return，静音不了守卫的结论"
     return "".join(out), ""
+
+
+#: Words after which the next word runs as a command, not as an argument.
+_SHELL_COMMAND_WORDS = frozenset({"then", "do", "else", "elif", "if", "while", "until", "!", "time", "{"})
+
+
+def _shell_command_position(line: str, index: int) -> bool:
+    """Is the word at `index` a command the shell would run?
+
+    A shell command starts the line (indentation aside), follows a separator
+    (`;`, `|`, `&`, `(`, `{`) or follows a control keyword. A word in the middle
+    of a simple command is an argument: `echo 修法：让本守卫 exit 1 >&2` prints
+    the words, and rewriting that `exit 1` changes the guard's output instead of
+    silencing its verdict.
+    """
+    prefix = line[:index].rstrip(" \t")
+    if not prefix:
+        return True
+    if prefix[-1] in ";|&({":
+        return True
+    match = re.search(r"([A-Za-z_][\w-]*)$", prefix)
+    return match is not None and match.group(1) in _SHELL_COMMAND_WORDS
 
 
 def _silence_shell_line(line: str, allow_return: bool) -> tuple[str, int]:
@@ -687,7 +768,7 @@ def _silence_shell_line(line: str, allow_return: bool) -> tuple[str, int]:
             (candidate for candidate in ("return", "exit") if line.startswith(candidate, index)),
             None,
         )
-        at_command = index == 0 or line[index - 1] in " \t;|&({"
+        at_command = _shell_command_position(line, index)
         if (
             word is not None
             and at_command
@@ -708,6 +789,55 @@ def _silence_shell_line(line: str, allow_return: bool) -> tuple[str, int]:
     return "".join(out), count
 
 
+def _shell_code_only(line: str) -> str:
+    """The line with quoted text and comments blanked out, indices preserved."""
+    out = list(line)
+    index = 0
+    quote = ""
+    while index < len(line):
+        char = line[index]
+        if quote:
+            out[index] = " "
+            if char == "\\" and quote == '"' and index + 1 < len(line):
+                out[index + 1] = " "
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char == "\\":
+            out[index] = " "
+            if index + 1 < len(line):
+                out[index + 1] = " "
+            index += 2
+            continue
+        if char in "'\"":
+            quote = char
+            out[index] = " "
+            index += 1
+            continue
+        if char == "#" and (index == 0 or line[index - 1] in " \t;|&({"):
+            for rest in range(index, len(line)):
+                out[rest] = " "
+            break
+        index += 1
+    return "".join(out)
+
+
+def _shell_heredoc_words(line: str) -> list[str]:
+    """Heredoc delimiters opened on this line, outside quotes and comments."""
+    words: list[str] = []
+    code = _shell_code_only(line)
+    for opener in re.finditer(r"<<", code):
+        # The delimiter itself may be quoted (`<<'EOF'`), so read it from the
+        # raw line at the same offset rather than from the blanked copy.
+        raw = _HEREDOC_RE.match(line, opener.start())
+        if raw is not None:
+            words.append(raw.group("word"))
+    return words
+
+
 def _shell_heredoc_lines(lines: list[str]) -> set[int]:
     """Line indices inside a heredoc body, its terminator included."""
     inside: set[int] = set()
@@ -720,7 +850,7 @@ def _shell_heredoc_lines(lines: list[str]) -> set[int]:
             continue
         if line.lstrip().startswith("#"):
             continue
-        pending.extend(match.group("word") for match in _HEREDOC_RE.finditer(line))
+        pending.extend(_shell_heredoc_words(line))
     return inside
 
 
@@ -769,7 +899,7 @@ def _shell_verdict_functions(
     """Functions whose status is the script's exit status.
 
     The script's status is its last command's, so only the function invoked by
-    that last line — and functions invoked last inside it — can carry the
+    that last line — and the commands whose status it hands on — can carry the
     verdict. A helper read as a condition (`if has_bad "$1"`) never does.
     """
     names = set(ranges)
@@ -786,16 +916,85 @@ def _shell_verdict_functions(
     while queue:
         name = queue.pop()
         first, last = ranges[name]
-        for index in range(last - 1, first, -1):
-            stripped = lines[index].strip()
-            if not stripped or stripped.startswith("#") or index in heredocs:
-                continue
-            callee = _bare_call(lines[index], names)
-            if callee is not None and callee != name and callee not in verdicts:
+        for callee in _shell_body_calls(lines, first, last, name, owners, heredocs, names):
+            if callee not in verdicts:
                 verdicts.add(callee)
                 queue.append(callee)
-            break
     return verdicts
+
+
+#: Words that end the flow of a function body at its own indentation.
+_SHELL_FLOW_ENDS = frozenset({"return", "exit"})
+
+
+def _shell_body_calls(
+    lines: list[str],
+    first: int,
+    last: int,
+    owner: str,
+    owners: list[str | None],
+    heredocs: set[int],
+    names: set[str],
+) -> set[str]:
+    """Functions whose status can become `owner`'s status.
+
+    Every simple command in the body carries its status unless it is read as a
+    condition: `if has_bad "$1"` asks a question, `scan "$1"` hands the answer
+    on. Commands after an unconditional `return`/`exit` never run. A trailing
+    compound (`if …; then scan "$1"; fi`) counts too: its last command is the
+    last thing the function does.
+    """
+    calls: set[str] = set()
+    body_indent = min(
+        (len(line) - len(line.lstrip()) for line in lines[first + 1 : last] if line.strip()),
+        default=0,
+    )
+    for index in range(first + 1, last):
+        if index in heredocs or owners[index] != owner:
+            continue
+        stripped = lines[index].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        head = stripped.split(None, 1)[0]
+        indent = len(lines[index]) - len(lines[index].lstrip())
+        if indent == body_indent and head in _SHELL_FLOW_ENDS:
+            break
+        if head in ("if", "elif", "while", "until"):
+            parts = re.split(r"\b(?:then|do)\b", stripped, maxsplit=1)
+            stripped = parts[1].strip() if len(parts) > 1 else ""
+        callee = _bare_call(stripped, names)
+        if callee is not None and callee != owner:
+            calls.add(callee)
+    return calls
+
+
+def _shell_harness_functions(
+    lines: list[str],
+    ranges: dict[str, tuple[int, int]],
+    heredocs: set[int],
+    block: tuple[int, int],
+) -> set[str]:
+    """Functions the self-test calls and nothing else does.
+
+    A `self_fail`-style helper defined outside the self-test block belongs to
+    the harness, not the guard. Silencing its `exit 1` turns the self-test's own
+    failure into a silent success, so a guard that really bites is reported as
+    unverified. A function the scan path also calls (`scan`) is not harness.
+    """
+    start, end = block
+    pattern = {name: re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])") for name in ranges}
+    inside: set[str] = set()
+    outside: set[str] = set()
+    for index, line in enumerate(lines):
+        if index in heredocs:
+            continue
+        code = _shell_code_only(line)
+        bucket = inside if start <= index <= end else outside
+        for name, regex in pattern.items():
+            if index == ranges[name][0] or not regex.search(code):
+                continue
+            bucket.add(name)
+    return inside - outside
 
 
 def _shell_self_test_span(
@@ -975,6 +1174,10 @@ def self_test() -> int:
         "fixture-arg-guard.py": "ok",
         "shell-biting-guard.sh": "ok",
         "shell-heredoc-fi-guard.sh": "ok",
+        "shell-trailing-if-guard.sh": "ok",
+        "shell-quoted-heredoc-guard.sh": "ok",
+        "shell-self-fail-outside-guard.sh": "ok",
+        "foreign-spawn-in-scan-guard.py": "ok",
         "fake-green-guard.py": "self-test-does-not-bite",
         "shell-fake-green-guard.sh": "self-test-does-not-bite",
         "clean-only-self-test-guard.py": "self-test-does-not-bite",
@@ -982,6 +1185,7 @@ def self_test() -> int:
         "call-exit-guard.py": "self-test-does-not-bite",
         "predicate-return-guard.py": "self-test-does-not-bite",
         "predicate-return-guard.sh": "self-test-does-not-bite",
+        "shell-unquoted-hint-guard.sh": "self-test-does-not-bite",
         "shell-record-text-guard.sh": "self-test-does-not-bite",
         "shell-heredoc-record-guard.sh": "self-test-does-not-bite",
         "no-self-test-guard.py": "missing-self-test",
@@ -1003,10 +1207,12 @@ def self_test() -> int:
         return 1
     print(
         "PASS: verify-guard-self-tests self-test（失败信号的每种写法都判得出咬合力——条件返回、"
-        "元组返回、裸 return、模块级命名常量、SystemExit、SystemExit(调用)、shell 的 exit/return；"
-        "谓词里的 return 1 和打印记录里的 exit 1 都不算结论；heredoc 里的 fi 不结束自测块；"
-        "参数里的 .py 不算委派、存进变量的命令也会还原；只查干净夹具的假绿被检出（Python 与 shell 各一）、"
-        "空转假绿被检出、缺自测与没变绿各自报出、委派给旁置测试文件的判不了）"
+        "元组返回、裸 return、模块级命名常量、SystemExit、SystemExit(调用)、shell 的 exit/return、"
+        "经末尾 if 转交的状态；谓词里的 return 1、echo 的参数 exit 1 和打印记录里的 exit 1 都不算结论；"
+        "heredoc 里的 fi 不结束自测块、引号里的 <<EOF 不算 heredoc；块外的 self_fail 不动；"
+        "参数里的 .py 不算委派、存进变量的命令也会还原、只有自测路径上的外派才判委派；"
+        "只查干净夹具的假绿被检出（Python 与 shell 各一）、空转假绿被检出、缺自测与没变绿各自报出、"
+        "委派给旁置测试文件的判不了）"
     )
     return 0
 
@@ -1502,6 +1708,159 @@ def self_test():
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 ''',
+    "shell-unquoted-hint-guard.sh": '''#!/usr/bin/env bash
+# `echo … exit 1` prints words; the self-test only looks at that text.
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+scan() {
+  if find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q .; then
+    echo 修法：让本守卫 exit 1 >&2
+    return 1
+  fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  out="$(scan "$tmp" 2>&1)"
+  case "$out" in
+    *"exit 1"*) ;;
+    *) echo "SELF-TEST FAIL: 提示里要写出 exit 1" >&2; exit 1 ;;
+  esac
+  echo "PASS: 提示写出了 exit 1"
+  exit 0
+fi
+
+scan "${1:-.}"
+''',
+    "shell-trailing-if-guard.sh": '''#!/usr/bin/env bash
+# The status comes back through `run`, which ends on an `if`.
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+scan() {
+  find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q . || return 0
+  echo "找到 .bad 文件；修法：删掉它" >&2
+  return 1
+}
+
+run() {
+  if [ -e "$1" ]; then
+    if [ -n "$1" ]; then
+      scan "$1"
+    fi
+  fi
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  if run "$tmp"; then
+    echo "SELF-TEST FAIL: .bad 文件必须让 run 返回非 0" >&2
+    exit 1
+  fi
+  echo "PASS: .bad 文件被报出"
+  exit 0
+fi
+
+run "${1:-.}"
+''',
+    "shell-quoted-heredoc-guard.sh": '''#!/usr/bin/env bash
+# `grep '<<EOF'` searches for the text; it opens no heredoc.
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+scan() {
+  if grep -rn '<<EOF' "$1" >/dev/null 2>&1; then
+    echo "找到 heredoc 用法；修法：改用 printf" >&2
+    return 1
+  fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  printf '%s\\n' 'cat <<EOF' > "$tmp/a.sh"
+  scan "$tmp" && { echo "SELF-TEST FAIL: heredoc 用法必须被报出" >&2; exit 1; }
+  echo "PASS: heredoc 用法被报出"
+  exit 0
+fi
+
+scan "${1:-.}"
+''',
+    "shell-self-fail-outside-guard.sh": '''#!/usr/bin/env bash
+# `self_fail` is defined outside the self-test block but belongs to the harness.
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+self_fail() {
+  echo "SELF-TEST FAIL: $*" >&2
+  exit 1
+}
+
+scan() {
+  find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q . || return 0
+  echo "找到 .bad；修法：删掉" >&2
+  return 1
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  scan "$tmp" && self_fail "一个 .bad 文件必须报错"
+  echo "PASS: .bad 被报出"
+  exit 0
+fi
+
+scan "${1:-.}"
+''',
+    "foreign-spawn-in-scan-guard.py": '''#!/usr/bin/env python3
+"""The scan path runs helper.py; the self-test re-runs this file."""
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    subprocess.run([sys.executable, str(Path(__file__).with_name("helper.py"))], check=False)
+    problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
+    for name in problems:
+        print(f"{name}: 修法：删掉它", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 1:
+            print("SELF-TEST FAIL: 没有以 1 报出 .bad", file=sys.stderr)
+            return 1
+    print("PASS: .bad 被报出")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
     "fake-green-guard.py": '''#!/usr/bin/env python3
 """A guard whose --self-test prints PASS and checks nothing."""
 import sys
@@ -1752,6 +2111,10 @@ if __name__ == "__main__":
 
 #: Files the synthetic guards need beside them, but that are not hooks.
 SYNTHETIC_SIBLINGS = {
+    "helper.py": '''#!/usr/bin/env python3
+"""A helper the scan path runs; not a test file."""
+print("helper")
+''',
     "test_handoff.py": '''#!/usr/bin/env python3
 """The test file `variable-command-guard.py --self-test` hands off to."""
 import unittest

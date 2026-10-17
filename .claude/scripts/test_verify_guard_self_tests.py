@@ -876,6 +876,184 @@ if __name__ == "__main__":
 '''
 
 
+#: The hint is printed without quotes, so its `exit 1` is an argument to `echo`.
+#: Rewriting it edits the guard's output; the self-test only looks at that text
+#: and never at the exit status, so the edit alone makes it go red.
+SHELL_UNQUOTED_HINT = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+scan() {
+  if find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q .; then
+    echo 修法：让本守卫 exit 1 >&2
+    return 1
+  fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  out="$(scan "$tmp" 2>&1)"
+  case "$out" in
+    *"exit 1"*) ;;
+    *) echo "SELF-TEST FAIL: 提示里要写出 exit 1" >&2; exit 1 ;;
+  esac
+  echo "PASS: 提示写出了 exit 1"
+  exit 0
+fi
+
+scan "${1:-.}"
+'''
+
+
+#: `run` carries the status but ends on an `if`, so the command that answers is
+#: `scan`, one level in. Only `run`'s error path is silenced, and the bite the
+#: self-test shows comes from `scan`'s untouched `return 1`.
+SHELL_TRAILING_IF = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+scan() {
+  find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q . || return 0
+  echo "找到 .bad 文件；修法：删掉它" >&2
+  return 1
+}
+
+run() {
+  if [ -e "$1" ]; then
+    if [ -n "$1" ]; then
+      scan "$1"
+    fi
+  fi
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  if run "$tmp"; then
+    echo "SELF-TEST FAIL: .bad 文件必须让 run 返回非 0" >&2
+    exit 1
+  fi
+  echo "PASS: .bad 文件被报出"
+  exit 0
+fi
+
+run "${1:-.}"
+'''
+
+
+#: `<<EOF` written inside single quotes is a pattern to search for, not a
+#: heredoc opener. Reading it as one marks the rest of the file as data, hides
+#: every verdict, and downgrades a biting guard to unverified.
+SHELL_QUOTED_HEREDOC_OP = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+scan() {
+  if grep -rn '<<EOF' "$1" >/dev/null 2>&1; then
+    echo "找到 heredoc 用法；修法：改用 printf" >&2
+    return 1
+  fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  printf '%s\\n' 'cat <<EOF' > "$tmp/a.sh"
+  scan "$tmp" && { echo "SELF-TEST FAIL: heredoc 用法必须被报出" >&2; exit 1; }
+  echo "PASS: heredoc 用法被报出"
+  exit 0
+fi
+
+scan "${1:-.}"
+'''
+
+
+#: `self_fail` is defined outside the self-test block, the way many guards do
+#: it. It belongs to the harness: silencing its `exit 1` turns the self-test's
+#: own failure into a silent success and a biting guard into "unverified".
+SHELL_SELF_FAIL_OUTSIDE = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+self_fail() {
+  echo "SELF-TEST FAIL: $*" >&2
+  exit 1
+}
+
+scan() {
+  find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q . || return 0
+  echo "找到 .bad；修法：删掉" >&2
+  return 1
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  scan "$tmp" && self_fail "一个 .bad 文件必须报错"
+  echo "PASS: .bad 被报出"
+  exit 0
+fi
+
+scan "${1:-.}"
+'''
+
+
+#: The scan path shells out to `helper.py`; the self-test re-runs this very
+#: file, so mutating it reaches the process that judges. Only the self-test
+#: path decides whether a spawn makes the mutation unreachable.
+PY_FOREIGN_SPAWN_IN_SCAN = '''#!/usr/bin/env python3
+"""The normal scan runs helper.py; the self-test re-runs this file."""
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    subprocess.run([sys.executable, str(Path(__file__).with_name("helper.py"))], check=False)
+    problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
+    for name in problems:
+        print(f"{name}: 修法：删掉它", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 1:
+            print("SELF-TEST FAIL: 没有以 1 报出 .bad", file=sys.stderr)
+            return 1
+    print("PASS: .bad 被报出")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+HELPER_SCRIPT = '''#!/usr/bin/env python3
+print("helper")
+'''
+
+
 def _build(root: Path, guards: dict[str, str], extra: dict[str, str] | None = None) -> Path:
     scripts = root / ".claude" / "scripts"
     scripts.mkdir(parents=True)
@@ -1022,6 +1200,47 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
             code, guard, output = self._only({name: source})
             self.assertEqual(code, 1, output)
             self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_an_unquoted_hint_is_an_argument_not_a_verdict(self) -> None:
+        """`echo 修法：让本守卫 exit 1` prints those words; nothing exits.
+
+        Rewriting the argument changes the printed hint, and a self-test that
+        only reads that hint goes red over the edit — reported as a bite by a
+        guard that never checks its exit status.
+        """
+        code, guard, output = self._only({"hint.sh": SHELL_UNQUOTED_HINT})
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_status_handed_on_through_a_trailing_if_is_still_the_verdict(self) -> None:
+        """`run` ends on `fi`, and the command that answers is `scan` inside it.
+
+        Reading only the last statement of the body misses `scan`, leaves its
+        `return 1` untouched, and calls a guard that really bites a no-op.
+        """
+        code, guard, output = self._only({"trailing.sh": SHELL_TRAILING_IF})
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_quoted_heredoc_opener_is_not_a_heredoc(self) -> None:
+        """`grep '<<EOF'` searches for the text; it does not open a heredoc."""
+        code, guard, output = self._only({"quoted.sh": SHELL_QUOTED_HEREDOC_OP})
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_self_test_helper_defined_outside_the_block_is_left_alone(self) -> None:
+        """`self_fail` reports the self-test's failure, whichever side of `if` it sits on."""
+        code, guard, output = self._only({"selffail.sh": SHELL_SELF_FAIL_OUTSIDE})
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_spawn_on_the_scan_path_is_not_a_delegated_self_test(self) -> None:
+        """Only the self-test's own spawns decide whether the mutation reaches the judge."""
+        code, guard, output = self._only(
+            {"spawnscan.py": PY_FOREIGN_SPAWN_IN_SCAN}, {"helper.py": HELPER_SCRIPT}
+        )
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
 
     def test_a_fi_inside_a_heredoc_does_not_end_the_self_test_block(self) -> None:
         """The self-test writes a sample containing `fi`; that line is data.
