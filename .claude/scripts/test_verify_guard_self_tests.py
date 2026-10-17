@@ -3932,6 +3932,130 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASS", result.stdout)
 
+    # --- the allowance, which has to be a claim and not a waiver -----------
+    #
+    # `--allow-unjudgeable NAME` exists for a guard this lane cannot judge: its
+    # self-test judges it in another process (`unverified`), or needs an install
+    # the lane does not have (its self-test does not start, which also reads as
+    # `self-test-not-green`). The point of these cases is that the flag stays
+    # narrow — it tolerates those two statuses for one named guard, the entry is
+    # checked, and this lane's own judgement is never waived.
+
+    def _allow(self, guards: dict[str, str], extra: dict[str, str], *allowed: str):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            config = _build(root, guards, extra)
+            result = _run(root, config, "--json", *allowed)
+        return result
+
+    def _allow_human(
+        self, guards: dict[str, str], extra: dict[str, str], *allowed: str
+    ):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            config = _build(root, guards, extra)
+            result = _run(root, config, *allowed)
+        return result
+
+    def test_an_unverified_guard_is_not_a_pass_without_the_allowance(self) -> None:
+        """The baseline the flag is measured against: exit 2, not a pass."""
+        result = self._allow(
+            {"delegating.py": DELEGATING}, {"test_delegating.py": DELEGATING_SIBLING}
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertFalse(json.loads(result.stdout)["guards"][0]["allowed"])
+
+    def test_an_allowed_unverified_guard_is_reported_and_not_counted(self) -> None:
+        """Allowed by name: still printed as unverified, but exit 0."""
+        result = self._allow(
+            {"delegating.py": DELEGATING},
+            {"test_delegating.py": DELEGATING_SIBLING},
+            "--allow-unjudgeable",
+            "delegating.py",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        guard = json.loads(result.stdout)["guards"][0]
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertTrue(guard["allowed"], guard)
+
+    def test_the_human_report_marks_an_allowed_run_rather_than_hiding_it(self) -> None:
+        """`unverified` is still printed; the allowance is visible on the line."""
+        result = self._allow_human(
+            {"delegating.py": DELEGATING},
+            {"test_delegating.py": DELEGATING_SIBLING},
+            "--allow-unjudgeable",
+            "delegating.py",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("UNVERIFIED (allowed)", result.stdout)
+
+    def test_an_allowance_covers_a_self_test_that_is_red_in_this_lane(self) -> None:
+        """scene-debt-ratchet's shape in a lane without frontend/node_modules.
+
+        Silencing is irrelevant here: the self-test runs and fails on what the
+        lane lacks, which is `self-test-not-green` — the same status a broken
+        self-test produces, so this lane cannot tell them apart. The allowance
+        is what says the breakage is the lane's. (The other shape, a self-test
+        that cannot start at all, is `unverified` and is covered by the first
+        case above; both statuses are in `ALLOWABLE_STATUSES`.)
+        """
+        result = self._allow(
+            {"needsnode.py": NOT_GREEN}, {}, "--allow-unjudgeable", "needsnode.py"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        guard = json.loads(result.stdout)["guards"][0]
+        self.assertEqual(guard["status"], "self-test-not-green", guard)
+        self.assertTrue(guard["allowed"], guard)
+
+    def test_an_allowance_for_a_guard_that_is_verified_now_is_reported(self) -> None:
+        """A fixed guard leaves its excuse behind; that stale entry is a finding."""
+        result = self._allow(
+            {"biting.py": BITING}, {}, "--allow-unjudgeable", "biting.py"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("verified now", result.stdout + result.stderr)
+
+    def test_an_allowance_for_a_guard_the_run_never_judged_is_reported(self) -> None:
+        result = self._allow(
+            {"biting.py": BITING}, {}, "--allow-unjudgeable", "gone.py"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("no guard of that name was judged", result.stdout + result.stderr)
+
+    def test_an_allowance_never_waives_this_lanes_own_verdict(self) -> None:
+        """Biting is this lane's judgement of the guard, so it is not excusable."""
+        result = self._allow(
+            {"fake.py": FAKE_GREEN}, {}, "--allow-unjudgeable", "fake.py"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("this lane's own judgement", result.stdout + result.stderr)
+
+    def test_the_summary_counts_a_guard_and_its_stale_entry_separately(self) -> None:
+        """One guard that is both a finding and a bad entry is one finding line.
+
+        Adding the two numbers used to report `有发现 2 个` for a single guard;
+        the summary names the allowance problems as their own count instead.
+        """
+        result = self._allow_human(
+            {"fake.py": FAKE_GREEN}, {}, "--allow-unjudgeable", "fake.py"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("有发现 1 个，名单问题 1 条", result.stdout)
+
+    def test_the_summary_omits_the_allowance_count_when_there_is_no_problem(self) -> None:
+        result = self._allow_human({"fake.py": FAKE_GREEN}, {})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("有发现 1 个，判不了", result.stdout)
+        self.assertNotIn("名单问题", result.stdout)
+
+    def test_an_allowance_never_waives_a_missing_self_test(self) -> None:
+        """The lane can always see that a guard carries no self-test at all."""
+        result = self._allow(
+            {"bare.py": NO_SELF_TEST}, {}, "--allow-unjudgeable", "bare.py"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("this lane's own judgement", result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
