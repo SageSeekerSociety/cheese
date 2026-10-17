@@ -45,8 +45,8 @@ async def announce_archived_rooms(svc: pkg.RoutineService) -> int:
 
     规则自己那一行**不动**（结论：取消归档后从下一个时刻继续，
     ``_fire_schedules`` 一直是按房间状态挑的）。要说的是每个归档了、又还有
-    在跑的规则的房间：房间里落一行「N 条规则已随归档停止」，加上给每条规则
-    主人的一条通知。
+    在跑的例行事务的房间：房间里落一行「N 条例行事务已随归档停止」，加上给每条例行
+    事务主人的一条通知。
 
     Idempotent per archive episode：房间自己的 ``archived_at`` 印在那行上，
     已经带着本轮印子的房间跳过 —— 所以取消归档后再归档会再说一次，而手工
@@ -103,14 +103,14 @@ async def announce_archived_rooms(svc: pkg.RoutineService) -> int:
                 author="system",
                 author_type=AuthorType.platform,
                 kind=BlockKind.event,
-                content=f"{len(rules)} 条规则已随归档停止",
+                content=f"{len(rules)} 条例行事务已随归档停止",
                 meta={
                     **notice(
                         EVENT_ROUTINE_STOPPED,
                         severity=SEVERITY_INFO,
                         who=WHO_PLATFORM,
                         detail="\n".join(f"「{r.title}」" for r in rules),
-                        detail_label="规则",
+                        detail_label="例行事务",
                     ),
                     "routine_ids": [str(r.id) for r in rules],
                     "archived_at": stamp,
@@ -122,9 +122,9 @@ async def announce_archived_rooms(svc: pkg.RoutineService) -> int:
                 project_id=rule.project_id,
                 level=NotificationLevel.light,
                 kind=NotificationType.CHANGE_ALERT,
-                title=f"周期任务「{rule.title}」已随话题归档停止",
+                title=f"例行事务「{rule.title}」已随话题归档停止",
                 body=(
-                    f"房间「{room.title}」归档了，这条规则随之停下。"
+                    f"房间「{room.title}」归档了，这条例行事务随之停下。"
                     "取消归档后它会从下一个时刻继续，不用重新设置。"
                 ),
                 target_handle=rule.owner_handle,

@@ -21,10 +21,10 @@ covers:
 
 | 表 | 是什么 | 关键列 |
 | --- | --- | --- |
-| `Routine` | 一条**规则** | `title`、`instructions`、`context_scope`、`output_dir`、`trigger`、`spec`、`timezone`、`state`、`agent_handle`、`owner_handle`、`next_run_at`、`event_cursor`、`revision` |
+| `Routine` | 一条**规则** | `title`、`instructions`（目标）、`note`（补充说明）、`trigger`、`spec`、`timezone`、`state`、`agent_handle`、`owner_handle`、`next_run_at`、`event_cursor`、`revision` |
 | `RoutineRun` | 规则**响了一次** | `occurrence_key`、`routine_revision`、`status`、`message_id`、`delivery_event_id`、`turn_id`、`summary`、`outputs`、`error`、`notified` |
 
-规则三态：`draft`（芝士起草，人没确认之前什么都不跑）、`active`、`paused`。执行五态：`queued` / `running` / `succeeded` / `failed` / `skipped`，末三者是终结态（`TERMINAL_RUN_STATUSES`）。
+规则两态：`active`、`paused`。执行五态：`queued` / `running` / `succeeded` / `failed` / `skipped`，末三者是终结态（`TERMINAL_RUN_STATUSES`）。
 
 **执行行先落，活才派**：`_fire` 先把 `RoutineRun` 写进去，唯一约束 `uq_routine_occurrence(routine_id, occurrence_key)` 保证同一个「计划时刻」或同一个「事件」只会有一行 —— 第二次扫描、第二个后端进程、重启，找到的都是同一行，而不是把同一件事再派一次。这就是「至少一次」被压回「恰好一次」的那一步。
 
@@ -37,9 +37,9 @@ covers:
 - `_agent_for` 只认这个房间里的 AI 队友席位，写别处的 handle 直接拒。
 - 芝士起草时（`by_agent=True`）必须给 `owner_handle`，而且那个人必须**是房间里的人** —— 否则结果没法通知给他。
 
-**芝士起草的规则停在 `draft`**：`create` 落一个房间事件块说「芝士起草了「…」，要你确认后才会执行」；人在页面上点确认才 `confirm` → `_activate`。人自己建的则当场就 `active`。同样地，`update` 里芝士改一条已经生效的规则，会把状态**退回 `draft`**、清掉 `next_run_at`：芝士写的东西，人读过才算数。
+**没有待确认这一步**：`create` 当场就 `_activate`，人和芝士建的都停在 `active`。芝士建的那一条**不落任何事件块**：它自己在对话里说一句，话里带上这条规则的链接（`/projects/<项目>/channels/<房间>?tab=routines&routine=<规则 id>`，点开还是这个频道，右栏「例行事务」那一格开在这一条上），平台不加一行、也不在那一行上放按钮。`delete` 里的 `_settled` 只收拾旧版本留在房间里的那些行。`update` 也不再退回任何状态：改的就是现在这条，下一次按改后的来。
 
-路由层把这条缝画得很直：确认 / 暂停 / 恢复 / 立即执行 / 删除都是 `_person(actor, …)`，芝士只能起草和修改（`api/routes/routines.py`）。
+路由层的缝只剩删除：暂停 / 恢复 / 立即执行 / 修改和读取同一个口径（读得到就改得动），只有删除要 `_person(actor, …)`，而且得是规则的 `created_by` 或项目管理员（`api/routes/routines.py`）。
 
 ## 两种触发 {#triggers}
 
@@ -71,7 +71,7 @@ covers:
 
 **这一轮留得下，追问留不下。** 支线里芝士的改动本来留不下；执行的那一轮从投递上认出来（`turn_speakers.is_routine_run`，`eventType == routine_run`），凭证不带 `scratch`，开场提示也换成「这一轮就是这次执行，可以保存结果」。之后有人在这条支线里追问，那几轮照支线的规矩改动留不下，会话按新参数重启一次，接着同一段对话。执行那一轮也不改代码：它和支线一样只拿到只读的仓库令牌，要改代码就转为任务（见[支线的会话](/dev/session#scratch)）。
 
-**投递和交回。** 投递事件的 payload 里是这段工作本身：`run_prompt` 把工作内容、资料范围、结果目录、上一次成功执行交回的结果，以及**怎么交回**（`POST /routine-runs/{id}/report`）都写给芝士看。执行的 `turn_id` 就是那一轮。
+**投递和交回。** 投递事件的 payload 里是这段工作本身：`run_prompt` 把目标、补充说明（有才写）、上一次成功执行交回的结果，以及**怎么交回**（`POST /routine-runs/{id}/report`）都写给芝士看。执行用哪些资料、结果放哪，提示词里明说由它这次自己定。执行的 `turn_id` 就是那一轮。
 
 **交回是必须的**：`report` 只认这条规则的 `agent_handle` 交，成功失败都要交，失败还必须写明原因，`outputs` 最多 50 条。成功时交回的 `summary` 就是那条消息的正文，频道里的人直接读它。没交回的那一次会被记成失败。
 
@@ -112,5 +112,5 @@ covers:
 - **执行行是幂等的锚，不是日志。** 想重跑一次，走 `run_now`（`occurrence_key = manual:<新 uuid>`），不要删执行行 —— 删了它就等于允许同一时刻再响一次。
 - **事件驱动的规则和它的产物会互相触发。** 熔断（每小时 6 次）和「自己开的任务不算触发」是两条独立的防线，缺一条就会出现环。
 - **暂停不补、恢复不补。** `resume` 从下一个未来时刻接着算（`_activate` 里 `next_after(…, now)`），中间空过的时段不会被回填。
-- **草稿不执行。** `run_now` 对 `draft` 直接报错「还没确认的规则不能执行」；芝士改过的规则会退回草稿，于是也就不跑了。
+- **改了就按新的跑。** `update` 改一条 `active` 的规则会重新算 `next_run_at`，没有人再确认一次；`revision` 加一，已经派出去的执行行留的还是当时那个版本。
 - **契约测试看着 `cheese_*` 工具面。** `backend/sandbox/cheese` 里的工具表和后端是两份，双方不一致由 `backend/tests/contract/` 拦下（同一形状的约束见 `MACHINE_PROFILES`）。

@@ -86,10 +86,10 @@ def test_archiving_a_room_says_so_in_the_room_and_tells_each_owner(client):
 
     lines = _stopped_lines(client, room)
     assert len(lines) == 1, lines
-    assert lines[0].content == "1 条规则已随归档停止"
+    assert lines[0].content == "1 条例行事务已随归档停止"
     assert lines[0].meta["routine_ids"] == [rule["id"]]
 
-    notices = [n for n in _notices_for(client, OWNER) if "周期任务" in n.title]
+    notices = [n for n in _notices_for(client, OWNER) if "例行事务" in n.title]
     assert len(notices) == 1, notices
     assert rule["title"] in notices[0].title
     # 归属那一列是一个会话 id，房间自己就是一条会话，所以存的就是房间。
@@ -144,9 +144,12 @@ def test_the_room_is_told_once_per_archive_but_every_episode(client):
 def test_a_room_without_active_rules_is_left_alone(client):
     project = _project(client)
     room = _room(client, project)
-    # 只有一份草稿，没有启用中的规则。
-    drafted = _weekly(client, room, owner_handle=OWNER).json()["data"]
-    assert drafted["state"] == "draft"
+    # 只有一条暂停的规则，没有在跑的。
+    parked = _weekly(client, room, headers=PERSON).json()["data"]
+    assert (
+        client.post(f"/routines/{parked['id']}/pause", headers=PERSON).status_code
+        == 200
+    )
 
     assert _archive(client, room).status_code == 200
     _sweep(client)

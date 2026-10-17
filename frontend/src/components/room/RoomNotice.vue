@@ -152,7 +152,7 @@ const showRetry = computed(
       (props.notice.mode === 'fold' && props.notice.retryable))
 )
 
-// 芝士起草的规则 / 技能：这一行直接通到要确认的那一条。
+// 芝士整理的技能：这一行直接通到要确认的那一条。
 const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
 const environmentAt = computed(() => environmentTarget(props.block, props.projectId))
 
@@ -390,7 +390,6 @@ const ACTION_META: Record<string, { btn: string }> = {
         <span v-if="notice.whoLabel" class="sys-who">{{
           notice.who === 'cheese' ? t('work.room.notice.working', { name: name || agentName }) : notice.whoLabel
         }}</span>
-        <!-- 在 summary 里点它不能顺带展开这一行。 -->
         <NavLink v-if="confirmAt" :to="confirmAt" class="sys-btn" data-testid="notice-confirm" @click.stop>
           {{ t('work.room.notice.goConfirm') }}
         </NavLink>

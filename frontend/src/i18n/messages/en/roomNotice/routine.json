@@ -1,5 +1,5 @@
 {
-  "labelRoutineToConfirm": "Settings to confirm",
+  "labelRoutineToConfirm": "This routine",
   "labelRoutineWorkFor": "Work handed to {who}",
   "routineTriggerHourly": "Every hour at minute {minute} ({timezone})",
   "routineTriggerDaily": "Every day at {time} ({timezone})",
@@ -20,14 +20,10 @@
   "routineWeekdaySat": "Saturday",
   "routineWeekdaySun": "Sunday",
   "routineFailed": "failed",
-  "routineOutputRoot": "root folder",
-  "routineProposalConfirmedBy": "{who}'s draft “{title}” was confirmed and runs as set",
-  "routineProposalDeletedBy": "{who}'s draft “{title}” was deleted and will not run",
-  "routineProposedBy": "{who} drafted “{title}”; it runs only once you confirm",
+  "routineProposalDeletedBy": "{who} deleted the routine “{title}”",
+  "routineProposedBy": "{who} created the routine “{title}”",
   "routineResultWithFiles": "{body}\nResult files: {files}",
   "routineRunStarted": "Started “{title}”",
-  "routineScopeUnset": "(not limited)",
   "routineSkipped": "did not run",
-  "routineSucceeded": "finished",
-  "routineSummary": "Name: {title}\nTrigger: {trigger}\nWork: {instructions}\nMaterials: {scope}\nResults saved to: channel {output}\nRun by: {agent}\nResults sent to: {owner}"
+  "routineSucceeded": "finished"
 }

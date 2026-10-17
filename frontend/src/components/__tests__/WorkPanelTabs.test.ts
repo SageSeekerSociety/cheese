@@ -331,7 +331,7 @@ describe('工作面板 · Tab 容器', () => {
   // 读的是「这件任务手上有什么」。
   const isEmpty = (tab: Element | undefined) => !!tab?.classList.contains('tabbar__tab--empty')
 
-  it('频道是人说话的地方：只有总览、支线、文件、定时与触发', async () => {
+  it('频道是人说话的地方：只有总览、支线、文件、例行事务', async () => {
     const { container } = mountChannel()
     await flush()
 
@@ -340,7 +340,7 @@ describe('工作面板 · Tab 容器', () => {
       '概览',
       '支线',
       '文件',
-      '定时与触发',
+      '例行事务',
     ])
   })
 

@@ -599,29 +599,27 @@ export function threadTime(iso: string): string {
     : at.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
 }
 
-// ---- 定时与触发 -------------------------------------------------------------------
+// ---- 例行事务 -------------------------------------------------------------------
 
 function routine(over: Partial<Routine>): Routine {
   return {
     id: 'routine-weekly',
-    can_manage: true,
+    can_delete: true,
     room_archived: false,
     project_id: DEMO_PROJECT,
     topic_id: DEMO_TOPIC,
     title: '每周一整理课程进展',
     instructions: '把上周这个频道里的作业、提问和改动整理成一页，放进「周报」目录',
-    context_scope: '',
-    output_dir: '周报',
+    note: '结果按周分文件；只用资料库里的文件',
     trigger: 'schedule',
     trigger_text: '每周周一 09:00（Asia/Shanghai）',
     spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
     timezone: 'Asia/Shanghai',
     state: 'active',
+    last_run_status: 'succeeded',
     agent_handle: 'cheese',
     owner_handle: 'wang',
-    proposed_by: 'cheese',
-    confirmed_by: 'wang',
-    confirmed_at: '2026-09-28T01:00:00Z',
+    created_by: 'cheese',
     next_run_at: '2026-10-12T01:00:00Z',
     revision: 1,
     created_at: '2026-09-27T09:00:00Z',
@@ -630,20 +628,19 @@ function routine(over: Partial<Routine>): Routine {
   }
 }
 
-/** 一条在跑的周报，和芝士刚起草、等人确认的一条。 */
+/** 两条在跑的规则：一条按时间，一条等频道里发生某件事。 */
 export const ROUTINE_WEEKLY = routine({})
-export const ROUTINE_DRAFT = routine({
+export const ROUTINE_ACCEPTED = routine({
   id: 'routine-accepted',
   title: '作业被采纳后通知全班',
   instructions: '成果被采纳时，在频道里写一句这次改了什么',
-  output_dir: '',
+  note: '',
   trigger: 'card_accepted',
   trigger_text: '成果被采纳时',
   spec: { scope: 'room' },
-  state: 'draft',
-  confirmed_by: null,
-  confirmed_at: null,
   next_run_at: null,
+  // 事件触发的那条还没轮上过：行上画的是「启用中」，不是「没能执行」。
+  last_run_status: null,
 })
 
 /** 周报那条最近两次执行：一次成了，一次没成。 */
@@ -679,6 +676,30 @@ export const ROUTINE_RUNS: Record<string, RoutineRun[]> = {
     },
   ],
 }
+
+/**
+ * 「看全部」那一页上的一整页：十条，成的那几次交回一份文件，没能执行的那几次带着原因。
+ *
+ * 一天一条往回排（第 index 天前），所以行上「今天 / 昨天 / 10月12日」三种写法都在。
+ */
+export const ROUTINE_RECORDS_RUNS: RoutineRun[] = Array.from({ length: 10 }, (_, index) => {
+  const at = new Date(Date.UTC(2026, 9, 14, 10, 2) - index * 86_400_000)
+  const missed = index % 3 === 1
+  return {
+    id: `page-run-${index}`,
+    routine_id: ROUTINE_WEEKLY.id,
+    trigger_detail: '',
+    routine_revision: 1,
+    scheduled_for: at.toISOString(),
+    status: missed ? 'failed' : 'succeeded',
+    summary: missed ? '' : '今天频道里决定的事和还没回音的线索，整理成一页',
+    outputs: missed ? [] : [`日报/2026-10-${String(14 - index).padStart(2, '0')}.md`],
+    error: missed ? '工作电脑没有连上' : '',
+    created_at: at.toISOString(),
+    started_at: at.toISOString(),
+    finished_at: at.toISOString(),
+  }
+})
 
 // ---- 现场：一行、组头、队友页签 ------------------------------------------------
 //

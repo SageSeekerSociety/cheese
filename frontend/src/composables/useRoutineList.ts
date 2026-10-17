@@ -1,26 +1,28 @@
-// 一份规则的取数：读（项目总览 / 某个房间）、做（确认、暂停、恢复、立即执行、删除、
-// 新建、修改）、以及执行记录什么时候去读。
+// 一份规则的取数：读（项目总览 / 某个房间）、做（暂停、恢复、立即执行、删除、新建、
+// 修改）、以及执行记录什么时候去读。
 //
 // 两处用它，问的是同一个问题、打的是同一个接口，只是范围不同：
-//   - 项目的「定时与触发」页 → 整个项目（`topicId` 不给）
-//   - 房间右侧「定时与触发」那一格 → 只这一个房间（`topicId` 给了）
+//   - 项目的「例行事务」页 → 整个项目（`topicId` 不给）
+//   - 房间右侧「例行事务」那一格 → 只这一个房间（`topicId` 给了）
 // 所以画的那一半（`components/routine/RoutineBoard.vue`）只有一份，取数也就只有一份。
 //
-// 画的人不在这里：这一层不碰 DOM，也不认识 Vuetify。`can_manage` 是后端逐条给的
-// （规则主人或项目管理员），这一层原样传下去，不自己算 —— 「谁能动这条规则」是后端的
+// 画的人不在这里：这一层不碰 DOM，也不认识 Vuetify。`can_delete` 是后端逐条给的
+// （规则主人或项目管理员），这一层原样传下去，不自己算 —— 「谁能删这条规则」是后端的
 // 判断，前端算一遍就是第二个答案。
-import type { Routine, RoutineInput, RoutineRun } from '../lib/routine'
+import type { Routine, RoutineInput, RoutineRecordsView, RoutineRun } from '../lib/routine'
 
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 
 import {
   createRoutine,
   deleteRoutine,
   getRoutine,
   listProjectRoutines,
+  listRoutineRuns,
   routineAction,
   updateRoutine,
 } from '../api/routines'
+import { routineRoomTarget } from '../lib/routine'
 
 import { t } from '@/i18n'
 
@@ -42,11 +44,6 @@ export function useRoutineList(options: RoutineListOptions) {
   /** 展开着执行记录的那一条。 */
   const openId = ref<string | null>(null)
   const runs = ref<Record<string, RoutineRun[]>>({})
-
-  // 等确认的那几条单独摆在前面：它们此刻什么都没在跑，摆在「已经在跑」那一堆里
-  // 就没人看得见，而它们是这一页唯一需要人动手的东西。
-  const drafts = computed(() => routines.value.filter((r) => r.state === 'draft'))
-  const others = computed(() => routines.value.filter((r) => r.state !== 'draft'))
 
   function fail(e: unknown, fallback: string) {
     error.value = e instanceof Error ? e.message : fallback
@@ -83,7 +80,7 @@ export function useRoutineList(options: RoutineListOptions) {
     }
   }
 
-  async function act(r: Routine, action: 'confirm' | 'pause' | 'resume' | 'run-now') {
+  async function act(r: Routine, action: 'pause' | 'resume' | 'run-now') {
     busy.value = `${r.id}:${action}`
     error.value = ''
     try {
@@ -127,9 +124,83 @@ export function useRoutineList(options: RoutineListOptions) {
     return created
   }
 
-  // ---- 那张新建 / 修改的表单 ----
+  // ---- 「看全部」那一整页 ----
+  // 行里只摊开最近三次，再多就得翻页。看的是哪一条、第几页、筛不筛没能执行的那几次，
+  // 和列表一样是这一份状态的一部分：两个入口（项目总览页、房间右侧那一格）都会展开
+  // 记录，各自再写一遍这三样就成了两份会走样的状态。
+  const RECORDS_PER_PAGE = 10
+  const records = ref<RoutineRecordsView | null>(null)
+  /** 正看着的是哪一条。筛和翻页都还要它。 */
+  let recordsId: string | null = null
+
+  /** 读当前这一页。筛变了、页变了、刚打开，都走这里 —— 问的是同一个问题。 */
+  async function loadRecords() {
+    const state = records.value
+    if (!recordsId || !state) return
+    state.loading = true
+    try {
+      const page = await listRoutineRuns(recordsId, {
+        offset: (state.page - 1) * RECORDS_PER_PAGE,
+        limit: RECORDS_PER_PAGE,
+        failedOnly: state.failedOnly,
+      })
+      state.runs = page.data
+      state.total = page.total
+      // 总数是在这一页才知道的：筛过之后一共几页，只有后端答得上来。
+      state.pages = Math.max(1, Math.ceil(page.total / RECORDS_PER_PAGE))
+    } catch (e) {
+      fail(e, t('routines.runsFailed'))
+      state.runs = []
+      state.total = 0
+      state.pages = 1
+    } finally {
+      state.loading = false
+    }
+  }
+
+  function openRecords(r: Routine) {
+    recordsId = r.id
+    records.value = {
+      title: r.title,
+      page: 1,
+      failedOnly: false,
+      runs: [],
+      total: 0,
+      pages: 1,
+      loading: false,
+      // 点一份结果文件要去哪个房间：项目总览页用得上（那一页上没有能开文件的面板），
+      // 房间面板自己不用这一项（它就在那个房间里，点一份当场打开）。
+      roomTo: routineRoomTarget(r),
+    }
+    void loadRecords()
+  }
+
+  function closeRecords() {
+    recordsId = null
+    records.value = null
+  }
+
+  function goRecordsPage(page: number) {
+    const state = records.value
+    if (!state) return
+    const next = Math.min(Math.max(1, page), state.pages)
+    if (next === state.page) return
+    state.page = next
+    void loadRecords()
+  }
+
+  function setRecordsFailedOnly(failedOnly: boolean) {
+    const state = records.value
+    if (!state || state.failedOnly === failedOnly) return
+    state.failedOnly = failedOnly
+    // 筛过之后的行数变了，接着看第 7 页没有意义：回到第一页。
+    state.page = 1
+    void loadRecords()
+  }
+
+  // ---- 建一条规则的那两页 ----
   // 表单开着没有、改的是哪一条、上一次存失败说了什么，和列表一样是这一份状态的一部分：
-  // 两个入口（项目总览页、房间右侧那一格）共用同一张 `RoutineFormDialog`，各自再写一遍
+  // 两个入口（项目总览页、房间右侧那一格）画的是同一份 `RoutineCompose`，各自再写一遍
   // 这三样就成了两份会走样的状态。
   const formOpen = ref(false)
   /** 正在改的那一条；`null` 是新建。 */
@@ -144,7 +215,6 @@ export function useRoutineList(options: RoutineListOptions) {
   }
 
   function startEdit(r: Routine) {
-    if (!r.can_manage) return
     editing.value = r
     formError.value = ''
     formOpen.value = true
@@ -154,19 +224,26 @@ export function useRoutineList(options: RoutineListOptions) {
     formOpen.value = false
   }
 
-  /** 表单存下去。出错写在这张表里，人改了字段就地再存一次。 */
-  async function submit(payload: { room: string; body: RoutineInput }) {
+  /**
+   * 表单存下去。出错写在这张表里，人改了字段就地再存一次。
+   *
+   * 存成了把那一条交回去（`null` 是没存成）：调用方还要拿它办别的事（比如「存成模板」
+   * —— 存规则失败时那一条不该留下）。
+   */
+  async function submit(payload: { room: string; body: RoutineInput }): Promise<Routine | null> {
     if (!editing.value && !payload.room) {
       formError.value = t('routines.pickRoom')
-      return
+      return null
     }
     saving.value = true
     formError.value = ''
     try {
-      await save({ id: editing.value?.id, room: payload.room, body: payload.body })
+      const saved = await save({ id: editing.value?.id, room: payload.room, body: payload.body })
       formOpen.value = false
+      return saved
     } catch (e) {
       formError.value = e instanceof Error ? e.message : t('routines.saveFailed')
+      return null
     } finally {
       saving.value = false
     }
@@ -178,6 +255,7 @@ export function useRoutineList(options: RoutineListOptions) {
       routines.value = []
       runs.value = {}
       openId.value = null
+      closeRecords()
       void reload()
     },
     { immediate: true }
@@ -190,13 +268,16 @@ export function useRoutineList(options: RoutineListOptions) {
 
   return {
     routines,
-    drafts,
-    others,
     loading,
     error,
     busy,
     openId,
     runs,
+    records,
+    openRecords,
+    closeRecords,
+    goRecordsPage,
+    setRecordsFailedOnly,
     formOpen,
     editing,
     formError,
