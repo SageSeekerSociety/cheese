@@ -4824,6 +4824,19 @@ def _has_work_to_sync(worktree: Path) -> bool:
         return True
 
 
+def _synced_already(worktree: Path) -> bool:
+    """Whether the task's checkout here has nothing a sync would deliver or
+    back up (`_has_work_to_sync`), and no platform snapshot still waiting to
+    come back into it, which a sync would try to restore."""
+    if not (worktree / ".git").exists() or _has_work_to_sync(worktree):
+        return False
+    try:
+        admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
+    except RuntimeError:
+        return False
+    return not (admin / _RESTORE_PENDING).exists()
+
+
 def _sync_all_tasks() -> None:
     root = _task_root()
     if not root.exists():
@@ -5506,7 +5519,13 @@ def main() -> None:
             _sync_all_tasks()
         else:
             task = _task_id(a.task)
-            _print_left_out(task, _sync_task(task))
+            # Run by hand right after a commit, whose own hook has just synced
+            # it, this used to ask the platform and probe the forge again to
+            # find nothing to do (dev, 10-12..10-17: 169 such calls, 5.2 s at
+            # the median). A checkout with nothing to deliver or back up is
+            # done as `sync --all` finds it done.
+            if not _synced_already(_task_root() / task):
+                _print_left_out(task, _sync_task(task))
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)

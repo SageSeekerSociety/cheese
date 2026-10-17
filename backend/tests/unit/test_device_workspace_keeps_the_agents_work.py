@@ -313,6 +313,56 @@ def test_sync_all_touches_only_the_tasks_with_something_to_sync(device):
     assert not [task for task in finished if task in seen]
 
 
+def _sync_by_hand(work, *args):
+    return subprocess.run(
+        [sys.executable, str(CLI), "sync", *args],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_a_sync_by_hand_after_the_commits_own_is_done_without_asking_anyone(device):
+    """Agents often run `cheese sync` right after `git commit`, whose hook has
+    just delivered the commit. With nothing new it is done at once: no call to
+    the platform, and nothing to say."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "a.txt").write_text("done\n")
+    git(work, "add", "a.txt")
+    git(work, "commit", "-m", "work")
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == git(
+        work, "rev-parse", "HEAD"
+    )
+    (home / "requests.log").unlink()
+
+    done = _sync_by_hand(work)
+
+    assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
+    assert not (home / "requests.log").exists()
+
+
+@pytest.mark.parametrize("left", ["a commit not pushed", "a file not committed"])
+def test_a_sync_by_hand_with_something_new_still_delivers_and_backs_it_up(device, left):
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    if left == "a commit not pushed":
+        _commit(work, "a.txt", "not pushed\n")
+    else:
+        (work / "draft.txt").write_text("not committed\n")
+
+    done = _sync_by_hand(work, "--task", task)
+
+    assert done.returncode == 0, done.stderr
+    head = git(work, "rev-parse", "HEAD")
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    if left == "a file not committed":
+        assert (home / "backups" / task / "latest.json").exists()
+
+
 def test_reopening_a_task_preserves_unpushed_commits_and_dirty_files(device):
     cli, tasks, _, _ = device
     task = next(iter(tasks))
