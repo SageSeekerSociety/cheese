@@ -58,8 +58,33 @@ _PULLS = re.compile(r"^/?repos/[^/\s]+/[^/\s]+/pulls/?(?:\?.*)?$")
 _LOOSE = re.compile(r"\bgh\s+pr\s+create\b|\bhub\s+pull-request\b")
 
 
+#: A here-document's operator and its delimiter word, bare or quoted. A
+#: delimiter spelled any other way (a Claude Code command still inside its
+#: `eval '…'` quoting) is left for the unquoted pass `eval` gets.
+_HEREDOC = re.compile(r"(?<!<)<<(-?)[ \t]*(?:'(\w+)'|\"(\w+)\"|\\?(\w+))")
+
+
+def _without_heredoc_bodies(command: str) -> str:
+    """``command`` with each here-document's body left out: it is text handed
+    to a command's input — a script being written, a commit message — not a
+    command, and a line of it that reads `gh pr create` is not one."""
+    kept, pending = [], []
+    for line in command.split("\n"):
+        if pending:
+            delimiter, tabs = pending[0]
+            if (line.lstrip("\t") if tabs else line) == delimiter:
+                pending.pop(0)
+            continue
+        kept.append(line)
+        for match in _HEREDOC.finditer(line):
+            word = match.group(2) or match.group(3) or match.group(4)
+            pending.append((word, match.group(1) == "-"))
+    return "\n".join(kept)
+
+
 def opens_pull_request(command: str) -> bool:
     """Whether running ``command`` would open a pull request."""
+    command = _without_heredoc_bodies(command)
     try:
         words = _split(command)
     except ValueError:

@@ -29,6 +29,7 @@ OPENS = [
     "gh api graphql -f query='mutation { createPullRequest(input: {}) { id } }'",
     "hub pull-request -m x",
     "/usr/bin/gh pr create --fill",
+    "cat <<EOF > notes.md\ntext\nEOF\ngh pr create --fill",
 ]
 
 LEAVES = [
@@ -46,6 +47,12 @@ LEAVES = [
     "git commit -m 'stop calling gh pr create'",
     ".claude/scripts/pr-watch.sh --enqueue --deploy 12",
     "gh api graphql -f query='{ viewer { login } }'",
+    # A here-document is text handed to a command, not a command.
+    "cat <<EOF > open.sh\n#!/bin/sh\ngh pr create --fill\nEOF",
+    "cat > notes.md <<'EOF'\nDon't run gh pr create here\nEOF",
+    "git commit -F - <<'EOF'\nfix: agents don't call gh pr create\nEOF",
+    "cat <<-EOF\n\tgh pr create --fill\n\tEOF",
+    "eval 'cat <<'\\''EOF'\\''\ngh pr create --fill\nEOF'",
 ]
 
 
