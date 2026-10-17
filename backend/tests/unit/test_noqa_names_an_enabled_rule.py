@@ -17,11 +17,11 @@ Directives are read from the ``COMMENT`` tokens ``tokenize`` yields, so a
 ``"# noqa: BLE001"`` inside a string literal is not a directive. Every spelling
 ruff reads is read: a clause anywhere in a comment (``## noqa: X``,
 ``# type: ignore  # noqa: X``), whitespace before either colon, the file-level
-``# ruff: noqa: X``, codes separated by commas, whitespace, or both, and an
-empty item where a code would be (``# noqa: ,BLE001``), which ruff warns about
-and then reads. A trailing explanation is not part of the code list. A bare
-``# noqa`` with no rule list suppresses everything and is never inert; it is
-not counted.
+``# ruff: noqa: X`` where it is alone on its line, codes separated by commas or
+whitespace, and an empty item where a code would be (``# noqa: ,BLE001``),
+which ruff warns about and then reads. A trailing explanation is not part of
+the code list. A bare ``# noqa`` with no rule list suppresses everything and is
+never inert; it is not counted.
 
 A selector that names a group (``E``, ``BLE``) enables every rule in that
 group; one that names a single rule (``A003``) enables only that one, and
@@ -53,12 +53,13 @@ _APP = BACKEND_ROOT / "app"
 
 #: A ``noqa`` clause, wherever it sits in a comment: ruff reads the whole
 #: comment, so a second hash inside it (a doubled-hash prefix, or a trailing
-#: ``type: ignore`` comment) does not end the search. The optional ``ruff:``
-#: prefix is the file-level form, and either colon may have whitespace before
-#: it. ``sep`` is the colon that introduces a rule list; its absence is the
-#: bare directive that suppresses everything.
+#: ``type: ignore`` comment) does not end the search. The ``ruff:`` prefix is
+#: the file-level form; ruff honours it only when it starts a comment on a line
+#: of its own, and warns about it anywhere else. Either colon may have
+#: whitespace before it. ``sep`` is the colon that introduces a rule list; its
+#: absence is the bare directive that suppresses everything.
 _NOQA = re.compile(
-    r"#\s*(?:ruff\s*:\s*)?noqa\b\s*(?P<sep>:\s*)?(?P<codes>[^#]*)",
+    r"#\s*(?P<file_level>ruff\s*:\s*)?noqa\b\s*(?P<sep>:\s*)?(?P<codes>[^#]*)",
     re.IGNORECASE,
 )
 #: One rule code: ``BLE001``. The clause is a comma-separated list, so a code
@@ -131,7 +132,12 @@ def _directives(path: Path) -> Counter[str]:
         for token in tokenize.tokenize(handle.readline):
             if token.type != tokenize.COMMENT:
                 continue
+            # The file-level form only counts where ruff honours it: alone on
+            # its line, at the start of the comment.
+            alone = not token.line[: token.start[1]].strip()
             for match in _NOQA.finditer(token.string):
+                if match.group("file_level") and not (match.start() == 0 and alone):
+                    continue
                 if match.group("sep") is None:
                     continue  # a bare directive suppresses everything
                 found.update(_listed_codes(match.group("codes")))
@@ -379,6 +385,7 @@ def test_every_spelling_ruff_accepts_is_read(tmp_path: Path) -> None:
     # — the ratchet would stay green while the tree grows them.
     sample = tmp_path / "sample.py"
     sample.write_text(
+        "# ruff : noqa: , F401\n"
         "import os  # noqa : F401\n"
         "import sys  ## noqa: F401\n"
         "import re  # type: ignore  # noqa: F401\n"
@@ -388,11 +395,14 @@ def test_every_spelling_ruff_accepts_is_read(tmp_path: Path) -> None:
         "y = 2  # ruff: noqa: F401\n"
         "z = 3  # noqa: BLE001 — surface failures (spec H4)\n"
         "q = 4  # noqa: ,BLE001\n"
-        "w = 5  # ruff : noqa: , F401\n",
+        "w = 5  # ruff : noqa: , F401\n"
+        "v = 6  # noqa: BLE001, BLE\n",
         encoding="utf-8",
     )
-    # H4 is prose, not a rule: the code list ends at the first non-code word.
-    assert _directives(sample) == Counter({"F401": 8, "BLE001": 4})
+    # H4 is prose and BLE is not a code: the list ends at the first thing that
+    # is not one. The two `ruff:` clauses after code are not file-level: ruff
+    # warns that they must be alone on their line and reads neither.
+    assert _directives(sample) == Counter({"F401": 7, "BLE001": 5})
 
 
 def test_a_selector_covers_its_own_group_not_a_spelled_prefix() -> None:
