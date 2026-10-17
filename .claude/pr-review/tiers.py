@@ -147,6 +147,12 @@ CONFIG = (
     "Taskfile.yml",
 )
 DOCS = (".claude/rules/", ".claude/skills/", ".claude/agents/", ".agents/", "docs/")
+#: Code that lives under `docs/`: the site's generator, its entry scripts, the evidence
+#: harnesses. The doc tier is for prose a person reads; these run at build time — the repo's
+#: own checkers read `docs/site/build.mjs` as build machinery — so a change to one is read
+#: like code. Only the `docs/` prefix is matched: the other DOCS entries hold rule and skill
+#: text, where a stray script is still documentation about how to do something.
+DOC_CODE = (".js", ".mjs", ".ts", ".py", ".css", ".vue")
 LOCKED = (
     "pnpm-lock.yaml",
     "package-lock.json",
@@ -223,7 +229,15 @@ def is_test(path):
 
 
 def is_doc(path):
-    return path.endswith(".md") or any(under(path, p) for p in DOCS)
+    """Whether this path is read as documentation. A `.md` always is. Under `docs/`, build
+    machinery is not: judging by the prefix alone put the site generator and its entry
+    scripts in the doc tier, which §4 also stops re-reading after a review — the same hole
+    as the copy prefix in ready.py, reached through a different door."""
+    if path.endswith(".md"):
+        return True
+    if not any(under(path, p) for p in DOCS):
+        return False
+    return not (under(path, "docs/") and path.endswith(DOC_CODE))
 
 
 def tier_of_path(path):
@@ -543,6 +557,23 @@ def self_test():
         (".claude/rules/migrations.md", "E"),
         ("docs/accept-is-merge.md", "E"),
         ("deploy/README-backup.md", "A"),  # deploy/ wins over .md: A is tested first
+        # A prefix is not enough: the copy and doc prefixes hold code too, and a file
+        # judged by its prefix alone lands in a tier that is also an exemption (§4 stops
+        # re-reading it after a review) while CI keeps reading it as code. The generator
+        # under docs/ is the pointed case — .claude/scripts/check-i18n-lists.py reads it as
+        # build machinery. The loaders beside the message files stay in A, where the copy
+        # prefix already put them: heavier is the safe direction. What was wrong is the
+        # increment exemption, and that lives in ready.exempt()'s self-test.
+        ("frontend/src/i18n/messages/catalog.ts", "A"),  # the loader, not a message file
+        ("frontend/src/i18n/messages/zh-CN/index.ts", "A"),
+        ("frontend/src/i18n/messages/zh-CN/sentences.ts", "A"),
+        ("docs/site/build.mjs", "B"),
+        ("docs/site/src/arch.mjs", "B"),
+        ("docs/site/gen/prompt.py", "B"),
+        ("docs/evidence/preview-copy/rows-for-pdf.mjs", "B"),
+        ("frontend/src/i18n/messages/zh-CN/ask.json", "A"),  # a message file still is copy
+        ("docs/site/diagrams/overview.html", "E"),  # generated page, still prose
+        (".claude/rules/frontend.md", "E"),
     ):
         check(f"按路径定档：{path}", tier_of_path(path), want)
 
