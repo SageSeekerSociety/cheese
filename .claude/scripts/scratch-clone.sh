@@ -79,7 +79,9 @@ if (url.scheme != "https" and not local_http) or not url.hostname or url.usernam
 repo = args.repo if args.repo is not None else url.path.removeprefix("/").removesuffix(".git")
 if not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repo) or repo.split("/")[1] in {".", ".."} or repo.endswith(".git"):
     fail("repository path must be OWNER/REPO without .git; rerun with --repo OWNER/REPO.")
-remote = f"{url.scheme}://{url.netloc}/{repo}.git"
+# Preserve the origin's suffix convention so URL-scoped helpers still match.
+path = repo + (".git" if url.path.endswith(".git") else "")
+remote = f"{url.scheme}://{url.netloc}/{path}"
 
 # Keep order, empty resets, and URL-specific entries: Git, not this script,
 # chooses which helpers match the target. Never copy hooks or URL rewrites.
@@ -90,10 +92,15 @@ settings = [("credential.helper", "")]
 for entry in config.stdout.split("\0"):
     if not entry:
         continue
-    key, value = entry.split("\n", 1)
-    if key.rsplit(".", 1)[-1].lower() in {"helper", "username", "usehttppath"}:
-        if args.helper is None or not key.lower().endswith(".helper"):
-            settings.append((key, value))
+    key, separator, value = entry.partition("\n")
+    kind = key.rsplit(".", 1)[-1].lower()
+    if kind not in {"helper", "username", "usehttppath"} or (kind == "helper" and args.helper is not None):
+        continue
+    if not separator:
+        if kind != "usehttppath":
+            fail("credential helper/username has no value; correct the source Git configuration or supply --helper.")
+        value = "true"  # Git's implicit boolean differs from an explicitly empty value.
+    settings.append((key, value))
 if args.helper is not None:
     if not args.helper.strip():
         fail("--helper is empty; provide a credential helper, not a token.")
@@ -111,7 +118,7 @@ if credential.returncode or not fields.get("username") or not fields.get("passwo
          "in an authorized Cheese project, or --helper YOUR_AUTHORIZED_HELPER. "
          "For another owner's fork, have the owner apply your bundle/patch; do not retry with broader credentials.")
 if (fields.get("protocol") != url.scheme or fields.get("host") != url.netloc
-        or fields.get("path") != f"{repo}.git"):
+        or fields.get("path") != path):
     fail("credential helper returned a different repository path/host; correct --repo OWNER/REPO or --helper.")
 
 

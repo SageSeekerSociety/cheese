@@ -69,7 +69,14 @@ WRONG_PATH = write_helper("wrongpath.sh", [GET, SINK,
     "printf 'username=%s\\npassword=%s\\npath=wrong/repo.git\\n' \"$CC_USER\" \"$CC_PASS\""])
 WRONG_HOST = write_helper("wronghost.sh", [GET, SINK,
     "printf 'username=%s\\npassword=%s\\nhost=evil.example:9999\\n' \"$CC_USER\" \"$CC_PASS\""])
+WRONG_PROTOCOL = write_helper("wrongprotocol.sh", [GET, SINK,
+    "printf 'username=%s\\npassword=%s\\nprotocol=https\\n' \"$CC_USER\" \"$CC_PASS\""])
+NO_SUFFIX = write_helper("no-suffix.sh", [GET, "path=", READ_PATH,
+    'test "$path" = owner/no-suffix || exit 0',
+    "printf 'username=%s\\npassword=%s\\n' \"$CC_USER\" \"$CC_PASS\""])
 BAD_READER = write_helper("bad-reader.sh", [GET, SINK, "printf 'username=reader\\npassword=read-token\\n'"])
+SECRETS = ["write-token", "read-token", base64.b64encode(b"writer:write-token").decode(),
+           base64.b64encode(b"reader:read-token").decode()]
 HELPER_CFG = lambda p: [["--add", "credential.helper", p]]
 DEFAULT_CFG = HELPER_CFG(GOOD)
 REPO = None
@@ -229,8 +236,9 @@ class Result:
         self.returncode, self.stdout, self.stderr = rc, out, err
 
 
-def run_target(args, creds=None):
+def run_target(args, creds=None, extra_env=None):
     env = dict(GITENV)
+    env.update(extra_env or {})
     if creds:
         env["CC_USER"], env["CC_PASS"] = creds
     try:
@@ -288,11 +296,13 @@ def t_success(server):
     check("success: receive-pack preflight then upload-pack POST",
           any(x["query"] == "service=git-receive-pack" for x in rs)
           and any(x["method"] == "POST" and x["path"].endswith("/git-upload-pack") for x in rs))
+    check("success: never posts to the push service",
+          not any(x["method"] == "POST" and x["path"].endswith("/git-receive-pack") for x in rs))
     check("success: reports the clone", "Cloned owner/repo" in r.stdout)
-    check("success: secret absent from stdout/stderr",
-          "write-token" not in r.stdout + r.stderr and "read-token" not in r.stdout + r.stderr)
-    check("success: secret absent from .git/config",
-          "write-token" not in dest_config(dest) and "read-token" not in dest_config(dest))
+    check("success: plaintext and encoded secrets absent from stdout/stderr",
+          all(secret not in r.stdout + r.stderr for secret in SECRETS))
+    check("success: plaintext and encoded secrets absent from .git/config",
+          all(secret not in dest_config(dest) for secret in SECRETS))
 
 
 def t_read_only(server):
@@ -325,6 +335,8 @@ def t_helper_bad_identity(server):
     fail_case(server, "wrong-path", source_config=HELPER_CFG(WRONG_PATH),
               keywords=("--repo",), requests_zero=True)
     fail_case(server, "wrong-host", source_config=HELPER_CFG(WRONG_HOST),
+              keywords=("--repo",), requests_zero=True)
+    fail_case(server, "wrong-protocol", source_config=HELPER_CFG(WRONG_PROTOCOL),
               keywords=("--repo",), requests_zero=True)
 
 
@@ -383,6 +395,33 @@ def t_multi_helper_reset_scoped(server):
           "read-token" not in dest_config(dest) and "write-token" not in dest_config(dest))
 
 
+def t_global_and_bare_credentials(server):
+    for bare in (False, True):
+        label = "global-bare" if bare else "global-helper"
+        src = make_source(label, f"http://{server.host}/owner/repo.git", [])
+        config = WORK / f"{label}.gitconfig"
+        run_git(["config", "--file", str(config), "credential.helper", GOOD])
+        if bare:
+            with config.open("a") as stream:
+                stream.write("[credential]\n\tuseHttpPath\n\tinteractive\n")
+        dest = WORK / f"dest-{label}"
+        server.reset()
+        r = run_target(["--source", str(src), str(dest)], ("writer", "write-token"),
+                       {"GIT_CONFIG_GLOBAL": str(config)})
+        check(f"{label}: clone succeeds", r.returncode == 0, r.stderr.strip()[-160:])
+        check(f"{label}: real content cloned", (dest / "hello.txt").is_file())
+
+
+def t_suffixless_origin(server):
+    _, _, head = make_bare("owner/no-suffix", "suffixless.txt", "without suffix\n")
+    url = f"http://{server.host}/owner/no-suffix"
+    r, dest = clone_case(server, "suffixless", ("writer", "write-token"), origin=url,
+                         source_config=[["--add", f"credential.{url}.helper", NO_SUFFIX]])
+    check("suffixless: scoped helper still matches", r.returncode == 0, r.stderr.strip()[-160:])
+    check("suffixless: correct repository cloned", (dest / "suffixless.txt").is_file()
+          and run_git(["rev-parse", "HEAD"], cwd=dest).stdout.strip() == head)
+
+
 def t_repo_override(server):
     make_bare("owner/other.git", "other.txt", "other\n")
     r, dest = clone_case(server, "repo-other", ("writer", "write-token"),
@@ -428,7 +467,8 @@ def main():
         for test in [t_success, t_read_only, t_read_token_denied_for_push, t_wrong_token,
                      t_missing_and_empty_credentials, t_helper_bad_identity, t_bad_origin,
                      t_redirect_and_fake_ad, t_existing_destination, t_explicit_helper,
-                     t_multi_helper_reset_scoped, t_repo_override, t_inherited_fetch]:
+                     t_multi_helper_reset_scoped, t_global_and_bare_credentials,
+                     t_suffixless_origin, t_repo_override, t_inherited_fetch]:
             try:
                 test(server)
             except Exception as exc:
