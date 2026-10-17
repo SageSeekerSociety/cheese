@@ -23,6 +23,8 @@ router」，同一个文件里的第二个 `APIRouter` 会被静默丢掉，理�
 `/integrations` 故意**没有 `days`**：凭据与投递是存量问题，不是「这七天怎么变的」。
 """
 
+import asyncio
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -31,6 +33,7 @@ from fastapi.routing import APIRoute
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
+from app.core.config import settings
 from app.domain.agent import preview_hub as preview_hub_module
 from app.domain.agent import turn_counts
 from app.domain.agent.device_hub import device_hub
@@ -39,6 +42,15 @@ from app.domain.machine.admin_schemas import MachinesOverviewOut
 from app.domain.platform_stats.services import PlatformStatsService
 
 router = APIRouter(prefix="/admin/stats", tags=["admin"])
+logger = logging.getLogger(__name__)
+
+#: How long one reading of the session host's memory may take. The reading goes
+#: over the host's link: this process's own ``/proc/meminfo`` describes its
+#: container, not the machine every project's sessions share. The bound is on
+#: the whole read, not just the wait for an answer — ``exec`` itself also waits
+#: out a reconnect grace and, over the RPC facade, retries an owner being
+#: replaced, so passing it as the exec timeout alone would not bound the request.
+SESSION_HOST_READ_TIMEOUT_S = 5.0
 
 
 async def get_platform_stats_service(db: DbSession) -> PlatformStatsService:
@@ -152,6 +164,76 @@ def _http_endpoints(app) -> list[tuple[str, str]]:
     return endpoints
 
 
+def meminfo_mib(text: str) -> tuple[int | None, int | None]:
+    """``MemTotal`` and ``MemAvailable`` out of ``/proc/meminfo``, in MiB.
+
+    Either is ``None`` when its line is missing or not a number. The kernel
+    always prints both, so a missing one means this text is not a meminfo at
+    all; answering 0 there would read as "the host has no memory left", which is
+    a much worse claim than "nobody could read it".
+    """
+    found: dict[str, int] = {}
+    for line in text.splitlines():
+        key, sep, rest = line.partition(":")
+        if not sep or key not in ("MemTotal", "MemAvailable"):
+            continue
+        fields = rest.split()
+        if not fields:
+            continue
+        try:
+            found[key] = int(fields[0]) // 1024
+        except ValueError:
+            continue
+    return found.get("MemTotal"), found.get("MemAvailable")
+
+
+async def session_host_snapshot() -> dict[str, int | None]:
+    """The session host's memory and the sessions open on it, right now.
+
+    ``sessions_active`` counts the screens the hub has open on the session host.
+    A screen is one agent, i.e. one session, and "open on this device" is the
+    same 口径 the connector's device view uses
+    (``connector/connections.py:_device_screens``). The hub only lists screens
+    on a device that is online, so a host that is away answers ``None`` rather
+    than 0: sessions running there did not stop because the link dropped.
+
+    The memory numbers come from the host's own ``/proc/meminfo`` over its
+    link: this process's file describes its container, not the machine every
+    project's sessions share. An unread host answers ``None`` for all three
+    instead of failing the request — someone looking at latency must not lose
+    the board because the session host is away, and the admission gate already
+    treats an unread host as holding nobody.
+    """
+    host = settings.agent_session_device_id
+    if not host:
+        return {
+            "mem_total_mib": None,
+            "mem_available_mib": None,
+            "sessions_active": None,
+        }
+    sessions = (
+        sum(1 for screen in device_hub.all_online_screens() if screen.device_id == host)
+        if device_hub.is_online(host)
+        else None
+    )
+    total = available = None
+    try:
+        async with asyncio.timeout(SESSION_HOST_READ_TIMEOUT_S):
+            result = await device_hub.exec(
+                host, ["cat", "/proc/meminfo"], timeout=SESSION_HOST_READ_TIMEOUT_S
+            )
+    except Exception:  # an unreadable host is not a broken board
+        logger.warning("session host memory unreadable", exc_info=True)
+    else:
+        if result.get("exit") == 0:
+            total, available = meminfo_mib(result.get("stdout") or "")
+    return {
+        "mem_total_mib": total,
+        "mem_available_mib": available,
+        "sessions_active": sessions,
+    }
+
+
 @router.get("/performance")
 async def performance_stats(
     service: StatsServiceDep,
@@ -166,9 +248,17 @@ async def performance_stats(
 
     「过去一周怎么变的」是另一个问题，原料在日志里（`main.py` 每个请求一行带
     毫秒），要的话是另做一件只读的事 —— 不是把这一条加上 `days`。
+
+    另带 `session_host`：会话主机的总内存、可用内存和当前会话数（#1824 第二轮
+    的补测量）。它和耗时一样是「这一刻」的读数，所以挂在这条上；口径在
+    `session_host_snapshot`。
     """
     endpoints = list(_http_endpoints(request.app))
-    return ok(await service.performance(routes_registered=endpoints))
+    snap = await service.performance(routes_registered=endpoints)
+    # 会话主机的内存和当前会话数（#1824 第二轮的补测量）：新会话能不能起只看
+    # `MemAvailable >= agent_session_memory_max_mb`，而此前没有任何接口暴露它。
+    snap["session_host"] = await session_host_snapshot()
+    return ok(snap)
 
 
 @router.get("/pipeline")
