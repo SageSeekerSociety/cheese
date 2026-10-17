@@ -458,30 +458,32 @@ def _remote_servers(target: dict) -> list[str]:
     return list((target.get("remote_mcp") or {}).get("servers", []))
 
 
-def agent_servers(target: dict) -> list[str]:
-    """The teammate's type's own stdio servers (`agent_mcp`): they run on the
-    room's machine, which is handed each one's definition with the call. A name
-    the checkout's `.mcp.json` or a remote server already uses stays that
-    server's, as committed configuration decides."""
+def command_servers(target: dict) -> list[str]:
+    """The commands added in project settings and the teammate's type's own
+    (`mcp_commands`): they run on the room's machine, which is handed each
+    one's definition with the call. A name the checkout's `.mcp.json` or a
+    remote server already uses stays that server's, as committed configuration
+    decides."""
     taken = {*target.get("mcp_servers", []), *_remote_servers(target)}
-    return [name for name in target.get("agent_mcp") or {} if name not in taken]
+    return [name for name in target.get("mcp_commands") or {} if name not in taken]
 
 
 def session_servers(target: dict) -> list[str]:
     """Every MCP server a session lists: the machine's stdio servers and the
-    type's, once the session is on the machine, and the remote ones.
+    commands handed to it, once the session is on the machine, and the remote
+    ones.
 
-    Before then (a session at the placeholder) it lists no stdio server at all,
-    the checkout's or the type's: listing one would take the machine for a turn
-    that may never need it. The session is relaunched onto the machine once it
-    has one, and lists them then."""
+    Before then (a session at the placeholder) it lists no stdio server at
+    all: listing one would take the machine for a turn that may never need it.
+    The session is relaunched onto the machine once it has one, and lists them
+    then."""
     on_machine = not (
         target.get("kind") == "deferred"
         and target.get("workspace") == DEFERRED_WORKSPACE
     )
     return [
         *(
-            [*target.get("mcp_servers", []), *agent_servers(target)]
+            [*target.get("mcp_servers", []), *command_servers(target)]
             if on_machine
             else []
         ),
@@ -929,9 +931,10 @@ class RemoteClient:
 
     # --- the project's local servers -------------------------------------------
     #
-    # A local server — a command the checkout's `.mcp.json` or the teammate's
-    # type names — is started by the machine's executor from its own
-    # definition. Before its first call this session asks the platform two
+    # A local server — a command the checkout's `.mcp.json`, the project's
+    # settings or the teammate's type names — is started by the machine's
+    # executor from the checkout's definition or the one handed with the call
+    # (`mcp_commands`). Before its first call this session asks the platform two
     # things to hand it with each call (`mcp_path`/<name>/start): the values of
     # the project secrets the default branch's definition names, and, on a
     # member's own computer, the fingerprints of the commands its owner lets
@@ -1022,8 +1025,8 @@ class RemoteClient:
             if state == "running":
                 self.report_local(server, "idle")
 
-    def agent_servers(self):
-        return agent_servers(self.config)
+    def command_servers(self):
+        return command_servers(self.config)
 
     def session_servers(self):
         return session_servers(self.config)
@@ -1132,9 +1135,9 @@ class RemoteClient:
         if (
             method in {"invoke", "mcp"}
             and params
-            and params.get("server") in self.agent_servers()
+            and params.get("server") in self.command_servers()
         ):
-            params = {**params, "spec": self.config["agent_mcp"][params["server"]]}
+            params = {**params, "spec": self.config["mcp_commands"][params["server"]]}
         if method in {"invoke", "mcp"} and params and self.local(params.get("server")):
             params = {**params, **self._local_start(params["server"])}
         if self.config.get("kind") == "device":

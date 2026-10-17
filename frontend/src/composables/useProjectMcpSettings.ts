@@ -16,7 +16,7 @@
 // `enabled`：设置页一次只画一栏，这一栏没被打开过就不读，授权回跳也等这一刻才认。
 import type { McpServer, McpServerDraft, McpServerList } from '@/api'
 
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { useNavigation } from '@/composables/useNavigation'
@@ -161,6 +161,22 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
     Object.assign(form, { open: true, editing: server, saving: false, error: '' })
   }
 
+  /** 编辑时交给那张表的现状：设置里加的那一条，远程的或命令。 */
+  const editing = computed<McpServerDraft | null>(() => {
+    const server = form.editing
+    if (!server?.added) return null
+    if (server.command !== null)
+      return { kind: 'command', name: server.name, command: server.command, env: server.added.env ?? {} }
+    return {
+      kind: 'remote',
+      name: server.name,
+      url: server.added.url ?? '',
+      auth: server.auth,
+      header: server.added.header,
+      value: null,
+    }
+  })
+
   async function submit(draft: McpServerDraft) {
     form.saving = true
     form.error = ''
@@ -264,6 +280,7 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
     busy,
     values,
     form,
+    editing,
     load,
     connect,
     disconnect,

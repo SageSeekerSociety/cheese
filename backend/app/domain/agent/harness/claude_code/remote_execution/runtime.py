@@ -155,8 +155,9 @@ class Executor:
         self.collected, self.snapshot = {}, None
         self.snapshot_lock, self.cli_lock = threading.Lock(), threading.Lock()
         self.clients = {}
-        # Agent types' servers, by name: their definitions come with the calls.
-        self.agent_specs = {}
+        # Commands added in project settings and agent types' own, by name:
+        # their definitions come with the calls.
+        self.handed_specs = {}
         # What the session's gateway hands with a local server's calls
         # (`RemoteClient._local_start`): the values of the project secrets its
         # definition names, and — on a member's computer — the fingerprints of
@@ -343,7 +344,7 @@ class Executor:
 
     def dispatch(self, method, params):
         if isinstance(params, dict) and isinstance(params.get("spec"), dict):
-            self.agent_specs[params["server"]] = params["spec"]
+            self.handed_specs[params["server"]] = params["spec"]
         if isinstance(params, dict) and isinstance(params.get("values"), dict):
             self.server_values[params["server"]] = params["values"]
         if isinstance(params, dict) and "allowed" in params:

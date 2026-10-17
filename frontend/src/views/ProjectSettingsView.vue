@@ -507,17 +507,7 @@ function close() {
         <McpServerDialog
           v-if="section === 'mcp'"
           v-model="mcp.form.open"
-          :initial="
-            mcp.form.editing?.added
-              ? {
-                  name: mcp.form.editing.name,
-                  url: mcp.form.editing.added.url,
-                  auth: mcp.form.editing.auth,
-                  header: mcp.form.editing.added.header,
-                  value: null,
-                }
-              : null
-          "
+          :initial="mcp.editing.value"
           :agent-name="agentName"
           :saving="mcp.form.saving"
           :error="mcp.form.error"

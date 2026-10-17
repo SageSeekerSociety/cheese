@@ -14,5 +14,12 @@
   "headers": "填写请求头",
   "headersHint": "例如 API 密钥，项目里所有人通过{agent}使用它",
   "headerName": "请求头名称",
-  "headerValue": "值"
+  "headerValue": "值",
+  "kind": "类型",
+  "command": "命令",
+  "commandHint": "密钥写成 {example} 这样的变量，添加后在列表里填值",
+  "env": "环境变量（可选）",
+  "envHint": "每行一个，例如 {example}",
+  "envInvalid": "每行写成 名称=值",
+  "commandOwner": "在成员自己的设备上运行前，要设备主人允许"
 }

@@ -31,7 +31,12 @@ app.domain.agent.gateway_models.cache`` 落在兄弟上，``from . import cache`
 """
 
 import ast
+from importlib.util import resolve_name
 from pathlib import Path
+
+import pytest
+
+from tests.unit._import_anchor import absolute_module, package_at, package_of
 
 MODULE = "app.domain.agent.gateway_models"
 PARENT = "app.domain.agent"
@@ -60,25 +65,6 @@ def _piece_files() -> list[Path]:
     )
 
 
-def _module_of(path: Path) -> str:
-    """这个文件自己的模块名。"""
-    parts = path.relative_to(PACKAGE).with_suffix("").parts
-    if parts[-1] == "__init__":
-        parts = parts[:-1]
-    return ".".join([MODULE, *parts])
-
-
-def _package_of(path: Path) -> str:
-    """这个文件的 ``__package__``——相对导入按它算，不按 ``__name__``。
-
-    包的 ``__init__.py`` 上两者是同一个（``sub/__init__.py`` 就是 ``…gateway_models
-    .sub``），别的模块上它比 ``__name__`` 短一级。拿 ``__name__`` 当锚点，子包的
-    ``__init__.py`` 里每一句相对导入都会多折一级。
-    """
-    module = _module_of(path)
-    return module if path.name == FACADE else module.rpartition(".")[0]
-
-
 def _type_checking_names(tree: ast.Module) -> set[str]:
     """这份文件里能当 ``TYPE_CHECKING`` 用的名字，别名一起收。"""
     names = {"TYPE_CHECKING"}
@@ -104,19 +90,7 @@ def _is_type_checking(test: ast.expr, names: set[str]) -> bool:
     return called in names
 
 
-def _package_at(package: str, level: int) -> str | None:
-    """``__package__`` 里第 ``level`` 级的相对导入落在哪个包上。
-
-    ``.`` 一级就落在包自己身上（``__package__`` 已经是锚点），``..`` 两级落到它的
-    父包，依此类推——和 CPython 的 ``resolve_name`` 一样，从锚点往上少折一级。
-    """
-    parts = package.split(".")
-    if level - 1 >= len(parts):
-        return None
-    return ".".join(parts[: len(parts) - (level - 1)])
-
-
-def _imported_module(node: ast.AST, package: str) -> str | None:
+def _imported_module(node: ast.AST, package: str | None) -> str | None:
     """这一句导的是哪个模块（多点一级 `a.b.c` 就落到 `a.b.c` 上）。"""
     if isinstance(node, ast.Import):
         # `import a.b.c` 导的是 `a.b.c` 这个模块本身；一句点几个名字时，任一个点中
@@ -127,15 +101,10 @@ def _imported_module(node: ast.AST, package: str) -> str | None:
         return PARENT if PARENT in names else None
     if not isinstance(node, ast.ImportFrom):
         return None
-    if not node.level:
-        return node.module
-    base = _package_at(package, node.level)
-    if base is None:
-        return None
-    return f"{base}.{node.module}" if node.module else base
+    return absolute_module(node, package)
 
 
-def _is_the_facade(node: ast.AST, package: str) -> bool:
+def _is_the_facade(node: ast.AST, package: str | None) -> bool:
     """这一句导的是门面吗。先解析它落在哪个模块上，再看那个模块是不是门面。"""
     target = _imported_module(node, package)
     if target is None:
@@ -225,7 +194,7 @@ def _runtime_imports(source: str, where: str) -> list[ast.Import | ast.ImportFro
     ]
 
 
-def _reaching_back(source: str, where: str, package: str = MODULE) -> list[str]:
+def _reaching_back(source: str, where: str, package: str | None = MODULE) -> list[str]:
     """这段源码里运行时会建到门面上的那些写法。
 
     ``package`` 是被扫那份源码的 ``__package__``，合成源码默认按包根算。
@@ -246,7 +215,7 @@ def test_no_gateway_models_piece_reaches_the_facade_at_runtime():
         (path.relative_to(PACKAGE).as_posix(), node.lineno, ast.unparse(node))
         for path in pieces
         for node in _runtime_imports(path.read_text(encoding="utf-8"), str(path))
-        if _is_the_facade(node, _package_of(path))
+        if _is_the_facade(node, package_of(path))
     ] + [
         (path.relative_to(PACKAGE).as_posix(), node.lineno, ast.unparse(node))
         for path in pieces
@@ -260,17 +229,50 @@ def test_no_gateway_models_piece_reaches_the_facade_at_runtime():
     )
 
 
-def test_the_relative_anchor_is_the_package_not_the_module():
-    """相对导入的锚点按 ``__package__`` 算，包的 ``__init__.py`` 上它短一级不对。
+#: 相对导入折算的对照表：``(被扫的文件, 那句 import, 它的 __package__)``。
+#: 期望的落点不写死在这里——由 ``importlib.util.resolve_name`` 现场算。手抄一份正好
+#: 会把同一个错法抄成期望值，测试就跟着错的一起绿了。
+ANCHOR_CASES = [
+    # 包的 ``__init__.py`` 和同目录的普通模块锚点相同。
+    (FACADE, "from . import cache", MODULE),
+    ("models.py", "from . import cache", MODULE),
+    ("models.py", "from .cache import _cached", MODULE),
+    ("models.py", "from .. import gateway_models", MODULE),
+    ("models.py", "from ...agent import gateway_models", MODULE),
+    # 子包里的文件：锚点是子包自己，它的 ``__init__.py`` 也一样。
+    ("sub/leaf.py", "from . import sibling", f"{MODULE}.sub"),
+    ("sub/leaf.py", "from .. import cache", f"{MODULE}.sub"),
+    (f"sub/{FACADE}", "from . import sibling", f"{MODULE}.sub"),
+    (f"sub/{FACADE}", "from .. import cache", f"{MODULE}.sub"),
+    (f"sub/{FACADE}", "from ... import gateway_models", f"{MODULE}.sub"),
+]
 
-    拿 ``__name__`` 当锚点：``sub/__init__.py`` 会被当成 ``…gateway_models.sub``
-    再往上折，``from .. import gateway_models`` 落到 ``…agent`` 上、认不出来，而
-    ``from . import leaf`` 落到 ``…gateway_models`` 上、被当成回头引报出来。
+
+def test_the_relative_anchor_is_the_package_not_the_module():
+    """相对导入从 ``__package__`` 折算，不从 ``__name__`` 再折一级。
+
+    同一目录里两类文件的锚点相同（``pkg/leaf.py`` 和 ``pkg/__init__.py`` 都是
+    ``pkg``）。拿 ``__name__`` 推，``sub/__init__.py`` 会多折一层：``from ..``
+    落到祖父包上，``from .`` 落到门面上——本来都是兄弟。
     """
-    assert _package_of(PACKAGE / "models.py") == MODULE
-    assert _package_of(PACKAGE / FACADE) == MODULE
-    assert _package_of(PACKAGE / "sub" / "leaf.py") == f"{MODULE}.sub"
-    assert _package_of(PACKAGE / "sub" / FACADE) == f"{MODULE}.sub"
+    for relative, source, package in ANCHOR_CASES:
+        path = PACKAGE / relative
+        assert package_of(path) == package, relative
+        node = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.ImportFrom)
+        )
+        assert absolute_module(node, package_of(path)) == resolve_name(
+            "." * node.level + (node.module or ""), package
+        ), source
+
+
+def test_a_relative_import_past_the_top_level_is_not_a_module():
+    """折出顶层之外的不是一个模块——导入机器在那里抛 ``ImportError``。"""
+    assert package_at("app", 2) is None
+    with pytest.raises(ImportError):
+        resolve_name("..", "app")
 
 
 def test_the_guard_reads_the_shapes_it_claims_to_read():
