@@ -39,7 +39,11 @@ from app.domain.agent.session_host.contract import SessionRef, StartAbandoned
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.main import app
-from tests.integration.conftest import post_message, session_auth_headers
+from tests.integration.conftest import (
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 from tests.integration.test_doc_edits import ALICE_PARAGRAPH, _doc, _document
 from tests.support.living_doc import document_of
 
@@ -454,6 +458,36 @@ def test_only_someone_in_the_room_can_stop_its_answer(client, sessions):
 
     assert refused.status_code in (403, 404)
     sessions.stopped.set()
+
+
+def test_a_thread_is_stopped_only_through_its_own_document(client, sessions):
+    """The thread named is the document's own: naming it under a document of
+    one's own project stops nothing on someone else's."""
+    from app.domain.living_doc.models import Document
+
+    task, seat, _ = _document(client)
+    sessions.held = "范围指第二节。"
+    root = _comment(client, task, f"<@{seat}> 这里的范围指什么？")
+    assert sessions.waiting.wait(20)
+    theirs = post_project(client, {"name": "M"}, owner="mallory").json()["data"]
+
+    async def their_document() -> str:
+        async with client.test_factory() as db:
+            doc = Document(project_id=uuid.UUID(theirs["id"]), content="自己的文档")
+            db.add(doc)
+            await db.commit()
+            return str(doc.id)
+
+    other = client.portal.call(their_document)
+
+    refused = client.post(
+        f"/documents/{other}/comments/{root}/agent/stop",
+        headers=session_auth_headers("mallory"),
+    )
+
+    assert refused.status_code == 404, refused.text
+    sessions.stopped.set()
+    assert all("已停止" not in said for said in _answers(client, task, root, seat))
 
 
 def test_a_document_in_no_room_is_answered_by_the_projects_own_agent(client, sessions):
