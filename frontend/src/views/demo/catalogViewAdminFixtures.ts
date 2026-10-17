@@ -307,6 +307,7 @@ export const CRV_LEGAL: LegalDocumentFull = {
 export const CRV_MACHINES: MachinesOverview = {
   configured: true,
   now: '2026-10-12T10:00:00Z',
+  node_load1: 25.65,
   pool: {
     hosts: 2,
     vms: 0,
@@ -374,7 +375,6 @@ export const CRV_MACHINES: MachinesOverview = {
         memory_bytes: 16 * 2 ** 30,
         memory_used_bytes: 7.4 * 2 ** 30,
         cpu_busy: 0.31,
-        load1: 1.6,
         sandboxes: 1,
         memory_history: [0.3, 0.34, 0.41, null, 0.45, 0.46],
         cpu_history: [0.1, 0.22, 0.35, null, 0.28, 0.31],
@@ -452,7 +452,6 @@ export const CRV_MACHINES: MachinesOverview = {
         memory_bytes: 16 * 2 ** 30,
         memory_used_bytes: 1.2 * 2 ** 30,
         cpu_busy: 0.02,
-        load1: 0.1,
         sandboxes: 0,
         memory_history: [0.08, 0.08, 0.07],
         cpu_history: [0.01, 0.02, 0.02],

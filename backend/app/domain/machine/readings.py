@@ -3,8 +3,10 @@ machines page, and the alert when a host runs short.
 
 The disk guard reads every platform host once a minute (``disk_guard``), and
 with the same reading the host reports its memory, the CPU time its processes
-have taken, its load and what each sandbox's cgroup holds in memory
-(``sandbox_home.disk``). This keeps them:
+have taken, the one-minute load and what each sandbox's cgroup holds in
+memory (``sandbox_home.disk``). The load is the physical node's, not the
+host's: a MicroCloud host is an LXC container sharing the node's kernel, so
+every host on a node reads the same figure (``node_load1``). This keeps them:
 
 - one ``HostReading`` per host per reading, for ``KEEP``, so the page shows the
   last one, how old it is, and the hours before it;
@@ -260,7 +262,6 @@ def _usage_of(last: HostReading, before: HostReading | None, cores: int) -> dict
         "memory_bytes": last.memory_bytes,
         "memory_used_bytes": _less(last.memory_bytes, last.memory_available_bytes),
         "cpu_busy": cpu_busy(last, before, cores),
-        "load1": last.load1,
         "sandboxes": last.sandboxes,
     }
 
@@ -304,6 +305,26 @@ async def hosts_now(
             "cpu_history": cpu,
         }
     return out
+
+
+async def node_load1(
+    session: AsyncSession, host_ids: list[uuid.UUID], now: datetime
+) -> float | None:
+    """The physical node's one-minute load, from the newest reading of any of
+    these hosts within ``KEEP``: each host reads the node's /proc/loadavg, so
+    the figure is not any one host's."""
+    if not host_ids:
+        return None
+    return await session.scalar(
+        select(HostReading.load1)
+        .where(
+            HostReading.host_id.in_(host_ids),
+            HostReading.read_at >= now - KEEP,
+            HostReading.load1.is_not(None),
+        )
+        .order_by(HostReading.read_at.desc())
+        .limit(1)
+    )
 
 
 def _iso(at: datetime | None) -> str | None:

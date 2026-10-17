@@ -370,8 +370,9 @@ class RetainedHomeArchive(UuidPk, Timestamps, Base):
 
 class HostReading(UuidPk, Base):
     """What one platform host used at one disk check (``disk_guard``): its
-    disk and inodes, its memory, the CPU time its processes had taken and its
-    load, and how many sandboxes it was running. Written once a check, kept
+    disk and inodes, its memory, the CPU time its processes had taken, the
+    one-minute load (its physical node's: the host is an LXC container on the
+    node's kernel), and how many sandboxes it was running. Written once a check, kept
     for ``readings.KEEP``: the admin machines page shows the last and the
     shape of the hours before it. A value the host could not give is NULL."""
 

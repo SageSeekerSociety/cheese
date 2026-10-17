@@ -181,6 +181,23 @@ def test_the_page_shows_what_each_host_and_its_sandboxes_use(cloud):  # noqa: F8
     )
 
 
+def test_the_load_is_shown_once_for_the_physical_node_not_per_host(
+    cloud,  # noqa: F811
+):
+    """A MicroCloud host is an LXC container on its node's kernel, so every
+    host reads the node's load. The page gives it once, as the node's."""
+    first, second, _ = cloud.seats
+    working_on(cloud, first, "host-1")
+    working_on(cloud, second, "host-2")
+    node = {**memory(2), "load1": 25.65}
+    kernel_says(cloud, {"host-1": node, "host-2": node}, {})
+    guard(cloud)
+
+    data = page(cloud)
+    assert data["node_load1"] == pytest.approx(25.65)
+    assert all("load1" not in (h["usage"] or {}) for h in data["hosts"])
+
+
 def test_a_sandbox_destroyed_while_its_host_is_read_does_not_stop_the_guard(
     cloud,  # noqa: F811
 ):

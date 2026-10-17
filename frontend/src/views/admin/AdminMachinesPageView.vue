@@ -2,7 +2,8 @@
 /**
  * 后台「机器」这一屏的画面：只收结果，不取数。路由页 `AdminMachinesPage.vue` 取数。
  *
- * 从上到下回答四个问题：池子此刻够不够用（四张卡，外加「此刻在拒绝新会话」那一句）；
+ * 从上到下回答四个问题：池子此刻够不够用（四张卡，外加「此刻在拒绝新会话」那一句；
+ * 第五张是物理节点的负载——宿主机是共用节点内核的 LXC 容器，负载只有节点一份，不按台画）；
  * 每台宿主机走到哪一步、上面有谁、磁盘内存 CPU 用了多少（一台一行，下面一条用量，
  * 点开列出它的沙箱和每个沙箱离上限多远）；过去一天沙箱起得多快、有多少没起来、拒了
  * 多少会话、丢了几台宿主机；温机池里有什么。
@@ -189,12 +190,7 @@ function meters(u: HostUsage): Meter[] {
     undefined,
     line?.memory
   )
-  add(
-    'cpu',
-    u.cpu_busy,
-    fmtPercent(u.cpu_busy, 0),
-    u.load1 === null ? '' : t('admin.machines.usage.load', { n: u.load1 })
-  )
+  add('cpu', u.cpu_busy, fmtPercent(u.cpu_busy, 0), '')
   return out
 }
 
@@ -327,6 +323,12 @@ const failureNote = computed(() =>
           :value="pool ? n(pool.provider_failures) : ''"
           :loading="first"
           :note="failureNote"
+        />
+        <AdminKpiCard
+          :label="t('admin.machines.kpi.nodeLoad')"
+          :value="overview?.node_load1 == null ? '' : n(overview.node_load1)"
+          :loading="first"
+          :note="overview ? t('admin.machines.kpi.nodeLoadNote') : undefined"
         />
       </div>
       <div v-if="overview" class="mc-alerts">
