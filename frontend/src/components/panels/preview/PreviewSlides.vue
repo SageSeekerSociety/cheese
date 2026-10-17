@@ -232,6 +232,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the reader takes focus (tabindex 0) and turns pages with the arrow keys -->
   <section
     ref="root"
     class="slides"
@@ -298,6 +299,7 @@ onBeforeUnmount(() => {
         :cancel-paint="cancelPaint"
         @select="go"
       />
+      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the pointer half of quoting a selection; @keyup.shift is the keyboard half -->
       <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote" @keyup.shift="quote">
         <div ref="sheet" class="slides__sheet" :data-page="current" />
       </div>

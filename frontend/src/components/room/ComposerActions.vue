@@ -141,7 +141,15 @@ const summonText = computed(() => ({
              看不见。旁边 components/common/FileSelect.vue 里也是这么藏的。
              They are opened only by script from the visible buttons below, so
              keep them out of the Tab order. -->
-    <input ref="fileInput" type="file" multiple class="visually-hidden" tabindex="-1" @change="onFilePicked" />
+    <input
+      ref="fileInput"
+      type="file"
+      multiple
+      class="visually-hidden"
+      tabindex="-1"
+      :aria-label="t('work.room.composer.attachFiles')"
+      @change="onFilePicked"
+    />
     <input
       ref="imageInput"
       type="file"
@@ -149,6 +157,7 @@ const summonText = computed(() => ({
       multiple
       class="visually-hidden"
       tabindex="-1"
+      :aria-label="t('work.room.composer.sendPhotos')"
       @change="onFilePicked"
     />
     <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的

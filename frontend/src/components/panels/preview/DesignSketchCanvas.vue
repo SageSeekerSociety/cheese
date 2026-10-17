@@ -292,6 +292,7 @@ const textStyle = computed(() => {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a focusable role="application" drawing surface (the rule does not count that role); Escape cancels the stroke in progress -->
   <div
     class="sketch-layer"
     tabindex="0"

@@ -61,6 +61,7 @@ async function submit() {
     :close-disabled="saving"
     @primary="submit"
   >
+    <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to write the steps; focus moves into the one field it holds -->
     <v-textarea
       v-model="text"
       class="pt-2"
@@ -75,5 +76,6 @@ async function submit() {
       persistent-hint
       :error-messages="problem || undefined"
     />
+    <!-- eslint-enable vuejs-accessibility/no-autofocus -->
   </AdaptiveDialog>
 </template>
