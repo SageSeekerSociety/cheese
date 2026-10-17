@@ -35,7 +35,6 @@ APIRouter(prefix="/users", tags=["Users"]) is all it takes.
 """
 
 import logging
-import re
 import uuid
 from typing import Annotated
 
@@ -54,6 +53,7 @@ from app.core import email as core_email
 from app.core.background import spawn
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
+from app.core.email import EMAIL_FORMAT
 from app.core.errors import ForbiddenError, UnprocessableEntityError
 from app.db.session import get_db
 from app.domain.user.login_security import PasswordResetService
@@ -148,8 +148,7 @@ async def recover_password_request(
 ) -> dict:
     email = payload.email.strip()
 
-    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    if not re.match(email_regex, email):
+    if not EMAIL_FORMAT.match(email):
         raise UnprocessableEntityError("Invalid email address format")
 
     # The quota is spent before the account is looked up, so it counts unknown
