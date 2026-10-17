@@ -47,22 +47,25 @@ def _load_guard():
 EXCUSED = tuple(sorted(_load_guard().ON_DEMAND))
 
 
-#: The source of a stub excused guard named NAME, exiting with CODE. The guard
-#: under test runs a `.sh` entry with `sh` and a `.py` one with this
-#: interpreter, so a test writing one language for both would be wrong the day
-#: a shell guard is excused. With MARKER the stub first writes `<name>.ran`
-#: beside itself: a run that never happened cannot produce that file, which an
-#: exit code alone cannot tell you.
-def stub(name: str, code: int, marker: bool = False) -> str:
+#: The source of a stub excused guard named NAME. It exits with CODE, or never
+#: exits at all with HANG. The guard under test runs a `.sh` entry with `sh` and
+#: a `.py` one with this interpreter, so a test writing one language for both
+#: would be wrong the day a shell guard is excused — which is the day it has to
+#: keep working, since nothing here would otherwise notice. With MARKER the stub
+#: writes `<name>.ran` beside itself first: a run that never happened cannot
+#: produce that file, which an exit code alone cannot tell you.
+def stub(name: str, code: int = 0, marker: bool = False, hang: bool = False) -> str:
     if name.endswith(".sh"):
-        write = f'printf %s {code} > "${{0}}.ran"\n' if marker else ""
-        return write + f"exit {code}\n"
-    write = (
+        body = f"printf %s {code} > \"${{0}}.ran\"\n" if marker else ""
+        body += "sleep 30\n" if hang else f"exit {code}\n"
+        return body
+    body = (
         f"Path(__file__).with_name({name + '.ran'!r}).write_text({str(code)!r})\n"
         if marker
         else ""
     )
-    return "from pathlib import Path\n" + write + f"raise SystemExit({code})\n"
+    body += "time.sleep(30)\n" if hang else f"raise SystemExit({code})\n"
+    return "import time\nfrom pathlib import Path\n" + body
 
 
 def run(root: Path, script: Path = GUARD) -> subprocess.CompletedProcess[str]:
@@ -342,6 +345,27 @@ class GuardWiringTests(unittest.TestCase):
             f"{excused} is green now: delete the ON_DEMAND entry", result.stderr
         )
 
+    def test_a_shell_guard_that_never_finishes_is_not_honoured(self) -> None:
+        """The hang case in shell, since a shell entry is run by `sh`, not Python."""
+        guard = _load_guard()
+        guard.EXCUSE_TIMEOUT = 0.5
+        wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
+        with fixture(workflow=wired) as root:
+            (root / ".claude/scripts/check-aa-hang.sh").write_text(
+                stub("check-aa-hang.sh", hang=True), encoding="utf-8"
+            )
+            original = dict(guard.ON_DEMAND)
+            guard.ON_DEMAND["check-aa-hang.sh"] = "test only: a shell entry that hangs"
+            try:
+                code, problems, _ = guard.judge(root)
+            finally:
+                guard.ON_DEMAND.clear()
+                guard.ON_DEMAND.update(original)
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(
+            any("did not finish" in problem for problem in problems), problems
+        )
+
     def test_an_excuse_that_never_finishes_is_not_honoured(self) -> None:
         """A guard that hangs gives no verdict, so it cannot show the tree is red."""
         excused = EXCUSED[0] if EXCUSED else None
@@ -351,9 +375,10 @@ class GuardWiringTests(unittest.TestCase):
         guard.EXCUSE_TIMEOUT = 0.5
         wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
         with fixture(workflow=wired) as root:
-            (root / ".claude/scripts" / excused).write_text(
-                "import time\ntime.sleep(30)\n", encoding="utf-8"
-            )
+            for name in EXCUSED:
+                (root / ".claude/scripts" / name).write_text(
+                    stub(name, 0, hang=True), encoding="utf-8"
+                )
             code, problems, _ = guard.judge(root)
         self.assertEqual(code, 1, problems)
         self.assertTrue(
