@@ -446,6 +446,7 @@ defineExpose({
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drop target for files dragged in; the attach button is the keyboard's way -->
   <div
     class="composer"
     :class="{ 'composer--drop': dragOver }"

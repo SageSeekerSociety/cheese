@@ -402,6 +402,7 @@ useComposerShortcut({
            composer, the new-message pill or the error toast down with it.
            resetKey = topic id, so switching topics recovers on its own. -->
       <ErrorBoundary :reset-key="topic.id">
+        <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- the keyboard twins are the focusin/focusout listeners useChatRowActions puts on the same scroller -->
         <ChatTimeline
           v-guide-anchor="onProjectLine ? 'timeline' : ''"
           :topic="topic"

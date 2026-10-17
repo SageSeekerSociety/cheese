@@ -75,6 +75,7 @@ const emit = defineEmits<{
           ></v-img>
 
           <!-- 视频预览 -->
+          <!-- eslint-disable-next-line vuejs-accessibility/media-has-caption -- an uploaded file comes with no caption track to offer; the native controls stay -->
           <video
             v-else-if="resource.type === 'MATERIAL' && resource.material?.type === 'video'"
             controls
@@ -87,6 +88,7 @@ const emit = defineEmits<{
           </video>
 
           <!-- 音频预览 -->
+          <!-- eslint-disable-next-line vuejs-accessibility/media-has-caption -- an uploaded file comes with no caption track to offer; the native controls stay -->
           <audio
             v-else-if="resource.type === 'MATERIAL' && resource.material?.type === 'audio'"
             controls

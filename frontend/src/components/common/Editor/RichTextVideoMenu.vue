@@ -42,6 +42,7 @@ function insertVideo() {
       </button>
     </template>
     <form class="rt-pop rt-pop--form" @submit.prevent="insertVideo">
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person pressed the video button to paste an address; focus moves into the popover's field -->
       <v-text-field
         v-model="video.href"
         :label="label('videoHref')"
@@ -54,6 +55,7 @@ function insertVideo() {
         :hide-details="!video.unsupported"
         @update:model-value="video.unsupported = false"
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
       <div class="rt-pop__actions">
         <BaseButton type="submit" kind="primary" size="sm">{{ label('videoInsert') }}</BaseButton>
       </div>

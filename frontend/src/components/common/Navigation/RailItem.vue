@@ -29,6 +29,8 @@
     @click="!item.to && item.action ? item.action() : undefined"
     @mouseenter="warmDestination()"
     @mouseleave="cancelPrefetch()"
+    @focus="warmDestination()"
+    @blur="cancelPrefetch()"
     @dragstart="onDragStart"
     @dragover="onDragOver"
     @drop="onDrop"

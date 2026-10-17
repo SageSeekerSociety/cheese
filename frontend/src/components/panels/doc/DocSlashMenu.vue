@@ -45,6 +45,7 @@ watch(
       :class="{ 'is-active': i === index }"
       @mousedown.prevent
       @mouseenter="emit('hover', i)"
+      @focus="emit('hover', i)"
       @click="emit('pick', it)"
     >
       <v-icon size="16">{{ it.icon }}</v-icon>
