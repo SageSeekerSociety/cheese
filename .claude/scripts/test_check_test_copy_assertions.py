@@ -88,6 +88,11 @@ assert actual == "SELECT name FROM users WHERE deleted_at IS NULL AND status IN 
 assert actual == "SELECT id, title FROM topics WHERE deleted_at IS NOT NULL ORDER BY id"
 assert actual == "SELECT name FROM users WHERE deleted_at IS NOT NULL"
 assert actual == "SELECT id, email FROM users WHERE status = active ORDER BY id"
+assert actual == "SELECT id, email FROM users WHERE status = 'active'"
+assert actual == "SELECT id, email FROM users WHERE id = $1"
+assert actual == "SELECT id, email FROM users WHERE id = :user_id"
+assert actual == "SELECT id, email FROM users WHERE id = ?"
+assert actual == "SELECT id FROM events WHERE created_at > now() - interval '1 day'"
 assert actual == "SELECT id, email, display_name FROM users ORDER BY created_at DESC LIMIT 20"
 assert actual == "SELECT id, email FROM users u JOIN profiles p ON u.id = p.user_id"
 assert actual == "SELECT id, email FROM users GROUP BY team_id ORDER BY team_id"
@@ -103,9 +108,6 @@ assert actual == "Type 'Foo' cannot be used as an index type."
 assert actual == "Type 'Foo' does not have any construct or call signatures."
 assert actual == "Type 'Foo' is incompatible with type 'Bar'."
 assert step.get("name") == "Require images and tests for the same commit"
-assert row["name"] == "Run smoke tests before deployment"
-assert job.name == "Ensure package metadata is valid"
-assert config["workflow"]["name"] == "Build release package before upload"
 assert actual != "This explanatory sentence should be checked by its important parts"
 assert "archived/removed notices should preserve the relevant message for readers" in text
 ''',
@@ -161,6 +163,8 @@ assert response.name == "The dialog explains where the file should be saved afte
 assert actual == "Select a message from the list where it belongs and continue with the next step"
 assert actual == "Select a message from the list and join the discussion in the main room"
 assert actual == "Select the option from the menu where name = weekly and continue with the next step"
+assert actual == "select the option from the menu where name = weekly and continue with the next step"
+assert actual == "SELECT failed because the row from the table where id = 3 is missing"
 assert actual == "Type a message to continue and then press Enter to send it."
 assert actual == "Type 'Save' does not work in this browser, choose another option to continue"
 assert actual == "The deployment failed because the gateway could not reach the upstream.\\nPlease retry after the environment has started."
@@ -170,9 +174,9 @@ assert actual == "deleted_at IS NULL AND completion_status IN ({})"
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        for line in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14):
+        for line in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16):
             self.assertIn(f"test_copy.py:{line}", result.stderr)
-        self.assertNotIn("test_copy.py:15", result.stderr)
+        self.assertNotIn("test_copy.py:17", result.stderr)
 
     def test_python_fstrings_and_wrapped_vitest_arguments_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

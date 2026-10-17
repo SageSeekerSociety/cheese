@@ -104,18 +104,25 @@ SQL_QUERY_RE = re.compile(
     r"(?:(?:SELECT|select)\b.*\b(?:FROM|from)\b.*"
     r"(?:\b(?:JOIN|join)\b.*\b(?:ON|on)\b|\b(?:ORDER|order)\s+(?:BY|by)\b|"
     r"\b(?:GROUP|group)\s+(?:BY|by)\b|\b(?:LIMIT|limit)\b|"
-    r"\b(?:IS|is)\s+(?:NOT\s+)?(?:NULL|null)\b|\b(?:IN|in)\s*\(|\w+\s*=\s*[\w.]+)).*",
+    r"\b(?:IS|is)\s+(?:NOT\s+)?(?:NULL|null)\b|\b(?:IN|in)\s*\(|,|\*|"
+    r"\w+\s*(?:=|!=|<>|<=|>=|<|>)\s*(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?))).*",
     re.DOTALL,
 )
 SQL_WHERE_RE = re.compile(
-    r"(?:WHERE|where)\s+[\w.]+\s*(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|=\s*[\w.]+).*",
+    r"(?:WHERE|where)\s+[\w.]+\s*(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|"
+    r"(?:=|!=|<>|<=|>=|<|>)\s*(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)).*",
     re.DOTALL,
 )
+SQL_SELECT_PREFIX_RE = re.compile(r"(?:SELECT|select)\s+(.+?)\s+(?:FROM|from)\s+([\w.]+)", re.DOTALL)
+SQL_PROSE_WORDS = {
+    "the", "a", "an", "this", "that", "these", "those", "because", "please", "you", "your",
+    "we", "they", "it", "should", "can", "could", "will", "must", "then", "continue", "option",
+    "message", "menu", "list", "record", "file", "folder", "report", "account", "project",
+}
 TS_TYPE_DIAGNOSTIC_RE = re.compile(
     r"""^Type ['\"][^'\"]+['\"] (?:is not assignable(?: to type)?|has no property|does not satisfy the constraint|is missing the following properties|has no properties in common with type|cannot be used as an index type|does not have any construct or call signatures|is incompatible with type)\b""",
     re.IGNORECASE,
 )
-WORKFLOW_NAME_LABEL_RE = re.compile(r"^(?:Require|Ensure|Check|Run|Use|Add|Remove|Enter|Click|Select|Build|Deploy|Test)\b", re.IGNORECASE)
 JS_ASSERTION_METHODS = {
     "toBe",
     "toEqual",
@@ -157,6 +164,18 @@ def _test_files(root: Path) -> list[Path]:
     return sorted(files)
 
 
+def _is_sql_value(value: str) -> bool:
+    match = SQL_SELECT_PREFIX_RE.match(value)
+    if SQL_QUERY_RE.fullmatch(value) and match is not None:
+        projection_words = {word.casefold() for word in WORD_RE.findall(match.group(1))}
+        table_name = match.group(2).casefold()
+        return not SQL_PROSE_WORDS.intersection(projection_words | {table_name})
+    if SQL_WHERE_RE.fullmatch(value):
+        words = [word.casefold() for word in WORD_RE.findall(value)][1:]
+        return len(words) >= 4 and not SQL_PROSE_WORDS.intersection(words)
+    return False
+
+
 def _is_explanatory_sentence(value: str) -> bool:
     value = " ".join(value.split())
     han_count = len(HAN_RE.findall(value))
@@ -173,8 +192,7 @@ def _is_explanatory_sentence(value: str) -> bool:
         or ":::" in value
         or value.startswith("step ")
         or SQL_EXPRESSION_RE.fullmatch(value)
-        or SQL_QUERY_RE.fullmatch(value)
-        or SQL_WHERE_RE.fullmatch(value)
+        or _is_sql_value(value)
         or TS_TYPE_DIAGNOSTIC_RE.match(value)
         or (EMAIL_RE.search(value) and not han_count and len(WORD_RE.findall(value)) < 9)
         or IDENTIFIER_RE.fullmatch(value)
@@ -208,22 +226,13 @@ def _python_string_value(node: ast.expr) -> str | None:
     return None
 
 
-def _is_name_lookup(node: ast.expr, value: str) -> bool:
-    is_lookup = (
-        isinstance(node, ast.Attribute) and node.attr == "name"
-        or isinstance(node, ast.Subscript) and _python_string_value(node.slice) == "name"
-        or isinstance(node, ast.Call)
+def _is_name_lookup(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "get"
         and bool(node.args)
         and _python_string_value(node.args[0]) == "name"
-    )
-    return (
-        is_lookup
-        and len(value) < 64
-        and len(WORD_RE.findall(value)) <= 9
-        and not re.search(r"[.!?;:]", value)
-        and WORKFLOW_NAME_LABEL_RE.match(value) is not None
     )
 
 
@@ -241,7 +250,7 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
                 if isinstance(operator, ast.Eq):
                     for candidate, other in ((left, comparator), (comparator, left)):
                         value = _python_string_value(candidate)
-                        if value is not None and not _is_name_lookup(other, value):
+                        if value is not None and not _is_name_lookup(other):
                             literals.append((candidate.lineno, value))
                 left = comparator
         if (
@@ -253,7 +262,7 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
                 other = node.args[1 - index] if len(node.args) > 1 else None
                 value = _python_string_value(candidate)
                 if value is not None and not (
-                    other is not None and _is_name_lookup(other, value)
+                    other is not None and _is_name_lookup(other)
                 ):
                     literals.append((candidate.lineno, value))
     return literals
