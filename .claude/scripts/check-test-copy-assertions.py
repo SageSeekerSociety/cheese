@@ -86,6 +86,7 @@ ABSOLUTE_PATH_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?[\\/][^\r\n]*[\\/][^\r\n]*$
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 COMMIT_TITLE_RE = re.compile(r"^(?:feat|fix|chore|docs|refactor|test|build|ci)(?:\([^)]*\))?: ", re.IGNORECASE)
 KEY_VALUE_RE = re.compile(r"\b[\w-]+=\S+")
+STRUCTURED_LABEL_LIST_RE = re.compile(r"^[A-Za-z][\w-]*:\s*[^,:]+(?:,\s*[A-Za-z][\w-]*:\s*[^,:]+)+$")
 IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
 STATUS_CODES_RE = re.compile(r"(?:HTTP\s*)?\d{3}(?:\s+\d{3})*\Z", re.IGNORECASE)
 STEP_DIAGNOSTIC_RE = re.compile(
@@ -94,11 +95,15 @@ STEP_DIAGNOSTIC_RE = re.compile(
 )
 UTILITY_CLASS_TOKEN_RE = re.compile(r"[\w:[\].#%/-]+\Z")
 UTILITY_CLASS_PREFIXES = (
-    "items-", "justify-", "border-", "bg-", "text-", "p-", "m-", "w-", "h-", "gap-",
-    "space-", "rounded-", "shadow-", "font-", "leading-", "max-w-", "min-w-", "overflow-",
-    "cursor-", "transition-", "opacity-", "z-", "top-", "left-", "right-", "bottom-",
+    "items-", "justify-", "border-", "bg-", "text-", "p-", "px-", "py-", "pt-", "m-",
+    "mb-", "mt-", "w-", "h-", "gap-", "space-", "rounded-", "shadow-", "font-",
+    "leading-", "max-w-", "min-w-", "overflow-", "cursor-", "transition-", "opacity-",
+    "z-", "top-", "left-", "right-", "bottom-", "flex-", "whitespace-",
 )
-UTILITY_CLASS_SINGLETONS = {"flex", "grid", "block", "hidden", "inline", "absolute", "relative", "fixed", "sticky", "truncate", "sr-only"}
+UTILITY_CLASS_SINGLETONS = {
+    "flex", "inline-flex", "grid", "block", "hidden", "inline", "absolute", "relative",
+    "fixed", "sticky", "truncate", "sr-only",
+}
 WORKFLOW_EXPRESSION_RE = re.compile(
     r"(?:\$\{\{.*\}\}|\(*\s*!?\s*(?:"
     r"(?:needs|steps|github|matrix|env|vars|inputs)\.[\w.-]+"
@@ -240,8 +245,6 @@ def _test_files(root: Path) -> list[Path]:
 
 
 def _is_sql_value(value: str) -> bool:
-    if SQL_UPDATE_RE.fullmatch(value) or SQL_DELETE_RE.fullmatch(value) or SQL_INSERT_RE.fullmatch(value):
-        return True
     sql_text = re.sub(r"'[^']*'|\"[^\"]*\"", " ", value)
     sql_text = re.sub(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", " ", sql_text)
     sql_text = re.sub(
@@ -253,6 +256,8 @@ def _is_sql_value(value: str) -> bool:
     )
     if SQL_PROSE_WORD_RE.search(sql_text):
         return False
+    if SQL_UPDATE_RE.fullmatch(value) or SQL_DELETE_RE.fullmatch(value) or SQL_INSERT_RE.fullmatch(value):
+        return True
     if SQL_WITH_QUERY_RE.fullmatch(sql_text) or SQL_JSON_QUERY_RE.fullmatch(value):
         return True
     select = SQL_SELECT_PREFIX_RE.match(value)
@@ -312,6 +317,7 @@ def _is_explanatory_sentence(value: str) -> bool:
         or EMAIL_RE.fullmatch(value)
         or COMMIT_TITLE_RE.match(value)
         or _is_structured_key_value(value)
+        or STRUCTURED_LABEL_LIST_RE.fullmatch(value)
         or SHELL_COMMAND_RE.search(value)
         or WORKFLOW_EXPRESSION_RE.fullmatch(value)
         or value.startswith(
@@ -405,7 +411,9 @@ def _is_js_string(token: str) -> bool:
     return len(token) >= 2 and token[0] in {"'", '\"', "`"} and token[-1] == token[0]
 
 
-def _call_argument_strings(tokens: list[tuple[str, int]], open_index: int) -> list[tuple[int, str]]:
+def _call_argument_strings(
+    tokens: list[tuple[str, int]], open_index: int, *, skip_first: bool = False
+) -> list[tuple[int, str]]:
     arguments: list[list[tuple[str, int]]] = [[]]
     depth = 0
     for token, line in tokens[open_index + 1 :]:
@@ -423,7 +431,9 @@ def _call_argument_strings(tokens: list[tuple[str, int]], open_index: int) -> li
             arguments[-1].append((token, line))
 
     literals: list[tuple[int, str]] = []
-    for argument in arguments[:2]:
+    for index, argument in enumerate(arguments[:2]):
+        if skip_first and index == 0:
+            continue
         while argument:
             if [token for token, _ in argument[-2:]] == ["as", "const"]:
                 argument = argument[:-2]
@@ -549,7 +559,9 @@ def _javascript_literals(path: Path) -> list[tuple[int, str]]:
         if index >= 3 and tokens[index - 1][0] == "." and tokens[index - 2][0] == "not":
             continue
         if index >= 1 and tokens[index - 1][0] == ".":
-            literals.extend(_call_argument_strings(tokens, index + 1))
+            literals.extend(
+                _call_argument_strings(tokens, index + 1, skip_first=token == "toHaveProperty")
+            )
     return literals
 
 

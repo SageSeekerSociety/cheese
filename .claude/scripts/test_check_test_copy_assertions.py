@@ -34,7 +34,8 @@ class TestCopyAssertionGuardTests(unittest.TestCase):
                 "frontend/src/copy.spec.ts",
                 f'expect(actual).toBe("{LONG_COPY}")\nexpect(actual).toEqual(`{LONG_COPY}`)\n'
                 f'assert.equal(actual, "{LONG_COPY}")\n"{LONG_COPY}" === actual\n'
-                f'actual === "{LONG_COPY}"\nexpect(actual).toHaveProperty("message", "{LONG_COPY}")\n',
+                f'actual === "{LONG_COPY}"\nexpect(actual).toHaveProperty("message", "{LONG_COPY}")\n'
+                'expect(obj).toHaveProperty("user.profile.settings.display.theme.preferences.value")\n',
             )
             self._write(
                 root,
@@ -49,6 +50,7 @@ class TestCopyAssertionGuardTests(unittest.TestCase):
             self.assertIn(f"backend/tests/unit/test_copy.py:{line}", result.stderr)
         for line in (1, 2, 3, 4, 5, 6):
             self.assertIn(f"frontend/src/copy.spec.ts:{line}", result.stderr)
+        self.assertNotIn("frontend/src/copy.spec.ts:7", result.stderr)
         self.assertIn("backend/tests/unit/test_copy.cjs:1", result.stderr)
         self.assertIn("Python 用 `in`", result.stderr)
         self.assertIn("Vitest 用 `toContain`", result.stderr)
@@ -180,6 +182,8 @@ expect(actual).not.toBe("This explanatory sentence should be checked by its impo
             "SELECT id FROM tasks UNION ALL SELECT id FROM archive",
             "api/v1/projects/:projectId/topics/:topicId/messages",
             "flex items-center justify-between border-b border-slate-200 bg-white text-sm text-slate-600",
+            "px-4 py-2 mb-2 mt-4 flex-1 items-center gap-2",
+            "read: documents, write: documents, admin: members, export: all data",
             "Property 'foo' is missing in type 'Bar' but required in type 'Baz'.",
             "Cannot assign to 'x' because it is a read-only property.",
             "Variable 'x' implicitly has an 'any' type.",
@@ -201,6 +205,19 @@ expect(actual).not.toBe("This explanatory sentence should be checked by its impo
         self.assertIn("test_boundaries.py:2:", result.stderr)
         for line in range(3, len(values) + 1):
             self.assertNotIn(f"test_boundaries.py:{line}:", result.stderr)
+
+    def test_sql_returning_clause_does_not_hide_prose(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write(
+                root,
+                "backend/tests/unit/test_sql_copy.py",
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING the deleted row and then continue"',
+            )
+            result = self._run(root)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("test_sql_copy.py:1", result.stderr)
 
     def test_explicit_root_is_scanned_when_scanner_script_is_shallow(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
