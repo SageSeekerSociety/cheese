@@ -42,7 +42,8 @@
       "from": "From the project's {file}, last changed by {name}",
       "once": "Once allowed, this command is not asked about again; you are asked again if it changes",
       "allow": "Allow",
-      "refuse": "Don't allow"
+      "refuse": "Don't allow",
+      "added": "Added by {name} in project settings"
     }
   },
   "nav": {

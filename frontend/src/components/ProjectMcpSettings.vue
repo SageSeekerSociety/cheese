@@ -234,7 +234,7 @@ const fieldValue = (name: string) => props.values[name] ?? ''
                       {{ t('work.mcp.action.log') }}
                     </BaseButton>
                     <BaseButton
-                      v-if="manages && !server.added && server.variables.length"
+                      v-if="manages && !(server.added && !server.command) && server.variables.length"
                       :kind="server.status === 'missing_values' ? 'secondary' : 'ghost'"
                       size="sm"
                       :aria-expanded="opened[server.name] === 'values'"

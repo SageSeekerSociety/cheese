@@ -340,7 +340,12 @@ class CentralChannel(DeviceChannel):
                 agent_handle,
                 type_of_seat=type_of_seat,
             )
-            own = await agent_stdio_servers(db, project_id, agent_handle)
+            # A name the project uses in its settings is the project's, as
+            # the settings page lists it (`declared.with_types`).
+            commands = {
+                **await agent_stdio_servers(db, project_id, agent_handle),
+                **await remote_mcp.session_commands(db, project_id),
+            }
             decided = await mcp_local.decided(db, project_id)
         if remote is not None:
             target["remote_mcp"] = remote
@@ -352,13 +357,14 @@ class CentralChannel(DeviceChannel):
         # starts again with a command it may now run.
         if decided is not None:
             target["mcp_decided"] = decided
-        # The teammate's type's own stdio servers, as definitions: they run
-        # where the session's commands run — the room's machine, beside the
-        # checkout's `.mcp.json` ones, or a private chat's scratch container —
-        # and `RemoteClient` hands the executor the definition with each call.
-        # Part of the target, so a changed type relaunches an idle session.
-        if own:
-            target["agent_mcp"] = own
+        # The commands added in the project's settings and the teammate's
+        # type's own, as definitions: they run where the session's commands
+        # run — the room's machine, beside the checkout's `.mcp.json` ones, or a
+        # private chat's scratch container — and `RemoteClient` hands the
+        # executor the definition with each call. Part of the target, so a
+        # changed command or type relaunches an idle session.
+        if commands:
+            target["mcp_commands"] = commands
         location = {
             "device_id": center,
             "resource_id": str(resource),

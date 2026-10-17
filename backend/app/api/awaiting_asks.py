@@ -194,7 +194,7 @@ async def membership_asks(
 
 @dataclass(frozen=True, slots=True)
 class RunAsk:
-    """一个项目要在我自己的电脑上运行仓库里的一条命令（一个本地 MCP 服务器），等我允许。
+    """一个项目要在我自己的电脑上运行一条命令（一个本地 MCP 服务器），等我允许。
     同一条命令允许过就不再问，命令改了再问（`remote_mcp/local.py`）。"""
 
     id: str
@@ -204,8 +204,12 @@ class RunAsk:
     command: str
     #: 我的哪台电脑。
     device: str
-    #: 最近改了 `.mcp.json` 的人，按仓库里写的名字；读不出来没有。
-    author: str | None
+    #: 命令写在哪：仓库的 `.mcp.json`（repository）、项目设置（settings）
+    #: 或队友类型（type）。
+    source: str
+    #: 谁写的：`.mcp.json` 是最近改它的人，按仓库里写的名字；项目设置是添加它的
+    #: 成员；读不出来没有。
+    author: Face | None
     at: datetime
 
     def as_dict(self) -> dict:
@@ -217,7 +221,8 @@ class RunAsk:
             "server": self.server,
             "command": self.command,
             "device": self.device,
-            "author": Face(self.author, None, None).as_dict() if self.author else None,
+            "source": self.source,
+            "author": self.author.as_dict() if self.author else None,
             "at": self.at.isoformat(),
         }
 
@@ -232,6 +237,18 @@ async def run_asks(db: AsyncSession, *, handle: str) -> list[RunAsk]:
         list({a.project_id for a in waiting})
     )
     names = await mcp_machines.names(db, owned)
+    people = await faces_by_handle(
+        db, [a.author for a in waiting if a.source == "settings" and a.author]
+    )
+
+    def author(a) -> Face | None:
+        if not a.author:
+            return None
+        if a.source != "settings":
+            return Face(a.author, None, None)
+        nickname, avatar_id = people.get(a.author, (None, None))
+        return Face(nickname or a.author, a.author, _avatar(avatar_id))
+
     return [
         RunAsk(
             id=str(a.id),
@@ -240,7 +257,8 @@ async def run_asks(db: AsyncSession, *, handle: str) -> list[RunAsk]:
             server=a.name,
             command=a.command,
             device=names.get(a.device_id, a.device_id),
-            author=a.author,
+            source=a.source,
+            author=author(a),
             at=a.created_at,
         )
         for a in waiting
