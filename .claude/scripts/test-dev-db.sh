@@ -196,6 +196,19 @@ dev_db() {  # dev_db <data dir> <port> <args...>; output in $sandbox/{out,err}, 
     set -e
 }
 
+dev_db_default_home() {  # dev_db_default_home <home> <port> <args...>
+    local home="$1" port="$2"; shift 2
+    set +e
+    env -u CHEESEX_DEV_DB_DIR -u XDG_DATA_HOME \
+        HOME="$home" PATH="$stub:$PATH" STUB="$stub" STATE="$state" \
+        CHEESEX_DEV_PG_PORT="$port" \
+        CHEESEX_DEV_REDIS_PORT="${redis_port:-$(free_port)}" CHEESEX_DEV_TOOL_CACHE="$tools" \
+        CHEESEX_DEV_SERVER_HOME="$servers" \
+        bash "$dev_db" "$@" >"$sandbox/out" 2>"$sandbox/err"
+    status=$?
+    set -e
+}
+
 failures=0
 check() {  # check <case> <description> <command...>
     local name="$1" what="$2"; shift 2
@@ -212,6 +225,13 @@ dead() { ! kill -0 "$1" 2>/dev/null; }
 stdout_is_only_exports() { ! grep -qv '^export ' "$sandbox/out"; }
 
 # --- cases -------------------------------------------------------------------
+# A deep default HOME falls back without requiring an environment override.
+long_home="$sandbox/$(printf '%0120d' 0)"
+fallback_dir="/tmp/cheesex-dev-db-$(id -u)"
+dev_db_default_home "$long_home" "$(free_port)" status
+check deep-home "status succeeds" [ "$status" = 0 ]
+check deep-home "fallback path is reported" grep -Fq "using $fallback_dir" "$sandbox/err"
+
 # 1. An older major of ours, idle: replaced, and its directory removed.
 d="$(new_data_dir older-idle)"; port="$(free_port)"; echo 0 >"$state/clients"
 run_server "$d/pg" "$port"; old="$(server_pid "$d/pg")"
