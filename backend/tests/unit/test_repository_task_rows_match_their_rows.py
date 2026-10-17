@@ -192,22 +192,39 @@ async def test_identity_reads_only_columns_the_copy_declares(
     真的行是 `select(_tasks)` 交回的 `Row`，只带副本声明的列；这里换成同样只有
     这些属性的替身，让「读者多读了一列」在本地红，而不是等那个请求 500。
     `_thread` 从 `TaskService.get` 换过来之后，原来没有单测经过它。
+
+    每一列都要有一条断言经过它：`getattr(task, ..., None)` 会把读错的列悄悄变成
+    `None`，只走一遍而不看结果，读者改坏列名照样绿。`author_handle` 只在
+    `attribution` 里读，而 `attribution` 要连会员和项目服务，这里不碰。
     """
     task_id = uuid.uuid4()
+    creator_id = uuid.uuid4()
     values = {name: None for name in READ_COLUMNS}
     values.update(
         id=task_id,
         title="把后端领域包之间的循环依赖降到零",
         owner_handle="wangchangxin",
+        reporter_handle="reporter-x",
         contributor_handles=["cheese-7bfbc959f100"],
     )
-    row = _Row(**values)
+    rows = {
+        task_id: _Row(**values),
+        # 没有 owner，署名要落到 `created_by` 那一列。
+        creator_id: _Row(
+            **{
+                **values,
+                "id": creator_id,
+                "owner_handle": None,
+                "created_by": "creator-x",
+            }
+        ),
+    }
 
     async def one(_session, wanted):
-        return row if wanted == task_id else None
+        return rows.get(wanted)
 
     async def many(_session, wanted):
-        return [row for wanted_id in wanted if wanted_id == task_id]
+        return [rows[wanted_id] for wanted_id in wanted if wanted_id in rows]
 
     monkeypatch.setattr(task_rows, "one", one)
     monkeypatch.setattr(task_rows, "many", many)
@@ -218,6 +235,8 @@ async def test_identity_reads_only_columns_the_copy_declares(
     )
     assert [item.task_id for item in items] == [task_id]
     assert items[0].title == "把后端领域包之间的循环依赖降到零"
+    assert items[0].reporter_handle == "reporter-x"
+    assert items[0].contributor_handles == ("cheese-7bfbc959f100",)
 
     topic = SimpleNamespace(id=uuid.uuid4(), created_by="someone")
     assert (
@@ -227,4 +246,12 @@ async def test_identity_reads_only_columns_the_copy_declares(
             task_id=task_id,  # type: ignore[arg-type]
         )
         == "wangchangxin"
+    )
+    assert (
+        await identity.requester_handle(
+            object(),
+            topic,
+            task_id=creator_id,  # type: ignore[arg-type]
+        )
+        == "creator-x"
     )
