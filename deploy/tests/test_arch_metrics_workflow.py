@@ -26,30 +26,43 @@ WORKFLOW = ROOT / ".github/workflows/arch-metrics.yml"
 BASH = shutil.which("bash") or "/bin/bash"
 
 
-# Stands in for the collector: writes a snapshot only when asked, then exits
-# with whatever the case under test needs. Nothing here reads the repository.
-def hours_per_day(field):
-    """The hours a cron's hour field fires at, whatever shape it is written in.
+def field_values(field, limit):
+    """The values a cron field fires at, whatever shape it is written in.
 
-    A schedule is a frequency, so the test asks how often it fires and not which
-    spelling was chosen: `*/3`, `0,3,6`, `0-21/3` and `*` all answer the same
-    question, and a weekly cron answers it with one hour.
+    `*`, `*/N`, `a-b`, `a-b/N` and comma lists all name a set of values; a
+    schedule is a frequency, so the test asks how often it fires rather than
+    which spelling was chosen.
     """
-    hours = set()
+    values = set()
     for part in field.split(","):
         if part == "*":
-            hours.update(range(24))
+            values.update(range(limit))
         elif part.startswith("*/"):
-            hours.update(range(0, 24, int(part[2:])))
+            values.update(range(0, limit, int(part[2:])))
         elif "-" in part:
             span, _, step = part.partition("/")
             low, _, high = span.partition("-")
-            hours.update(range(int(low), int(high) + 1, int(step or 1)))
+            values.update(range(int(low), int(high) + 1, int(step or 1)))
         else:
-            hours.add(int(part))
-    return hours
+            values.add(int(part))
+    return values
 
 
+def collections_per_day(cron):
+    """How often a five-field cron fires on a day it runs on.
+
+    A cron restricted to one weekday fires on that day and no other, so it is
+    zero here: the weekly schedule this workflow used to have must not read as
+    eight collections because its hour field happens to be a frequency.
+    """
+    minute, hour, day, month, weekday = cron.split()
+    if day != "*" or month != "*" or weekday != "*":
+        return 0
+    return len(field_values(minute, 60)) * len(field_values(hour, 24))
+
+
+# Stands in for the collector: writes a snapshot only when asked, then exits
+# with whatever the case under test needs. Nothing here reads the repository.
 STUB = """\
 import os
 import sys
@@ -94,19 +107,19 @@ class RatchetCollectionTest(unittest.TestCase):
         schedule = self.triggers.get("schedule")
         self.assertTrue(schedule, "no schedule: nothing collects on a clock")
         crons = [entry["cron"] for entry in schedule]
-        # Four collections a day is the floor: the page's 60 points would cover
-        # less than a fortnight at that rate, and a weekly cron would put one
-        # point on the series per week whatever the job does.
+        # Four collections a day is the floor: at that rate the page's 60 points
+        # still cover 15 days, and a weekly cron would put one point on the
+        # series per week whatever the job does.
         self.assertTrue(
             any(
-                len(hours_per_day(cron.split()[1])) >= 4
+                len(cron.split()) == 5 and collections_per_day(cron) >= 4
                 for cron in crons
-                if len(cron.split()) == 5
             ),
             f"no schedule that collects at least four times a day among {crons}",
         )
-        self.assertTrue(
-            self.triggers.get("workflow_dispatch") is not None,
+        self.assertIn(
+            "workflow_dispatch",
+            self.triggers,
             "no workflow_dispatch: a revision that no run covers cannot be collected",
         )
         self.assertNotIn(
