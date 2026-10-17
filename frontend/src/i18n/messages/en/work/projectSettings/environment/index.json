@@ -28,7 +28,7 @@
   "setupHint": "Installs tools such as Python and Node. Runs once per project on each machine, and again when a new setup is applied",
   "setupLabel": "Install tools (setup script)",
   "started": "Started: {at}",
-  "startupHint": "Runs when a task's working directory is created, and on a reopen once its dependency files change or its installed dependencies are gone, installing that branch's dependencies",
+  "startupHint": "Runs when a task's working directory is created, and on a reopen once its dependency files change, an installed dependency directory is gone or a new environment is applied, installing that branch's dependencies",
   "startupLabel": "Prepare project (startup script)",
   "statusFailed": "Couldn't load the preparation status",
   "title": "Scripts and environment variables",

@@ -958,6 +958,84 @@ def test_a_reopen_installs_again_once_the_room_has_a_new_environment(device):
     assert (work / "installs").read_text() == "ran\nnew\n"
 
 
+def test_a_reopen_after_a_failed_install_installs_again(device):
+    """An install that failed partway leaves the checkout half prepared, even
+    once its dependency files are back as they were when it last succeeded."""
+    cli, tasks, _, home = device
+    _prepared_room(
+        home,
+        "echo ran >> installs\ntest ! -f fail-install",
+    )
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "uv.lock").write_text("broken\n")
+    (work / "fail-install").touch()
+    with pytest.raises(SystemExit):
+        cli._task_worktree(task)
+    (work / "uv.lock").unlink()
+    (work / "fail-install").unlink()
+    before = (work / "installs").read_text()
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == before + "ran\n"
+
+
+def test_a_reopen_installs_again_when_asked_to(device):
+    cli, tasks, _, home = device
+    _prepared_room(home, "echo ran >> installs")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+
+    opened = subprocess.run(
+        [sys.executable, str(CLI), "worktree", task, "--prepare"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert opened.returncode == 0, opened.stderr
+    assert opened.stdout.strip() == str(work)
+    assert (work / "installs").read_text() == "ran\nran\n"
+
+
+def test_a_reopen_follows_the_task_to_its_new_forge(device, tmp_path):
+    """A project moved to another forge: the reopen reads the task's base
+    from there, not from what the old one last had."""
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    moved = tmp_path / "moved.git"
+    git(tmp_path, "clone", "-q", "--bare", str(remote), str(moved))
+    remote.rename(remote.with_name("retired.git"))
+    tasks[task]["remote"] = str(moved)
+    elsewhere = tmp_path / "elsewhere"
+    git(tmp_path, "clone", "-q", str(moved), str(elsewhere))
+    git(elsewhere, "config", "user.name", "someone")
+    git(elsewhere, "config", "user.email", "someone@example.com")
+    _commit(elsewhere, "new.txt", "landed on the new forge\n")
+    git(elsewhere, "push", "-q", "origin", "HEAD:main")
+
+    assert cli._task_worktree(task) == work
+
+    assert git(work, "rev-parse", "origin/main") == git(moved, "rev-parse", "main")
+
+
+def test_a_reopen_brings_back_a_snapshot_still_waiting_for_its_checkout(device):
+    cli, tasks, _, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    admin = Path(git(work, "rev-parse", "--absolute-git-dir"))
+    (admin / cli._RESTORE_PENDING).write_text("")
+    (home / "requests.log").unlink(missing_ok=True)
+
+    cli._task_worktree(task)
+
+    assert f"/git/tasks/{task}/snapshots/latest" in (home / "requests.log").read_text()
+    assert not (admin / cli._RESTORE_PENDING).exists()
+
+
 def test_a_closed_task_checkout_moved_off_its_branch_is_backed_up_not_reported(
     device,
 ):

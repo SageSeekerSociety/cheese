@@ -3825,7 +3825,7 @@ def _checkout() -> Path:
     return target
 
 
-def _task_worktree(task_id: str) -> Path:
+def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
     task_id = str(uuid.UUID(task_id))
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("POST", f"/projects/{project}/git/tasks/{task_id}")["data"]
@@ -3920,7 +3920,7 @@ def _task_worktree(task_id: str) -> Path:
         # Read before the run: a dependency file changed while it installs is
         # one this preparation may have missed, so the next open prepares again.
         wanted = _prepared_from(task_dir, config)
-        if not _still_prepared(task_dir, stamp, wanted):
+        if reinstall or not _still_prepared(task_dir, stamp, wanted):
             stamp.unlink(missing_ok=True)
             result = subprocess.run(
                 [sys.executable, str(runner), "task", str(task_dir)]
@@ -3993,7 +3993,7 @@ _DEPENDENCY_FILES = (
     "Pipfile.lock",
     "requirements*.txt",
     "requirements*.in",
-    "requirements*/**",
+    "requirements/**",
     "constraints*.txt",
     "environment.yml",
     "environment.yaml",
@@ -5375,6 +5375,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     pwork.add_argument("task_id", help="任务 UUID")
+    pwork.add_argument(
+        "--prepare",
+        action="store_true",
+        help="依赖文件没变也重新跑一遍项目的启动脚本",
+    )
     sub.add_parser(
         "checkout",
         help="准备项目默认分支的代码并输出路径",
@@ -5678,7 +5683,7 @@ def main() -> None:
     a = parser.parse_args()
 
     if a.cmd == "worktree":
-        print(_task_worktree(a.task_id))
+        print(_task_worktree(a.task_id, reinstall=a.prepare))
     elif a.cmd == "checkout":
         print(_checkout())
     elif a.cmd == "recover":
