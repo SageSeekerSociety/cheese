@@ -3,6 +3,9 @@
 //
 // 手机上看一张放大的图，返回手势/返回键是「不看了」，不是「离开这一页」。关掉之后，
 // 历史里也不能留一格多出来的记录：不然下一次返回原地不动，人以为按坏了。
+//
+// jsdom 的 back() 不当场生效：它把这次遍历排进队里，过一会儿才改 state、发 popstate。
+// 所以每条都等那一次 popstate，不按毫秒数估——等多久是这台机器忙不忙说了算。
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -20,7 +23,10 @@ beforeEach(() => {
   setLocale('zh-CN')
   history.replaceState(PAGE, '')
 })
-afterEach(cleanup)
+afterEach(() => {
+  vi.restoreAllMocks()
+  cleanup()
+})
 
 function mount() {
   const onClose = vi.fn()
@@ -31,17 +37,20 @@ function mount() {
   return { onClose, ...utils }
 }
 
-/** 等历史退完、popstate 发完。 */
-function settled() {
-  return new Promise<void>((resolve) => setTimeout(resolve, 20))
+/** 等到历史真的退完：popstate 发出来时 state 已经换好了。 */
+function nextPopState() {
+  return new Promise<void>((resolve) => {
+    window.addEventListener('popstate', () => resolve(), { once: true })
+  })
 }
 
 it('closes on Back and keeps the reader on the page', async () => {
   const { onClose } = mount()
   const href = location.href
 
+  const popped = nextPopState()
   history.back()
-  await settled()
+  await popped
 
   expect(onClose).toHaveBeenCalledTimes(1)
   expect(location.href).toBe(href)
@@ -53,9 +62,11 @@ it('leaves no extra history entry behind when closed some other way', async () =
 
   await fireEvent.click(screen.getByRole('button', { name: '关闭' }))
   expect(onClose).toHaveBeenCalledTimes(1)
-  // 父组件收到 close 就把这一层拿掉。
+  // 父组件收到 close 就把这一层拿掉；拿掉的时候它自己把压进去的那一格退掉，
+  // 退完会发 popstate。
+  const popped = nextPopState()
   unmount()
-  await settled()
+  await popped
 
   // 回到打开之前那一格：下一次返回就是离开这一页，不会原地空按一下。
   expect(history.state).toEqual(PAGE)
@@ -67,12 +78,17 @@ it('does not step back a second time after Back already closed it', async () => 
   history.pushState(PAGE, '')
   const { onClose, unmount } = mount()
 
+  const popped = nextPopState()
   history.back()
-  await settled()
-  unmount()
-  await settled()
+  await popped
 
   // 只退了自己压的那一格：人还在房间页，没被多退回列表页。
   expect(onClose).toHaveBeenCalledTimes(1)
   expect(history.state).toEqual(PAGE)
+
+  // 这一次返回已经替它退过了。再退一次就把读者退回列表页，所以卸载时不许再请求。
+  // 「不会再发生的事」等不来，直接看它有没有再调一次返回。
+  const back = vi.spyOn(window.history, 'back')
+  unmount()
+  expect(back).not.toHaveBeenCalled()
 })
