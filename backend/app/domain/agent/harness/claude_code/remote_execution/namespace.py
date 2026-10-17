@@ -10,6 +10,7 @@ project mounted where the executor holds it. Shipped beside `client.py`
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import json
 import os
@@ -69,6 +70,15 @@ def enter(target_path, argv):
             f"path: {problem}"
         )
     _place(seen, view, Path(target_path).parent / "namespace-root")
+    tasks = target.get("session_task_root")
+    if tasks:
+        # The task checkouts' directory, empty: commands run on the executor,
+        # and the build needs only the directory a command ends in to exist
+        # here (`shell_prefix._report_directory` makes each one). It keeps a
+        # directory given at launch only if it exists then. One this namespace
+        # cannot make leaves the shell reset to the project, as before.
+        with contextlib.suppress(OSError):
+            os.makedirs(tasks, exist_ok=True)
     os.chdir(seen)
     os.environ["PWD"] = seen
     os.execv(program, argv)

@@ -377,9 +377,10 @@ def _report_directory(target, client, final, spelled):
 
     The build reads it from the cwd file it named and keeps it only if the
     directory exists here. A directory in the workspace does, at the same path,
-    in the session's view of the project. One outside the workspace is
-    reported as `/`, which the build answers exactly as a native session does:
-    it resets to the workspace root and says so.
+    in the session's view of the project; one under the room's task checkouts
+    is made here, empty, at its own path. Any other is reported as `/`,
+    which the build answers exactly as a native session does: it resets to
+    the workspace root and says so.
     """
     path = Path(shlex.split(spelled)[0])
     temporary = os.environ.get("CLAUDE_CODE_TMPDIR")
@@ -397,12 +398,24 @@ def _report_directory(target, client, final, spelled):
     # workspace meanwhile.
     machine = session_path(client.config["workspace"])
     seen = session_path(client.config.get("virtual_workspace", machine))
+    tasks = target.get("session_task_root")
     final = final[:4096]
     if _under(final, machine):
         spelled_here = seen + final[len(machine) :]
         if target.get("kind") == "private" or (target.get("local") and seen != machine):
             # A plain directory here: the private scratch view, an own session's.
             Path(spelled_here).mkdir(parents=True, exist_ok=True)
+    elif _under(final, tasks) and ".." not in final.split("/"):
+        # A task checkout, a directory the session was given (`client.prepare`
+        # `--add-dir`). An own session's machine holds it at this very path.
+        # In a session's namespace it is an empty directory made here for the
+        # build to find; its files are on the executor.
+        spelled_here = final
+        if not target.get("local"):
+            try:
+                Path(spelled_here).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                spelled_here = "/"
     else:
         spelled_here = "/"
     descriptor = os.open(

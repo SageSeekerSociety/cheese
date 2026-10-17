@@ -411,6 +411,14 @@ class Executor:
                 "workspace": str(self.root),
                 # Where the skills are here (`bootstrap.plant_native_skills`).
                 "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
+                # Where `cheese worktree` makes task checkouts for this room
+                # (the CLI's `_task_root`), so a session's shell may stay in one;
+                # resolved, as the `pwd -P` a command's directory is read by.
+                "task_root": str(
+                    (
+                        Path(self.env.get("HOME") or Path.home()) / ".cheese" / "tasks"
+                    ).resolve()
+                ),
                 "files": files,
                 "runtime_sha256": SOURCE_SHA256,
                 "protocol_version": PROTOCOL_VERSION,

@@ -271,10 +271,25 @@ def prepare(
         if not at_placeholder:
             workspace = Path(info["workspace"])
     carry_conversation(config, extra_args, seen)
+    # The room's task checkouts (`cheese worktree`) sit beside the project, not
+    # in it. Without them among the session's directories the build resets the
+    # shell to the project after every command that ends in one, and the agent
+    # resolves the checkout again before the next (`_report_directory`).
+    task_root = (
+        session_path(info["task_root"])
+        if info.get("task_root")
+        and not at_placeholder
+        and target.get("kind") != "private"
+        else None
+    )
+    if task_root and local:
+        # The build keeps a directory given at launch only if it exists then.
+        Path(task_root).mkdir(parents=True, exist_ok=True)
     target = dict(
         target,
         workspace=info["workspace"],
         session_workspace=seen,
+        **({"session_task_root": task_root} if task_root else {}),
         # Where its paths are rewritten from once it takes its machine
         # (`RemoteClient.call`): the directory it started in, not the
         # placeholder a session in its own namespace sees.
@@ -502,6 +517,7 @@ def prepare(
         "--disallowedTools",
         "EnterWorktree,ExitWorktree",
         "--no-chrome",
+        *(["--add-dir", task_root] if task_root else []),
         *extra_args,
     ]
     if target.get("kind") == "private":
