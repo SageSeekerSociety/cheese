@@ -32,13 +32,13 @@ task dev:sandbox      # 前台运行；Ctrl-C 停掉它起的服务
 
 1. `dev-db.sh servers` 起 Postgres 和 Redis。只起这两个，不装测试用的 Claude Code、Codex 和 pi。
 2. 在这个 Postgres 里建 `cheese_dev_sandbox` 库，`uv sync`、`pnpm install`，再单独跑一次 `vite optimize`。
-3. 跑迁移；库是这次新建的，再跑 `seed_fusion_demo --without-repository`，种出 alice 的三个演示项目。
+3. 跑迁移；库里还一个项目都没有时，再跑 `seed_fusion_demo --without-repository`，种出 alice 的三个演示项目。
 4. 照 `e2e/stack.mjs` 起 stub 网关、后端、协作服务和 Vite 开发服务器。这份清单 e2e 也在用，那边加了服务这里跟着有。
 
 最后打印 `FRONTEND_PORT=3000`。浏览器只要这一个端口，`/api`、`/connector`、`/collab` 由 Vite 转给后面的服务。用 alice / demo12345 登录；新库第一次登录会弹「协议已更新」，点同意。
 
 - **不连任何外部服务。** 没有模型：stub 网关只回答有哪些模型，对话起不了轮次。没有 forge：演示项目没有仓库，任务、PR 走不通。也没有邮件和对象存储。`backend/.env` 存在时直接退出，因为后端会读它，连上里面配的服务。传给各服务的环境变量只留 `PATH`、`HOME` 这一类，调用方环境里的模型密钥、代理都传不进去。
-- **再跑一次不重新种数据**：种子会删掉同名项目重建，连同在里面做过的事。要从头来，先 `bash .claude/scripts/dev-db.sh stop --purge`。停掉 `dev:sandbox` 之后 Postgres 和 Redis 还在跑，也用 `dev-db.sh stop` 停。
+- **已经有项目就不再种数据**：种子会删掉同名项目重建，连同在里面做过的事。要从头来，先 `bash .claude/scripts/dev-db.sh stop --purge`。停掉 `dev:sandbox` 之后 Postgres 和 Redis 还在跑，也用 `dev-db.sh stop` 停。
 - 端口被占时它退出并说是哪个端口；换端口用 e2e 那组变量 `E2E_FRONTEND_PORT`、`E2E_BACKEND_PORT`、`E2E_COLLAB_PORT`、`E2E_STUB_GATEWAY_PORT`。
 - 要 node 22、pnpm 和 uv。Redis 是 fakeredis 时（没有 `cc`，见上），协作服务不接 Redis：它的客户端一连上就发 `INFO`，fakeredis 不认这条命令。一个协作服务实例本来也用不着 Redis。
 - **`vite optimize` 单独跑是为了内存。** Vite 第一次启动时要预打包依赖，放在开发服务器里跟其他服务一起跑，整套峰值到 2698 MiB，限 2.5 GiB 时 Vite 被杀；单独先跑完，峰值降到 1332–1759 MiB，开发服务器只读它留下的缓存。

@@ -383,6 +383,8 @@ check servers "stdout carries only export lines" stdout_is_only_exports
 check servers "it says where psql is" grep -q "^export PG_BIN=" "$sandbox/out"
 check servers "no harness build is exported" bash -c '! grep -q CHEESE_TEST_ "$1"' _ "$sandbox/out"
 check servers "nothing was installed into the tool cache" [ ! -e "$sandbox/no-harness/harness" ]
+check servers "postgres is up" alive "$(server_pid "$d/pg17" 2>/dev/null || echo 0)"
+check servers "redis is up" alive "$(cat "$d/redis.pid" 2>/dev/null || echo 0)"
 dev_db "$d" "$port" stop
 
 cat >"$stub/fake_redis_server.py" <<'PY'

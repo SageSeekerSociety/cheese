@@ -103,9 +103,11 @@ const env = {
 };
 const pg = new URL(db.TEST_PG_BASE.replace('+asyncpg', ''));
 const pgArgs = ['-h', pg.hostname, '-p', pg.port, '-U', pg.username];
-const exists = run(join(db.PG_BIN, 'psql'), [...pgArgs, '-d', 'postgres', '-Atc', `SELECT 1 FROM pg_database WHERE datname = '${DATABASE}'`], { stdio: ['ignore', 'pipe', 'inherit'] }).toString().trim();
-const fresh = exists !== '1';
-if (fresh) run(join(db.PG_BIN, 'createdb'), [...pgArgs, DATABASE]);
+const psql = (database, sql) =>
+  run(join(db.PG_BIN, 'psql'), [...pgArgs, '-d', database, '-Atc', sql], { stdio: ['ignore', 'pipe', 'inherit'] }).toString().trim();
+if (psql('postgres', `SELECT 1 FROM pg_database WHERE datname = '${DATABASE}'`) !== '1') {
+  run(join(db.PG_BIN, 'createdb'), [...pgArgs, DATABASE]);
+}
 
 log(`dependencies (${seconds()})`);
 run('uv', ['sync', '--frozen'], { cwd: BACKEND, env: install });
@@ -117,12 +119,16 @@ run('pnpm', ['install', '--frozen-lockfile'], { cwd: FRONTEND, env: install });
 // left (docs/testing-without-docker.md has the measurements).
 run('pnpm', ['exec', 'vite', 'optimize'], { cwd: FRONTEND, env: { ...base, VITE_API_BASE_URL: '/api' } });
 
-log(`migrations${fresh ? ' and seed' : ''} (${seconds()})`);
+log(`migrations (${seconds()})`);
 run('uv', ['run', 'alembic', 'upgrade', 'head'], { cwd: BACKEND, env });
 // alice comes from the migrations; her projects from the fusion demo seed, as
-// on CI. Only into a new database: the seed replaces its projects, and with
-// them whatever was done in them since.
-if (fresh) run('uv', ['run', 'python', '-m', 'scripts.seed_fusion_demo', '--without-repository'], { cwd: BACKEND, env });
+// on CI. Only while there are no projects at all: the seed replaces its own,
+// and with them whatever was done in them since. Asked of the database rather
+// than remembered, so a first run stopped before this point still seeds.
+if (psql(DATABASE, 'SELECT count(*) FROM projects') === '0') {
+  log(`seed (${seconds()})`);
+  run('uv', ['run', 'python', '-m', 'scripts.seed_fusion_demo', '--without-repository'], { cwd: BACKEND, env });
+}
 
 const children = [];
 function stop(code) {
@@ -139,6 +145,9 @@ function stop(code) {
 }
 process.on('SIGINT', () => stop(130));
 process.on('SIGTERM', () => stop(143));
+// A closed terminal: the servers lead process groups of their own, so the
+// hangup reaches only this process, and without this they would outlive it.
+process.on('SIGHUP', () => stop(129));
 
 async function answers(url, deadline) {
   while (Date.now() < deadline) {
