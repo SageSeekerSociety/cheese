@@ -370,7 +370,7 @@ def _mentions_string(node: ast.AST, needle: str) -> bool:
     )
 
 
-def _branch_runs_self_test(test: ast.AST) -> bool:
+def _branch_runs_self_test(test: ast.AST, constants: dict[str, int]) -> bool:
     """True when this `if` branch is the one that runs for `--self-test`.
 
     `if "--self-test" not in argv:` guards the *scan* path; the calls in its body
@@ -378,10 +378,10 @@ def _branch_runs_self_test(test: ast.AST) -> bool:
     self-test path.
     """
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-        return not _branch_runs_self_test(test.operand)
+        return not _branch_runs_self_test(test.operand, constants)
     for node in ast.walk(test):
         if isinstance(node, ast.Compare) and _mentions_string(node, "--self-test"):
-            return _comparison_holds_with_flag(node)
+            return _comparison_holds_with_flag(node, constants)
     return True
 
 
@@ -397,27 +397,192 @@ def _counts_the_flag(node: ast.AST) -> bool:
     )
 
 
-def _comparison_holds_with_flag(node: ast.Compare) -> bool:
+def _comparison_holds_with_flag(node: ast.Compare, constants: dict[str, int]) -> bool:
     """True when this comparison holds exactly while `--self-test` is passed.
 
     `"--self-test" in argv` and `argv[1:] == ["--self-test"]` hold with the
     flag; `not in` and `!=` hold without it. A comparison on how many times
     the flag appears inverts that sense for the count of zero — absent — but
     not for any other count: `count("--self-test") == 1` holds exactly when
-    the flag is there, the same as `in`.
+    the flag is there, the same as `in`. The count compared against may be a
+    module-level constant (`NO_FLAG = 0`), so `constants` resolves it.
     """
     operands = [node.left, *node.comparators]
     counted = any(_counts_the_flag(item) for item in operands)
-    zero_side = any(
-        isinstance(item, ast.Constant) and isinstance(item.value, int) and item.value == 0
-        for item in operands
+    expected = next(
+        (value for value in (_int_value(item, constants) for item in operands if not _counts_the_flag(item)) if value is not None),
+        None,
     )
     for op in node.ops:
         if counted and isinstance(op, (ast.Eq, ast.NotEq)):
-            absent = isinstance(op, ast.Eq) and zero_side or isinstance(op, ast.NotEq) and not zero_side
-            return not absent
+            if expected is None:
+                # The count on the other side is not something this can read.
+                # The self-test side is the safe guess: it widens the scope,
+                # which can only turn a verdict into `unverified`.
+                return True
+            return expected != 0 if isinstance(op, ast.Eq) else expected != 1
         return not isinstance(op, (ast.NotIn, ast.NotEq))
     return True
+
+
+def _int_value(node: ast.AST, constants: dict[str, int]) -> int | None:
+    """The integer an operand settles to, or None when it is not an integer literal."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.Name):
+        return constants.get(node.id)
+    return None
+
+
+def _int_constants(tree: ast.Module) -> dict[str, int]:
+    """Module-level names assigned an integer literal exactly once."""
+    seen: dict[str, int] = {}
+    assigned_twice: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    value = _int_value(node.value, {})
+                    if value is None:
+                        assigned_twice.add(target.id)
+                        continue
+                    if target.id in seen:
+                        assigned_twice.add(target.id)
+                    seen[target.id] = value
+    return {name: value for name, value in seen.items() if name not in assigned_twice}
+
+
+#: The argv a guard sees when its own `--self-test` runs, as the command in
+#: `_self_test_command` builds it. Conditions on it can be settled without
+#: running the guard.
+_SELF_TEST_ARGV = ["guard.py", "--self-test"]
+
+_UNKNOWN = object()
+
+
+def _settled(node: ast.AST):
+    """The value of a small expression under the `--self-test` invocation.
+
+    Only what that invocation fixes is known: the script name and the flag.
+    Anything else — a file read, a platform check, a helper call — is
+    `_UNKNOWN`, and a block guarded by it cannot be shown to run.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name) and node.id == "argv":
+        return _SELF_TEST_ARGV
+    if isinstance(node, (ast.List, ast.Tuple)):
+        items = [_settled(item) for item in node.elts]
+        if any(item is _UNKNOWN for item in items):
+            return _UNKNOWN
+        return items
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        value = _settled(node.operand)
+        return _UNKNOWN if value is _UNKNOWN else not value
+    if isinstance(node, ast.BoolOp):
+        values = [_settled(value) for value in node.values]
+        if any(value is _UNKNOWN for value in values):
+            return _UNKNOWN
+        return any(values) if isinstance(node.op, ast.Or) else all(values)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len":
+        if len(node.args) == 1 and not node.keywords:
+            value = _settled(node.args[0])
+            if isinstance(value, (list, tuple, str)):
+                return len(value)
+        return _UNKNOWN
+    if isinstance(node, ast.Compare):
+        left = _settled(node.left)
+        for op, comparator in zip(node.ops, node.comparators, strict=True):
+            right = _settled(comparator)
+            if left is _UNKNOWN or right is _UNKNOWN:
+                return _UNKNOWN
+            try:
+                if not _compare(op, left, right):
+                    return False
+            except TypeError:
+                return _UNKNOWN
+            left = right
+        return True
+    return _UNKNOWN
+
+
+def _compare(op: ast.cmpop, left, right) -> bool:
+    if isinstance(op, ast.Eq):
+        return left == right
+    if isinstance(op, ast.NotEq):
+        return left != right
+    if isinstance(op, ast.In):
+        return left in right
+    if isinstance(op, ast.NotIn):
+        return left not in right
+    if isinstance(op, ast.Lt):
+        return left < right
+    if isinstance(op, ast.LtE):
+        return left <= right
+    if isinstance(op, ast.Gt):
+        return left > right
+    if isinstance(op, ast.GtE):
+        return left >= right
+    raise TypeError(type(op).__name__)
+
+
+def _branch_is_proven_reached(branch: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
+    """True when the `--self-test` invocation provably reaches this branch.
+
+    The walk collects what follows the branch on the assumption that the branch
+    is the discriminator the self-test goes through. That is only safe when
+    every enclosing statement provably runs: a loop body may run zero times, a
+    `match` case may not be the one taken, a handler may never be entered, and
+    an `if` whose test this invocation does not settle may go either way.
+    """
+    node = branch
+    while True:
+        holder = parents.get(node)
+        if holder is None or isinstance(
+            holder, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.Module)
+        ):
+            return True
+        if isinstance(holder, ast.If):
+            value = _settled(holder.test)
+            if value is _UNKNOWN or bool(value) != (node in holder.body):
+                return False
+            node = holder
+        elif isinstance(holder, (ast.Try, ast.TryStar)):
+            if node in holder.body or node in holder.finalbody:
+                node = holder
+            else:
+                return False
+        elif isinstance(holder, (ast.With, ast.AsyncWith)):
+            node = holder
+        else:
+            return False
+
+
+def _abandons_the_run(statement: ast.stmt) -> bool:
+    """True when control cannot continue past this statement.
+
+    A `return`, an `exit`/`sys.exit` call or `raise SystemExit` ends the path.
+    A bare `raise` does not: an enclosing `except` may catch it, and execution
+    resumes after the `try`, so the walk keeps climbing over it.
+    """
+    if isinstance(statement, ast.Return):
+        return True
+    if isinstance(statement, ast.Raise):
+        exc = statement.exc
+        return (
+            isinstance(exc, ast.Name)
+            and exc.id == "SystemExit"
+            or isinstance(exc, ast.Call)
+            and isinstance(exc.func, ast.Name)
+            and exc.func.id == "SystemExit"
+        )
+    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+        func = statement.value.func
+        if isinstance(func, ast.Name):
+            return func.id in ("exit", "quit", "_exit")
+        if isinstance(func, ast.Attribute):
+            return func.attr == "exit"
+    return False
 
 
 def _statement_blocks(tree: ast.Module) -> dict[int, list[ast.stmt]]:
@@ -451,7 +616,16 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
     scan()` then `return check()` — keeps its self-test in the statements after
     the branch, so those are on the path as well. The branch may be an `elif`
     or sit inside a `try`, so the walk climbs through its enclosing statements
-    until it reaches the function, collecting what follows at each level.
+    until it reaches the function, collecting what follows at each level. It
+    climbs for either side, since whichever side ran, control falls through the
+    branch unless that side returns, exits or raises `SystemExit`.
+
+    `_abandons_the_run` decides when the climb can stop; a bare `raise` does not
+    stop it, because an enclosing `except` may catch it. `_branch_is_proven_reached`
+    decides whether the statements after a block that returned are really off the
+    path: only when every enclosing statement provably runs for this invocation
+    (an `if` whose test on `--self-test`'s argv is true, a `try` body, a `with`)
+    is the return final for it.
     """
     named: dict[str, list[ast.AST]] = {}
     for node in ast.walk(tree):
@@ -461,8 +635,9 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
             parents[child] = parent
+    constants = _int_constants(tree)
     branches = [
-        (node, _branch_runs_self_test(node.test))
+        (node, _branch_runs_self_test(node.test, constants))
         for node in ast.walk(tree)
         if isinstance(node, ast.If) and _mentions_string(node.test, "--self-test")
     ]
@@ -474,31 +649,37 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
     blocks = _statement_blocks(tree)
     sides: list[list[ast.stmt]] = []
     for branch, for_self_test in branches:
-        sides.append(branch.body if for_self_test else branch.orelse)
-        if not for_self_test:
-            # Whatever follows the branch also runs for the self-test. The
-            # branch may sit in an `elif`, a `try`, a `with`, an `except` or a
-            # `match` case, so walk out through its enclosing statements,
-            # stopping at the function.
-            node: ast.AST = branch
-            while True:
-                block = blocks.get(id(node))
-                if block is None:
-                    break
-                tail = block[block.index(node) + 1 :]
-                sides.append(tail)
-                if tail and isinstance(tail[-1], (ast.Return, ast.Raise)):
-                    # The self-test leaves here. Nothing further out can be on
-                    # its path, so collecting it would only invent a spawn.
-                    break
-                holder = parents.get(node)
-                while isinstance(holder, (ast.ExceptHandler, ast.match_case)):
-                    holder = parents.get(holder)
-                if holder is None or isinstance(
-                    holder, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module, ast.Lambda)
-                ):
-                    break
-                node = holder
+        # The side that runs for the self-test: the branch body when the test
+        # holds with the flag, otherwise what follows the branch.
+        side = branch.body if for_self_test else branch.orelse
+        sides.append(side)
+        if side and _abandons_the_run(side[-1]):
+            continue
+        # Whichever side was taken, execution falls through to what follows the
+        # branch. The branch may sit in an `elif`, a `try`, a `with`, an
+        # `except` or a `match` case, so walk out through its enclosing
+        # statements, stopping at the function.
+        trusted = _branch_is_proven_reached(branch, parents)
+        node: ast.AST = branch
+        while True:
+            block = blocks.get(id(node))
+            if block is None:
+                break
+            tail = block[block.index(node) + 1 :]
+            sides.append(tail)
+            if trusted and tail and _abandons_the_run(tail[-1]):
+                # The self-test leaves inside a block that provably runs, so
+                # nothing further out can be on its path; collecting it would
+                # only invent a spawn.
+                break
+            holder = parents.get(node)
+            while isinstance(holder, (ast.ExceptHandler, ast.match_case)):
+                holder = parents.get(holder)
+            if holder is None or isinstance(
+                holder, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module, ast.Lambda)
+            ):
+                break
+            node = holder
     for side in sides:
         for statement in side:
             for node in ast.walk(statement):
@@ -1332,6 +1513,11 @@ def self_test() -> int:
         "except-handoff-guard.py": "unverified",
         "count-one-handoff-guard.py": "unverified",
         "unreachable-spawn-guard.py": "self-test-does-not-bite",
+        "named-count-guard.py": "unverified",
+        "counted-tail-guard.py": "unverified",
+        "loop-body-branch-guard.py": "unverified",
+        "caught-raise-guard.py": "unverified",
+        "system-exit-handoff-guard.py": "self-test-does-not-bite",
     }
     failures = []
     for name, want in expected.items():
@@ -1351,7 +1537,8 @@ def self_test() -> int:
         "heredoc 里的 fi 不结束自测块、引号里的 <<EOF 不算 heredoc；块外的 self_fail 不动；"
         "参数里的 .py 不算委派、存进变量的命令也会还原、只有自测路径上的外派才判委派、"
         "自测分支调到的普通函数也会跟下去；计数为零的分支是扫描侧、elif 之后照样跟下去；"
-        "控制词后面的判定算判定、return 之后的死代码不算；"
+        "控制词后面的判定算判定、return 之后的死代码不算；分支落在循环体里不算离开、"
+        "被捕获的 raise 不算离开、sys.exit 才算；"
         "只查干净夹具的假绿被检出（Python 与 shell 各一）、空转假绿被检出、缺自测与没变绿各自报出、"
         "委派给旁置测试文件的判不了）"
     )
@@ -2054,11 +2241,12 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 ''',
     "unreachable-spawn-guard.py": '''#!/usr/bin/env python3
-"""The scan-side branch is nested, and the self-test returns before the spawn.
+"""The scan-side branch is nested under a condition the self-test settles.
 
-Walking out of the branch must stop where the self-test leaves the function:
-the `helper.py` call after the outer `if` never runs for `--self-test`, so it
-does not make the self-test unjudgeable.
+`len(argv) >= 2` holds for `--self-test` — interpreting means the script name
+plus the flag — so the branch provably runs, and the self-test returns inside
+it. The `helper.py` call after the outer `if` is therefore unreachable for the
+self-test, and counting it would only invent a spawn.
 """
 import subprocess
 import sys
@@ -2081,6 +2269,182 @@ def main(argv):
         return 0
     subprocess.run([sys.executable, str(Path(__file__).with_name("helper.py"))], check=False)
     return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "named-count-guard.py": '''#!/usr/bin/env python3
+"""The count is compared against a named zero, not a literal.
+
+`ZERO = 0`, so `count("--self-test") == ZERO` holds when the flag is absent and
+the branch is the scan side; the hand-off follows it. Reading the name as an
+unreadable count sends the scan branch to the self-test side and drops `check`.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+ZERO = 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if argv.count("--self-test") == ZERO:
+        return 1 if list(Path(argv[1] if len(argv) > 1 else ".").rglob("*.bad")) else 0
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "counted-tail-guard.py": '''#!/usr/bin/env python3
+"""The counted flag picks the self-test side, and the branch body falls through.
+
+`count("--self-test") == 1` holds with the flag, so the branch is the self-test
+side; it does not return, so what follows the branch runs for the self-test
+too, and `check` after it is a real hand-off.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if argv.count("--self-test") == 1:
+        print("flag seen")
+    if len(argv) > 2:
+        return 1
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "loop-body-branch-guard.py": '''#!/usr/bin/env python3
+"""The branch sits in a loop body that runs zero times for the self-test.
+
+`roots` is empty when only `--self-test` is passed, so the loop body — and the
+`return 0` inside it — is skipped, and execution continues at `check` after the
+loop. Reading that `return` as the end of the self-test would miss the hand-off.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    roots = [Path(argument) for argument in argv[1:] if not argument.startswith("-")]
+    for root in roots:
+        if "--self-test" not in argv:
+            return scan(root)
+        print("PASS: 什么都没测")
+        return 0
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "caught-raise-guard.py": '''#!/usr/bin/env python3
+"""The self-test branch's `raise` is caught, so the hand-off after it still runs.
+
+The `raise` ends the `try` body, but the handler swallows it and execution
+resumes at `check`. Treating a bare `raise` as leaving the self-test would drop
+that hand-off.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    try:
+        if "--self-test" not in argv:
+            return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+        raise ValueError("boom")
+    except ValueError:
+        pass
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "system-exit-handoff-guard.py": '''#!/usr/bin/env python3
+"""The self-test branch leaves through `sys.exit`, so the hand-off below is dead.
+
+The branch hands nothing off; it prints a PASS line and ends the process. The
+`check` after the `try` never runs for `--self-test`, so this guard's green is
+false and must be reported as not biting, not as unjudgeable.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    try:
+        if "--self-test" not in argv:
+            return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+        print("PASS: 什么都没测")
+        sys.exit(0)
+    except SystemExit:
+        raise
+    return check()
 
 
 if __name__ == "__main__":
