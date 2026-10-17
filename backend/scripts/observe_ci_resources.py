@@ -16,11 +16,15 @@ from pathlib import Path
 
 GIB = 1024**3
 
-# The sandbox ends a session at its memory cap instead of slowing it down
-# (docs/remote-execution.md: 3 GiB, no swap by default). A run within a tenth
-# of the cap is one allocation from disappearing, so that is the line reported.
+# A run is judged against the memory its own box allows, not a fixed number: a
+# hosted runner has 16 GiB while a remote sandbox ends a session at its cgroup
+# cap (docs/remote-execution.md: 3 GiB, no swap by default). This value is the
+# last resort when neither the cgroup nor /proc/meminfo says anything.
 SANDBOX_MEMORY_LIMIT_BYTES = 3 * GIB
+# Within a tenth of the cap a run is one allocation from disappearing, so that
+# is the line reported.
 MEMORY_HEADROOM_RATIO = 0.1
+CGROUP_ROOT = Path("/sys/fs/cgroup")
 
 # Runnable processes beyond the CPUs are queued, and steal time says the box's
 # neighbours are spending the vCPUs this run was promised.
@@ -95,6 +99,9 @@ def storage_snapshot(data, meminfo):
         "filesystem_used_bytes": (usage.f_blocks - usage.f_bfree) * usage.f_frsize,
         "filesystem_available_bytes": usage.f_bavail * usage.f_frsize,
         "mem_available_bytes": available_kb * 1024,
+        # The cgroup counts this box only; /proc/meminfo counts the host, and
+        # on a runner that is where every other job's memory shows up too.
+        "mem_used_bytes": cgroup_memory_usage(),
     }
 
 
@@ -210,6 +217,19 @@ def read_mem_total(meminfo):
 
 def memory_peak_bytes(storage_samples, vmstat_rows, mem_total_bytes):
     """The highest memory use any sample saw, or None if none measured it."""
+    container_peaks = [
+        sample["mem_used_bytes"]
+        for sample in storage_samples
+        if isinstance(sample.get("mem_used_bytes"), int)
+    ]
+    if container_peaks:
+        # A cgroup sample is this box's own use; host-wide numbers would make
+        # a container cap meaningless.
+        return max(container_peaks)
+    if mem_total_bytes is not None and cgroup_memory_limit(mem_total_bytes):
+        # The box is capped below the machine's memory, so no surviving sample
+        # speaks for it; the cgroup's current use is the only scoped number.
+        return cgroup_memory_usage()
     if mem_total_bytes is None:
         return None
     peaks = [
@@ -266,12 +286,45 @@ def database_peak(postgres_samples):
     return peak, limit
 
 
-def memory_limit_bytes():
-    """The cap to compare against: the sandbox's, or the one set for this box."""
+def _cgroup_int(relative):
+    try:
+        value = (CGROUP_ROOT / relative).read_text().strip()
+    except OSError:
+        return None
+    return int(value) if value.isdigit() else None
+
+
+def cgroup_memory_usage():
+    """Bytes this cgroup uses, when the box exposes one (v2, then v1)."""
+    for relative in ("memory.current", "memory/memory.usage_in_bytes"):
+        if (value := _cgroup_int(relative)) is not None:
+            return value
+    return None
+
+
+def cgroup_memory_limit(mem_total_bytes):
+    """The cgroup's memory cap, when it is a real cap rather than 'max'."""
+    for relative in ("memory.max", "memory/memory.limit_in_bytes"):
+        value = _cgroup_int(relative)
+        if value is None:
+            continue
+        # cgroup v1 spells "unlimited" as a number just under 2**63; anything
+        # at or above the machine's memory is no cap at all.
+        if mem_total_bytes is None or value < mem_total_bytes:
+            return value
+    return None
+
+
+def memory_limit_bytes(mem_total_bytes=None):
+    """The cap to compare against: this box's, whichever layer sets it."""
     try:
         return int(os.environ["CHEESE_CI_SANDBOX_MEMORY_BYTES"])
     except (KeyError, ValueError):
-        return SANDBOX_MEMORY_LIMIT_BYTES
+        pass
+    limit = cgroup_memory_limit(mem_total_bytes)
+    if limit is not None:
+        return limit
+    return mem_total_bytes or SANDBOX_MEMORY_LIMIT_BYTES
 
 
 def summarize(output):
@@ -289,7 +342,7 @@ def summarize(output):
         "cpu_count": start.get("cpu_count") or os.cpu_count() or 1,
         "memory_total_bytes": mem_total_bytes,
         "memory_peak_bytes": memory_peak_bytes(storage, vmstat_rows, mem_total_bytes),
-        "memory_limit_bytes": memory_limit_bytes(),
+        "memory_limit_bytes": memory_limit_bytes(mem_total_bytes),
         "runnable_peak": runnable_peak,
         "steal_peak_percent": steal_peak,
         "client_backends_peak": backends_peak,
