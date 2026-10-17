@@ -493,8 +493,25 @@ def shell(self, params):
                     raise ValueError("Command ID already belongs to different input")
                 return {"started": True}
             cwd = Path(native_path(params.get("cwd") or str(self.root)))
+            body = params["body"]
             if not cwd.is_dir():
-                # Gone since the session last looked: its own reset.
+                # Gone since the session last looked, a closed task's
+                # checkout swept away under a shell left in it, say. Running
+                # the command in the project instead would aim what was meant
+                # for that checkout (a reset, a commit, a removal) at the
+                # project, with nothing said. A Bash command does not run: it
+                # says why and leaves the shell in the project, as the build's
+                # own reset does.
+                if params.get("kind") == "bash":
+                    gone = (
+                        f"[cheese] {cwd} no longer exists; the command did not run."
+                        f" The shell is back in {self.root}."
+                    )
+                    where = shlex.quote(str(record / "cwd"))
+                    body = (
+                        f"printf '%s\\n' {shlex.quote(gone)} >&2;"
+                        f" pwd -P >| {where}; ! :"
+                    )
                 cwd = self.root
             env = self.command_env()
             env.update(
@@ -504,7 +521,7 @@ def shell(self, params):
             )
             if params.get("kind") == "bash":
                 argv = self.shell_argv(
-                    params["body"] + " && pwd -P >| " + shlex.quote(str(record / "cwd"))
+                    body + " && pwd -P >| " + shlex.quote(str(record / "cwd"))
                 )
             elif params.get("kind") == "sh":
                 argv = (
