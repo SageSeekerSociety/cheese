@@ -467,7 +467,7 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 
 ## CI runner pool (cheese-ci)
 
-Every suite Required CI selects runs on GitHub-hosted Ubuntu runners, including
+Every suite Required CI selects runs on GitHub-hosted runners, including
 the CLI boot e2e and remote-execution acceptance; only the serial aggregation
 jobs listed in the bullet below take the pool. The organisation is on the
 Free plan, whose documented limit is 20 concurrent hosted jobs; this repository
@@ -485,8 +485,8 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
 - **Serial aggregation jobs run here too** (2026-10-17): `scope`, `CI required`,
   `CI required (draft quick)` and `Backend coverage complete` take
   `[self-hosted, cheese-ci]` for same-repo PRs and the merge queue, and stay on
-  `ubuntu-latest` for fork PRs. They run seconds of work and used to wait 3-18 (#4101)
-  min in the shared hosted queue. The boxes have python3, git and curl but no
+  `ubuntu-latest` for fork PRs. They run seconds of work and used to wait 3-20
+  min (#4101) in the shared hosted queue. The boxes have python3, git and curl but no
   gh, jq or node on PATH (JS actions use the runner's bundled node), so those
   jobs' `run:` steps must not call them. Every other event (deploy-prod's x86
   run of `test.yml`) keeps `Backend coverage complete` on hosted machines. #2257 did this on 09-30 and
