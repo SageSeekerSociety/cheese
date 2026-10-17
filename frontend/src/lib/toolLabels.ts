@@ -130,6 +130,8 @@ export const TOOL_LABELS: Record<string, string> = {
   bash_write: 'toolLabels.bashWrite',
   bash_kill: 'toolLabels.bashKill',
   bash_list: 'toolLabels.bashList',
+  // pi 的 codemode：模型写一段脚本，脚本里再调别的工具（现场把那几样挂在它下面）。
+  codemode: 'toolLabels.codemode',
 }
 
 /** `mcp__<服务器>__<工具>` → `<工具>`。**认任意服务器名**，不认某一个写死的：写死
@@ -137,7 +139,12 @@ export const TOOL_LABELS: Record<string, string> = {
  *  于是前缀剥不掉、下面那张表查不到，时间线上原样显示
  *  `mcp__native__cheese_feedback_propose` —— 而「前缀没剥掉」和「这个工具本来就没有
  *  中文标签」在屏幕上是同一件事。 */
-const MCP_PREFIX = /^mcp__[a-z0-9_]+__/
+const MCP_PREFIX = /^mcp__[a-z0-9_-]+?__/
+
+/** `mcp__<服务器>__<工具>` 里的服务器名；不是 MCP 工具就是空串。 */
+export function mcpServerOf(name: string): string {
+  return /^mcp__([a-z0-9_-]+?)__/.exec(name)?.[1] ?? ''
+}
 
 export function toolLabel(name: string): string {
   const short = name.replace(MCP_PREFIX, '')

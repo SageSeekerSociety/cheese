@@ -357,7 +357,8 @@ async def list_topics(
     threads_working = await topics_signals.working_in_threads(
         db, broker, [t.id for t in topics], threads=room_threads
     )
-    # 在跑的那几个各自「多久没有新输出了」——侧栏的红灯靠它（`silent_of`）。
+    # 在跑的那几个各自「多久没有动静了」（帧、或者读它的那一路收到应答）——侧栏的
+    # 红灯靠它（`silent_of`）。
     silent = silent_gaps(runner, [t.id for t in topics if t.id in moving_ids])
     # 哪几间房里有「交付完了、而这个人还没点开看过」的活——侧栏的长绿靠它。一次
     # 查一整页（`room_task/repositories.unseen_deliveries`），频道行和它下面的活行

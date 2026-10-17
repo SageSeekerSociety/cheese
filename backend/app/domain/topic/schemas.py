@@ -67,10 +67,11 @@ class TopicOut(BaseModel):
     # Derived per query, so only the endpoints that ask for it
     # (list_topics/get_topic) fill it in; elsewhere it stays None.
     last_activity_at: datetime | None = None
-    # 上一次有**输出**是什么时候：在跑的那一轮最后一帧（`agent/turn/intake/
-    # status.live_work_for_topic`）。`last_activity_at` 只说「有人说了话」——一个块
-    # 落了地；这一位说「队友还在输出」。一次长工具调用期间多半没有新块、只有帧，
-    # 所以「显示在跑、但五分钟没动静」（侧栏红灯）只可能看这一位。
+    # 上一次有**动静**是什么时候：在跑的那一轮最后一帧，或者读它的那一路最后一次
+    # 收到 runner 的应答 —— 两者取较新的（`agent/turn/intake/status.
+    # live_work_for_topic`）。`last_activity_at` 只说「有人说了话」——一个块落了地；
+    # 这一位说「队友还在」。长思考、一次长工具调用期间没有块、也没有帧，只有那一声
+    # 应答，所以「显示在跑、但五分钟没动静」（侧栏红灯）只可能看这一位。
     #
     # None：此刻没有在跑的轮次，或者记录里没有这个戳（那种「不知道」不当成「很新」
     # 用，读的人自己决定，前后端都不许自己编一个）。

@@ -7,6 +7,7 @@ import importlib.resources
 import io
 import json
 import posixpath
+import re
 import shutil
 import types
 from pathlib import Path
@@ -21,6 +22,12 @@ from app.domain.agent.executor_transport import (
     session_path,
 )
 from app.domain.agent.harness.driven import monitor
+from app.domain.agent.harness.driven.mcp_gateway import (
+    SECRET_ENV,
+    SECRET_HEADER,
+    STARTUP_S,
+    Gateway,
+)
 from app.domain.agent.harness.driven.runner import reply_owed
 
 # The executor implements these tools. The platform's own tools are not the
@@ -43,6 +50,11 @@ YIELD_POLL_S = 0.2
 
 #: The route a platform tool takes: not a server on the executor, the backend.
 PLATFORM = "platform"
+#: The server names Codex takes (`mcp_config`).
+NAME = re.compile(r"[A-Za-z0-9_-]+")
+#: How long Codex waits on one project tool call: longer than the executor
+#: waits for the room's machine (`RemoteClient.call`'s deadline).
+TOOL_TIMEOUT_S = 900
 
 #: The route `Monitor` takes: this process, which follows the command on the
 #: machine and tells the session what it prints (`driven/monitor.py`).
@@ -119,6 +131,8 @@ class RemoteTools:
         # The session's monitors, once the runner that tells the session what
         # they print exists (`entry.py`).
         self.monitors: monitor.Monitors | None = None
+        # The project's MCP servers the session opened with (`discover`).
+        self.mcp_servers: list[str] = []
 
     def skill_roots(self) -> list[str]:
         assert self.mirror is not None
@@ -357,9 +371,9 @@ class RemoteTools:
         }
 
     async def discover(self) -> list[dict]:
-        """Every tool the session lists: the executor's own, each MCP server's
-        the session reaches (`RemoteClient.session_servers`), and the
-        platform's.
+        """Every tool the session lists besides the project's MCP servers'
+        (Codex's own client reaches those, at the gateway — `mcp_config`): the
+        executor's own, and the platform's.
 
         A session started on its leased machine (`central_provider`) takes it
         first, as Claude Code's does (`_take_leased_machine`): the lease names
@@ -375,41 +389,39 @@ class RemoteTools:
             and not await asyncio.to_thread(self.client.take_now)
         ):
             target["workspace"] = DEFERRED_WORKSPACE
+        # The servers the session opens with, as they are before its own tools
+        # are listed: listing those may take the machine, which names the
+        # checkout's servers, and a session at the placeholder lists none.
+        self.mcp_servers = self.client.session_servers()
         tools = []
         routes = {}
-        for server in ["native", *self.client.session_servers()]:
-            cursor = None
-            while True:
-                result = await asyncio.to_thread(
-                    self.client.call,
-                    "mcp",
+        cursor = None
+        while True:
+            result = await asyncio.to_thread(
+                self.client.call,
+                "mcp",
+                {
+                    "server": "native",
+                    "method": "tools/list",
+                    "params": {"cursor": cursor} if cursor else {},
+                },
+            )
+            for tool in result["tools"]:
+                name = tool["name"]
+                if name not in NATIVE_TOOLS:
+                    continue
+                routes[name] = ("native", name)
+                tools.append(
                     {
-                        "server": server,
-                        "method": "tools/list",
-                        "params": {"cursor": cursor} if cursor else {},
-                    },
+                        "type": "function",
+                        "name": name,
+                        "description": tool.get("description", ""),
+                        "inputSchema": tool["inputSchema"],
+                    }
                 )
-                for tool in result["tools"]:
-                    original = tool["name"]
-                    if server == "native" and original not in NATIVE_TOOLS:
-                        continue
-                    name = (
-                        original if server == "native" else f"mcp__{server}__{original}"
-                    )
-                    if name in routes:
-                        raise ValueError(f"Duplicate executor tool: {name}")
-                    routes[name] = (server, original)
-                    tools.append(
-                        {
-                            "type": "function",
-                            "name": name,
-                            "description": tool.get("description", ""),
-                            "inputSchema": tool["inputSchema"],
-                        }
-                    )
-                cursor = result.get("nextCursor")
-                if not cursor:
-                    break
+            cursor = result.get("nextCursor")
+            if not cursor:
+                break
         for tool in self.platform.PLATFORM_TOOLS.schemas():
             if tool["name"] in routes:
                 raise ValueError(f"Duplicate executor tool: {tool['name']}")
@@ -423,6 +435,31 @@ class RemoteTools:
             tools.append({"type": "function", **monitor.TOOL})
         self.routes = routes
         return tools
+
+    def gateway(self) -> Gateway:
+        """The door Codex's own MCP client reaches the project's servers by."""
+        return Gateway(
+            self.client.call,
+            self.client.session_servers,
+            tool_call=self.mcp_tool_call,
+            observe=self.client.local_outcome,
+            on_close=self.client.local_closed,
+        )
+
+    def mcp_tool_call(self, params: dict) -> dict:
+        """A project server's tool call, as the gateway hands it on. Codex
+        fires no project hooks of its own — every other tool it has is the
+        platform's, which the machine runs them around — so they are run
+        around this one too: by the machine for its own commands, and here,
+        on it, for a remote server, whose call never reaches it."""
+        if params["server"] in self.client.remote_servers():
+            try:
+                return self.client.remote_call_with_hooks(
+                    params["id"], params["server"], params["tool"], params["args"]
+                )
+            except MachineOutOfReach:
+                return {"error": MACHINE_OUT_OF_REACH}
+        return self.client.call("invoke", params)
 
     async def _yield_when_spoken_to(
         self, call_id: str, invoked: asyncio.Future
@@ -573,87 +610,73 @@ class RemoteTools:
         notice: io.StringIO,
         session_call: bool,
     ) -> dict:
-        receipt: dict
-        if server == "native":
-            await self.find_shipped(params["arguments"])
-            params = {**params, "arguments": self.on_the_machine(params["arguments"])}
-        if server in self.client.remote_servers():
-            # Codex fires no project hooks, and a remote server's call never
-            # reaches the machine that would run them around it.
-            try:
-                receipt = await asyncio.to_thread(
-                    self.client.remote_call_with_hooks,
-                    params["callId"],
-                    server,
-                    tool,
-                    params["arguments"],
-                    notice,
-                )
-            except MachineOutOfReach:
-                receipt = {"error": MACHINE_OUT_OF_REACH}
-        else:
-            invoked = asyncio.ensure_future(
-                asyncio.to_thread(
-                    self.client.call,
-                    "invoke",
-                    {
-                        "id": params["callId"],
-                        "server": server,
-                        "tool": tool,
-                        "args": params["arguments"],
-                    },
-                    preparing=notice,
-                )
+        await self.find_shipped(params["arguments"])
+        params = {**params, "arguments": self.on_the_machine(params["arguments"])}
+        invoked = asyncio.ensure_future(
+            asyncio.to_thread(
+                self.client.call,
+                "invoke",
+                {
+                    "id": params["callId"],
+                    "server": server,
+                    "tool": tool,
+                    "args": params["arguments"],
+                },
+                preparing=notice,
             )
-            if session_call and server == "native" and tool == "Bash":
-                await self._yield_when_spoken_to(params["callId"], invoked)
-            receipt = await invoked
-        return receipt
+        )
+        if session_call and tool == "Bash":
+            await self._yield_when_spoken_to(params["callId"], invoked)
+        return await invoked
 
     @staticmethod
     def _answer(server: str, receipt: dict) -> dict:
+        """What one of the executor's own tools answered, as Codex reads it."""
         if "error" in receipt:
             return {
                 "success": False,
                 "contentItems": [{"type": "inputText", "text": receipt["error"]}],
             }
         value = receipt["value"]
-        if server == "native":
-            if isinstance(value, dict) and value.get("type") == "image":
-                file = value["file"]
-                return {
-                    "success": True,
-                    "contentItems": [
-                        {
-                            "type": "inputImage",
-                            "imageUrl": f"data:{file['type']};base64,{file['base64']}",
-                        }
-                    ],
-                }
+        if isinstance(value, dict) and value.get("type") == "image":
+            file = value["file"]
             return {
                 "success": True,
                 "contentItems": [
-                    {"type": "inputText", "text": json.dumps(value, ensure_ascii=False)}
+                    {
+                        "type": "inputImage",
+                        "imageUrl": f"data:{file['type']};base64,{file['base64']}",
+                    }
                 ],
             }
-        content = []
-        for item in value.get("content", []):
-            if item["type"] == "text":
-                content.append({"type": "inputText", "text": item["text"]})
-            elif item["type"] in ("image", "audio"):
-                image = item["type"] == "image"
-                url = f"data:{item['mimeType']};base64,{item['data']}"
-                content.append(
-                    {
-                        "type": "inputImage" if image else "inputAudio",
-                        "imageUrl" if image else "audioUrl": url,
-                    }
-                )
-            else:
-                # Preserve structured resources that have no app-server content type.
-                content.append({"type": "inputText", "text": json.dumps(item)})
-        if value.get("structuredContent") is not None:
-            content.append(
-                {"type": "inputText", "text": json.dumps(value["structuredContent"])}
-            )
-        return {"success": not value.get("isError", False), "contentItems": content}
+        return {
+            "success": True,
+            "contentItems": [
+                {"type": "inputText", "text": json.dumps(value, ensure_ascii=False)}
+            ],
+        }
+
+
+def mcp_config(servers: list[str], port: int) -> list[str]:
+    """The project's servers as Codex's own MCP client reaches them: each one
+    at the gateway (`mcp_gateway`), as `app-server` overrides. The secret is
+    read from the environment the app server is started with, not written
+    here: a command line is read by every process on the shared machine."""
+    overrides = []
+    for name in servers:
+        # Codex takes no other server name, and a dotted override no other key.
+        if not NAME.fullmatch(name):
+            continue
+        key = f"mcp_servers.{name}"
+        overrides += [
+            "-c",
+            f'{key}.url="http://127.0.0.1:{port}/mcp/{name}"',
+            "-c",
+            f'{key}.env_http_headers={{"{SECRET_HEADER}"="{SECRET_ENV}"}}',
+            "-c",
+            f"{key}.startup_timeout_sec={STARTUP_S}",
+            # A call may wait for the room's machine to be prepared (`acquire`).
+            "-c",
+            f"{key}.tool_timeout_sec={TOOL_TIMEOUT_S}",
+        ]
+    return overrides

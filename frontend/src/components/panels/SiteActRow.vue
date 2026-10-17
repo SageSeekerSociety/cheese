@@ -6,10 +6,10 @@
 // 这一只只画，取数一滴不进：摊开的那一步打印了什么由 `load` 递进来（`usePanelSite`
 // 那一包里的 `loadStepOutput`）。哪一步摊开了记在外面 —— 读的是 `block.id`，所以
 // 一次安静的刷新不会把读的人刚点开的那一行又收回去。
-import type { Block } from '../../cx_types'
+import type { Block, ScriptCall } from '../../cx_types'
 
 import { argDisplay, eventArg, eventFailed, eventVerb, isProseArg, isRunRecord } from '../../lib/siteLog'
-import { isPlatformEvent } from '../../lib/toolLabels'
+import { isPlatformEvent, mcpServerOf, toolLabel } from '../../lib/toolLabels'
 
 import SiteStepOutput from './SiteStepOutput.vue'
 
@@ -50,6 +50,10 @@ function named(text: string): string {
 // （见样式里的 `.site-act--solo`），全文挂到 title 上，鼠标停一下看全。
 function soloVerb(b: Block): string {
   return eventArg(b) ? '' : eventVerb(b)
+}
+// 一段脚本里调过的工具（pi 的 codemode）：脚本这一行下面一样一行，按调的先后。
+function scriptCalls(b: Block): ScriptCall[] {
+  return Array.isArray(b.meta?.calls) ? (b.meta.calls as ScriptCall[]) : []
 }
 // 圆点分级: solid = platform action, faint = plain work (structured fields
 // only — never guessed from the content text).
@@ -107,6 +111,19 @@ function eventPlatform(b: Block): boolean {
     >
       {{ eventError(block) }}
     </button>
+    <!-- A script's own calls, one line each, indented under it. -->
+    <ul v-if="scriptCalls(block).length" class="site-act__calls" data-testid="site-act-calls">
+      <li
+        v-for="(call, i) in scriptCalls(block)"
+        :key="i"
+        class="site-act__call"
+        :class="{ 'site-act__call--failed': call.failed }"
+      >
+        <span v-if="mcpServerOf(call.tool)" class="site-act__server">{{ mcpServerOf(call.tool) }}</span>
+        <span class="site-act__verb">{{ toolLabel(call.tool) }}</span>
+        <span class="site-act__call-arg" :title="call.arg">{{ call.arg }}</span>
+      </li>
+    </ul>
     <!-- What this step printed: collapsed, fetched on the first open. -->
     <SiteStepOutput
       v-if="topicId && expanded && block.meta?.output_bytes"
@@ -118,6 +135,34 @@ function eventPlatform(b: Block): boolean {
 </template>
 
 <style scoped>
+/* 脚本调过的那几样：缩进到参数那一列，左边一道细线把它们挂在脚本这一行下面。 */
+.site-act__calls {
+  flex: 1 0 100%;
+  margin: 2px 0 2px calc(4em + 14px);
+  padding: 0 0 0 10px;
+  border-left: 1px solid var(--line);
+  list-style: none;
+}
+.site-act__call {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.site-act__server {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.site-act__call-arg {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.site-act__call--failed .site-act__call-arg {
+  color: var(--danger-ink);
+}
 /* 一步一行。重复的是动词，有信息的是参数，所以动词退成固定宽度的次要列，参数
    拿正文色 —— 扫下来看见的是文件名和命令在变，不是二十遍「执行命令」。 */
 .site-act {

@@ -29,6 +29,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 import uuid
@@ -90,6 +91,8 @@ _TOOL_ARG = {
     "pin_milestone": "title",
     "write_file": "path",
     "record_decision": "decision",
+    # pi 的 codemode：模型写的一段脚本
+    "codemode": "code",
     # Claude Code 原生工具
     "Bash": "command",
     "Write": "file_path",
@@ -501,6 +504,14 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
             if isinstance(todo, dict) and todo.get("status") == "in_progress":
                 return ToolPreview(_collapse(todo.get("content") or "")[:PREVIEW_MAX])
         return ToolPreview()
+    if name == "codemode":
+        # 一段脚本：那一行写它的第一句（模型多半在那儿写了一句注释说它要干什么），
+        # 跳过开头那行选项。整段在摊开时看（``tool_detail``）。
+        for line in str(args.get("code") or "").splitlines():
+            line = line.strip()
+            if line and not line.startswith("// @options"):
+                return ToolPreview(_collapse(line)[:PREVIEW_MAX])
+        return ToolPreview()
     if name in SHELL_TOOLS:
         # pi 的 bash 没有 description 这个参数，所以它总是走下面的解析那条路 ——
         # 四档退让本来就是为「只有一行命令」写的，不必为它再分一支。
@@ -525,3 +536,15 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
     if name in _PATH_TOOLS:
         return ToolPreview(short_path(args[key], work_dir=work_dir))
     return ToolPreview(_collapse(args[key])[:PREVIEW_MAX])
+
+
+def call_line(name: str, args: object) -> str:
+    """One call a script made, as the line under the script's step shows its
+    argument: the same preview a step of its own would get, or the arguments
+    themselves when that tool has none."""
+    if not isinstance(args, dict):
+        return ""
+    preview = tool_preview(name, args)
+    if preview.text:
+        return preview.text
+    return _collapse(json.dumps(args, ensure_ascii=False))[:PREVIEW_MAX]

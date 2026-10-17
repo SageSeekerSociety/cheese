@@ -414,13 +414,14 @@ async def retarget_completed_dependencies(
                 retarget = delivered and task.base_branch != base
                 client = None
                 if retarget and task.pr_number is not None:
-                    # deferred-import: tests patch app.domain.review.services
-                    from app.domain.review.services import AcceptService
-
                     room = await session.get(Topic, task.room_id)
                     if room is None:
                         raise ValueError("Task room is missing")
-                    client = await AcceptService(session)._app_pr_client(room)
+                    # Ask the forge layer for the client directly. Going
+                    # through the accept service only wrapped this call, and
+                    # importing that service from here made the two modules a
+                    # cycle.
+                    client = await proposal_client(room.project_id, session)
                     if client is None:
                         raise RuntimeError(
                             "Cannot retarget the task PR without its forge connection"

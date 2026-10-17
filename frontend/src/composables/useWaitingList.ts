@@ -3,7 +3,7 @@
 // 清单本身由后端按当下的状态现算（`/awaiting-me`），所以这里列的就是角标上数的那几件。
 // 画它的组件（`components/common/Notification/WaitingList.vue`）只收这里的状态、把点击
 // 交回来——组件不碰 API 层（.claude/rules/architecture.md）。
-import type { WaitingAsk, WaitingItem, WaitingWork } from '@/cx_types'
+import type { WaitingAsk, WaitingItem, WaitingRun, WaitingWork } from '@/cx_types'
 
 import { onScopeDispose, ref } from 'vue'
 
@@ -12,7 +12,7 @@ import { useProjectTransferAnswer } from '@/composables/useProjectTransferAnswer
 import { useTeamInvitationAnswer } from '@/composables/useTeamInvitationAnswer'
 import { useTeamJoinRequestAnswer } from '@/composables/useTeamJoinRequestAnswer'
 
-import { listAwaitingMe, markAllAlertsRead, markRead, resolveAlert } from '@/api'
+import { decideMcpRun, listAwaitingMe, markAllAlertsRead, markRead, resolveAlert } from '@/api'
 import { t } from '@/i18n'
 import { onInboxChange } from '@/lib/inboxLive'
 import { waitingKey } from '@/lib/waitingKey'
@@ -114,6 +114,21 @@ export function useWaitingList() {
     }
   }
 
+  // 允许或不允许在自己电脑上运行一条命令：答了就从清单上拿掉；没成，话说在清单上方。
+  async function allow(item: WaitingRun, yes: boolean) {
+    const key = waitingKey(item)
+    replying.value = key
+    actionError.value = ''
+    try {
+      await decideMcpRun(item.id, yes)
+      items.value = items.value.filter((other) => waitingKey(other) !== key)
+    } catch (e) {
+      actionError.value = e instanceof Error ? e.message : t('home.inbox.actionFailed')
+    } finally {
+      replying.value = null
+    }
+  }
+
   return {
     items,
     loading,
@@ -128,5 +143,6 @@ export function useWaitingList() {
     dismiss,
     dismissAll,
     reply,
+    allow,
   }
 }

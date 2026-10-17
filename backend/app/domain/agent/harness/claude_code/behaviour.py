@@ -5,7 +5,7 @@
 效的时候发现。
 """
 
-from app.domain.agent.capability import BuiltIn, Declaration, Difference
+from app.domain.agent.declaration import BuiltIn, Declaration, Difference
 from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS
 from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VERSION
 

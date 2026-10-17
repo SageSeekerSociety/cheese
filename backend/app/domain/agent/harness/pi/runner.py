@@ -38,6 +38,12 @@ from app.domain.agent.executor_transport import (
 )
 from app.domain.agent.harness.driven import monitor, runner
 from app.domain.agent.harness.driven.journal import PAGE
+from app.domain.agent.harness.driven.mcp_gateway import (
+    SECRET_ENV,
+    SECRET_HEADER,
+    STARTUP_S,
+    Gateway,
+)
 from app.domain.agent.harness.driven.monitor import Monitors
 from app.domain.agent.harness.driven.runner import SessionStart, socket_path
 from app.domain.agent.harness.pi import catalog, hooks
@@ -50,7 +56,6 @@ from app.domain.agent.harness.pi.journal import (
     Journal,
 )
 from app.domain.agent.harness.pi.machine import Machine
-from app.domain.agent.harness.pi.mcp import ProjectServers
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 from app.domain.agent.harness.pi.subagents import Subagents
 from app.domain.agent.nonce import nonce_in
@@ -112,9 +117,9 @@ class Runner(runner.Runner[Journal]):
         # What every subagent the session starts reads as its system prompt's
         # tail (`subagents.py`); the platform's words, handed over (`start`).
         self.subagent_rules = ""
-        # The project's MCP servers (`mcp.py`), opened with the session.
-        self.servers: ProjectServers | None = None
-        self.mcp_tools: list[dict] = []
+        # The door pi's own MCP client reaches the project's servers by
+        # (`mcp_gateway`), opened with the session.
+        self.gateway: Gateway | None = None
         # The room's machine, where every file and command of the session's is
         # (`machine.py`), and the checkout as the session sees it there. `cwd`
         # is the directory pi runs in on this host, which holds nothing of the
@@ -484,9 +489,9 @@ class Runner(runner.Runner[Journal]):
                     "monitor": monitor.TOOL if hands and not child else None,
                     "tools": tools,
                     "unavailable": reason,
-                    # The project's MCP servers' tools, listed when the session
-                    # opened (`open_servers`); each call comes back as `mcp`.
-                    "mcp": self.mcp_tools,
+                    # The project's MCP servers, each at the session's gateway
+                    # (`open_servers`), for pi's own MCP client.
+                    "mcp": self.mcp_servers(),
                     # The marker every platform instruction in this room already
                     # carries, handed over rather than restated: it is the one
                     # string in a prompt that claims institutional authority,
@@ -500,13 +505,42 @@ class Runner(runner.Runner[Journal]):
         return home
 
     async def open_servers(self) -> None:
-        """List every MCP server's tools, before the extension's manifest is
-        written."""
+        """Open the door to the project's MCP servers, before the extension's
+        manifest names it. Calls through it go on marked as already hooked:
+        the extension fires the project's hooks around every call pi makes,
+        an MCP tool's included (`applyProjectHooks`)."""
         assert self.machine is not None
-        self.servers = ProjectServers(
-            self.machine, self.journal.recall("session_id") or ""
-        )
-        self.mcp_tools = await self.servers.discover()
+        if self.gateway is None:
+            client = self.machine.client
+            self.gateway = Gateway(
+                client.call,
+                client.session_servers,
+                observe=client.local_outcome,
+                on_close=client.local_closed,
+            )
+            self.gateway.start()
+
+    def mcp_servers(self) -> dict[str, dict]:
+        """Each of the project's servers as pi's `mcp.json` names one, at the
+        gateway. The secret is the variable pi expands from its environment
+        (`agent_env`), not the value: this file is read by whatever reads the
+        session's state directory."""
+        if self.gateway is None:
+            return {}
+        return {
+            name: {
+                "url": self.gateway.url(name),
+                "headers": {SECRET_HEADER: f"${{{SECRET_ENV}}}"},
+                "timeout": STARTUP_S,
+            }
+            for name in self.gateway.servers()
+        }
+
+    def agent_env(self, env: dict[str, str]) -> dict[str, str]:
+        env = super().agent_env(env)
+        if self.gateway is not None:
+            env[SECRET_ENV] = self.gateway.secret
+        return env
 
     def _invoke(self, payload: dict, args: dict) -> dict:
         """A command on the machine, answered the way an executor's Bash is:
@@ -1039,14 +1073,6 @@ class Runner(runner.Runner[Journal]):
                 params.get("cwd"),
                 params.get("id") or str(uuid.uuid4()),
             )
-        if method == "mcp":
-            if self.servers is None:
-                raise ValueError("This session has no MCP servers")
-            return await self.servers.call(
-                params["tool"],
-                params.get("arguments") or {},
-                call_id=params.get("id") or str(uuid.uuid4()),
-            )
         if method == "hooks":
             return await self.tool_hooks(params)
         if method == "files":
@@ -1145,6 +1171,8 @@ class Runner(runner.Runner[Journal]):
             await self.jobs.close(end=True)
         if self.monitors is not None:
             await self.monitors.close()
+        if self.gateway is not None:
+            self.gateway.close()
         if self.refresher is not None:
             self.refresher.cancel()
             await asyncio.gather(self.refresher, return_exceptions=True)

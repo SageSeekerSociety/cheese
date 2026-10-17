@@ -163,7 +163,10 @@ class Runner(runner.Runner[Journal]):
         env: dict[str, str],
         tools: list[dict],
         base_instructions: str | None = None,
+        overrides: list[str] | None = None,
     ) -> str:
+        """``overrides`` are `app-server` configuration overrides (``-c``):
+        the project's MCP servers, at the session's gateway."""
         self.claim()
         saved = self.journal.recall("thread_id")
         if saved is not None:
@@ -183,6 +186,7 @@ class Runner(runner.Runner[Journal]):
         self.process = await asyncio.create_subprocess_exec(
             binary,
             "app-server",
+            *(overrides or []),
             cwd=cwd,
             env=env,
             stdin=asyncio.subprocess.PIPE,

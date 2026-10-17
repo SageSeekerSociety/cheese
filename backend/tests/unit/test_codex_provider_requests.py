@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from app.domain.agent.capability import BuiltIn, Missing
+from app.domain.agent.declaration import BuiltIn, Missing
 from app.domain.agent.harness.codex import declaration as codex_declaration
 from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.runner import Runner
