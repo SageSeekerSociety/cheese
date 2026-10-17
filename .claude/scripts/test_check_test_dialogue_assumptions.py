@@ -467,6 +467,105 @@ def test_counts_the_non_events(session, topic):
         )
         self.assertEqual(findings, [])
 
+    def test_a_filter_that_also_excludes_a_block_is_still_the_event_slice(self) -> None:
+        # `kind == "event" and id != first` is the event slice with one block
+        # taken out, not a filter that leaves the events out.
+        self._assert_rejected(
+            """
+def test_the_other_events(client, topic, first):
+    rows = [
+        b["id"]
+        for b in _history(client, topic)["data"]
+        if b["kind"] == "event" and b["id"] != first
+    ]
+    assert rows == ["said"]
+""",
+            kind="whole",
+            repair="拿整段对话跟一个固定的东西比",
+        )
+
+    def test_a_filter_by_a_row_key_narrows_the_query(self) -> None:
+        # `filter_by(content=…)` says which block just as `.where(…)` does.
+        findings = self._dump(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_finds_the_message(session, topic):
+    rows = session.scalars(
+        select(Block).where(Block.conversation_id == topic).filter_by(content="hi")
+    ).all()
+    assert len(rows) == 1
+"""
+        )
+        self.assertEqual(findings, [])
+
+    def test_excluding_the_events_with_notin_narrows_the_query(self) -> None:
+        findings = self._dump(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_counts_the_non_events(session, topic):
+    rows = session.scalars(
+        select(Block).where(
+            Block.conversation_id == topic, Block.kind.notin_(["event"])
+        )
+    ).all()
+    assert len(rows) == 1
+"""
+        )
+        self.assertEqual(findings, [])
+
+    def test_excluding_the_events_with_is_not_narrows_the_query(self) -> None:
+        findings = self._dump(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_counts_the_non_events(session, topic):
+    rows = session.scalars(
+        select(Block).where(
+            Block.conversation_id == topic, Block.kind.is_not("event")
+        )
+    ).all()
+    assert len(rows) == 1
+"""
+        )
+        self.assertEqual(findings, [])
+
+    def test_a_helper_that_counts_the_conversation_is_still_a_reader(self) -> None:
+        # `_count` returns how many blocks there are, so a caller pinning that
+        # number is pinning the length.
+        self._assert_rejected(
+            """
+def _count(client, conversation_id):
+    return len(_history(client, conversation_id))
+
+
+def test_counts_the_blocks(client, topic):
+    assert _count(client, topic) == 2
+""",
+            kind="length",
+            repair="钉死了这段对话里有几个块",
+        )
+
+    def test_a_nested_lambda_parameter_still_shadows_the_conversation(self) -> None:
+        # The outer lambda's parameter has to stay shadowed inside it, or the
+        # inner lambda sees the conversation again.
+        findings = self._dump(
+            """
+def test_sorts_the_numbers(client, topic):
+    rows = _history(client, topic)["data"]
+    f = lambda rows: (lambda other: rows[0])(1)
+    assert f([1, 2]) == 1
+"""
+        )
+        self.assertEqual(findings, [])
+
     def test_a_query_run_through_execute_is_still_the_conversation(self) -> None:
         # `session.execute(q).scalars()` is the same rows as `session.scalars(q)`.
         self._assert_rejected(

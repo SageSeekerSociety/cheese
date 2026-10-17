@@ -66,6 +66,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import sys
 from collections import Counter
 from collections.abc import Iterator
@@ -312,14 +313,18 @@ def _callee(node: ast.Call) -> str | None:
     return None
 
 
-#: Comparisons that EXCLUDE the event slice. `Block.kind != "event"` names
-#: the events only to leave them out, and a test that leaves them out is
-#: narrow enough: no announcement joins what it reads.
-EVENT_EXCLUSIONS = ("!=", "notin_", "is_not")
+#: A comparison that EXCLUDES the event slice: `Block.kind != "event"`,
+#: `.notin_([BlockKind.event])`, `.is_not(BlockKind.event)`. The event literal
+#: has to sit right after the operator — a filter that says
+#: `kind == "event" and id != first` is still the event slice, one block down.
+EVENT_EXCLUSION = re.compile(
+    r"(?:!=|notin_\s*\(\s*\[?|is_not\s*\(\s*)\s*"
+    r"""(?:"event"|'event'|BlockKind\.event)"""
+)
 
 
 def _narrows_to_events(expression: str) -> bool:
-    if any(marker in expression for marker in EVENT_EXCLUSIONS):
+    if EVENT_EXCLUSION.search(expression):
         return False
     return any(marker in expression for marker in EVENT_MARKERS)
 
@@ -589,7 +594,20 @@ class _Readers:
         value = ret.value
         if value is None:
             return False
-        return _derives_from_conversation(value, held, readers)
+        if _derives_from_conversation(value, held, readers):
+            return True
+        # `return len(…)` hands back how many blocks the conversation has.
+        # A caller pinning that number (`assert _count(…) == 2`) is pinning
+        # the length as directly as `assert len(…) == 2` is, so the helper is
+        # read as a count of the whole conversation, not as something else.
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "len"
+            and len(value.args) == 1
+        ):
+            return _derives_from_conversation(value.args[0], held, readers)
+        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -954,7 +972,8 @@ def _scopes(
             held = _held_names(node, readers, inherited)
             yield node, held, readers
         elif isinstance(node, ast.Lambda):
-            yield node, _without_params(node.args, held), engine.names(scope)
+            held = _without_params(node.args, held)
+            yield node, held, engine.names(scope)
         elif isinstance(node, ast.Module):
             yield node, held, engine.names(scope)
         for child in ast.iter_child_nodes(node):
