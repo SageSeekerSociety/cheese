@@ -30,6 +30,13 @@ import urllib.request
 POOL_LABEL = "cheese-ci"
 BOX_LABEL_PREFIX = "cheese-ci-box-"
 
+#: The two failures look alike from outside the script and must not read alike
+#: in the alert: one says the pool lost a machine, the other says this check
+#: could not look at the pool. Sending the second as the first is the false
+#: page an unreadable runner API used to produce every half hour.
+POOL_DOWN = "CI 机器掉了：{problems}"
+COULD_NOT_JUDGE = "读不到 CI 机器列表（{reason}），这一项没有结论，不是机器掉了"
+
 
 def fetch_runners(repo: str, token: str) -> list[dict]:
     request = urllib.request.Request(
@@ -41,7 +48,27 @@ def fetch_runners(repo: str, token: str) -> list[dict]:
         },
     )
     with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response).get("runners", [])
+        payload = json.load(response)
+    if not isinstance(payload, dict):
+        raise ValueError("response is not a JSON object")
+    runners = payload.get("runners", [])
+    if not isinstance(runners, list):
+        raise ValueError("response has no runners list")
+    return runners
+
+
+def write_alert(text: str) -> None:
+    """Publish the one sentence the alert step sends.
+
+    Deciding it here, next to the exit code, is what keeps "a machine is down"
+    and "nobody could look" from collapsing into the same message. No alert is
+    written for a healthy pool, so an empty `alert` output means quiet.
+    """
+    path = os.environ.get("GITHUB_OUTPUT")
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"alert={text}\n")
 
 
 def labels_of(runner: dict) -> set[str]:
@@ -86,38 +113,43 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token", default=os.environ.get("GH_TOKEN", ""))
     args = parser.parse_args(argv)
     if not args.repo or not args.token:
-        print("REPO and GH_TOKEN are required", file=sys.stderr)
+        reason = "REPO and GH_TOKEN are required"
+        print(reason, file=sys.stderr)
+        write_alert(COULD_NOT_JUDGE.format(reason=reason))
         return 2
 
     try:
         runners = fetch_runners(args.repo, args.token)
+    except urllib.error.HTTPError as error:
+        reason = f"HTTP {error.code}"
     except urllib.error.URLError as error:
-        # Not knowing is not the same as everything being fine, and it is also
-        # not a machine being down: 2 is the "could not judge" answer the
-        # missing-credential branch above gives. Returning 0 here would report
-        # a pool nobody managed to look at as healthy. HTTPError is a URLError.
-        reason = (
-            f"HTTP {error.code}"
-            if isinstance(error, urllib.error.HTTPError)
-            else str(error.reason)
-        )
-        print(f"::warning::could not read the runner list: {reason}")
-        return 2
+        reason = str(error.reason)
+    except (OSError, ValueError) as error:
+        # A body that is not the JSON we expect leaves the same hole as a
+        # request that never arrived: nothing here knows what the pool looks
+        # like. Letting json's exception escape would exit 1 — the machine-down
+        # answer — and page the team for a machine that is probably fine.
+        reason = f"unreadable response: {error}"
+    else:
+        healthy, problems = assess(runners)
+        for line in healthy:
+            print(f"ok   {line}")
+        for line in problems:
+            print(f"DOWN {line}")
+        if problems:
+            joined = "; ".join(problems)
+            print(f"::error::CI pool is short a machine — {joined}")
+            write_alert(POOL_DOWN.format(problems=joined))
+            return 1
+        return 0
 
-    healthy, problems = assess(runners)
-    for line in healthy:
-        print(f"ok   {line}")
-    for line in problems:
-        print(f"DOWN {line}")
-    if problems:
-        joined = "; ".join(problems)
-        print(f"::error::CI pool is short a machine — {joined}")
-        summary = os.environ.get("GITHUB_OUTPUT")
-        if summary:
-            with open(summary, "a", encoding="utf-8") as handle:
-                handle.write(f"problems={joined}\n")
-        return 1
-    return 0
+    # Not knowing is not the same as everything being fine, and it is also not
+    # a machine being down: 2 is the "could not judge" answer the
+    # missing-credential branch above gives. Returning 0 here would report a
+    # pool nobody managed to look at as healthy.
+    print(f"::warning::could not read the runner list: {reason}")
+    write_alert(COULD_NOT_JUDGE.format(reason=reason))
+    return 2
 
 
 if __name__ == "__main__":

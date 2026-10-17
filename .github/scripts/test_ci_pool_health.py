@@ -3,13 +3,16 @@
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import pathlib
+import tempfile
 import unittest
 import urllib.error
 from unittest import mock
 
 _HERE = pathlib.Path(__file__).resolve().parent
+_WORKFLOW = _HERE.parent / "workflows" / "box-uptime.yml"
 _spec = importlib.util.spec_from_file_location("pool", _HERE / "ci-pool-health.py")
 pool = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pool)
@@ -69,30 +72,71 @@ class PoolHealth(unittest.TestCase):
         _healthy, problems = pool.assess([runner("r1", "1"), dev])
         self.assertEqual(problems, [])
 
-    def _main_when_the_api_fails(self, error: BaseException) -> int:
-        """Run main([]) with credentials present and the runner API failing.
+    def _run_main(
+        self,
+        runners: list[dict] | None = None,
+        error: BaseException | None = None,
+    ) -> tuple[int, dict[str, str]]:
+        """Run main([]) with credentials and a real GITHUB_OUTPUT file.
 
         The credentials are what make these tests bite: without them main
         returns 2 before it ever asks the API, and a check that reported every
-        API failure as healthy would still pass.
+        API failure as healthy would still pass. The output file is the
+        workflow's whole input, so what it says is the alert the team gets.
         """
-        fetch = mock.Mock(side_effect=error)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        output = pathlib.Path(directory.name) / "output"
+        output.touch()
+        fetch = (
+            mock.Mock(side_effect=error)
+            if error is not None
+            else mock.Mock(return_value=runners)
+        )
         with (
-            mock.patch.dict(os.environ, {"REPO": "owner/repo", "GH_TOKEN": "token"}),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "REPO": "owner/repo",
+                    "GH_TOKEN": "token",
+                    "GITHUB_OUTPUT": str(output),
+                },
+            ),
             mock.patch.object(pool, "fetch_runners", fetch),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
             code = pool.main([])
         fetch.assert_called_once()
-        return code
+        values: dict[str, str] = {}
+        for line in output.read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                name, value = line.split("=", 1)
+                values[name] = value
+        return code, values
 
-    def test_a_forbidden_runner_list_is_not_a_healthy_pool(self) -> None:
+    def test_a_healthy_pool_sends_no_alert(self) -> None:
+        code, outputs = self._run_main(runners=[runner("r1", "1")])
+        self.assertEqual(code, 0)
+        self.assertNotIn("alert", outputs)
+
+    def test_a_missing_machine_says_a_machine_is_down(self) -> None:
+        """The one failure that really is a machine lost has to say so, and
+        name it, so the reader is not left to open the run log."""
+        code, outputs = self._run_main(
+            runners=[runner("r1", "1"), runner("r2", "2", status="offline")]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("CI 机器掉了", outputs["alert"])
+        self.assertIn("cheese-ci-box-2", outputs["alert"])
+
+    def test_a_forbidden_runner_list_says_it_could_not_judge(self) -> None:
         """The API refusing to answer is the check failing to see the pool. It
         is neither a healthy pool nor a missing machine, so it must not exit 0
-        (reported fine) or 1 (a machine is down)."""
-        code = self._main_when_the_api_fails(
-            urllib.error.HTTPError(
+        (reported fine) or 1 (a machine is down), and its alert must not read
+        as the machine-down one."""
+        code, outputs = self._run_main(
+            error=urllib.error.HTTPError(
                 "https://api.github.com/repos/owner/repo/actions/runners",
                 403,
                 "Forbidden",
@@ -101,12 +145,38 @@ class PoolHealth(unittest.TestCase):
             )
         )
         self.assertEqual(code, 2)
+        self.assertIn("读不到", outputs["alert"])
+        self.assertIn("HTTP 403", outputs["alert"])
+        self.assertNotIn("CI 机器掉了", outputs["alert"])
 
     def test_an_unreachable_runner_api_is_not_a_healthy_pool(self) -> None:
-        code = self._main_when_the_api_fails(
-            urllib.error.URLError(OSError("connection refused"))
+        code, outputs = self._run_main(
+            error=urllib.error.URLError(OSError("connection refused"))
         )
         self.assertEqual(code, 2)
+        self.assertIn("读不到", outputs["alert"])
+
+    def test_a_malformed_runner_list_says_it_could_not_judge(self) -> None:
+        """Bad JSON raises out of json, and an uncaught exception exits 1 — the
+        machine-down answer. The alert then names a lost machine that is
+        probably fine."""
+        code, outputs = self._run_main(
+            error=json.JSONDecodeError("Expecting value", "", 0)
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("读不到", outputs["alert"])
+        self.assertNotIn("CI 机器掉了", outputs["alert"])
+
+    def test_the_workflow_sends_the_alert_the_script_decided(self) -> None:
+        """The workflow's job is to send the script's sentence. A fallback of
+        its own, such as "见运行日志", is how both failures used to arrive as
+        the same message."""
+        text = _WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("steps.pool.outputs.alert != ''", text)
+        self.assertIn("ALERT: ${{ steps.pool.outputs.alert }}", text)
+        self.assertIn('"$ALERT"', text)
+        self.assertNotIn("见运行日志", text)
+        self.assertNotIn("steps.pool.outputs.problems", text)
 
 
 if __name__ == "__main__":
