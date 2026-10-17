@@ -101,9 +101,9 @@ about the guard:
     name), so silencing a copy cannot reach it — the run is `unverified`;
   * the self-test needs what the judging lane does not install. The same guard's
     self-test shells out to a node scan over `frontend/node_modules`, which a
-    commit and the repo-guards job do not have, so there the self-test cannot
-    even start — the run is `self-test-not-green`, the shape of a broken
-    self-test reached for a reason that is the lane's.
+    commit and the repo-guards job do not have, so there it runs and fails on
+    that — the run is `self-test-not-green`, the shape of a broken self-test
+    reached for a reason that is the lane's.
 
 `--allow-unjudgeable NAME` tolerates exactly those two statuses for exactly that
 named guard; both mean "this lane could not establish the bite", and neither is
@@ -4871,7 +4871,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         metavar="SCRIPT",
-        help="按名字容忍一个本车道判不了的守卫（只认 unverified / 自测起不来），可重复；条目会自检",
+        help="按名字容忍一个本车道判不了的守卫（只认 unverified / self-test-not-green），可重复；条目会自检",
     )
     args = parser.parse_args(argv)
 
