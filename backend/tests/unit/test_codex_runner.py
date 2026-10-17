@@ -220,6 +220,42 @@ async def test_a_turn_the_session_was_woken_into_is_its_own_work(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_a_person_heard_during_a_woken_turn_joins_it(tmp_path):
+    """While a turn a monitor woke has not spoken yet, the room knows of no
+    turn to steer into and sends a person's message as its own work: the
+    session takes it instead of refusing it."""
+    sent = []
+
+    async def send(text):
+        sent.append(text)
+        runner.session.turn_id = "turn"
+        return "turn"
+
+    runner = Runner(tmp_path, AsyncMock())
+    runner.session = SimpleNamespace(
+        send=AsyncMock(side_effect=send),
+        thread_id="thread",
+        turn_id=None,
+        observe=lambda event: None,
+    )
+    try:
+        await runner.tell("<task-notification>line</task-notification>")
+        await runner.send("input", "from a person", work_id="platform-work")
+        assert sent == ["<task-notification>line</task-notification>", "from a person"]
+        await runner.record(
+            {
+                "method": "item/completed",
+                "params": {"threadId": "thread", "turnId": "turn", "item": {}},
+            }
+        )
+        said = (await runner.dispatch("events", {}))["events"][-1]["record"]
+        assert said["cheese"]["work_id"] == "platform-work"
+        assert "unsolicited" not in said["cheese"]
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
 async def test_a_line_said_mid_turn_goes_into_that_turn(tmp_path):
     runner = Runner(tmp_path, AsyncMock())
     sender = AsyncMock(return_value="turn")
