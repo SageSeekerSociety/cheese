@@ -84,6 +84,7 @@ assert path == "https://example.test/api/a-long-route"
 assert identifier == "a_long_identifier_name_that_is_not_copy"
 assert response == "429 429 429 429 429 429 429 429 429 429"
 assert status == "not found"
+assert actual == "${{ inputs.integration && github.event_name != 'pull_request' }}"
 assert actual == "SELECT name FROM users WHERE deleted_at IS NULL AND status IN ({})"
 assert actual == "SELECT id, title FROM topics WHERE deleted_at IS NOT NULL ORDER BY id"
 assert actual == "SELECT name FROM users WHERE deleted_at IS NOT NULL"
@@ -107,7 +108,6 @@ assert actual == "Type 'Record' has no properties in common with type 'Save'"
 assert actual == "Type 'Foo' cannot be used as an index type."
 assert actual == "Type 'Foo' does not have any construct or call signatures."
 assert actual == "Type 'Foo' is incompatible with type 'Bar'."
-assert step.get("name") == "Require images and tests for the same commit"
 assert actual != "This explanatory sentence should be checked by its important parts"
 assert "archived/removed notices should preserve the relevant message for readers" in text
 ''',
@@ -164,6 +164,7 @@ assert actual == "Select a message from the list where it belongs and continue w
 assert actual == "Select a message from the list and join the discussion in the main room"
 assert actual == "Select the option from the menu where name = weekly and continue with the next step"
 assert actual == "select the option from the menu where name = weekly and continue with the next step"
+assert actual == "select records from archive, then continue to the next page for more detail"
 assert actual == "SELECT failed because the row from the table where id = 3 is missing"
 assert actual == "Type a message to continue and then press Enter to send it."
 assert actual == "Type 'Save' does not work in this browser, choose another option to continue"
@@ -174,9 +175,9 @@ assert actual == "deleted_at IS NULL AND completion_status IN ({})"
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        for line in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16):
+        for line in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17):
             self.assertIn(f"test_copy.py:{line}", result.stderr)
-        self.assertNotIn("test_copy.py:17", result.stderr)
+        self.assertNotIn("test_copy.py:18", result.stderr)
 
     def test_python_fstrings_and_wrapped_vitest_arguments_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -222,6 +223,25 @@ expect(actual).toBe(mapping["{LONG_COPY}"]);
         self.assertNotIn("copy.spec.ts:9", result.stderr)
         self.assertNotIn("copy.spec.ts:10", result.stderr)
         self.assertNotIn("copy.spec.ts:11", result.stderr)
+
+    def test_urls_mentioned_in_copy_are_not_filtered_as_path_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write(
+                root,
+                "backend/tests/unit/test_links.py",
+                'assert actual == "Open https://example.test/help if the browser does not show the correct account settings."',
+            )
+            self._write(
+                root,
+                "frontend/src/links.spec.ts",
+                "expect(url).toBe('https://example.test/api/help?mode=brief&source=test')",
+            )
+            result = self._run(root)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("test_links.py:1", result.stderr)
+        self.assertNotIn("links.spec.ts:", result.stderr)
 
     def test_additional_test_roots_are_scanned(self) -> None:
         roots = (".github/scripts", "backend/scripts", "deploy/gateway", "deploy/tests", "docs/site/test")

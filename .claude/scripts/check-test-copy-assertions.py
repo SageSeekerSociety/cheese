@@ -49,6 +49,8 @@ BASELINE: dict[tuple[str, str], int] = {
     ("frontend/src/components/panels/doc/blocks/reader.spec.ts", "组会报名\n时间：周四下午三点\n地点：B201\n报名找林老师"): 1,
     ("frontend/src/lib/platformEvents.spec.ts", "这轮因运行环境存储空间不足而暂停，项目文件和已完成的改动都还在。"): 1,
     ("frontend/src/components/account/SudoDialog.spec.ts", "Enter a code from your authenticator app"): 4,
+    ("backend/tests/unit/test_observe_ci_resources.py", "hand the run to CI when the local box is shared"): 1,
+    ("deploy/tests/test_pr_watch_deploy.py", "Require images and tests for the same commit"): 1,
 }
 
 SKIP_DIRS = {
@@ -74,10 +76,10 @@ HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
 PATH_VALUE_RE = re.compile(
     r"(?:https?|wss?)://[^\s]+|"
-    r"(?:[A-Za-z]:)?[\\/][\w.-]+(?:[\\/][\w.-]+)*|"
-    r"\.{1,2}[\\/][\w.-]+(?:[\\/][\w.-]+)*|"
-    r"[\w.-]+(?:[\\/][\w.-]+)+|"
-    r"[\w.-]+\.(?:md|py|ts|tsx|js|jsx|cjs|mjs|json|txt|vue|docx)",
+    r"(?:(?:[A-Za-z]:)?[\\/][\w.%+-]+(?:[\\/][\w.%+-]+)*|"
+    r"\.{1,2}[\\/][\w.%+-]+(?:[\\/][\w.%+-]+)*|"
+    r"[\w.%+-]+(?:[\\/][\w.%+-]+)+|"
+    r"[\w.-]+\.(?:md|py|ts|tsx|js|jsx|cjs|mjs|json|txt|vue|docx))(?:\?[^\s]+)?",
     re.IGNORECASE,
 )
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
@@ -86,9 +88,9 @@ KEY_VALUE_RE = re.compile(r"\b[\w-]+=\S+")
 IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
 STATUS_CODES_RE = re.compile(r"(?:HTTP\s*)?\d{3}(?:\s+\d{3})*\Z", re.IGNORECASE)
 WORKFLOW_EXPRESSION_RE = re.compile(
-    r"(?:needs|steps|github|matrix|env|vars|inputs)\.[\w.-]+"
-    r"(?:\s*(?:==|!=|&amp;&amp;|\|\|).*)?\Z",
-    re.IGNORECASE,
+    r"(?:\$\{\{.*\}\}|(?:needs|steps|github|matrix|env|vars|inputs)\.[\w.-]+"
+    r"(?:\s*(?:==|!=|&amp;&amp;|\|\|).*)?)\Z",
+    re.IGNORECASE | re.DOTALL,
 )
 SHELL_COMMAND_RE = re.compile(
     r"(?:^|&&\s*)(?:git\s+(?:fetch|merge|checkout|switch|status|diff)\b|"
@@ -104,7 +106,7 @@ SQL_QUERY_RE = re.compile(
     r"(?:(?:SELECT|select)\b.*\b(?:FROM|from)\b.*"
     r"(?:\b(?:JOIN|join)\b.*\b(?:ON|on)\b|\b(?:ORDER|order)\s+(?:BY|by)\b|"
     r"\b(?:GROUP|group)\s+(?:BY|by)\b|\b(?:LIMIT|limit)\b|"
-    r"\b(?:IS|is)\s+(?:NOT\s+)?(?:NULL|null)\b|\b(?:IN|in)\s*\(|,|\*|"
+    r"\b(?:IS|is)\s+(?:NOT\s+)?(?:NULL|null)\b|\b(?:IN|in)\s*\(|"
     r"\w+\s*(?:=|!=|<>|<=|>=|<|>)\s*(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?))).*",
     re.DOTALL,
 )
@@ -116,8 +118,8 @@ SQL_WHERE_RE = re.compile(
 SQL_SELECT_PREFIX_RE = re.compile(r"(?:SELECT|select)\s+(.+?)\s+(?:FROM|from)\s+([\w.]+)", re.DOTALL)
 SQL_PROSE_WORDS = {
     "the", "a", "an", "this", "that", "these", "those", "because", "please", "you", "your",
-    "we", "they", "it", "should", "can", "could", "will", "must", "then", "continue", "option",
-    "message", "menu", "list", "record", "file", "folder", "report", "account", "project",
+    "we", "they", "it", "should", "can", "could", "will", "must", "then", "continue", "to", "next",
+    "option",
 }
 TS_TYPE_DIAGNOSTIC_RE = re.compile(
     r"""^Type ['\"][^'\"]+['\"] (?:is not assignable(?: to type)?|has no property|does not satisfy the constraint|is missing the following properties|has no properties in common with type|cannot be used as an index type|does not have any construct or call signatures|is incompatible with type)\b""",
@@ -165,14 +167,16 @@ def _test_files(root: Path) -> list[Path]:
 
 
 def _is_sql_value(value: str) -> bool:
-    match = SQL_SELECT_PREFIX_RE.match(value)
-    if SQL_QUERY_RE.fullmatch(value) and match is not None:
-        projection_words = {word.casefold() for word in WORD_RE.findall(match.group(1))}
-        table_name = match.group(2).casefold()
-        return not SQL_PROSE_WORDS.intersection(projection_words | {table_name})
+    words = [word.casefold() for word in WORD_RE.findall(re.sub(r"'[^']*'|\"[^\"]*\"", " ", value))]
+    select = SQL_SELECT_PREFIX_RE.match(value)
+    if select is not None:
+        projection = select.group(1).strip()
+        prose_words = SQL_PROSE_WORDS.intersection(words)
+        structured_projection = "," in projection or projection == "*"
+        if not prose_words and (SQL_QUERY_RE.fullmatch(value) or structured_projection):
+            return True
     if SQL_WHERE_RE.fullmatch(value):
-        words = [word.casefold() for word in WORD_RE.findall(value)][1:]
-        return len(words) >= 4 and not SQL_PROSE_WORDS.intersection(words)
+        return len(words) >= 4 and not SQL_PROSE_WORDS.intersection(words[1:])
     return False
 
 
@@ -198,7 +202,6 @@ def _is_explanatory_sentence(value: str) -> bool:
         or IDENTIFIER_RE.fullmatch(value)
         or STATUS_CODES_RE.fullmatch(value)
         or value.startswith(("Co-authored-by:", "::error::", "## "))
-        or (not han_count and (value.startswith(("/", "./", "../", "http")) or "://" in value or ("?" in value and "/" in value)))
     ):
         return False
     if han_count >= 18:
@@ -226,16 +229,6 @@ def _python_string_value(node: ast.expr) -> str | None:
     return None
 
 
-def _is_name_lookup(node: ast.expr) -> bool:
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get"
-        and bool(node.args)
-        and _python_string_value(node.args[0]) == "name"
-    )
-
-
 def _python_literals(path: Path) -> list[tuple[int, str]]:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -248,9 +241,9 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
             left = node.left
             for operator, comparator in zip(node.ops, node.comparators):
                 if isinstance(operator, ast.Eq):
-                    for candidate, other in ((left, comparator), (comparator, left)):
+                    for candidate in (left, comparator):
                         value = _python_string_value(candidate)
-                        if value is not None and not _is_name_lookup(other):
+                        if value is not None:
                             literals.append((candidate.lineno, value))
                 left = comparator
         if (
@@ -258,12 +251,9 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
             and isinstance(node.func, ast.Attribute)
             and node.func.attr in {"assertEqual", "assertEquals"}
         ):
-            for index, candidate in enumerate(node.args[:2]):
-                other = node.args[1 - index] if len(node.args) > 1 else None
+            for candidate in node.args[:2]:
                 value = _python_string_value(candidate)
-                if value is not None and not (
-                    other is not None and _is_name_lookup(other)
-                ):
+                if value is not None:
                     literals.append((candidate.lineno, value))
     return literals
 
