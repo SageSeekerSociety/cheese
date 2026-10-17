@@ -1,0 +1,11 @@
+{
+  "backToList": "Back to the files",
+  "confirmBody": "Only the {people} people here can see “{name}” now. In the library, all {projectPeople} people in the project can see it.",
+  "confirmTitle": "Save to library",
+  "empty": "No files",
+  "folderCount": "no files | 1 file | {n} files",
+  "inLibrary": "In library",
+  "keep": "Save to library",
+  "keepFailed": "Couldn't save to the library",
+  "loadFailed": "Can't load the files in this conversation"
+}

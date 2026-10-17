@@ -1,102 +1,143 @@
 /**
- * 一个频道的文件那一页（`ChannelFilesView`）在预览站里的条目。
+ * 频道和私聊右侧面板「文件」那一格（`PanelRoomFiles`）、私聊页的两栏（`DmViewView`）
+ * 和保存前的确认在预览站里的条目。单放一份是因为
+ * `catalog.ts` 顶着一千行的上限。
  *
- * 这一件以前要一整个频道才看得出来（真房间、真文件区、路由、外壳），现在只吃
- * props：一份文件清单、一个「截断了」的旗子、三种状态（读着的、读回来的、读失败），
- * 和一个由调用方给的 `read`（字节怎么来不是这一件的事）。规矩见 `catalog.ts`，单放
- * 一份是因为 `catalog.ts` 顶着一千行的上限。
- *
- * 数据编在这里而不是 `catalogFixtures.ts`：只有这一件用得上，且要摆出产品里真会
- * 出现的那几种形状——定时任务交回的结果（带日期戳的一层文件夹）、人放进来的文件、
- * 芝士交付的文档。`CatalogEntry` 是 type-only 引用，运行时不构成循环。
- *
- * 一行上写的是谁什么时候放下的：`author` 只存着 handle，名字由名册换出来，所以这里
- * 也编一份 `memberNames`（和房间里那份同名同形）。名册上认不出的队友照「芝士」写，说
- * 不出谁写的写「来源未知」。
+ * 数据编在这里：只有这一件用得上，且要摆出产品里真会出现的几种形状——芝士写的文档、
+ * 人发进来的附件、定时任务交回的结果（带日期戳的一层文件夹）。`author` 只存着 handle，
+ * 名字由名册换出来，所以这里也编一份 `names`。
  */
-import type { RoomFile } from '@/api/roomFiles'
-import type { CatalogEntry, CatalogNeed } from './catalog'
+import type { ConversationFile } from '@/composables/useConversationFiles'
+import type { CatalogEntry } from './catalog'
 
-import ChannelFilesView from '@/views/workspace/ChannelFilesView.vue'
-
-/** 页头是 `AppPage`（它的返回链接要路由），正文的字走 `t`。 */
-const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
-
-/** 字节由调用方给：预览站上给一份写得进 `FileBytesPreview` 的文本。 */
-const read = async () => new TextEncoder().encode('这个频道的一份文件。').buffer
-
-const FILES: RoomFile[] = [
-  {
-    path: 'runs/2026-09-14/weekly-report.md',
-    bytes: 4210,
-    modified_at: '2026-09-14T02:10:00Z',
-    author: 'cheese-1a2b3c',
-    author_kind: 'agent',
-    source: 'scheduled',
-  },
-  {
-    path: 'runs/2026-09-14/numbers.csv',
-    bytes: 21_300,
-    modified_at: '2026-09-14T02:09:00Z',
-    author: 'cheese-1a2b3c',
-    author_kind: 'agent',
-    source: 'scheduled',
-  },
-  {
-    path: '采购清单.xlsx',
-    bytes: 12_300,
-    modified_at: '2026-09-08T09:00:00Z',
-    author: 'alice',
-    author_kind: 'human',
-    source: 'upload',
-  },
-  {
-    path: '会议纪要.docx',
-    bytes: 61_400,
-    modified_at: '2026-09-07T11:00:00Z',
-    author: '',
-    author_kind: 'unknown',
-    source: 'baseline',
-  },
-]
+import PanelRoomFiles from '@/components/panels/PanelRoomFiles.vue'
+import KeepToLibraryConfirm from '@/components/room/KeepToLibraryConfirm.vue'
+import PrivateChatFiles from '@/components/room/PrivateChatFiles.vue'
+import DmViewView from '@/views/workspace/DmViewView.vue'
 
 /** 预览站上的名册：这一条目录里没有真名册，编一份和房间里同名同形的。 */
 const NAMES: Record<string, string> = { alice: '阿丽', 'cheese-1a2b3c': '小苔' }
 
+/** 「文件」那一格（#3828）的几行：一份文档、一个定时任务交回结果的文件夹、一份附件。 */
+const CONVERSATION_FILES: ConversationFile[] = [
+  {
+    kind: 'document',
+    id: 'doc-1',
+    name: '本周复盘',
+    added_by: 'cheese-1a2b3c',
+    folder: '',
+    added_at: '2026-09-14T02:10:00Z',
+    in_library: false,
+  },
+  {
+    kind: 'file',
+    id: 'runs/2026-09-14/weekly-report.md',
+    name: 'weekly-report.md',
+    folder: 'runs/2026-09-14',
+    added_by: 'cheese-1a2b3c',
+    added_at: '2026-09-14T02:09:00Z',
+    in_library: false,
+  },
+  {
+    kind: 'file',
+    id: 'uploads/0123456789abcdef0123456789abcdef/采购清单.xlsx',
+    name: '采购清单.xlsx',
+    folder: '',
+    added_by: 'alice',
+    added_at: '2026-09-08T09:00:00Z',
+    in_library: true,
+  },
+]
+
 export const CHANNEL_FILES_ENTRIES: CatalogEntry[] = [
   {
-    id: 'channel-files-view',
-    title: 'ChannelFilesView',
+    id: 'panel-room-files',
+    title: 'PanelRoomFiles',
     about:
-      '一个频道自己的文件：芝士交付的文档、定时任务交回的结果、有人放进来的文件都在这一页上，一层一层像文件夹；点一份在右边一栏看内容。',
-    file: 'src/views/workspace/ChannelFilesView.vue',
-    component: ChannelFilesView,
-    needs: UI_T_R,
-    args: { read, loading: false, error: null, truncated: false, memberNames: NAMES },
+      '频道和私聊右侧面板的「文件」：这段对话里发过的附件、文件区里的文件和芝士写的文档，一层一层像文件夹；每一行写着谁、什么时候放进来的，还没在资料库里的给一颗「保存到资料库」。',
+    file: 'src/components/panels/PanelRoomFiles.vue',
+    component: PanelRoomFiles,
+    needs: ['vuetify', 'i18n'],
+    args: { names: NAMES, loading: false, error: null, keeping: new Set<string>() },
     states: [
       {
-        name: '有几份文件',
-        note: '最上层：文件夹在前（写着里面有几份、最近改的是哪一份），文件在后，各自按最近改的排。一行上写着名字，和是谁什么时候放下的。',
-        props: { files: FILES },
-        expect: '采购清单.xlsx',
+        name: '有几份',
+        note: '文件夹在前，其余新的在前。已经保存过的写「已在资料库」，没保存的给按钮。',
+        props: { rows: CONVERSATION_FILES },
+        expect: '已在资料库',
       },
       {
         name: '一份都没有',
-        note: '这个频道还没往文件区里放过东西：一句「暂无文件」，不摆搜索框也不摆筛选。',
-        props: { files: [] },
+        note: '这段对话里还没发过文件，芝士也没写过文档。',
+        props: { rows: [] },
         expect: '暂无文件',
       },
+    ],
+  },
+  {
+    id: 'private-chat-files',
+    title: 'PrivateChatFiles',
+    about: '私聊右侧面板的「文件」：清单和频道那一格一样；点一份文件就在这一栏里看，上面一条返回清单、下载。',
+    file: 'src/components/room/PrivateChatFiles.vue',
+    component: PrivateChatFiles,
+    needs: ['vuetify', 'i18n'],
+    args: {
+      rows: CONVERSATION_FILES,
+      names: NAMES,
+      loading: false,
+      error: null,
+      keeping: new Set<string>(),
+      truncated: false,
+      read: async () => new TextEncoder().encode('这一周的数据。').buffer,
+    },
+    states: [
+      { name: '清单', note: '和频道那一格同一个清单。', props: { viewing: null }, expect: '已在资料库' },
       {
-        name: '读着',
-        note: '第一次列还没回来：一个转圈，清单和空态都不画。',
-        props: { files: [], loading: true },
-        expectSelector: '.v-progress-circular',
+        name: '看一份文件',
+        note: '上面一条：返回清单、文件名、下载；下面是这份文件的内容。',
+        props: { viewing: 'runs/2026-09-14/weekly-report.md' },
+        expect: 'weekly-report.md',
       },
+    ],
+  },
+  {
+    id: 'keep-to-library-confirm',
+    title: 'KeepToLibraryConfirm',
+    about: '私密频道和私聊里保存到资料库之前的确认：现在几个人看得到，保存后几个人看得到。',
+    file: 'src/components/room/KeepToLibraryConfirm.vue',
+    component: KeepToLibraryConfirm,
+    needs: ['vuetify', 'i18n'],
+    teleport: true,
+    args: { people: 2, projectPeople: 5 },
+    states: [{ name: '问一句', note: '取消就不保存。', props: { name: '合作协议.docx' }, expect: '合作协议.docx' }],
+  },
+  {
+    id: 'dm-view-view',
+    title: 'DmViewView',
+    about: '私聊页的两栏：左边对话，右边「文件」面板，中间可拖的分隔，可以收起或铺满。对话和面板由页面放进来。',
+    file: 'src/views/workspace/DmViewView.vue',
+    component: DmViewView,
+    needs: ['vuetify', 'i18n'],
+    args: {
+      error: null,
+      ready: true,
+      desktop: true,
+      docked: true,
+      panelOpen: true,
+      panelFloat: false,
+      focusMode: false,
+      chatNews: false,
+      focusLabel: '专注模式',
+      focusIcon: 'mdi-arrow-expand',
+      chatStyle: { flex: '0 0 50%' },
+    },
+    states: [
+      { name: '并排', note: '面板开着，页签栏右边是铺满和收起。', props: {}, expect: '文件' },
       {
-        name: '读失败',
-        note: '列不出来时原地给一条重试的路（往外 emit retry），不装成「这个频道是空的」。',
-        props: { files: [], error: '加载文件失败：网络错误' },
-        expect: '无法读取文件',
+        name: '取不到',
+        note: '这段私聊打不开时只有一句话。',
+        props: { error: '无法打开私聊' },
+        expect: '无法打开私聊',
       },
     ],
   },

@@ -24,14 +24,14 @@ export function phraseLabel(phrase: BoardPhrase): string {
   return i18n.global.te(`work.board.phrase.${phrase}`, 'zh-CN') ? t(`work.board.phrase.${phrase}`) : phrase
 }
 
-/** 等的是**看的这个人**时卡面那一句：「待审阅」对他说成「待你审阅」，「讨论中」说成
- *  「待你开始」—— 文档写好了，下一步是他点开始。没有专门说法的照通用那一句。 */
+/** 等的是**看的这个人**时卡面那一句：「待审阅」对他说成「待你审阅」。没有专门说法的
+ *  照通用那一句。 */
 export function myPhraseLabel(phrase: BoardPhrase): string {
   return i18n.global.te(`work.board.mine.${phrase}`, 'zh-CN') ? t(`work.board.mine.${phrase}`) : phraseLabel(phrase)
 }
 
 /** 一件任务的那一句，按看的人说：在等的就是他，用 `myPhraseLabel`。页头、频道概览
- *  和频道里的卡说的是同一件事，对同一个人不能一处「讨论中」一处「待你开始」。 */
+ *  和频道里的卡说的是同一件事，对同一个人不能一处「待审阅」一处「待你审阅」。 */
 export function taskPhraseLabel(task: Pick<RoomTask, 'presentation' | 'waiting_on'>, viewer: string): string {
   const { phrase } = task.presentation
   return task.waiting_on && task.waiting_on === viewer ? myPhraseLabel(phrase) : phraseLabel(phrase)
@@ -47,7 +47,6 @@ export function taskPhraseLabel(task: Pick<RoomTask, 'presentation' | 'waiting_o
  *  只有 `needs_you` 是暖色且实心：整块板上唯一需要人动手的那一列，应该是唯一抓眼
  *  睛的。其余靠形状分（空心 / 虚线 / 实心），所以把颜色关掉也还读得出来。 */
 export function columnDotStyle(column: BoardColumn): Record<string, string> {
-  if (column === 'not_started') return { borderColor: 'var(--faint)', borderStyle: 'dashed' }
   if (column === 'building') return { borderColor: 'var(--ok)' }
   if (column === 'delivering') return { borderColor: 'var(--ok)', borderStyle: 'dashed' }
   if (column === 'needs_you') return { borderColor: 'var(--warn)', background: 'var(--warn)' }
@@ -58,7 +57,7 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
 /** 还有人要管的那些任务：去掉已归档频道里没走完的。
  *
  *  任务不归档，频道归档：一个频道收了尾，里面没走完的任务后端照样按它自己的状态落在
- *  未开始 / 进行中 / 检查中 / 待处理里，可频道归档了就没人会再去动它们——全部任务答的
+ *  进行中 / 检查中 / 待处理里，可频道归档了就没人会再去动它们——全部任务答的
  *  是「接下来谁要动什么」，它们不该在上面。已关闭的不筛：那是收了尾的东西。 */
 export function liveTasks<T extends { room_id: string; presentation: { column: BoardColumn } }>(
   tasks: readonly T[],

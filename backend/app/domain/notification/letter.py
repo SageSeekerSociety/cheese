@@ -5,7 +5,7 @@
 收件人是在自己的邮箱里读到它的，那里没有平台的任何上下文。所以这封信要单独站得
 住：发生了什么（标题）、原话是什么（引文）、在哪儿（项目、房间、设备）、点哪里回去
 处理（按钮直达那个房间）。措辞跟站内通知同一套 ——
-`frontend/src/i18n/messages/zh-CN/notifications.json` 和各个 `Render*Notification`
+`frontend/src/i18n/messages/zh-CN/notifications/` 和各个 `Render*Notification`
 组件说的那句话，人在邮件里读到的、在收件箱里读到的是同一句。
 
 `payload` 的形状按类型各不相同，下面按类型取字；认不出来的类型退回到一句类型的人
@@ -69,7 +69,7 @@ _HEADLINES: Final[dict[str, str]] = {
     "THREAD_REPLY": "你参与的支线有新回复",
     "REACTION": "有人对你的内容做出了反应",
     "PROJECT_INVITE": "你收到了项目邀请",
-    "DEADLINE_REMIND": "有一个截止时间快到了",
+    "PROJECT_TRANSFER": "你收到了项目转让",
     "DEVICE_IN_USE": "有 AI 队友开始在你的设备上工作",
 }
 
@@ -160,6 +160,22 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             link=link,
         )
 
+    if type_ == "MENTION" and _text(payload, "documentId"):
+        # 文档正文里的一个 @（`api.doc_mentions`）：在哪份文档，比在哪个频道要紧。
+        who = _text(payload, "authorName") or _text(payload, "author") or "有人"
+        title = _text(payload, "documentTitle")
+        headline = (
+            f"{who} 在文档「{title}」提到了你" if title else f"{who} 在文档里提到了你"
+        )
+        return Letter(
+            subject=headline,
+            eyebrow="有人提到了你",
+            headline=headline,
+            quote=_clip(_text(payload, "content"), _QUOTE_LIMIT),
+            details=tuple((k, v) for k, v in (("项目", project), ("频道", room)) if v),
+            action="查看文档",
+            link=link,
+        )
     if type_ in ("MENTION", "THREAD_REPLY") and room:
         # 频道里的一条消息（`agent.mentions`）：讨论区的 @ 没有 `topicTitle`，走下面
         # 那一句通用的。

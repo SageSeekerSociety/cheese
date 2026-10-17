@@ -98,7 +98,7 @@ class TestTwoFactorIntegration:
         )
         assert confirm.status_code == 200
         body = confirm.json()
-        assert body["code"] == 201
+        assert body["code"] == 200
         codes = body["data"]["backup_codes"]
         assert len(codes) == 10 and all(len(c) == 8 for c in codes)
         return secret, codes
@@ -198,7 +198,7 @@ class TestTwoFactorIntegration:
         )
         assert resp.status_code == 200
         body = resp.json()
-        assert body["code"] == 201
+        assert body["code"] == 200
         data = body["data"]
         assert data["requires2FA"] is False
         assert data["usedBackupCode"] is False
@@ -735,7 +735,7 @@ class TestTwoFactorIntegration:
         )
         assert regen.status_code == 200
         body = regen.json()
-        assert body["code"] == 201
+        assert body["code"] == 200
         new_codes = body["data"]["backup_codes"]
         assert len(new_codes) == 10
         assert not set(new_codes) & set(old_codes)

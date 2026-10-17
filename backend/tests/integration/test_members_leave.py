@@ -21,15 +21,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.project.services import ProjectService
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import team_service
 from app.domain.user.models import User
 from tests.integration.conftest import (
     add_external_member,
+    hand_over,
     join_project_team,
     post_project,
+    project_service,
     session_auth_headers,
 )
 
@@ -61,9 +62,8 @@ def _topic(client, pid: str, created_by: str, title: str | None = "房间") -> s
 
 
 def _managed_by(client, pid: str, handle: str, title: str) -> str:
-    """A channel ``handle`` manages and the project's owner is not in. An
-    external member does not open channels, so the owner opens it and hands
-    it over."""
+    """A channel ``handle`` manages and the project's owner is not in: the owner
+    opens it, hands it over and leaves it."""
     tid = _topic(client, pid, OWNER, title=title)
     handed = client.put(
         f"/projects/{pid}/channels/{tid}/manager",
@@ -192,26 +192,32 @@ def test_removing_a_channels_creator_leaves_it_managed(client, bearer):
     _seat(client, tid, "carol", by=OWNER)
 
 
-def test_a_teammate_cannot_be_removed_from_the_project(client):
-    """团队成员在名册上是从团队读出来的，没有一条可删的成员行 —— 移他是 404，人
-    还在（这条路由仍然只对外部成员和 AI 队友的座位成立）。
+async def _captains_team(client, *members: str) -> int:
+    """A team ``captain`` owns, with ``members`` on it as plain members."""
+    factory = client.test_request_factory
+    captain = await _user(factory, "captain")
+    ids = [await _user(factory, handle) for handle in members]
+    async with factory() as session:
+        team = await team_service(session).create_team(
+            name="小队", intro="", description="", avatar_id=1, owner_id=captain
+        )
+        for user_id in ids:
+            await TeamRepository(session).add_member(
+                team.id, user_id, TeamMemberRole.MEMBER
+            )
+        await session.commit()
+        return team.id
 
-    他自己走的路是 ``DELETE /projects/{id}/membership``，那是另一条路：它记的是
-    「他在小队里，但不属于这个项目」，而这里缺的是一条能删的名册行。"""
+
+def test_a_teammate_is_taken_out_of_the_project_and_stays_on_the_team(client):
+    """团队成员在名册上是从团队读出来的；管项目的人把他移出这个项目，记下的是
+    「他在小队里，但不属于这个项目」—— 名册上没他、门关上，小队那一行不动。"""
 
     async def seed() -> str:
-        factory = client.test_request_factory
-        captain = await _user(factory, "captain")
-        latecomer = await _user(factory, "latecomer")
-        async with factory() as session:
-            team = await team_service(session).create_team(
-                name="小队", intro="", description="", avatar_id=1, owner_id=captain
-            )
-            project = await ProjectService(session).create(
-                name="P", owner_handle="captain", team_id=team.id
-            )
-            await TeamRepository(session).add_member(
-                team.id, latecomer, TeamMemberRole.MEMBER
+        team_id = await _captains_team(client, "latecomer")
+        async with client.test_request_factory() as session:
+            project = await project_service(session).create(
+                name="P", owner_handle="captain", team_id=team_id
             )
             await session.commit()
             return str(project.id)
@@ -225,8 +231,10 @@ def test_a_teammate_cannot_be_removed_from_the_project(client):
     r = client.delete(
         f"/projects/{pid}/members/latecomer", headers=session_auth_headers("captain")
     )
-    assert r.status_code == 404, r.text
-    assert "latecomer" in _project_handles(client, pid)
+    assert r.status_code == 200, r.text
+    assert "latecomer" not in _project_handles(client, pid)
+    assert not _reads(client, pid, "latecomer")
+    assert _on_team(client, pid, "latecomer")
 
 
 def test_the_owner_cannot_leave(client, bearer):
@@ -286,25 +294,29 @@ def test_a_room_with_only_its_owner_in_it_does_not_hold_them_back(client, bearer
 
 
 def test_a_previous_owner_leaves_the_project_and_stays_on_its_team(client, bearer):
-    """把项目交给队友之后，原所有者在名册上按小队读出来 —— 他现在退得掉这个项目，
-    而且退的是**这个项目**：小队那一行不动。
+    """把团队的项目交给队友之后，原所有者留在项目里（管理员）—— 他现在退得掉这个
+    项目，而且退的是**这个项目**：小队那一行不动。
 
-    从前这条路的答复是 409「去退团队」，因为「在小队里」就是「在这个项目里」。现在
     按下它写下 ``ProjectMemberExclusion``：名册上少他一个人，小队那边一个字节没变
     —— ``test_leaving_a_project_is_not_leaving_the_team.py`` 逐面钉的是它。"""
-    pid = _project(client, owner="alice")
-    join_project_team(client, pid, "bob")
-    handed = client.put(
-        f"/projects/{pid}/owner",
-        json={"owner_handle": "bob"},
-        headers=session_auth_headers("alice"),
-    )
+
+    async def seed() -> str:
+        team_id = await _captains_team(client, "alice", "bob")
+        async with client.test_request_factory() as session:
+            project = await project_service(session).create(
+                name="P", owner_handle="alice", team_id=team_id
+            )
+            await session.commit()
+            return str(project.id)
+
+    pid = client.portal.call(seed)
+    handed = hand_over(client, pid, "bob", by="alice")
     assert handed.status_code == 200, handed.text
 
     rows = client.get(f"/projects/{pid}/members").json()["data"]["data"]
-    sources = {m["user_handle"]: m.get("source") for m in rows if not m.get("agent")}
-    assert sources["bob"] == "owner"
-    assert sources["alice"] == "team"
+    roles = {m["user_handle"]: m.get("role") for m in rows if not m.get("agent")}
+    assert roles["bob"] == "owner"
+    assert roles["alice"] == "admin"
 
     left = _leave(client, pid, "alice")
     assert left.status_code == 200, left.text
@@ -394,10 +406,10 @@ def test_a_teammate_leaves_the_project_without_leaving_the_team(client):
             await TeamRepository(session).add_member(
                 team.id, mate, TeamMemberRole.MEMBER
             )
-            project = await ProjectService(session).create(
+            project = await project_service(session).create(
                 name="P", owner_handle="captain", team_id=team.id
             )
-            other = await ProjectService(session).create(
+            other = await project_service(session).create(
                 name="Q", owner_handle="captain", team_id=team.id
             )
             await session.commit()

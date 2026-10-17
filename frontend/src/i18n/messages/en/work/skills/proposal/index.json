@@ -1,0 +1,14 @@
+{
+  "absorbs": "Saving deletes these memories: {memories}",
+  "accepted": "This time",
+  "byline": "{name} proposes a new skill",
+  "bylineEdit": "{name} proposes a change to a skill",
+  "collapse": "Hide full text",
+  "decline": "Don't save",
+  "expand": "Show full text",
+  "open": "View",
+  "reason": "Reason for the change",
+  "related": "How it differs from existing skills",
+  "saved": "Saved \"{title}\"",
+  "taught": "Based on"
+}

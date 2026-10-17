@@ -189,10 +189,10 @@
     }
   },
   "panelDocReviewStrip": {
-    "about": "The strip above the body when 'View changes' opens the doc: who asked the AI teammate to edit, how many are left, previous/next, collapse.",
+    "about": "The strip above the body when 'View changes' opens the doc: how many of the AI teammate's changes are left, previous/next, collapse.",
     "s1": {
       "name": "Some left",
-      "note": "'3 spots changed by Cheese at a person's request', with previous/next and collapse."
+      "note": "'3 changes by Cheese', with previous/next and collapse."
     },
     "s2": {
       "name": "All reverted",
@@ -256,6 +256,85 @@
     "s2": {
       "name": "Still loading",
       "note": "The body is still on its way: draws a skeleton, the editor gives way."
+    }
+  },
+  "panelDocProse": {
+    "about": "The prose column itself: mounts an editor that already exists and lays the whole typography set over it — heading sizes, paragraph spacing, lists, tables, code blocks, quotes, comment marks, edit marks and collaborative cursors. Locating paragraphs and flashing a passage are someone else's concern.",
+    "s1": {
+      "name": "An article",
+      "note": "Handed an editor holding 'Rollout process': headings a size up, a little air between paragraphs, the body laid out as a column capped at 720px."
+    },
+    "s2": {
+      "name": "Empty doc",
+      "note": "The editor is empty: the ghost placeholder line shows up in the body, the caret resting at its left edge."
+    },
+    "s3": {
+      "name": "Keyboard focus",
+      "note": "Focus arrived in the body by keyboard: a focus ring is drawn around the editor box."
+    }
+  },
+  "previewPanelHeadBar": {
+    "about": "Preview top bar: 'Publish site' on the left (a project-level action, jumping to the website block on the project overview) and open-in-new-tab, fullscreen and reload on the right — every one of them acts on the current preview.",
+    "s1": {
+      "name": "Looking at the current preview",
+      "note": "The first control on the right opens it in a new tab; with a web page or an image there is also fullscreen, and reload at the far right."
+    },
+    "s2": {
+      "name": "The image, fullscreen",
+      "note": "Images get fullscreen too (they are only accurate when enlarged, and wheel zoom is only live in fullscreen); once it is fullscreen that control turns into exit fullscreen."
+    }
+  },
+  "previewPanelFrameStage": {
+    "about": "The web/app stage: an app bar (which file, which version), a runtime status line, the frames below, and region picking laid over the app.",
+    "s1": {
+      "name": "An app that is running",
+      "note": "The bar says what this frame is called, the 'running app' chip says it answers; the line below reports resource, instance and readiness."
+    },
+    "s2": {
+      "name": "Two frames both running",
+      "note": "The frame on stage takes the reader's input, the other is kept without being re-mounted: hidden away, taking no input; the pane that names a file also gets open and download."
+    },
+    "s3": {
+      "name": "The new content did not land",
+      "note": "What is on screen is still the previous page: say which step failed and offer a retry."
+    },
+    "s4": {
+      "name": "Picking a region on an app",
+      "note": "While picking is on, a transparent overlay covers the app; drag out a rectangle."
+    }
+  },
+  "previewPanelDocStage": {
+    "about": "The document stage: a document bar (name, type, edit, history, the other reading, download) plus the body. Word, slides, sheets and Markdown all come through here.",
+    "s1": {
+      "name": "A Markdown file",
+      "note": "Markdown is not converted to PDF: it is shown as what it is, read by the same renderer the chat uses."
+    },
+    "s2": {
+      "name": "This deployment has no converter",
+      "note": "Same for any file: say plainly that document preview is off rather than offering a viewer that cannot render."
+    },
+    "s3": {
+      "name": "Refresh failed, the previous version is still up",
+      "note": "What is on screen is not the latest: the bar says so and names the error; the body stays readable."
+    },
+    "s4": {
+      "name": "The other reading: web view",
+      "note": "A second way to read the same document: the elements carry addressable ids, a sheet cell's address among them, and those ids are the ones used to change the file."
+    }
+  },
+  "previewPanelImageStage": {
+    "about": "The image stage: an image laid into the pane, where a region can be circled and a sentence written, and the composited image handed to the room.",
+    "s1": {
+      "name": "An image",
+      "note": "The image fills the stage, with 'open in new window' in the corner for the original file; circling and annotating happen right on it."
+    },
+    "s2": {
+      "name": "The bytes are not here yet",
+      "note": "Nothing to draw yet: a spinner, not a blank block."
+    },
+    "s3": {
+      "name": "The annotation would not composite",
+      "note": "Circled and written, but the composited image was not produced: the image stays, and the line below names the error."
     }
   },
   "previewPanelPage": {
@@ -533,14 +612,6 @@
     "s5": {
       "name": "No one has claimed",
       "note": "Loaded and the roster is indeed empty: only then does it say 'No claimants yet'."
-    },
-    "s6": {
-      "name": "An external problem is linked",
-      "note": "The problem number was filled in when the task was published: there is one more column, saying whether each person solved it over there. Solved ones open to show the day it was solved; a claimant the other side has no result for yet shows a dash."
-    },
-    "s7": {
-      "name": "Last sync did not go through",
-      "note": "When a sync fails, that line has to say it outright: the column below is not this attempt's numbers, they are the last successful one's."
     }
   },
   "views404": {
@@ -1078,14 +1149,18 @@
     }
   },
   "modelConnectionsView": {
-    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device.",
+    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device; and the API keys and model services kept on your account, with the key's last four characters, service host, model and last check, and test, rename and remove.",
     "s1": {
       "name": "No connections",
-      "note": "Logged in on no device: the card says there are no model connections, and the custom model service button stays at its top right."
+      "note": "Logged in on no device and nothing kept on the account: the card says there are no model connections, and the buttons to add an API key, add a model service or use one on a device stay at its top right."
     },
     "s2": {
       "name": "Removing on an offline device",
       "note": "Removed while its device is offline: no longer used, marked as removing, with a line saying it logs out when the device comes online; no check or remove buttons."
+    },
+    "s3": {
+      "name": "A key on the account fails its check",
+      "note": "The service refused the key when it was tested again: marked as failing the check, with what the service said below; it can still be tested again, renamed or removed."
     }
   },
   "thisDeviceView": {
@@ -1282,29 +1357,6 @@
     "s4": {
       "name": "App ID blank",
       "note": "Saving with a blank App ID: it says \"Enter the App ID first\" and the request is never sent."
-    },
-    "s5": {
-      "name": "Save failed",
-      "note": "A rejected save shows the server's own words and leaves every field untouched."
-    }
-  },
-  "adminExternalProblemPageView": {
-    "about": "The admin \"external problem account\" page: an admin fills in the account the platform uses to read results on external problems (today only YOJ); the password is write-only and never echoed.",
-    "s1": {
-      "name": "Already configured",
-      "note": "Default state: the status line reads \"Configured · username · source\" and who last updated it; the username is filled in, the password is always empty."
-    },
-    "s2": {
-      "name": "Never configured",
-      "note": "Never set up: the status line reads \"Not configured\" and the two fields wait to be filled."
-    },
-    "s3": {
-      "name": "Could not load",
-      "note": "A failed read shows only \"could not load\" with a retry — no status line and no form, because only a successful read knows whether it is configured."
-    },
-    "s4": {
-      "name": "Username blank",
-      "note": "Saving with a blank username: it says \"Enter the username first\" and the request is never sent."
     },
     "s5": {
       "name": "Save failed",
@@ -1514,6 +1566,106 @@
     "s4": {
       "name": "An empty pool",
       "note": "Read, and there really is no host: only then does it say so."
+    }
+  },
+  "teamDetailView": {
+    "about": "The team page's rendering half: someone who has not joined sees the team's public side, a member sees the workspace shell - header, parent link, and the middle column left to a child route. Which team to read, whether this person is a member, and how a failure differs from a denial all live in the container `teams/Detail.vue`.",
+    "s1": {
+      "name": "A member in the workspace",
+      "note": "Read, and this person is a member: the workspace shell - header, parent link (the team name), the team intro beside the title, the middle cell left to a child route (empty in the catalog), and no public-facing profile card."
+    },
+    "s2": {
+      "name": "Not joined yet: the team's public side",
+      "note": "The same team, but not a member: the public side - intro, owner, member count - with \"Join team\" or \"Apply to join\" below, depending on whether approval is on; no workspace."
+    },
+    "s3": {
+      "name": "No team at this address",
+      "note": "404: it says no team is at this address, which is not \"this read failed\", and offers no retry."
+    },
+    "s4": {
+      "name": "This read failed",
+      "note": "A network or server error: this cell says the read failed, with the real reason and a retry."
+    },
+    "s5": {
+      "name": "No permission",
+      "note": "401/403 is \"you may not see this\", drawn apart from \"this read failed\": it says so and offers no retry."
+    }
+  },
+  "teamIndexView": {
+    "about": "The header of the teams page and its create-team dialog: three tabs (find / mine / pending) and a \"Create team\" button, with the middle column left to a child route; the dialog holds avatar, name, address and intro. Where the tabs go, that column's content and the create request all live in the container `teams/Index.vue`.",
+    "s1": {
+      "name": "The header and three tabs",
+      "note": "Default state: the three tabs and the \"Create team\" button on the right, with the middle column empty (the catalog has no child route)."
+    },
+    "s2": {
+      "name": "The create dialog, open",
+      "note": "After tapping \"Create team\": avatar, name, address (prefixed with the current host) and the intro editor are all there, and the primary button is \"Create team\"."
+    },
+    "s3": {
+      "name": "The create is in flight",
+      "note": "After submitting: the primary button spins and cannot be pressed, and the dialog stays open so nobody presses it again thinking it did not register."
+    },
+    "s4": {
+      "name": "The name is taken",
+      "note": "The duplicate-name error sits under the name field; the dialog and everything typed stay."
+    },
+    "s5": {
+      "name": "The address is taken",
+      "note": "Same for a taken address: the error sits under the address field, and the person just edits the address."
+    }
+  },
+  "teamMembersView": {
+    "about": "The team members screen: members / join requests / sent invitations tabs plus an invite dialog; from here you promote an admin, remove a member, approve or reject a request. Reading the lists, writing, and which tab is open all live in the container `teams/detail/Members.vue`; this half does no fetching at all. The join-link card is a separate piece the page hands in through a named slot, and it has an entry of its own in the catalog.",
+    "s1": {
+      "name": "The members tab",
+      "note": "Default state: three people, one per row, owner and admin each carrying a role chip, and a plain member's row spelling out in one line what that role can do. Whoever the server says cannot be removed (an admin cannot remove another admin) has no \"Remove member\"."
+    },
+    "s2": {
+      "name": "The join requests tab",
+      "note": "The one waiting for a decision: who asked, their one-line reason, when they asked, with approve and reject on the right; both go dead while an answer is in flight."
+    },
+    "s3": {
+      "name": "The sent invitations tab",
+      "note": "Sent, no answer yet: who was invited and when, with only a withdraw button on the right."
+    },
+    "s4": {
+      "name": "The members tab could not load",
+      "note": "The list did not come back: this tab turns into the failure state, states the reason and offers a retry, rather than drawing \"No members\"."
+    },
+    "s5": {
+      "name": "The requests are still loading",
+      "note": "The requests are not back yet: one centred spinner. It cannot say \"No join requests\" here - that sentence is only sayable after a read."
+    },
+    "s6": {
+      "name": "The invite dialog found someone",
+      "note": "Whoever the username or email lookup found is laid out first: avatar, name, username. That is who gets invited, visible before the button is pressed."
+    },
+    "s7": {
+      "name": "That person is already in the team",
+      "note": "The same person is already a member: the dialog says so, and \"Invite\" is greyed out."
+    }
+  },
+  "teamJoinLinkCard": {
+    "about": "The team address and joining card: the address (`/teams/` plus the handle), a long-lived team link (copy it, reset it), whether joining needs approval, and whether the team shows up in search. Fetching, writing, and where the browser goes after an address change all live in the container `teams/detail/Members.vue`; this card only takes data and reports actions, and only the address field keeps its own draft - a half-typed address must not follow the next team.",
+    "s1": {
+      "name": "The link is back",
+      "note": "Default state: the address field carries the host prefix, the link field is read-only, copy and reset sit beside it, and below are the approval switch and the two \"who can find this team\" options."
+    },
+    "s2": {
+      "name": "Just copied",
+      "note": "After pressing copy: the button's label becomes \"Copied\", so nobody presses it again thinking it did not register."
+    },
+    "s3": {
+      "name": "The link is not back yet",
+      "note": "The link has not arrived: that section is a spinning progress bar, not an empty text field - it says it is loading, not that there is nothing."
+    },
+    "s4": {
+      "name": "It did not go through",
+      "note": "A read or write failed: a red bar states the reason, the rest of the card stays as it was, and the person can try again."
+    },
+    "s5": {
+      "name": "The address is taken",
+      "note": "The new address collides with someone else: that error sits under the address field, whatever was half-typed stays, and the person just edits it."
     }
   }
 }

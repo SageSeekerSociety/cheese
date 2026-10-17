@@ -104,44 +104,56 @@ jobs:
           docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "CREATE DATABASE \"$CHEESE_E2E_DB\""
 
-      # Keep the dependency steps unchanged to measure the hosted runner's setup.
-      - name: Point uv's cache outside the per-job temp
-        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
-
       - name: Install uv
-        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.1"
-          cache-local-path: ${{ env.UV_SHARED_CACHE }}
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
+          prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
 
       - name: Set up Python
         run: uv python install 3.13
-
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          version: 11
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
-      # Keep the store outside setup-pnpm, which the setup action deletes each run.
+      # Pin pnpm from the nearest package.json so it matches the store layout
+      # warm-caches.yml saved; a different major writes a separate store subdir.
+      - name: Enable corepack
+        run: corepack enable
+
+      # Restore only: warm-caches.yml saves this key on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ github.workspace }}/.pnpm-store
+          key: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install frontend deps
         working-directory: frontend
-        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
+        run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
 
       # The browser runs against a production build served by `vite preview`
       # (playwright.config.ts), not the dev server, which compiled every route
       # on its first visit. The build needs nothing from the backend steps
       # below, so it runs alongside them and the wait step joins it.
       # VITE_API_BASE_URL is baked in at build time, as in production.
+      # `pnpm run build` is the image's build: the mini-app shell, then the app.
       - name: Start the frontend build
         working-directory: frontend
         env:
           VITE_API_BASE_URL: /api
           NODE_OPTIONS: --max-old-space-size=4096
         run: |
-          nohup bash -c 'pnpm exec vite build > "$RUNNER_TEMP/frontend-build.log" 2>&1; echo $? > "$RUNNER_TEMP/frontend-build.status"' > /dev/null 2>&1 &
+          nohup bash -c 'pnpm run build > "$RUNNER_TEMP/frontend-build.log" 2>&1; echo $? > "$RUNNER_TEMP/frontend-build.status"' > /dev/null 2>&1 &
 
       # Build a fresh venv for this job on the hosted runner's filesystem.
       - name: Point uv at a per-job venv
@@ -176,7 +188,7 @@ jobs:
 
       - name: Install E2E deps
         working-directory: e2e
-        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
+        run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
 
       - name: Wait for the frontend build
         timeout-minutes: 5

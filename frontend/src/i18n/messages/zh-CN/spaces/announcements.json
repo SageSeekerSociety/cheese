@@ -1,0 +1,40 @@
+{
+  "confirmDelete": "删除这条公告？",
+  "day": "{month} 月 {date} 日",
+  "dayWithYear": "{year} 年 {month} 月 {date} 日",
+  "delete": "删除",
+  "edit": "编辑",
+  "editTitle": "编辑公告",
+  "edited": "已编辑",
+  "empty": "暂无公告",
+  "expiredFold": "已到期 · {count} 条",
+  "expiresOn": "{day}到期",
+  "form": {
+    "content": "正文",
+    "expiry": "到期日（选填）",
+    "notifyHint": "发布后通知空间内 {count} 位成员，后续修改不再通知",
+    "pinned": "置顶",
+    "publish": "发布",
+    "save": "保存",
+    "title": "标题"
+  },
+  "loadFailed": "加载公告失败",
+  "morePinned": "另有 {count} 条置顶公告",
+  "pin": "置顶",
+  "pinnedTag": "置顶",
+  "publish": "发布公告",
+  "publishedOn": "{day}发布",
+  "toast": {
+    "deleteFailed": "删除失败",
+    "deleted": "已删除",
+    "pinFailed": "置顶失败",
+    "pinned": "已置顶",
+    "publishFailed": "发布失败",
+    "published": "已发布",
+    "saveFailed": "保存失败",
+    "saved": "已保存",
+    "unpinFailed": "取消置顶失败",
+    "unpinned": "已取消置顶"
+  },
+  "unpin": "取消置顶"
+}

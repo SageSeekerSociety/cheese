@@ -5,7 +5,7 @@ summary: 一条活从开卡到合进主干。
 covers:
   - backend/app/domain/review/pr_publish.py
   - backend/app/api/routes/accept.py
-  - backend/app/domain/agent/github_app.py
+  - backend/app/domain/project/github_app.py
   - backend/app/forge_events_app.py
 ---
 

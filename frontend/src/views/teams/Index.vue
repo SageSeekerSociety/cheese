@@ -1,95 +1,36 @@
 <template>
-  <PageHeader icon="mdi-account-group" :title="t('teams.index.title')">
-    <template #tabs>
-      <v-tabs color="on-surface" slider-color="primary" bg-color="transparent">
-        <v-tab :to="{ name: 'HomeTeamsExplore' }">{{ t('teams.index.tabExplore') }}</v-tab>
-        <v-tab :to="{ name: 'HomeTeamsMine' }">{{ t('teams.index.tabMine') }}</v-tab>
-        <v-tab :to="{ name: 'HomeTeamsPending' }">{{ t('teams.index.tabPending') }}</v-tab>
-      </v-tabs>
-      <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" @click="openCreateTeamDialog">
-        {{ t('teams.index.create') }}
-      </BaseButton>
-    </template>
-  </PageHeader>
-
-  <router-view />
-
-  <!-- Create team dialog -->
-  <AdaptiveDialog
-    v-model="createTeamDialog"
-    :title="t('teams.index.create')"
-    :primary-label="t('teams.index.create')"
-    :cancel-label="t('teams.index.cancel')"
-    :primary-loading="creatingTeam"
-    @primary="createTeam"
+  <IndexView
+    v-model:create-team-dialog="createTeamDialog"
+    v-model:team-name="teamName"
+    v-model:team-handle="teamHandle"
+    v-model:team-description="teamDescription"
+    v-model:team-avatar="teamAvatar"
+    :creating-team="creatingTeam"
+    :team-name-error="teamNameError"
+    :team-handle-error="teamHandleError"
+    :address-prefix="addressPrefix"
+    @create-team="createTeam"
   >
-    <v-form>
-      <v-container fluid>
-        <v-row>
-          <v-col cols="12" md="4" class="text-center">
-            <avatar-uploader v-model="teamAvatar" />
-            <p class="text-body-2 text-medium-emphasis mb-2">{{ t('teams.index.avatar') }}</p>
-          </v-col>
-          <v-col cols="12" md="8">
-            <v-text-field
-              v-model="teamName"
-              autocomplete="off"
-              :label="t('teams.index.name')"
-              variant="outlined"
-              color="primary"
-              :placeholder="t('teams.index.namePlaceholder')"
-              :rules="[(v) => !!v || t('teams.index.nameRequired')]"
-              :error-messages="teamNameError"
-              class="mb-4"
-              rounded="md"
-            ></v-text-field>
-
-            <v-text-field
-              v-model="teamHandle"
-              autocomplete="off"
-              :label="t('work.teamLink.address')"
-              :prefix="addressPrefix"
-              :hint="t('work.teamLink.createAddressHint')"
-              :error-messages="teamHandleError"
-              persistent-hint
-              variant="outlined"
-              color="primary"
-              class="mb-4"
-              rounded="md"
-            ></v-text-field>
-
-            <p class="text-body-2 text-medium-emphasis mb-2">{{ t('teams.index.description') }}</p>
-            <tip-tap-editor
-              ref="teamDescriptionEditor"
-              v-model="teamDescription"
-              output="html"
-              :placeholder="t('teams.index.descriptionPlaceholder')"
-              class="team-description-editor rounded-md"
-            />
-          </v-col>
-        </v-row>
-      </v-container>
-    </v-form>
-  </AdaptiveDialog>
+    <router-view />
+  </IndexView>
 </template>
 
 <script setup lang="ts">
+// 「团队」这一栏的外框：页头、三个标签和「创建团队」弹窗。创建要发请求、成功要跳进
+// 新建的那个团队，那两件事留在这里；画面在 `IndexView.vue`，只收状态、把「要创建」
+// 连同它取到的简介交上来。
 import type { JSONContent } from '@tiptap/core'
 
-import { defineAsyncComponent, ref } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
+
+import IndexView from './IndexView.vue'
 
 import { ApiError } from '@/api'
 import { createAvatar } from '@/api/avatars'
 import { TeamsApi } from '@/api/teams'
-import BaseButton from '@/components/base/BaseButton.vue'
-import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
-import AvatarUploader from '@/components/common/AvatarUploader.vue'
-import PageHeader from '@/components/common/PageHeader.vue'
 import { t } from '@/i18n'
-
-const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Editor/TipTapEditor.vue'))
 
 const createTeamDialog = ref(false)
 const teamName = ref('')
@@ -98,17 +39,13 @@ const teamHandle = ref('')
 const teamHandleError = ref('')
 const addressPrefix = `${window.location.host}/teams/`
 const teamDescription = ref<JSONContent>({ type: 'doc', content: [] })
-const teamDescriptionEditor = ref<InstanceType<typeof TipTapEditor>>()
 const teamAvatar = ref<File | undefined>()
 const creatingTeam = ref(false)
 
 const router = useRouter()
 
-const openCreateTeamDialog = () => {
-  createTeamDialog.value = true
-}
-
-const createTeam = async () => {
+/** 简介那一句由画面从编辑器正文里取好递过来（编辑器住在画面那一半）。 */
+const createTeam = async (intro: string) => {
   if (!teamName.value) {
     toast.error(t('teams.index.nameRequired'))
     return
@@ -118,10 +55,6 @@ const createTeam = async () => {
   teamHandleError.value = ''
   try {
     creatingTeam.value = true
-    let intro = teamDescriptionEditor.value?.editor?.getText() ?? ''
-    if (intro.length > 250) {
-      intro = `${intro.slice(0, 250)}…`
-    }
 
     const { avatarId } = teamAvatar.value ? await createAvatar(teamAvatar.value) : { avatarId: null }
 
@@ -154,5 +87,3 @@ const createTeam = async () => {
   }
 }
 </script>
-
-<style scoped></style>

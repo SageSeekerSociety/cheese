@@ -1,0 +1,3 @@
+{
+  "policyOverTier": "{what} “{label}” is in tier {tier}, which this project doesn't allow. Use a resource within the allowed tiers, or ask a project manager to change the tier policy."
+}

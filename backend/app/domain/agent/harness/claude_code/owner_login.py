@@ -200,6 +200,19 @@ async def remember(session: AsyncSession, device_id: str, login: ClaudeLogin) ->
         await rename_for_connection(session, device_id)
 
 
+async def rename(session: AsyncSession, device_id: str, name: str | None) -> bool:
+    """Its owner names the machine's connection; the own agents on it are
+    named after it from now on, whatever the machine reports later. False when
+    the machine has no login to name."""
+    row = await session.get(DeviceClaudeLoginRow, device_id)
+    if row is None or not (row.logged_in and row.revoked_at is None):
+        return False
+    row.name = name or None
+    await session.flush()
+    await rename_for_connection(session, device_id)
+    return True
+
+
 async def status(session: AsyncSession, device_id: str) -> dict | None:
     """What the machine last said about its owner's Claude Code login, for its
     owner to read; None when it has not been asked yet."""
@@ -260,11 +273,12 @@ async def settle(session: AsyncSession, hub, device_id: str) -> None:
 async def revoke(session: AsyncSession, hub, device_id: str) -> None:
     """Its owner removes the machine's login, from wherever they are. It is out
     of use from this moment — no session starts with it — and the machine logs
-    it out now if it is online, or as it next connects."""
+    it out now if it is online, or as it next connects. The name its owner gave
+    it goes with it: a login made there later is another connection."""
     await session.execute(
         update(DeviceClaudeLoginRow)
         .where(DeviceClaudeLoginRow.device_id == device_id)
-        .values(revoked_at=datetime.now(UTC), logged_in=False)
+        .values(revoked_at=datetime.now(UTC), logged_in=False, name=None)
     )
     await session.commit()
     if not hub.is_online(device_id):

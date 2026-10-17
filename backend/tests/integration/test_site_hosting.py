@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.domain.site.hosting import content_origin, mint_site_token
 from tests.integration.conftest import (
     add_external_member,
+    join_project_team,
     post_project,
     session_auth_headers,
     session_token,
@@ -163,6 +164,23 @@ def test_revoked_membership_blocks_existing_site_cookie(client, published):
     removed = client.delete(f"/projects/{project}/members/bob", headers=auth)
     assert removed.status_code == 200, removed.text
     assert client.get(origin + "/app.js").status_code == 404
+
+
+def test_leaving_the_project_closes_its_site(client, published):
+    """The site is read by whoever may read its project: a teammate who left the
+    project no longer opens it."""
+    project, _ = published
+    join_project_team(client, str(project), "carol")
+    carol = session_auth_headers("carol")
+    _open(client, project, carol)
+
+    left = client.delete(f"/projects/{project}/membership", headers=carol)
+
+    assert left.status_code == 200, left.text
+    assert (
+        client.post(f"/projects/{project}/site-session", headers=carol).status_code
+        == 404
+    )
 
 
 def test_https_grant_sets_secure_host_cookie(client, published, monkeypatch):

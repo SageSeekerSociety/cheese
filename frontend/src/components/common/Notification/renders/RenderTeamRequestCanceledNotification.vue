@@ -1,12 +1,12 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">
+    <div class="n-title">
       <i18n-t v-if="canceler" scope="global" keypath="notifications.TEAM_REQUEST_CANCELED.title" tag="span">
         <template #canceler><UserRef :handle="canceler.handle" :name="canceler.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>
     </div>
-    <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
+    <div class="n-sub">{{ body }}</div>
   </div>
 </template>
 
@@ -64,14 +64,3 @@ defineExpose({
   content,
 })
 </script>
-
-<style scoped>
-.notification-content {
-  display: flex;
-  flex-direction: column;
-}
-
-.neutral-box {
-  border-left: 3px solid rgba(var(--v-theme-on-surface), 0.2);
-}
-</style>

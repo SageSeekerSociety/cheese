@@ -1,10 +1,12 @@
 // 「最近去过」：只记在这台浏览器里（localStorage）。
 //
 // 记的是一条的 id、去过几次、最后一次什么时候，外加名字和去处的一份快照：那一类
-// 当下交不出这一条的时候（换了项目、话题还没加载完）照样列得出来。存储读写都可能
-// 抛（隐私模式、被清理），出错就当没有记录，面板照常能用。
+// 当下交不出这一条的时候（换了项目、话题还没加载完）照样列得出来。存储读不出来
+// （隐私模式、被清理）就当没有记录，面板照常能用；写不进去就不记这一条。
 import type { RouteLocationRaw } from 'vue-router'
 import type { PaletteItem } from './sources'
+
+import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
 
 const KEY = 'cheesex.palette.recent'
 const LIMIT = 30
@@ -20,13 +22,8 @@ export interface RecentEntry {
 }
 
 export function readRecents(): RecentEntry[] {
-  try {
-    const raw = localStorage.getItem(KEY)
-    const parsed: unknown = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? (parsed as RecentEntry[]) : []
-  } catch {
-    return []
-  }
+  const parsed = storageGetJson<unknown>(KEY)
+  return Array.isArray(parsed) ? (parsed as RecentEntry[]) : []
 }
 
 /** 记下一次去过。只记有去处的：做完就结束的操作不算「去过」。 */
@@ -43,11 +40,8 @@ export function recordVisit(item: PaletteItem, now = Date.now()) {
     icon: item.icon,
     to: item.to,
   }
-  try {
-    localStorage.setItem(KEY, JSON.stringify([entry, ...rest].slice(0, LIMIT)))
-  } catch {
-    // 存不下就不记。
-  }
+  // 存不下就不记。
+  storageSetJson(KEY, [entry, ...rest].slice(0, LIMIT))
 }
 
 /** 去得越多、越近，排得越前；给打分加的那一点。 */

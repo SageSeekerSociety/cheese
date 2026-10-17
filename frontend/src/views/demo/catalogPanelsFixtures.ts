@@ -30,6 +30,7 @@ import type { Block, RoomTask, TodoItem, WorkspaceFile } from '@/cx_types'
 import type { DiffLine, FileDiff } from '@/lib/diff'
 import type { DocumentIdentity } from '@/lib/documentIdentity'
 import type { Routine, RoutineRun } from '@/lib/routine'
+import type { SiteTurn } from '@/lib/siteLog'
 import type { AgentControlState } from '@/types/agentControl'
 import type { ThreadReply, ThreadRow } from '@/types/threads'
 
@@ -53,6 +54,7 @@ import { SCENES } from './scenes'
 import { buildFileRows } from '@/lib/changesTree'
 import { DIFF_WINDOW, parseDiffLines, splitDiffByFile } from '@/lib/diff'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, pageViewOf, suffixOf } from '@/lib/fileKind'
+import { groupByTurn } from '@/lib/siteLog'
 
 const SCENE = SCENES.quickstart
 
@@ -78,6 +80,67 @@ const DIFF_BY_PATH = CHANGES.diffByPath as Map<string, FileDiff>
 const TREE_FILES = CHANGES.treeFiles as WorkspaceFile[]
 /** 这一支活本身（「不在当前版本里」那一格列的就是它）。 */
 export const CHANGES_TASK = CHANGES.currentTask as RoomTask
+
+/** 改动那一格拆出来的三个面，各自吃的那一串 props：从同一支活（`CHANGES`）里挑它要
+ *  的键，值不另写一遍 —— 树、差异、打开着的那一份本来就是同一份数据切出来的。 */
+export const CHANGES_BAR_PROPS = {
+  openPath: CHANGES.openPath,
+  sourceStatus: CHANGES.sourceStatus,
+  fileDirty: CHANGES.fileDirty,
+  openDiff: CHANGES.openDiff,
+  openIsDocument: CHANGES.openIsDocument,
+  effectiveView: CHANGES.effectiveView,
+  fileReadOnly: CHANGES.fileReadOnly,
+  fileSaving: CHANGES.fileSaving,
+  currentTask: CHANGES.currentTask,
+  fileSource: CHANGES.fileSource,
+  fileToolReady: CHANGES.fileToolReady,
+  refreshing: CHANGES.refreshing,
+}
+
+/** 打开着的那一份的正文（`ChangesFileContent`）。 */
+export const CHANGES_CONTENT_PROPS = {
+  openPath: CHANGES.openPath,
+  openIsDocument: CHANGES.openIsDocument,
+  docLoading: CHANGES.docLoading,
+  docBytes: CHANGES.docBytes,
+  docError: CHANGES.docError,
+  docRendererMissing: CHANGES.docRendererMissing,
+  openDocumentType: CHANGES.openDocumentType,
+  revs: CHANGES.revs,
+  revisionPath: CHANGES.revisionPath,
+  review: CHANGES.review,
+  canCompare: CHANGES.canCompare,
+  comparing: CHANGES.comparing,
+  comparison: CHANGES.comparison,
+  comparisonLoading: CHANGES.comparisonLoading,
+  comparisonError: CHANGES.comparisonError,
+  effectiveView: CHANGES.effectiveView,
+  openDiffLines: CHANGES.openDiffLines,
+  openIsImage: CHANGES.openIsImage,
+  openRawUrl: CHANGES.openRawUrl,
+  fileBinary: CHANGES.fileBinary,
+  fileTooLarge: CHANGES.fileTooLarge,
+  fileBytes: CHANGES.fileBytes,
+  fileDraft: CHANGES.fileDraft,
+  fileReadOnly: CHANGES.fileReadOnly,
+}
+
+/** 全部改动那一面（`ChangesAllView`）。树常驻那一档在这里是关的：树常驻 / 只在顶部
+ *  那块下面列几行，两种排法在目录里各有一格。 */
+export const CHANGES_ALL_PROPS = {
+  treeFiles: CHANGES.treeFiles,
+  diffByPath: CHANGES.diffByPath,
+  fileDiffs: CHANGES.fileDiffs,
+  treeShown: false,
+  currentTask: CHANGES.currentTask,
+  sourceStatus: CHANGES.sourceStatus,
+  fileSource: CHANGES.fileSource,
+  fileToolReady: CHANGES.fileToolReady,
+  refreshing: CHANGES.refreshing,
+  summaryAll: false,
+  review: CHANGES.review,
+}
 
 /** 这一支活里某一份文件自己的那一段，切成行（`ChangesDiff` 吃的就是这个）。 */
 export function diffLinesOf(path: string): DiffLine[] {
@@ -338,6 +401,16 @@ export function docBundle(
     documentId: ref(null),
     suggestionReasons: ref({}),
     fetchSuggestionReasons: noopAsync,
+    notifiedMentions: ref([]),
+    fetchNotifiedMentions: noop,
+    mentionOutside: {
+      prompt: ref(null),
+      adding: ref(false),
+      names: (handles: string[]) => handles.join('、'),
+      offer: noop,
+      add: noopAsync,
+      dismiss: noop,
+    },
     commentAuthor: 'wang',
     sendComment: refuseWrite,
     askAgent: noopAsync,
@@ -606,3 +679,103 @@ export const ROUTINE_RUNS: Record<string, RoutineRun[]> = {
     },
   ],
 }
+
+// ---- 现场：一行、组头、队友页签 ------------------------------------------------
+//
+// 现场拆出来的那几只（一步一行、说的话一行、一轮的组头、顶上按队友筛的那排）在
+// `quickstart` 那一帧里凑不齐形状：它那一轮现场只有四次工具调用，没有失败的一步，
+// 也没有芝士说的话，更没有第二个队友。`turn` 和 `seats` 两份剧本里都有，所以从
+// 它们取，不另手造。
+
+/** `turn` 剧本（「一条消息怎么变成芝士的一轮」）放到第 step 步末尾的那一帧。 */
+function turnFrame(step: number) {
+  return frameAt(SCENES.turn, step, Number.MAX_SAFE_INTEGER)
+}
+
+/** `seats` 剧本（「两个队友在同一个话题里并行」）放到第 step 步末尾的那一帧。 */
+function seatsFrame(step: number) {
+  return frameAt(SCENES.seats, step, Number.MAX_SAFE_INTEGER)
+}
+
+/** 那一段现场里的一步，按工具名找（同一段里工具名不重复）。 */
+function actOf(step: number, tool: string): Block {
+  const block = turnFrame(step).site.find((b) => b.meta?.tool === tool)
+  if (!block) throw new Error(`turn 剧本第 ${step} 步里没有 ${tool} 这一步`)
+  return block
+}
+
+/** 那一段现场里失败的那一步。 */
+function failedActOf(step: number): Block {
+  const block = turnFrame(step).site.find((b) => b.meta?.failed === true)
+  if (!block) throw new Error(`turn 剧本第 ${step} 步里没有失败的一步`)
+  return block
+}
+
+/** 那一段现场里芝士说的话，取最先或最后那一句（剧本的 `note` 落成叙述，`meta.progress`）。 */
+function sayOf(step: number, which: 'first' | 'last'): Block {
+  const says = turnFrame(step).site.filter((b) => b.meta?.progress === true)
+  const say = which === 'first' ? says[0] : says[says.length - 1]
+  if (!say) throw new Error(`turn 剧本第 ${step} 步里没有芝士说的话`)
+  return say
+}
+
+/** 一步：改一个文件。 */
+export const SITE_ACT_EDIT = actOf(4, 'Edit')
+/** 一步：跑一次测试。 */
+export const SITE_ACT_BASH = actOf(4, 'Bash')
+/** 一步：平台自己做的事（行上的圆点是实心的）。 */
+export const SITE_ACT_PLATFORM = actOf(4, 'chat_send')
+/** 失败了的一步：`git push` 的结果不知道，那句错跟着它。 */
+export const SITE_ACT_FAILED = failedActOf(5)
+/** 上面那一步摊开之后的输出：真实的现场里，记下了输出的那一步在 `meta.output_bytes`
+ *  上写着有多大，`SiteStepOutput` 收着时说的就是它。 */
+export const SITE_ACT_BASH_OUTPUT: Block = {
+  ...SITE_ACT_BASH,
+  meta: { ...SITE_ACT_BASH.meta, output_bytes: LS_OUTPUT_BYTES },
+}
+
+/** 芝士说的话：回一句补充（收到补充：手机上也要检查）。 */
+export const SITE_SAY_SHORT = sayOf(4, 'first')
+/** 芝士说的话：交代一段经过（推送结果未知那一次）。 */
+export const SITE_SAY_LONG = sayOf(5, 'last')
+/**
+ * 芝士说的一长段：现场里最长的那一种是「做完了交代一遍」—— 改了什么、验证过什么、
+ * 还剩什么。剧本里它只说一句话（那一格讲的是「要说话必须 chat_send」），这一种照
+ * 同一位、同一件事造：从第二个字起还是真的，行数够越过 12 行那条线。
+ */
+export const SITE_SAY_DETAIL: Block = {
+  ...SITE_SAY_LONG,
+  id: 'site-say-detail',
+  content: [
+    '登录页改完了，两处都动过：',
+    '',
+    '- 主按钮换成琥珀色实心（`--color-accent-strong`），按下时再深一档；',
+    '- 「忘记密码」挪到输入框下面，没登录也点得到。',
+    '',
+    '验证过这些：',
+    '',
+    '1. `pnpm exec vitest run src/views/home`：4 个文件、12 条全过；',
+    '2. 宽度 390 / 768 / 1280 三档各截了一张，按钮不换行、不压住输入框；',
+    '3. Tab 到「忘记密码」有焦点圈，回车跳得过去。',
+    '',
+    '还没做的：「注册」那一页的按钮还是旧的主色，等设计稿定了再一起换。',
+    '',
+    '验收卡递了，审阅要点写在里面。',
+  ].join('\n'),
+}
+
+/** 组头看的那一组：`turn` 剧本到「芝士怎么说话」那一步为止，五步全在同一轮（t1）里。 */
+export const SITE_ONE_TURN: SiteTurn<Block> = (() => {
+  const turn = groupByTurn(turnFrame(4).site, turnFrame(4).running)[0]
+  if (!turn) throw new Error('turn 剧本里没有成组的一轮')
+  return turn
+})()
+/** 那一轮开始的时刻（毫秒）：组头用它和最后一条的时间算「多久」。 */
+export const SITE_TURN_START = turnFrame(4).running.t1
+
+/** `seats` 剧本那一帧里做过事的队友，按露面的先后（`usePanelSite` 也是这么攒的）。 */
+export const SITE_AGENTS = [...new Set(seatsFrame(1).site.map((b) => b.author))]
+/** 页签上写的名字：`seats` 剧本那两页名册（芝士、芝士K）。 */
+export const SITE_AGENT_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(SCENES.seats.people).map(([handle, person]) => [handle, person.name])
+)

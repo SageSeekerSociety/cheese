@@ -37,7 +37,7 @@ from app.domain.conversation.models import Conversation  # noqa: F401
 
 class GrantSource(StrEnum):
     """Where a credit pack came from; it decides when the pack lapses and where
-    it falls in the order a charge drains packs in (``usage.ledger``)."""
+    it falls in the order a charge drains packs in (``usage.balance``)."""
 
     # The team's plan, one per period; lapses when the period ends.
     PLAN_PERIOD = "plan_period"
@@ -69,7 +69,7 @@ class Plan(Timestamps, Base):
     # A plan that issues no pack: at most ``credits`` within each window.
     # ``{"hours": 5, "credits": 100}`` starts at a team's first call and resets
     # that many hours later; ``{"calendar": "week" | "month", "credits": 100}``
-    # resets every Monday or every first of the month (``usage.ledger``).
+    # resets every Monday or every first of the month (``usage.windows``).
     windows: Mapped[list] = mapped_column(JSON, default=list)
     # The model tiers its teams may use, the subscription (Claude) models
     # included; NULL is every tier.
@@ -100,6 +100,26 @@ class PlanWindowUse(Base):
     window: Mapped[str] = mapped_column(String(16), primary_key=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     credits_used: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class OverseasModelApproval(Timestamps, Base):
+    """A team a platform administrator has let use overseas models (Claude,
+    GPT, Gemini). A team without a row may not, whatever its plan allows; a
+    person is let in through their personal team. Withdrawing deletes the row,
+    and ``credit_admin_audit`` keeps who did either and when."""
+
+    __tablename__ = "overseas_model_approvals"
+
+    team_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "team.id",
+            ondelete="CASCADE",
+            name="fk_overseas_model_approvals_team_id_team",
+        ),
+        primary_key=True,
+    )
+    approved_by: Mapped[str] = mapped_column(String(64))
 
 
 class CreditAdminAudit(UuidPk, Timestamps, Base):
@@ -235,10 +255,11 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     # "compute" for a charge of cloud compute (``COMPUTE_ROUTE``).
     # "" on rows that predate the column.
     route: Mapped[str] = mapped_column(String(16), default="")
-    # The team that paid, and the credits charged for this row (#2397). A row
-    # with no team, no project and no person is a call the platform made on its
-    # own and paid for (``Ledger.record_platform``); ``kind`` names the job.
-    # Rows written before the team was recorded carry a project or a person.
+    # The team that paid, and the credits charged for this row (#2397). Every
+    # new row names one: the platform's own calls for a project are the
+    # project's (``Ledger.record_project_call``). Rows with no team are older:
+    # written before the team was recorded (they carry a project or a person),
+    # or calls the platform once paid for itself, ``kind`` naming the job.
     team_id: Mapped[int | None] = mapped_column(
         ForeignKey("team.id", ondelete="CASCADE"), nullable=True
     )

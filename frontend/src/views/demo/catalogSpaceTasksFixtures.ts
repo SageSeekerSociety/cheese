@@ -32,8 +32,6 @@ import { t } from '@/i18n'
 type TaskAttachmentData = InstanceType<typeof BriefView>['$props']['attachments'][number]
 /** 报名最新一版提交的形状（`RosterView` 的 `latestByParticipant` 的值）。 */
 type Latest = InstanceType<typeof RosterView>['$props']['latestByParticipant'] extends Map<number, infer L> ? L : never
-/** 这道题挂在 YOJ 上那一块的形状（`RosterView` 的 `onlineJudge` 的值），同上。 */
-type OnlineJudge = NonNullable<InstanceType<typeof RosterView>['$props']['onlineJudge']>
 
 /** 一天，用毫秒写，别在心里换算。 */
 const DAY = 86_400_000
@@ -371,34 +369,6 @@ export const TASK_LATEST: Map<number, Latest> = new Map<number, Latest>([
   ],
   [104, { submissionId: 6003, version: 1, createdAt: NOW - 1 * DAY }],
 ])
-
-/**
- * 这道题接的 YOJ 题号：五个领的人里**四个**有学号，两个过了。
- *
- * 三种格子在这上面都能看到：过了的（点得开、看得见过的那一刻）、没过的、以及
- * 名单上有、外站那边还没同步到的（`105` 不在 `results` 里，画「—」）。
- */
-export const TASK_ONLINE_JUDGE: OnlineJudge = {
-  problemNo: '1000',
-  source: 'yoj',
-  lastSyncedAt: new Date(NOW - 3 * 3_600_000).toISOString(),
-  status: 'ok',
-  error: '',
-  results: [
-    { participantId: 101, studentNo: '20210129', solved: true, acceptedAt: new Date(NOW - 5 * DAY).toISOString() },
-    { participantId: 102, studentNo: '20210130', solved: false, acceptedAt: null },
-    { participantId: 103, studentNo: '20210131', solved: true, acceptedAt: new Date(NOW - 2 * DAY).toISOString() },
-    { participantId: 104, studentNo: '20210132', solved: false, acceptedAt: null },
-  ],
-}
-
-/** 同上，但**上回去外站没看成**：`lastSyncedAt` 是那一趟的时刻，格子里的数还是更早那次成功的。 */
-export const TASK_ONLINE_JUDGE_STALE: OnlineJudge = {
-  ...TASK_ONLINE_JUDGE,
-  lastSyncedAt: new Date(NOW - 5 * 60_000).toISOString(),
-  status: 'failed',
-  error: 'timeout',
-}
 
 /** 数据页的评审索引：`participantId → 最新那一版的评审`，`undefined` 是交了还没判。 */
 export const TASK_REVIEWS: Map<number, TaskSubmissionReview | undefined> = new Map([

@@ -1,0 +1,9 @@
+{
+  "agentWorking": "{name} is on it",
+  "behind": "Platform is updating the branch",
+  "ci": "Waiting for checks",
+  "clean": "Ready to merge",
+  "human": "Waiting for review",
+  "platform": "Platform is on it",
+  "unknown": "Updating status"
+}

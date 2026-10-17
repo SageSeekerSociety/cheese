@@ -218,9 +218,10 @@ class IndexSource:
                 ) as client:
                     r = await client.get(
                         url,
-                        headers=_cookie_header(
-                            self._cookies() if self._cookies else {}
-                        ),
+                        headers={
+                            **site.read_headers(url),
+                            **_cookie_header(self._cookies() if self._cookies else {}),
+                        },
                     )
                     r.raise_for_status()
                     rows = r.json()

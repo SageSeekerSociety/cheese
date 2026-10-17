@@ -27,6 +27,7 @@ import ChatErrorToast from '@/components/chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from '@/components/chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from '@/components/chat/ChatPanelHeader.vue'
 import ChatTimeline from '@/components/chat/ChatTimeline.vue'
+import MentionOutsidePrompt from '@/components/chat/MentionOutsidePrompt.vue'
 import MessageQuote from '@/components/room/MessageQuote.vue'
 import { topicStateBadge } from '@/lib/topicState'
 
@@ -241,6 +242,41 @@ export const CHAT_ENTRIES: CatalogEntry[] = [
         name: '没有错误',
         note: '`message` 是 null：什么都不画。',
         props: { message: null },
+      },
+    ],
+  },
+  {
+    id: 'mention-outside-prompt',
+    title: 'MentionOutsidePrompt',
+    about:
+      '刚发的消息 @ 了不在这个频道里的人：贴在输入框上方问发消息的人要不要把他们加进来（Slack 那样），只有发的人看得见。',
+    file: 'src/components/chat/MentionOutsidePrompt.vue',
+    component: MentionOutsidePrompt,
+    needs: UI_T,
+    args: { names: '张衡、李冰', membersOnly: true, mayAdd: true, adding: false },
+    states: [
+      {
+        name: '私密频道，能加',
+        note: '不在私密频道里的人看不到这条消息，所以要说出来。「添加到频道」走频道名册加人的那条路，「不添加」谁也不进来。',
+        props: {},
+        expect: '看不到这条消息',
+      },
+      {
+        name: '公开频道，能加',
+        note: '公开频道里他们照样收到通知、读得到，只是没加入：只说没加入。',
+        props: { names: '张衡', membersOnly: false },
+        expect: '未加入这个频道',
+      },
+      {
+        name: '加不了人',
+        note: '在支线里回话、自己没加入这个公开频道也不管它：不给添加的按钮，说清楚只有频道里的人能添加成员。',
+        props: { names: '张衡', membersOnly: false, mayAdd: false },
+        expect: '只有频道里的人能添加成员',
+      },
+      {
+        name: '正在添加',
+        note: '一个一个地加，按钮转圈；「不添加」这时按不了。',
+        props: { adding: true },
       },
     ],
   },

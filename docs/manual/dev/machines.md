@@ -4,7 +4,7 @@ kind: 流程
 summary: 一台机器怎么变成芝士能用的「手」。
 covers:
   - cli/
-  - backend/app/domain/agent/device_hub.py
+  - backend/app/domain/agent/device_hub/
   - backend/app/domain/agent/device_provider.py
   - backend/app/domain/agent/central_provider.py
   - backend/app/domain/agent/host_failure.py
@@ -58,7 +58,7 @@ steps:
 
 会话进程和干活的机器分开时，一次工具调用怎么落到机器上，见[执行通道](/dev/execution)；连接器的命令见 [cheese CLI 原理](/dev/cli#connector)。
 
-连接器登录后，和机器连接服务之间保持一条长连接（`DeviceHub`，`device_hub.py`）。服务器在这条连接上为某个房间打开一个「屏幕」，屏幕里运行骨架的 runner；runner 负责 agent 进程、记录它说的话，并在一个 socket 上应答。浏览器里看到的终端是屏幕原始字节的转发。
+连接器登录后，和机器连接服务之间保持一条长连接（`DeviceHub`，`device_hub/`）。服务器在这条连接上为某个房间打开一个「屏幕」，屏幕里运行骨架的 runner；runner 负责 agent 进程、记录它说的话，并在一个 socket 上应答。浏览器里看到的终端是屏幕原始字节的转发。
 
 机器连接服务单独常驻，发版不重启，所以主 API 发版时设备链接不断，见[部署拓扑](/dev/topology#planes)。
 

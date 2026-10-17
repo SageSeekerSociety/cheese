@@ -56,7 +56,8 @@ _SHARING_WORDS = (
 #: `/my/devices/{device_id}/...` 下（`backend/app/api/routes/local_dirs.py`），
 #: 端点在响应前先 `_require_owned_device` 或（不接 device_id 的）`_require_user`；
 #: 别的路由模块不许 import `app.domain.local_fs`，
-#: 唯一放行的是设备连上来时推授权表的 `push_grants_on_connect`（connector.py）。
+#: 唯一放行的是设备连上来时推授权表的 `push_grants_on_connect`
+#: （connector/devices.py）。
 #: 文档：docs/manual/dev/local-fs.md 的「对外接口」（#api）与「边界与坑」（#traps）。
 _REPAIR_LOCAL_FS = (
     "修法：授权只出现在主人命名空间 /my/devices/{device_id}/... 下（"
@@ -120,38 +121,63 @@ def test_every_directory_endpoint_checks_device_ownership():
 
 # -- (二) 授权不外泄到别的路由模块 ----------------------------------------
 
-# 设备连上来时把它自己的授权表推给它（connector.recover_business_state）。这是在授权所属
-# 的那台机器上执行授权，拿到的东西不进任何响应。只放行这一个名字，同一模块里别的引用
-# 照样算碰。
+# 设备连上来时把它自己的授权表推给它（connector/devices.py 的
+# recover_business_state）。这是在授权所属的机器上执行授权，拿到的
+# 东西不进任何响应。只放行这一个名字，同一模块里别的引用照样算碰。
+# 键是相对路由根的路径：路由目录里有包（connector/、tasks/、users/），
+# 光看文件名区分不出来。
 _ENFORCEMENT_ONLY = {
-    ("connector.py", "app.domain.local_fs.enforcement"): {"push_grants_on_connect"},
+    ("connector/devices.py", "app.domain.local_fs.enforcement"): {
+        "push_grants_on_connect"
+    },
 }
+
+
+def _route_modules() -> list[Path]:
+    """路由树里的每个模块，含包里的（connector/…）。只扫顶层目录的话，一个路由模块
+    拆成包就等于从这份名单里消失——那种失效是安静的。"""
+    return sorted(ROUTES.rglob("*.py"))
 
 
 def test_no_other_route_module_touches_local_fs():
     """授权只能在它自己的路由里出现。一旦任务、素材、附件的响应里能带上授权，
     它就已经在共享了——只是还没有人把它叫「共享」。"""
     offenders = []
-    for path in sorted(ROUTES.glob("*.py")):
+    for path in _route_modules():
         if path == OWN_MODULE:
             continue
+        where = path.relative_to(ROUTES).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
                 "app.domain.local_fs"
             ):
-                allowed = _ENFORCEMENT_ONLY.get((path.name, node.module or ""), set())
+                allowed = _ENFORCEMENT_ONLY.get((where, node.module or ""), set())
                 if {alias.name for alias in node.names} <= allowed:
                     continue
-                offenders.append(f"{path.name}: {node.module}")
+                offenders.append(f"{where}: {node.module}")
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name.startswith("app.domain.local_fs"):
-                        offenders.append(f"{path.name}: {alias.name}")
+                        offenders.append(f"{where}: {alias.name}")
 
     assert offenders == [], (
         "这些路由模块碰了 local_fs——授权不该跟成果一起被分享出去："
         + ", ".join(offenders)
+        + "\n"
+        + _REPAIR_LOCAL_FS
+    )
+
+
+def test_the_scan_reaches_every_exempted_module():
+    """上面那条检查只对扫到的文件生效。2026-10 把 connector 拆成包时，顶层那份文件
+    没了，扫描名单跟着少一块，放行例外成了死键，而测试照样绿。所以例外指向的文件必须
+    真的在名单里。"""
+    listed = {path.relative_to(ROUTES).as_posix() for path in _route_modules()}
+    unreachable = sorted({where for where, _ in _ENFORCEMENT_ONLY} - listed)
+    assert unreachable == [], (
+        "放行名单指向的文件不在这份扫描名单里，那条例外等于没有："
+        + ", ".join(unreachable)
         + "\n"
         + _REPAIR_LOCAL_FS
     )

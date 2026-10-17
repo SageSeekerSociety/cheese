@@ -1,0 +1,22 @@
+{
+  "downloadFailed": "Couldn't download",
+  "eventLabel": "{time}: {text}",
+  "liveNew": "{name}: {text}",
+  "loadingOlder": "Loading older messages…",
+  "messageLabel": "{name}, {time}: {text}",
+  "newMessagesBelow": "New messages below",
+  "older": "Older messages",
+  "pickTopic": "Select a channel to start chatting",
+  "reactionFailed": "Couldn't update the reaction",
+  "refMissing": "missing reference",
+  "refMissingHint": "The channel, task or thread referenced here doesn't exist, or you can't see it",
+  "refThread": "Thread: {title}",
+  "sending": "Sending…",
+  "startAria": "Start working in this project",
+  "startTitle": "What would you like to do first?",
+  "timelineLabel": "Conversation",
+  "today": "Today",
+  "typing": "Typing…",
+  "waitingConnection": "Waiting for connection",
+  "yesterday": "Yesterday"
+}

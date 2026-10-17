@@ -63,6 +63,8 @@ export interface TaskSubmissionSchemaEntry {
 export type TaskClaimStatus = 'IN_PROGRESS' | 'SUBMITTED' | 'PASSED' | 'REJECTED'
 
 export interface Task {
+  /** 加入每个领取者项目的导师（#3830）；没有就是空。 */
+  mentors?: { handle: string; nickname: string }[]
   id: number
   name: string
   intro: string
@@ -213,18 +215,12 @@ export type TaskFormSubmitData = {
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
-  /**
-   * 这道题挂的 YOJ 题号；空串 = 不接外站。
-   *
-   * 它不是题目自己的字段：外站题号有自己的一条接口（`PUT/DELETE /tasks/{id}/external-problem`），
-   * 所以调用方**不能**把它跟着 `PATCH /tasks/{id}` 一起发出去，题目保存完要单独写一次
-   * （见 `api/externalProblem.ts` 开头）。`undefined` = 这张表压根没有这一格，别去写。
-   */
-  externalProblemNo?: string
   videoUrl?: string | null
   /**
    * 这道题自己的「给 AI 队友的指导」覆盖（#944）。留空 = 不设，用空间的默认
    * （`PublishTask.vue` 那一栏据此决定要不要带上它）。
    */
   teaching?: SpaceTeaching
+  /** 加入每个领取者项目的导师（#3830）；空 = 没有导师。 */
+  mentors?: string[]
 }

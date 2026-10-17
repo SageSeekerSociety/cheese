@@ -1,8 +1,8 @@
 // 对象级编辑的「数据那一半」：选中、拖动/缩放、改色、删除、文字编辑，以及撤销历史。
 //
 // 从 DesignImage.vue 里搬出来的——那个组件本来就贴着 file-size 闸门的边，再加这一层
-// 就过不去了（见 .claude/rules/architecture.md）。屏幕上怎么画、图片怎么量、键盘怎么
-// 路由都留在组件里；这里只认「笔画这份数据该怎么被改」，换算坐标用的几何由外面传进来。
+// 就过不去了（见 .claude/rules/architecture.md）。屏幕上怎么画留在组件里；这里只认
+// 「笔画这份数据该怎么被改」，换算坐标用的几何由外面传进来。
 import type { Ref } from 'vue'
 import type { Point } from './designRegion'
 import type { RedactStyle, SketchStroke, SketchTool } from './designSketch'

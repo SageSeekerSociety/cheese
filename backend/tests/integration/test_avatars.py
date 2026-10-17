@@ -120,7 +120,7 @@ class TestAvatarsUploadIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "avatarId" in data["data"]
         self.avatar_id = data["data"]["avatarId"]
 
@@ -134,7 +134,7 @@ class TestAvatarsUploadIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "avatarId" in data["data"]
 
     def test_upload_avatar_no_auth(self):

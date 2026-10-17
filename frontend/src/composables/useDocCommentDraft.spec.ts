@@ -106,6 +106,36 @@ describe('selection-specific comment drafts', () => {
     ])
     scope.stop()
   })
+
+  it('reads the drafts out of a stored record that also holds entries which are not drafts', () => {
+    const topic = `junk-${++serial}`
+    // Anything JSON allows can sit in the record — an older build, or a hand-edited
+    // session. Those entries are not drafts and are skipped; the record still counts.
+    sessionStorage.setItem(
+      `cheese:doc-comments:${JSON.stringify(['reader', topic])}`,
+      JSON.stringify({
+        active: 'good',
+        hidden: false,
+        drafts: {
+          junk: null,
+          alsoJunk: 'not a draft',
+          good: { target: { quote: second.quote, from: second.from, to: second.to }, text: '留下' },
+        },
+      })
+    )
+    const scope = effectScope()
+    const d = scope.run(() =>
+      useDocCommentDraft(
+        () => topic,
+        () => 'reader',
+        vi.fn(async (): Promise<void> => undefined),
+        vi.fn()
+      )
+    )!
+    expect(d.text.value).toBe('留下')
+    expect(d.draft.value).toEqual(second)
+    scope.stop()
+  })
 })
 
 describe('closing is distinct from discarding comment drafts', () => {

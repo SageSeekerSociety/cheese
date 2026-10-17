@@ -41,6 +41,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import ActorResolverDep
+from app.api.response import ok
 from app.api.space_deps import (
     _ensure_space_admin,
     _ensure_space_visible,
@@ -100,7 +101,7 @@ async def get_space_analytics_overview(
         task_approved=taskApproved,
         group_by=groupBy,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -117,7 +118,7 @@ async def get_space_analytics_alerts(
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_alerts(space_id=space_id)
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -148,7 +149,7 @@ async def get_space_analytics_publishers(
         sort_by=sortBy,
         sort_order=sortOrder,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -188,7 +189,7 @@ async def get_space_analytics_participants(
         real_name=realName,
         group_by=groupBy,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -205,7 +206,7 @@ async def get_space_analytics_people(
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_people(space_id=space_id)
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -369,10 +370,8 @@ async def get_space_submissions(
         space_id=space_id,
         task_id=taskId,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "submissions": items,
             "summary": summary,
             "page": {
@@ -382,8 +381,8 @@ async def get_space_submissions(
                 "nextStart": offset + returned if has_more and returned > 0 else None,
                 "total": total,
             },
-        },
-    }
+        }
+    )
 
 
 async def get_space_learning_service(db=Depends(get_db)) -> SpaceLearningService:
@@ -423,7 +422,7 @@ async def get_space_learning_filters(
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     actor = await resolver.resolve()
     data = await service.filters(space_id=space_id, handle=_learning_handle(actor))
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -451,7 +450,7 @@ async def get_space_learning_questions(
         to_ts=to_ts,
         knowledge_point=knowledgePoint,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -477,7 +476,7 @@ async def get_space_learning_queues(
         from_ts=from_ts,
         to_ts=to_ts,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.post(
@@ -503,7 +502,7 @@ async def build_space_learning_outline(
         handle=_learning_handle(actor),
         block_ids=body.block_ids,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(

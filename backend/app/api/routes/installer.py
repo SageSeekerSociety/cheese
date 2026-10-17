@@ -4,7 +4,7 @@ Serves the `cheesehost` thin-client connector so a fresh user machine can join
 with one line — `curl -fsSL <origin>/connector/install.sh | sh`. The script
 detects the platform, downloads the matching binary, and prints the next step
 (`cheesehost auth login`). It carries no secrets and no business logic;
-enrollment still goes through the device flow (routes/connector.py), so a piped
+enrollment still goes through the device flow (routes/connector/devices.py), so a piped
 installer never grants access by itself.
 
 Binaries are built artifacts under backend/connector-dist/ (git-ignored; built
@@ -404,8 +404,9 @@ def _accepts_gzip(request: Request) -> bool:
     "/latest/{target}/{name}",
     methods=["GET", "HEAD"],
     # Named here, not derived: FastAPI builds the default id from the first of the
-    # route's methods and those are a set, so the committed document would otherwise
-    # change with the process (backend/openapi.json is checked as text).
+    # route's methods and those are a set, so the document would otherwise change
+    # from run to run — and the frontend generates its types from that document,
+    # while backend/openapi-untyped.json is compared as text.
     operation_id="download_connector_binary",
 )
 async def download_binary(target: str, name: str, request: Request) -> Response:

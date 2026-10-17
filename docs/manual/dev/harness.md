@@ -43,7 +43,7 @@ covers:
 
 骨架之上是会话核心（`agent/session_host/`，`SessionHost`）。它不认识房间、文档和人，对三种骨架都一样：`start` 照一份 `SessionSpec` 起一条会话，`attach` 接上已经在跑的，`send` 交一个输入、`steer` 在干活时插一句、`stop` 停下，`status` 问它在不在干活，`memory` 和 `control` 转给会话的 runner，`read` 把会话说的、做的一条条交出来（说了什么、开始和停下干活、读到了哪条输入、活怎么结束、机器够不够得着、正在写什么，都是 `session_host/reads.py` 的一种）。各骨架只回答自己协议写法不同的地方：怎么起、怎么读、停用哪个调用、收下输入算不算读到，这些写在各自的驱动里（`session_host/driver.py` 的 `Driver`，实现是同目录的 `pi.py`、`claude_code.py`、`codex.py`）。会不会把记忆对账回平台是注册表上的事实（`Harness.keeps_memory`），只经 `session_host.host.keeps_memory` 一处读。
 
-房间、文档里的芝士、个人芝士各自从核心装起来。房间的那一份是 `agent/room/sessions.py` 的 `RoomSessions`：`ensure`、`send`、`backlog`、`steer`、`interrupt`、`close` 这几个动词，加上 `holds` 这类事实；它记房间自己的账（每个座位在干哪件活、干活时插进来的话被哪件活读到、存活规则看的几只钟），再经 `report_to` 交给房间：读到的每一条交给 `room/reads.py` 分到房间各自的账，输入之前和一轮之后对记忆，问房间还有没有输入没被读。
+房间、文档里的芝士、个人芝士各自从核心装起来。房间的那一份是 `agent/room/sessions/` 的 `RoomSessions`：`ensure`、`send`、`backlog`、`steer`、`interrupt`、`close` 这几个动词，加上 `holds` 这类事实；它记房间自己的账（每个座位在干哪件活、干活时插进来的话被哪件活读到、存活规则看的几只钟），再经 `report_to` 交给房间：读到的每一条交给 `room/reads.py` 分到房间各自的账，输入之前和一轮之后对记忆，问房间还有没有输入没被读。
 
 旁边几个小协议：`Backlog`（`unread` / `assemble` / `unfinished` / `landed` / `forget`）、`SessionRef`（`(conversation, agent_handle, harness)`，`agent_sessions` 的键；任务的会话带 `task_id`，`topic_id` 仍是它所在的房间）。
 
@@ -55,7 +55,7 @@ covers:
 
 四格（提问、待办、提醒、自动同步）今天长这样：
 
-| | Claude Code 2.1.282 | Codex 0.154.0 | pi 1.0.0 |
+| | Claude Code 2.1.299 | Codex 0.154.0 | pi 1.0.0 |
 | --- | --- | --- | --- |
 | 提问 | 自己带，两侧都拒（`DISALLOWED_TOOLS` + `settings.json` 的 deny），平台用 `cheese_ask` | 自己带；同步那个关得掉，异步那个这个 build 关不掉（#1880） | 不自带（工具联合八个里没有，内建扩展四个里也没有），平台用 `cheese_ask` |
 | 待办 | 自己带，`TodoWrite`/`Task*` 两侧都拒，平台用 `todo_write` | 自己带，`tools.update_plan.enabled=False`，平台用 `todo_write` | 不自带，清单由平台建 |
@@ -80,7 +80,7 @@ Codex 和 pi 没有 Claude Code 的 `Monitor`，平台照 Claude Code 2.1.282 �
 
 | 骨架 | pin | 在哪 | 谁管 |
 | --- | --- | --- | --- |
-| Claude Code | `2.1.282` | `claude_code/device_launch.py` 的 `CLAUDE_PINNED_VERSION` | `backend/scripts/test_harness_contracts.py` |
+| Claude Code | `2.1.299` | `claude_code/device_launch.py` 的 `CLAUDE_PINNED_VERSION` | `backend/scripts/test_harness_contracts.py` |
 | Codex | `0.154.0` | `codex/host.py` 的 `VERSION` | 同上；不在注册表也照样被它管着 |
 | pi | `1.0.0` | `pi/launch.py` 的 `VERSION` | 不走那份脚本：它是按平台分的 tarball（`app/domain/machine/pi_dist.py`），契约由 `backend/tests/fixtures/harness-contract/` 那套夹具核 |
 

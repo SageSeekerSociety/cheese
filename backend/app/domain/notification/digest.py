@@ -41,13 +41,13 @@ from sqlalchemy import or_, select
 
 from app.core.db import SessionFactory
 from app.core.email import get_email_sender, is_placeholder_email
-from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification.letter import (
     letter_for,
     render_digest_html,
     render_digest_text,
 )
 from app.domain.notification.maintenance import display_names
+from app.domain.notification.models import ChannelDelivery
 from app.domain.notification.outbox import LEASE_SECONDS
 from app.domain.notification.preferences import DigestCadence, EmailMode
 from app.domain.notification.preferences_models import PreferencesRepository

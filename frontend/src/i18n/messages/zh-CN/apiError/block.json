@@ -1,0 +1,16 @@
+{
+  "askAlreadyAnswered": "这道题已经有人回答过了",
+  "askAlreadySkipped": "你已经跳过了这道题",
+  "askFieldRequired": "{field} 必须是非空字符串",
+  "askFieldString": "{field} 必须是字符串",
+  "askNotAQuestion": "这条消息不是一道带选项的题",
+  "askNothingToWithdraw": "你没有回答过这道题，没有可以撤回的答复",
+  "askOptionObject": "每个选项必须是对象，包含 text 和可选的 explain 字段",
+  "askOptionsTwoToThree": "每题需要 2-3 个对象选项",
+  "askQuestionObject": "每题必须是对象",
+  "askQuestionsCount": "questions 必须含 1-{limit} 题",
+  "askSkipNotYours": "这道题不在等你回答，你不能跳过它",
+  "optionsDistinct": "选项不能重复",
+  "quoteNeedsMessage": "引用要配上你自己写的话",
+  "quoteTooLong": "消息和引用加起来不能超过 {limit} 个字符"
+}

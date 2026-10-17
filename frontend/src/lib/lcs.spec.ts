@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { LCS_MAX_CELLS, lcsOps } from './lcs'
 import { lineDiff } from './lineDiff'
-import { compareTexts, inlineDiff } from './paragraphDiff'
+import { inlineDiff } from './paragraphDiff'
 
 type Kind = 'same' | 'add' | 'del'
 
@@ -92,13 +92,6 @@ describe('callers degrade as a whole when too large', () => {
     expect(rows).toHaveLength(side * 2)
     expect(rows.slice(0, side).every((r) => r.kind === 'removed')).toBe(true)
     expect(rows.slice(side).every((r) => r.kind === 'added')).toBe(true)
-  })
-
-  it('compareTexts pairs every old paragraph with a new one, none kept', () => {
-    const diff = compareTexts(a, b)
-    expect(diff.changed).toBe(side)
-    expect(diff.added).toBe(0)
-    expect(diff.removed).toBe(0)
   })
 
   it('inlineDiff returns one deleted and one added segment', () => {

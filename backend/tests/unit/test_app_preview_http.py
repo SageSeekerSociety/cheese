@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.websockets import WebSocket
 
+from app.api import preview_relay
 from app.api.routes import app_preview
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import PreviewHub
@@ -86,7 +87,7 @@ async def test_disconnect_delivers_cancel_through_actual_response_and_adapter():
         return {"type": "http.disconnect"}
 
     await asyncio.wait_for(
-        app_preview._PreviewStreamingResponse(upstream)(_scope(), receive, send), 1
+        preview_relay._PreviewStreamingResponse(upstream)(_scope(), receive, send), 1
     )
     assert sent[0]["type"] == "http.response.start"
     assert sent[1]["body"] == b"first"
@@ -102,7 +103,7 @@ async def test_cancel_during_watcher_cleanup_does_not_leave_unowned_response(
     topic = uuid.uuid4()
     machine = hub.attach(topic, "seat", sink)
     sink.machine = machine
-    monkeypatch.setattr(app_preview, "preview_hub", hub)
+    monkeypatch.setattr(preview_relay, "preview_hub", hub)
     cancelled_receive = asyncio.Event()
     body_read = False
 
@@ -117,7 +118,7 @@ async def test_cancel_during_watcher_cleanup_does_not_leave_unowned_response(
             cancelled_receive.set()
 
     task = asyncio.create_task(
-        app_preview.relay_http(topic, "seat", Request(_scope(), receive))
+        preview_relay.relay_http(topic, "seat", Request(_scope(), receive))
     )
 
     async def expiry():
@@ -137,7 +138,7 @@ async def test_tunnel_ingress_overflow_closes_and_detaches_real_adapter(monkeypa
     monkeypatch.setattr(wire, "MAX_WS_MESSAGE_BYTES", 8)
     hub = PreviewHub()
     topic = uuid.uuid4()
-    monkeypatch.setattr(app_preview, "preview_hub", hub)
+    monkeypatch.setattr(preview_relay, "preview_hub", hub)
     monkeypatch.setattr(
         app_preview,
         "scoped_token_claims",
@@ -170,13 +171,13 @@ async def test_request_body_overflow_stops_before_tunnel_admission(monkeypatch):
     topic = uuid.uuid4()
     machine = hub.attach(topic, "seat", sink)
     sink.machine = machine
-    monkeypatch.setattr(app_preview, "preview_hub", hub)
+    monkeypatch.setattr(preview_relay, "preview_hub", hub)
     chunks = iter([b"12345678", b"9"])
 
     async def receive():
         return {"type": "http.request", "body": next(chunks), "more_body": True}
 
-    response = await app_preview.relay_http(topic, "seat", Request(_scope(), receive))
+    response = await preview_relay.relay_http(topic, "seat", Request(_scope(), receive))
     assert response.status_code == 413
     assert sink.frames == [] and machine.streams == {}
 
@@ -212,7 +213,7 @@ async def test_failed_write_closes_idle_real_adapter_and_joins_route(monkeypatch
 
     hub = PreviewHub()
     topic = uuid.uuid4()
-    monkeypatch.setattr(app_preview, "preview_hub", hub)
+    monkeypatch.setattr(preview_relay, "preview_hub", hub)
     monkeypatch.setattr(
         app_preview,
         "scoped_token_claims",

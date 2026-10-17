@@ -1,110 +1,39 @@
 <template>
-  <div class="an-section">
-    <div class="an-bar">
-      <AnalyticsPublisherSelect
-        v-model="publisherIdModel"
-        :publishers="publisherOptions"
-        :loading="publishersLoading"
-      />
-      <v-select
-        v-model="groupByModel"
-        autocomplete="off"
-        :items="options.groupBy.value"
-        :prefix="t('spaces.analytics.groupBy.label')"
-        :aria-label="t('spaces.analytics.groupBy.label')"
-        density="compact"
-        hide-details
-        variant="outlined"
-      />
-    </div>
-
-    <v-progress-linear v-if="loading && !overview" indeterminate color="primary" />
-
-    <!-- A failed reload must replace the block, not leave the previous filter's numbers standing (docs/design-system.md §3.10). -->
-    <BaseLoadError
-      v-if="failed"
-      :title="t('spaces.analytics.overview.loadFailed')"
-      :error="errorDetail"
-      @retry="load"
-    />
-
-    <template v-else-if="overview">
-      <AnalyticsStatStrip>
-        <AnalyticsMetricCard
-          v-for="item in metricCards"
-          :key="item.label"
-          :label="item.label"
-          :value="item.value"
-          :description="item.description"
-        />
-      </AnalyticsStatStrip>
-
-      <div class="an-grid">
-        <AnalyticsTrendCard
-          :title="t('spaces.analytics.overview.trend.joined')"
-          :points="overview.trends.participantsJoined"
-        />
-        <AnalyticsTrendCard
-          :title="t('spaces.analytics.overview.trend.succeeded')"
-          :points="overview.trends.successesAchieved"
-        />
-      </div>
-
-      <div class="an-grid">
-        <AnalyticsDistributionCard
-          :title="t('spaces.analytics.overview.distribution.category')"
-          :distribution="categoryDistribution"
-        />
-        <AnalyticsDistributionCard
-          :title="t('spaces.analytics.overview.distribution.approval')"
-          :distribution="approvalDistribution"
-        />
-        <AnalyticsDistributionCard
-          :title="t('spaces.analytics.overview.distribution.completion')"
-          :distribution="completionDistribution"
-        />
-      </div>
-
-      <section v-if="alerts">
-        <h3 class="an-card__title">{{ t('spaces.analytics.overview.alerts') }}</h3>
-        <AnalyticsAlertGrid :alerts="alerts" @open="openTasks" />
-      </section>
-    </template>
-
-    <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.overview.empty')" />
-  </div>
+  <OverviewView
+    v-model:publisher-id="publisherIdModel"
+    v-model:group-by="groupByModel"
+    :loading="loading"
+    :failed="failed"
+    :error-detail="errorDetail"
+    :overview="overview"
+    :alerts="alerts"
+    :publishers="publisherOptions"
+    :publishers-loading="publishersLoading"
+    @load="load"
+    @open-tasks="openTasks"
+  />
 </template>
 
 <script setup lang="ts">
 import type { SpaceAnalyticsAlerts, SpaceAnalyticsOverview } from '@/types/apiSpaces'
 import type { AnalyticsGroupBy, SpaceAnalyticsQueryState } from './utils'
 
-import { computed, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { ref, watch } from 'vue'
 
 import { useAnalyticsPublishers } from '@/composables/useAnalyticsPublishers'
 
-import AnalyticsAlertGrid from './components/AnalyticsAlertGrid.vue'
-import AnalyticsDistributionCard from './components/AnalyticsDistributionCard.vue'
-import AnalyticsMetricCard from './components/AnalyticsMetricCard.vue'
-import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
-import AnalyticsStatStrip from './components/AnalyticsStatStrip.vue'
-import AnalyticsTrendCard from './components/AnalyticsTrendCard.vue'
-import { useAnalyticsOptions } from './composables/useAnalyticsOptions'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
-import { formatCount, formatPercent, labelDistributionCodes, withDistributionPercent } from './helpers'
+import OverviewView from './OverviewView.vue'
 import { buildAnalyticsApiParams } from './utils'
 
 import { SpacesApi } from '@/api/spaces'
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 
+// 管理员看板「总览」那一格（`/spaces/:id/analytics`）：取数在这里，画法在 `OverviewView.vue`。
+// 这一层只做四件事 —— 拿 spaceId 取一次、空间或筛选换了重取一次、两个下拉写回筛选、点一个
+// 能处理的数时跳去「题目」那一格。判「失败/空/有数据」在画面那一半。
 const analyticsNames = ANALYTICS_ROUTE_NAMES
 const { filters, pushToSection, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
-
-const { t, te } = useI18n()
-const options = useAnalyticsOptions()
 
 const loading = ref(false)
 // 读失败和「还没有数据」是两件事：失败留在页面上（`failed`），空状态才交给「暂无」。
@@ -162,61 +91,6 @@ watch(
   { immediate: true }
 )
 
-const metricCards = computed(() => {
-  const o = overview.value
-  if (!o) return []
-  const m = o.entityMetrics
-  return [
-    { key: 'tasks', value: m.taskCount },
-    { key: 'publishers', value: m.publisherCount },
-    { key: 'claims', value: m.participantCount },
-    { key: 'submitted', value: m.submittedParticipantCount, rate: m.submissionConversionRate },
-    { key: 'succeeded', value: m.successfulParticipantCount, rate: m.successRate },
-    { key: 'members', value: o.studentMetrics.studentCount },
-  ].map((item) => ({
-    label: t(`spaces.analytics.overview.metric.${item.key}.label`),
-    value: formatCount(item.value),
-    description: t(`spaces.analytics.overview.metric.${item.key}.hint`, { rate: formatPercent(item.rate) }),
-  }))
-})
-
-const categoryDistribution = computed(() =>
-  overview.value
-    ? {
-        ...overview.value.taskDistributions.byCategory,
-        items: withDistributionPercent(overview.value.taskDistributions.byCategory),
-      }
-    : null
-)
-
-const approvalDistribution = computed(() =>
-  overview.value
-    ? {
-        ...overview.value.taskDistributions.byApprovalStatus,
-        items: labelDistributionCodes(
-          withDistributionPercent(overview.value.taskDistributions.byApprovalStatus),
-          t,
-          te
-        ),
-      }
-    : null
-)
-
-const completionDistribution = computed(() =>
-  overview.value
-    ? {
-        ...overview.value.taskDistributions.byCompletionStatus,
-        items: labelDistributionCodes(
-          withDistributionPercent(overview.value.taskDistributions.byCompletionStatus),
-          t,
-          te
-        ),
-      }
-    : null
-)
-
 /** 点一个能处理的数：去「题目」那一格，带上对应的筛选。 */
 const openTasks = (patch: Partial<SpaceAnalyticsQueryState>) => pushToSection(analyticsNames.tasks, patch)
 </script>
-
-<style scoped src="./analytics.css"></style>

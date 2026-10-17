@@ -5,12 +5,15 @@ A room opens a checkout per task under its home on a machine
 archived, so an old room carries every task it ever had — 56 checkouts, about
 20 GB, in one room on dev.
 
-The platform knows which tasks are closed, and names them;
-`resource_cleanup.remove_task_checkouts` removes each checkout that no process
-is inside. A closed task's work went to its branch and snapshot at each turn's
-checkpoint, so nothing waits on publication. It goes over the device exec the
-room's own archive cleanup uses, which needs no executor running there: an
-idle session usually has none.
+The platform knows which tasks are closed, and names them; the machine removes
+each checkout that no process is inside. A closed task's work went to its
+branch and snapshot at each turn's checkpoint, so nothing waits on publication.
+It goes over the device exec the room's own archive cleanup uses, which needs
+no executor running there: an idle session usually has none.
+
+Naming them is all this module does. Reaching the machine is a call this layer
+cannot make, so it is declared in `ports.py` and handed in by whoever builds
+us (`app.domain.agent.checkout_sweep` implements it).
 
 Two moments start it. A task closing, for every machine the room holds a
 lease on — the current ones and those it has left (`retained_leases`), whose
@@ -21,55 +24,39 @@ executor on again. Each run names all of the room's closed tasks, so a
 checkout something still had open is tried again on the next run.
 """
 
-import json
 import logging
 import uuid
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import background
 from app.core.db import after_own_commit
-from app.domain.agent import resource_cleanup
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.services import of_room, room_column
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.ports import SweepCheckouts
 from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger("cheesex.room_task.checkouts")
 
-# Removing checkouts of a few GB each, after one `lsof` over all of them.
-EXEC_TIMEOUT_S = 300.0
-# The most characters of task ids one exec names. Windows refuses a command
-# line over 32,767 characters ("The filename or extension is too long"), and
-# a room on dev has 1,250 closed tasks, about 46,000 characters of ids; so the
-# list goes in batches under that, and under cmd.exe's 8,191. Naming a task
-# again is harmless (`remove_task_checkouts`), so a batch can be retried alone.
-ARGV_BUDGET = 8000
-
-
-def _batches(tasks: list[str]) -> list[list[str]]:
-    batches: list[list[str]] = [[]]
-    size = 0
-    for task in tasks:
-        if batches[-1] and size + len(task) + 1 > ARGV_BUDGET:
-            batches.append([])
-            size = 0
-        batches[-1].append(task)
-        size += len(task) + 1
-    return batches
-
 
 async def remove_closed_checkouts(
-    sessions, *, room_id: uuid.UUID | None = None, device_id: str | None = None
+    sessions,
+    *,
+    room_id: uuid.UUID | None = None,
+    device_id: str | None = None,
+    machines: SweepCheckouts | None = None,
 ) -> dict[str, int]:
     """Ask each machine holding a lease of ``room_id`` (or every lease on
     ``device_id``) to remove its closed tasks' checkouts; answer how many
-    went and how many were kept."""
-    # deferred-import: tests replace this name on app.domain.agent.device_hub
-    from app.domain.agent.device_hub import device_hub
+    went and how many were kept.
 
+    ``machines`` is the call that reaches one machine with a list of task ids
+    (`ports.SweepCheckouts`), handed in by whoever built us. None is the wiring
+    missing, not a room without machines: a run that has checkouts to remove
+    and no way to reach a machine raises, and an idle one answers zero.
+    """
     # (device, work resource) -> (project, room). An archived room's own
     # cleanup removes its whole home; this leaves it to that.
     places: dict[tuple[str, str], tuple[uuid.UUID, uuid.UUID]] = {}
@@ -104,50 +91,41 @@ async def remove_closed_checkouts(
             for room, task in rows.all():
                 closed.setdefault(room, []).append(str(task))
     counts = {"removed": 0, "kept": 0}
-    script = Path(resource_cleanup.__file__).read_text()
     for (device, resource), (project, room) in places.items():
         tasks = closed.get(room)
-        if not tasks or not device_hub.is_online(device):
+        if not tasks:
             continue
-        for batch in _batches(tasks):
-            try:
-                result = await device_hub.exec(
-                    device,
-                    ["python3", "-", "tasks", str(project), resource, "-", "-", *batch],
-                    stdin=script,
-                    timeout=EXEC_TIMEOUT_S,
-                )
-                if result.get("exit") != 0 or result.get("truncated"):
-                    raise RuntimeError(
-                        str(result.get("stderr") or "no answer from the machine")[
-                            -1500:
-                        ]
-                    )
-                outcome = json.loads(result["stdout"])
-            except Exception:  # noqa: BLE001 — one machine must not stop the others
-                # WARNING, not ERROR: a machine going away mid-run is the usual
-                # cause, and its next connection runs this again.
-                logger.warning(
-                    "closed task checkouts not removed device=%s room=%s",
-                    device,
-                    room,
-                    exc_info=True,
-                )
-                break
-            counts["removed"] += len(outcome["removed"])
-            counts["kept"] += len(outcome["kept"])
-            for task, reason in outcome["kept"].items():
-                logger.info(
-                    "closed task checkout kept device=%s room=%s task=%s: %s",
-                    device,
-                    room,
-                    task,
-                    reason,
-                )
+        if machines is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("checkout sweep was not handed in")
+        try:
+            outcome = await machines(device, str(project), resource, tasks)
+        except Exception:  # noqa: BLE001 — one machine must not stop the others
+            # WARNING, not ERROR: a machine going away mid-run is the usual
+            # cause, and its next connection runs this again.
+            logger.warning(
+                "closed task checkouts not removed device=%s room=%s",
+                device,
+                room,
+                exc_info=True,
+            )
+            continue
+        counts["removed"] += len(outcome["removed"])
+        counts["kept"] += len(outcome["kept"])
+        for task, reason in outcome["kept"].items():
+            logger.info(
+                "closed task checkout kept device=%s room=%s task=%s: %s",
+                device,
+                room,
+                task,
+                reason,
+            )
     return counts
 
 
-def after_close(db: AsyncSession, room_id: uuid.UUID) -> None:
+def after_close(
+    db: AsyncSession, room_id: uuid.UUID, *, machines: SweepCheckouts | None = None
+) -> None:
     """Once ``db`` commits the close of a task in ``room_id``, remove the
     room's closed checkouts. Every place that closes a task calls this; a
     close that is rolled back runs it at the next commit instead, which
@@ -162,7 +140,7 @@ def after_close(db: AsyncSession, room_id: uuid.UUID) -> None:
     def committed() -> None:
         pending.discard(room_id)
         background.spawn(
-            remove_closed_checkouts(factory, room_id=room_id),
+            remove_closed_checkouts(factory, room_id=room_id, machines=machines),
             name="closed task checkouts",
         )
 

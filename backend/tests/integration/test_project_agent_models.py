@@ -15,6 +15,7 @@ from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from tests.conftest import stub_compute
 from tests.integration.conftest import (
+    approve_overseas,
     post_project,
     put_on_plan,
     session_auth_headers,
@@ -44,6 +45,7 @@ def create(client):
     async def reserve() -> None:
         async with client.test_request_factory() as session:  # type: ignore[attr-defined]
             await put_on_plan(session, project["team_id"], "reserve")
+            await approve_overseas(session, project["team_id"])
             await session.commit()
 
     client.portal.call(reserve)  # type: ignore[union-attr]
@@ -529,3 +531,81 @@ def test_the_picker_reports_a_main_model_that_left_the_catalog_as_saved(
     assert state["model"] == "opus"
     assert client.put(route, json={"model": "deepseek-flash"}).status_code == 200
     assert client.get(route).json()["data"]["model"] == "deepseek-flash"
+
+
+def test_a_subagent_naming_no_model_is_refused_a_model_its_team_lost(client):
+    """A subagent default saved while the team was approved is refused once the
+    approval is withdrawn, whether the subagent names the model or not."""
+    project = create(client)
+    pid = project["id"]
+    response = client.put(
+        f"/projects/{pid}/default-model",
+        json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+    )
+    assert response.status_code == 200, response.text
+
+    async def withdraw() -> None:
+        from sqlalchemy import delete
+
+        from app.domain.usage.models import OverseasModelApproval
+
+        async with client.test_request_factory() as session:  # type: ignore[attr-defined]
+            await session.execute(
+                delete(OverseasModelApproval).where(
+                    OverseasModelApproval.team_id == project["team_id"]
+                )
+            )
+            await session.commit()
+
+    client.portal.call(withdraw)  # type: ignore[union-attr]
+    token = mint_scoped_token(project_id=pid, topic_id=project["root_topic_id"])
+    headers = {"Authorization": f"Bearer {token}", "X-Cheese-Subagent": "1"}
+    main = client.post(
+        "/llm/admission", headers={"Authorization": f"Bearer {token}"}
+    ).json()["data"]
+    assert main["allow"] is True
+    for extra in ({}, {"X-Cheese-Child-Model": "sonnet"}):
+        child = client.post("/llm/admission", headers={**headers, **extra}).json()[
+            "data"
+        ]
+        assert child["allow"] is False, (extra, child)
+
+
+def test_a_turn_on_a_model_its_team_lost_is_refused_before_it_runs(client, tmp_path):
+    """A main model saved while the team was approved stops the turn once the
+    approval is withdrawn: it is not run, and not swapped for another model."""
+    from sqlalchemy import delete
+
+    from app.domain.policy.gate import OverseasNotApproved
+    from app.domain.usage.models import OverseasModelApproval
+
+    project = create(client)
+    pid = project["id"]
+    response = client.put(f"/projects/{pid}/default-model", json={"model": "sonnet"})
+    assert response.status_code == 200, response.text
+
+    async def withdraw() -> None:
+        async with client.test_request_factory() as session:  # type: ignore[attr-defined]
+            await session.execute(
+                delete(OverseasModelApproval).where(
+                    OverseasModelApproval.team_id == project["team_id"]
+                )
+            )
+            await session.commit()
+
+    client.portal.call(withdraw)  # type: ignore[union-attr]
+    chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
+        session_factory=client.test_request_factory,
+        compute=stub_compute(),
+        base_system_prompt="Test",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    with pytest.raises(OverseasNotApproved):
+        client.portal.call(
+            lambda: chat._model_kwargs(
+                uuid.UUID(pid),
+                RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost()),
+                uuid.UUID(project["root_topic_id"]),
+            )
+        )

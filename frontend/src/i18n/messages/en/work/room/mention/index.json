@@ -1,0 +1,15 @@
+{
+  "all": "Everyone",
+  "allSub": "{'@'}all · notifies everyone in the channel",
+  "archived": "Archived",
+  "back": "Back",
+  "fileCount": "No files | 1 file | {count} files",
+  "fileGroup": "Files",
+  "here": "Online members",
+  "hereSub": "{'@'}here · notifies online members",
+  "imageGroup": "Images",
+  "inProgress": "In progress",
+  "library": "Library",
+  "noFiles": "No matching files",
+  "noMatch": "No matches"
+}

@@ -168,8 +168,14 @@ COPY --chown=cheese:python alembic.ini ./
 # it comes in through the named `i18n` context (build.yml), to the place
 # app/core/sentences.py reads it from: three levels above that module's
 # directory (/app/app/core), which here is /. Without it the backend does not start.
-COPY --from=i18n --chown=cheese:python zh-CN/roomNotice.json zh-CN/apiError.json zh-CN/global.json /frontend/src/i18n/messages/zh-CN/
-COPY --from=i18n --chown=cheese:python en/roomNotice.json en/apiError.json en/global.json /frontend/src/i18n/messages/en/
+# Both catalogs are split by backend module, so each whole directory comes in —
+# one COPY per shard would need a line here for every new shard.
+COPY --from=i18n --chown=cheese:python zh-CN/roomNotice/ /frontend/src/i18n/messages/zh-CN/roomNotice/
+COPY --from=i18n --chown=cheese:python en/roomNotice/ /frontend/src/i18n/messages/en/roomNotice/
+COPY --from=i18n --chown=cheese:python zh-CN/apiError/ /frontend/src/i18n/messages/zh-CN/apiError/
+COPY --from=i18n --chown=cheese:python en/apiError/ /frontend/src/i18n/messages/en/apiError/
+COPY --from=i18n --chown=cheese:python zh-CN/global.json /frontend/src/i18n/messages/zh-CN/
+COPY --from=i18n --chown=cheese:python en/global.json /frontend/src/i18n/messages/en/
 # The agent-side assets the BACKEND serves at runtime: the `cheese` platform CLI
 # (fetched by enrolled devices via /sandbox/cli/cheese) and the skills seeded
 # into a topic's ~/.claude. Without these the device path has no CLI.
@@ -214,4 +220,15 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # stop_grace_period ran out and SIGKILL cut it off.
 # No uvicorn access log: the app logs every request itself (`req` in main.py,
 # with user, client and request id), and a second line per request doubled it.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--timeout-graceful-shutdown", "10", "--no-access-log"]
+#
+# `BACKEND_WORKERS` is how many worker processes this container runs. 1 is the
+# single process every deployment has run so far; a deploy raises it in
+# deploy/compose/docker-compose.base.yml. Each worker is a process of its own
+# with a pool of its own, so the app reads this SAME variable and hands each
+# worker its share of the container's connection budget
+# (Settings.db_connections_per_worker): four workers on the old per-process
+# pool ask a server that has 97 connections to give 4 x 36.
+# An exec-form CMD cannot expand a variable, so this goes through a shell;
+# `exec` keeps uvicorn the process Docker starts and signals.
+ENV BACKEND_WORKERS=1
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8081 --timeout-graceful-shutdown 10 --no-access-log --workers \"${BACKEND_WORKERS:-1}\""]

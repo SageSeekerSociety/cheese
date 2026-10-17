@@ -20,6 +20,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.announce import announce
+from app.domain.delivery.agent import (
+    record_task_instruction,
+)
+from app.domain.delivery.ledger import settle_card
 from app.domain.review import github_pr
 from app.domain.review.github_pr import OpenedPR
 from app.domain.review.github_pr_status import PullRequestStatus
@@ -36,6 +41,7 @@ from tests.integration.conftest import (
 from tests.landing import summary_turn_ends
 from tests.machine_work import machine_commits
 from tests.support import git_store
+from tests.support.review_ports import task_teammate
 
 REPO = "acme/widgets"
 
@@ -187,7 +193,15 @@ def _poll(client) -> dict:
     """
     from app.domain.review import pr_poll
 
-    return client.portal.call(pr_poll.poll_open_prs, _chat_service())
+    return client.portal.call(
+        lambda: pr_poll.poll_open_prs(
+            _chat_service(),
+            announce,
+            settle_card=settle_card,
+            record_instruction=record_task_instruction,
+            task_teammate=task_teammate,
+        )
+    )
 
 
 def _room(client, topic_id: str) -> str:
@@ -505,11 +519,11 @@ def app_world(client, monkeypatch):
     The fake records proposal edits and remote merges. Repository protection is
     disabled so the project approval policy is exercised by these tests.
     """
-    from app.domain.agent import github_app
     from app.domain.project import forge as project_forge
+    from app.domain.project import github_app
     from app.domain.project.models import ProjectForge
     from app.domain.repository import forge_files
-    from app.domain.review import pr_publish
+    from app.domain.review import forge_clients, pr_publish
     from app.domain.review import services as review_services
 
     fake = FakeGitHubPrClient()
@@ -642,7 +656,7 @@ def app_world(client, monkeypatch):
     monkeypatch.setattr(
         project_forge, "github_app_tokens_for_project", _tokens_for_project
     )
-    monkeypatch.setattr(project_forge, "GitHubPRClient", _AppPrOpener)
+    monkeypatch.setattr(forge_clients, "GitHubPRClient", _AppPrOpener)
 
     async def provision(project_id, session, **kwargs):
         binding = ProjectForge(
@@ -872,6 +886,17 @@ def _age_queue_mirror(client, card_id: str, *, seconds: int) -> str:
     return stale_at
 
 
+def _watch_window() -> int:
+    """「还在等 CI」的持有窗口，秒 —— `queries.CHECK_WATCH_TICKS` 个轮询间隔
+    （默认 3 × 60）。拨时钟的用例照它算，别复写「900」「300」这类数字：
+    `accept_pr_poll_interval_s` 一动它们就悄悄错位，而错位的那一侧是断言不
+    再钉在边界上（2026-10-16 300→60 时这里红过一次）。"""
+    from app.core.config import settings
+    from app.domain.review.queries import CHECK_WATCH_TICKS
+
+    return CHECK_WATCH_TICKS * settings.accept_pr_poll_interval_s
+
+
 def _waiting_on_checks(client, topic_id: str) -> bool:
     """环境释放判据读的就是它（`machine.lifecycle`）。"""
     from app.domain.review.queries import waiting_on_checks
@@ -892,7 +917,7 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     队列里 PR 的 `mergeStateStatus` 被 GitHub 钉在 BLOCKED，判定重算没有意义，
     所以进队以后不再重算它，只由轮询每跳把 `checked_at` 推到此刻（`state`、
     `reasons` 一条不动）。`checked_at` 是「还在等 CI」这句话的有效期：冻在入队
-    那一刻，过 `CHECK_WATCH_TICKS` 个轮询间隔（默认 15 分钟）就没人再当这张卡在
+    那一刻，过 `CHECK_WATCH_TICKS` 个轮询间隔（默认 3 分钟）就没人再当这张卡在
     等 CI，环境释放判据把机器收掉 —— 而轮询其实一直在看，回头还要叫醒这条线重建
     环境、重读文档。队列里这段和普通路径是同一件事，就该挂同一根钟（1 小时）。
 
@@ -924,7 +949,7 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     assert first["checked_at"] > enqueued["checked_at"]  # 只有 checked_at 走
 
     # 摆成「上一次看这张卡是三个轮询间隔以前」：不再刷的话，判据就不认它了。
-    stale_at = _age_queue_mirror(client, cid, seconds=3 * 300 + 1)
+    stale_at = _age_queue_mirror(client, cid, seconds=_watch_window() + 1)
     assert not _waiting_on_checks(client, tid)
 
     _poll(client)  # 队列里的下一跳：把有效期续上
@@ -939,10 +964,19 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     assert again["checked_at"] > stale_at
     assert _waiting_on_checks(client, tid)
 
-    # 这时浏览器来读一次卡。读卡这条路对「比地板（`accept_pr_snapshot_floor_s`
-    # = 60s）还旧」的快照会自己重算一遍，所以把 `checked_at` 拨到地板之外、
-    # 持有窗口（900s）之内：读卡会去重算它。
-    aged_at = _age_queue_mirror(client, cid, seconds=300)
+    # 这时浏览器来读一次卡。读卡这条路对「比地板（`accept_pr_snapshot_floor_s`）
+    # 还旧」的快照会自己重算一遍，所以把 `checked_at` 拨到地板之外、持有窗口
+    # 之内的一段——两个数都从设置里算，下面那条 assert 钉着这段确实存在：
+    # 地板追平窗口时这条用例就没法摆出「读卡会重算、判据却还认」这个状态了。
+    from app.core.config import settings as _settings
+
+    floor = _settings.accept_pr_snapshot_floor_s
+    window = _watch_window()
+    assert floor < window, (
+        f"地板的 {floor}s 不小于持有窗口的 {window}s，这条用例摆不出"
+        "「读卡重算、但判据仍认它是等 CI」的那段区间"
+    )
+    aged_at = _age_queue_mirror(client, cid, seconds=(floor + window) // 2)
     assert _waiting_on_checks(client, tid)  # 还在窗口里，判据照样认它
 
     _cards(client, tid)
@@ -1539,6 +1573,101 @@ def test_click_405_surfaces_githubs_reason_and_stops(client, app_world):
     assert "Merge commits are not allowed" in r.json()["message"]
     assert _cards(client, tid)[0]["status"] == "pending"
     assert _topic(client, tid)["accepted_at"] is None
+
+
+def _github_enforces(monkeypatch) -> None:
+    """这个项目的仓库自己开着分支保护/合并队列：平台不再自己判，直接调 GitHub
+    的合并 API（`_pr_verdict` 返回的 `enforces`）。真实实现要打 HTTP，`app_world`
+    把它钉成 False（「平台补位」那条路），走强制那条路的用例自己钉成 True。"""
+    from app.domain.review import services as review_services
+
+    async def _enforces(_repo, _token):
+        return True
+
+    monkeypatch.setattr(review_services, "_github_enforces", _enforces)
+
+
+def _room_event_settled(
+    client, topic_id: str, event_type: str, *, times: int = 1, tries: int = 40
+) -> int:
+    """房间事件是 fire-and-forget（spawn 出去的），给事件循环几拍落块的时间。"""
+    count = _room_event_count(client, topic_id, event_type)
+    for _ in range(tries):
+        if count >= times:
+            break
+        time.sleep(0.05)
+        count = _room_event_count(client, topic_id, event_type)
+    return count
+
+
+def test_a_conflicting_pr_stops_the_accept_in_a_github_enforced_project(
+    client, app_world, monkeypatch
+):
+    """GitHub 自己开着保护的项目：冲突的 PR 在点击那一刻停下，说清是冲突。
+
+    这道闸过去只在平台补位的项目上（`if not enforces` 那一条），强制项目会带着
+    `dirty` 去调合并 API；合并队列不收一个合不进去的 PR，入队那一步抛出的
+    `GitHubPrError` 落进调用点笼统的 `except Exception`，成了「PR 的合并结果暂时
+    无法确认，请重试以核对仓库状态」——把「先解冲突」读成了「重试一次」，而重试
+    不会让冲突消失（2026-10-16 采纳 PR #3927 时的样子）。
+
+    钉 `enforces=True` 是为了让这真的走强制那条路：不钉的话，`if not enforces`
+    那道守卫会替这道闸挡住合并调用，测的就不是强制项目了。"""
+    fake = app_world["fake"]
+    _github_enforces(monkeypatch)
+    _, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.mergeable_by_number[number] = False  # GitHub: CONFLICTING / DIRTY
+
+    attempts: list[dict] = []
+
+    async def refused_by_the_queue(**kw):
+        # 生产上这是 `_enqueue_if_required` 撞上 GitHub 的拒收：合并队列不要一个
+        # 合不进去的 PR，`_queue_request` 因此抛 GitHubPrError。
+        attempts.append(kw)
+        raise github_pr.GitHubPrError("GitHub did not confirm queue entry")
+
+    monkeypatch.setattr(fake, "merge_pull_request", refused_by_the_queue)
+
+    r = _accept(client, cid)
+    assert r.status_code == 422, r.text
+    message = r.json()["message"]
+    assert "冲突" in message
+    assert "无法确认" not in message
+    assert attempts == []  # 压根没去撞那道墙
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert "冲突" in card["note"]
+    assert card["note_level"] == "error"
+    assert _room_event_settled(client, tid, "accept_conflict") == 1
+    assert _topic(client, tid)["accepted_at"] is None
+
+
+def test_a_conflicting_pr_stops_the_accept_when_the_platform_enforces(
+    client, app_world
+):
+    """平台补位的项目：冲突同样停下，说清是冲突、卡上写明、房间有事件。
+
+    这条路上过去只有一句 `acceptBlocked`（「现在不能采纳（合并态：dirty）：与
+    目标分支冲突」）：一个状态词，卡上没有 note，房间也没有事件——芝士不知道有
+    活要干，人也不知道这件事不会自己好。"""
+    fake = app_world["fake"]
+    _, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.mergeable_by_number[number] = False
+
+    r = _accept(client, cid)
+    assert r.status_code == 422, r.text
+    message = r.json()["message"]
+    assert "冲突" in message
+    assert "现在不能采纳" not in message  # 不是那句「合并态：dirty」
+    assert "无法确认" not in message
+    assert fake.merge_calls == []
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert "冲突" in card["note"]
+    assert card["note_level"] == "error"
+    assert _room_event_settled(client, tid, "accept_conflict") == 1
 
 
 def _strip_delivery_claim(client, card_id: str) -> None:
@@ -2439,6 +2568,10 @@ def test_the_merge_that_closed_a_task_does_not_close_it_again(client, app_world)
         headers=session_auth_headers("alice"),
     )
     assert rejected.status_code == 200, rejected.text
+    # 退回的那一轮（告诉队友去改）先跑完：生产上改完再交时它早就结束了。还开着的
+    # 一轮会让写总结那一轮结束时任务照规矩不关（`room_task.closing.unfinished`），
+    # CI 上它偶尔恰好卡在这个窗口里，断言就读到 open。
+    wait_work_idle()
     # 同一张 PR 上再递一张 —— 生产上这是改完又交的那一版。
     resent = _make_card(client, tid)
     _give_card_a_pr(client, app_world, tid, resent, number)
@@ -3090,7 +3223,13 @@ def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
 def _sweep(client) -> dict:
     from app.domain.review import pr_publish
 
-    return client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
+    return client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+        )
+    )
 
 
 def _room_with_work(client) -> tuple[str, str]:
@@ -3340,7 +3479,13 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
 
     monkeypatch.setattr(TaskService, "open_without_pr", _list_then_merge)
 
-    counts = client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
+    counts = client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+        )
+    )
 
     assert counts["opened"] == 0, counts
     assert sweeping["opened"] == []
@@ -3439,8 +3584,7 @@ def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(client, sw
 def test_ready_reports_github_installation_rate_limit_without_changing_pr(
     client, sweeping, monkeypatch
 ):
-    from app.domain.project import forge as project_forge
-    from app.domain.review.github_pr import GitHubPRRateLimited
+    from app.domain.review.github_pr import GitHubPRClient, GitHubPRRateLimited
 
     _, tid = _room_with_work(client)
     _sweep(client)
@@ -3449,7 +3593,7 @@ def test_ready_reports_github_installation_rate_limit_without_changing_pr(
     async def limited(_self, _number):
         raise GitHubPRRateLimited("API rate limit exceeded for installation ID")
 
-    monkeypatch.setattr(project_forge.GitHubPRClient, "pr_view", limited)
+    monkeypatch.setattr(GitHubPRClient, "pr_view", limited)
     response = _ready(client, tid)
 
     assert response.status_code == 200, response.text
@@ -3634,6 +3778,27 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(
 
     assert swept == {"opened": 0, "skipped": 1, "failed": 0}, swept
     assert [o for o in sweeping["opened"] if o["draft"]] == []
+
+
+def test_a_card_still_waiting_to_be_settled_keeps_the_sweep_away(client, sweeping):
+    """这张卡还没结算，所以巡检连问都不问 GitHub 就把这批跳过。
+
+    判据是「有没有还没结算的卡」，不是「有没有递过卡」：一张 `pending` 的卡是
+    「这批活正在交付里」，巡检在那儿开 PR 只会多出一个没人要合的；结算过的卡不
+    挡，因为第二步正是靠这一点才开得出自己的 PR
+    （`test_a_task_delivers_in_steps.py::test_the_next_step_gets_a_draft_pr_of_its_own`）。
+
+    这条咬的是不加锁的预判那一步：预判先返回 False，锁里那一步这两条根本走不到
+    （把它删掉这条仍然绿，`test_a_batch_being_merged_right_now_does_not_get_a_second_pr`
+    管的就是那个窗口）。两条判据一起拿掉，这条和它一起红。
+    """
+    _pid, tid = _room_with_work(client)
+    _make_card(client, tid)  # 递出去就是 pending
+
+    counts = _sweep(client)
+
+    assert counts == {"opened": 0, "skipped": 1, "failed": 0}, counts
+    assert sweeping["opened"] == []
 
 
 def _treeless_card(client, topic_id: str, status: str) -> None:

@@ -1,20 +1,38 @@
 """The platform's skill guides, and what a session is shipped of them.
 
-The markdown next to this file is the platform's own prompt text, and two of
-them (`doc_writing.md`, `doc_blocks.md`) are also packed into a `cheese-docs`
-skill and sent to a session. The reader of that directory and the vocabulary of
-what travels are therefore the same thing, and both are read by packages
-further down than the one that writes prompts — `repository` builds a session
-directory, `project_skill` refuses a name the platform owns — which is why they
-sit here and not inside the agent layer that first needed them.
+The markdown next to this file is the platform's own prompt text, and four of
+them (`doc_writing.md`, `doc_blocks.md`, `doc_apps.md`, `doc_live.md`) are
+also packed into a `cheese-docs` skill and sent to a session. The reader of
+that directory and the vocabulary of what travels are therefore the same thing,
+and both are read by packages further down than the one that writes prompts —
+`repository` builds a session directory, `project_skill` refuses a name the
+platform owns — which is why they sit here and not inside the agent layer that
+first needed them.
 """
 
 import functools
 import json
+import uuid
 from pathlib import Path
+
+from app.core.config import settings
 
 #: Where the guides live: next to this file.
 SKILL_DIR = Path(__file__).parent
+
+
+def project_skills_root(project_id: uuid.UUID | str) -> Path:
+    """Where a project's confirmed skills are mirrored on disk for a session to
+    read: one directory per project under the platform's workspace.
+
+    Written by `project_skill.service`, rebuilt after every change. The
+    convention lives here, below both the writer and one of its readers —
+    `repository.service.session_dir` copies that directory into a session
+    directory — because where a path is is not worth an upward import;
+    `event_author` and `event_about` came down here for the same reason.
+    `project_skill.service` keeps its own name for the call, `mirror_root`.
+    """
+    return Path(settings.workspace_root) / ".project-skills" / str(project_id)
 
 
 def parse_frontmatter(path: Path) -> tuple[dict[str, str], str]:
@@ -118,4 +136,8 @@ def _native_skill_files() -> dict[str, str]:
     )
     _, blocks = parse_frontmatter(SKILL_DIR / "doc_blocks.md")
     files["skills/cheese-docs/references/blocks.md"] = blocks + "\n"
+    _, apps = parse_frontmatter(SKILL_DIR / "doc_apps.md")
+    files["skills/cheese-docs/references/apps.md"] = apps + "\n"
+    _, live = parse_frontmatter(SKILL_DIR / "doc_live.md")
+    files["skills/cheese-docs/references/live-doc.md"] = live + "\n"
     return files

@@ -38,8 +38,9 @@ const SELECTABLE = [
   // Step checklists: a teammate's in the chat, a room's and a card's progress.
   '.checklist',
   '.todo-checklist',
-  // File previews: a PDF's text layer and a sheet's cells.
+  // File previews: the text layers of a PDF and of slides, and a sheet's cells.
   '.pv-text',
+  '.slide-text-layer',
   '.ps__cell',
 ]
 

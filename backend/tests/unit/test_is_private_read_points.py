@@ -24,10 +24,15 @@ import pathlib
 #: 其余文件是登记，不是认可：它们多半是 ``WHERE is_private IS FALSE`` 这类「私聊
 #: 不进这张列表」的过滤，和轮次组装不是一回事，各自有各自的去向。
 BASELINE = {
-    # 1: `_private`. The policy's parameter is named for what it decides
-    # (`seats_only`: a private chat or a private channel), not for this flag.
-    "app/api/auth.py": 1,
-    "app/api/routes/project_environment.py": 2,
+    # 0: the access rules ask it once, in `app/auth/audience.py`. auth 拆成包后
+    # 这条换个路径接着钉：`ActorResolver` 和它的授权方法都在 `resolver.py`。
+    "app/api/auth/resolver.py": 0,
+    # 1: `seats_only`. The policy's parameter is named for what it decides
+    # (a private chat or a private channel), not for this flag.
+    "app/auth/audience.py": 1,
+    # Environment data access owns the route's two private-chat filters.
+    "app/api/routes/project_environment.py": 0,
+    "app/domain/project/environment.py": 2,
     # 0：项目这一侧本来有一处，现在推回 `_is_dm` 那一类了（结论 19）。留着这一行
     # 是把它钉在 0，谁再加一处回来，红的就是这条。
     "app/api/routes/projects.py": 0,
@@ -41,17 +46,25 @@ BASELINE = {
     "app/domain/thread/services.py": 1,
     # 置顶只在频道里有：私聊是两个人的，没有概览，也就没有置顶。
     "app/domain/pin/services.py": 1,
+    # 任务和支线都不是两个人之间的事：这一处原来在 `topic/services.py`，2026-10-16
+    # 跟着任务的动词一起搬到 `room_task/dispatch.py`。总数没变，只是换了文件。
+    "app/domain/room_task/dispatch.py": 1,
     "app/domain/topic/models.py": 1,
     # 画布格子关联的任务，在谁都能读的频道里才写给 AI 队友看：`open_rooms` 是
     # `WHERE is_private IS FALSE` 一类的过滤，和轮次组装不是一回事。
     "app/domain/topic/reads.py": 1,
-    # 8：未读数里私聊默认每条都算（`unread_counts`），和「私聊不进这张列表」一类
-    # 过滤同属登记。
-    "app/domain/topic/repositories.py": 8,
+    # 8，拆包之前是同一行的一条：这些读点现在散在四个子模块里（未读数 2、私聊
+    # 房间的取得 2、读点与列表过滤 4）。未读数里私聊默认每条都算
+    # （`unread_counts`），和「私聊不进这张列表」一类过滤同属登记。总数没变，
+    # 只是不再挤在一个路径上。
+    "app/domain/topic/repositories/reads.py": 3,
+    "app/domain/topic/repositories/statements.py": 1,
+    "app/domain/topic/repositories/unread.py": 2,
+    "app/domain/topic/repositories/writes.py": 2,
     # 频道能加入、退出、要加入才能在主线说话，私聊是两席、不走这些：`_public`
-    # 是这个文件唯一读那个布尔的地方。
-    "app/domain/topic_membership/services.py": 1,
-    "app/domain/topic/services.py": 1,
+    # 是唯一读那个布尔的地方。2026-10-16 `topic_membership/services.py` 拆成包时
+    # `_public` 跟着搬进了 `housekeeping.py`，位置变了、数没变。
+    "app/domain/topic_membership/services/housekeeping.py": 1,
 }
 
 _APP = pathlib.Path(__file__).resolve().parents[2] / "app"

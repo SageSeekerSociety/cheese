@@ -19,10 +19,10 @@ from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.platform_notices import EVENT_ROUTINE_RUN
 from app.domain.block.models import Block
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import names_a_person
+from app.domain.notice_meta import EVENT_ROUTINE_RUN
 
 
 async def turn_speakers(

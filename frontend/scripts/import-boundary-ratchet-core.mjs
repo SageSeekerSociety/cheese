@@ -33,6 +33,8 @@
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { parseEslintJsonFor } from './eslint-ratchet-json.mjs'
+
 /** The eslint rule that carries the boundary. Must match the id eslint reports. */
 export const BOUNDARY_RULE_ID = 'boundary/no-api-or-router'
 
@@ -200,53 +202,17 @@ export const boundaryPlugin = {
 }
 
 /**
- * Count boundary violations per file in eslint's `--format json` output.
- *
- * Keys are relative to `root` (forward slashes, no leading `./`): eslint reports
- * absolute paths, and a baseline keyed by those would only match on the machine
- * that wrote it — not in CI, not in a second worktree. `root` is a parameter
- * rather than a constant so the unit test can drive it with a fixture.
- *
- * Returns `{ counts, violations, unjudged }`. `violations` keeps eslint's own
- * `line`, `column` and `message` for every hit, for the failure report.
- * `unjudged` is non-empty when eslint could not
- * parse a file (`"fatal": true`) or reported a message with no rule id — a
- * syntax error, a missing parser, a plugin that crashed. Those are neither a
- * pass nor a violation of this rule, and counting them as zero is exactly how a
- * boundary check reports a clean tree it never read. The caller must treat a
- * non-empty `unjudged` as "could not judge".
+ * Count boundary violations per file in eslint's `--format json` output — this
+ * rule's share of it. The parsing, the relative-path keys and the "could not
+ * judge" set are the same question every rule-counting ratchet asks, so they
+ * live in `eslint-ratchet-json.mjs`; this binds it to `BOUNDARY_RULE_ID`.
  *
  * @param {string} text raw eslint JSON output
  * @param {string} root absolute path the file names are made relative to
  * @returns {{ counts: Record<string, number>, violations: {file: string, line: number, column: number, rule: string, message: string}[], unjudged: string[] }}
  */
 export function parseEslintJson(text, root = process.cwd()) {
-  const parsed = JSON.parse(String(text))
-  if (!Array.isArray(parsed)) {
-    throw new TypeError('eslint output is not a JSON array of file results')
-  }
-
-  const prefix = String(root).replaceAll('\\', '/').replace(/\/$/, '') + '/'
-  /** @type {Record<string, number>} */
-  const counts = {}
-  /** @type {{file: string, line: number, column: number, rule: string, message: string}[]} */
-  const violations = []
-  const unjudged = []
-  for (const result of parsed) {
-    const absolute = String(result.filePath ?? '').replaceAll('\\', '/')
-    const file = absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute
-    const messages = result.messages ?? []
-    if (result.fatal === true || messages.some((m) => m.ruleId == null)) {
-      unjudged.push(`${file}: ${messages.map((m) => m.message).join('; ') || 'fatal'}`)
-      continue
-    }
-    const hits = messages.filter((m) => m.ruleId === BOUNDARY_RULE_ID)
-    for (const m of hits) {
-      violations.push({ file, line: m.line, column: m.column, rule: m.ruleId, message: m.message })
-    }
-    if (hits.length > 0) counts[file] = (counts[file] ?? 0) + hits.length
-  }
-  return { counts, violations, unjudged }
+  return parseEslintJsonFor(text, root, BOUNDARY_RULE_ID)
 }
 
 // The ratchet arithmetic is the same question the vue-tsc and stylelint
@@ -261,6 +227,11 @@ export { compare, tightenedBaseline } from './tsc-ratchet-core.mjs'
  * The human-readable half: what went wrong, where, and what to do about it.
  * Takes what `compare()` returns, and (optionally) the violations from
  * `parseEslintJson` for the files that regressed.
+ *
+ * The reader is whoever has to land the fix, an agent as often as a person, and
+ * the report is the whole of what they get: the count says which file, so the
+ * rest of it names the shortest fix and the one-file command that proves it —
+ * a reader left to grep the tree reaches for the baseline instead.
  * @param {ReturnType<typeof compare>} result
  * @param {{file: string, line: number, column: number, rule: string, message: string}[]} [details]
  */
@@ -278,15 +249,51 @@ export function formatBoundaryReport(result, details = []) {
         lines.push(`  ${file}:${line}:${column}  ${rule}  ${message}`)
       }
     }
+    // A baseline key is a file path and the count is per file, so a move or a
+    // split renames the key: the path it went to is a key the baseline never
+    // had (base 0), and the path it left stops matching anything (now 0). Both
+    // at once is what that looks like, and a report that called it only "new
+    // violations" would send the reader to fix a component that imports nothing
+    // new. Printed only when the run has both, so the common case — a genuinely
+    // new import — is not buried under an explanation that does not apply.
+    const unfrozenKeys = result.regressions.filter(({ base }) => base === 0)
+    const unmatchedKeys = result.improvements.filter(({ now }) => now === 0)
+    if (unfrozenKeys.length && unmatchedKeys.length) {
+      lines.push('')
+      lines.push('The baseline is keyed by the file path under src/components, and the')
+      lines.push('count is per file, so moving or splitting a component changes its key:')
+      lines.push('the new path above reads as a violation while the old key — one of the')
+      lines.push('"Also improved" entries below — stops matching anything. If that is what')
+      lines.push('happened, realign the keys with `pnpm run lint:boundary:update` and check')
+      lines.push('the diff is the same count under the new key. A count that went up is a')
+      lines.push('real violation at whatever path, to fix rather than freeze.')
+    }
+
     lines.push('')
-    lines.push('A component under src/components must render from props alone: no')
-    lines.push('API layer, no vue-router. Move the fetch/navigation up to the view,')
-    lines.push('pass the data down, emit the intent up. If the component genuinely')
-    lines.push('has to do this, the honest fix is a view or a composable — not a')
-    lines.push('line in import-boundary-baseline.json, which only ever goes down.')
-    lines.push('Why, and what the boundary buys: .claude/rules/architecture.md (the')
-    lines.push('component boundary). The rule and its messages live in')
-    lines.push('scripts/import-boundary-ratchet-core.mjs.')
+    lines.push('Sink the dependency; do not freeze it in the baseline. What was crossed')
+    lines.push('is the API layer (@/api, @/services/*) or the router, and both sink the')
+    lines.push('same way:')
+    lines.push('  - Fetching belongs to the view (src/views/**) or to a composable the')
+    lines.push('    view calls (src/composables/), or a store (src/stores/) when several')
+    lines.push('    components share one request. The component takes the data as a prop')
+    lines.push('    and emits the intent back up.')
+    lines.push('  - The route moves up the same way: read it above and pass a NavTarget')
+    lines.push('    (src/lib/navTarget.ts) down; use useNavigation() (src/composables/)')
+    lines.push('    only where a component really must navigate, and keep vue-router —')
+    lines.push('    even `import type` — out of src/components.')
+    lines.push('  - Why, and what the boundary buys: .claude/rules/architecture.md')
+    lines.push('    (frontend: a component does not fetch). The rule and its messages')
+    lines.push('    live in scripts/import-boundary-ratchet-core.mjs.')
+    lines.push('')
+    lines.push('Check the one file you are fixing, from frontend/ — not the whole tree:')
+    for (const { file } of result.regressions) {
+      lines.push(`  pnpm exec eslint --config eslint.boundary.config.mjs ${file}`)
+    }
+    lines.push('That lists every violation in the file, baseline ignored. Then the gate')
+    lines.push('itself, narrowed to the same file (exit 1 while it still counts):')
+    for (const { file } of result.regressions) {
+      lines.push(`  node scripts/import-boundary-ratchet.mjs --files ${file}`)
+    }
   }
   if (result.improvements.length) {
     lines.push(result.regressions.length ? 'Also improved:' : 'Boundary debt went down — tighten the baseline:')

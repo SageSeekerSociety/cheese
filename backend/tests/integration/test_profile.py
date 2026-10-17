@@ -5,7 +5,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.memory.models import user_scope_id
 from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import DbMemoryStore

@@ -2,19 +2,20 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
-from app.domain.discussion.models import DiscussableModelType
+from app.domain.delivery.ledger import deliver
 from app.domain.discussion.reaction_services import DiscussionReactionService
 from app.domain.discussion.repositories import (
     DiscussionReactionRepository,
     DiscussionRepository,
     ReactionTypeRepository,
 )
-from app.domain.discussion.services import DiscussionService
+from app.domain.discussion.services import DiscussableModelType, DiscussionService
 from app.domain.questions.repositories import (
     QuestionInvitationRepository,
     QuestionRepository,
@@ -50,6 +51,7 @@ async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
         repo=discussion_repo,
         reaction_service=reaction_service,
         session=db,
+        deliver=deliver,
     )
 
 
@@ -76,7 +78,7 @@ async def get_trending_questions(
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     items = await service.get_trending_questions(limit=limit, days=days)
-    return {"code": 200, "message": "OK", "data": {"questions": items}}
+    return ok({"questions": items})
 
 
 @router.get(
@@ -87,7 +89,7 @@ async def get_question_stats(
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     stats = await service.get_stats()
-    return {"code": 200, "message": "OK", "data": stats}
+    return ok(stats)
 
 
 @router.get(
@@ -100,7 +102,7 @@ async def get_popular_search_terms(
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     terms = await service.get_popular_search_terms(limit=limit, days=days)
-    return {"code": 200, "message": "OK", "data": {"terms": terms}}
+    return ok({"terms": terms})
 
 
 @router.get(
@@ -122,7 +124,7 @@ async def search_questions(
         sort_by="createdAt",
         sort_order="desc",
     )
-    return {"code": 200, "message": "OK", "data": {"questions": items, "page": page}}
+    return ok({"questions": items, "page": page})
 
 
 @router.post(
@@ -168,7 +170,7 @@ async def add_question(
         bounty=bounty,
         topic_ids=topic_ints,
     )
-    return {"code": 201, "message": "Created", "data": {"id": question["id"]}}
+    return ok({"id": question["id"]})
 
 
 @router.get(
@@ -186,7 +188,7 @@ async def list_followed_questions(
         page_size=pageSize,
         page_start=pageStart,
     )
-    return {"code": 200, "message": "OK", "data": {"questions": items, "page": page}}
+    return ok({"questions": items, "page": page})
 
 
 @router.get(
@@ -200,7 +202,7 @@ async def get_question(
 ) -> dict:
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
     question = await service.get_question(question_id, user_id)
-    return {"code": 200, "message": "OK", "data": {"question": question}}
+    return ok({"question": question})
 
 
 @router.post(
@@ -219,7 +221,7 @@ async def follow_question(
     if not changed:
         raise BadRequestError("Already followed")
     follow_count = await service._repo.count_followers(question_id)
-    return {"code": 201, "message": "Created", "data": {"follow_count": follow_count}}
+    return ok({"follow_count": follow_count})
 
 
 @router.delete(
@@ -236,7 +238,7 @@ async def unfollow_question(
     )
     if not changed:
         raise BadRequestError("Not followed")
-    return {"code": 200, "message": "OK", "data": {"unfollowed": True}}
+    return ok({"unfollowed": True})
 
 
 @router.put(
@@ -252,7 +254,7 @@ async def accept_answer(
     question = await service.accept_answer(
         question_id=question_id, answer_id=answer_id, user_id=auth_user.user_id
     )
-    return {"code": 200, "message": "OK", "data": {"question": question}}
+    return ok({"question": question})
 
 
 @router.delete(
@@ -269,7 +271,7 @@ async def unaccept_answer(
     question = await service.unaccept_answer(
         question_id=question_id, user_id=auth_user.user_id
     )
-    return {"code": 200, "message": "OK", "data": {"question": question}}
+    return ok({"question": question})
 
 
 @router.post(
@@ -286,7 +288,7 @@ async def vote_question(
     result = await service.vote_question(
         question_id=question_id, user_id=auth_user.user_id, vote_type=vote_type
     )
-    return {"code": 200, "message": "OK", "data": result}
+    return ok(result)
 
 
 @router.delete(
@@ -301,7 +303,7 @@ async def remove_question_vote(
     result = await service.remove_question_vote(
         question_id=question_id, user_id=auth_user.user_id
     )
-    return {"code": 200, "message": "OK", "data": result}
+    return ok(result)
 
 
 @router.get(
@@ -315,7 +317,7 @@ async def get_question_votes(
 ) -> dict:
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
     result = await service.get_question_votes(question_id=question_id, user_id=user_id)
-    return {"code": 200, "message": "OK", "data": result}
+    return ok(result)
 
 
 @router.get(
@@ -344,7 +346,7 @@ async def list_question_comments(
         include_subs=True,
         with_reactions=True,
     )
-    return {"code": 200, "message": "OK", "data": {"comments": items, "page": page}}
+    return ok({"comments": items, "page": page})
 
 
 @router.post(
@@ -369,7 +371,7 @@ async def create_question_comment(
         parent_id=parent_id,
         mentioned_user_ids=mentioned_user_ids,
     )
-    return {"code": 201, "message": "Created", "data": {"comment": comment}}
+    return ok({"comment": comment})
 
 
 @router.delete(
@@ -397,7 +399,7 @@ async def delete_question_comment(
     if discussion["sender"]["id"] != auth_user.user_id:
         raise ForbiddenError("Only the author can delete this comment")
     await discussion_service.delete_discussion(comment_id)
-    return {"code": 200, "message": "OK", "data": {"deleted": True}}
+    return ok({"deleted": True})
 
 
 @router.put(
@@ -436,7 +438,7 @@ async def update_question(
         type_=type_,
         topic_ids=topic_ids,
     )
-    return {"code": 200, "message": "OK", "data": {"question": question}}
+    return ok({"question": question})
 
 
 @router.delete(
@@ -468,7 +470,7 @@ async def list_question_followers(
         page_start=page_start,
     )
     users = [{"id": uid} for uid in follower_ids]
-    return {"code": 200, "message": "OK", "data": {"users": users, "page": page}}
+    return ok({"users": users, "page": page})
 
 
 @router.put(
@@ -482,7 +484,7 @@ async def follow_question_put(
 ) -> dict:
     await service.follow_question(question_id=question_id, user_id=auth_user.user_id)
     follow_count = await service._repo.count_followers(question_id)
-    return {"code": 200, "message": "OK", "data": {"follow_count": follow_count}}
+    return ok({"follow_count": follow_count})
 
 
 @router.put(
@@ -501,7 +503,7 @@ async def set_question_bounty(
         user_id=auth_user.user_id,
         bounty=bounty,
     )
-    return {"code": 200, "message": "OK", "data": {"bounty": result["bounty"]}}
+    return ok({"bounty": result["bounty"]})
 
 
 @router.post(
@@ -530,7 +532,7 @@ async def attitude_question(
         "difference": result.get("upvotes", 0) - result.get("downvotes", 0),
         "user_attitude": attitude_type,
     }
-    return {"code": 200, "message": "OK", "data": {"attitudes": attitudes}}
+    return ok({"attitudes": attitudes})
 
 
 # ── 邀请的读侧 ──────────────────────────────────────────────────────────
@@ -571,7 +573,7 @@ async def list_question_invitations(
         page_start=page_start,
         page_size=page_size,
     )
-    return {"code": 200, "message": "OK", "data": {"invitations": items, "page": page}}
+    return ok({"invitations": items, "page": page})
 
 
 @router.post(
@@ -599,14 +601,12 @@ async def invite_user_to_answer(
         inviter_id=auth_user.user_id,
         invitee_id=invitee_id,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {
+    return ok(
+        {
             "invitationId": result["invitation_id"],
             "invitation": result["invitation"],
-        },
-    }
+        }
+    )
 
 
 @router.get(
@@ -620,7 +620,7 @@ async def get_invitation_recommendations(
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
     users = await service.get_recommendations(question_id=question_id, limit=limit)
-    return {"code": 200, "message": "OK", "data": {"users": users}}
+    return ok({"users": users})
 
 
 @router.get(
@@ -636,7 +636,7 @@ async def get_invitation_detail(
     invitation = await service.get_invitation(
         question_id=question_id, invitation_id=invitation_id
     )
-    return {"code": 200, "message": "OK", "data": {"invitation": invitation}}
+    return ok({"invitation": invitation})
 
 
 @router.delete(
@@ -654,4 +654,4 @@ async def delete_invitation(
         invitation_id=invitation_id,
         user_id=auth_user.user_id,
     )
-    return {"code": 200, "message": "OK", "data": {"deleted": True}}
+    return ok({"deleted": True})

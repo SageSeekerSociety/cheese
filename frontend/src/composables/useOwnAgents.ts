@@ -1,5 +1,5 @@
 // 项目设置里「成员自己的 Claude Code」那一块的数据：项目允不允许成员接入，以及谁加入了、
-// 各用哪份连接（#2991）。开关和允许的连接类型只有管理者能改；加入、移出和谁可以叫某一位，
+// 各用哪份连接（#2991）。开关、允许的连接类型和允许的服务商只有管理者能改；加入、移出和谁可以叫某一位，
 // 只有它的主人能改。
 import type { MaybeRefOrGetter } from 'vue'
 import type { OwnAgentCallers, OwnAgentKind, OwnAgentsSettings } from '@/types/ownAgents'
@@ -49,6 +49,20 @@ export function useOwnAgents(projectId: MaybeRefOrGetter<string>) {
     }
   }
 
+  /** 允许的自定义模型服务，按主机名；空列表是不限。 */
+  async function setServiceHosts(hosts: string[]) {
+    if (!state.value?.can_manage) return
+    saving.value = true
+    error.value = ''
+    try {
+      state.value = await setOwnAgentsRules(toValue(projectId), { service_hosts: hosts })
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : t('work.projectSettings.ownAgents.saveFailed')
+    } finally {
+      saving.value = false
+    }
+  }
+
   async function setCallers(handle: string, callers: OwnAgentCallers) {
     saving.value = true
     error.value = ''
@@ -85,5 +99,5 @@ export function useOwnAgents(projectId: MaybeRefOrGetter<string>) {
 
   watch(() => toValue(projectId), load)
 
-  return { state, error, saving, load, setAllowed, setKinds, setCallers, add, remove }
+  return { state, error, saving, load, setAllowed, setKinds, setServiceHosts, setCallers, add, remove }
 }

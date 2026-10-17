@@ -1,19 +1,4 @@
 {
   "_comment": "Unannotated imports inside a function body under backend/app, per file. May only go down: a new file must have none. Annotate one with `# deferred-import: <reason>` (same line or the line above) or lift it to module level. Refresh with `uv run python scripts/check_deferred_imports.py --update` (shrink-only). The rule is in .claude/rules/architecture.md.",
-  "files": {
-    "app/api/deps.py": 4,
-    "app/api/doc_store.py": 1,
-    "app/api/place.py": 1,
-    "app/api/preview_host.py": 1,
-    "app/api/task_instructions.py": 6,
-    "app/api/task_serialization.py": 1,
-    "app/api/write_access.py": 1,
-    "app/auth/checker.py": 2,
-    "app/common/auth.py": 2,
-    "app/core/background.py": 26,
-    "app/core/errors.py": 1,
-    "app/core/storage.py": 2,
-    "app/device_connection_app.py": 1,
-    "app/main.py": 28
-  }
+  "files": {}
 }

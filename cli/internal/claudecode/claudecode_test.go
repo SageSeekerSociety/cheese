@@ -43,7 +43,7 @@ func TestTheServersBuildIsFetchedOnceAndThenReused(t *testing.T) {
 	}
 	t.Setenv("HOME", t.TempDir())
 	var downloads atomic.Int32
-	srv := server(t, "2.1.282", fakeBuild("2.1.282"), &downloads)
+	srv := server(t, "2.1.299", fakeBuild("2.1.299"), &downloads)
 	// The stored base carries the connector path; artifacts are at the origin.
 	base := srv.URL + "/connector"
 
@@ -51,7 +51,7 @@ func TestTheServersBuildIsFetchedOnceAndThenReused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first install: %v", err)
 	}
-	if !runsAs(first, "2.1.282") {
+	if !runsAs(first, "2.1.299") {
 		t.Fatalf("installed build at %s does not run as the pinned version", first)
 	}
 	second, err := Ensure(context.Background(), base, nil)
@@ -73,7 +73,7 @@ func TestABuildThatIsNotThePinnedVersionIsRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	var downloads atomic.Int32
-	srv := server(t, "2.1.282", fakeBuild("2.0.0"), &downloads)
+	srv := server(t, "2.1.299", fakeBuild("2.0.0"), &downloads)
 
 	if _, err := Ensure(context.Background(), srv.URL, nil); err == nil {
 		t.Fatal("a build reporting another version was installed")

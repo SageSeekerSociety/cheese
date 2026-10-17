@@ -3,16 +3,16 @@
 # HTTP goes into two reverse SSH tunnels from the dev box, each landing on the
 # dev front door's 127.0.0.1:18080.
 #
-# PRE-FILING: okcheese.cn has no ICP filing yet, so nothing listens on 80/443.
-# The only HTTPS listener is :8443 with Caddy's internal CA, reachable through
-# ufw from a few test addresses only. When the filing is approved, this site
-# moves to :443 with a public certificate and the test listener goes away.
-{
-	auto_https disable_redirects
+# okcheese.cn is ICP-filed (京ICP备2026068086号), so this box may serve it on
+# 80/443. Only okcheese.cn names belong here: okcheese.com resolves to Hong
+# Kong, and a .com site block would only make Caddy try for a certificate it
+# cannot get. Plain http is Caddy's automatic redirect to https.
+
+www.okcheese.cn {
+	redir https://okcheese.cn{uri} permanent
 }
 
-https://okcheese.cn:8443, https://okcheese.com:8443 {
-	tls internal
+okcheese.cn {
 	reverse_proxy 127.0.0.1:18463 127.0.0.1:18464 {
 		# Same reasoning as HK: neither line is reliably faster, so requests
 		# in flight decide (a slow line collects them).

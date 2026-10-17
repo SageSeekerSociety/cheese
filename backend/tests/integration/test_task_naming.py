@@ -32,7 +32,8 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.room_task import naming
 from app.domain.room_task.models import Task, TaskTitle
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
@@ -362,11 +363,10 @@ def test_the_task_document_is_what_the_model_reads_as_its_goal(client, alice, ga
     assert "给 gateway 加限流" in gateway["asked"][0]
 
 
-def test_naming_is_recorded_as_the_platforms_spend_and_charges_no_team(
-    client, alice, gateway
-):
-    """Naming a task is work the platform does unasked (#2233): what it spent
-    is on the platform's books, and no team's credits or usage move."""
+def test_naming_is_charged_to_the_tasks_project(client, alice, gateway):
+    """Naming a task is a model call made for its project: the project's team
+    pays for it, and its usage says what it was for."""
+    from app.domain.usage.credits import CREDIT_USD
     from app.domain.usage.ledger import Ledger, payer_for_project
     from app.domain.usage.models import ResourceUsage
 
@@ -385,24 +385,16 @@ def test_naming_is_recorded_as_the_platforms_spend_and_charges_no_team(
                 )
             )
             payer = await payer_for_project(s, uuid.UUID(pid))
-            balance = await Ledger(s).balance(payer)
-            team_rows = list(
-                await s.scalars(
-                    select(ResourceUsage).where(
-                        (ResourceUsage.team_id == payer.team_id)
-                        | (ResourceUsage.project_id == uuid.UUID(pid))
-                    )
-                )
-            )
-            return rows, balance, team_rows
+            return rows, payer.team_id, await Ledger(s).balance(payer)
 
-    rows, balance, team_rows = client.portal.call(read)
-    assert [(r.input_tokens, r.output_tokens, r.cost_usd) for r in rows] == [
-        (300, 12, 0.0004)
-    ]
-    assert rows[0].team_id is None and rows[0].credits == 0
-    assert balance.credits_used == 0
-    assert team_rows == []
+    rows, team_id, balance = client.portal.call(read)
+    assert [
+        (r.input_tokens, r.output_tokens, r.cost_usd, r.project_id, r.team_id)
+        for r in rows
+    ] == [(300, 12, 0.0004, uuid.UUID(pid), team_id)]
+    assert rows[0].credits == pytest.approx(0.0004 / CREDIT_USD)
+    assert rows[0].conversation_id == uuid.UUID(rid)
+    assert balance.credits_used == pytest.approx(0.0004 / CREDIT_USD)
 
 
 def test_an_at_sign_in_the_middle_of_a_sentence_is_not_a_mention(
@@ -827,22 +819,29 @@ def test_a_rename_is_heard_on_the_tasks_own_page_and_in_its_channel(
 ):
     """The task's page listens on the task's conversation and the channel's
     pages on the channel's: a new title reaches both without a reload."""
-    import app.domain.agent.staleness as staleness
+    from app.domain.agent import live_notices
 
     heard: list[tuple[str, str, str | None]] = []
 
-    async def announce(conversation_id, resource, *, id=None):
-        heard.append(
-            (str(conversation_id), resource, str(id) if id is not None else None)
-        )
+    class _Broker:
+        """发布出去的那几帧，代替 broker（`agent/live_notices` 在提交后发的）。"""
 
-    monkeypatch.setattr(staleness, "announce_stale", announce)
+        async def publish(self, channel, frame):
+            heard.append((str(channel), frame.get("resource"), frame.get("id")))
+
+    async def _told(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(live_notices, "get_broker", lambda: _Broker())
+    monkeypatch.setattr(live_notices, "tell_project", _told)
     project = _project(client, alice)
     room = project["root_topic_id"]
     tid = _task(client, alice, room)
     _say(client, tid, "帮我排查一下 dev 机器从外网访问很慢的问题")
     gateway["answers"].append({"keep": False, "title": "dev 外网访问慢排查"})
     assert _run(client, tid, "message") is not None
+    # 帧是提交之后后台发的，再走一趟 portal 让那个循环把它发出去。
+    _shown(client, tid)
     assert (tid, "topics") in [(c, r) for c, r, _ in heard]
     assert (room, "topics") in [(c, r) for c, r, _ in heard]
     # Both frames name the ROOM's row: the sidebar holds rooms, and a task id is

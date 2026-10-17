@@ -18,14 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
+from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
+from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.notice_meta import (
     EVENT_FILE_EDITED,
     SEVERITY_INFO,
     WHO_CHEESE,
     notice,
 )
-from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
-from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.room_task.models import Task
 
 

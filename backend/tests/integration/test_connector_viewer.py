@@ -10,8 +10,7 @@ import uuid
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from app.api.routes import connector
-from app.common.auth import create_access_token
+from app.common.auth import create_access_token, verify_access_token
 from app.domain.agent.device_hub import HubScreen, device_hub
 from app.domain.user.repositories import UserRepository
 from app.domain.user.sessions import SessionService
@@ -117,6 +116,31 @@ def test_outsider_cannot_watch_screen(client):
         _unregister(screen)
 
 
+def test_a_viewer_token_that_states_no_handle_resolves_through_its_user_id(client):
+    """The 现场 gate reads the caller as a handle too, and the roster knows a
+    name, never a user id: a token that names only the id has to be looked up.
+    Comparing the roster against the id's digits denied the project's own owner.
+    """
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
+    owner_id = verify_access_token(_login_real(client, "alice")).user_id
+    assert owner_id is not None
+    token = create_access_token(owner_id)  # older shape: no ``handle`` claim
+    screen = _register_screen(
+        project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-x"
+    )
+    try:
+        url = f"/connector/session/{screen.sid}/screen?token={token}"
+        with client.websocket_connect(url) as ws:
+            ws.send_json({"type": "resize", "cols": 100, "rows": 30})
+            for _ in range(100):
+                if screen.viewers:
+                    break
+                time.sleep(0.02)
+            assert screen.viewers, "the owner should be attached"
+    finally:
+        _unregister(screen)
+
+
 def _signed_in_viewer(client, handle: str) -> tuple[int, uuid.UUID, str]:
     """A real sign-in for ``handle``, and the page's access token for it.
 
@@ -160,7 +184,7 @@ def test_a_viewer_whose_sign_in_ended_stops_driving_the_screen(client, monkeypat
 
     The interval is 25s in production; its length is not what this pins, so it
     is shortened to keep the test quick."""
-    monkeypatch.setattr(connector, "VIEW_RECHECK_EVERY_S", 0.2)
+    monkeypatch.setattr("app.api.routes.connector.screen.VIEW_RECHECK_EVERY_S", 0.2)
     project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     user_id, sid, page = _signed_in_viewer(client, "alice")
     screen = _register_screen(

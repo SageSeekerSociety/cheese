@@ -7,25 +7,29 @@
 //   长绿（不动）  这里做过事、都做完交付完了，你还没点开看过。点开过就灭；之后
 //                 再有新活，回到呼吸绿。
 //   红（不动）    显示在跑，但五分钟没动静。
-//   黄（不动）    有事等你：一道只有你能答的问题、一张等你采纳的卡。
-//   蓝（不动）    这条是我之外的人负责的。只有任务行用得着。
+//   黄（不动）    有事等你：一道只有你能答的问题、一张等你采纳的卡，或者有人回复了
+//                 我、我还没处理。
+//   蓝（不动）    这条活归我，状态上没别的话可说。只有任务行用得着。
 //   不亮          没开过、也没活在跑的，不亮灯。
 //
-// 前四条判据全是**事实**，这一份不推状态、只排先后：在不在往前走看 `moving`
+// 五条判据全是**事实**，这一份不推状态、只排先后：在不在往前走看 `moving`
 // （后端按「活的事实压过纸面」算，房间那一行还含它名下的活），等不等人看
 // `awaits_me`（后端按看的人算），多久没输出看 `last_output_at`（后端取整到分钟），
-// 交付完没看过看 `unseen_delivery`（后端比的是这个人的已读位和采纳时刻）。
+// 交付完没看过看 `unseen_delivery`（后端比的是这个人的已读位和采纳时刻），有人回了
+// 我没处理看 `repliedToMe`（后端比的是这个人上次打开这间房的时刻和那条回复落地的
+// 时刻）。
 //
-// 蓝灯是第五条，**不是判据**：谁负责写在数据里（`owner_handle`），`lightOf` 不看它，
-// 也永远不会返回蓝灯——它是调用方在拿到灯之后盖上的一枚印（`useTopicRail.taskLight`）。
+// 蓝灯**不是判据**：谁负责写在数据里（`owner_handle`），`lightOf` 不看它，
+// 也永远不会返回蓝灯——它是调用方盖的一枚印（`useTopicRail.taskLight`），而且只在
+// 状态那几盏都没话说的时候才盖：它说的那件事（这条归我）比状态轻。
 //
-// 优先级：蓝 > 红 > 黄 > 呼吸绿 > 长绿 —— 一行上只画一盏灯，蓝最亮。蓝压过一切
-// 是刻意的：那条活不归我，先看清这件事，再看它在跑还是卡住。折叠开关在收起来
-// 的一堆行里挑一个颜色出来时也走同一个次序（`brightest`）。
+// 优先级：红 > 黄 > 呼吸绿 > 长绿 > 蓝 —— 一行上只画一盏灯，蓝最暗。蓝垫底是刻意
+// 的：红黄绿说的是这条活现在怎么了，非说不可；蓝只说这条归我，没别的可说时才轮到
+// 它。折叠开关在收起来的一堆行里挑一个颜色出来时也走同一个次序（`brightest`）。
 //
-// 「点开过就灭」不在这一份里：那是数据的事（服务端按已读位算 `unseen_delivery`，
-// 点开时本地先把那一行灭掉，见 `stores/workspace` 的 `forgetUnseenDelivery`）。
-// 这里因此是个纯函数，测得起来。
+// 「点开过就灭」不在这一份里：那是数据的事（服务端按已读位算 `unseen_delivery` 和
+// `replied_to_me`，点开时本地先把那一行灭掉，见 `stores/workspace` 的
+// `forgetReadLights`）。这里因此是个纯函数，测得起来。
 
 import { t } from '@/i18n'
 
@@ -38,11 +42,11 @@ export interface RowLight {
   breathe: boolean
 }
 
-/** 别人的活那一盏灯：`lightOf` 不产它，调用方盖上（见文件头）。 */
-export const OTHERS_LIGHT: RowLight = { kind: 'blue', breathe: false }
+/** 我负责的活那一盏灯：`lightOf` 不产它，调用方在前面四盏都不亮时盖上（见文件头）。 */
+export const MINE_LIGHT: RowLight = { kind: 'blue', breathe: false }
 
-/** 亮到暗。`brightest` 用它排序。 */
-const BRIGHTNESS: Record<LightKind, number> = { blue: 4, red: 3, yellow: 2, green: 1 }
+/** 亮到暗。`brightest` 用它排序。蓝垫底：它说的是这条归谁，不是这条怎么了。 */
+const BRIGHTNESS: Record<LightKind, number> = { red: 3, yellow: 2, green: 1, blue: 0 }
 
 /** 「显示在跑、但五分钟没动静」的那五分钟，和 `lib/replyWait.ts` 里等一位成员
  * 回话的阈值是同一个数：两条判据说的是同一件事——五分钟没有新东西出来。 */
@@ -63,6 +67,10 @@ function quietForMs(lastOutputAt: string | null | undefined, now: number): numbe
  * 走、又已经五分钟没有新输出的画红。后者要 `lastOutputAt` 说得出话说得准 —— 说不
  * 出来（没在跑、或那个进程说不了）就不画红：不知道不等于卡住。
  *
+ * `awaitsMe` 和 `repliedToMe` 画同一盏黄灯 —— 都是「有事等你」：一道只有你能答的问
+ * 题、一张等你采纳的卡，或者一条别人回给你的消息。两样各自都有别的记法（待办、未
+ * 读角标），这里的灯只负责让这一行在侧栏里先被看见。
+ *
  * `now` 是调用方自己的钟：五分钟是时间走到的，不是数据变出来的（`useTopicRail`
  * 有一只为这件事拨的慢钟）。
  */
@@ -70,6 +78,8 @@ export function lightOf(
   facts: {
     /** 有事在等我（一道只有我能答的问题、一张等我采纳的卡）。 */
     awaitsMe: boolean
+    /** 有人回复了我、我还没处理（回复我发的消息，或者 @ 我）。 */
+    repliedToMe: boolean
     /** 这里有活在往前走：有一轮在跑，或者走在交付链路上。 */
     moving: boolean
     /** 做完了、交付完了，而我还没点开看过。 */
@@ -83,7 +93,7 @@ export function lightOf(
   if (facts.moving && quiet !== null && quiet >= LIGHT_STALL_MS) {
     return { kind: 'red', breathe: false }
   }
-  if (facts.awaitsMe) return { kind: 'yellow', breathe: false }
+  if (facts.awaitsMe || facts.repliedToMe) return { kind: 'yellow', breathe: false }
   if (facts.moving) return { kind: 'green', breathe: true }
   if (facts.unseenDelivery) return { kind: 'green', breathe: false }
   return null
@@ -107,7 +117,7 @@ export function brightest(lights: Iterable<RowLight | null | undefined>): RowLig
 
 /** 灯上悬停（和读屏）说的那一个词：这一行现在怎么了。 */
 export function lightTitle(light: RowLight): string {
-  if (light.kind === 'blue') return t('work.sidebar.light.others')
+  if (light.kind === 'blue') return t('work.sidebar.light.mine')
   if (light.kind === 'red') return t('work.sidebar.light.red')
   if (light.kind === 'yellow') return t('work.sidebar.light.yellow')
   return t(light.breathe ? 'work.sidebar.light.moving' : 'work.sidebar.light.delivered')
