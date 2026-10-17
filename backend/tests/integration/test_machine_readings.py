@@ -20,12 +20,13 @@ since this machine has neither.
 
 import asyncio
 import json
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import insert, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core import alerting
 from app.core.config import settings
@@ -33,7 +34,12 @@ from app.domain.machine import disk_guard, readings
 from app.domain.machine.models import HostReading, SandboxHome, SandboxUsage
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_cloud_host_pool import pool  # noqa: F401 — fixture
-from tests.integration.test_sandbox_disk_guard import ROOM, files, guard
+from tests.integration.test_sandbox_disk_guard import (
+    ROOM,
+    files,
+    guard,
+    on_the_same_host,
+)
 from tests.integration.test_sandbox_idle_stop import (  # noqa: F401 — fixture
     cloud,
     home_of,
@@ -46,16 +52,21 @@ from tests.integration.test_sandbox_idle_stop import (  # noqa: F401 — fixture
 GIB = 2**30
 
 
-def kernel_says(case, machines: dict[str, dict], sandboxes: dict[str, list]) -> None:
+def kernel_says(
+    case,
+    machines: dict[str, dict],
+    sandboxes: dict[str, list],
+    filesystem: dict = ROOM,
+) -> None:
     """From now on each host's reading reports this of its memory and CPU,
-    and these sandbox cgroups; its disk is ``ROOM``."""
+    these sandbox cgroups, and this of its disk."""
     real = case.hosts.exec
 
     async def exec_(device_id, argv, *, stdin=None, **kwargs):
         result = await real(device_id, argv, stdin=stdin, **kwargs)
         if stdin and '"action": "disk"' in stdin and not result["exit"]:
             answer = json.loads(result["stdout"].strip().splitlines()[-1])
-            answer["filesystem"] = ROOM
+            answer["filesystem"] = filesystem
             answer["machine"] = machines.get(device_id, {})
             answer["sandboxes"] = sandboxes.get(device_id, [])
             result = {**result, "stdout": json.dumps(answer)}
@@ -200,6 +211,66 @@ def test_a_sandbox_destroyed_while_its_host_is_read_does_not_stop_the_guard(
     rows = {h["id"]: h for h in page(cloud)["hosts"]}
     assert rows[str(hosts["host-1"])]["usage"]["memory_used_bytes"] == 2 * GIB
     assert rows[str(hosts["host-2"])]["usage"]["memory_used_bytes"] == 3 * GIB
+
+
+#: A disk with its inodes nearly gone: the guard evicts the heaviest sandbox.
+SHORT = {"bytes": 10**12, "bytes_free": 9 * 10**11, "inodes": 2000, "inodes_free": 20}
+
+
+@pytest.fixture
+def two_a_host(monkeypatch):
+    monkeypatch.setattr(settings, "cloud_host_slots_per_core", 2)
+
+
+def test_a_full_disk_is_freed_even_when_its_reading_cannot_be_kept(
+    cloud,  # noqa: F811
+    two_a_host,
+    monkeypatch,
+):
+    """Keeping the reading is for the page; freeing a full disk is the guard's
+    job, and the first failing must not stop the second."""
+    light, heavy, _ = cloud.seats
+    working_on(cloud, light, "host-1")
+    on_the_same_host(cloud, heavy, "host-1")
+    files(sandbox_dir(cloud, heavy, "host-1") / "brute", 300)
+    kernel_says(cloud, {"host-1": memory(2)}, {}, SHORT)
+
+    async def database_gone(*args, **kwargs):
+        raise OperationalError("INSERT", {}, ConnectionError("database went away"))
+
+    monkeypatch.setattr(readings, "record", database_gone)
+
+    assert guard(cloud)["evicted"] == 1
+    assert home_of(cloud, heavy) is None
+
+
+def test_a_reading_is_dated_when_the_host_was_read_not_after_the_guard_acted(
+    cloud,  # noqa: F811
+    two_a_host,
+):
+    """Stopping a sandbox can take minutes; the page must not show a disk read
+    before that as read after it."""
+    light, heavy, _ = cloud.seats
+    working_on(cloud, light, "host-1")
+    on_the_same_host(cloud, heavy, "host-1")
+    files(sandbox_dir(cloud, heavy, "host-1") / "brute", 300)
+    kernel_says(cloud, {"host-1": memory(2)}, {}, SHORT)
+    read: list[float] = []
+
+    async def slow_to_stop(device_id, action):
+        if action == "disk":
+            read.append(time.time())
+        if action == "destroy":
+            await asyncio.sleep(1.5)
+
+    cloud.hosts.after = slow_to_stop
+    assert guard(cloud)["evicted"] == 1
+
+    host = next(
+        h for h in page(cloud)["hosts"] if h["id"] == str(host_of(cloud, light).id)
+    )
+    stamped = datetime.fromisoformat(host["usage"]["read_at"]).timestamp()
+    assert stamped - read[-1] < 1
 
 
 def test_a_host_whose_sandboxes_are_gone_is_still_read(cloud):  # noqa: F811

@@ -224,6 +224,9 @@ class DiskGuard:
             reading = await self._read(device_id, live, walk=True)
             filesystem = reading["filesystem"]
             full = below_floor(filesystem)
+        # When the values were true, for the machines page: the evictions below
+        # can take minutes, and a reading stamped after them looks newer than it is.
+        read_at = datetime.now(UTC)
         if walk:
             _walked[device_id] = now
         await self._mark(device_id, full, filesystem)
@@ -273,14 +276,13 @@ class DiskGuard:
             # Last, so keeping the reading for the machines page can never stand
             # between a full disk and the eviction that frees it.
             try:
-                await readings.record(
-                    self._session, host, reading, live, datetime.now(UTC)
-                )
+                await readings.record(self._session, host, reading, live, read_at)
             except SQLAlchemyError:
+                # The machines page and the capacity alert go without this
+                # reading; that is an error a person should hear of, and still
+                # not one that stops the guard from reading the next machine.
                 await self._session.rollback()
-                logger.warning(
-                    "keeping the reading of %s failed", device_id, exc_info=True
-                )
+                logger.exception("keeping the reading of %s failed", device_id)
         return {"read": 1, "walked": int(walk), "evicted": evicted, "removed": removed}
 
     async def _read(self, device_id: str, live: list, *, walk: bool) -> dict:
