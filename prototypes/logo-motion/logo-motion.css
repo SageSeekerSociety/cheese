@@ -1,0 +1,6 @@
+/*! 知是 logo 动效 · 咬痕（logo-motion.js 的可选样式，不加也能跑） */
+.logo-motion{cursor:pointer;touch-action:manipulation;-webkit-user-drag:none;user-select:none}
+.logo-motion:focus-visible{outline:2px solid #FF9500;outline-offset:8px}
+@media (prefers-reduced-motion:reduce){
+  .logo-motion{transition:none!important;animation:none!important}
+}
