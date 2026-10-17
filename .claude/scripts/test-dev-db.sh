@@ -167,10 +167,22 @@ printf '#!/usr/bin/env bash\necho 0.85.1\n' >"$pi_dir/pi"
 chmod +x "$stub"/* "$harness"/* "$pi_dir/pi"
 
 # --- helpers -----------------------------------------------------------------
+port_candidate() {
+    local port
+    if [ -s "$state/port-candidates" ]; then
+        IFS= read -r port <"$state/port-candidates"
+        tail -n +2 "$state/port-candidates" >"$state/port-candidates.next"
+        mv "$state/port-candidates.next" "$state/port-candidates"
+    else
+        port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+    fi
+    printf '%s\n' "$port"
+}
+
 free_port() {
     local port
     while :; do
-        port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+        port="$(port_candidate)"
         if grep -Fqx "$port" "$state/allocated-ports" 2>/dev/null || [ -e "$state/redis-$port" ]; then
             continue
         fi
@@ -236,10 +248,18 @@ dead() { ! kill -0 "$1" 2>/dev/null; }
 stdout_is_only_exports() { ! grep -qv '^export ' "$sandbox/out"; }
 
 # --- cases -------------------------------------------------------------------
-# A returned port is reserved so a later allocation cannot reuse a Redis stub's
-# non-listening, file-backed port.
+# Force a previously allocated port and a file-backed Redis port so the next
+# allocation must skip both and use the following candidate.
+printf '%s\n' 12345 >"$state/port-candidates"
 allocated_port="$(free_port)"
-check port-allocation "assigned port is recorded" grep -Fxq "$allocated_port" "$state/allocated-ports"
+registered_port=12346
+expected_port=12347
+: >"$state/redis-$registered_port"
+printf '%s\n' "$allocated_port" "$registered_port" "$expected_port" >"$state/port-candidates"
+next_port="$(free_port)"
+rm -f "$state/port-candidates" "$state/redis-$registered_port"
+: >"$sandbox/err"
+check port-allocation "skips allocated and registered ports" [ "$next_port" = "$expected_port" ]
 
 # A deep default HOME falls back without requiring an environment override.
 long_home="$sandbox/$(printf '%0120d' 0)"
