@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import secrets
+import shlex
 import time
 import uuid
 from collections.abc import Sequence
@@ -33,9 +34,11 @@ from app.core.crypto import DecryptionError, Purpose, decrypt, encrypt
 from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.remote_mcp import declared, local, oauth, upstream
-from app.domain.remote_mcp.declared import Declared, RemoteServer
+from app.domain.remote_mcp.declared import Declared, LocalServer, RemoteServer
 from app.domain.remote_mcp.models import (
+    ProjectMcpCommand,
     ProjectMcpConnection,
+    ProjectMcpRun,
     ProjectMcpSecret,
     ProjectMcpServer,
 )
@@ -151,16 +154,29 @@ async def _added_rows(
     return {row.name: row for row in rows}
 
 
+async def _command_rows(
+    db: AsyncSession, project_id: uuid.UUID
+) -> dict[str, ProjectMcpCommand]:
+    rows = await db.scalars(
+        select(ProjectMcpCommand)
+        .where(ProjectMcpCommand.project_id == project_id)
+        .order_by(ProjectMcpCommand.created_at)
+    )
+    return {row.name: row for row in rows}
+
+
 async def _with_added(
     db: AsyncSession, project_id: uuid.UUID, found: Declared
 ) -> Declared:
-    return declared.with_settings(
-        found,
-        [
-            declared.settings_server(row.name, row.url, row.header_name)
-            for row in (await _added_rows(db, project_id)).values()
-        ],
-    )
+    added: list[RemoteServer | LocalServer] = [
+        declared.settings_server(row.name, row.url, row.header_name)
+        for row in (await _added_rows(db, project_id)).values()
+    ]
+    added += [
+        local.added_server(row)
+        for row in (await _command_rows(db, project_id)).values()
+    ]
+    return declared.with_settings(found, added)
 
 
 async def _project_declared(
@@ -311,6 +327,7 @@ async def settings_view(
                     "at": _when(row.created_at),
                     "url": row.url,
                     "header": row.header_name,
+                    "env": None,
                 }
                 if row is not None
                 else None,
@@ -350,7 +367,9 @@ async def settings_view(
     owners = await device_owners(
         db, sorted({r.device_id for r in runs.values() if r.device_id})
     )
-    servers += local.rows(found, types, runs, owners, secret_rows)
+    servers += local.rows(
+        found, types, runs, owners, secret_rows, await _command_rows(db, project_id)
+    )
     return {"servers": servers, "problem": found.problem}
 
 
@@ -693,9 +712,7 @@ async def add_server(
     _checked(name, url, header_name)
     if header_name is not None and not header_value:
         raise UnprocessableEntityError(say("mcpValueRequired"))
-    found = await _project_declared(db, project_id, project_types, fresh=True)
-    if name in found.names or found.get(name) is not None or name in found.shadowed:
-        raise UnprocessableEntityError(say("mcpServerNameTaken", name=name))
+    await _name_free(db, project_id, name, project_types)
     db.add(
         ProjectMcpServer(
             project_id=project_id,
@@ -710,6 +727,127 @@ async def add_server(
     if header_name is not None and header_value:
         await _store_header(db, project_id, name, header_value, handle)
     await db.commit()
+
+
+async def _name_free(
+    db: AsyncSession, project_id: uuid.UUID, name: str, project_types: ProjectTypes
+) -> None:
+    """Refuse a name any source of the project already uses, so the server an
+    agent calls by that name is not in doubt."""
+    found = await _project_declared(db, project_id, project_types, fresh=True)
+    if (
+        name in found.names
+        or found.get(name) is not None
+        or found.get_local(name) is not None
+        or name in found.shadowed
+    ):
+        raise UnprocessableEntityError(say("mcpServerNameTaken", name=name))
+
+
+def _command(name: str, line: str, env: dict[str, str]) -> tuple[str, list[str]]:
+    """A command added in settings, checked: its name, the line split as a
+    shell would, and its environment's names."""
+    if not _NAME.match(name):
+        raise UnprocessableEntityError(say("mcpServerNameInvalid"))
+    try:
+        words = shlex.split(line)
+    except ValueError:
+        words = []
+    if not words:
+        raise UnprocessableEntityError(say("mcpCommandInvalid"))
+    if any(not re.match(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$", key) for key in env):
+        raise UnprocessableEntityError(say("mcpEnvNameInvalid"))
+    return words[0], words[1:]
+
+
+async def add_command(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    name: str,
+    line: str,
+    env: dict[str, str],
+    handle: str,
+    project_types: ProjectTypes,
+) -> None:
+    """Add a local server in settings: a command, run on the room's machine
+    like one the repository's `.mcp.json` names, and asked about on a member's
+    computer the same way."""
+    command, args = _command(name, line, env)
+    await _name_free(db, project_id, name, project_types)
+    db.add(
+        ProjectMcpCommand(
+            project_id=project_id,
+            name=name,
+            command=command,
+            args=args,
+            env=env,
+            added_by=handle,
+        )
+    )
+    # How an earlier server of this name fared is not this one's.
+    await _forget_run(db, project_id, name)
+    await db.commit()
+
+
+async def update_command(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    name: str,
+    line: str,
+    env: dict[str, str],
+) -> None:
+    """Change a command added in settings. A changed command is a new one to
+    the owner of a member's computer, who is asked again."""
+    command, args = _command(name, line, env)
+    row = await _command_row(db, project_id, name)
+    row.command, row.args, row.env = command, args, env
+    await db.commit()
+
+
+async def _command_row(
+    db: AsyncSession, project_id: uuid.UUID, name: str
+) -> ProjectMcpCommand:
+    row = await db.scalar(
+        select(ProjectMcpCommand).where(
+            ProjectMcpCommand.project_id == project_id,
+            ProjectMcpCommand.name == name,
+        )
+    )
+    if row is None:
+        raise NotFoundError(say("mcpServerNotAdded"))
+    return row
+
+
+async def added_by(db: AsyncSession, project_id: uuid.UUID, name: str) -> str | None:
+    """Who added the command of this name in settings."""
+    return await db.scalar(
+        select(ProjectMcpCommand.added_by).where(
+            ProjectMcpCommand.project_id == project_id,
+            ProjectMcpCommand.name == name,
+        )
+    )
+
+
+async def _forget_run(db: AsyncSession, project_id: uuid.UUID, name: str) -> None:
+    await db.execute(
+        delete(ProjectMcpRun).where(
+            ProjectMcpRun.project_id == project_id, ProjectMcpRun.name == name
+        )
+    )
+
+
+async def session_commands(db: AsyncSession, project_id: uuid.UUID) -> dict[str, dict]:
+    """The commands added in settings that a session runs, as definitions: the
+    room's machine is handed one with each call. One whose name the
+    repository's `.mcp.json` uses is the repository's."""
+    found = await _with_added(db, project_id, await declared.read(db, project_id))
+    return {
+        server.name: local.spec(server)
+        for server in found.local
+        if server.name in found.added
+    }
 
 
 async def update_server(
@@ -737,6 +875,18 @@ async def update_server(
 
 
 async def remove_server(db: AsyncSession, project_id: uuid.UUID, name: str) -> None:
+    """Remove a server added in settings, remote or a command."""
+    command = await db.scalar(
+        select(ProjectMcpCommand).where(
+            ProjectMcpCommand.project_id == project_id,
+            ProjectMcpCommand.name == name,
+        )
+    )
+    if command is not None:
+        await _forget_run(db, project_id, name)
+        await db.delete(command)
+        await db.commit()
+        return
     row = await _added_row(db, project_id, name)
     await _forget_credentials(db, project_id, name)
     await db.delete(row)

@@ -14,5 +14,12 @@
   "headers": "Send a header",
   "headersHint": "Such as an API key; everyone in the project uses it through {agent}",
   "headerName": "Header name",
-  "headerValue": "Value"
+  "headerValue": "Value",
+  "kind": "Type",
+  "command": "Command",
+  "commandHint": "Write secrets as variables like {example}, then fill in their values in the list",
+  "env": "Environment variables (optional)",
+  "envHint": "One per line, for example {example}",
+  "envInvalid": "Write each line as NAME=value",
+  "commandOwner": "Before it runs on a member's own device, the device's owner must allow it"
 }

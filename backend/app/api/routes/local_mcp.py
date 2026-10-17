@@ -81,7 +81,7 @@ async def run(
     topic_id: uuid.UUID, name: str, body: RunIn, request: Request, db: DbSession
 ) -> dict:
     """How a local server fared, as the session's gateway saw it."""
-    project_id, _ = await session_in(
+    project_id, claims = await session_in(
         db, request.headers.get("x-cheese-token", ""), topic_id
     )
     machine = (
@@ -89,6 +89,18 @@ async def run(
         if body.device_id
         else None
     )
+    source, author = "repository", None
+    if body.state == local.AWAITING:
+        # Where the command is written and by whom, for the owner to read.
+        found = await service.seat_declared(
+            db, project_id, claims.get("a"), type_of_seat=type_of_seat
+        )
+        if name in found.added:
+            source, author = "settings", await service.added_by(db, project_id, name)
+        elif name in found.local_types:
+            source = "type"
+        else:
+            author = await declared.last_author(db, project_id)
     try:
         state = await local.report(
             db,
@@ -99,9 +111,8 @@ async def run(
             machine=machine,
             fingerprint=body.fingerprint,
             command=body.command,
-            author=await declared.last_author(db, project_id)
-            if body.state == local.AWAITING
-            else None,
+            source=source,
+            author=author,
         )
     except ValueError as exc:
         raise UnprocessableEntityError(str(exc)) from exc

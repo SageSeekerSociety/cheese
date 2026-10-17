@@ -25,8 +25,8 @@ Usage:
     check-migration-fork.py --self-test
 
 Exit 0 the chain is intact, 1 it would fork (or a re-chain was refused), 2 the
-base could not be read or this tree holds no revisions at all, so nothing was
-judged.
+base could not be read, a migration could not be parsed, or this tree holds no
+revisions at all, so nothing was judged.
 """
 
 import argparse
@@ -97,6 +97,10 @@ def cannot_judge_tree(versions_dir: str) -> int:
     return EXIT_CANNOT_JUDGE
 
 
+class UnparseableMigrations(Exception):
+    """Files whose syntax prevents judging the complete revision graph."""
+
+
 def parse_revision(source: str) -> tuple[str | None, list[str]]:
     """Return (revision, parents) for one alembic version file.
 
@@ -107,10 +111,7 @@ def parse_revision(source: str) -> tuple[str | None, list[str]]:
     """
     revision: str | None = None
     parents: list[str] = []
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return None, []
+    tree = ast.parse(source)
 
     for node in tree.body:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
@@ -163,10 +164,17 @@ def collect(ref: str | None, versions_dir: str) -> dict[str, list[str]]:
         paths = [p for p in listing.splitlines() if p.endswith(".py")]
         sources = {p: _git("show", f"{ref}:{p}") for p in paths}
 
-    for source in sources.values():
-        revision, parents = parse_revision(source)
+    unparseable: list[str] = []
+    for path, source in sources.items():
+        try:
+            revision, parents = parse_revision(source)
+        except SyntaxError as error:
+            unparseable.append(f"  {ref + ':' if ref else ''}{path}: {error}")
+            continue
         if revision:
             graph[revision] = parents
+    if unparseable:
+        raise UnparseableMigrations("\n".join(unparseable))
     return graph
 
 
@@ -327,11 +335,16 @@ def rechain(args) -> int:
 
     sources: dict[str, tuple[Path, str]] = {}
     duplicates: list[str] = []
+    unparseable: list[str] = []
     for path in sorted(Path(args.versions_dir).glob("*.py")):
         # Bytes, not text: a file read with universal newlines would come back
         # with every line ending rewritten.
         text = path.read_bytes().decode("utf-8")
-        revision, _ = parse_revision(text)
+        try:
+            revision, _ = parse_revision(text)
+        except SyntaxError as error:
+            unparseable.append(f"  {path}: {error}")
+            continue
         if not revision:
             continue
         if revision in sources:
@@ -339,6 +352,8 @@ def rechain(args) -> int:
             continue
         sources[revision] = (path, text)
 
+    if unparseable:
+        raise UnparseableMigrations("\n".join(unparseable))
     if duplicates:
         print("FAIL: two files declare the same revision id, so there is no one file to rewrite:")
         for duplicate in duplicates:
@@ -417,9 +432,16 @@ def main() -> int:
         print("::error::--base is behind its upstream")
         return 1
 
-    if args.rechain:
-        return rechain(args)
+    try:
+        if args.rechain:
+            return rechain(args)
+        return check(args)
+    except UnparseableMigrations as error:
+        print(f"cannot judge: migration files do not parse:\n{error}", file=sys.stderr)
+        return EXIT_CANNOT_JUDGE
 
+
+def check(args) -> int:
     try:
         base_graph = collect(args.base, args.versions_dir)
     except subprocess.CalledProcessError:
@@ -782,6 +804,41 @@ def self_test() -> int:
         )
         check("... leaving a chain the plain check accepts", settled.returncode, 0)
 
+        # A broken intermediate migration must not disappear from the graph while
+        # the base supplies its old revision and makes the remaining chain pass.
+        originals = {path: path.read_bytes() for path in (versions / "a.py", versions / "m.py", sentinel)}
+        broken = versions / "broken.py"
+        (versions / "a.py").write_text("<<<<<<< HEAD\n", encoding="utf-8")
+        broken.write_text("def upgrade(\n", encoding="utf-8")
+        try:
+            for label, argv in (("the check", []), ("the re-chain", ["--rechain"])):
+                if argv:
+                    # A late refusal must be caught even when re-chaining would
+                    # change both a migration and the sentinel.
+                    (versions / "m.py").write_text('revision = "m"\ndown_revision = "a"\n', encoding="utf-8")
+                    sentinel.write_text("n\n", encoding="utf-8")
+                before = {path: path.read_bytes() for path in (*versions.glob("*.py"), sentinel)}
+                invalid = subprocess.run(
+                    [sys.executable, str(script), *argv, "--base", "main"],
+                    cwd=lab,
+                    capture_output=True,
+                    text=True,
+                    env=lab_env,
+                )
+                check(f"{label} refuses unparsable migrations", invalid.returncode, EXIT_CANNOT_JUDGE)
+                check(f"... and {label} prints no PASS", "PASS" in invalid.stdout, False)
+                for path in (versions / "a.py", broken):
+                    check(f"... and {label} names {path.name}", str(path.relative_to(lab)) in invalid.stderr, True)
+                check(
+                    f"... and {label} leaves migrations and sentinel unchanged",
+                    {path: path.read_bytes() for path in before},
+                    before,
+                )
+        finally:
+            for path, original in originals.items():
+                path.write_bytes(original)
+            broken.unlink()
+
         # An unavailable --base is not a clean tree. `collect()` cannot read the
         # ref at all, and exiting 0 there prints the same PASS as a tree that was
         # read and cleared — which is how a checkout with no origin/main used to
@@ -837,7 +894,7 @@ def self_test() -> int:
     print(
         "PASS: check-migration-fork self-test (parser variants, merge parents, head "
         "detection, re-chain splice, re-chain decisions, the re-chain itself, and the "
-        "refusal of a --base it cannot read or a tree with no revisions in it)"
+        "refusal of unparsable migrations, a --base it cannot read, or a tree with no revisions in it)"
     )
     return 0
 

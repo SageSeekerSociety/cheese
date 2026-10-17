@@ -122,6 +122,15 @@ Metric-page merge handling:
   [`../.claude/rules/frontend.md`](../.claude/rules/frontend.md).
 - From the repository root, `task ci:fast` before you push runs the checks your
   changed paths select; `task fe:check` runs the whole frontend check.
+- `pnpm run test:ratchet` tests the check scripts themselves
+  (`scripts/*.test.mjs`) and takes minutes. Run it locally when the change
+  touches `scripts/`, an `eslint*.config.mjs` or a `*-baseline.json`, and then
+  only the test file for the script you changed
+  (`node --test scripts/<name>.test.mjs`). `task ci:fast` never selects it. CI
+  runs the whole set on every frontend change, and a few of those tests also
+  read the rest of the tree (`mdi-` icon names across `src/`, `index.html`,
+  `demo.html`, `nginx.conf`, `src/styles/fonts.css`, `src/views/demo/`,
+  `tsconfig.app.json`), so an ordinary change can still turn it red there.
 - A dev server may already be running in this worktree; do not restart one you
   did not start.
 - A new page under `src/views/admin/features/`: the chart components take props
