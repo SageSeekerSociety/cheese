@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.delivery_events import SettleCard
 from app.domain.event_about import EventAbout
+from app.domain.topic.models import Topic
 
 
 class SeatHandles(Protocol):
@@ -320,3 +321,36 @@ class PlatformLine(Protocol):
         task_id: uuid.UUID | None = None,
         thread_id: uuid.UUID | None = None,
     ) -> None: ...
+
+
+class TopicMembership(Protocol):
+    """谁在这间房里：看到哪些、加入了哪些、各有几个人、谁管得着、主人是谁。
+
+    形状就是 `topic_membership.services.TopicMemberService` 上这五个方法，递进来的
+    就是那个服务实例。「全部频道」那一页要同时问这五件事，而席位与名册在第 2 层的
+    `topic_membership` 手里——和 `OpenTaskCounts` 一样，本包只认这五个方法，不认得
+    它背后那批模型。
+
+    为什么是协议而不是直接 import：`topic_membership` 反过来经 `topic` 与
+    `topic_membership` 之间的那层依赖读本包，两边各 import 一次就是一个环（C3 的
+    `domains-acyclic` 查的正是这个）。调用方（`api/routes/project_channels.py`）
+    在门口把服务本身递进来，本包不另包一层。
+    """
+
+    async def seen(
+        self, topics: list[Topic], handle: str, *, team: ProjectTeam
+    ) -> list[Topic]: ...
+
+    async def joined_topic_ids(
+        self, topics: list[Topic], handle: str, *, team: ProjectTeam
+    ) -> set[uuid.UUID]: ...
+
+    async def seat_counts(
+        self, topics: list[Topic], *, team: ProjectTeam
+    ) -> dict[uuid.UUID, int]: ...
+
+    async def managed_topic_ids(
+        self, topics: list[Topic], actor: str
+    ) -> set[uuid.UUID]: ...
+
+    async def owner_of(self, topic_id: uuid.UUID) -> str | None: ...

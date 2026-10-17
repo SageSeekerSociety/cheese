@@ -17,7 +17,8 @@ from app.core.config import settings
 from app.domain.library import records as library_records
 from app.domain.library.service import artifact_snapshot_path
 from app.domain.living_doc.models import Document
-from app.domain.project.models import ProjectArtifact, ProjectForge
+from app.domain.project.models import Project, ProjectArtifact, ProjectForge
+from app.domain.project.services import ProjectService
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from app.domain.room_task.models import Task
 from app.domain.topic.repositories import TopicRepository
@@ -56,9 +57,21 @@ def exported_project(client, monkeypatch, tmp_path):
 
     async def seed():
         async with client.test_factory() as db:
-            room = await TopicRepository(db).add(project_id=pid, title="Public room")
+            # A channel's number and its environment are the project's to hand
+            # out, so this test asks it the same way the service does.
+            project = await db.get(Project, pid)
+            number, environment = await ProjectService(db).channel_start(project)
+            room = await TopicRepository(db).add(
+                project_id=pid,
+                number=number,
+                environment=environment,
+                title="Public room",
+            )
             private = await TopicRepository(db).add(
-                project_id=pid, title="Other person's private room"
+                project_id=pid,
+                number=number,
+                environment=environment,
+                title="Other person's private room",
             )
             private.is_private = True
             binding = await db.scalar(
