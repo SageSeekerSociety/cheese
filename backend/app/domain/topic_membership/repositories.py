@@ -78,6 +78,16 @@ class TopicMembershipRepository:
         rows = (await self._session.execute(stmt)).all()
         return {topic_id: role for topic_id, role in rows}
 
+    async def topics_with_owner(self, topic_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        """Which of these topics have an explicit ``owner`` seat."""
+        if not topic_ids:
+            return set()
+        stmt = select(TopicMembership.topic_id).where(
+            TopicMembership.topic_id.in_(topic_ids),
+            TopicMembership.role == TopicRole.owner,
+        )
+        return set((await self._session.scalars(stmt)).all())
+
     async def counts_for_topics(
         self, topic_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, int]:

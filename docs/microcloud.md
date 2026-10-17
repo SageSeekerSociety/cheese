@@ -45,7 +45,7 @@ Nothing inside a sandbox bounds what it writes: a host is an unprivileged contai
 loop device for a filesystem per sandbox and no project quotas. So the disk is held the way
 Kubernetes holds a node's ephemeral storage, by reading it and evicting. Every
 `SANDBOX_DISK_CHECK_S` (60 s), every online machine holding a sandbox — the platform's hosts
-and people's computers alike — reports the free bytes and inodes of the filesystem its homes
+and people's computers alike — and every platform host in the pool, holding one or not, reports the free bytes and inodes of the filesystem its homes
 are on, one `statvfs`. What each home holds takes a walk of every file (13 s on a dev host
 holding 880 thousand inodes), so it is read every `SANDBOX_DISK_WALK_S` (300 s), and at once
 on any check that finds the disk below a floor.
@@ -65,6 +65,17 @@ on any check that finds the disk below a floor.
   own directory on a computer that runs it without a sandbox) is never touched.
 - An executor that cannot be installed because the disk is full says so rather than repeating
   the path the error named.
+
+### What hosts and sandboxes use is shown and alerted
+
+`backend/app/domain/machine/readings.py`. The same reading also carries a host's memory
+(`/proc/meminfo`, the container's own under lxcfs), the CPU time of its cgroup root, its load,
+and each sandbox cgroup's `memory.current` and `memory.peak`. A platform host's reading is kept
+(`host_readings`, six hours) with each sandbox's latest memory and disk (`sandbox_usages`), and
+the admin page `/admin/machines` shows them beside the sandbox limits, with each reading's age.
+A host past 85% of its disk, 90% of its inodes or 90% of its memory on two readings running is
+sent to the alert group, keyed per host and resource, so the alert path's backoff (an hour,
+four hours, a day) repeats it while it lasts. A person's computer's reading is not kept.
 
 ### Idle sandboxes are destroyed
 
