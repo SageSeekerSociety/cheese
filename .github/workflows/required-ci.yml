@@ -442,7 +442,7 @@ jobs:
 
   # Merge queue only: fails `CI required` on the entry's sha as soon as any job
   # of this run fails, instead of after the slowest suite, so the queue drops
-  # the entry and rebuilds the ones behind it right away (2026-10-17: 10-50
+  # the entry and rebuilds the ones behind it right away (2026-10-17: 3-50
   # minutes saved per failed entry). What it posts, and why it never fails the
   # run, is .github/scripts/merge-group-fail-fast.py. Not in `required`'s
   # needs: the aggregator must not wait for it. A hosted runner, not the

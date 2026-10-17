@@ -4,7 +4,7 @@
 slowest suite has finished. On a merge_group run that meant a job failing at
 minute 9 left the entry looking pending until minute 58, and every entry the
 queue had built on top of it ran its own doomed run in the meantime (measured
-2026-10-17: 10-50 minutes from the first failed job to the red check, 450
+2026-10-17: 3-50 minutes from the first failed job to the red check, 450
 minutes in total over one day). The queue removes an entry, and rebuilds the
 ones behind it, only once the required check reports.
 
@@ -25,11 +25,21 @@ be `success`. That is what lets one failed job stand for the whole verdict. A
 but so does a run the queue-dedupe job cancelled as superseded, and those
 entries are no longer in the queue.
 
-This job never fails the run: the deploy gate (deploy/check-auto-deploy.py)
-reads the Required CI run's own conclusion, so a watcher that went red on a
-green run would hold the commit back from dev. Any error is a warning and exit
-0; it stops on its own before its job's timeout. A missed fail-fast costs what
-the queue cost before this existed.
+The deploy gate (deploy/check-auto-deploy.py) reads the Required CI run's own
+conclusion, so a watcher that went red on a green run would hold the commit
+back from dev. This script therefore turns its own errors into a warning and
+exit 0, bounds every API call, and stops before its job's timeout. What it
+cannot rule out is the job failing outside the script (its checkout, a lost
+runner); that leaves the entry's verdict untouched and holds back only that
+commit's own dev deploy, which the next commit's deploy carries. A missed
+fail-fast costs what the queue cost before this existed.
+
+It polls every three minutes and gives up on the first rate-limit answer.
+Every workflow in the repository shares the job token's REST budget (1,000
+requests an hour per repository), and the steps that spend the rest of it —
+`CI required`'s own commit-title read among them — turn red when it runs out.
+Up to 16 merge_group runs were in flight at once on 2026-10-17: at a 20-second
+interval that is ~2,900 requests an hour, at three minutes 320.
 """
 
 import json
@@ -43,7 +53,9 @@ FAILED = ("failure", "timed_out")
 #: Jobs whose result is not a suite's: the aggregators, and this watcher.
 NOT_SUITES = ("CI required", "CI required (draft quick)", "Fail fast")
 REQUIRED_CHECK = "CI required"
-POLL_SECONDS = 20
+POLL_SECONDS = 180
+#: One `gh api` call; a hung one must not outlive the deadline.
+CALL_SECONDS = 60
 #: The required-ci.yml job allows 130 minutes; stop well inside it.
 DEADLINE_SECONDS = 120 * 60
 
@@ -100,6 +112,7 @@ def gh_api(*args, payload=None):
         capture_output=True,
         text=True,
         input=None if payload is None else json.dumps(payload),
+        timeout=CALL_SECONDS,
     ).stdout
     return json.loads(out) if out.strip() else None
 
@@ -129,9 +142,13 @@ def watch(api, env, sleep=time.sleep, clock=time.monotonic):
     while clock() - started < DEADLINE_SECONDS:
         try:
             jobs = run_jobs(api, repo, run_id, attempt)
-        except subprocess.CalledProcessError as err:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as err:
+            detail = getattr(err, "stderr", None) or str(err)
+            # Polling on would keep the shared budget at zero for everyone.
+            if "rate limit" in detail.lower():
+                return f"::warning::Stopped: the token's rate limit is used up ({detail.strip()})."
             # One failed read is a network blip; the next poll tries again.
-            print(f"::warning::Could not read this run's jobs: {err.stderr}")
+            print(f"::warning::Could not read this run's jobs: {detail}")
             sleep(POLL_SECONDS)
             continue
         job = first_failure(jobs)

@@ -113,6 +113,40 @@ class FailFastTests(unittest.TestCase):
         watch(github)
         self.assertEqual(len(github.posted), 1)
 
+    def test_an_aggregator_still_waiting_on_its_needs_does_not_end_the_watch(self):
+        for status in ("queued", "waiting", "pending"):
+            with self.subTest(status=status):
+                github = FakeGitHub([
+                    [job("backend / pure (0/2)"), job("CI required", status)],
+                    [done("backend / pure (0/2)", "failure", 30), job("CI required", status)],
+                ])
+                watch(github)
+                self.assertEqual(len(github.posted), 1)
+
+    def test_a_failure_on_the_second_page_of_jobs_of_this_attempt_is_seen(self):
+        asked = []
+
+        def github(*args, payload=None):
+            if args[:2] == ("-X", "POST"):
+                asked.append(("POST", payload))
+                return {}
+            path = args[0]
+            asked.append(path)
+            if "/attempts/2/jobs" not in path:
+                return {"jobs": []}
+            if path.endswith("&page=1"):
+                return {"jobs": [done(f"frontend / unit ({i}/100)", "success", 5) for i in range(100)]}
+            return {"jobs": [done("guards / guards", "failure", 9)]}
+
+        ticks = iter(range(0, 10**9, fail_fast.POLL_SECONDS))
+        fail_fast.watch(
+            github, {**ENV, "GITHUB_RUN_ATTEMPT": "2"},
+            sleep=lambda _: None, clock=lambda: next(ticks),
+        )
+        posts = [entry for entry in asked if isinstance(entry, tuple)]
+        self.assertEqual(len(posts), 1)
+        self.assertIn("guards / guards", posts[0][1]["output"]["title"])
+
     def test_cancelled_skipped_and_aggregator_results_are_not_a_suite_failure(self):
         github = FakeGitHub([[
             done("backend / pure (0/2)", "cancelled", 5),
@@ -130,6 +164,21 @@ class FailFastTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             watch(github)
         self.assertEqual(len(github.posted), 1)
+
+    def test_a_used_up_rate_limit_stops_the_watch_instead_of_polling_on(self):
+        limited = subprocess.CalledProcessError(
+            1, "gh", stderr="gh: API rate limit exceeded for installation ID 1 (HTTP 403)"
+        )
+        github = FakeGitHub([limited, [done("guards / guards", "failure", 3)]])
+        clock = iter([0, 1])  # a second poll would exhaust it and raise
+        line = watch(github, clock=lambda: next(clock))
+        self.assertEqual(github.posted, [])
+        self.assertIn("rate limit", line)
+
+    def test_polls_fit_the_repository_token_budget(self):
+        # 1,000 requests an hour per repository is shared by every workflow;
+        # 16 merge_group runs were in flight at once on 2026-10-17.
+        self.assertLessEqual(16 * 3600 / fail_fast.POLL_SECONDS, 1000 / 2)
 
     def test_the_watch_ends_at_its_deadline_without_posting(self):
         github = FakeGitHub([[job("backend / pure (0/2)")]])
