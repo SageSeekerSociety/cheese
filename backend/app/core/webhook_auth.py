@@ -1,10 +1,11 @@
 """Auth for the external-facing webhook ingress (POST /webhooks/{topic_id}).
 
-Same HMAC-signing shape as ``app.core.sandbox_auth``, but a different lifetime
-semantic: a webhook credential is a long-lived, revocable/rotatable config item
-pasted into an external system (a GitHub Actions secret, a CI pipeline var) —
-not a short-TTL per-turn grant. So instead of an expiry, the token embeds a
-``version`` int that must match the topic's current version in
+Signs with the same key and the same construction as ``app.core.sandbox_auth``
+— both take the algorithm from ``app.core.hmac_token`` — but has a different
+lifetime semantic: a webhook credential is a long-lived, revocable/rotatable
+config item pasted into an external system (a GitHub Actions secret, a CI
+pipeline var), not a short-TTL per-turn grant. So instead of an expiry, the
+token embeds a ``version`` int that must match the topic's current version in
 ``webhook_tokens`` (app.domain.webhook.models.WebhookToken). Minting bumps that
 version and signs a token embedding the new value; any token embedding an
 older version — the entire population of previously-minted tokens — instantly
@@ -13,18 +14,16 @@ storing the live secret itself.
 """
 
 import base64
-import hashlib
 import hmac
 import json
 
+from app.core.hmac_token import sign_body
 from app.core.sandbox_auth import SANDBOX_TOKEN
 
-_SECRET = SANDBOX_TOKEN.encode()
-
-
-def _sign(body: str) -> str:
-    digest = hmac.new(_SECRET, body.encode(), hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+# The key is the sandbox signing secret: a webhook credential and a sandbox
+# credential are signed by the same deployment secret, and each family's own
+# prefix/signing domain is what keeps one from verifying as the other.
+_SECRET = SANDBOX_TOKEN
 
 
 def mint_webhook_token(*, project_id: str, topic_id: str, version: int) -> str:
@@ -34,7 +33,7 @@ def mint_webhook_token(*, project_id: str, topic_id: str, version: int) -> str:
     payload = {"p": project_id, "t": topic_id, "v": version}
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    return f"{body}.{_sign(body)}"
+    return f"{body}.{sign_body(_SECRET, body)}"
 
 
 def webhook_token_claims(token: str, *, topic_id: str) -> dict | None:
@@ -46,7 +45,7 @@ def webhook_token_claims(token: str, *, topic_id: str) -> dict | None:
         body, sig = token.split(".", 1)
     except ValueError:
         return None
-    if not hmac.compare_digest(sig, _sign(body)):
+    if not hmac.compare_digest(sig, sign_body(_SECRET, body)):
         return None
     try:
         padded = body + "=" * (-len(body) % 4)

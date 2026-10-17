@@ -467,3 +467,21 @@ def test_a_long_assignment_prefix_is_still_dropped():
     command = "TOKEN=" + "x" * 4000 + " cheese sync"
 
     assert cheese_subcommand(command) == "sync"
+
+
+def test_a_script_reads_as_what_it_says_it_does():
+    # pi 的 codemode：模型写一段脚本，现场那一行写它的第一句话，而不是开头那行选项。
+    code = (
+        '// @options: {"timeout_ms": 60000}\n'
+        "// 找出 Linear 里和标注有关的议题\n"
+        "const found = await tools.mcp__linear__search_issues({ query: '标注' })\n"
+    )
+    assert tool_preview("codemode", {"code": code}).text == (
+        "// 找出 Linear 里和标注有关的议题"
+    )
+    assert (
+        tool_detail(
+            "codemode", {"code": code}, tool_preview("codemode", {"code": code})
+        )
+        == code.strip()
+    )

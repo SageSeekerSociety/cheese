@@ -208,7 +208,7 @@ const canMakePublic = computed(
           canMakePublic ? t('work.projectSettings.channels.makePublic') : t('work.projectSettings.channels.makePrivate')
         }}</BaseButton>
       </div>
-      <div v-if="canManage && !general" class="details__row">
+      <div v-if="canManage && !general && (archived || (topic.my_tasks?.open ?? 0) === 0)" class="details__row">
         <div class="details__what">
           <span class="details__label">{{
             archived ? t('work.projectSettings.channels.unarchive') : t('work.channelDetails.archive')

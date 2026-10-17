@@ -13,6 +13,17 @@
 
     python3 .claude/scripts/pr-state.py <PR 编号>
     python3 .claude/scripts/pr-state.py --json-input <file>   # 离线：读一条同样的返回
+    python3 .claude/scripts/pr-state.py dev --sha <合并 SHA> --json-input <file>
+    python3 .claude/scripts/pr-state.py deploy-failure --json-input <file>
+
+部署子命令不联网。dev 的 JSON 是 {"logs": "原始 job 日志", "version_sha": "可选完整运行 SHA"}。
+完整 DEPLOY OK 标记直接确认；真实七位镜像标签必须同时有目标 dev 的 /api/version
+返回的 data.sha 与完整目标 SHA 一致，单独短前缀、候选 metadata 和绿 run 都不算上线。
+deploy-failure 的 JSON 是
+{"run": {"conclusion": "failure", "jobs": [...]}, "changed_files": ["frontend/src/App.vue"]}。
+run.jobs 使用 Actions jobs API 的 name/conclusion/steps；run.build 可提供候选 SHA
+最新构建的 status/conclusion；run.failure_files 可提供已经核实、覆盖全部失败的源输入
+路径。未知归因不猜，两种已知部署链失败或完整失败输入与改动不相交时提醒别重跑。
 
 取数走一次 GraphQL 查询（`gh api graphql`），不是 `gh pr view --json`：后者的字段表里
 没有 `isInMergeQueue`（gh 2.62.0 实测报 `Unknown JSON field`），而队列状态正是这里
@@ -40,9 +51,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
 # 一次查询取齐判状态要用的全部字段：多一次往返就多一次「拿到旧答案」的机会。
@@ -71,6 +83,18 @@ QUEUED = "IN_MERGE_QUEUE"
 BLOCKED = "MERGEABLE_BLOCKED"
 CLEAN = "MERGEABLE_CLEAN"
 UNKNOWN = "UNKNOWN"
+DEV_CONFIRMED = "DEV_CONFIRMED"
+DEV_UNCONFIRMED = "DEV_UNCONFIRMED"
+DEPLOY_UNRELATED = "DEPLOY_UNRELATED"
+DEPLOY_RELATED = "DEPLOY_RELATED"
+
+# actions/jobs/<id>/logs 的时间戳和部署脚本的 log 前缀；不匹配日志里回显的 shell 命令。
+DEPLOY_CONFIRMATION = re.compile(
+    r"^(?:\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+)?"
+    r"(?:\[deploy-docker \d{2}:\d{2}:\d{2}\]\s+)?"
+    r"DEPLOY OK: sha=([0-9a-f]{40}|[0-9a-f]{7})(?: healthy)?\s*$",
+    re.MULTILINE,
+)
 
 # GitHub 说「能合、且没有挡路的东西」。BLOCKED 不在其中：那是等必需检查或批准。
 READY_STATUSES = ("CLEAN", "HAS_HOOKS", "UNSTABLE")
@@ -96,7 +120,7 @@ def classify(pr: dict) -> Verdict:
     if mergeable == "CONFLICTING" or status == "DIRTY":
         return Verdict(
             CONFLICTING,
-            "CONFLICTING — 确有合并冲突，请 git fetch origin main && git merge --no-autostash origin/main",
+            "CONFLICTING — 确有合并冲突，先核对合并树，再 git fetch origin main && git merge --no-autostash origin/main",
         )
     if pr.get("isInMergeQueue"):
         return Verdict(QUEUED, "IN_MERGE_QUEUE — 已在合并队列中，等待队列检查完成")
@@ -113,6 +137,89 @@ def classify(pr: dict) -> Verdict:
         UNKNOWN,
         f"UNKNOWN — 合并状态没认出来（mergeable={mergeable}, mergeStateStatus={status}），请重查并人工判断",
     )
+
+
+def classify_dev(merged_sha: str, deployment: dict) -> Verdict:
+    """完整 SHA 标记直接确认；真实七位镜像标签还需独立的完整运行版本证据。
+
+    logs 来自目标 dev 的 actions/jobs/<id>/logs；version_sha 可选，必须是同一 dev
+    实例实际 /api/version 返回的 data.sha，不是候选 metadata、run.head_sha、data.short
+    或 data.build。离线调用者负责取证；绿 run 和单独短前缀都不能替代这份证据。
+    确认只描述证据中的观测，不承诺当前仍运行该版本。
+    """
+    logs = deployment.get("logs", "")
+    if (isinstance(merged_sha, str) and re.fullmatch(r"[0-9a-f]{40}", merged_sha)
+            and isinstance(logs, str)):
+        tags = DEPLOY_CONFIRMATION.findall(logs)
+        if merged_sha in tags:
+            return Verdict(DEV_CONFIRMED, f"DEV_CONFIRMED — dev 已确认部署 SHA={merged_sha}（日志证据，非当前版本）")
+        if merged_sha[:7] in tags and deployment.get("version_sha") == merged_sha:
+            return Verdict(DEV_CONFIRMED, f"DEV_CONFIRMED — dev 已确认部署 SHA={merged_sha}（短标签日志与完整运行版本观测一致）")
+    return Verdict(DEV_UNCONFIRMED, "DEV_UNCONFIRMED — 还没到 dev（未找到目标 SHA 的完整部署证据），别重跑旧部署")
+
+
+def _paths(value: object) -> set[str] | None:
+    """证据路径必须是仓库相对路径；缺失或坏数据不能当成空集来证明不相交。"""
+    if not isinstance(value, list):
+        return None
+    paths = set()
+    for item in value:
+        if not isinstance(item, str) or not item or "\\" in item:
+            return None
+        path = PurePosixPath(item)
+        if path.is_absolute() or ".." in path.parts or str(path) == ".":
+            return None
+        paths.add(str(path))
+    return paths
+
+
+def classify_deploy_failure(run: dict, changed_files: list[str] | None) -> Verdict:
+    """归因只给线索，不把相交冒充因果，也不建议 rerun。
+
+    run 的 conclusion 和 jobs（含 steps）取自 Actions；build 是候选 SHA 的最新构建
+    status/conclusion，不是 workflow_run 的 head_sha（后者可能是 main 的另一个 tip）。
+    failure_files 可选：调用者已核实的、覆盖本次全部失败的源输入路径，不是堆栈里随便
+    出现的路径或 workflow 文件名。没有完整证据时只识别两种已知部署链失败，其余 UNKNOWN。
+    """
+    unknown = Verdict(UNKNOWN, "UNKNOWN — 部署归因证据不足，核对失败步骤与合并树，别盲目重跑")
+    changed = _paths(changed_files)
+    if run.get("conclusion") != "failure" or changed is None:
+        return unknown
+
+    # 完整诊断路径优先；相交只是待核实的嫌疑，不能声称本分支一定导致失败。
+    inputs = _paths(run.get("failure_files"))
+    if inputs:
+        if changed & inputs:
+            return Verdict(DEPLOY_RELATED, "DEPLOY_RELATED — 失败输入与本分支改动相交，请核对合并树，尚不能断言因果")
+        return Verdict(DEPLOY_UNRELATED, "DEPLOY_UNRELATED — 失败输入与本分支改动不相交，不是你的线，别重跑")
+    if "failure_files" in run and inputs is None:
+        return unknown
+
+    jobs = run.get("jobs", [])
+    failed = [job for job in jobs if job.get("conclusion") == "failure"]
+    names = {job.get("name") for job in failed}
+    login_failure = (
+        len(failed) == 1 and names == {"deploy"}
+        and any(job.get("name") == "eligibility" and job.get("conclusion") == "success" for job in jobs)
+        and [step.get("name") for step in failed[0].get("steps", [])
+             if step.get("conclusion") == "failure"] == ["Log in to ghcr"]
+    )
+    build = run.get("build") or {}
+    cancelled_build = (
+        bool(failed) and names <= {"eligibility", "build-did-not-produce-images"}
+        and all(job.get("name") == "build-did-not-produce-images" or
+                [step.get("name") for step in job.get("steps", [])
+                 if step.get("conclusion") == "failure"] == ["Fail when this commit will not be deployed"]
+                for job in failed)
+        and (build.get("conclusion") == "cancelled" or build.get("status") == "in_progress")
+    )
+    if not (login_failure or cancelled_build):
+        return unknown
+    # 改过部署链本身时，上面两种形状也不能替本分支免责。
+    if any(path.startswith((".github/", "deploy/")) for path in changed):
+        return Verdict(DEPLOY_RELATED, "DEPLOY_RELATED — 本分支改过部署链，请核对失败步骤与合并树，尚不能断言因果")
+    reason = "镜像仓库登录失败" if login_failure else "候选 SHA 的构建被取消或仍在运行"
+    return Verdict(DEPLOY_UNRELATED, f"DEPLOY_UNRELATED — {reason}，属部署链问题，不是你的线，别重跑")
 
 
 def fetch(pr_number: int) -> dict:
@@ -143,8 +250,32 @@ def fetch(pr_number: int) -> dict:
     return pr
 
 
+def deployment_command(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog=f"pr-state.py {argv[0]}", description=(
+        "离线部署判定：dev 读取 {logs, version_sha?}（version_sha 取目标 dev /api/version 的 data.sha）；"
+        "deploy-failure 读取 {run, changed_files}"
+    ))
+    parser.add_argument("--json-input", required=True, metavar="FILE", help="部署证据 JSON 文件")
+    if argv[0] == "dev":
+        parser.add_argument("--sha", required=True, help="完整合并 SHA（40 位）")
+    args = parser.parse_args(argv[1:])
+    payload = json.loads(Path(args.json_input).read_text(encoding="utf-8"))
+    if argv[0] == "dev":
+        verdict = classify_dev(args.sha, payload)
+    else:
+        verdict = classify_deploy_failure(payload.get("run", {}), payload.get("changed_files"))
+    print(verdict.line)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="一次问清一个 PR 的真实状态，给出唯一结论和下一步")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in ("dev", "deploy-failure"):
+        return deployment_command(argv)
+    parser = argparse.ArgumentParser(
+        description="一次问清一个 PR 的真实状态，给出唯一结论和下一步",
+        epilog="部署子命令：dev --sha SHA --json-input FILE；deploy-failure --json-input FILE",
+    )
     parser.add_argument("pr", nargs="?", type=int, help="PR 编号")
     parser.add_argument("--json-input", metavar="FILE", help="离线：读一条同样形状的 JSON 返回")
     args = parser.parse_args(argv)

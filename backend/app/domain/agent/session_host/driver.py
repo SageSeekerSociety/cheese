@@ -23,7 +23,7 @@ from app.domain.agent.harness.driven.subscription import (
     SeatActivity,
     Subscription,
 )
-from app.domain.agent.harness.launch import ExecutorLaunch
+from app.domain.agent.launch import ExecutorLaunch
 from app.domain.agent.platform_failures import classify_session_start
 from app.domain.agent.session_host.contract import (
     Access,

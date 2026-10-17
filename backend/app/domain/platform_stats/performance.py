@@ -18,9 +18,10 @@ from app.core import net_io
 from app.core import route_metrics as rm
 from app.core.loop_lag import lag_status
 
-#: 看板上列几条。按 p95 从大到小排，取前这么多个 —— 这一类的读法是「哪一条最慢」，
-#: 不是「一共有多少条路由」。
-ROUTES_SHOWN = 12
+#: 快照里最多放多少行路由 —— 这是**载荷上限**，不是看板展示条数：所有注册过的端点
+#: 都列出来，样本为 0 的也占一行。真越过这个数时截断并在 `routes_omitted` 里说出来，
+#: 静默截断读起来像「就这些」。
+MAX_SNAPSHOT_ROUTES = 2000
 
 
 def performance_snapshot(
@@ -78,9 +79,9 @@ def performance_snapshot(
     )
     # 线上护栏：路由表真长到几千条时截断并**说出来**（静默截断读起来像「就这些」）。
     omitted = 0
-    if len(rows) > 2000:
-        omitted = len(rows) - 2000
-        rows = rows[:2000]
+    if len(rows) > MAX_SNAPSHOT_ROUTES:
+        omitted = len(rows) - MAX_SNAPSHOT_ROUTES
+        rows = rows[:MAX_SNAPSHOT_ROUTES]
 
     snap = {
         "routes": rows,
@@ -99,8 +100,3 @@ def performance_snapshot(
         },
     }
     return snap
-
-
-def performance_snapshot_legacy() -> dict:
-    """Back-compat shim for the pre-split shape (status was part of the key)."""
-    return performance_snapshot()

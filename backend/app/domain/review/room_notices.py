@@ -470,8 +470,10 @@ async def tell_room_undelivered(
 ) -> None:
     """``closed`` was closed past its deadline with work still going on or
     asked for in it (`room_task.closing.STOP_WORK_AFTER`): its room hears that
-    the task closed, that work was stopped, and what it was. Best effort,
-    like `task_landing.tell_origin`."""
+    the task closed, that work was stopped, and what it was. One line for the
+    room, however many turns were stopped; each of those turns keeps a run
+    record under its own number in `closing` (where the close is written).
+    Best effort, like `task_landing.tell_origin`."""
     if not closed.undelivered:
         return
     try:
@@ -486,7 +488,7 @@ async def tell_room_undelivered(
                     who=WHO_HUMAN,
                     detail=say(
                         "taskClosedUndeliveredDetail",
-                        items=[_gist(said) for said in closed.undelivered],
+                        items=[work.gist for work in closed.undelivered],
                     ),
                     detail_label=say("labelDetails"),
                 ),
@@ -495,8 +497,3 @@ async def tell_room_undelivered(
         logger.warning(
             "could not tell task %s's room what it left", closed.task.id, exc_info=True
         )
-
-
-def _gist(said: str) -> str:
-    line = " ".join(said.split())
-    return line if len(line) <= 120 else line[:119] + "…"

@@ -307,7 +307,7 @@ def volume_target(demo: Path, importer: Path, spec: str) -> Path | None:
     return target
 
 
-def catalog_files(root: Path) -> list[Path]:
+def catalog_files(root: Path, sources: Any) -> list[Path]:
     """`catalog.ts`, every volume beside it and every shard under `catalog/`.
 
     Only what `catalog.ts` reaches is on the site: `DemoCatalog.vue` and
@@ -320,6 +320,10 @@ def catalog_files(root: Path) -> list[Path]:
     walked. Which files are volumes at all is `volume_target`'s answer. Imports
     are read after `strip_comments`, so a commented-out import or spread
     follows nothing.
+
+    `sources` is the run's text reader (`frontend_grade.SourceTexts`). Every
+    file walked here is also one the grader's import graph read, so sharing the
+    reader is what keeps a run at one read per path instead of two.
     """
     demo = root / DEMO_DIR
     entry = demo / "catalog.ts"
@@ -333,7 +337,7 @@ def catalog_files(root: Path) -> list[Path]:
             continue
         seen.append(path)
         try:
-            text = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+            text = strip_comments(sources.read(path))
         except OSError as exc:
             raise Unjudgeable(f"cannot read {path}: {exc}") from exc
         for type_only, clause, spec in IMPORT_CLAUSE.findall(text):
@@ -352,18 +356,25 @@ def catalog_files(root: Path) -> list[Path]:
     return sorted(seen)
 
 
-def catalogued(root: Path, grade_module: Any) -> dict[str, list[str]]:
+def catalogued(
+    root: Path, grade_module: Any, sources: Any = None
+) -> dict[str, list[str]]:
     """`{component rel: [catalog files that render it]}`.
 
     A component is catalogued by a file `catalog_files` reaches from
     `catalog.ts` that value-imports it AND uses that binding as an entry's
     `component:` — both read with comments stripped.
+
+    `sources` is the run's text reader. `catalog_files` has already read every
+    file it returns, so reading each one again here is the duplicate this
+    parameter exists to remove; without one, this makes a reader of its own.
     """
+    sources = grade_module.SourceTexts() if sources is None else sources
     src = root / "frontend" / "src"
     found: dict[str, list[str]] = {}
-    for path in catalog_files(root):
+    for path in catalog_files(root, sources):
         try:
-            text = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+            text = strip_comments(sources.read(path))
         except OSError as exc:
             raise Unjudgeable(f"cannot read {path}: {exc}") from exc
         here = path.relative_to(root).as_posix()
@@ -389,13 +400,21 @@ def catalogued(root: Path, grade_module: Any) -> dict[str, list[str]]:
     return found
 
 
-def grade_all(root: Path, grade_module: Any) -> dict[str, Any]:
-    """`{rel: Grade}` for every subject — one `api_reach` for all."""
-    reach = grade_module.api_reach(root)
+def grade_all(
+    root: Path, grade_module: Any, sources: Any = None
+) -> dict[str, Any]:
+    """`{rel: Grade}` for every subject — one `api_reach` for all.
+
+    `sources` is the run's text reader: the same one goes into `api_reach` and
+    every `grade_component`, so a component the walk already read is graded
+    from that text rather than read a second time.
+    """
+    sources = grade_module.SourceTexts() if sources is None else sources
+    reach = grade_module.api_reach(root, sources)
     grades = {}
     for rel in subject_paths(root):
         try:
-            grades[rel] = grade_module.grade_component(root, root / rel, reach)
+            grades[rel] = grade_module.grade_component(root, root / rel, reach, sources)
         except OSError as exc:
             raise Unjudgeable(f"cannot read {rel}: {exc}") from exc
     return grades
@@ -527,8 +546,9 @@ def run(root: Path, baseline_path: Path, *, update: bool, init: bool, listing: b
     """Judge the tree at `root` against `baseline_path` and print the answer."""
     try:
         grade_module = load_frontend_grade()
-        grades = grade_all(root, grade_module)
-        shown_by = catalogued(root, grade_module)
+        sources = grade_module.SourceTexts()
+        grades = grade_all(root, grade_module, sources)
+        shown_by = catalogued(root, grade_module, sources)
         shown = set(shown_by)
         if init:
             if baseline_path.exists():

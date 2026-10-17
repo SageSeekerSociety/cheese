@@ -28,6 +28,7 @@ from app.domain.agent.service import (
     AgentResult,
     AgentRetrying,
     AgentSessionInfo,
+    AgentStepCalls,
     AgentStepFailed,
     AgentStepOutput,
     AgentToolResult,
@@ -54,7 +55,11 @@ from app.domain.agent.turn.intake.notes import (
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.state.notices import _TOOL_ACTION, _turn_failure_notice
 from app.domain.agent.turn.steps.hooks import HookActivity, LandedEvent, execute_event
-from app.domain.agent.turn.store.events import _mark_step_failed, _record_step_output
+from app.domain.agent.turn.store.events import (
+    _mark_step_failed,
+    _record_step_calls,
+    _record_step_output,
+)
 from app.domain.agent.turn.store.intervals import turn_credits_refused
 from app.domain.agent.turn_inputs import mark_session_for_turn
 from app.domain.delivery.receipts import inputs_answered_inside
@@ -268,6 +273,13 @@ class HookEvents:
             block_id = state.steps.get(event.call_id) if state is not None else None
             if block_id is not None:
                 payload = await _record_step_output(sessions, block_id, event.text)
+                if payload is not None:
+                    frame = {"type": "block_updated", "block": without_output(payload)}
+        elif isinstance(event, AgentStepCalls):
+            # The tools a script called, written onto the script's step.
+            block_id = state.steps.get(event.call_id) if state is not None else None
+            if block_id is not None and event.calls:
+                payload = await _record_step_calls(sessions, block_id, event.calls)
                 if payload is not None:
                     frame = {"type": "block_updated", "block": without_output(payload)}
         elif isinstance(event, AgentCompacting):

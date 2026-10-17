@@ -44,7 +44,7 @@ from app.domain.agent.harness.claude_code import (
     DEVICE_TUNNEL_PROBE,
     resident_release,
 )
-from app.domain.agent.harness.launch import ExecutorPlan, MachinePlace, MachinePlan
+from app.domain.agent.launch import ExecutorPlan, MachinePlace, MachinePlan
 from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.place import (
     CHECKOUT_DIR,

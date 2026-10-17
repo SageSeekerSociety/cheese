@@ -47,7 +47,11 @@ OUTPUT_CLOCK_S = 60
 
 
 def silent_of(runner: LiveWork, topic_id: uuid.UUID) -> float | None:
-    """这个话题里在跑的那一轮「多久没有新输出了」（秒）。
+    """这个话题里在跑的那一轮「多久没有动静了」（秒）。
+
+    动静有两样：房间里落下了一帧，或者读这一轮的那一路收到了 runner 的一声应答
+    （`WorkStatus.live_work_for_topic` 取两者较新的）。长思考、跑长命令的时候只有
+    后者 —— 只数前者，会把一轮好好跑着的活说成停了。
 
     None = 没有在跑的轮次，或者记录里没有这个戳 —— 「不知道」不当成「很新」用，
     读的人（侧栏的灯）自己决定那时画什么。
@@ -73,8 +77,11 @@ def silent_gaps(
 
 
 def last_output_at(gap_s: float | None, now: datetime) -> datetime | None:
-    """最后一次输出的时刻：从那句「多久没输出了」倒推，取整到分钟
-    （`OUTPUT_CLOCK_S`）。说不出来（None）就不给时刻 —— 前后端都不许自己编一个。"""
+    """最后一次有动静的时刻：从那句「多久没动静了」倒推，取整到分钟
+    （`OUTPUT_CLOCK_S`）。说不出来（None）就不给时刻 —— 前后端都不许自己编一个。
+
+    字段名还是 `last_output_at`（话题清单的契约），但它数的已经是任何一样动静：
+    输出，或者会话自己应的一声（`silent_of`）。"""
     if gap_s is None:
         return None
     at = now - timedelta(seconds=gap_s)

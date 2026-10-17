@@ -19,6 +19,7 @@ def build() -> bytes:
             # `RemoteClient`: every file, command, hook and MCP call of the
             # session goes to the room's machine, or the platform, through it.
             "domain/agent/executor_transport.py",
+            "domain/agent/pr_creation.py",
             # The input marker the runner reads back for exact attribution
             # (FB-56) — stdlib-only, so the machine needs nothing else.
             "domain/agent/nonce.py",
@@ -28,7 +29,6 @@ def build() -> bytes:
             "domain/agent/harness/pi/hooks.py",
             "domain/agent/harness/pi/machine.py",
             "domain/agent/harness/pi/jobs.py",
-            "domain/agent/harness/pi/mcp.py",
             # Run on the room's machine, read from the archive as source.
             "domain/agent/harness/pi/repository.py",
             "domain/agent/harness/pi/project_skills.py",

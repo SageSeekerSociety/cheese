@@ -1,0 +1,83 @@
+{
+  "verb": "backlog",
+  "why": "A script the model wrote (pi's codemode) calls tools the model never called itself, and pi records them only on the script's result (`nestedCalls`, read off the 1.0.0 binary). They go onto the script's step, in order, each with its argument as one line and whether it failed, so the room can see what the script did; none becomes a line of its own.",
+  "readers": [
+    "python"
+  ],
+  "harnesses": {
+    "claude-code": {
+      "difference": "no-script-calls"
+    },
+    "pi": {
+      "records": [
+        {
+          "type": "message",
+          "id": "e1",
+          "message": {
+            "role": "toolResult",
+            "toolCallId": "toolu_1",
+            "toolName": "codemode",
+            "content": [
+              {
+                "type": "text",
+                "text": "Script completed in 0.2s\n3 issues"
+              }
+            ],
+            "isError": false,
+            "timestamp": 1792180000000,
+            "nestedCalls": {
+              "calls": [
+                {
+                  "id": "toolu_1/1",
+                  "name": "mcp__linear__search_issues",
+                  "arguments": {
+                    "query": "标注"
+                  },
+                  "status": "ok",
+                  "durationMs": 120
+                },
+                {
+                  "id": "toolu_1/2",
+                  "name": "mcp__sentry__list_issues",
+                  "arguments": {
+                    "since": "7d"
+                  },
+                  "status": "error",
+                  "durationMs": 40,
+                  "error": "401 Unauthorized"
+                }
+              ],
+              "complete": true
+            }
+          }
+        }
+      ]
+    },
+    "codex": {
+      "difference": "no-script-calls"
+    }
+  },
+  "events": [
+    {
+      "kind": "step_output",
+      "call_id": "toolu_1",
+      "text": "Script completed in 0.2s\n3 issues"
+    },
+    {
+      "kind": "step_calls",
+      "call_id": "toolu_1",
+      "calls": [
+        {
+          "tool": "mcp__linear__search_issues",
+          "arg": "{\"query\": \"标注\"}",
+          "failed": false
+        },
+        {
+          "tool": "mcp__sentry__list_issues",
+          "arg": "{\"since\": \"7d\"}",
+          "failed": true
+        }
+      ]
+    }
+  ]
+}
