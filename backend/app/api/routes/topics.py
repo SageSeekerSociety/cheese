@@ -411,7 +411,7 @@ async def list_topics(
         }
         for t in topics
     ]
-    return conditional_json(ok(page(items, total)), if_none_match)
+    return await conditional_json(ok(page(items, total)), if_none_match)
 
 
 @router.get("/names")
