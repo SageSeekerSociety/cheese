@@ -14,10 +14,12 @@
 // Exit 0: no watch source left behind; 1: at least one; 2: cannot judge.
 //
 // Equivalence is bounded, not general expression equivalence: both sides are
-// canonicalized to prop paths (`props.x` and `toValue(scope.x)` match when the call
-// site maps `x: () => props.x`), refs are unwrapped, `.value` is dropped, and array
-// sources are compared element by element. A renamed or restructured source can be
-// reported even though it survived; waive that one explicitly with --allow.
+// canonicalized to prop paths. `props.x` and `toValue(scope.x)` match when the call
+// site maps `x: () => props.x`, or passes the scope as `() => ({ x: props.x })`; a
+// composable taking the value itself (`fn(() => props.x)`) matches `toValue(x)`; refs
+// and local aliases (`const s = toValue(scope)`) are unwrapped, `.value` is dropped,
+// and array sources are compared element by element. A renamed or restructured
+// source can be reported even though it survived; waive that one with --allow.
 import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -63,23 +65,53 @@ function mapSet(set, fn) {
   return new Set([...set].map(fn))
 }
 
-// A member chain as `{ root, path }`, or null when the node is not one.
-function memberPath(node) {
+// A member chain as `{ root, path }`, or null when the node is not one. `toValue`
+// and `unref` are transparent, and a local `const s = toValue(scope)` is followed
+// through `ctx.aliases` so both sides of the split speak in the same terms.
+function memberPath(node, ctx = {}) {
   node = unwrap(node)
-  if (ts.isIdentifier(node)) return { root: node.text, path: [] }
+  if (ts.isCallExpression(node)) {
+    const callee = unwrap(node.expression)
+    if (
+      ts.isIdentifier(callee) &&
+      (callee.text === 'toValue' || callee.text === 'unref') &&
+      node.arguments.length === 1
+    ) {
+      return memberPath(node.arguments[0], ctx)
+    }
+    return null
+  }
+  if (ts.isIdentifier(node)) {
+    const alias = ctx.aliases?.get(node.text)
+    if (alias) return { root: alias.root, path: [...alias.path] }
+    return { root: node.text, path: [] }
+  }
   if (ts.isPropertyAccessExpression(node)) {
-    const base = memberPath(node.expression)
+    const base = memberPath(node.expression, ctx)
     if (!base) return null
     base.path.push(node.name.text)
     return base
   }
   if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
-    const base = memberPath(node.expression)
+    const base = memberPath(node.expression, ctx)
     if (!base) return null
     base.path.push(node.argumentExpression.text)
     return base
   }
   return null
+}
+
+// Local `const x = <member chain>` declarations inside a scope, so a getter that
+// names the scope once and reads it through locals still resolves.
+function collectAliases(root, ctx) {
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const member = memberPath(node.initializer, ctx)
+      if (member && (member.root !== node.name.text || member.path.length)) ctx.aliases.set(node.name.text, member)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(root)
 }
 
 function propertyName(node) {
@@ -92,15 +124,22 @@ function propertyName(node) {
 //   scopeParam       the composable's first parameter, when it is a plain identifier
 //   scopeProps       scope property -> source keys the changed call sites pass for it
 //   scopeWholeProps  a call site passes the props object itself
+//   scopeValue       the value itself when the composable's first parameter is it,
+//                    not a scope object (`fn(() => props.sid)`)
 //   bindings         destructured scope names -> source keys the call sites pass
+//   aliases          local names bound to a member chain inside the scope
 function memberKeys(node, ctx) {
-  const member = memberPath(node)
+  const member = memberPath(node, ctx)
   if (!member) return null
   const segments = member.path.filter((segment) => segment !== 'value')
   const { root } = member
   if (root === 'props') return new Set([segments.length ? segments.join('.') : 'props'])
   if (ctx.scopeParam && root === ctx.scopeParam) {
-    if (!segments.length) return new Set(['$scope'])
+    if (!segments.length) {
+      if (ctx.scopeValue?.size) return new Set(ctx.scopeValue)
+      if (ctx.scopeWholeProps) return new Set(['props'])
+      return new Set(['$scope'])
+    }
     const [head, ...rest] = segments
     const mapped = ctx.scopeProps?.get(head)
     if (mapped) return new Set([...mapped].map((key) => (rest.length ? `${key}.${rest.join('.')}` : key)))
@@ -154,14 +193,17 @@ function canonicalStatement(node, ctx) {
   if (ts.isBlock(node)) return mapSet(canonicalStatements(node.statements, ctx), (text) => `{${text}}`)
   if (ts.isIfStatement(node)) {
     const elsePart = node.elseStatement ? canonicalStatement(node.elseStatement, ctx) : new Set([''])
-    return product([canonical(node.expression, ctx), canonicalStatement(node.thenStatement, ctx), elsePart], (parts) => {
-      const elseText = parts[2]
-        ? ts.isIfStatement(unwrap(node.elseStatement))
-          ? `else ${parts[2]}`
-          : `else${brace(parts[2])}`
-        : ''
-      return `if(${parts[0]})${brace(parts[1])}${elseText}`
-    })
+    return product(
+      [canonical(node.expression, ctx), canonicalStatement(node.thenStatement, ctx), elsePart],
+      (parts) => {
+        const elseText = parts[2]
+          ? ts.isIfStatement(unwrap(node.elseStatement))
+            ? `else ${parts[2]}`
+            : `else${brace(parts[2])}`
+          : ''
+        return `if(${parts[0]})${brace(parts[1])}${elseText}`
+      }
+    )
   }
   return new Set([flatten(node.getText())])
 }
@@ -172,7 +214,11 @@ function canonical(node, ctx = {}) {
   if (members) return members
   if (ts.isCallExpression(node)) {
     const callee = unwrap(node.expression)
-    if (ts.isIdentifier(callee) && (callee.text === 'toValue' || callee.text === 'unref') && node.arguments.length === 1) {
+    if (
+      ts.isIdentifier(callee) &&
+      (callee.text === 'toValue' || callee.text === 'unref') &&
+      node.arguments.length === 1
+    ) {
       return canonical(node.arguments[0], ctx)
     }
     const parts = [canonical(node.expression, ctx), ...node.arguments.map((argument) => canonical(argument, ctx))]
@@ -209,7 +255,8 @@ function canonical(node, ctx = {}) {
       (parts) => `${parts[0]} ? ${parts[1]} : ${parts[2]}`
     )
   }
-  if (ts.isPrefixUnaryExpression(node)) return mapSet(canonical(node.operand, ctx), (text) => `${ts.tokenToString(node.operator)}${text}`)
+  if (ts.isPrefixUnaryExpression(node))
+    return mapSet(canonical(node.operand, ctx), (text) => `${ts.tokenToString(node.operator)}${text}`)
   if (ts.isTypeOfExpression(node)) return mapSet(canonical(node.expression, ctx), (text) => `typeof ${text}`)
   if (ts.isAwaitExpression(node)) return mapSet(canonical(node.expression, ctx), (text) => `await ${text}`)
   if (ts.isStringLiteralLike(node)) return new Set([JSON.stringify(node.text)])
@@ -255,8 +302,17 @@ function watchSourceItems(node, ctx) {
       if (ts.isArrayLiteralExpression(body)) return body.elements.flatMap((element) => watchSourceItems(element, ctx))
       return keysToItems(canonical(body, ctx), body)
     }
-    if (node.body.statements.length === 1 && ts.isReturnStatement(node.body.statements[0]) && node.body.statements[0].expression) {
-      return watchSourceItems(node.body.statements[0].expression, ctx)
+    // A getter that only names locals and returns one expression watches that
+    // expression: `() => { const s = toValue(source); return [s.a, s.b] }`.
+    const statements = node.body.statements
+    const last = statements[statements.length - 1]
+    if (
+      last &&
+      ts.isReturnStatement(last) &&
+      last.expression &&
+      statements.slice(0, -1).every((statement) => ts.isVariableStatement(statement))
+    ) {
+      return watchSourceItems(last.expression, ctx)
     }
   }
   return keysToItems(canonical(node, ctx), node)
@@ -293,7 +349,8 @@ function collectScriptWatchers(sourceFile, ctx, lineBase, ctxFor, out) {
       } else if (kind === 'watchEffect') {
         const line = lineBase + sourceFile.getLineAndCharacterOfPosition(start).line
         const body = canonicalFunctionOrExpression(node.arguments[0], scoped)
-        for (const key of body) out.push({ kind, key: `effect:${key}`, text: flatten(node.arguments[0].getText()), line })
+        for (const key of body)
+          out.push({ kind, key: `effect:${key}`, text: flatten(node.arguments[0].getText()), line })
       }
     }
     ts.forEachChild(node, visit)
@@ -317,7 +374,10 @@ function parseModule(text, file) {
 function analyzeSfc(file, source) {
   const items = []
   for (const block of scriptBlocks(file, source)) {
-    collectScriptWatchers(parseModule(block.text, file), {}, block.line, null, items)
+    const sourceFile = parseModule(block.text, file)
+    const ctx = { aliases: new Map() }
+    collectAliases(sourceFile, ctx)
+    collectScriptWatchers(sourceFile, ctx, block.line, null, items)
   }
   return items
 }
@@ -346,24 +406,27 @@ function exportedFunctionRanges(sourceFile) {
 }
 
 function scopeContext(found, callSites) {
-  const ctx = { ...callSites, bindings: new Map() }
+  const ctx = { ...callSites, bindings: new Map(), aliases: new Map() }
   const param = found.param
-  if (!param) return ctx
-  if (ts.isIdentifier(param.name)) {
-    ctx.scopeParam = param.name.text
-  } else if (ts.isObjectBindingPattern(param.name)) {
-    for (const element of param.name.elements) {
-      if (!ts.isIdentifier(element.name)) continue
-      const source = element.propertyName ? propertyName(element.propertyName) : element.name.text
-      const mapped = callSites.scopeProps?.get(source)
-      if (mapped) ctx.bindings.set(element.name.text, mapped)
+  if (param) {
+    if (ts.isIdentifier(param.name)) {
+      ctx.scopeParam = param.name.text
+    } else if (ts.isObjectBindingPattern(param.name)) {
+      for (const element of param.name.elements) {
+        if (!ts.isIdentifier(element.name)) continue
+        const source = element.propertyName ? propertyName(element.propertyName) : element.name.text
+        const mapped = callSites.scopeProps?.get(source)
+        if (mapped) ctx.bindings.set(element.name.text, mapped)
+      }
     }
   }
+  collectAliases(found.node, ctx)
   return ctx
 }
 
 function callSiteMappings(vueFiles, fnName, readHead) {
   const scopeProps = new Map()
+  const scopeValue = new Set()
   let scopeWholeProps = false
   const add = (key, keys) => {
     if (!scopeProps.has(key)) scopeProps.set(key, new Set())
@@ -388,8 +451,13 @@ function callSiteMappings(vueFiles, fnName, readHead) {
         const callee = ts.isCallExpression(node) ? unwrap(node.expression) : null
         if (callee && ts.isIdentifier(callee) && callee.text === fnName && node.arguments.length) {
           const argument = unwrap(node.arguments[0])
-          if (ts.isObjectLiteralExpression(argument)) {
-            for (const property of argument.properties) {
+          // A call site may hand over the scope as a getter: `fn(() => ({ x: props.x }))`
+          // is the same scope as `fn({ x: () => props.x })`.
+          const target =
+            ts.isArrowFunction(argument) || ts.isFunctionExpression(argument) ? unwrap(argument.body) : argument
+          const scopeObject = ts.isObjectLiteralExpression(target) ? target : null
+          if (scopeObject) {
+            for (const property of scopeObject.properties) {
               if (ts.isPropertyAssignment(property)) {
                 const name = propertyName(property.name)
                 if (name !== null) add(name, canonical(property.initializer))
@@ -397,8 +465,12 @@ function callSiteMappings(vueFiles, fnName, readHead) {
                 add(property.name.text, canonical(property.name))
               }
             }
-          } else if (ts.isIdentifier(argument) && argument.text === 'props') {
+          } else if (ts.isIdentifier(target) && target.text === 'props') {
             scopeWholeProps = true
+          } else {
+            // The parameter is the value itself: `fn(() => props.sid)`, watched as
+            // `toValue(sid)` on the composable side.
+            for (const key of canonical(argument)) scopeValue.add(key)
           }
         }
         ts.forEachChild(node, visit)
@@ -406,7 +478,7 @@ function callSiteMappings(vueFiles, fnName, readHead) {
       visit(parseModule(block.text, file))
     }
   }
-  return { scopeProps, scopeWholeProps }
+  return { scopeProps, scopeWholeProps, scopeValue }
 }
 
 function analyzeComposable(file, source, vueFiles, readHead) {
@@ -431,7 +503,9 @@ function changedFiles(repo, baseline, target, staged) {
   const args = ['diff', '--name-status', '--no-renames', '-z', baseline]
   if (target) args.push(target)
   if (staged) args.push('--cached')
-  const fields = git(repo, ...args).split('\0').filter(Boolean)
+  const fields = git(repo, ...args)
+    .split('\0')
+    .filter(Boolean)
   const changed = []
   for (let i = 0; i < fields.length; i += 2) changed.push({ status: fields[i], file: fields[i + 1] })
   if (!target && !staged) {
@@ -449,7 +523,9 @@ function listVueFiles(repo, target, staged) {
       .filter((file) => file.endsWith('.vue'))
   }
   const args = staged ? ['ls-files', '--cached', '-z'] : ['ls-files', '-z']
-  const files = git(repo, ...args).split('\0').filter((file) => file.endsWith('.vue'))
+  const files = git(repo, ...args)
+    .split('\0')
+    .filter((file) => file.endsWith('.vue'))
   if (!staged) {
     for (const file of git(repo, 'ls-files', '--others', '--exclude-standard', '-z')
       .split('\0')
@@ -543,7 +619,7 @@ function fixFor(finding) {
     return `fix: the composable watches \`${finding.key.slice(7)}\`, but no call site maps it to a parent value; pass it through the scope and add a test that fails without that watch.`
   }
   const scopeName = scopeNameFor(finding.key)
-  return `fix: carry the watcher into the composable, e.g. watch(() => toValue(scope.${scopeName}), ...) with \`${scopeName}: () => props.${finding.key}\` at the call site; add a test that fails without that watch.`
+  return `fix: carry the watcher into the composable, e.g. watch(() => toValue(scope.${scopeName}), ...) with \`${scopeName}: () => props.${finding.key}\` at the call site (or watch(() => toValue(<param>), ...) when the parameter is the value); add a test that fails without that watch.`
 }
 
 function report(findings, result) {
@@ -565,9 +641,13 @@ function report(findings, result) {
 function main(argv) {
   if (argv.length === 1 && argv[0] === '--self-test') {
     return (
-      spawnSync(process.execPath, ['--test', fileURLToPath(new URL('./composable-watch-guard.test.mjs', import.meta.url))], {
-        stdio: 'inherit',
-      }).status ?? 2
+      spawnSync(
+        process.execPath,
+        ['--test', fileURLToPath(new URL('./composable-watch-guard.test.mjs', import.meta.url))],
+        {
+          stdio: 'inherit',
+        }
+      ).status ?? 2
     )
   }
   if (argv.includes('--help')) {

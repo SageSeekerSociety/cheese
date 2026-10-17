@@ -106,7 +106,10 @@ function mutatedGuard(t) {
     anchor,
     'const isEquivalent = (available, lost) => available.size > 0 || available.has(lost)'
   )
-  const file = path.join(path.dirname(guard), `.composable-watch-guard.mutated-${process.pid}-${mutatedGuard.seq++}.mjs`)
+  const file = path.join(
+    path.dirname(guard),
+    `.composable-watch-guard.mutated-${process.pid}-${mutatedGuard.seq++}.mjs`
+  )
   fs.writeFileSync(file, mutated)
   t.after(() => fs.rmSync(file, { force: true }))
   return file
@@ -158,6 +161,79 @@ export function usePanel(scope: { topicId: () => string }) {
   const dropped = split(t, { script, head, composableSource: droppedComposable }).run()
   assert.equal(dropped.status, 1, dropped.output)
   assert.match(dropped.output, /topicId/)
+})
+
+test('matches a scope the call site passes as a getter of an object', (t) => {
+  // The real shape in useArtifactVersionPreview: the call site hands over
+  // `() => ({ topicId: props.topicId })` and the composable names it once,
+  // `const s = toValue(source); return [s.topicId]`, before watching it.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ topicId: string; other: string }>()
+const loading = ref(false)
+watch(() => [props.topicId, props.other], () => { loading.value = false })`
+  const head = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ topicId: string; other: string }>()
+const { loading } = usePanel(() => ({ topicId: props.topicId, other: props.other }))`
+  const composableSource = `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(source: { topicId: string; other: string }) {
+  const loading = ref(false)
+  watch(
+    () => {
+      const s = toValue(source)
+      return [s.topicId, s.other]
+    },
+    () => { loading.value = false }
+  )
+  return { loading }
+}`
+  const kept = split(t, { script, head, composableSource }).run()
+  assert.equal(kept.status, 0, kept.output)
+
+  const dropped = split(t, { script, head, composableSource: droppedComposable }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /topicId/)
+})
+
+test('matches a composable whose first parameter is the watched value', (t) => {
+  // useDeviceScreen: the call site passes `() => props.sid`, the composable
+  // watches its parameter directly, `watch(() => toValue(sid), ...)`.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ sid: string }>()
+const loading = ref(false)
+watch(() => props.sid, () => { loading.value = false })`
+  const head = `import { useScreen } from '@/composables/useScreen'
+
+const props = defineProps<{ sid: string }>()
+const { loading } = useScreen(() => props.sid, { onSwitched: () => {} })`
+  const kept = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function useScreen(sid: { value: string }, hooks: { onSwitched?: () => void }) {
+  const loading = ref(false)
+  watch(() => toValue(sid), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(kept.status, 0, kept.output)
+
+  const dropped = split(t, {
+    script,
+    head,
+    composableSource: `import { ref } from 'vue'
+
+export function useScreen(sid: { value: string }) {
+  const loading = ref(false)
+  return { loading }
+}`,
+  }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /props\.sid/)
 })
 
 test('an unrelated watch in the composable does not stand in for the lost one', (t) => {
