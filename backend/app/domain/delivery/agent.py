@@ -12,10 +12,11 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select, true, update
+from sqlalchemy import DateTime, Uuid, column, or_, select, table, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
+from app.domain.addressing import addressed_to_agent
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.services import project_of, room_of
@@ -59,21 +60,36 @@ def now():
     return datetime.now(UTC)
 
 
+#: The turn interval, read bare. `agent_turns` belongs to the agent domain and
+#: that domain already imports this one (it reads input holds), so the question
+#: goes out through this table instead of that domain's model — importing the
+#: models on the delivery side would close a domain cycle (C3 in
+#: backend/.importlinter). `room_task/closing.py` and `block/waits.py` read the
+#: same table the same way.
+_TURNS = table(
+    "agent_turns",
+    column("id", Uuid),
+    column("conversation_id", Uuid),
+    column("stopped_at", DateTime(timezone=True)),
+)
+
+
 def work_interval_is_over():
     """Whether this input's own work interval is one the platform ended.
 
     A correlated EXISTS over the turn intervals, anchored on the input row that
-    names its work (``work_id``/``conversation_id``). The fact belongs to the agent
-    domain's turn intervals, and that domain already imports this one (it reads
-    input holds), so the question goes out through this seam — importing
-    the turn models on the delivery side would close a domain cycle (C3 in
-    backend/.importlinter).
+    names its work (``work_id``/``conversation_id``). A work the platform has no
+    row for is NOT over — silence is not a conclusion. As a clause rather than a
+    second question so the caller's query stays one query.
     """
-    # deferred-import: breaks the cycle agent.runtime -> delivery.agent
-    from app.domain.agent.runtime import AgentTurnRepository
-
-    return AgentTurnRepository.interval_is_over(
-        turn_id=NativeInput.work_id, topic_id=NativeInput.conversation_id
+    return (
+        select(_TURNS.c.id)
+        .where(
+            _TURNS.c.id == NativeInput.work_id,
+            _TURNS.c.conversation_id == NativeInput.conversation_id,
+            _TURNS.c.stopped_at.is_not(None),
+        )
+        .exists()
     )
 
 
@@ -287,9 +303,6 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 )
             )
         await session.commit()
-    # deferred-import: breaks the cycle agent.runtime -> delivery.agent
-    from app.domain.agent.runtime import addressed_to_agent
-
     for delivery_id, attempt, topic_id, instance_id, seat, content in claimed:
         runner.submit(
             chat,
