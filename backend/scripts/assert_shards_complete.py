@@ -69,6 +69,7 @@ def find_reports(results: list[Path]) -> list[Path]:
     directory itself is read; a report named twice is only read once.
     """
     reports: list[Path] = []
+    seen: set[Path] = set()
     for result in results:
         if result.is_dir():
             found = sorted(result.glob("*.xml"))
@@ -79,17 +80,27 @@ def find_reports(results: list[Path]) -> list[Path]:
         else:
             raise SuiteDidNotRun(f"{result} does not exist")
         for path in found:
-            if path not in reports:
+            # Resolved, so one report named twice by two spellings (a directory
+            # and a file inside it, a symlink) is read once; reading it twice
+            # would look like a case that ran in two reports.
+            identity = path.resolve()
+            if identity not in seen:
+                seen.add(identity)
                 reports.append(path)
     return reports
 
 
-def assert_reports_complete(results: list[Path], expected: Path) -> int:
+def assert_reports_complete(
+    results: list[Path], expected: Path, *, reruns: Path | None = None
+) -> int:
     """Every case the plan names ran on exactly one of these reports, and no
     report held a case the plan does not name.
 
     The local counterpart of ``assert_complete``: no artifact tree, no shard
     assignment, just the reports a run produced and the plan it meant to run.
+    ``reruns`` is the record ``scripts.ci_evidence`` writes, so a case the
+    local run retried is judged on its final attempt instead of looking like a
+    case that ran twice.
     """
     reports = find_reports(results)
     if not reports:
@@ -97,13 +108,20 @@ def assert_reports_complete(results: list[Path], expected: Path) -> int:
     planned = read_plan(expected)
     seen: set[str] = set()
     for report in reports:
-        for nodeid in executed_nodeids(report):
+        # A shard can be assigned no case at all when there are more shards
+        # than cases; that report is empty and the coverage check below is
+        # what refuses a run that executed nothing.
+        for nodeid in executed_nodeids(report, reruns, allow_empty=True):
             if nodeid in seen:
                 raise SuiteDidNotRun(
                     f"cases ran in more than one report: {nodeid} "
                     "(a duplicate means the plan was not partitioned)"
                 )
             seen.add(nodeid)
+    if not seen:
+        raise SuiteDidNotRun(
+            "no report holds an executed case — the run verified nothing"
+        )
     missing = sorted(set(planned) - seen)
     unexpected = sorted(seen - set(planned))
     if missing or unexpected:
@@ -133,6 +151,12 @@ def main() -> None:
         nargs="+",
         help="offline mode: JUnit reports (or directories of them) judged together",
     )
+    parser.add_argument(
+        "--reruns",
+        type=Path,
+        help="offline mode: reruns.jsonl from scripts.ci_evidence, retries the "
+        "reports hide",
+    )
     args = parser.parse_args()
     try:
         if args.results is not None:
@@ -140,10 +164,14 @@ def main() -> None:
                 parser.error("--results replaces the CI artifacts directory")
             if args.plan is None:
                 parser.error("--results needs --plan")
-            count = assert_reports_complete(args.results, Path(args.plan))
+            count = assert_reports_complete(
+                args.results, Path(args.plan), reruns=args.reruns
+            )
         else:
             if args.artifacts is None or args.plan is None:
                 parser.error("give the artifacts directory and --plan, or --results")
+            if args.reruns is not None:
+                parser.error("--reruns belongs to the offline --results mode")
             count = assert_complete(args.artifacts, args.plan)
     except SuiteDidNotRun as exc:
         raise SystemExit(f"::error::{exc}") from exc

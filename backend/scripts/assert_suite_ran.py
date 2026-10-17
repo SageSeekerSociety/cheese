@@ -211,8 +211,10 @@ def read_plan(path: Path) -> list[str]:
         _, selected, _ = read_selection(path)
         return _as_nodeids(path, selected)
     try:
-        text = path.read_text()
-    except OSError as exc:
+        # utf-8-sig, not utf-8: an editor that writes a byte-order mark would
+        # otherwise turn the first planned case into a different, never-run ID.
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
         raise SuiteDidNotRun(f"{path} is not a readable plan: {exc}") from exc
     if path.suffix != ".json":
         lines = [line.strip() for line in text.splitlines()]
@@ -313,8 +315,14 @@ def _inspect(junit_xml: Path, reruns: Path | None, *, require_nodeid: bool) -> _
     return _Run(junit_xml, ran, skipped, errored, nodeids, placeholders, crashes)
 
 
-def _require_no_silence(run: _Run) -> None:
-    """Refuse a report that could pass while saying nothing about the cases."""
+def _require_no_silence(run: _Run, *, allow_empty: bool = False) -> None:
+    """Refuse a report that could pass while saying nothing about the cases.
+
+    ``allow_empty`` is for a caller judging several reports together: one shard
+    of a plan can legitimately collect no case at all (more shards than cases),
+    and the aggregate's coverage check is what refuses a plan nothing ran. A
+    single report is never allowed to be empty.
+    """
     if run.placeholders > run.crashes:
         raise SuiteDidNotRun(
             f"the JUnit report has {run.placeholders} nameless testcase(s) but "
@@ -340,7 +348,7 @@ def _require_no_silence(run: _Run) -> None:
         raise SuiteDidNotRun(
             f"{len(run.errored)} case(s) errored before their test body ran:\n{listing}"
         )
-    if run.ran == 0:
+    if run.ran == 0 and not allow_empty:
         raise SuiteDidNotRun(
             f"{run.junit_xml} reports no executed case — the suite ran nothing, "
             "so nothing was verified"
@@ -420,15 +428,21 @@ def assert_suite_ran(
     return run.ran
 
 
-def executed_nodeids(junit_xml: Path, reruns: Path | None = None) -> list[str]:
+def executed_nodeids(
+    junit_xml: Path,
+    reruns: Path | None = None,
+    *,
+    allow_empty: bool = False,
+) -> list[str]:
     """The node IDs the report says executed, in report order.
 
     A caller aggregating several reports needs the identities, not just the
     count, so the report must name every case it holds: run pytest with
-    ``-p scripts.ci_shard``.
+    ``-p scripts.ci_shard``. ``allow_empty`` admits a report that executed
+    nothing, for a caller judging several reports together.
     """
     run = _inspect(junit_xml, reruns, require_nodeid=True)
-    _require_no_silence(run)
+    _require_no_silence(run, allow_empty=allow_empty)
     return list(run.nodeids)
 
 

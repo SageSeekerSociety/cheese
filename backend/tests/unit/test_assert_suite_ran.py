@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from scripts.assert_shards_complete import assert_reports_complete
+from scripts.assert_shards_complete import main as shards_main
 from scripts.assert_suite_ran import (
     SuiteDidNotRun,
     assert_suite_ran,
@@ -545,3 +546,131 @@ def test_the_reports_can_be_directories(tmp_path: Path) -> None:
     nodeids = ["tests/unit/test_a.py::test_one"]
     first = shard_report(tmp_path, "first", nodeids)
     assert assert_reports_complete([first.parent], plan(tmp_path, nodeids)) == 1
+
+
+def test_a_report_with_a_case_the_plan_does_not_name_is_not_coverage(
+    tmp_path: Path,
+) -> None:
+    nodeids = ["tests/unit/test_a.py::test_one"]
+    first = shard_report(tmp_path, "first", [*nodeids, "tests/unit/test_b.py::x"])
+    with pytest.raises(SuiteDidNotRun, match="1 unexpected"):
+        assert_reports_complete([first], plan(tmp_path, nodeids))
+
+
+def test_an_empty_shard_does_not_refuse_a_run_that_covered_its_plan(
+    tmp_path: Path,
+) -> None:
+    # More shards than cases: pytest writes a valid report holding no case.
+    # The plan's coverage is what decides, not each shard on its own.
+    nodeids = ["tests/unit/test_a.py::test_one"]
+    first = shard_report(tmp_path, "first", nodeids)
+    empty = shard_report(tmp_path, "second", [])
+    assert assert_reports_complete([first, empty], plan(tmp_path, nodeids)) == 1
+
+
+def test_reports_that_hold_no_case_verified_nothing(tmp_path: Path) -> None:
+    nodeids = ["tests/unit/test_a.py::test_one"]
+    empty = shard_report(tmp_path, "first", [])
+    with pytest.raises(SuiteDidNotRun, match="verified nothing"):
+        assert_reports_complete([empty], plan(tmp_path, nodeids))
+
+
+def test_a_case_the_local_run_retried_is_judged_on_its_final_attempt(
+    tmp_path: Path,
+) -> None:
+    nodeids = ["tests/unit/test_a.py::test_one", "tests/unit/test_a.py::test_two"]
+    first = shard_report(tmp_path, "first", [nodeids[0], nodeids[0], nodeids[1]])
+    recorded = reruns(
+        tmp_path, {"nodeid": nodeids[0], "when": "teardown", "reason": "fixture died"}
+    )
+    with pytest.raises(SuiteDidNotRun, match="duplicate"):
+        assert_reports_complete([first], plan(tmp_path, nodeids))
+    assert (
+        assert_reports_complete([first], plan(tmp_path, nodeids), reruns=recorded) == 2
+    )
+
+
+def test_one_report_named_by_two_spellings_is_read_once(
+    tmp_path: Path, monkeypatch
+) -> None:
+    nodeids = ["tests/unit/test_a.py::test_one"]
+    first = shard_report(tmp_path, "first", nodeids)
+    monkeypatch.chdir(first.parent)
+    reports = [first.parent, Path(first.name)]
+    assert assert_reports_complete(reports, plan(tmp_path, nodeids)) == 1
+
+
+def test_a_report_that_does_not_exist_fails_closed(tmp_path: Path) -> None:
+    with pytest.raises(SuiteDidNotRun, match="does not exist"):
+        assert_reports_complete(
+            [tmp_path / "missing.xml"],
+            plan(tmp_path, ["tests/unit/test_a.py::test_one"]),
+        )
+
+
+def test_a_directory_holding_no_report_fails_closed(tmp_path: Path) -> None:
+    empty = tmp_path / "no-reports"
+    empty.mkdir()
+    with pytest.raises(SuiteDidNotRun, match="no JUnit report"):
+        assert_reports_complete(
+            [empty], plan(tmp_path, ["tests/unit/test_a.py::test_one"])
+        )
+
+
+def test_the_offline_shard_cli_judges_the_reports_together(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    nodeids = ["tests/unit/test_a.py::test_one"]
+    first = shard_report(tmp_path, "first", nodeids)
+    planned = plan(tmp_path, nodeids)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["assert_shards_complete", "--results", str(first), "--plan", str(planned)],
+    )
+    assert shards_main() is None
+    assert "All 1 planned cases ran on exactly one runner." in capsys.readouterr().out
+
+
+def test_the_offline_shard_cli_errors_on_a_report_that_does_not_exist(
+    tmp_path: Path, monkeypatch
+) -> None:
+    planned = plan(tmp_path, ["tests/unit/test_a.py::test_one"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["assert_shards_complete", "--results", str(tmp_path / "no.xml")]
+        + ["--plan", str(planned)],
+    )
+    with pytest.raises(SystemExit) as raised:
+        shards_main()
+    assert "does not exist" in str(raised.value)
+
+
+def test_the_plan_can_be_one_manifest_or_a_json_list(tmp_path: Path) -> None:
+    nodeids = ["tests/unit/test_a.py::test_one"]
+    manifest = selection(tmp_path, nodeids) / "selection-main.json"
+    assert read_plan(manifest) == nodeids
+    listed = tmp_path / "plan.json"
+    listed.write_text(json.dumps(nodeids))
+    assert read_plan(listed) == nodeids
+
+
+def test_a_plan_that_names_one_case_twice_fails_closed(tmp_path: Path) -> None:
+    planned = plan(tmp_path, ["tests/unit/test_a.py::test_one"] * 2)
+    with pytest.raises(SuiteDidNotRun, match="more than once"):
+        read_plan(planned)
+
+
+def test_a_plan_with_a_byte_order_mark_still_names_its_cases(tmp_path: Path) -> None:
+    nodeids = ["tests/unit/test_a.py::test_one"]
+    planned = tmp_path / "plan.txt"
+    planned.write_text("\ufeff" + nodeids[0] + "\n", encoding="utf-8")
+    assert read_plan(planned) == nodeids
+
+
+def test_a_plan_that_is_not_utf8_fails_closed(tmp_path: Path) -> None:
+    planned = tmp_path / "plan.txt"
+    planned.write_bytes(b"\xff\xfe\x00")
+    with pytest.raises(SuiteDidNotRun, match="not a readable plan"):
+        read_plan(planned)
