@@ -385,33 +385,47 @@ def _branch_runs_self_test(test: ast.AST) -> bool:
     return True
 
 
+def _counts_the_flag(node: ast.AST) -> bool:
+    """True for the ways a guard asks how many times the flag appears.
+
+    `argv.count("--self-test")`, `len(argv)`, `sum(...)`: the comparison's
+    sense is then about a count, not about membership.
+    """
+    return isinstance(node, ast.Call) and (
+        isinstance(node.func, ast.Name) and node.func.id in ("len", "sum")
+        or isinstance(node.func, ast.Attribute) and node.func.attr == "count"
+    )
+
+
 def _comparison_holds_with_flag(node: ast.Compare) -> bool:
     """True when this comparison holds exactly while `--self-test` is passed.
 
     `"--self-test" in argv` and `argv[1:] == ["--self-test"]` hold with the
     flag; `not in` and `!=` hold without it. A comparison on how many times
-    the flag appears — `argv.count("--self-test") == 0` — inverts instead:
-    zero means the flag is absent, so that branch is the scan.
+    the flag appears inverts that sense for the count of zero — absent — but
+    not for any other count: `count("--self-test") == 1` holds exactly when
+    the flag is there, the same as `in`.
     """
-    counted = any(
-        isinstance(item, ast.Call)
-        and (
-            isinstance(item.func, ast.Name)
-            and item.func.id in ("len", "sum")
-            or isinstance(item.func, ast.Attribute)
-            and item.func.attr == "count"
-        )
-        for item in [node.left, *node.comparators]
+    operands = [node.left, *node.comparators]
+    counted = any(_counts_the_flag(item) for item in operands)
+    zero_side = any(
+        isinstance(item, ast.Constant) and isinstance(item.value, int) and item.value == 0
+        for item in operands
     )
     for op in node.ops:
         if counted and isinstance(op, (ast.Eq, ast.NotEq)):
-            return isinstance(op, ast.NotEq)
+            absent = isinstance(op, ast.Eq) and zero_side or isinstance(op, ast.NotEq) and not zero_side
+            return not absent
         return not isinstance(op, (ast.NotIn, ast.NotEq))
     return True
 
 
 def _statement_blocks(tree: ast.Module) -> dict[int, list[ast.stmt]]:
-    """Map each statement to the block of statements it sits in."""
+    """Map each statement to the block of statements it sits in.
+
+    `ExceptHandler` and `match_case` have a `body` too, so a statement inside
+    an `except` or a `match` case is mapped like any other.
+    """
     blocks: dict[int, list[ast.stmt]] = {}
     for node in ast.walk(tree):
         for slot in ("body", "orelse", "finalbody"):
@@ -463,18 +477,26 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
         sides.append(branch.body if for_self_test else branch.orelse)
         if not for_self_test:
             # Whatever follows the branch also runs for the self-test. The
-            # branch may sit in an `elif`, a `try` or a `with`, so walk out
-            # through its enclosing statements, stopping at the function.
+            # branch may sit in an `elif`, a `try`, a `with`, an `except` or a
+            # `match` case, so walk out through its enclosing statements,
+            # stopping at the function.
             node: ast.AST = branch
             while True:
                 block = blocks.get(id(node))
                 if block is None:
                     break
-                sides.append(block[block.index(node) + 1 :])
+                tail = block[block.index(node) + 1 :]
+                sides.append(tail)
+                if tail and isinstance(tail[-1], (ast.Return, ast.Raise)):
+                    # The self-test leaves here. Nothing further out can be on
+                    # its path, so collecting it would only invent a spawn.
+                    break
                 holder = parents.get(node)
-                if isinstance(
+                while isinstance(holder, (ast.ExceptHandler, ast.match_case)):
+                    holder = parents.get(holder)
+                if holder is None or isinstance(
                     holder, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module, ast.Lambda)
-                ) or holder is None:
+                ):
                     break
                 node = holder
     for side in sides:
@@ -1252,7 +1274,7 @@ def report(results: list[tuple[str, Path, Outcome, bool]]) -> tuple[int, int]:
     width = max(len(path.name) for _, path, _, _ in checked)
     findings = 0
     unverified = 0
-    for hook, path, outcome, _ in checked:
+    for _hook, path, outcome, _ in checked:
         label = outcome.status.upper()
         print(f"{label:<22} {path.name:<{width}}  {outcome.detail}")
         if outcome.status in FINDING_STATUSES:
@@ -1307,6 +1329,9 @@ def self_test() -> int:
         "count-zero-guard.py": "ok",
         "else-handoff-guard.py": "unverified",
         "nested-handoff-guard.py": "unverified",
+        "except-handoff-guard.py": "unverified",
+        "count-one-handoff-guard.py": "unverified",
+        "unreachable-spawn-guard.py": "self-test-does-not-bite",
     }
     failures = []
     for name, want in expected.items():
@@ -2028,6 +2053,107 @@ def self_test():
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 ''',
+    "unreachable-spawn-guard.py": '''#!/usr/bin/env python3
+"""The scan-side branch is nested, and the self-test returns before the spawn.
+
+Walking out of the branch must stop where the self-test leaves the function:
+the `helper.py` call after the outer `if` never runs for `--self-test`, so it
+does not make the self-test unjudgeable.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(argv):
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+def main(argv):
+    if len(argv) >= 2:
+        if "--self-test" not in argv:
+            return scan(argv)
+        print("PASS: 什么都没测")
+        return 0
+    subprocess.run([sys.executable, str(Path(__file__).with_name("helper.py"))], check=False)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "count-one-handoff-guard.py": '''#!/usr/bin/env python3
+"""`count("--self-test") == 1` holds when the flag *is* there; it is a hand-off.
+
+Only a count of zero means the flag is absent, so only `== 0` is the scan.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if argv.count("--self-test") == 1:
+        return check()
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "except-handoff-guard.py": '''#!/usr/bin/env python3
+"""The branch sits in a handler that always runs; the hand-off is after the try.
+
+The self-test side falls out of the handler and reaches `check` below it, so
+the walk has to climb out of the `except` body; reading the handler as a dead
+end would leave the hand-off out of scope.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(argv):
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_except.py"))]
+    )
+
+
+def main(argv):
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError:
+        if "--self-test" not in argv:
+            return scan(argv)
+        print("running the self-test")
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
     "shell-unquoted-hint-guard.sh": '''#!/usr/bin/env bash
 # `echo … exit 1` prints words; the self-test only looks at that text.
 set -u
@@ -2524,6 +2650,14 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+''',
+    "test_counted.py": '''#!/usr/bin/env python3
+"""The test file `count-one-handoff-guard.py --self-test` hands off to."""
+print("PASS: 旁置测试跑通了")
+''',
+    "test_except.py": '''#!/usr/bin/env python3
+"""The test file `except-handoff-guard.py --self-test` hands off to."""
+print("PASS: 旁置测试跑通了")
 ''',
     "test_nested.py": '''#!/usr/bin/env python3
 """The test file `nested-handoff-guard.py --self-test` hands off to."""

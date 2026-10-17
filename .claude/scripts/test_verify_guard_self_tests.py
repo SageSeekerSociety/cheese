@@ -1200,6 +1200,102 @@ PY_COUNT_ZERO_SCAN = PY_NEGATIVE_BRANCH_SCAN.replace(
     'if "--self-test" not in argv:', 'if argv.count("--self-test") == 0:'
 )
 
+#: The same count, one instead of zero: the branch is the self-test side now.
+#: Reading it as the scan leaves the hand-off out and blesses a green guard.
+PY_COUNT_ONE_HANDOFF = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if argv.count("--self-test") == 1:
+        return check()
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The self-test returns inside the outer `if`; `helper.py` below it is not on
+#: that path. Walking further out would call this guard unjudgeable when it
+#: simply prints PASS and exits 0 — a green that must be reported as such.
+PY_UNREACHABLE_SPAWN = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(argv):
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+def main(argv):
+    if len(argv) >= 2:
+        if "--self-test" not in argv:
+            return scan(argv)
+        print("PASS: 什么都没测")
+        return 0
+    subprocess.run([sys.executable, str(Path(__file__).with_name("helper.py"))], check=False)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The self-test branch sits in a handler that always runs; its path leaves the
+#: handler and reaches the hand-off after the `try`. Treating the handler as a
+#: dead end drops `check` from the scope and the delegation goes unseen.
+PY_EXCEPT_HANDOFF = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(argv):
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_except.py"))]
+    )
+
+
+def main(argv):
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError:
+        if "--self-test" not in argv:
+            return scan(argv)
+        print("running the self-test")
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
 #: The scan path shells out to `helper.py`; the self-test re-runs this very
 #: file, so mutating it reaches the process that judges. Only the self-test
 #: path decides whether a spawn makes the mutation unreachable.
@@ -1485,6 +1581,32 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         )
         self.assertEqual(code, 0, output)
         self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_counted_one_is_the_self_test_not_the_scan(self) -> None:
+        """`count() == 1` holds when the flag is present, so the branch hands off."""
+        code, guard, output = self._only(
+            {"countedone.py": PY_COUNT_ONE_HANDOFF}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_spawn_after_the_self_test_returns_is_not_on_its_path(self) -> None:
+        """The self-test exits inside the outer `if`; `helper.py` below never runs."""
+        code, guard, output = self._only(
+            {"unreachable.py": PY_UNREACHABLE_SPAWN}, {"helper.py": HELPER_SCRIPT}
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_branch_in_a_handler_still_reaches_the_hand_off_below_the_try(self) -> None:
+        """Falling out of the `except` body lands on `check` after the `try`."""
+        code, guard, output = self._only(
+            {"handlerhandoff.py": PY_EXCEPT_HANDOFF}, {"test_except.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
 
     def test_a_verdict_after_a_control_word_is_still_the_verdict(self) -> None:
         """`then exit 1` is a command in command position, not another word of the test."""
