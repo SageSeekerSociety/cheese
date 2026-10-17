@@ -14,7 +14,7 @@ import unittest
 SCRIPT = Path(__file__).with_name("post-pull.sh")
 UV_LOCK = "backend/uv.lock"
 PNPM_LOCK = "frontend/pnpm-lock.yaml"
-BASELINES = ("frontend/import-boundary-baseline.json", "frontend/a11y-baseline.json")
+BASELINES = ("frontend/a11y-baseline.json",)
 
 
 class PostPullTest(unittest.TestCase):
@@ -124,7 +124,6 @@ class PostPullTest(unittest.TestCase):
             "other/pyproject.toml",
             "desktop/pnpm-lock.yaml",
             "frontend/pnpm-lock.yaml.backup",
-            "frontend/import-boundary-baseline.json.backup",
             "frontend/a11y-baseline.json.backup",
             "backend/.boundary-baseline.json",
             "frontend/.a11y-baseline.json",
