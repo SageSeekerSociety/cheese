@@ -1066,10 +1066,10 @@ class Settings(BaseSettings, SandboxSettings):
     # there. Configurable so a fork or a second deployment is not a code change.
     ratchet_repository: str = "SageSeekerSociety/cheese"
     #: How often the backend pulls new `ratchet-snapshot` artifacts. The page
-    #: reads the table and never GitHub, so this clock is what makes a merge
-    #: visible there; 0 disables the pull and leaves the table as it stands.
-    #: 15 minutes is the design's interval — one listing call per tick, and a
-    #: merge does not need to appear faster than a person can read the page.
+    #: reads the table and never GitHub, so this clock is what makes a new
+    #: collection visible there; 0 disables the pull and leaves the table as it
+    #: stands. 15 minutes is the design's interval — one listing call per tick,
+    #: and a collection does not need to appear faster than a person reads.
     ratchet_ingest_interval_s: int = 900
     #: How many points the page draws. A bound on one response, and the window
     #: the direction is computed over; the archive keeps everything.
