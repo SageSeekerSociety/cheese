@@ -164,7 +164,6 @@ auth_entries:
   legacy.groups.update_group: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); GroupsService requires group OWNER or ADMIN; source: backend/app/api/routes/groups.py:106, backend/app/auth/checker.py:142, backend/app/domain/groups/services.py:178"
   legacy.groups.delete_group: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); GroupsService requires group OWNER; source: backend/app/api/routes/groups.py:130, backend/app/auth/checker.py:142, backend/app/domain/groups/services.py:208"
   legacy.groups.create_group_target: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); group target/question service requires group OWNER or ADMIN; source: backend/app/api/routes/groups.py:232, backend/app/auth/checker.py:142, backend/app/domain/groups/services.py:385, backend/app/domain/groups/services.py:477"
-  legacy.knowledge.create_knowledge: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); KnowledgeService requires membership of knowledge owning team for create/read/update/delete/vote; source: backend/app/api/routes/knowledge.py:47, backend/app/auth/checker.py:142, backend/app/domain/knowledge/services.py:320"
   legacy.materialbundles.update_material_bundle: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); MaterialBundleService requires bundle creator_id == authenticated user; source: backend/app/api/routes/materialbundles.py:90, backend/app/auth/checker.py:142, backend/app/domain/materials/services.py:273, backend/app/domain/materials/services.py:299"
   legacy.materials.get_material_detail: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); in addition to the uploader-free read, the handler refuses material that sits in a board material library's admins-only tier unless the caller manages that board (SpaceMaterialService.may_read_outside_space); MaterialService.get_material checks existence; source: backend/app/api/routes/materials.py:106, backend/app/auth/checker.py:142, backend/app/domain/space/material_service.py:190"
   legacy.materials.delete_material: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); MaterialService requires uploader_id == authenticated user; source: backend/app/api/routes/materials.py:110, backend/app/auth/checker.py:142, backend/app/domain/materials/services.py:120"
@@ -353,7 +352,6 @@ owners:
   avatars: "Account avatar asset catalogue and image delivery; domain/avatars/AvatarService."
   comments: "Community comments/reactions; domain/comments/CommentService."
   groups: "Learning groups, study targets and question curation; domain/groups/GroupService."
-  knowledge: "Team knowledge library and votes; domain/knowledge/KnowledgeService."
   materials.bundles: "Curated learning-material bundles; domain/materials/MaterialBundleService, not project artifact catalogues."
   materials: "Uploaded learning materials; domain/materials/MaterialService, not runtime local asset delivery."
   questions: "Community questions/discovery/answer invitations; domain/questions services, composed with domain/discussion."
@@ -724,14 +722,6 @@ routes:
   - {protocol: "http", method: "GET", path: "/integrations/{integration_id}/feishu/docs/{document_id}", auth: "integration.room", owner: "integration"}
   - {protocol: "http", method: "POST", path: "/integrations/{integration_id}/feishu/docs", auth: "integration.room", owner: "integration"}
   - {protocol: "http", method: "PATCH", path: "/integrations/{integration_id}/feishu/docs/{document_id}", auth: "integration.room", owner: "integration"}
-  # app.api.routes.knowledge
-  - {protocol: "http", method: "POST", path: "/knowledge", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
-  - {protocol: "http", method: "GET", path: "/knowledge", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
-  - {protocol: "http", method: "GET", path: "/knowledge/{knowledgeId}", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
-  - {protocol: "http", method: "PATCH", path: "/knowledge/{knowledgeId}", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
-  - {protocol: "http", method: "DELETE", path: "/knowledge/{knowledgeId}", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
-  - {protocol: "http", method: "POST", path: "/knowledge/{knowledgeId}/upvote", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
-  - {protocol: "http", method: "DELETE", path: "/knowledge/{knowledgeId}/upvote", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
   # app.api.routes.legal
   - {protocol: "http", method: "GET", path: "/legal/documents", auth: "public.legal", owner: "legal"}
   - {protocol: "http", method: "GET", path: "/legal/documents/{document}", auth: "public.legal", owner: "legal"}
@@ -758,6 +748,10 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/overview", auth: "project.documents", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/about", auth: "document.reader", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/links", auth: "document.reader", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/documents/{document_id}/places", auth: "document.own", owner: "living_doc"}
+  - {protocol: "http", method: "PUT", path: "/documents/{document_id}/place", auth: "document.own", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/teams/{team_id}/documents", auth: "team.member.read", owner: "living_doc"}
+  - {protocol: "http", method: "POST", path: "/teams/{team_id}/documents", auth: "team.member.read", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/keep", auth: "document.own", owner: "living_doc"}
   - {protocol: "http", method: "PATCH", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}
   - {protocol: "http", method: "DELETE", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}

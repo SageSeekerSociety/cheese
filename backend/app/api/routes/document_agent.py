@@ -36,6 +36,7 @@ from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import box, question, thread
+from app.domain.agent.document.question import Asked
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.living_doc.comments import CommentThreads
@@ -58,6 +59,8 @@ def _sse(event: str, data: dict, position: str | None = None) -> bytes:
 
 async def _asker(db, resolver, document_id: uuid.UUID):
     reached = await reach(db, resolver, document_id, enforce=True)
+    if reached.doc.project_id is None:
+        raise ForbiddenError(say("docTeamNoAgent"))
     await human_operation_actor(db, reached.actor)
     redis = get_redis_client()
     if redis is None:
@@ -65,7 +68,18 @@ async def _asker(db, resolver, document_id: uuid.UUID):
     return reached, reached.actor, redis
 
 
+def _asked(reached) -> Asked:
+    """The question asked of this document's AI teammate; a team's own document
+    has none to ask (`_asker` refuses it first)."""
+    asked = asked_of(reached)
+    if asked is None:
+        raise ForbiddenError(say("docTeamNoAgent"))
+    return asked
+
+
 async def _blank_overview(db, doc) -> bool:
+    if doc.project_id is None:
+        return False
     overview = await pointed_overview(db, doc.project_id)
     return overview is not None and overview.id == doc.id and not doc.content.strip()
 
@@ -121,7 +135,7 @@ async def ask_agent(
                 questions,
                 redis,
                 emit,
-                asked=asked_of(reached),
+                asked=_asked(reached),
                 asker=actor.handle,
                 conversation=conversation,
                 preset=body.preset,
@@ -198,7 +212,10 @@ async def stop_agent(
     await box.owned(redis, conversation, asker=actor.handle, document_id=document_id)
     await db.commit()
     await box.stop(
-        redis, sessions, project_id=reached.doc.project_id, conversation=conversation
+        redis,
+        sessions,
+        project_id=_asked(reached).project_id,
+        conversation=conversation,
     )
     return ok({})
 
@@ -223,7 +240,7 @@ async def reply_in_thread(
         raise ForbiddenError("Only the thread you started takes this answer")
     if not held.answer:
         raise ValidationError(say("docAgentNoAnswerToComment"))
-    asked = asked_of(reached)
+    asked = _asked(reached)
     bound = await question.bind(db, asked)
     await db.commit()
     await thread.reply(chat.session_factory, asked, thread_id, bound, held.answer)

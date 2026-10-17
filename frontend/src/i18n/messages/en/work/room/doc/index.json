@@ -64,5 +64,20 @@
     "title": "Linked from",
     "edited": "Edited by {name} {when}",
     "count": "{count} messages"
+  },
+  "move": "Move to…",
+  "moveDialog": {
+    "title": "Move \"{name}\"",
+    "place": "Put it in",
+    "mine": "My documents",
+    "move": "Move",
+    "readersPersonal": "After the move only you can read this document",
+    "readersTeam": "After the move every member of \"{name}\" can read this document",
+    "readersProject": "After the move every member of the project \"{name}\" can read this document",
+    "search": "Search teams or projects",
+    "here": "Current",
+    "none": "No matches",
+    "pick": "Choose where to put it",
+    "failed": "Move failed"
   }
 }

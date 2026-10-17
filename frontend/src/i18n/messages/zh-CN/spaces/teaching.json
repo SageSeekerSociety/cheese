@@ -7,7 +7,7 @@
     "avoidInCodeHint": "用逗号分隔，例如「递归」「指针」",
     "currentWeek": "当前周次",
     "currentWeekHint": "留空表示不设",
-    "knowledgeIds": "知识条目编号",
+    "documentIds": "阅读文档 ID",
     "listHint": "用逗号分隔",
     "materials": "参考资料",
     "materialsCollapse": "收起资料库清单",
