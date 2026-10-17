@@ -61,6 +61,9 @@ class MemoryChange:
     refused: dict[str, str] = field(default_factory=dict)
     #: 会话写的、超了单条上限没收的（路径 → 原因）。
     rejected: dict[str, str] = field(default_factory=dict)
+    #: `rejected` 里的新文件中，会话这一轮加进索引的那一行也没收的（路径）。比这
+    #: 一版旧的会话不报它，那就是空的：没说拿掉过，就不叫 agent 加回去。
+    unindexed: tuple[str, ...] = ()
     #: 路径 → 那一条的统一 diff。按条存而不是拼成一份：说给谁听是按作用域分的
     #: （team 的说进项目总览，某个人的 private 只说进他的私聊），而一件事说给谁
     #: 听决定了哪几行能跟着一起出去。
@@ -87,6 +90,7 @@ class MemoryChange:
             conflicted=within(self.conflicted),
             refused=keyed(self.refused),
             rejected=keyed(self.rejected),
+            unindexed=within(self.unindexed),
             diffs=keyed(self.diffs),
         )
 
@@ -172,6 +176,7 @@ async def apply_tree(
         str(path): str(reason)
         for path, reason in (response.get("rejected") or {}).items()
     }
+    unindexed = tuple(sorted(str(path) for path in response.get("unindexed") or ()))
     added: list[str] = []
     updated: list[str] = []
     conflict: list[str] = []
@@ -244,6 +249,7 @@ async def apply_tree(
         conflicted=tuple(sorted(set(conflict))),
         refused=refused,
         rejected=rejected,
+        unindexed=unindexed,
         diffs=_diffs(before, files),
     )
 

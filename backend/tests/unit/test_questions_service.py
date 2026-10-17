@@ -9,7 +9,6 @@ from app.domain.questions.services import (
     QuestionInvitationService,
     QuestionsService,
     _invitation_to_dto,
-    _profile_to_user,
     _question_to_dto,
 )
 
@@ -184,27 +183,6 @@ class TestInvitationToDto:
         inv = _invitation()
         dto = _invitation_to_dto(inv, user=None)
         assert dto["user"] is None
-
-
-# ---------------------------------------------------------------------------
-# _profile_to_user (pure helper)
-# ---------------------------------------------------------------------------
-
-
-class TestProfileToUser:
-    def test_non_none_profile(self):
-        p = _profile(user_id=3, nickname="bob", avatar_id=7, intro="hey")
-        # avatarId 走 chosen 判据，由调用方查过再传进来（契约 §3.14）。
-        result = _profile_to_user(p, chosen_avatar_id=7)
-        assert result == {"id": 3, "nickname": "bob", "avatarId": 7, "intro": "hey"}
-
-    def test_unchosen_avatar_is_null(self):
-        p = _profile(user_id=3, nickname="bob", avatar_id=7, intro="hey")
-        # 没传 chosen（= 没挑过）时回 None，不把档案里那张全局默认照原样吐出来。
-        assert _profile_to_user(p)["avatarId"] is None
-
-    def test_none_profile(self):
-        assert _profile_to_user(None) is None
 
 
 # ---------------------------------------------------------------------------

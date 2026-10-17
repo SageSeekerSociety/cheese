@@ -21,7 +21,7 @@
 
 - **channels**（device）：拿走的是还没搬过缝的 Claude Code 知识——隧道探针
   ``DEVICE_TUNNEL_PROBE``，和常驻执行机换版时要做的 ``resident_release``。「跑什么」
-  不在这张表里：那是 ``harness.launch`` 的 ``LaunchPlan``，通道只说「在哪」。
+  不在这张表里：那是 ``agent.launch`` 的 ``LaunchPlan``，通道只说「在哪」。
 - **平台侧（chat.py）：一行也没有。** 它只从房间读会话的那一路拿到已经拼好的
   ``AgentEvent``，落库发帧是它的活，翻译不是。**这一行别再长回来。**
 - **会话核心**（``session_host`` 的驱动）：每个骨架怎么起、记录怎么读，写在它自己

@@ -42,30 +42,29 @@ async def test_native_read_image_remains_an_image(monkeypatch):
 
 @pytest.mark.anyio
 async def test_schema_pages_and_multimodal_results_keep_their_content(monkeypatch):
+    """Every page of the executor's tools is listed, and a picture a call
+    answers with reaches the model as one."""
     schema = {"type": "object", "properties": {"path": {"type": "string"}}}
     calls = []
 
     def call(method, params, **_):
         calls.append((method, params))
         if method == "mcp":
-            if params["server"] == "native":
+            assert params["server"] == "native"
+            if not params["params"]:
                 return {
                     "tools": [
                         {"name": "Bash", "inputSchema": schema},
                         {"name": "Agent", "inputSchema": schema},
-                    ]
+                    ],
+                    "nextCursor": "second",
                 }
-            if not params["params"]:
-                return {"tools": [], "nextCursor": "second"}
             assert params["params"] == {"cursor": "second"}
-            return {"tools": [{"name": "view", "inputSchema": schema}]}
+            return {"tools": [{"name": "Glob", "inputSchema": schema}]}
         return {
             "value": {
-                "content": [
-                    {"type": "text", "text": "caption"},
-                    {"type": "image", "mimeType": "image/png", "data": "aW1hZ2U="},
-                ],
-                "structuredContent": {"page": 2},
+                "type": "image",
+                "file": {"type": "image/png", "base64": "aW1hZ2U="},
             }
         }
 
@@ -73,31 +72,23 @@ async def test_schema_pages_and_multimodal_results_keep_their_content(monkeypatc
     monkeypatch.setattr(tools.client, "call", call)
     schemas = await tools.discover()
     names = [tool["name"] for tool in schemas]
-    assert names[:2] == ["Bash", "mcp__docs__view"]
+    assert names[:2] == ["Bash", "Glob"]
+    assert not [name for name in names if name.startswith("mcp__")], (
+        "Codex's own MCP client reaches the project's servers"
+    )
     assert all(tool["inputSchema"] == schema for tool in schemas[:2])
     result = await tools(
         "item/tool/call",
-        {
-            "tool": "mcp__docs__view",
-            "callId": "call-17",
-            "arguments": {"path": "中文"},
-        },
+        {"tool": "Glob", "callId": "call-17", "arguments": {"path": "中文"}},
     )
     assert calls[-1] == (
         "invoke",
-        {
-            "id": "call-17",
-            "server": "docs",
-            "tool": "view",
-            "args": {"path": "中文"},
-        },
+        {"id": "call-17", "server": "native", "tool": "Glob", "args": {"path": "中文"}},
     )
     assert result == {
         "success": True,
         "contentItems": [
-            {"type": "inputText", "text": "caption"},
             {"type": "inputImage", "imageUrl": "data:image/png;base64,aW1hZ2U="},
-            {"type": "inputText", "text": json.dumps({"page": 2})},
         ],
     }
 

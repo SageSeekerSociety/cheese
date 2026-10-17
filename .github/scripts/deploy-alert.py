@@ -29,6 +29,9 @@ What pages and what does not, by the deploy job's conclusion:
 - When the job list cannot be read, a deploy job that ended `failure` still
   pages, saying the reason is unknown; a `cancelled` one does not, since most
   of those are runs a newer deploy replaced.
+- When the job list has no job named `DEPLOY_JOB`, a run the workflow passed as
+  `DEPLOY_RESULT=failure` still pages, naming the missing job: a renamed or
+  removed job must not turn a failed deploy into silence.
 """
 
 from __future__ import annotations
@@ -141,12 +144,23 @@ def main() -> int:
             return 0
         reason = "部署作业失败；读不到是哪一步（GitHub API 不可达），见运行页"
     else:
-        job = next((j for j in jobs if j.get("name") == env.get("DEPLOY_JOB", "deploy")), None)
-        reason = assess(job, int(env["TIMEOUT_MINUTES"]), env.get("REFUSED") == "true",
-                        env.get("WAITS_FOR_A_PERSON", ""))
-        if reason is None:
-            print(f"deploy job ended {job and job.get('conclusion')}: not a failure to page about")
-            return 0
+        job_name = env.get("DEPLOY_JOB", "deploy")
+        job = next((j for j in jobs if j.get("name") == job_name), None)
+        if job is None:
+            # A run the workflow calls a failed deploy whose job list has no deploy
+            # job is still a deploy that did not land: the job was renamed or removed,
+            # or the run failed before creating it. Page like the unreadable-list
+            # branch rather than trust the absent job.
+            if env.get("DEPLOY_RESULT") != "failure" or env.get("REFUSED") == "true":
+                print(f"no job named {job_name} in this run: not a failure to page about")
+                return 0
+            reason = f"部署工作流失败，且未找到目标 job `{job_name}`"
+        else:
+            reason = assess(job, int(env["TIMEOUT_MINUTES"]), env.get("REFUSED") == "true",
+                            env.get("WAITS_FOR_A_PERSON", ""))
+            if reason is None:
+                print(f"deploy job ended {job.get('conclusion')}: not a failure to page about")
+                return 0
     text = message(env["ENVIRONMENT"], env.get("COMMIT", ""), reason, env["RUN_URL"])
     print(text)
     with open(env["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
