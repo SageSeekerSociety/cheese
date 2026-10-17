@@ -988,9 +988,7 @@ class RemoteClient:
                     "mcp", {"server": asked["server"], "method": "tools/list"}
                 )
         operation_deadline = time.monotonic() + 660
-        # A start on an admission just taken does not take the hands (`call`).
-        lease_path = None if admitted else self.config.get("lease_path")
-        if lease_path and (
+        if self.config.get("lease_path") and (
             method in {"invoke", "mcp", "project_tools"}
             # Starting a command acquires hands; reading one that runs does not.
             or (
@@ -1013,7 +1011,9 @@ class RemoteClient:
             original_workspace = self.config.setdefault(
                 "virtual_workspace", self.config["workspace"]
             )
-            changed_lease = self.acquire(
+            # A start on an admission just taken does not take the hands again
+            # (`call`); its paths are still spelled the machine's way below.
+            changed_lease = not admitted and self.acquire(
                 deadline=operation_deadline, abandoned=abandoned, preparing=preparing
             )
             workspace = self.config["workspace"]

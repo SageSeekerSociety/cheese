@@ -55,6 +55,8 @@ class Room:
                 params = sent["params"]
                 asked = params.get("operation") or params.get("subtype")
                 room.asked.append(asked)
+                if asked == "start":
+                    room.cwd = params.get("cwd")
                 if asked == "start" and room.refuse_starts:
                     room.refuse_starts -= 1
                     self.status, self.body = 409, {"message": "not current"}
@@ -112,6 +114,26 @@ def test_a_bash_call_asks_for_its_machine_once(tmp_path, monkeypatch):
     room = Room(monkeypatch)
     _bash(_session(tmp_path))
     assert room.asked == ["lease", "tool_hooks", "start"]
+
+
+def test_a_start_on_that_admission_runs_where_the_machine_holds_the_project(
+    tmp_path, monkeypatch
+):
+    """A session that sees the project at another path than the executor's
+    (its owner's own computer) starts the command in the executor's copy of
+    the directory it is in, as a start that took the hands itself does."""
+    room = Room(monkeypatch)
+    target = _session(tmp_path)
+    config = json.loads(target.read_text())
+    target.write_text(json.dumps({**config, "virtual_workspace": "/seen"}))
+    RemoteClient(json.loads(target.read_text())).permission(
+        {"tool": "Bash", "id": "toolu_1"}, {"command": "true"}
+    )
+    RemoteClient(json.loads(target.read_text())).call(
+        "control", {**START, "cwd": "/seen/src"}
+    )
+    assert room.asked == ["lease", "tool_hooks", "start"]
+    assert room.cwd == "/work/src"
 
 
 def test_a_start_refused_on_that_admission_takes_the_machine_again(
