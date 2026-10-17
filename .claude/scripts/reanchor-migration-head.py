@@ -3,14 +3,14 @@
 
 From the repository root, using the existing backend dependencies:
     uv run --project backend python .claude/scripts/reanchor-migration-head.py
+    uv run --project backend python .claude/scripts/reanchor-migration-head.py --base origin/main
     uv run --project backend python .claude/scripts/reanchor-migration-head.py --dry-run
     uv run --offline --no-sync --project backend python \
         .claude/scripts/reanchor-migration-head.py --self-test
 
-Reads migration modules as `alembic heads` does; never runs env.py, upgrades a
-DB, edits migrations, fetches main, or stages files. A fork must be rechained
-first, per .claude/rules/migrations.md. This checks the working tree only;
-check-migration-fork.py still owns the comparison against origin/main.
+With --base, this re-chains this branch against the fetched base and repairs the
+sentinel in one command. Without it, it checks and repairs this checkout's only
+head. It never runs env.py, upgrades a DB, fetches main, or stages files.
 Exit 0: updated, already correct, or valid dry-run. Exit 1: refused, no write.
 """
 
@@ -193,6 +193,10 @@ class ReanchorTests(unittest.TestCase):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--base",
+        help="re-chain this branch against the fetched base before repairing HEAD",
+    )
+    parser.add_argument(
         "--root",
         type=Path,
         default=REPO_ROOT,
@@ -211,8 +215,20 @@ def main() -> int:
             unittest.defaultTestLoader.loadTestsFromTestCase(ReanchorTests)
         )
         return 0 if result.wasSuccessful() else 1
+    root = args.root.resolve()
+    if args.base:
+        if args.dry_run:
+            parser.error("--base cannot be combined with --dry-run")
+        checker = Path(__file__).with_name("check-migration-fork.py")
+        result = subprocess.run(
+            [sys.executable, str(checker), "--rechain", "--base", args.base],
+            cwd=root,
+            check=False,
+        )
+        if result.returncode:
+            return result.returncode
     try:
-        print(reanchor(args.root.resolve(), dry_run=args.dry_run))
+        print(reanchor(root, dry_run=args.dry_run))
     except Exception as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
