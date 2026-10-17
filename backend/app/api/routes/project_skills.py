@@ -164,7 +164,7 @@ async def _in_project(
     if topic is not None:
         place = await place_or_404(db, topic)
         if place.project_id != project_id:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         actor = await resolver.resolve(project_id=project_id, topic_id=topic)
         await resolver.authorize_topic(
             actor, project_id=project_id, topic_id=topic, enforce=True
