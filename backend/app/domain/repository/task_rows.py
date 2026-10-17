@@ -38,8 +38,11 @@ from sqlalchemy import JSON, DateTime, Integer, String, Uuid, column, select, ta
 #: `TaskStatus.open`, spelled out: see the module docstring.
 STATUS_OPEN = "open"
 
-# 只声明这一包读到的列 —— `forge_files.py` 判活的去向只要 `status` /
-# `closing_since` / `delivered_head`，`identity.py` 署名要 `title` 和两列人。
+# 只声明这一包读到的列：`forge_files.py` 读 id / project_id / room_id / status /
+# branch_name / base_branch / pr_number / delivered_head / closing_since；
+# `identity.py` 读 id / title / owner_handle / reporter_handle / created_by /
+# author_handle / contributor_handles，批量那条还要 created_at 排序。
+# `tests/unit/test_repository_task_rows_match_their_rows.py` 把这份清单钉住了。
 _tasks = table(
     "tasks",
     column("id", Uuid),

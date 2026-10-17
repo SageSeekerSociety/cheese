@@ -17,14 +17,36 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
+import pytest
 from sqlalchemy.sql.util import find_tables
 
-from app.domain.repository import task_rows
+from app.domain.repository import identity, task_rows
 from app.domain.room_task.models import Task, TaskStatus
 
 #: 裸表 → 它抄的那张真表。
 REAL = Task.__table__
+
+#: `repository` 读到的列。副本只声明这些：少一列，只有读到它的那个请求才会炸。
+READ_COLUMNS = {
+    "id",
+    "project_id",
+    "room_id",
+    "status",
+    "title",
+    "branch_name",
+    "base_branch",
+    "pr_number",
+    "delivered_head",
+    "closing_since",
+    "owner_handle",
+    "reporter_handle",
+    "created_by",
+    "author_handle",
+    "contributor_handles",
+    "created_at",
+}
 
 
 def test_every_declared_column_is_a_column_of_the_real_table() -> None:
@@ -35,6 +57,16 @@ def test_every_declared_column_is_a_column_of_the_real_table() -> None:
         f"task_rows 声明了 Task 上没有的列：{unknown}。"
         "真表改了列名时，抄在这儿的那份要跟着改。"
     )
+
+
+def test_the_copy_declares_every_column_the_readers_take() -> None:
+    """副本只声明这一包读的列；少一列，只有读到它的那个请求才会 500。
+
+    `topic` 那边每条读法都把列写进语句，少一列在建语句时就炸；这里的读法是
+    `select(_tasks)`，列在运行时按属性取 —— 删掉一列，单测全绿。所以把清单钉死：
+    读者改了要读的列，这里和 `task_rows` 一起改。
+    """
+    assert set(task_rows._tasks.c.keys()) == READ_COLUMNS
 
 
 def test_the_copy_points_at_the_table_it_copies() -> None:
@@ -78,8 +110,13 @@ def _borrowed(statement: object) -> bool:
     比的是表的**列**属于谁，不是 `find_tables` 交回的那张表：ORM 语句里它交回的是
     带注解的副本（`AnnotatedTable`），和 `Task.__table__` 不是同一个对象，`is` 比
     不上 —— 直接拿表对象比，这条断言对「退回模型」这一类改动永远不红。
+
+    `check_columns=True` 也不能省：`find_tables` 默认只收 `FROM` / `JOIN` 上的表
+    节点，`WHERE`、`ORDER BY` 里单独出现的列不算。于是「表还用着副本、排序却拿了
+    `Task.created_at`」这种退法，不开这个开关照样绿。
     """
-    tables = find_tables(statement)  # type: ignore[arg-type]
+    # 开了 `check_columns`，没有所属表的列（字面量、`label`）会交回 `None`，跳过。
+    tables = [t for t in find_tables(statement, check_columns=True) if t is not None]  # type: ignore[arg-type]
     return any(column.table is REAL for table in tables for column in table.c)
 
 
@@ -115,10 +152,15 @@ async def test_the_attribute_style_still_works_on_the_copy() -> None:
     AttributeError），而那个错只在真库上才跑得到。这条在本地预演一次。
     """
     session = _AnswersNothing()
+    await task_rows.one(session, uuid.uuid4())  # type: ignore[arg-type]
     await task_rows.many(session, [uuid.uuid4(), uuid.uuid4()])  # type: ignore[arg-type]
-    compiled = _sql(session.seen[-1])
-    assert "ORDER BY tasks.created_at" in compiled, compiled
-    assert "tasks.id IN" in compiled, compiled
+    one, many = (_sql(statement) for statement in session.seen)
+    # 单条读法钉住 `WHERE`：少了这一句，`one` 会随表里第一行漂走。
+    assert "WHERE tasks.id = " in one, one
+    assert "tasks.id IN" in many, many
+    # 排序的第二个键也要钉：只按 `created_at` 排，同一毫秒落库的两行顺序不定，
+    # `work_items` 的署名顺序就跟着不定。
+    assert "ORDER BY tasks.created_at, tasks.id" in many, many
 
 
 def test_is_open_asks_only_the_status_column() -> None:
@@ -132,3 +174,57 @@ class TaskStatusRow:
 
     def __init__(self, *, status: str) -> None:
         self.status = status
+
+
+class _Row:
+    """一行只带副本声明过的列 —— `identity` 多读一列就 AttributeError。"""
+
+    def __init__(self, **values: object) -> None:
+        assert set(values) == READ_COLUMNS
+        self.__dict__.update(values)
+
+
+async def test_identity_reads_only_columns_the_copy_declares(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`identity` 从这行上只取副本声明过的列，`_thread` 那条读法也走一遍。
+
+    真的行是 `select(_tasks)` 交回的 `Row`，只带副本声明的列；这里换成同样只有
+    这些属性的替身，让「读者多读了一列」在本地红，而不是等那个请求 500。
+    `_thread` 从 `TaskService.get` 换过来之后，原来没有单测经过它。
+    """
+    task_id = uuid.uuid4()
+    values = {name: None for name in READ_COLUMNS}
+    values.update(
+        id=task_id,
+        title="把后端领域包之间的循环依赖降到零",
+        owner_handle="wangchangxin",
+        contributor_handles=["cheese-7bfbc959f100"],
+    )
+    row = _Row(**values)
+
+    async def one(_session, wanted):
+        return row if wanted == task_id else None
+
+    async def many(_session, wanted):
+        return [row for wanted_id in wanted if wanted_id == task_id]
+
+    monkeypatch.setattr(task_rows, "one", one)
+    monkeypatch.setattr(task_rows, "many", many)
+
+    items = await identity.work_items(
+        object(),
+        SimpleNamespace(delivered_task_ids=[str(task_id)]),  # type: ignore[arg-type]
+    )
+    assert [item.task_id for item in items] == [task_id]
+    assert items[0].title == "把后端领域包之间的循环依赖降到零"
+
+    topic = SimpleNamespace(id=uuid.uuid4(), created_by="someone")
+    assert (
+        await identity.requester_handle(
+            object(),
+            topic,
+            task_id=task_id,  # type: ignore[arg-type]
+        )
+        == "wangchangxin"
+    )

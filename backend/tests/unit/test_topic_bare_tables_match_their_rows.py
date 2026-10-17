@@ -208,8 +208,14 @@ def _borrowed_models(statement: object) -> list[str]:
     比的是这些表的**列**属于谁，不是 `find_tables` 交回的那张表：ORM 语句里它交回
     的是带注解的副本（`AnnotatedTable`），和 `Block.__table__` 不是同一个对象，
     `is` 比不上 —— 直接拿表对象比，这条断言对「退回模型」这一类改动永远不红。
+
+    `check_columns=True` 同样不能省：默认只收 `FROM` / `JOIN` 上的表节点，
+    `WHERE`、`ORDER BY` 里单独出现的列不算 —— 表还用着副本、排序却拿了别人家模型
+    的列，这种退法不开这个开关看不见。
     """
-    columns = [c for table in _tables_in(statement) for c in table.c]  # type: ignore[attr-defined]
+    # 开了 `check_columns`，没有所属表的列（字面量、`label`）会交回 `None`，跳过。
+    tables = [t for t in find_tables(statement, check_columns=True) if t is not None]  # type: ignore[arg-type]
+    columns = [c for table in tables for c in table.c]  # type: ignore[attr-defined]
     return [t.name for t in FOREIGN_TABLES if any(c.table is t for c in columns)]
 
 
