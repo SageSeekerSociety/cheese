@@ -1,0 +1,18 @@
+{
+  "addTitle": "Add MCP server",
+  "editTitle": "Edit {name}",
+  "add": "Add",
+  "save": "Save",
+  "cancel": "Cancel",
+  "name": "Name",
+  "nameHint": "{agent} calls it by this name: lowercase letters, digits and hyphens",
+  "url": "URL",
+  "urlChanged": "Changing the URL clears its connection and header",
+  "auth": "Sign-in",
+  "oauth": "Sign in with an account",
+  "oauthHint": "After adding, click Connect and authorize an account",
+  "headers": "Send a header",
+  "headersHint": "Such as an API key; everyone in the project uses it through {agent}",
+  "headerName": "Header name",
+  "headerValue": "Value"
+}

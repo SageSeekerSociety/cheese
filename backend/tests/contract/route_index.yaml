@@ -77,6 +77,8 @@ auth_entries:
   mcp.member: "remote_mcp.member resolves actor, rejects failed credentials/anonymous caller, and checks actual project roster independently of the access kill switch. Source: app/api/routes/remote_mcp.py."
   mcp.oauth.state: "remote_mcp.callback validates signed flow via service.read_state then service.finish_connect (code, issuer); no ordinary login dependency on provider callback. Source: app/api/routes/remote_mcp.py."
   mcp.proxy: "remote_mcp.proxy requires scoped_token_claims from X-Cheese-Token and binds server forwarding to claimed project/room in remote_mcp service. Source: app/api/routes/remote_mcp.py."
+  mcp.local.session: "local_mcp.start/run call auth.session_in: the X-Cheese-Token must be minted for this conversation and its project, with its agent still seated; values are only the default branch's own variables of that server. Source: app/api/routes/local_mcp.py."
+  mcp.local.owner: "local_mcp.decide resolves the signed-in actor and lets only the owner of the approval's device answer (remote_mcp.local.decide). Source: app/api/routes/local_mcp.py."
   memory.read: "memory.list_memory resolves/authorize_project and forbids user_handle different from actor.handle for about-person notes. Source: app/api/routes/memory.py."
   memory.delete: "memory.delete_memory: require_verified_caller, resolve project from stored entry scope, authorize_project; person-scope suffix must match caller. Refusal uses NotFound. Source: app/api/routes/memory.py."
   memory.files.read: "memory_files._readable: resolve/authorize_project; private files require matching handle or MemberService.manages. Source: app/api/routes/memory_files.py."
@@ -957,6 +959,9 @@ routes:
   - {protocol: "http", method: "GET", path: "/teams/{teamId}/recruitment", auth: "legacy.recruitment.list_team_recruitment_posts", owner: "team.recruitment"}
   # app.api.routes.remote_mcp
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/mcp/servers", auth: "mcp.member", owner: "remote_mcp"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/mcp/servers", auth: "mcp.member", owner: "remote_mcp"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/mcp/servers/{name}", auth: "mcp.member", owner: "remote_mcp"}
+  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/mcp/servers/{name}", auth: "mcp.member", owner: "remote_mcp"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/mcp/servers/{name}/connect", auth: "mcp.member", owner: "remote_mcp"}
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/mcp/servers/{name}/connection", auth: "mcp.member", owner: "remote_mcp"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/mcp/secrets/{name}", auth: "mcp.member", owner: "remote_mcp"}
@@ -965,6 +970,10 @@ routes:
   - {protocol: "http", method: "GET", path: "/mcp/oauth/callback", auth: "mcp.oauth.state", owner: "remote_mcp"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/mcp/{name}", auth: "mcp.proxy", owner: "remote_mcp"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/mcp/servers", auth: "actor.topic.enforced", owner: "remote_mcp"}
+  # app.api.routes.local_mcp
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/mcp/{name}/start", auth: "mcp.local.session", owner: "remote_mcp"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/mcp/{name}/run", auth: "mcp.local.session", owner: "remote_mcp"}
+  - {protocol: "http", method: "POST", path: "/mcp/approvals/{approval_id}", auth: "mcp.local.owner", owner: "remote_mcp"}
   # app.api.routes.room_files
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/files", auth: "actor.topic", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/files/raw", auth: "actor.topic", owner: "room.files"}

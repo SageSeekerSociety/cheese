@@ -778,14 +778,12 @@ class Settings(BaseSettings, SandboxSettings):
     cloud_pool_min_free_slots: int = Field(default=2, ge=0, le=64)
     # How long a host that has no sandbox on it is kept before it is released.
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
-    # The most hosts the pool holds at once. It
-    # protects the MicroCloud cluster; a session that finds the pool full is told
-    # capacity is tight and to try later. Thirty hosts are a hundred and twenty
-    # sandbox slots, and their disks written full are 1.2 TB: the cluster's
-    # shared thin pool is what has to hold them, so this rises only with the
-    # storage behind it. (At ten, whose 400 GB did fit, the pool had 464 GB
-    # free — 2026-10-06.)
-    cloud_pool_max_hosts: int = Field(default=30, ge=1, le=500)
+    # The most hosts the pool holds at once. It protects the MicroCloud cluster;
+    # a session that finds the pool full is told capacity is tight and to try
+    # later. The current cluster supports ten hosts, forty standard sandbox
+    # slots, within its 400 GB shared thin pool. Raise this only when the
+    # storage behind it grows.
+    cloud_pool_max_hosts: int = Field(default=10, ge=1, le=500)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer

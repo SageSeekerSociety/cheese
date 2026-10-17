@@ -361,20 +361,6 @@ export function register(on) {
         return { deny: "Cheese delivery failed: " + String(error) };
       }
     }
-    // The machine's stdio servers and the teammate's type's (`agent_mcp`, whose
-    // definitions the bridge hands the machine with each call).
-    for (const server of [...(execution.mcp_servers || []), ...Object.keys(execution.agent_mcp || {})]) {
-      const prefix = "mcp__" + server + "__";
-      if (tool.startsWith(prefix)) {
-        try {
-          const response = await $.mcp.call(server, tool.slice(prefix.length), args);
-          if (response.isError) return failed(response);
-          return { result: response.content };
-        } catch (error) {
-          return { deny: "Remote MCP failed: " + String(error) };
-        }
-      }
-    }
     if (tool === "Bash") {
       const denied = await refused($, tool_use_id, tool, args);
       if (denied) return denied;

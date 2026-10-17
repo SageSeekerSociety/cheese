@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.awaiting_asks import MembershipAsk, membership_asks
+from app.api.awaiting_asks import MembershipAsk, RunAsk, membership_asks, run_asks
 from app.domain.addressing import (
     REASON_ASKED,
     REASON_REVIEWER,
@@ -380,11 +380,13 @@ async def waiting_items(
 
 async def all_waiting(
     db: AsyncSession, chat: ChatService, *, handle: str, user_id: int | None
-) -> list[awaiting.WaitingItem | MembershipAsk]:
-    """等 `handle` 处理的全部事项，最近的在前：项目里的事，和等他回答的邀请、申请。"""
-    rows: list[awaiting.WaitingItem | MembershipAsk] = [
+) -> list[awaiting.WaitingItem | MembershipAsk | RunAsk]:
+    """等 `handle` 处理的全部事项，最近的在前：项目里的事，等他回答的邀请、申请，
+    和等他允许在自己电脑上运行的命令。"""
+    rows: list[awaiting.WaitingItem | MembershipAsk | RunAsk] = [
         *await waiting_items(db, chat, handle=handle, user_id=user_id),
         *await membership_asks(db, handle=handle, user_id=user_id),
+        *await run_asks(db, handle=handle),
     ]
     rows.sort(key=lambda row: row.at, reverse=True)
     return rows

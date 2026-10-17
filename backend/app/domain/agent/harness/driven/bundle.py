@@ -17,6 +17,7 @@ SHARED = (
     "domain/agent/harness/__init__.py",
     "domain/agent/harness/driven/journal.py",
     "domain/agent/harness/driven/runner.py",
+    "domain/agent/harness/driven/mcp_gateway.py",
 )
 
 #: The Windows half of what a machine's programs ask of the operating system.
