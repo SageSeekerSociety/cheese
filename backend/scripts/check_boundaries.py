@@ -58,7 +58,7 @@ Everything else is import-linter's own machinery: the contracts live in
 is enough to reproduce a verdict by hand. This script adds the two things above
 and nothing more.
 
-    ... --self-test   plant each violation the nine contracts exist to catch,
+    ... --self-test   plant each violation the ten contracts exist to catch,
                       in a throwaway tree, and require them to fire
     ... --json        one JSON record on stdout instead of the report; the exit
                       code is unchanged. The record's shape is fixed in
@@ -392,9 +392,10 @@ _BOUNDARY_FIXES = {
         "app.domain, package or top-level module, must be named in it."
     ),
     "H1": (
-        "H1 the platform side (chat*, runtime, room, turn) does not import the "
-        "Claude Code adapter. Take the finished `AgentEvent` from the room's session "
-        "path, or put the Claude Code knowledge in its session-host driver."
+        "H1 the platform side (the chat, room, runtime and turn modules H1 lists "
+        "in `.importlinter`) does not import the Claude Code adapter. Take the "
+        "finished `AgentEvent` from the room's session path, or put the Claude "
+        "Code knowledge in its session-host driver."
     ),
 }
 
@@ -494,7 +495,7 @@ def _load_declarations(config_path: Path) -> tuple[int, str, Any]:
     """(exit code, message, options) for the declarations in `config_path`.
 
     The two shapes this format must not accept are refused here, before any
-    tree is graded: a declaration that lost one of the nine contracts, and an
+    tree is graded: a declaration that lost one of the ten contracts, and an
     exception written as a wildcard.
     """
     try:
@@ -1146,6 +1147,15 @@ _SEED = {
     "app/domain/agent/chat_live_input.py": "",
     "app/domain/agent/chat_places.py": "",
     "app/domain/agent/room/__init__.py": "",
+    "app/domain/agent/room_events.py": "",
+    "app/domain/agent/runtime_orphans.py": "",
+    "app/domain/agent/turn_adoption.py": "",
+    "app/domain/agent/turn_counts.py": "",
+    "app/domain/agent/turn_inputs.py": "",
+    "app/domain/agent/turn_ledger.py": "",
+    "app/domain/agent/turn_speakers.py": "",
+    "app/domain/agent/turn_times.py": "",
+    "app/domain/agent/turn_usage.py": "",
     "app/domain/agent/harness/__init__.py": "",
     "app/domain/agent/harness/claude_code/__init__.py": "",
     "app/domain/agent/runtime.py": "",
@@ -1654,14 +1664,14 @@ def _self_test_verdict(failures: list[str]) -> int:
         )
         return 1
     print(
-        "PASS: check_boundaries self-test (9 contracts fire on the violation they "
+        "PASS: check_boundaries self-test (10 contracts fire on the violation they "
         "exist to catch; an absent, a trimmed and a wildcarded declaration each "
         "come back not-passing; a base tree's own violations are held open while "
         "the ones this tree adds are reported, under a rename too when a module "
         "it held as one file this tree holds as a package, and a declaration "
         "naming a module this branch adds is still judged; every case agrees "
         "with the exit code under --json, on one line of stdout, naming all "
-        "nine contracts)"
+        "ten contracts)"
     )
     return 0
 
@@ -1960,7 +1970,7 @@ def self_test() -> int:
         tmp = sandbox / "thin"
         tmp.mkdir()
         report(
-            "a declaration that lost all nine contracts",
+            "a declaration that lost all ten contracts",
             *_run(_THIN_CONFIG, {}, tmp),
             CANNOT_JUDGE,
             "missing",
@@ -2130,7 +2140,7 @@ def self_test() -> int:
             for index, (what, _f, expected, _n, _broken) in enumerate(_CASES)
         ]
         json_cases.append(
-            ("thin", "a declaration that lost all nine contracts", CANNOT_JUDGE)
+            ("thin", "a declaration that lost all ten contracts", CANNOT_JUDGE)
         )
         json_cases.append(("wildcard", "an exception written as a wildcard", BROKEN))
         json_cases.append(("absent", "no config to read at all", CANNOT_JUDGE))

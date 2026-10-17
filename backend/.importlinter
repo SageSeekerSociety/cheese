@@ -598,8 +598,17 @@ source_modules =
     app.domain.agent.chat_lifecycle
     app.domain.agent.chat_live_input
     app.domain.agent.chat_places
-    app.domain.agent.runtime
     app.domain.agent.room
+    app.domain.agent.room_events
+    app.domain.agent.runtime
+    app.domain.agent.runtime_orphans
     app.domain.agent.turn
+    app.domain.agent.turn_adoption
+    app.domain.agent.turn_counts
+    app.domain.agent.turn_inputs
+    app.domain.agent.turn_ledger
+    app.domain.agent.turn_speakers
+    app.domain.agent.turn_times
+    app.domain.agent.turn_usage
 forbidden_modules = app.domain.agent.harness.claude_code
 allow_indirect_imports = true

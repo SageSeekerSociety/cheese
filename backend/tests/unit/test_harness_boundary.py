@@ -7,8 +7,9 @@
 
 所以边界就是全部的意义。**外面 import 包本身，只拿它 ``__all__`` 里的名字**，
 ``claude_code/__init__.py`` 的导出表就是「还有什么在跨界」的那一份声明。越过门口
-没有例外：直接 import 子模块（``from … import`` 和 ``import …`` 两种写法都算），
-或者从门口拿一个不在 ``__all__`` 里的名字（比如把子模块本身当名字拿走），一律红。
+没有例外：直接 import 子模块（``from … import``、``import …`` 和相对 import 都算），
+从门口拿一个不在 ``__all__`` 里的名字（比如把子模块本身当名字拿走），或者把包本身
+当模块对象拿走（``from app.domain.agent.harness import claude_code``），一律红。
 """
 
 import ast
@@ -44,6 +45,9 @@ def _reached_past(package: str = PKG) -> list[str]:
         module = _module_name(path)
         if module == package or module.startswith(package + "."):
             continue
+        # The package a relative import is resolved against (for an
+        # `__init__.py`, whose name ends in `.__init__`, that is its own).
+        here = module.split(".")[:-1]
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -52,14 +56,26 @@ def _reached_past(package: str = PKG) -> list[str]:
                     for alias in node.names
                     if alias.name.startswith(package + ".")
                 ]
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                if node.module.startswith(package + "."):
-                    found.append(f"{module} → {node.module}")
-                elif node.module == package:
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if node.level:
+                    anchor = here[: len(here) - (node.level - 1)]
+                    base = ".".join(anchor + ([node.module] if node.module else []))
+                if base.startswith(package + "."):
+                    found.append(f"{module} → {base}")
+                elif base == package:
                     found += [
                         f"{module} → {package}.{alias.name} (not in __all__)"
                         for alias in node.names
                         if alias.name not in exported
+                    ]
+                else:
+                    # `from <parent> import <package>` hands over the package
+                    # object, whose submodules are attributes on it.
+                    found += [
+                        f"{module} → {package} (as a module object)"
+                        for alias in node.names
+                        if f"{base}.{alias.name}" == package
                     ]
     return found
 
