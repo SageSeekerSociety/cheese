@@ -58,28 +58,72 @@ _PULLS = re.compile(r"^/?repos/[^/\s]+/[^/\s]+/pulls/?(?:\?.*)?$")
 _LOOSE = re.compile(r"\bgh\s+pr\s+create\b|\bhub\s+pull-request\b")
 
 
-#: A here-document's operator and its delimiter word, bare or quoted. A
-#: delimiter spelled any other way (a Claude Code command still inside its
-#: `eval '…'` quoting) is left for the unquoted pass `eval` gets.
-_HEREDOC = re.compile(r"(?<!<)<<(-?)[ \t]*(?:'(\w+)'|\"(\w+)\"|\\?(\w+))")
+#: A here-document's operator and its delimiter word, bare or quoted (not
+#: `<<<`, a here-string, which is a word on the command line).
+_HEREDOC = re.compile(
+    r"<<(?!<)(-?)[ \t]*(?:'([^'\n]+)'|\"([^\"\n]+)\"|\\?([^\s;&|<>()'\"\\]+))"
+)
 
 
 def _without_heredoc_bodies(command: str) -> str:
-    """``command`` with each here-document's body left out: it is text handed
-    to a command's input — a script being written, a commit message — not a
-    command, and a line of it that reads `gh pr create` is not one."""
-    kept, pending = [], []
-    for line in command.split("\n"):
-        if pending:
-            delimiter, tabs = pending[0]
-            if (line.lstrip("\t") if tabs else line) == delimiter:
-                pending.pop(0)
-            continue
-        kept.append(line)
-        for match in _HEREDOC.finditer(line):
+    """``command`` with each here-document's body and each comment left out:
+    a body is text handed to a command's input — a script being written, a
+    commit message — not a command, and a line of it that reads `gh pr create`
+    is not one.
+
+    Only an operator outside quotes and comments starts one, the way the shell
+    reads it. A command still inside a quoted string (`eval '…'`, `bash -c
+    '…'`) keeps its here-documents for the pass its unquoted text gets."""
+    out: list[str] = []
+    pending: list[tuple[str, bool]] = []
+    quote = ""
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote == "'":
+            quote = "" if c == "'" else quote
+            out.append(c)
+            i += 1
+        elif c == "\\" and i + 1 < n:
+            out.append(command[i : i + 2])
+            i += 2
+        elif quote == '"':
+            quote = "" if c == '"' else quote
+            out.append(c)
+            i += 1
+        elif c in "'\"":
+            quote = c
+            out.append(c)
+            i += 1
+        elif c == "#" and (i == 0 or command[i - 1] in " \t\n;&|("):
+            stop = command.find("\n", i)
+            stop = n if stop < 0 else stop
+            # A comment is no command either; shlex would also swallow its newline.
+            i = stop
+        elif c == "\n" and pending:
+            out.append(c)
+            i += 1
+            for delimiter, tabs in pending:
+                while i < n:
+                    stop = command.find("\n", i)
+                    line = command[i : n if stop < 0 else stop]
+                    i = n if stop < 0 else stop + 1
+                    if (line.lstrip("\t") if tabs else line) == delimiter:
+                        break
+            pending = []
+        elif (
+            c == "<"
+            and (match := _HEREDOC.match(command, i))
+            and (i == 0 or command[i - 1] != "<")
+        ):
             word = match.group(2) or match.group(3) or match.group(4)
             pending.append((word, match.group(1) == "-"))
-    return "\n".join(kept)
+            out.append(match.group(0))
+            i = match.end()
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def opens_pull_request(command: str) -> bool:

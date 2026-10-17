@@ -30,6 +30,15 @@ OPENS = [
     "hub pull-request -m x",
     "/usr/bin/gh pr create --fill",
     "cat <<EOF > notes.md\ntext\nEOF\ngh pr create --fill",
+    # The same inside Claude Code's `eval '…'` and a `bash -c`: the quoted
+    # here-document is read once, when its text is unquoted.
+    "eval 'cat > b.md <<EOF\nbody\nEOF\ngh pr create --body-file b.md'",
+    "eval 'cat <<A <<B\na\nA\nb\nB\ngh pr create --fill'",
+    "bash -c 'cat <<EOF\nx\nEOF\ngh pr create --fill'",
+    # `<<` that starts no here-document leaves the next line a command.
+    "echo '<<EOF'\ngh pr create --fill",
+    "echo x # <<EOF\ngh pr create --fill",
+    "cat <<E-1\nx\nE-1\ngh pr create --fill",
 ]
 
 LEAVES = [
