@@ -277,7 +277,6 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/preview_sessions.py": 3,
     "app/api/routes/project_channels.py": 2,
     "app/api/routes/project_context.py": 1,
-    "app/api/routes/project_environment.py": 3,
     "app/api/routes/project_export.py": 1,
     "app/api/routes/project_skills.py": 1,
     "app/api/routes/projects.py": 6,
@@ -483,7 +482,8 @@ _BASELINE: dict[str, int] = {
     "app/domain/oauth/services/connections.py": 2,
     "app/domain/oauth/services/providers.py": 1,
     "app/domain/passkey/services.py": 5,
-    "app/domain/project/environment.py": 2,
+    # Includes the three unchanged refusals moved out of the environment route.
+    "app/domain/project/environment.py": 5,
     "app/domain/project/forge_migration.py": 20,
     "app/domain/project/forgejo_tokens.py": 7,
     "app/domain/project/github_app.py": 5,

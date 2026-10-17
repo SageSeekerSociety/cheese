@@ -1,4 +1,8 @@
 {
   "_comment": "Frozen vue-tsc errors. The ratchet blocks any NEW error; these are pre-existing and may only go down. Regenerate with `pnpm run typecheck:update`.",
-  "files": {}
+  "files": {},
+  "missingNames": {
+    "TS2304": {},
+    "TS2552": {}
+  }
 }

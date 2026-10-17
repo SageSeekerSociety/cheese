@@ -36,9 +36,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
 from app.core.sentences import say
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery_events import DeliveryEvent
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project

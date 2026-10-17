@@ -17,8 +17,9 @@ import uuid
 from sqlalchemy import select
 
 from app.domain.agent.announce import notify_question
-from app.domain.block.models import AuthorType, Block
+from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.notification.letter import letter_for
 from app.domain.notification.models import ChannelDelivery
 from app.domain.notification.push import push_link

@@ -43,7 +43,9 @@ from sqlalchemy import select
 
 import app.models  # noqa: F401 — register every table so FKs resolve
 from app.core.db import async_session_factory
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.agent_instance.adapters import project_team, seat_project
+from app.domain.block.models import BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.block.repositories import BlockRepository
 from app.domain.deliverables import artifacts as project_artifacts
 from app.domain.device.service import device_service_for_session
@@ -63,6 +65,7 @@ from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.services import team_service
 from app.domain.thread.services import open_thread
 from app.domain.thread.models import Thread
+from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -349,13 +352,17 @@ async def _seed_project(session, project: Project, owner: str, authors: list[str
             )
             counts["messages"] += 1
 
-    # Tasks in the busy channel.
+    # Tasks in the busy channel. 2026-10-16：开一条活的那批函数从 `TopicService`
+    # 搬去了 `room_task.dispatch`，两个口子在这里按名字递进去（和路由同一个写法）。
     for i, title in enumerate(TASK_TITLES):
-        await topics.create_task(
+        await task_dispatch.create_task(
+            session,
             room_id=busiest.id,
             created_by=owner,
             title=title,
             owner_handle=DEMO_MEMBERS[i % len(DEMO_MEMBERS)],
+            seat_project=seat_project,
+            team=project_team,
         )
         counts["tasks"] += 1
 
@@ -532,14 +539,14 @@ async def seed() -> None:
         )
 
         first_project: Project | None = None
-        for name, project_team, owner in DEMO_PROJECTS:
-            project = await _make_project(session, name, project_team, owner)
+        for name, project_team_id, owner in DEMO_PROJECTS:
+            project = await _make_project(session, name, project_team_id, owner)
             first_project = first_project or project
             counts = await _seed_project(session, project, owner, authors)
             totals["projects"] += 1
             for key, value in counts.items():
                 totals[key] += value
-            print(f"seeded project {name!r} (team {project_team}, owner {owner})")
+            print(f"seeded project {name!r} (team {project_team_id}, owner {owner})")
 
         assert first_project is not None
         totals["skills"] = await _seed_skills(session, first_project)

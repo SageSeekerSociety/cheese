@@ -13,8 +13,9 @@ and a room that stays with its teammate when the project's default moves on.
 import asyncio
 import uuid
 
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from tests.integration.conftest import (
     join_project_team,
     post_project,

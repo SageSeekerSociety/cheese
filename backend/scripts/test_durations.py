@@ -9,7 +9,9 @@ one long module finishes alone. This writes the timings it orders by.
 Each directory is one CI run's downloaded backend artifacts
 (``gh run download <run> -p 'backend-*' -D <dir>``), holding
 ``backend-<layer>-*/results.xml``. Several runs are combined by taking each
-module's median, because hosted runners differ in speed from run to run.
+module's and test's median, because hosted runners differ in speed from run to
+run. Layer maps retain module seconds and case counts for scheduling; the
+additional ``tests`` map records seconds by full nodeid for slow-test queries.
 
 The same runs also answer the question ``tests/slow_tests.txt`` asks: how slow
 the tests it lists are now. It prints that as a table, worst first, which is
@@ -123,8 +125,24 @@ def combine(runs: list[dict[str, dict[str, tuple[float, int]]]]) -> dict:
     return out
 
 
+def combine_tests(runs: list[Run]) -> dict[str, float]:
+    """Median per observed run; absent tests are not zero-second samples."""
+    samples: dict[str, list[float]] = defaultdict(list)
+    for run in runs:
+        per_run: dict[str, float] = defaultdict(float)
+        for cases in run.tests.values():
+            for nodeid, seconds in cases.items():
+                per_run[nodeid] += seconds
+        for nodeid, seconds in per_run.items():
+            samples[nodeid].append(seconds)
+    return {
+        nodeid: round(statistics.median(seconds), 2)
+        for nodeid, seconds in sorted(samples.items())
+    }
+
+
 def render(combined: dict) -> str:
-    """JSON with one module per line, so a refresh reads as a short diff."""
+    """JSON with one module or test per line for short refresh diffs."""
     blocks = []
     for layer, modules in combined.items():
         rows = ",\n".join(
@@ -212,9 +230,13 @@ def main(argv: list[str]) -> int:
         print("no backend-<layer>-*/results.xml with a cheese_nodeid", file=sys.stderr)
         return 1
     combined = combine([run.modules for run in runs])
+    combined["tests"] = combine_tests(runs)
     OUTPUT.write_text(render(combined))
-    counts = {layer: len(modules) for layer, modules in combined.items()}
-    print(f"wrote {OUTPUT.name}: {counts} modules from {len(runs)} run(s)")
+    counts = {layer: len(combined[layer]) for layer in LAYERS if layer in combined}
+    print(
+        f"wrote {OUTPUT.name}: {counts} modules, "
+        f"{len(combined['tests'])} tests from {len(runs)} run(s)"
+    )
     print(slow_report(runs))
     return 0
 

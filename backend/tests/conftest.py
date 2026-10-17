@@ -995,6 +995,46 @@ def fast_timings(monkeypatch) -> FastTimings:
     return FastTimings(monkeypatch).apply()
 
 
+#: The machine's own git configuration, neutralized. `os.devnull` rather than the
+#: literal `/dev/null`: the suite runs on Windows too.
+_HOST_GIT_VARS: tuple[tuple[str, str], ...] = (
+    ("GIT_CONFIG_GLOBAL", os.devnull),
+    ("GIT_CONFIG_SYSTEM", os.devnull),
+    ("GIT_TERMINAL_PROMPT", "0"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _host_git_and_pre_commit_isolated(monkeypatch, tmp_path_factory) -> None:
+    """No test reads the machine's git configuration, and no two tests share
+    pre-commit's store.
+
+    A `~/.gitconfig` or `/etc/gitconfig` that sets `commit.gpgsign` — or a
+    signer of its own — fails every `git commit` the suite makes in a throwaway
+    repository (`tests/support/git_store.ensure_repo` is the first consumer, not
+    the only one), in a test whose subject never mentions git. The strip above
+    removes *inherited* `GIT_*` variables, not the files git reads without them,
+    which is where that setting lives; the null device for both leaves git with
+    no global or system configuration at all.
+
+    `PRE_COMMIT_HOME` is the same leak one layer out: pre-commit keeps its hook
+    environments and a sqlite store under it (default `~/.cache/pre-commit`),
+    and two runs on one machine as one user — the self-hosted runners, or a hook
+    beside a test on a laptop — lock each other out of the one store
+    (`.github/AGENTS.md`; `scripts/test_ci_fast.py` does this for its harness).
+    Each test gets one under this worker's temp instead.
+
+    A test that means to run git or pre-commit against a configuration of its
+    own sets the variable itself, in its own fixture or body: that lands after
+    this one and wins.
+    """
+    for name, value in _HOST_GIT_VARS:
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv(
+        "PRE_COMMIT_HOME", str(tmp_path_factory.mktemp("pre-commit-home"))
+    )
+
+
 @pytest.fixture(autouse=True)
 def _metering_proxy_ca(monkeypatch, tmp_path_factory) -> None:
     """A machine has one launch shape, and it reaches a model only through the

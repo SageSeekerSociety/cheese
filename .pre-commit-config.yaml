@@ -186,7 +186,7 @@ repos:
         files: ^frontend/(src/.*\.vue|eslint\.(a11y\.)?config\.mjs|a11y-baseline\.json|package\.json|pnpm-lock\.yaml|scripts/(a11y-ratchet|tsc-ratchet-core|ratchet-report))
 
       # A component calls a bare name it binds nothing for, and a module in this
-      # tree declares that name and exports it to nobody: the call does not
+      # tree declares that name and never hands it out: the call does not
       # fail, it reaches a browser global of the same name and does nothing.
       # That is what a function moved into a composable and left unexported
       # looks like — 2026-10-16 (#1618), `blur()` moved into
@@ -208,6 +208,22 @@ repos:
         language: system
         pass_filenames: false
         files: ^frontend/(src/.*\.(vue|ts)|package\.json|scripts/(check-global-fallback-ratchet|global-fallback-ratchet-core|global-fallback-ratchet\.test|tsc-ratchet-core|ratchet-report)\.mjs)$
+
+      # Check the index against the branch baseline, not unstaged repairs.
+      # CI's test:ratchet also checks the committed tree via the discovered test.
+      - id: sfc-attribute-diff
+        name: Vue splits preserve explicit attribute fallbacks (staged)
+        entry: node frontend/scripts/sfc-attribute-diff.mjs --staged
+        language: system
+        pass_filenames: false
+        files: ^(.*\.vue|frontend/scripts/sfc-attribute-diff(\.test)?\.mjs|\.pre-commit-config\.yaml)$
+
+      - id: sfc-attribute-diff-self-test
+        name: Vue split attribute guard self-test
+        entry: node frontend/scripts/sfc-attribute-diff.mjs --self-test
+        language: system
+        pass_filenames: false
+        files: ^(frontend/scripts/sfc-attribute-diff(\.test)?\.mjs|\.pre-commit-config\.yaml)$
 
       # Every page the router reaches and every SFC under
       # src/components/panels/ has to render with no backend, no route and no

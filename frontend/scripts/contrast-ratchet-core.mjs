@@ -34,6 +34,19 @@
 // labels have since been paid off (the door pages put dark ink on the amber,
 // LandingShell.vue), which is what the ratchet exists to let a page do one run
 // at a time.
+//
+// WHY THE RUNGS HAVE NAMES, AND ONE TOKEN HAS ONE. The floors are WCAG's, and
+// they are reached by the run's size, weight and font — never by the colour it
+// was written with. Naming them (TIERS, tierOf) is what lets a failure say
+// which rung it is on and what that rung owes. One token is named too:
+// `--faint` is the project's decorative rung — a deliberate 3:1 for icons,
+// dividers and placeholder shapes, one step off --muted in the neutral ramp. A
+// run painted with it that lands below its floor is reported with the fix that
+// fits that rung — put the words on --muted, or move the token — rather than
+// the generic one, because the answer the ramp forbids is deepening `--faint`
+// until words clear 4.5:1, which is what would collapse its step against
+// --muted. docs/design-system.md §2.6 and #3691 are where that ruling was made;
+// this is the check saying it out loud.
 
 /**
  * WCAG relative luminance of an `[r, g, b]` triple, channels 0-255.
@@ -59,17 +72,37 @@ export function contrastRatio(fg, bg) {
 }
 
 /**
+ * The rungs of the WCAG AA ladder, by name, and the floor each one owes: text
+ * owes 4.5:1, and the 3:1 rung covers large text and graphics. The names are
+ * what a failure quotes, so a reader gets "the graphic rung" and not a bare
+ * number.
+ */
+export const TIERS = { body: 4.5, large: 3, graphic: 3 }
+
+/**
+ * Which rung a run is on, by name. Deliberately a function of the run's size,
+ * weight and font alone — the colour that painted it is not an input. A run too
+ * close to its ground to read is not made readable by the token it was written
+ * with; that is what makes `--faint` a fix rather than a verdict (#3691,
+ * docs/design-system.md §2.6).
+ * @param {{ size: number, weight: number, icon: boolean }} run
+ * @returns {'body' | 'large' | 'graphic'}
+ */
+export function tierOf({ size, weight, icon }) {
+  if (icon) return 'graphic'
+  if (size >= 24 || (size >= 18.66 && weight >= 700)) return 'large'
+  return 'body'
+}
+
+/**
  * The floor a run has to clear. The same rule is applied inside collectRuns,
  * which runs in the page and cannot import this; the driver asserts the two
  * agree for every run it measures, so a change here that is not mirrored there
  * fails immediately rather than silently.
  * @param {{ size: number, weight: number, icon: boolean }} run
  */
-export function floorFor({ size, weight, icon }) {
-  if (icon) return 3
-  if (size >= 24) return 3
-  if (size >= 18.66 && weight >= 700) return 3
-  return 4.5
+export function floorFor(run) {
+  return TIERS[tierOf(run)]
 }
 
 /**
@@ -289,32 +322,54 @@ export function tightenedBaseline(baseline, worst, { freezeNew = false } = {}) {
 }
 
 /**
- * The human half: what went wrong, where, and which of the two named colour
- * rules it probably is.
+ * The fix for the one token the ratchet knows by name, printed under a failing
+ * run painted with it. Not "make it darker": `--faint` is the decorative rung —
+ * a deliberate 3:1 for icons, dividers and placeholder shapes — and it sits one
+ * step off `--muted` in the neutral ramp, so darkening it far enough for words
+ * to clear 4.5:1 would collapse that step. The ruling
+ * (docs/design-system.md §2.6, #3691) is that the words move off the token.
+ */
+const FAINT_FIX = [
+  '',
+  '    --faint is the decorative rung — a deliberate 3:1 for icons, dividers and',
+  '    placeholder shapes, not a colour for words. Do not deepen the token: it',
+  '    sits one step off --muted, and that step is what the ramp is made of. Put',
+  '    the words on --muted (.t-meta-read / .t-eyebrow-read); a decoration that',
+  '    reads below 3:1 needs the token itself moved.',
+].join('\n')
+
+/**
+ * The human half: what went wrong, where, which rung it is on, and which of the
+ * named colour rules it is.
  * @param {ReturnType<typeof compare>} result
  */
 export function formatContrastReport(result) {
   const lines = []
-  const detail = ({ key, was, run }) => {
+  const detail = ({ key, was, run }, answerable) => {
     const sample = run ? run.text : was && was.sample
     const where = run ? `${run.selector}${run.pseudo || ''} "${sample}"` : key
     const measured = run
       ? run.unjudged
         ? ` — ${run.unjudged}`
-        : ` — ${run.fg} on ${run.bg} at ${run.size}px/${run.weight}, ${run.ratio}:1, needs ${run.need}:1`
+        : ` — ${run.fg} on ${run.bg} at ${run.size}px/${run.weight}, ${run.ratio}:1, needs ${run.need}:1 (the ${tierOf(run)} rung)`
       : ''
     const from = was && typeof was.ratio === 'number' ? ` (baseline froze ${was.ratio}:1)` : ''
     const blind = run && run.unreadable ? `, and ${run.unreadable} instance(s) of it the walker cannot read` : ''
-    return `  ${key}\n    ${where}${measured}${blind}${from}`
+    // Only where the run is reported for its own ratio. Under "the check cannot
+    // measure" a tagged run is there for the instances the ratio does not speak
+    // for — the run itself, or a sibling of the same selector on a picture — and
+    // repainting the text is not the answer to that: it leaves the gate red.
+    const faint = answerable && run && run.faint && !run.unjudged && run.ratio < run.need ? FAINT_FIX : ''
+    return `  ${key}\n    ${where}${measured}${blind}${from}${faint}`
   }
-  for (const [title, rows] of [
-    ['New runs below their contrast floor:', result.added],
-    ['Frozen runs that are below their floor:', result.worse],
-    ['Runs the check cannot measure:', result.unjudged],
+  for (const [title, rows, answerable] of [
+    ['New runs below their contrast floor:', result.added, true],
+    ['Frozen runs that are below their floor:', result.worse, true],
+    ['Runs the check cannot measure:', result.unjudged, false],
   ]) {
     if (!rows.length) continue
     lines.push(title)
-    for (const row of rows) lines.push(detail(row))
+    for (const row of rows) lines.push(detail(row, answerable))
     lines.push('')
   }
   if (!result.ok) {
@@ -348,7 +403,9 @@ export function formatContrastReport(result) {
  * into the page, so it must stay self-contained: no imports, no closure over
  * anything in this module, and no helper it does not define itself. The floor
  * it applies is floorFor() above, which it cannot import; the driver asserts
- * they agree.
+ * they agree. It also tags the runs painted with `--faint` — the one token the
+ * rule knows by name — by resolving it in the document it is walking, which is
+ * the only thing it reads from outside the run itself.
  */
 export function collectRuns() {
   const parse = (value) => {
@@ -369,6 +426,27 @@ export function collectRuns() {
     return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
   }
   const show = (c) => `${Math.round(c.r)},${Math.round(c.g)},${Math.round(c.b)}`
+
+  // The one token the rule knows by name: `--faint` is the deliberate 3:1
+  // decorative rung (docs/design-system.md §2.6), so a run painted with it is
+  // tagged as it is recorded and the report answers a failing one with the fix
+  // that fits that rung instead of the generic one. Read off the document
+  // element of the theme being measured, and compared on the same rounded
+  // channels `show()` prints, so both themes are recognised and a colour that
+  // merely resembles the token is not. Nothing is tagged when the document does
+  // not declare it (no app stylesheet) or declares it in a syntax the two
+  // branches below do not read — hex and rgb()/rgba() are how this repo writes
+  // tokens, and a guess would tag the wrong runs.
+  const faintToken = (() => {
+    const declared = getComputedStyle(document.documentElement).getPropertyValue('--faint').trim()
+    const hex = declared.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
+    if (hex) {
+      const full = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join('') : hex[1]
+      return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)).join(',')
+    }
+    const parsed = parse(declared)
+    return parsed ? show(parsed) : ''
+  })()
 
   // The ground a run sits on, composited bottom-up: the public pages paint
   // translucent washes over each other, and a thin one has to be laid over what
@@ -470,6 +548,12 @@ export function collectRuns() {
       weight,
       icon,
       need,
+      // Whether the run is painted with the named decorative token at full
+      // strength, which changes the fix a failure quotes and nothing else. A run
+      // dimmed by its own opacity, or painted in a translucent colour that
+      // rounds to the token's channels, is not the token reading too faint, so
+      // it is not tagged and no fix can blame the token for it.
+      faint: alpha === 1 && show(fg) === faintToken,
       ratio: Math.round(ratioOf(painted, ground) * 100) / 100,
       unjudged: blind ? 'a background image or gradient sits between the run and its ground' : '',
     })

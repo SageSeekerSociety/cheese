@@ -11,13 +11,18 @@
 出去。
 
 后半截（`RoomThread`、`SessionStore`、`WorkspacePaths`、`ReviewCards`、
-`PendingDecisions`、`ArchivedCards`、`OpenTaskCounts`、`CloseRoomTasks`）是本包在
-上面各层各自只取一两次调用的那些：支线的根消息（第 4 层）、一间房的会话状态
-（第 3 层）、转写与工作目录落在哪（第 3 层）、「这间房等着谁动手」的两个角标和
-归档时收卡收活（第 3、4 层）、还有一间房里有几个活还在走（第 4 层）。它们的形状
-大多就是提供方已有的类或函数，递进来的就是那个对象本身，本包不另包一层。
+`PendingDecisions`、`ArchivedCards`、`OpenTaskCounts`、`CloseRoomTasks`、
+`PlatformLine`）是本包在上面各层各自只取一两次调用的那些：支线的根消息（第 4 层）、
+一间房的会话状态（第 3 层）、转写与工作目录落在哪（第 3 层）、「这间房等着谁动手」的
+两个角标和归档时收卡收活（第 3、4 层）、还有一间房里有几个活还在走、以及平台在一条
+对话上说一句话（第 4 层）。它们的形状大多就是提供方已有的类或函数，递进来的就是那个
+对象本身，本包不另包一层。
 
 递回来的都是内置类型：本包认不出别人家的类，也不该认得。
+
+这里唯一读别的领域的**表**的地方不在这份名单上（`PlatformLine` 是写）：`blocks`
+那几列由 `repositories/statements.py` 逐字声明，`latest.py` 写读法 —— 读的是数据，
+不是那个包的代码。
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.delivery_events import SettleCard
+from app.domain.event_about import EventAbout
 
 
 class SeatHandles(Protocol):
@@ -275,11 +281,42 @@ class CloseRoomTasks(Protocol):
     函数本身 —— 和 `ArchivedCards` 一样。一条活没有房间就没有上下文，也没有回去
     的路，所以关一个地方要把它里面的活一起关掉。
 
-    为什么结束这件事不在这个口子里：那句话要落进每条活自己的支线，而写块的是本包
-    （`topic`），递回来的 id 就是给那几句话用的。一条早就结束的活不回报，也不重
-    写它的 `closed_at`。
+    为什么结束这件事不在这个口子里：那句话要落进每条活自己的支线，而那句话的内容
+    是本包决定的（说哪条活、因为哪间房关了），递回来的 id 就是给那几句话用的；
+    写下去的那一步走 `PlatformLine`。一条早就结束的活不回报，也不重写它的
+    `closed_at`。
     """
 
     async def __call__(
         self, session: AsyncSession, room_id: uuid.UUID
     ) -> Sequence[uuid.UUID]: ...
+
+
+class PlatformLine(Protocol):
+    """本包要说一句平台的话（房间归档、取消归档、一间房收工），落点按 `landing()`
+    那张封闭表算，写下去的是 `block`。
+
+    形状就是 `block.adapters.platform_line`，实现留在第 4 层，递进来的就是那个函数
+    本身 —— 和 `ArchivedCards`、`RoomFiles` 一样，提供方已经长成这个形状。
+
+    为什么不一并手写这一句：写一条块带着三样本包给不出的东西 —— 轮次 id 的兜底、
+    `with_keys()` 记下的内容键、落库后投给现场。少一样都不会当场报错，只会在别处
+    读不出来。所以本包只决定「说什么、关于什么」，`landing()` 和真正的写入都在实现
+    那一侧；这也是 `test_event_landing_guard.py` 要的形状 —— 那座守卫按模块看
+    `landing()` 和 `blocks.add(kind=event)` 在不在同一处。
+
+    ``about`` 那四档要哪几个 id，由 `landing()` 当场校验，本包把手里有的都递过去。
+    """
+
+    async def __call__(
+        self,
+        session: AsyncSession,
+        *,
+        about: EventAbout,
+        project_id: uuid.UUID,
+        author: str,
+        content: str,
+        room_id: uuid.UUID | None = None,
+        task_id: uuid.UUID | None = None,
+        thread_id: uuid.UUID | None = None,
+    ) -> None: ...

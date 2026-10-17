@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.block.adapters import platform_line
 from app.domain.delivery.ledger import settle_card
 from app.domain.memory.models import MemoryDreamRun
 from app.domain.project.services import ProjectService
@@ -217,6 +218,7 @@ def test_an_archived_project_is_not_given_a_memory_dream(client, tmp_path):
                 settle_card=settle_card,
                 cards=close_cards_for_archived_topic,
                 close_tasks=close_room_tasks,
+                events=platform_line,
             ).archive(project.id, by=OWNER)
             project_id = project.id
             await session.commit()
