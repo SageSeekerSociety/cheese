@@ -73,6 +73,10 @@ case ${1:-} in
       # 多步任务的下一步换了分支（task/<id>-2）：平台把目录跟过去，推的是新那条。
       branch="task/${CHEESE_TOPIC%%-*}-2"
       git switch -q -C "$branch"
+    elif [ -n "${FAKE_SYNC_SWITCHES_TO:-}" ]; then
+      # 同一步把目录带到了别处（不在任务分支上）。
+      branch=$FAKE_SYNC_SWITCHES_TO
+      git switch -q -C "$branch"
     fi
     head=$(git rev-parse HEAD)
     idx="$root/.git/fake-snapshot-index"
@@ -89,12 +93,14 @@ case ${1:-} in
     ;;
   worktree)
     id=${2:?}
-    # 真 CLI 第一件事就是 uuid.UUID(task_id)，短 id 在这里当场失败。
-    uuid='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    # 真 CLI 第一件事就是 uuid.UUID(task_id)，短 id 在这里当场失败；大写它照收，
+    # 归一化成小写——任务目录、recovered 下的目录、分支名都是小写。
+    uuid='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
     printf '%s' "$id" | grep -Eqx "$uuid" || {
       echo "fake cheese: badly formed UUID string: $id" >&2
       exit 1
     }
+    id=$(printf '%s' "$id" | tr 'A-F' 'a-f')
     short=${id%%-*}
     dir=${FAKE_WORKTREE_DIR:?}
     if [ "${FAKE_WORKTREE_FAIL:-}" = 1 ]; then
@@ -406,6 +412,20 @@ def test_save_checks_the_branch_the_sync_moved_to(machine: Machine) -> None:
     assert machine.remote_tip(f"refs/heads/{BRANCH}-2") == machine.head()
 
 
+def test_save_refuses_a_sync_that_leaves_the_task_branch(machine: Machine) -> None:
+    """故意违规：同步把目录带到别处，推上去的就不是任务分支了。"""
+    machine.commit("step.py", "print(1)\n")
+
+    refused(machine.run("save", FAKE_SYNC_SWITCHES_TO="wip"), 2, "不是任务分支")
+
+
+def test_save_refuses_a_task_option(machine: Machine) -> None:
+    """故意违规：save 只认当前目录，给了别的任务 id 时不能照着它核对。"""
+    machine.commit("step.py", "print(1)\n")
+
+    refused(machine.run("save", "--task", TASK), 2, "save 不接受 --task")
+
+
 def test_save_refuses_when_the_remote_cannot_be_reached(
     machine: Machine,
 ) -> None:
@@ -500,6 +520,24 @@ def test_save_still_passes_when_the_advisory_scan_fails(machine: Machine) -> Non
     assert f"cheese worktree {TASK}" in out
 
 
+def test_save_keeps_the_exit_code_when_the_advisory_list_is_long(
+    machine: Machine,
+) -> None:
+    """列表长过管道缓冲时，截断的那一头早退会把整条管线带成 141。
+
+    `set -o pipefail` 下这个退出码就是脚本的退出码：核对明明通过了，却报失败。
+    """
+    room = machine.home / "room"
+    for i in range(1500):
+        (room / f"note-{i:05d}.txt").write_text("x\n")
+    machine.commit("step.py", "print(1)\n")
+
+    result = machine.run("save")
+
+    ran(result)
+    assert "个里只列了前" in result.stderr
+
+
 def test_the_machine_is_wiped_and_the_work_comes_back(machine: Machine) -> None:
     """工作机回收：整个目录删掉，从远端接回来，未提交的东西也在。"""
     machine.commit("step.py", "print(1)\n")
@@ -580,6 +618,24 @@ def test_restore_still_refuses_after_a_set_aside_the_run_before(
     refused(first, 3, ".cheese/recovered")
     refused(second, 3, ".cheese/recovered")
     assert "与远端一致" not in second.stdout
+
+
+def test_restore_finds_a_set_aside_backup_for_an_upper_case_id(
+    machine: Machine,
+) -> None:
+    """CLI 认大写 id，平台建的目录却是小写：照原样匹配会漏掉那一份。
+
+    漏掉的后果是「接回来了」——而实际未提交的活还躺在独立目录里。
+    """
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+
+    machine.wipe()
+
+    result = machine.run("restore", "--task", TASK.upper(), FAKE_WORKTREE_SET_ASIDE="1")
+
+    refused(result, 3, ".cheese/recovered")
+    assert "与远端一致" not in result.stdout
 
 
 def test_restore_refuses_when_the_platform_could_not_apply_the_snapshot(

@@ -135,9 +135,13 @@ restore_mismatch() {
   exit 3
 }
 
-# restore 用：没有东西可以拿来对照，说清是什么、该怎么办
+# restore 用：没有东西可以拿来对照，说清是什么、该怎么办。
+# $3 是分支名，给了就把「远端现在是什么」那行也打出来。
 restore_stop() {
   printf '  接回来的状态没法核对：%s\n' "$1" >&2
+  if [ -n "${3:-}" ]; then
+    printf '  远端现在是什么：git ls-remote origin refs/heads/%s\n' "$3" >&2
+  fi
   printf '  %s\n' "$2" >&2
   exit 3
 }
@@ -281,6 +285,9 @@ else
 fi
 uuid_like "$task_id" ||
   die 2 "「$task_id」不是完整的任务 id；cheese worktree 只认完整 UUID。用 --task <任务 id> 再跑"
+# 平台用 uuid.UUID(...) 归一化，任务目录和 recovered 下的目录名都是小写；大写
+# 输入照原样去匹配会漏掉那一份（CLI 自己认大写，所以这里也得认）。
+task_id=$(printf '%s' "$task_id" | tr 'A-F' 'a-f')
 
 printf '%s: cheese worktree %s\n' "$PROG" "$task_id" >&2
 worktree_out=$(cheese worktree "$task_id") ||
@@ -311,9 +318,9 @@ fi
 
 remote_tip "$branch"
 if [ "$REMOTE_OK" != yes ]; then
-  printf '  远端现在是什么：git ls-remote origin refs/heads/%s\n' "$branch" >&2
   restore_stop "取不到远端 refs（连不上远端，或者凭据不能用）" \
-    "先别在这个目录里接着改；把上面的输出原样报上来，说清没能核对到哪个提交。"
+    "先别在这个目录里接着改；把上面的输出原样报上来，说清没能核对到哪个提交。" \
+    "$branch"
 fi
 
 if [ -z "$REMOTE_TIP" ]; then
