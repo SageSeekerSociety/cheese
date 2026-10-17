@@ -536,7 +536,8 @@ def test_the_steal_limit_is_five_percent(tmp_path, monkeypatch):
 
     monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
 
-    def crossed(steal):
+    verdicts = {}
+    for steal in (5, 6):
         case = tmp_path / f"steal-{steal}"
         case.mkdir()
         output = _write_observation(
@@ -548,10 +549,14 @@ def test_the_steal_limit_is_five_percent(tmp_path, monkeypatch):
                 _vmstat_row(runnable=2, steal=steal, free_kib=6 * 1024 * 1024),
             ],
         )
-        return "cpu" in observer.evaluate(observer.summarize(output))["crossed"]
+        verdicts[steal] = observer.evaluate(observer.summarize(output))
 
-    assert crossed(5) is False
-    assert crossed(6) is True
+    assert "cpu" not in verdicts[5]["crossed"]
+    assert "cpu" in verdicts[6]["crossed"]
+    # vmstat reports whole percents, so 5 and 6 cannot tell 5.0 from 5.9; the
+    # recorded limit is what pins the number itself.
+    cpu = next(c for c in verdicts[5]["checks"] if c["metric"] == "cpu")
+    assert cpu["steal_limit_percent"] == 5.0
 
 
 def test_the_last_resort_cap_is_the_sandbox_number(tmp_path, monkeypatch):
@@ -704,8 +709,35 @@ def test_steal_time_alone_names_cpu_contention(tmp_path, monkeypatch):
     # The record says which signal crossed, so the queue numbers beside it
     # do not read as a verdict on their own.
     cpu = next(check for check in verdict["checks"] if check["metric"] == "cpu")
-    assert cpu["over_by"] == "steal"
+    assert cpu["over_by"] == ["steal"]
     assert cpu["steal_percent"] == 9.0
+
+
+def test_the_record_names_every_signal_that_crossed(tmp_path, monkeypatch):
+    """Both numbers sit beside one state, so neither may stand for the other."""
+    from scripts import observe_ci_resources as observer
+
+    monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
+
+    def signals(runnable, steal):
+        case = tmp_path / f"runnable-{runnable}-steal-{steal}"
+        case.mkdir()
+        output = _write_observation(
+            case,
+            mem_used_bytes=observer.GIB,
+            cpu_count=2,
+            vmstat_rows=[
+                _vmstat_row(runnable=1, steal=0, free_kib=6 * 1024 * 1024),
+                _vmstat_row(runnable=runnable, steal=steal, free_kib=6 * 1024 * 1024),
+            ],
+        )
+        verdict = observer.evaluate(observer.summarize(output))
+        return next(c for c in verdict["checks"] if c["metric"] == "cpu")["over_by"]
+
+    assert signals(1, 0) == []
+    assert signals(9, 0) == ["runnable"]
+    assert signals(1, 9) == ["steal"]
+    assert signals(9, 9) == ["runnable", "steal"]
 
 
 def test_a_single_vmstat_report_cannot_measure_steal(tmp_path, monkeypatch):
@@ -866,13 +898,32 @@ def test_a_v1_mount_names_the_reclaimable_pages_total_inactive_file(
     own = root / "memory" / "docker" / "abc"
     own.mkdir(parents=True)
     (own / "memory.usage_in_bytes").write_text(str(2 * observer.GIB))
-    (own / "memory.stat").write_text("total_cache 1\ntotal_inactive_file 1610612736\n")
+    # The local figure comes first in the file and would subtract too little
+    # from a hierarchical usage; the total is the one that pairs with it.
+    (own / "memory.stat").write_text(
+        "inactive_file 1048576\n"
+        "total_cache 1\n"
+        "total_inactive_file 1610612736\n"
+        "total_active_file 4096\n"
+    )
     proc_self = tmp_path / "proc-self-cgroup"
     proc_self.write_text("5:memory:/docker/abc\n")
     monkeypatch.setattr(observer, "CGROUP_ROOT", root)
     monkeypatch.setattr(observer, "PROC_SELF_CGROUP", proc_self)
 
     assert observer.cgroup_memory_usage() == 2 * observer.GIB - 1610612736
+
+
+def test_a_reclaimable_total_above_the_usage_is_not_a_measurement(
+    tmp_path, monkeypatch
+):
+    """Two reads that disagree must not turn a use into a fabricated 0 bytes."""
+    from scripts import observe_ci_resources as observer
+
+    root = _cgroup(tmp_path, monkeypatch, current=2 * observer.GIB)
+    (root / "memory.stat").write_text("total_inactive_file 6442450944\n")
+
+    assert observer.cgroup_memory_usage() == 2 * observer.GIB
 
 
 def test_a_v1_memory_controller_is_read_from_its_own_mount(tmp_path, monkeypatch):

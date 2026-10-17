@@ -231,7 +231,11 @@ def read_mem_total(meminfo):
 def memory_peak_bytes(
     memory_samples, storage_samples, vmstat_rows, mem_total_bytes, limit_bytes
 ):
-    """The highest memory use any sample saw, or None if none measured it."""
+    """The highest memory use any sample saw, or None if none measured it.
+
+    Cgroup samples are already net of the page cache the kernel can drop;
+    fallbacks to host-wide numbers are not, and say so where they appear.
+    """
     container_peaks = [
         sample["mem_used_bytes"]
         for sample in memory_samples
@@ -370,10 +374,20 @@ def _cgroup_int(directory, names):
 
 
 def _memory_stat_int(directory, names):
+    """The value of the first of `names` present, in the order given.
+
+    Order is the caller's priority, not the file's: on cgroup v1 the locals
+    come before the hierarchical totals in the file, and the totals are the
+    ones that match `memory.usage_in_bytes`.
+    """
+    values = {}
     for line in read_text(directory / "memory.stat").splitlines():
         name, _, value = line.partition(" ")
         if name in names and value.strip().isdigit():
-            return int(value)
+            values.setdefault(name, int(value))
+    for name in names:
+        if name in values:
+            return values[name]
     return None
 
 
@@ -382,19 +396,25 @@ def cgroup_memory_usage():
 
     `memory.current` also counts page cache, and the kernel reclaims that
     before it kills anything at the cap: a run that writes files reaches the
-    cap with almost no real pressure. Leaving the reclaimable file pages out
-    is what makes the number comparable with the cap.
+    cap with almost no real pressure. Leaving the inactive file pages out is
+    what makes the number comparable with the cap. Only the inactive half is
+    left out on purpose: active pages include tmpfs and shared memory, which
+    nothing gets back without swap, so they stay counted.
     """
     for directory in cgroup_dirs():
         value = _cgroup_int(directory, ("memory.current", "memory.usage_in_bytes"))
         if value is None:
             continue
+        # The totals first: on v1 `memory.usage_in_bytes` is hierarchical, so
+        # pairing it with the local figure would subtract too little.
         reclaimable = _memory_stat_int(
-            directory, ("inactive_file", "total_inactive_file")
+            directory, ("total_inactive_file", "inactive_file")
         )
-        if reclaimable is None:
+        if reclaimable is None or reclaimable > value:
+            # Nothing to subtract, or the two reads disagree; the raw reading
+            # is the safe answer either way -- never a made-up zero.
             return value
-        return max(0, value - reclaimable)
+        return value - reclaimable
     return None
 
 
@@ -536,11 +556,16 @@ def evaluate(summary):
         {
             "metric": "cpu",
             "state": cpu_state,
-            # The record names which signal crossed: the numbers beside it
-            # describe the queue only, and steal alone can set the state.
-            "over_by": "runnable"
-            if runnable_over
-            else ("steal" if steal_over else None),
+            # Every signal that crossed, not just the first: the numbers
+            # beside it describe the queue, and steal can set the state alone.
+            "over_by": [
+                signal
+                for signal, crossed in (
+                    ("runnable", runnable_over),
+                    ("steal", steal_over),
+                )
+                if crossed
+            ],
             "observed": summary["runnable_peak"],
             "threshold": summary["cpu_count"],
             "steal_percent": summary["steal_peak_percent"],
@@ -578,7 +603,8 @@ def _describe(check, summary):
         if state == "unknown":
             return "memory: unknown — no memory sample"
         return (
-            f"memory: {state} — peak {_gib(check['observed'])}, "
+            f"memory: {state} — peak {_gib(check['observed'])} in use "
+            f"(inactive cache excluded), "
             f"threshold {_gib(check['threshold'])} "
             f"(cap {_gib(summary['memory_limit_bytes'])})"
         )
