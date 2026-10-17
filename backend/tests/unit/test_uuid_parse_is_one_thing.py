@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.errors import ValidationError
+from app.core.errors import UnprocessableEntityError
 from app.core.work_context import parse_work_id
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.deliverables import artifacts
@@ -56,7 +56,7 @@ async def test_reuse_resolves_only_a_listed_uuid(monkeypatch, raw):
     session.get.return_value = row
 
     if raw in {"not-a-uuid", ""}:
-        with pytest.raises(ValidationError):
+        with pytest.raises(UnprocessableEntityError):
             await artifacts.reuse(session, project_id=project_id, artifact_id=raw)
         session.get.assert_not_awaited()
     else:
