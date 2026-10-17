@@ -89,6 +89,25 @@ it('没加入的能加入，加入了的能退出，综合两样都没有', asyn
   expect(view.emitted('leave')).toEqual([['前端']])
 })
 
+it('频道创建者在无进行中任务时能从全部频道归档，有任务时不显示归档', async () => {
+  const view = mount({
+    channels: [
+      entry('空闲频道', { joined: true, can_administer: true, open_tasks: 0 }),
+      entry('忙碌频道', { joined: true, can_administer: true, open_tasks: 2 }),
+      entry('别人的频道', { joined: true, can_administer: false, open_tasks: 0 }),
+    ],
+  })
+  const rows = view.getAllByTestId('channel-browse-row')
+  const row = (name: string) => rows.find((r) => r.textContent?.includes(name))!
+  const archiveBtn = row('空闲频道').querySelector('[data-testid="channel-archive"]') as HTMLElement | null
+  expect(archiveBtn).not.toBeNull()
+  expect(row('忙碌频道').querySelector('[data-testid="channel-archive"]')).toBeNull()
+  expect(row('别人的频道').querySelector('[data-testid="channel-archive"]')).toBeNull()
+
+  await fireEvent.click(archiveBtn!)
+  expect(view.emitted('archive')).toEqual([['空闲频道']])
+})
+
 it('外部成员看不到「新建频道」', () => {
   const view = mount({ canCreate: false })
   expect(view.queryByRole('button', { name: t('work.projectSettings.channels.create') })).toBeNull()
