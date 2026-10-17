@@ -76,19 +76,19 @@ from app.domain.agent.device_contract import (
     DeviceOffline,
     DeviceUnreachable,  # noqa: F401
     HubScreen,
-    LinkInterrupted,
+    LinkInterrupted,  # noqa: F401
     ViewerTransport,
+    offline_headers,  # noqa: F401
 )
 from app.domain.agent.device_hub import calls, inbound, local_fs, sessions, viewers
 from app.domain.agent.device_hub.link import DeviceTransport, HubDevice
 
-# The failures, the screen shape and the call timings are re-exported from
-# ``device_contract`` — they were written down here, so importing them from here
-# keeps working, but the module that hands the hub's HTTP facade its screens
-# cannot import the hub itself (C3). ``offline_headers`` stays below instead of
-# moving with its exceptions: its callers import it from here already, and
-# ``core/errors.py`` reaching into a second ``domain.agent`` module would trade
-# one C1 entry for another.
+# The failures, the screen shape, the call timings and ``offline_headers`` are
+# re-exported from ``device_contract`` — they were written down here, so
+# importing them from here keeps working, but the module that hands the hub's
+# HTTP facade its screens cannot import the hub itself (C3). The one rule for
+# how a ``DeviceOffline`` crosses HTTP lives in ``core/device_failures``, where
+# the error tree that answers with it can use it too.
 #
 # The `noqa: F401` ones are no longer read here, and stay so this module's name
 # set does not shrink: drop one and ``from app.domain.agent.device_hub import
@@ -100,19 +100,6 @@ from app.domain.agent.device_hub.link import DeviceTransport, HubDevice
 # reads.
 
 logger = logging.getLogger(__name__)
-
-
-def offline_headers(exc: DeviceOffline) -> dict[str, str]:
-    """How a ``DeviceOffline`` crosses HTTP, as the 409 that carries it.
-
-    ``X-Device-Id`` says the machine is not there; ``X-Device-Link:
-    interrupted`` that the link went down under this very call
-    (``LinkInterrupted``), so its outcome is unknown. The connection owner, the
-    backend and the executor client each read the pair the same way."""
-    headers = {"X-Device-Id": exc.device_id}
-    if isinstance(exc, LinkInterrupted):
-        headers["X-Device-Link"] = "interrupted"
-    return headers
 
 
 # The hub's own clock, and the version it speaks. Kept here rather than moving

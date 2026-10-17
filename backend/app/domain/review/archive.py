@@ -70,9 +70,36 @@ def pr_left_open(card: AcceptCard) -> bool:
 
 
 def prefix_note(note: str, added: str) -> str:
-    """把归档说明放在最前面（它是这张卡最后、也最该被读到的一句），旧 note 保留在后。"""
+    """把收尾说明放在最前面（它是这张卡最后、也最该被读到的一句），旧 note 保留在后。"""
     old = (note or "").strip()
     return (f"{added}\n{old}" if old else added)[:_NOTE_MAX]
+
+
+async def _converge_card(
+    session: AsyncSession,
+    card: AcceptCard,
+    *,
+    outcome: str,
+    note_code: notes.NoteCode,
+    note: str,
+    by: str | None,
+    settle_card: SettleCard | None,
+    now: datetime,
+) -> None:
+    """把一张非终态的卡收掉，并留下为什么。
+
+    归档和关任务是两种收尾，处理同一件事：卡跟着它所在的那一块一起结束。所以
+    状态、收件箱、留痕、决议时间都在这一处写，两边不各写一份会走散的规矩。
+    """
+    card.status = AcceptStatus.revoked
+    # 卡跟着终结：等验收人动手的那几句一起收掉，别留在他的收件箱里说着「等你」。
+    await room_notices._settle_the_card(session, card, outcome, settle_card=settle_card)
+    notes.record(card, note_code, prefix_note(card.note, note))
+    # 只在空的时候补：已有的决议痕迹不覆盖。
+    if card.decided_by is None and by is not None:
+        card.decided_by = by
+    if card.decided_at is None:
+        card.decided_at = now
 
 
 async def close_cards_for_archived_topic(
@@ -105,33 +132,26 @@ async def close_cards_for_archived_topic(
         if card.status not in OPEN_CARD_STATUSES:
             continue
         was = card.status
-        card.status = AcceptStatus.revoked
-        # 房间关掉，卡跟着终结：等验收人动手的那几句一起收掉，别留在他的收件箱
-        # 里说着「等你」。
-        await room_notices._settle_the_card(
-            session, card, "archived", settle_card=settle_card
-        )
         if pr_left_open(card):
             # 骑着未合并的 PR：停止跟进，但不替任何人去关它。
-            notes.record(
-                card,
-                notes.NoteCode.archived,
-                prefix_note(
-                    card.note,
-                    f"话题已归档，平台已停止跟进 PR #{card.pr_number}。PR 未合并，"
-                    f"仍在 GitHub 上打开，需要人决定合并还是关闭："
-                    f"{card.pr_url or '（无链接）'}",
-                ),
+            note = (
+                f"话题已归档，平台已停止跟进 PR #{card.pr_number}。PR 未合并，"
+                f"仍在 GitHub 上打开，需要人决定合并还是关闭："
+                f"{card.pr_url or '（无链接）'}"
             )
             stranded.append(card)
         else:
-            closed = f"话题已归档，审阅随之关闭，关闭时状态为「{was}」。"
-            notes.record(card, notes.NoteCode.archived, prefix_note(card.note, closed))
-        # 只在空的时候补：已有的决议痕迹不覆盖。
-        if card.decided_by is None:
-            card.decided_by = by
-        if card.decided_at is None:
-            card.decided_at = now
+            note = f"话题已归档，审阅随之关闭，关闭时状态为「{was}」。"
+        await _converge_card(
+            session,
+            card,
+            outcome="archived",
+            note_code=notes.NoteCode.archived,
+            note=note,
+            by=by,
+            settle_card=settle_card,
+            now=now,
+        )
         changed.append(card)
 
     if not changed:
@@ -178,4 +198,88 @@ async def close_cards_for_archived_topic(
             },
         )
 
+    return changed
+
+
+def _note_for_closed_task(card: AcceptCard, was: AcceptStatus) -> str:
+    """一条活关掉之后，卡面上留的那一句。
+
+    和归档那句只差一个原因：归档是房间没了，关任务是活没了。骑着的 PR 不在这里
+    处理 —— 一条活关掉时它自己的 PR 怎么处置是 `review.task_pr` 的事，这条 note
+    只说平台不再跟进了。
+    """
+    if pr_left_open(card):
+        return (
+            f"任务已关闭，平台已停止跟进 PR #{card.pr_number}。"
+            f"PR 未合并：{card.pr_url or '（无链接）'}"
+        )
+    return f"任务已关闭，审阅随之关闭，关闭时状态为「{was}」。"
+
+
+async def close_cards_for_closed_task(
+    session: AsyncSession,
+    *,
+    task_id: uuid.UUID,
+    by: str | None,
+    settle_card: SettleCard | None,
+) -> list[AcceptCard]:
+    """一条活被关掉，它还没结算的卡跟着作废。返回被改动的卡。
+
+    这是归档那一套在关任务上的对应物：卡不能比它挂着的活活得久。漏掉这一步，
+    卡就永远停在非终态上，而轮询和侧栏都把它当成还有东西在走 —— 一件 10-12
+    就关掉的活，到了 10-17 还在让房间亮着绿灯。
+
+    幂等：终态的卡不动，所以重复调用（关任务一次，轮询器补一次）不会重复写
+    note。``by`` 是关任务的人；轮询器补的那一次没有人在场，留空，和闸门孤儿卡
+    同一条理由（`gate_sweep`：没有人做过这个决定，写上谁都是假的）。调用方负责
+    flush/commit。
+    """
+    cards = await AcceptCardRepository(session).list_for_task(task_id)
+    return await _close_the_open_cards(session, cards, by=by, settle_card=settle_card)
+
+
+async def close_cards_for_closed_tasks(
+    session: AsyncSession,
+    *,
+    settle_card: SettleCard | None,
+    project_id: uuid.UUID | None = None,
+) -> list[AcceptCard]:
+    """第二道锁：轮询器每一轮把已关的活上漏下的非终态卡收掉。
+
+    关任务的那条路（`routes/topics_tasks`）当场收；这里兜住其余路径和这次修复
+    之前就停在 pending 上的行 —— 和归档那条路同一个双保险（`pr_poll` 不再跟进，
+    这里把行也收敛掉）。``project_id`` 有值就只看这个项目。
+    """
+    cards = await AcceptCardRepository(session).list_open_on_closed_tasks(
+        OPEN_CARD_STATUSES, project_id=project_id
+    )
+    return await _close_the_open_cards(session, cards, by=None, settle_card=settle_card)
+
+
+async def _close_the_open_cards(
+    session: AsyncSession,
+    cards: list[AcceptCard],
+    *,
+    by: str | None,
+    settle_card: SettleCard | None,
+) -> list[AcceptCard]:
+    now = datetime.now(UTC)
+    changed: list[AcceptCard] = []
+    for card in cards:
+        if card.status not in OPEN_CARD_STATUSES:
+            continue
+        was = card.status
+        await _converge_card(
+            session,
+            card,
+            outcome="closed",
+            note_code=notes.NoteCode.task_closed,
+            note=_note_for_closed_task(card, was),
+            by=by,
+            settle_card=settle_card,
+            now=now,
+        )
+        changed.append(card)
+    if changed:
+        await session.flush()
     return changed
