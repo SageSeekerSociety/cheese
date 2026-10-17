@@ -84,17 +84,20 @@ function memberPath(node, ctx = {}) {
     ) {
       // `computed(() => props.x)` watches the same thing the inner expression does.
       const argument = unwrap(node.arguments[0])
-      const value = ts.isArrowFunction(argument) || ts.isFunctionExpression(argument) ? unwrap(argument.body) : argument
+      const getter = ts.isArrowFunction(argument) || ts.isFunctionExpression(argument)
+      const value = getter ? unwrap(argument.body) : argument
       const inner = memberPath(value, ctx)
-      // The call already unwrapped one level, so a `.value` after it names a field.
-      if (inner) inner.unwrapped = true
+      // `toValue(config).value` names a field: the call already unwrapped one level.
+      // A getter writes its accesses inside the callback, where they unwrap as usual
+      // (`computed(() => x.value)` watches x), so its path keeps its own reading.
+      if (inner && !getter) inner.unwrapped = true
       return inner
     }
     return null
   }
   if (ts.isIdentifier(node)) {
     const alias = ctx.aliases?.get(node.text)
-    if (alias) return { root: alias.root, path: [...alias.path] }
+    if (alias) return { root: alias.root, path: [...alias.path], unwrapped: alias.unwrapped }
     return { root: node.text, path: [] }
   }
   if (ts.isPropertyAccessExpression(node)) {

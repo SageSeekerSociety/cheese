@@ -738,6 +738,64 @@ export function usePanel(config: { value: { value: string } }) {
   assert.match(dropped.output, /config\.value/)
 })
 
+test('a computed getter keeps the unwrap written inside it', (t) => {
+  // `computed(() => x.value)` watches x, so pairing it with `watch(() => x.value)`
+  // across the split must not report it lost: that `.value` is written inside the
+  // callback, where it unwraps, not after the call, where it names a field.
+  const script = `import { computed, ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(computed(() => topicId.value), () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel(topicId)`
+  const composed = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, watch } from 'vue'
+
+export function usePanel(sid: { value: string }) {
+  const loading = ref(false)
+  watch(() => sid.value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(composed.status, 0, composed.output)
+  assert.match(composed.output, /1 checked/)
+})
+
+test('a local alias of toValue keeps the value it unwrapped', (t) => {
+  // `const c = toValue(config)` binds c to the value the call site handed over, so
+  // `c.value` is a field of it; the alias must carry the unwrap that call performed.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { computed } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel(computed(() => props.config))`
+  const composed = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(config: { value: { value: string } }) {
+  const loading = ref(false)
+  const c = toValue(config)
+  watch(() => c.value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(composed.status, 0, composed.output)
+  assert.match(composed.output, /1 checked/)
+})
+
 test('reads each call site the way it hands the parameter over', (t) => {
   // One component passes a ref, the other a prop expression. `.value` on the
   // parameter unwraps at the first call site and names a field at the second; the
@@ -769,6 +827,9 @@ export function usePanel(sid: { value: string }) {
   run.write(composable, composableSource)
   const result = runGuard(run.repo, run.base)
   assert.equal(result.status, 0, result.output)
+  // Both components' watches must be recognised, or a guard that sees nothing
+  // would pass this test for the wrong reason.
+  assert.match(result.output, /1 checked/)
 })
 
 test('a local ref destructured into the composable keeps its unwrap', (t) => {
@@ -794,6 +855,8 @@ export function usePanel({ topicId }: { topicId: Ref<string> }) {
 }`,
   }).run()
   assert.equal(composed.status, 0, composed.output)
+  // A guard that recognised no watch would also pass; the count rules that out.
+  assert.match(composed.output, /1 checked/)
 })
 
 test('a scope object passed through a variable does not hide the literal call site', (t) => {
@@ -826,6 +889,7 @@ export function usePanel(scope: { topicId: () => string }) {
   run.write(composable, composableSource)
   const result = runGuard(run.repo, run.base)
   assert.equal(result.status, 0, result.output)
+  assert.match(result.output, /1 checked/)
 })
 
 test('follows a prop destructured into a local before watching it', (t) => {
