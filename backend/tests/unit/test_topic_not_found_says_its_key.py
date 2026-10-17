@@ -41,7 +41,9 @@ def count_legacy(source: str) -> int:
     return sum(
         1
         for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Constant) and node.value == LEGACY
+        if isinstance(node, ast.Call)
+        for arg in node.args
+        if isinstance(arg, ast.Constant) and arg.value == LEGACY
     )
 
 
@@ -69,6 +71,7 @@ def test_no_file_says_topic_not_found_in_english_beyond_its_baseline():
 def test_the_counter_sees_a_string_and_ignores_prose():
     assert count_legacy('raise NotFoundError("Topic not found")') == 1
     assert count_legacy('# "Topic not found"\nx = 1') == 0
+    assert count_legacy('"""Topic not found"""\nx = 1') == 0
 
 
 def test_the_refusal_goes_out_with_its_key():
