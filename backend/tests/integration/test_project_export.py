@@ -14,9 +14,10 @@ import pytest
 from sqlalchemy import event, select
 
 from app.core.config import settings
+from app.domain.deliverables.export import _versions_of
 from app.domain.library import records as library_records
 from app.domain.library.service import artifact_snapshot_path
-from app.domain.living_doc.models import Document
+from app.domain.living_doc.models import Document, DocumentNode
 from app.domain.project.models import ProjectArtifact, ProjectForge
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from app.domain.room_task.models import Task
@@ -245,6 +246,72 @@ def test_export_query_count_does_not_grow_with_the_number_of_tasks(
     few = _select_count_of_export(client, exported_project, 2)
     many = _select_count_of_export(client, exported_project, 9, first=2)
     assert many == few
+
+
+def test_export_batches_keep_versions_numbering_hidden_rooms_and_node_order(
+    client, exported_project, tmp_path
+):
+    data = exported_project
+
+    async def seed():
+        async with client.test_factory() as db:
+            hidden = await TopicRepository(db).add(
+                project_id=data["pid"], title="Members only"
+            )
+            hidden.members_only = True
+            artifact = await db.scalar(
+                select(ProjectArtifact).where(ProjectArtifact.project_id == data["pid"])
+            )
+            for room, name in ((data["room"], "second.txt"), (hidden.id, "hidden.txt")):
+                db.add(
+                    AcceptCard(
+                        topic_id=room,
+                        reviewer_handle="export-owner",
+                        artifact_id=artifact.id,
+                        status=AcceptStatus.accepted,
+                        deliverable_kind=DeliverableKind.link,
+                        deliverable_url=f"https://example.invalid/{name}",
+                    )
+                )
+            db.add_all(
+                [
+                    DocumentNode(
+                        document_id=data["doc"],
+                        node_type="paragraph",
+                        content=content,
+                        position=position,
+                        author="export-owner",
+                    )
+                    for content, position in (("later", 2.0), ("earlier", 1.0))
+                ]
+            )
+            await db.commit()
+            return hidden.id
+
+    hidden_room = asyncio.run(seed())
+    response = client.get(f"/projects/{data['pid']}/export", headers=data["headers"])
+    assert response.status_code == 200, response.text[:500]
+    offline = tmp_path / "offline"
+    with tarfile.open(fileobj=io.BytesIO(response.content)) as archive:
+        archive.extractall(offline, filter="data")
+    catalog = json.loads((offline / "artifacts.json").read_text())
+    versions = catalog[0]["versions"]
+    assert [v["number"] for v in versions] == [1, 2]
+
+    async def versions_without_the_hidden_room():
+        async with client.test_factory() as db:
+            artifact_id = uuid.UUID(catalog[0]["id"])
+            found = await _versions_of(db, [artifact_id], {hidden_room})
+            return found[artifact_id]
+
+    kept = asyncio.run(versions_without_the_hidden_room())
+    assert [(v.number, v.room_id == hidden_room) for v in kept] == [
+        (1, False),
+        (2, False),
+    ]
+    rows = json.loads((offline / "documents.json").read_text())
+    nodes = [r["content"] for r in rows if r["struct_parent"] == str(data["doc"])]
+    assert nodes == ["earlier", "later"]
 
 
 def test_export_requires_real_project_access_even_with_dev_auth_off(
