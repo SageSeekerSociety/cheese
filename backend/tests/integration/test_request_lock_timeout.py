@@ -32,21 +32,33 @@ async def test_each_request_transaction_has_its_timeout_but_background_does_not(
         monkeypatch.delenv("DB_REQUEST_LOCK_TIMEOUT", raising=False)
     else:
         monkeypatch.setenv("DB_REQUEST_LOCK_TIMEOUT", configured)
+    single_connection = create_async_engine(
+        TEST_DATABASE_URL, pool_size=1, max_overflow=0
+    )
+    monkeypatch.setattr(
+        db, "async_session_factory", async_sessionmaker(single_connection)
+    )
     request = asynccontextmanager(db.get_db)
-    async with request() as session:
-        assert await session.scalar(text("SHOW lock_timeout")) == expected
-        await session.commit()
-        assert await session.scalar(text("SHOW lock_timeout")) == expected
-        async with session.begin_nested() as savepoint:
+    try:
+        async with request() as session:
+            request_pid = await session.scalar(text("SELECT pg_backend_pid()"))
             assert await session.scalar(text("SHOW lock_timeout")) == expected
-            await savepoint.rollback()
-        assert await session.scalar(text("SHOW lock_timeout")) == expected
-        await db.release_read_session(session)
-        assert await session.scalar(text("SHOW lock_timeout")) == expected
+            await session.commit()
+            assert await session.scalar(text("SHOW lock_timeout")) == expected
+            async with session.begin_nested() as savepoint:
+                assert await session.scalar(text("SHOW lock_timeout")) == expected
+                await savepoint.rollback()
+            assert await session.scalar(text("SHOW lock_timeout")) == expected
+            await db.release_read_session(session)
+            assert await session.scalar(text("SHOW lock_timeout")) == expected
 
-    async with db.async_session_factory() as background:
-        # SET LOCAL must not leak through the pooled connection into other work.
-        assert await background.scalar(text("SHOW lock_timeout")) == "0"
+        async with db.async_session_factory() as background:
+            # Read the SAME physical connection, not another idle pool slot.
+            background_pid = await background.scalar(text("SELECT pg_backend_pid()"))
+            assert background_pid == request_pid
+            assert await background.scalar(text("SHOW lock_timeout")) == "0"
+    finally:
+        await single_connection.dispose()
 
 
 @pytest.mark.anyio
