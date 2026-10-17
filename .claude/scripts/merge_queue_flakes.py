@@ -354,15 +354,17 @@ def judge_known_flakes(runs: list[Run]) -> dict:
         evidenced.update(
             run.id for run in reds if (run.workflow, run.subject) in green_keys
         )
-        #: 这批红有没有「认不出来」的成分，判据因此不下结论。三种都算：红自己
-        #: 缺 workflow、红自己缺入场名（`--jq` 把 head_sha/head_branch 也挑掉了），
-        #: 以及同一入场里另有一轮缺 workflow —— 那条可能就是能坐实的绿。渲染那边
-        #: 于是不能说「没有绿」：数据里可能就有，只是认不出来。两件事分开说，
-        #: 处置才不会指错方向。
+        #: 这批红有没有「认不出来」的成分，判据因此不下结论。两处：红自己缺入场名
+        #: （`--jq` 把 head_sha/head_branch 也挑掉了），或者同一入场里另有一轮缺
+        #: workflow —— 那条可能就是能坐实的绿。渲染那边于是不能说「没有绿」：数据里
+        #: 可能就有，只是认不出来。两件事分开说，处置才不会指错方向。
+        #:
+        #: 红自己缺 workflow 不在第一处，它由第二处覆盖：那种红的入场名非空，就在
+        #: `subjects` 里。写成两个 `or` 时那一半是死代码，谁也验证不了它。
         subjects = {run.subject for run in reds if run.subject}
-        workflow_unknown = any(
-            not red.workflow or not red.subject for red in reds
-        ) or any(not run.workflow and run.subject in subjects for run in runs)
+        workflow_unknown = any(not red.subject for red in reds) or any(
+            not run.workflow and run.subject in subjects for run in runs
+        )
         case_rows.append(
             {
                 "flake": flake_id,
@@ -1133,8 +1135,9 @@ def _self_test_flake_criterion() -> None:
     assert "workflow 或入场名是空的，判不了同 SHA 有没有绿" in thin_text, thin_text
     assert "没有同一条 workflow、同一次入场上的绿" not in thin_text, thin_text
 
-    # 入场身份也被 `--jq` 挑掉（head_sha/head_branch 都没了）：还是判不了。
-    # `workflow_unknown` 只看「subject 非空的红」，这一档就会漏回那句错话。
+    # 入场身份也被 `--jq` 挑掉（head_sha/head_branch 都没了）、workflow 还在：
+    # 还是判不了。workflow 留着，「缺入场名」那半边才单独咬得住 —— 两边都清空时，
+    # `not red.workflow or not red.subject` 里任意一半都能让这条样本变绿。
     no_identity = [
         failed(
             28,
@@ -1142,7 +1145,7 @@ def _self_test_flake_criterion() -> None:
             "",
             planner,
             "AssertionError: assert 'GroupAggregate' not in plan",
-            workflow="",
+            head_branch="",
             event="merge_group",
         )
     ]
@@ -1175,12 +1178,15 @@ def _self_test_flake_criterion() -> None:
             workflow=frontend,
             event="merge_group",
         ),
-        # 另一条入场缺 workflow，和这条红无关：过宽的写法（见空 workflow 就翻成
-        # 「判不了」）会把它算进来，这里就红。
+        # 另一条入场缺 workflow（它有入场名，只是不是这一条的）：过宽的写法（见空
+        # workflow 就翻成「判不了」）会把它算进来，这里就红。入场名留着，「按入场
+        # 收窄」和「见空就翻」两种写法才分得开。
         Run(
             31,
             "success",
             "2026-10-16T10:20:00Z",
+            head_sha="3" * 40,
+            head_branch=f"gh-readonly-queue/main/pr-4099-{head}",
             workflow="",
             event="merge_group",
         ),
@@ -1229,7 +1235,13 @@ def _self_test_flake_criterion() -> None:
 
     # 渲染也真跑一遍：坐实、未坐实、运行级三种行都得出来。
     text = render(analyze(runs, top=DEFAULT_TOP, min_tests=DEFAULT_CONFLICT_MIN_TESTS))
-    for fragment in ("[已知偶发判据]", "[坐实]", "[未坐实]", "[运行级档案]"):
+    for fragment in (
+        "[已知偶发判据]",
+        "[坐实]",
+        "[未坐实]",
+        "[运行级档案]",
+        "同一入场红绿",
+    ):
         assert fragment in text, text
     # 这份样本的 workflow 一个不缺：未坐实那一行必须走「只是没绿」那一句。
     # `workflow_unknown` 恒真、或宽到「数据里有任何一条空 workflow 就算」，这里就红。
