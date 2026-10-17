@@ -39,6 +39,10 @@ OPENS = [
     "echo '<<EOF'\ngh pr create --fill",
     "echo x # <<EOF\ngh pr create --fill",
     "cat <<E-1\nx\nE-1\ngh pr create --fill",
+    # Comment lines and blank lines before it, and a `#` inside a word.
+    "# step 1\n# step 2\ngh pr create --fill",
+    "echo hi\n\ngh pr create --fill",
+    "echo issue#1 && gh pr create --fill",
 ]
 
 LEAVES = [
@@ -62,6 +66,8 @@ LEAVES = [
     "git commit -F - <<'EOF'\nfix: agents don't call gh pr create\nEOF",
     "cat <<-EOF\n\tgh pr create --fill\n\tEOF",
     "eval 'cat <<'\\''EOF'\\''\ngh pr create --fill\nEOF'",
+    # A here-document inside `"$( … )"`, the usual commit message spelling.
+    'git commit -m "$(cat <<\'EOF\'\nfix: x"\ngh pr create --fill\nEOF\n)"',
 ]
 
 

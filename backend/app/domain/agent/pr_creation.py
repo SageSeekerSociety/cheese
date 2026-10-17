@@ -29,6 +29,7 @@ REFUSAL = (
 )
 
 _SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "\n", ";;", "|&"}
+_SEPARATOR_CHARS = frozenset(";&|()\n")
 _SHELLS = {"bash", "sh", "zsh", "dash"}
 #: Words in front of a command that leave the command itself unchanged.
 _PREFIXES = {"sudo", "env", "command", "exec", "nohup", "time", "builtin"}
@@ -71,35 +72,52 @@ def _without_heredoc_bodies(command: str) -> str:
     commit message — not a command, and a line of it that reads `gh pr create`
     is not one.
 
-    Only an operator outside quotes and comments starts one, the way the shell
-    reads it. A command still inside a quoted string (`eval '…'`, `bash -c
-    '…'`) keeps its here-documents for the pass its unquoted text gets."""
+    Only an operator the shell would read starts one: outside quotes and
+    comments, or inside a `$( … )` (which reads its own here-documents even
+    within double quotes). A command still inside a quoted string (`eval '…'`,
+    `bash -c '…'`) keeps its here-documents for the pass its unquoted text
+    gets."""
     out: list[str] = []
     pending: list[tuple[str, bool]] = []
-    quote = ""
+    # What encloses the current character: `'`, `"`, or `(` for a `$( … )`
+    # or a parenthesis inside one. Empty is the top level.
+    within: list[str] = []
     i, n = 0, len(command)
     while i < n:
         c = command[i]
-        if quote == "'":
-            quote = "" if c == "'" else quote
+        top = within[-1] if within else ""
+        if top == "'":
+            if c == "'":
+                within.pop()
             out.append(c)
             i += 1
         elif c == "\\" and i + 1 < n:
             out.append(command[i : i + 2])
             i += 2
-        elif quote == '"':
-            quote = "" if c == '"' else quote
+        elif command.startswith("$(", i) and top != "'":
+            within.append("(")
+            out.append("$(")
+            i += 2
+        elif top == '"':
+            if c == '"':
+                within.pop()
             out.append(c)
             i += 1
         elif c in "'\"":
-            quote = c
+            within.append(c)
+            out.append(c)
+            i += 1
+        elif c == "(" and top == "(":
+            within.append("(")
+            out.append(c)
+            i += 1
+        elif c == ")" and top == "(":
+            within.pop()
             out.append(c)
             i += 1
         elif c == "#" and (i == 0 or command[i - 1] in " \t\n;&|("):
             stop = command.find("\n", i)
-            stop = n if stop < 0 else stop
-            # A comment is no command either; shlex would also swallow its newline.
-            i = stop
+            i = n if stop < 0 else stop
         elif c == "\n" and pending:
             out.append(c)
             i += 1
@@ -140,13 +158,17 @@ def _split(command: str) -> list[str]:
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
+    # Comments are gone already (`_without_heredoc_bodies`), the way the shell
+    # reads them; shlex's own would also cut a word at a `#` inside it.
+    lexer.commenters = ""
     return list(lexer)
 
 
 def _segments(words: list[str]) -> list[list[str]]:
     segments, current = [], []
     for word in words:
-        if word in _SEPARATORS:
+        # shlex hands a run of separators over as one token (`;\n`, `\n\n`).
+        if word in _SEPARATORS or (word and set(word) <= _SEPARATOR_CHARS):
             if current:
                 segments.append(current)
             current = []
