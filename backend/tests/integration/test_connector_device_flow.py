@@ -174,7 +174,7 @@ def test_device_code_is_committed_before_start_http_response():
 def test_the_human_door_creates_the_hosted_subtype(client):
     """Enrollment identifies human-owned supply; visibility is chosen per topic."""
     from app.api.request_deps import DbSession
-    from app.api.routes.connector import get_device_service
+    from app.api.routes.connector.devices import get_device_service
     from app.domain.device.service import DeviceService
     from app.domain.device.supply import Supply
 
@@ -312,7 +312,7 @@ def test_a_closed_device_link_records_who_hung_up(client, monkeypatch, caplog):
 
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
 
-    with caplog.at_level(logging.INFO, logger="app.api.routes.connector"):
+    with caplog.at_level(logging.INFO, logger="app.api.routes.connector.devices"):
         with client.websocket_connect(f"/connector/agent?token={device_token}") as ws:
             ws.close()
 

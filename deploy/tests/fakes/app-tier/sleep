@@ -4,4 +4,9 @@ if [ "$*" = 31 ]; then
   [ -z "${APP_TIER_DOCKER_LOG:-}" ] || printf 'sleep 31\n' >> "$APP_TIER_DOCKER_LOG"
   exit 0
 fi
+# The wait for the old backend's model streams polls at its own interval.
+if [ -n "${DEPLOY_MODEL_STREAM_POLL_SECONDS:-}" ] && [ "$*" = "$DEPLOY_MODEL_STREAM_POLL_SECONDS" ]; then
+  [ -z "${APP_TIER_DOCKER_LOG:-}" ] || printf 'sleep %s\n' "$*" >> "$APP_TIER_DOCKER_LOG"
+  exit 0
+fi
 exec /bin/sleep "$@"

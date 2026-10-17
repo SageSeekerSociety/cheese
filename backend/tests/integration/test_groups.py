@@ -85,7 +85,7 @@ class TestGroupsCreateIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         group_dto = data["data"]["group"]
         assert group_dto["id"] is not None
         assert "数学之神膜膜喵" in group_dto["name"]
@@ -121,7 +121,7 @@ class TestGroupsCreateIntegration:
             )
             assert response.status_code == 201
             data = response.json()
-            assert data["code"] == 201
+            assert data["code"] == 200
             group_dto = data["data"]["group"]
             assert group_dto["id"] is not None
             assert name in group_dto["name"]
@@ -306,7 +306,7 @@ class TestGroupsJoinIntegration:
             )
             assert response.status_code == 201
             data = response.json()
-            assert data["code"] == 201
+            assert data["code"] == 200
 
     def test_get_group_with_is_member_true(self):
         self.client.post(
@@ -910,7 +910,7 @@ class TestGroupTargetsIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "id" in data["data"]
 
     def test_list_targets(self):

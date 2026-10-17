@@ -155,7 +155,7 @@ async def run(descriptor):
         else:
             assert not status["working"] and not chat.live.hook_work
             from app.api.deps import get_work_runner
-            from app.domain.delivery.addressing import Addressed, Recipient
+            from app.domain.addressing import Addressed, Recipient
 
             work_runner = get_work_runner()
             turn = work_runner.submit(

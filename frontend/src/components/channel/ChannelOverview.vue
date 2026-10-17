@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 频道的概览：一整列，自然往下滚。从上到下是频道说明（综合是项目总览）、置顶、
-// 进行中的任务（各带最后说的一句）、最近完成。频道没有自己的实况文档：要一起看的
+// 进行中的任务（各带最后说的一句）、最近关闭。频道没有自己的实况文档：要一起看的
 // 东西钉在置顶里，要做成的事是任务。
 import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { RoomTask, Topic } from '@/cx_types'

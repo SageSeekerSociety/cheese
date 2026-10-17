@@ -76,7 +76,7 @@ class TestQuestionsCreateIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "id" in data["data"]
 
     def test_create_multiple_questions(self):

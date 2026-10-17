@@ -33,6 +33,16 @@ task machine.
    moves the task onto a new branch from the latest code; the last one gives
    the task's AI teammate one turn to update the task document and post a
    summary, and the task closes when that turn ends (`room_task.closing`).
+   A last step whose AI teammate is, when it lands or while it is written up,
+   working on something a person or itself began after its card went up, or
+   has a message waiting for it in the task, lands as a step instead: that
+   work is not in the merge, and the next step delivers it. A turn the
+   platform started there (another seat woken, a fix it was told to make)
+   does not count. The platform does not close a task while anything but the
+   write-up is running or waiting in it; once nothing is, it closes as above.
+   A turn silent for the orphan sweep's limit does not hold it, and at 45
+   minutes plus two hours it closes regardless, stopping that work, and its
+   room is told what was not delivered.
    The room remains active for further work.
 7. For two hours after the merge the platform watches the merge commit on the
    default branch (`review.landing_watch`): a check that fails there and passed

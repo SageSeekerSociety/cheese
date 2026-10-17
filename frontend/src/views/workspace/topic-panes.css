@@ -1,5 +1,6 @@
-/* 话题页的左右两栏：专注模式里对话栏的进出、对话收起后的窄边、两栏之间的分隔线。
- * TopicView 用 `scoped src` 引这一份（和 accept-card.css 同一个办法）。 */
+/* 话题页和私聊页的左右两栏：专注模式里对话栏的进出、对话收起后的窄边、两栏之间的分隔
+ * 线、工作面板的外壳和它的浮层。TopicView 和 DmView 都用 `scoped src` 引这一份（和
+ * accept-card.css 同一个办法）。 */
 
 /* 专注模式：对话栏是一只侧抽屉（§9：整块进出 --dur-slow，走掉快一档）。动的是
    flex-basis；`!important` 是为了压过模板上那条内联的 `flex: 0 0 N%`。 */
@@ -66,4 +67,68 @@
 }
 .pane-resizer:hover {
   background: var(--faint);
+}
+.col {
+  min-width: 0;
+}
+/* 工作面板的外壳（里面就是 WorkPanel 本身）：并排时是普通的 flex 子项，窄档里被
+   下面的 --sheet 改成一只浮层。 */
+.panel-host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 面板浮层：从对话右边拉进来的一张纸。收起时走进屏幕右侧并藏掉 visibility（不占
+   tab 序、不进读屏的树）；visibility 的过渡延迟等于位移时长，收起时等位移走完才藏。 */
+.panel-host--sheet {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-panel-2);
+  width: min(520px, 100%);
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition:
+    transform var(--dur-base) var(--ease-standard),
+    visibility 0s linear var(--dur-base);
+}
+.panel-host--open {
+  transform: none;
+  visibility: visible;
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    visibility 0s;
+}
+
+/* 浮层背后的遮罩：点它就和按 Esc 一样收起面板。 */
+.panel-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-panel);
+  background: var(--overlay);
+}
+.panel-scrim-enter-active,
+.panel-scrim-leave-active {
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+.panel-scrim-enter-from,
+.panel-scrim-leave-to {
+  opacity: 0;
+}
+
+/* 用户关掉了动画就别拉。 */
+@media (prefers-reduced-motion: reduce) {
+  .panel-host--sheet,
+  .panel-host--open,
+  .panel-scrim-enter-active,
+  .panel-scrim-leave-active {
+    transition: none;
+  }
 }

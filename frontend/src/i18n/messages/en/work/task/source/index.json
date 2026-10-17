@@ -1,0 +1,9 @@
+{
+  "byAgent": "Created by {name}; which message it came from was not recorded",
+  "byPerson": "Created by {name}, not from a conversation",
+  "channel": "From a message in #{title}",
+  "quote": "{name}: {text}",
+  "task": "From the task “{title}”",
+  "thread": "From a thread in #{title}",
+  "unknown": "Where this task came from was not recorded"
+}

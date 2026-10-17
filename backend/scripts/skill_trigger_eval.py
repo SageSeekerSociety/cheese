@@ -234,7 +234,7 @@ def platform_tools() -> list[dict]:
 
 def skill_listing() -> str:
     """The skills a session lists, written the way Claude Code lists them."""
-    from app.domain.agent.skills import native_skill_files
+    from app.domain.skill_library import native_skill_files
 
     lines = []
     for path, text in sorted(native_skill_files().items()):

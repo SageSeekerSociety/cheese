@@ -145,13 +145,38 @@ def failures(needs, expected_tier):
     return errors
 
 
+def changed_files(base, head="HEAD"):
+    if os.environ.get("GITHUB_EVENT_NAME") == "merge_group":
+        # The supplied base may be the preceding queue entry's synthetic tree.
+        # Only landed main can exclude a prefix from this run's coverage.
+        main_ref = "+refs/heads/main:refs/remotes/origin/main"
+        subprocess.check_call(["git", "fetch", "--no-tags", "origin", main_ref])
+        shallow = subprocess.check_output(
+            ["git", "rev-parse", "--is-shallow-repository"]
+        ).decode().strip()
+        if shallow == "true":
+            # checkout and the workflow's base fetch are both depth one. Fetch
+            # the cumulative head too: fetching main alone cannot fill its DAG.
+            head_sha = subprocess.check_output(
+                ["git", "rev-parse", head]
+            ).decode().strip()
+            subprocess.check_call(
+                ["git", "fetch", "--no-tags", "--unshallow", "origin", main_ref, head_sha]
+            )
+        base = subprocess.check_output(
+            ["git", "merge-base", "refs/remotes/origin/main", head]
+        ).decode().strip()
+    # No rename detection: moving code must test both the old and new area.
+    # Fetch/ancestry failures propagate; never fall back to a narrower diff.
+    return subprocess.check_output(
+        ["git", "diff", "--name-only", "--no-renames", "-z", base, head]
+    ).decode().split("\0")
+
+
 def main():
     if sys.argv[1] == "scope":
         event_name, event = _read_event()
-        # No rename detection: moving code must test both the old and new area.
-        changed = subprocess.check_output(
-            ["git", "diff", "--name-only", "--no-renames", "-z", sys.argv[2], "HEAD"]
-        ).decode().split("\0")
+        changed = changed_files(sys.argv[2])
         tier = tier_for(event_name, event)
         # The raw select() flags are kept whatever the tier: the fast job reads
         # them to decide which dependency sets to install, and the aggregation

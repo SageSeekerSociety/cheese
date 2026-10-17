@@ -31,11 +31,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.block.indexed_rows import FAILED_TURN_ROWS
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
-    AuthorType,
     Block,
     BlockKind,
 )
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column, names_a_person
 from app.domain.thread.models import Thread
 
@@ -90,6 +90,11 @@ def _among(ids):
     return any_(bindparam(None, list(ids), type_=ARRAY(Uuid)))
 
 
+def _became_a_task():
+    """Whether the 支线 became a task in place: the task has its id."""
+    return select(_tasks.c.id).where(_tasks.c.id == Thread.id).exists()
+
+
 #: How much of the last reply the main line shows: two lines of it.
 LAST_REPLY_CHARS = 200
 
@@ -128,13 +133,19 @@ def _reply(block: Block | None) -> dict | None:
         return None
     return {
         "author": block.author,
+        "author_type": block.author_type,
+        "kind": block.kind,
         "content": block.content[:LAST_REPLY_CHARS],
+        # A cut text is a preview, never the message: a reader drawing the
+        # whole message from it (the 支线 header before its read returns) must
+        # be able to tell.
+        "truncated": len(block.content) > LAST_REPLY_CHARS,
         "created_at": block.created_at.isoformat(),
         "checklist": _checklist(block),
     }
 
 
-def _checklist(block: Block) -> dict | None:
+def _checklist(block: Block) -> dict | bool | None:
     """The step checklist this message carries, or None when it carries none.
 
     The line under a message in the main line shows one step of the last
@@ -142,9 +153,12 @@ def _checklist(block: Block) -> dict | None:
     tell one step from the next are folded away on the way here, and the text
     is cut at ``LAST_REPLY_CHARS``. So the structure rides along with it — the
     same ``{"items", "result"}`` a block's ``meta.checklist`` holds. Messages
-    written before that structure existed carry a bare ``true``: they are
-    drawn as ordinary messages, and get no checklist here either."""
+    written before that structure existed carry a bare ``true``, passed on as
+    it is: their text is one marked step per line, and the line has to know
+    that to read a step out of it rather than show the row of marks."""
     checklist = (block.meta or {}).get(CHECKLIST_META_KEY)
+    if checklist is True:
+        return True
     if not isinstance(checklist, dict) or not isinstance(checklist.get("items"), list):
         return None
     return checklist
@@ -203,7 +217,9 @@ async def under_messages(
     """The line under each of these main-line messages whose 支线 has a reply
     in it, an AI teammate answering in it now, or a turn that failed in it,
     keyed by the message: what `in_room` says of a 支线, and who is answering
-    (``replying``: the seats with a turn running in a 支线)."""
+    (``replying``: the seats with a turn running in a 支线). A 支线 that became
+    a task keeps its line: the task's card is drawn on top of it, the same
+    conversation with an owner."""
     if not block_ids:
         return {}
     found = list(
@@ -302,8 +318,9 @@ async def in_room(
     session: AsyncSession, room_id: uuid.UUID, *, viewer: str | None, limit: int
 ) -> list[dict]:
     """A channel's 支线 that have replies or a failed turn, the latest first:
-    the message each hangs under, its last reply, who took part, whether it
-    became a task, and whether something new is waiting for ``viewer``."""
+    the message each hangs under, its last reply, who took part, the tasks
+    made from it, and whether something new is waiting for ``viewer``. One
+    that became a task is listed with the channel's tasks, not here."""
     failed_turn = (
         select(Block.id)
         .where(
@@ -316,7 +333,11 @@ async def in_room(
     threads = list(
         await session.scalars(
             select(Thread)
-            .where(Thread.room_id == room_id, or_(Thread.reply_count > 0, failed_turn))
+            .where(
+                Thread.room_id == room_id,
+                or_(Thread.reply_count > 0, failed_turn),
+                ~_became_a_task(),
+            )
             .order_by(Thread.last_reply_at.desc().nulls_last(), Thread.id)
             .limit(limit)
         )

@@ -36,6 +36,7 @@ import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
+import { storageSetJson } from '@/lib/browserStorage'
 import { postLoginTarget } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
@@ -86,7 +87,7 @@ async function verify(code: string) {
   try {
     const data = await UserApi.addEmail({ email: email.value.trim(), code })
     AccountService.user = data.user
-    localStorage.setItem('user', JSON.stringify(data.user))
+    storageSetJson('user', data.user)
     toast.success(t('account.addEmail.added'))
   } catch (e) {
     // Added meanwhile in another tab: the account needs nothing more.

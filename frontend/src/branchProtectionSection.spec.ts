@@ -73,7 +73,7 @@ describe('the 分支保护 section', () => {
     expect(s).not.toMatch(/merge_method\s*:/)
   })
 
-  it('平台独有的三项（自动合并、默认审阅、调度座位）不随 GitHub 灰掉', () => {
+  it('平台独有的两项（自动合并、默认审阅）不随 GitHub 灰掉', () => {
     const s = section('title')
     const row = (key: string) => {
       const at = s.indexOf(`'${label(key)}'`)
@@ -82,6 +82,5 @@ describe('the 分支保护 section', () => {
     }
     expect(row('autoMerge')).not.toContain('ghEnforced')
     expect(row('defaultReviewer')).not.toContain('ghEnforced')
-    expect(row('dispatchSeat')).not.toContain('ghEnforced')
   })
 })

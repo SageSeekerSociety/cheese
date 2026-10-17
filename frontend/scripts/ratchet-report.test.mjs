@@ -183,6 +183,30 @@ describe('--json on the real checkers', () => {
   const emptyBaseline = join(sandbox, 'empty-baseline.json')
   writeFileSync(emptyBaseline, '{"files":{}}\n')
 
+  it('fe-storage: the record is the run, passing and failing', () => {
+    const probe = resolve(ROOT, 'src/__ratchetReportStorageProbe.ts')
+    const args = ['--files', 'src/__ratchetReportStorageProbe.ts', '--baseline', emptyBaseline]
+    try {
+      // A file that reaches storage through a parameter, not the global: clean.
+      writeFileSync(probe, 'export const read = (s: Storage): string | null => s.getItem("k")\n')
+      assert.equal(agreedRecord('browser-storage-ratchet.mjs', 'fe-storage', ...args).status, 'pass')
+
+      // The same file touching the global directly is a new reference against an
+      // empty baseline.
+      writeFileSync(probe, 'export const read = (): string | null => localStorage.getItem("k")\n')
+      assert.equal(agreedRecord('browser-storage-ratchet.mjs', 'fe-storage', ...args).status, 'fail')
+
+      // Under --json (what the snapshot collector runs) stdout stays the one
+      // record line; the human report with the line and the fix rides on stderr.
+      const json = runChecker('browser-storage-ratchet.mjs', '--json', ...args)
+      assert.equal(json.stdout.trim().split('\n').length, 1, json.stdout)
+      assert.match(json.stderr, /__ratchetReportStorageProbe\.ts: 0 -> 1/)
+      assert.match(json.stderr, /@\/lib\/browserStorage/)
+    } finally {
+      rmSync(probe, { force: true })
+    }
+  })
+
   it('stylelint-tokens: the record is the run, passing and failing', () => {
     const clean = join(sandbox, 'clean.css')
     const planted = join(sandbox, 'planted.css')

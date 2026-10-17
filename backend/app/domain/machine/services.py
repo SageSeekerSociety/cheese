@@ -39,7 +39,8 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent import environment
-from app.domain.agent_session.models import LOST_KEY, AgentSession
+from app.domain.agent_instance.adapters import project_team
+from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSession
 from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
@@ -47,30 +48,35 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
-from app.domain.machine.infra_records import keep_host_lost
 from app.domain.machine.lifecycle import SandboxRemoving
-from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
+from app.domain.machine.microcloud import MicroCloudClient
 from app.domain.machine.models import (
-    AI_TRANSITIONAL,
     GONE,
     HOST_OWNER,
-    MAX_ENROLL_ATTEMPTS,
     MAX_PROVIDER_ERRORS,
     PROVIDER_ERROR_WINDOW,
     PROVIDER_PROBE_INTERVAL,
-    TRANSITIONAL,
     AiStatus,
     CloudHost,
     MachineStatus,
     SandboxHome,
-    capacity,
 )
 from app.domain.machine.progress import (
-    publish_line,
-    tell_lost,
     tell_preparing,
     tell_ready,
-    tell_replaced,
+)
+from app.domain.machine.reaper import (
+    CONNECT_GRACE,
+    CloudKeepsFailing,
+    CloudPoolFull,
+    PoolSweep,
+    _as_ai_status,
+    _as_status,
+    _counts_toward_cap,
+    _failed_unenrolled,
+    _still_moving,
+    accepting,
+    free_slots,
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.supply import pick_offering
@@ -86,16 +92,6 @@ logger = logging.getLogger("cheese.machine")
 #: The platform's MicroCloud customer for its hosts. One for the whole pool: a
 #: host carries sessions of many projects, so it is no project's cost.
 CUSTOMER_REF = "cheese-platform-host-pool"
-#: How long an enrolled host's connector has to reach the platform before the
-#: pool gives up on it, when no session has started working there yet.
-CONNECT_GRACE = timedelta(minutes=5)
-#: How long an enrolled pool host's connector may stay away before the pool
-#: gives up on it and its sessions get new sandboxes. A dropped link is back
-#: within seconds (``device_hub.RECONNECT_GRACE_S``) and a rebooted host dials
-#: in within ``CONNECT_GRACE``; twice that is past any host that is coming
-#: back, and still minutes, where a hung host kept its sessions waiting for
-#: hours (dev, 2026-10-05: four to five).
-LOST_AFTER = timedelta(minutes=10)
 
 # One provider create per host per process: a session placed on a host that is
 # being created waits here, holding no database lock, until the create returned.
@@ -103,41 +99,6 @@ _create_locks: dict[uuid.UUID, asyncio.Lock] = {}
 # A home's ``active_at`` moves at most this often: every tool call passes
 # through placement, and idleness is measured in minutes.
 ACTIVE_STEP = timedelta(minutes=1)
-
-
-class CloudKeepsFailing(Exception):
-    """The provider failed every host the pool asked for lately; the message is
-    what the session is told instead of a sandbox (or its VM)."""
-
-    def __init__(self, failures: int, *, whole_machine: bool = False) -> None:
-        minutes = int(PROVIDER_ERROR_WINDOW.total_seconds() // 60)
-        probe = int(PROVIDER_PROBE_INTERVAL.total_seconds() // 60)
-        key = "cloudVmKeepsFailing" if whole_machine else "cloudKeepsFailing"
-        super().__init__(say(key, failures=failures, minutes=minutes, probe=probe))
-
-
-class CloudPoolFull(Exception):
-    """The pool holds ``cloud_pool_max_hosts`` and none has a free slot (or a
-    whole VM was asked for, which needs a host of its own)."""
-
-    def __init__(self, *, whole_machine: bool = False) -> None:
-        super().__init__(say("cloudVmBusy" if whole_machine else "cloudBusy"))
-
-
-def free_slots(host: CloudHost, load: dict[uuid.UUID, int]) -> int:
-    """How many more sandboxes a host can be given."""
-    return max(0, capacity(host) - load.get(host.id, 0))
-
-
-def accepting(host: CloudHost) -> bool:
-    """Whether a new session may be placed on this host."""
-    return (
-        host.released_at is None
-        and host.failed_at is None
-        and not host.whole_machine
-        and host.status not in {MachineStatus.error, MachineStatus.deleting, *GONE}
-        and not _failed_unenrolled(host)
-    )
 
 
 def host_failed(host: CloudHost) -> bool:
@@ -151,11 +112,7 @@ def host_failed(host: CloudHost) -> bool:
     return host.status == MachineStatus.error
 
 
-def _counts_toward_cap(host: CloudHost) -> bool:
-    return host.released_at is None
-
-
-class HostPool:
+class HostPool(PoolSweep):
     def __init__(
         self, session: AsyncSession, client: MicroCloudClient | None = None, hub=None
     ) -> None:
@@ -196,7 +153,8 @@ class HostPool:
             raise NotFoundError("Project not found")
 
         if not any(
-            m.handle == actor.handle for m in await roster(self._session, project_id)
+            m.handle == actor.handle
+            for m in await roster(self._session, project_id, team=project_team)
         ):
             raise ForbiddenError(say("cloudMembersOnly"))
 
@@ -279,10 +237,17 @@ class HostPool:
             if _still_moving(host) and host.released_at is None:
                 await self.refresh(host)
             # Every tool call of the session comes through here: a sandbox that
-            # is where it was is answered without the pool.
+            # is where it was is answered without the pool. One whose host
+            # stopped answering is moved off it instead: the sweep gives such a
+            # host up only after reaper.LOST_AFTER, and the call waiting here has
+            # minutes (`leave_unusable`).
             if _keeps(host):
-                _touch(home)
-                return host
+                if self._answers(host) or not await self.leave_unusable(
+                    session_id, host.id
+                ):
+                    _touch(home)
+                    return host
+                home = None
 
         if home is None and not whole_machine:
             # A whole VM is admitted at its own price once its size is known
@@ -304,10 +269,15 @@ class HostPool:
                 await self.forget(host)
                 home = None
             elif _keeps(host):
-                _touch(home)
-                host.idle_since = None
-                await self._session.flush()
-                return host
+                if self._answers(host) or not await self.leave_unusable(
+                    session_id, host.id
+                ):
+                    _touch(home)
+                    host.idle_since = None
+                    await self._session.flush()
+                    return host
+                # Moved off a host that stopped answering; placed below.
+                home = None
             else:
                 await self._fail(host)
                 # The locks were let go around the provider; look again.
@@ -327,7 +297,8 @@ class HostPool:
         }
         if whole_machine:
             return await self._place_on_own_vm(session_id, topic_id, home)
-        host = await self._place_on_free(home)
+        avoid = await self._moved_off(session_id)
+        host = await self._place_on_free(home, avoid)
         if host is not None:
             return host
         # No host has room. The provider is read with no lock held; another
@@ -339,7 +310,7 @@ class HostPool:
         await self._repo.lock_pool()
         if await self._repo.current_home(session_id) is not None:
             return await self.place(session_id, actor=actor, resource_id=resource_id)
-        host = await self._place_on_free(home)
+        host = await self._place_on_free(home, avoid)
         if host is not None:
             return host
         await self._require_room_to_grow()
@@ -374,16 +345,30 @@ class HostPool:
         await self._require_room_to_grow(whole_machine=True)
         return await self._create(body, home, whole_machine=True)
 
-    async def _place_on_free(self, home: dict) -> CloudHost | None:
+    async def _place_on_free(
+        self, home: dict, avoid: uuid.UUID | None = None
+    ) -> CloudHost | None:
         """Put ``home`` on a host with a free slot, if there is one. Called
-        holding the pool; commits when it placed."""
+        holding the pool; commits when it placed.
+
+        ``avoid`` is a host this session is deliberately leaving: a room that
+        asked for the sandbox it already has asks for another one, and the host
+        it just left is the one with the fewest free slots, which is the one
+        placement above prefers. When nothing else has room it is placed there
+        anyway — that is still a sandbox, and a session with none is worse
+        off."""
         load = await self._repo.occupancy()
         now = datetime.now(UTC)
         free = [
             host
             for host in await self._repo.live()
-            if accepting(host) and free_slots(host, load) and self._can_start(host, now)
+            if accepting(host)
+            and free_slots(host, load)
+            and self._can_start(host, now)
+            and host.id != avoid
         ]
+        if not free and avoid is not None:
+            return await self._place_on_free(home)
         if not free:
             return None
 
@@ -396,6 +381,7 @@ class HostPool:
         host = min(free, key=rank)
         await self._repo.put_home(host.id, home)
         host.idle_since = None
+        await self._placed_off(home["session_id"])
         await self._session.commit()
         return host
 
@@ -417,6 +403,17 @@ class HostPool:
         if host.device_id is None or self._hub.is_online(host.device_id):
             return True
         return host.enrolled_at is None or now - host.enrolled_at < CONNECT_GRACE
+
+    def _answers(self, host: CloudHost) -> bool:
+        """Whether a call to this host can be answered: its connector is up, or
+        it dropped moments ago and the call waits for it to come back
+        (``device_hub.reconnecting``). The same line ``session_work._reachable``
+        draws before making a call. A host with no machine yet answers nothing:
+        one still dialling in is waited for, not left."""
+        return host.device_id is not None and (
+            self._hub.is_online(host.device_id)
+            or self._hub.reconnecting(host.device_id)
+        )
 
     async def _require_room_to_grow(self, *, whole_machine: bool = False) -> None:
         """Refuse to add a host while the provider keeps failing them, or when
@@ -567,19 +564,140 @@ class HostPool:
             await self._client.topup(account_id, floor, remark=CUSTOMER_REF)
         return customer_id, account_id
 
-    async def leave(self, session_id: uuid.UUID) -> None:
-        """The session moves off its machine. A host's home goes, and with it
-        the slot; a home on a person's computer stays there, no session's, for
-        the idle sweep to destroy like any sandbox (``lifecycle``)."""
+    async def leave(self, session_id: uuid.UUID) -> CloudHost | None:
+        """The session moves off its machine. Its home stays where it is, no
+        session's, for the idle sweep to destroy like any sandbox
+        (``lifecycle``); on a host it holds its slot until then, since the
+        sandbox runs there until then. A home with nothing on the machine yet
+        (its host not enrolled) goes at once, and so does a whole VM's, which
+        the pool releases once no home is on it.
+
+        Answers the shared host it left that home on, which the session may be
+        placed on again; None when it left nothing there. A caller that moved
+        the session off on purpose asks for its next sandbox to be somewhere
+        else (`_moved_off`)."""
         await self._repo.lock_pool()
         home = await self._repo.current_home(session_id)
         if home is None:
-            return
-        if home.host_id is None:
-            home.session_id = None
-            await self._session.flush()
-        else:
+            return None
+        host = None if home.host_id is None else await self._repo.get(home.host_id)
+        if host is not None and (host.device_id is None or host.whole_machine):
             await self._repo.delete_home(home)
+            return None
+        home.session_id = None
+        await self._session.flush()
+        return host
+
+    async def _moved_off(self, session_id: uuid.UUID) -> uuid.UUID | None:
+        """The host this session asked to be moved off, if it has not been
+        placed somewhere since: it asked for the sandbox it already had again
+        (``session_work.switch_environment``), which means another one. Placing
+        it back on that host — the one it just left, with the fewest free slots
+        — would answer that request with the machine it was asking to get away
+        from."""
+        row = await self._session.get(AgentSession, session_id)
+        raw = ((row.execution_request or {}) if row is not None else {}).get(
+            LEFT_HOST_KEY
+        )
+        try:
+            return uuid.UUID(raw) if raw else None
+        except (TypeError, ValueError):
+            return None
+
+    async def _placed_off(self, session_id: uuid.UUID) -> None:
+        """Forget the host a switch moved this session off: it has a sandbox
+        again, this one. Written only when there is one to forget, since this
+        runs on every placement."""
+        row = await self._session.get(AgentSession, session_id)
+        if row is None:
+            return
+        request = row.execution_request or {}
+        if LEFT_HOST_KEY not in request:
+            return
+        row.execution_request = {
+            key: value for key, value in request.items() if key != LEFT_HOST_KEY
+        }
+
+    async def ran_out_of_space(self, host_id: uuid.UUID) -> None:
+        """Record that a write on this host was refused for want of space
+        (``session_work._install``).
+
+        A sandbox's home is on the host's disk, shared with its other
+        sandboxes, and a host with none to spare cannot run one. The mark is
+        the disk guard's own (``CloudHost.disk_full_since``): no new sandbox is
+        placed on a marked host (``accepting``), and the guard's next reading —
+        every minute, and it reads a marked host even with no sandbox left on
+        it — takes the mark off again when the disk has room."""
+        host = await self._repo.get(host_id)
+        if host is None or host.disk_full_since is not None:
+            return
+        host.disk_full_since = datetime.now(UTC)
+        await self._session.commit()
+        logger.warning(
+            "host %s ran out of space: no new sandbox is placed on it until a "
+            "reading finds room",
+            host.id,
+        )
+
+    async def leave_unusable(self, session_id: uuid.UUID, host_id: uuid.UUID) -> bool:
+        """Move the session off a host that cannot run its sandbox, when
+        another host of the pool can: an install there timed out or its
+        connector went away (`session_work._install`), or the host stopped
+        answering at all (`place`).
+
+        The pool gives a host up only after ``reaper.LOST_AFTER`` of silence
+        (``reaper._lost``), which is right for the pool and longer than the tool call
+        waiting on it has: that call is answered that the machine is still
+        being prepared, and so is every call after it while the session stays
+        there. Its sandbox is disposable — what counts is what was pushed — so
+        it is placed on a host that answers instead of waiting the sweep out.
+        One that had been working there is told it is in a new sandbox
+        (``LOST_KEY``), as when the sweep gives the host up (``_fail``).
+
+        Answers whether the session was moved. False when it has no sandbox on
+        ``host_id``, when that host is a whole VM's — the session's own, waited
+        for where it is — or when the pool has nowhere else to put it: leaving
+        would not get it a sandbox any sooner.
+        """
+        await self._repo.lock_pool()
+        home = await self._repo.current_home(session_id)
+        host = await self._repo.get(host_id)
+        if (
+            home is None
+            or host is None
+            or host.id != home.host_id
+            or host.device_id is None
+            or host.whole_machine
+        ):
+            return False
+        if not await self._elsewhere(host):
+            return False
+        # Read without a lock, and before the pool: a tool call holds the
+        # session's row and then the pool, and this runs from both sides of it.
+        row = await self._session.get(AgentSession, session_id)
+        lease = (row.work_lease if row is not None else None) or {}
+        if row is not None and (
+            lease.get("status", "ready") == "ready"
+            and lease.get("device_id") == host.device_id
+        ):
+            row.execution_request = {**(row.execution_request or {}), LOST_KEY: True}
+        await self.leave(session_id)
+        return True
+
+    async def _elsewhere(self, host: CloudHost) -> bool:
+        """Whether the pool has another host that can run a sandbox now: it
+        would take one (``accepting``, a slot free) and its connector answers.
+        Called holding the pool. A host still dialling in does not count: the
+        session would wait for it exactly as it waits for the one it is on."""
+        load = await self._repo.occupancy()
+        return any(
+            other.id != host.id
+            and accepting(other)
+            and other.device_id is not None
+            and self._hub.is_online(other.device_id)
+            and free_slots(other, load) > 0
+            for other in await self._repo.live()
+        )
 
     async def keep_on_device(
         self,
@@ -690,438 +808,6 @@ class HostPool:
     ) -> None:
         """A room's cleanup finished: none of that generation's homes remain."""
         await self._repo.delete_room_homes(topic_id, room_resource_id)
-
-    # --- the sweep -----------------------------------------------------------
-
-    async def maintain(self) -> None:
-        """Keep the pool the size its sessions need.
-
-        A host that has had no sandbox on it for ``cloud_host_idle_hold_s`` is
-        released — while the free slots left behind stay at least
-        ``cloud_pool_min_free_slots``. Also gives up on hosts the provider failed and on
-        enrolled ones that stopped answering (``_lost``), closes the preparing
-        line of every room whose sandbox's host is up, and adds a host when the
-        free slots fall below that floor.
-        """
-        now = datetime.now(UTC)
-        await self._repo.lock_pool()
-        hosts = await self._repo.live()
-        load = await self._repo.occupancy()
-        for host in hosts:
-            if host.device_id is None or self._hub.is_online(host.device_id):
-                host.offline_since = None
-            else:
-                host.offline_since = host.offline_since or now
-        failed = [
-            host
-            for host in hosts
-            if _failed_unenrolled(host) or await self._silent(host, now)
-        ]
-        lost = self._lost([host for host in hosts if host not in failed], now)
-        live = [host for host in hosts if host not in failed and host not in lost]
-        free = sum(free_slots(host, load) for host in live if accepting(host))
-        hold = timedelta(seconds=settings.cloud_host_idle_hold_s)
-        idle: list[CloudHost] = []
-        for host in live:
-            homes = load.get(host.id, 0)
-            if host.whole_machine:
-                # A whole VM goes the moment no home is on it: nobody else will
-                # be placed on it, and it was never part of the floor.
-                if not homes and host.machine_id is not None:
-                    host.released_at = now
-                    idle.append(host)
-                continue
-            if homes or host.machine_id is None or host.warm_claim_pending:
-                host.idle_since = None
-                continue
-            idle_since = host.idle_since = host.idle_since or now
-            if now - idle_since < hold:
-                continue
-            spare = free_slots(host, load) if accepting(host) else 0
-            if free - spare < settings.cloud_pool_min_free_slots:
-                continue
-            free -= spare
-            host.released_at = now
-            idle.append(host)
-        await self._session.flush()
-        grow = (
-            free < settings.cloud_pool_min_free_slots
-            and sum(_counts_toward_cap(h) for h in live) < settings.cloud_pool_max_hosts
-            and not await self._provider_failing(now)
-        )
-        await self._session.commit()
-        for host in failed:
-            await self._repo.lock_pool()
-            await self._session.refresh(host)
-            await self._fail(host)
-        for host in lost:
-            await self._lose(host)
-        for host in idle:
-            logger.info("cloud pool releasing idle host %s", host.hostname)
-            await self._delete_at_provider(host)
-        if grow:
-            await self._grow()
-        await self.settle_waiting()
-
-    async def _grow(self) -> None:
-        """Add a host ahead of demand, if the free slots are still short once
-        the provider has been read."""
-        try:
-            body = await self._host_body()
-            await self._repo.lock_pool()
-            load = await self._repo.occupancy()
-            hosts = await self._repo.live()
-            free = sum(free_slots(host, load) for host in hosts if accepting(host))
-            if free >= settings.cloud_pool_min_free_slots:
-                await self._session.commit()
-                return
-            await self._require_room_to_grow()
-            host = await self._acquire(body, None)
-        except (MicroCloudError, ValidationError, CloudKeepsFailing, CloudPoolFull):
-            logger.warning("cloud pool could not add a host", exc_info=True)
-            await self._session.rollback()
-            return
-        logger.info("cloud pool added host %s ahead of demand", host.hostname)
-
-    async def _silent(self, host: CloudHost, now: datetime) -> bool:
-        """An enrolled host whose connector has not reached the platform for
-        ``CONNECT_GRACE``, with no session working on it yet: nothing there is
-        anyone's, so it is replaced. Offline that long, not merely offline now:
-        right after this backend restarts no connector has dialled back yet, and
-        an idle host found offline then is a healthy one (a dev pool host was
-        deleted that way a minute after a deploy, 2026-10-06 22:10)."""
-
-        if (
-            host.device_id is None
-            or host.enrolled_at is None
-            or now - host.enrolled_at < CONNECT_GRACE
-            or self._hub.is_online(host.device_id)
-            or host.offline_since is None
-            or now - host.offline_since < CONNECT_GRACE
-        ):
-            return False
-        working = await self._session.scalar(
-            select(AgentSession.id)
-            .where(AgentSession.work_lease["device_id"].as_string() == host.device_id)
-            .limit(1)
-        )
-        return working is None
-
-    def _lost(self, hosts: list[CloudHost], now: datetime) -> list[CloudHost]:
-        """Enrolled pool hosts whose sandboxes will not run again: one the
-        provider reports in error, and one whose connector has been away for
-        ``LOST_AFTER``. A sandbox is disposable — what counts is what was pushed
-        — so its session is not left waiting on such a host.
-
-        A connector away is only believed while another host of the pool is
-        online right now. When none is, what is down is more likely the
-        platform's side — this backend just restarted, the link to the hosts is
-        cut — and giving up on every host would throw away every sandbox that
-        is about to come back. The provider's own error report needs no such
-        check. Whole cloud VMs are left as they are."""
-        pool = [
-            host
-            for host in hosts
-            if host.device_id is not None and not host.whole_machine
-        ]
-        answering = any(
-            host.device_id is not None and self._hub.is_online(host.device_id)
-            for host in pool
-        )
-        return [
-            host
-            for host in pool
-            if host.status == MachineStatus.error
-            or (
-                answering
-                and host.offline_since is not None
-                and now - host.offline_since >= LOST_AFTER
-            )
-        ]
-
-    async def _lose(self, host: CloudHost) -> None:
-        """Give up on an enrolled host found lost (``_lost``), unless its
-        connector came back meanwhile.
-
-        Each session whose sandbox was there (its lease is on the host's
-        device) is told so on its next tool call, which places it in a new
-        sandbox. Their rows are locked before the pool, the order a tool call
-        takes them in (``session_work._attempt``)."""
-
-        device_id = host.device_id
-        assert device_id is not None  # an enrolled host (``_lost``)
-        worked = {
-            row.id: row
-            for row in await self._session.scalars(
-                select(AgentSession)
-                .where(AgentSession.work_lease["device_id"].as_string() == device_id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-        }
-        await self._repo.lock_pool()
-        await self._session.refresh(host)
-        error = host.status == MachineStatus.error
-        if host.released_at is not None or (
-            not error and self._hub.is_online(device_id)
-        ):
-            await self._session.commit()
-            return
-        # Only the provider's own error counts against it (``CloudKeepsFailing``).
-        # A connector that went away may be the platform's network as much as
-        # the provider's, and counting it would let a partial outage stop the
-        # pool adding the very hosts the sessions are moved to.
-        await self._fail(host, worked=worked, provider_failed=error)
-
-    async def _fail(
-        self,
-        host: CloudHost,
-        *,
-        worked: dict | None = None,
-        provider_failed: bool = True,
-    ) -> None:
-        """Give up on a host: release it, take its homes off it, and delete it
-        at the provider.
-
-        Called holding the pool. Each session is placed again on its next tool
-        call. One whose sandbox was there (``worked``, its locked session rows
-        by id) is told on that call that it is in a new sandbox (``LOST_KEY``),
-        and its room hears that the sandbox was replaced and what was not
-        pushed is gone. A room that was told a sandbox no session used yet is
-        being prepared hears why it takes longer. The provider delete follows
-        with no transaction open. ``provider_failed`` counts the host against
-        the provider's record.
-        """
-        now = datetime.now(UTC)
-        first = host.released_at is None
-        host.released_at = host.released_at or now
-        if provider_failed:
-            host.failed_at = host.failed_at or now
-        lines = []
-        lost = replaced = 0
-        for home in await self._repo.homes_on(host.id):
-            row = (worked or {}).get(home.session_id)
-            if row is not None:
-                row.execution_request = {
-                    **(row.execution_request or {}),
-                    LOST_KEY: True,
-                }
-                lost += 1
-                lines.append((home.topic_id, await tell_lost(self._session, home)))
-            elif home.waiting_since is not None:
-                replaced += 1
-                lines.append(
-                    (
-                        home.topic_id,
-                        await tell_replaced(self._session, home, host.whole_machine),
-                    )
-                )
-            await self._repo.delete_home(home)
-        if first:
-            await keep_host_lost(self._session, host, lost=lost, replaced=replaced)
-        await self._session.commit()
-        for topic_id, line in lines:
-            await publish_line(topic_id, line)
-        logger.warning(
-            "cloud pool gave up on host %s "
-            "(status=%s, enroll_attempts=%s, offline_since=%s)",
-            host.hostname,
-            host.status,
-            host.enroll_attempts,
-            host.offline_since,
-        )
-        failures, _ = await self._repo.failures_since(now - PROVIDER_ERROR_WINDOW)
-        if host.failed_at == now and failures >= MAX_PROVIDER_ERRORS:
-            # Every new session is refused a sandbox until a probe succeeds,
-            # and nobody watching the pool would otherwise know.
-            logger.error(
-                "cloud provider failed %s hosts within %s; the pool tries one "
-                "host every %s until one comes up",
-                failures,
-                PROVIDER_ERROR_WINDOW,
-                PROVIDER_PROBE_INTERVAL,
-            )
-        await self._delete_at_provider(host)
-
-    async def _delete_at_provider(self, host: CloudHost) -> None:
-        """Ask MicroCloud to delete a released host. One it refuses stays
-        released, where ``release_undeleted`` asks again."""
-        try:
-            await self.destroy(host)
-        except MicroCloudError:
-            logger.warning("deleting host %s failed", host.hostname)
-            await self._session.rollback()
-            return
-        await self._session.commit()
-
-    async def release_undeleted(self) -> None:
-        """Ask again for hosts released earlier whose delete did not land.
-
-        MicroCloud accepts a delete and runs it later; one that then fails
-        leaves the machine in `error`, already released, which this finds."""
-        for host in await self._repo.list_released_undeleted():
-            await self._delete_at_provider(host)
-
-    async def settle_waiting(self) -> None:
-        """Tell every room still waiting on a sandbox whose host is up now."""
-        for home, host in await self._repo.waiting_homes():
-            if host.device_id is None or not self._hub.is_online(host.device_id):
-                continue
-            locked = await self._session.scalar(
-                select(SandboxHome)
-                .where(SandboxHome.id == home.id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-            if locked is None or locked.waiting_since is None:
-                await self._session.commit()
-                continue
-
-            locked.waiting_since = None
-            line = await tell_ready(self._session, locked, host.whole_machine)
-            await self._session.commit()
-            await publish_line(locked.topic_id, line)
-
-    async def settle_reservations(self) -> int:
-        """Finish or drop reservations whose create call never came back.
-
-        A backend that dies between reserving the row and hearing from the
-        provider leaves a row with no machine id. Past the time a create can
-        take, the provider either has the machine — adopted here by hostname,
-        so a billed machine is not orphaned — or it does not, and the
-        reservation (with the homes placed on it) is dropped.
-        """
-        cutoff = datetime.now(UTC) - timedelta(
-            seconds=max(300.0, settings.microcloud_timeout_s * 2)
-        )
-        settled = 0
-        for host in await self._repo.list_reservations_older_than(cutoff):
-            try:
-                remote = await self._client.find_machine(
-                    host.customer_id, host.hostname
-                )
-            except MicroCloudError:
-                logger.warning(
-                    "settling reservation %s failed; provider unreachable",
-                    host.hostname,
-                )
-                continue
-            if remote is None:
-                logger.warning(
-                    "reservation %s never became a machine; dropped", host.hostname
-                )
-                await self._repo.delete(host)
-            else:
-                await self._repo.set_state(
-                    host,
-                    status=_as_status(remote.get("status")),
-                    ip=remote.get("ip"),
-                    ai_mode=str(remote.get("aiMode") or host.ai_mode),
-                    ai_status=_as_ai_status(remote.get("aiStatus")),
-                    machine_id=int(remote["id"]),
-                )
-                logger.info(
-                    "reservation %s adopted machine %s", host.hostname, remote["id"]
-                )
-            settled += 1
-        return settled
-
-    async def refresh(self, host: CloudHost) -> CloudHost:
-        """Bring one row in line with MicroCloud. Never raises for a provider
-        problem: a host we can't reach is reported `unknown`, not lost."""
-        if host.warm_claim_pending or host.machine_id is None:
-            # Provider RUNNING says nothing about whether the claim completed,
-            # and a reservation has no machine to ask about yet.
-            return host
-        settled_before = not _still_moving(host)
-        try:
-            remote = await self._client.get_machine(host.machine_id)
-        except MicroCloudError:
-            # An unreachable provider is not news about the machine. For one
-            # still moving, `unknown` is the honest answer; for a settled one it
-            # would report a healthy host as broken on a blip. `last_seen_at`
-            # says how old what we keep is.
-            now = datetime.now(UTC)
-            if settled_before:
-                return await self._repo.touch_seen(host, when=now)
-            return await self._repo.set_state(
-                host,
-                status=MachineStatus.unknown,
-                ip=None,
-                ai_status=AiStatus.unknown,
-                seen_at=now,
-            )
-        if remote is None:
-            return await self._repo.set_state(
-                host, status=MachineStatus.deleted, ip=None, seen_at=datetime.now(UTC)
-            )
-        return await self._repo.set_state(
-            host,
-            status=_as_status(remote.get("status")),
-            ip=remote.get("ip"),
-            ai_mode=str(remote.get("aiMode") or host.ai_mode),
-            ai_status=_as_ai_status(remote.get("aiStatus")),
-            seen_at=datetime.now(UTC),
-        )
-
-    async def refresh_due(self, limit: int = 10) -> int:
-        """Poll MicroCloud for hosts still changing and for settled ones not
-        re-checked within `microcloud_reconcile_interval_s`, and let go of the
-        ones it no longer has."""
-        hosts = await self._repo.list_due(
-            limit,
-            seen_before=datetime.now(UTC)
-            - timedelta(seconds=settings.microcloud_reconcile_interval_s),
-        )
-        for host in hosts:
-            try:
-                if host.status not in GONE:
-                    await self.refresh(host)
-                if host.status in GONE:
-                    await self.forget(host)
-            except MicroCloudError:
-                # The next tick tries again; `refresh` records the attempt.
-                logger.warning("refreshing host %s failed", host.hostname)
-        return len(hosts)
-
-    async def destroy(self, host: CloudHost) -> CloudHost:
-        if host.machine_id is None:
-            # Never created at the provider; there is nothing to delete there.
-            return await self._repo.set_state(
-                host, status=MachineStatus.deleted, ip=None
-            )
-        await self._client.delete_machine(host.machine_id)
-        return await self._repo.set_state(host, status=MachineStatus.deleting, ip=None)
-
-    async def forget(self, host: CloudHost) -> None:
-        """Drop a vanished host, its homes and the device enrolled for it."""
-        if host.device_id is not None:
-            device = await self._devices.get_device(host.device_id)
-            if device is not None and device.supply is not Supply.cloud:
-                # Structurally impossible — a host's device is enrolled by the
-                # platform with supply=cloud. Refusing to delete is the safe
-                # direction: the platform never destroys a machine it did not
-                # open. The row still goes.
-                logger.error(
-                    "not deleting device %s for host %s: supply=%s, not cloud",
-                    host.device_id,
-                    host.hostname,
-                    device.supply,
-                )
-            elif device is not None:
-                await self._devices.delete_platform_provisioned(
-                    host.device_id, actor_user_id=device.owner_user_id
-                )
-        if (
-            host.failed_at is not None
-            and datetime.now(UTC) - host.failed_at < PROVIDER_ERROR_WINDOW
-        ):
-            # Its row is what `_provider_failing` counts; it goes once it is out
-            # of the window (`list_due` hands it back then). Its homes go now.
-            for home in await self._repo.homes_on(host.id):
-                await self._repo.delete_home(home)
-            return
-        await self._repo.delete(host)
 
     # --- enrollment: making the host a device ---------------------------------
 
@@ -1237,43 +923,3 @@ def _keeps(host: CloudHost) -> bool:
         and host.status not in GONE
         and not _failed_unenrolled(host)
     )
-
-
-def _failed_unenrolled(host: CloudHost) -> bool:
-    """The provider failed the host, or enrolling it kept failing, before
-    anyone worked on it."""
-    return host.device_id is None and (
-        host.status == MachineStatus.error
-        or (host.enroll_attempts or 0) >= MAX_ENROLL_ATTEMPTS
-    )
-
-
-def _still_moving(host: CloudHost) -> bool:
-    """Whether either lifecycle can still change on its own. Both count: a
-    sandbox waits on both, and MicroCloud can report them settling at
-    different moments."""
-    return (
-        host.status in TRANSITIONAL
-        or host.status == MachineStatus.unknown
-        or host.ai_status in AI_TRANSITIONAL
-        or host.ai_status == AiStatus.unknown
-    )
-
-
-def _as_status(value: object) -> MachineStatus:
-    """MicroCloud is the source of truth for status, but an unrecognised value
-    must not blow up a read — a newer provider status maps to `unknown`."""
-    try:
-        return MachineStatus(str(value))
-    except ValueError:
-        return MachineStatus.unknown
-
-
-def _as_ai_status(value: object) -> AiStatus:
-    """Same tolerance as _as_status for MicroCloud's AI state."""
-    if value is None:
-        return AiStatus.unknown
-    try:
-        return AiStatus(str(value))
-    except ValueError:
-        return AiStatus.unknown

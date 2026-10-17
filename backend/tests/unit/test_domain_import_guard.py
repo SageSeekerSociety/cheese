@@ -65,6 +65,29 @@ _SCANNED_MODULES = (
     "app/api/space_payloads.py",
     "app/api/task_deps.py",
     "app/api/topics_deps.py",
+    # 2026-10 的第二轮：拆路由之间的边。前三个是新的共享依赖模块（`awaiting_deps`
+    # 装 `waiting_items`，`teams_deps` 装 teams 的四个共享名，`legal_deps` 装
+    # `client_context`），`topics_file_sources` 是从 `routes/` 挪到 `app/api/` 的
+    # 整个文件，`ws_pipe` 是新的（隧道的两个泵）。判据就一条：这个模块是不是
+    # 2026-10 这轮从 `routes/` 里出来的——是就得点名，否则搬家的那几条账没人看着。
+    # `app/api/doc_access.py` 和 `app/api/room_task_rows.py` 不在这里：它们在这轮之前
+    # 就生在 `app/api/` 下，是那棵树的普通成员，不是从路由里搬出来的。
+    "app/api/awaiting_deps.py",
+    "app/api/legal_deps.py",
+    "app/api/teams_deps.py",
+    "app/api/topics_file_sources.py",
+    "app/api/ws_pipe.py",
+    # 2026-10 的第三轮（最后一轮）：把经过 `app.api` 助手绕出来的名字也挪走。
+    # 前四个是新的行构造模块——`topic_member_rows`、`topic_pin_rows`、
+    # `review_comment_rows`、`project_skill_rows`，`room_snapshot` 原先是回它们各自
+    # 的路由里去拿的；`preview_relay` 装预览隧道浏览端的那半边和两端共用的 hub。
+    # 判据不变：从 `routes/` 里出来的就点名。`preview_host`、`preview_runtime`、
+    # `room_snapshot` 这些不点，因为它们在这轮之前就生在 `app/api/` 下。
+    "app/api/preview_relay.py",
+    "app/api/project_skill_rows.py",
+    "app/api/review_comment_rows.py",
+    "app/api/topic_member_rows.py",
+    "app/api/topic_pin_rows.py",
 )
 
 #: 路由那棵树的「领域」。它不是领域包，这个值只用来让路由发出的每一条 repository
@@ -96,9 +119,17 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- agent --- (announce writes the room line itself: 平台说的每一句
         # 都从这一个函数出去，走 block 领域的 service 就要把整条 DI 图拖进来)
         ("app.domain.agent.announce", "app.domain.block.repositories"),
-        ("app.domain.agent.chat", "app.domain.block.repositories"),
-        ("app.domain.agent.chat", "app.domain.project.repositories"),
-        ("app.domain.agent.github_app", "app.domain.project.repositories"),
+        # chat_admission / chat_lifecycle / chat_places 是从 agent.chat 里拆出来的
+        # 那三块（准入与并发、停与「还在不在」、会场与 session 指针）。原先记在
+        # `agent.chat` 名下的一对 repository 跟着代码搬了家：读 block（准入时要看
+        # 这个座位说了什么、停的时候要认这条活真干出了东西；block 领域没有 service
+        # 层，`platform_stats.pipeline` 那条注释讲的是同一件事）落在
+        # chat_admission 与 chat_lifecycle；读项目表（会场里那个座位归谁，决定记
+        # 在谁名下）落在 chat_places。拆模块没有新增跨包的边，只是发起方从 chat.py
+        # 换成了这三个模块，所以按同一笔债入账。
+        ("app.domain.agent.chat_admission", "app.domain.block.repositories"),
+        ("app.domain.agent.chat_lifecycle", "app.domain.block.repositories"),
+        ("app.domain.agent.chat_places", "app.domain.project.repositories"),
         # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与
         # refs）。它摸的两个 repository 正是原先 chat.py 那一对里跟着它走的：
         # 一条读 block（block 领域没有 service 层，`platform_stats.pipeline`
@@ -180,11 +211,17 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.knowledge.services", "app.domain.user.repositories"),
         ("app.domain.machine.services", "app.domain.project.repositories"),
         ("app.domain.membership.services", "app.domain.project.repositories"),
-        # --- notification（项目收件箱：写入前核项目在不在，拍板时把决定发回房间。
-        #     这两条是 alert/ 并进来时原样带过来的） ---
-        ("app.domain.notification.services", "app.domain.block.repositories"),
+        # --- notification（项目收件箱：写入前核项目在不在。拍板时把决定发回房间
+        #     那一条已经收进 `notification/ports.py` 的口子，落话的是
+        #     `block/adapters.py`，本模块不再读 room 的表） ---
         ("app.domain.notification.services", "app.domain.project.repositories"),
-        ("app.domain.oauth.services", "app.domain.user.repositories"),
+        # oauth.services 拆成了包（`services/__init__.py` 门面 + 三个子模块）。两条
+        # 按 handle 取身份的模块级函数留在门面里，函数内那句
+        # `from app.domain.user.repositories import UserRepository` 也跟着留在那儿，
+        # 于是发起方从 `app.domain.oauth.services` 换成包的 `__init__` —— 守卫按文件
+        # 路径取名，包的入口就是 `…services.__init__`。同一份债换了导入方，不是新债，
+        # 和 `review.services` 拆包时 `_shared` 接手那三条是同一回事。
+        ("app.domain.oauth.services.__init__", "app.domain.user.repositories"),
         # --- pin --- 置顶要确认那一块在这个频道主线上，再在主线写一行「置顶了…」：
         # 读一块、写一块，block 领域没有 service 层，和 announce 同一个理由入账。
         ("app.domain.pin.services", "app.domain.block.repositories"),
@@ -194,7 +231,10 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- routine ---
         # 一次执行的那条消息变了（开始、跑完）要整行推给开着频道的人，整行里
         # 有它的表情回应；block 领域没有 service 层，和 pin 同一个理由入账。
-        ("app.domain.routine.service", "app.domain.block.repositories"),
+        # `routine.service` 拆成了包，这条边现在由 `service/sweep.py` 发起（整行
+        # 推送就在 `publish_run_messages`）；被摸的 module 一个没变，同一笔债
+        # 挪了发起方。拆分前这条在 `app.domain.routine.service` 名下。
+        ("app.domain.routine.service.sweep", "app.domain.block.repositories"),
         # --- questions ---
         ("app.domain.questions.services", "app.domain.user.repositories"),
         ("app.domain.questions.services", "app.domain.answers.repositories"),
@@ -212,6 +252,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.review.services._shared", "app.domain.block.repositories"),
         ("app.domain.review.services._shared", "app.domain.project.repositories"),
         ("app.domain.review.services._shared", "app.domain.topic.repositories"),
+        # --- room_task ---
+        # 任务是一条从房间里长出来的活，它落户时房间里要说的那两句（开一条支线的
+        # 标题、这里开了一条活）由本包写。`block` 没有 service 层，只有 repository，
+        # 和上面 thread 那条同形。2026-10-16 这批函数从 `topic.services` 搬来时
+        # 发起方换了名字，被摸的 module 一个没多 —— 同一笔债挪了发起方。挪过来
+        # 的这一半要按 id 取一行、再写一句，而 `block` 没有 service 层可让，所以
+        # 入账；留在 `topic.services` 名下的那一半同一天还掉了，见下面 topic 段。
+        ("app.domain.room_task.dispatch", "app.domain.block.repositories"),
         # --- space ---
         ("app.domain.space.analytics_service", "app.domain.task.repositories"),
         ("app.domain.space.analytics_service", "app.domain.user.repositories"),
@@ -229,15 +277,26 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.task.services", "app.domain.user.repositories"),
         ("app.domain.task.visibility_service", "app.domain.space.repositories"),
         ("app.domain.task.visibility_service", "app.domain.user.repositories"),
-        # --- team ---
-        ("app.domain.team.services", "app.domain.task.repositories"),
         # --- thread --- 支线摘要要每条支线最后说的那一句：一次查询读一批块，
         # block 领域没有 service 层。
         ("app.domain.thread.reads", "app.domain.block.repositories"),
         # --- topic / topic_membership ---
-        ("app.domain.topic.services", "app.domain.block.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.project.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.topic.repositories"),
+        # `app.domain.topic.services → app.domain.block.repositories` 是 2026-10-16
+        # 还掉的：本包要写一句平台的话走 `topic/ports.py` 的 `PlatformLine`，读每条
+        # 房间最后说的那一句走本包的裸表（`repositories/latest.py`），两条路都不再
+        # 摸 `block` 的 repository。
+        # 2026-10-16：`topic_membership/services.py` 变成了包（门面在 `__init__.py`，
+        # 名册与席位那一半在 `housekeeping.py`）。这两条边本来就在，发起方是门面的
+        # 入口文件；守卫按文件路径取名，包的入口就是 `…services.__init__`。跟搬走的
+        # 两半没关系——两条读的 repository 都还在门面里（`__init__` 建它们）。
+        (
+            "app.domain.topic_membership.services.__init__",
+            "app.domain.project.repositories",
+        ),
+        (
+            "app.domain.topic_membership.services.__init__",
+            "app.domain.topic.repositories",
+        ),
         # --- webhook / workspace ---
         ("app.domain.usage.subscription_ingest", "app.domain.project.repositories"),
         # --- app/api/routes ---
@@ -250,17 +309,21 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.answers", "app.domain.questions.repositories"),
         ("app.api.routes.answers", "app.domain.user.repositories"),
         ("app.api.routes.avatars", "app.domain.avatars.repositories"),
-        ("app.api.routes.awaiting", "app.domain.block.repositories"),
-        ("app.api.routes.awaiting", "app.domain.project.repositories"),
-        ("app.api.routes.awaiting", "app.domain.room_task.repositories"),
-        ("app.api.routes.awaiting", "app.domain.topic.repositories"),
+        # `waiting_items` 的发起方换了名字：那个函数连同它的四个码搬去了
+        # `app/api/awaiting_deps.py`（推送也读它，而路由模块之间不互相 import）。
+        # 被摸的 repository 一个没多，所以按同一笔债入账，只是换个发起方——记法同下面的
+        # users_team / topics_compute。
+        ("app.api.awaiting_deps", "app.domain.block.repositories"),
+        ("app.api.awaiting_deps", "app.domain.project.repositories"),
+        ("app.api.awaiting_deps", "app.domain.room_task.repositories"),
+        ("app.api.awaiting_deps", "app.domain.topic.repositories"),
         ("app.api.routes.blocks", "app.domain.block.repositories"),
         ("app.api.routes.comments", "app.domain.comments.repositories"),
         ("app.api.routes.comments", "app.domain.questions.repositories"),
         ("app.api.routes.comments", "app.domain.user.repositories"),
-        ("app.api.routes.connector", "app.domain.device.repository"),
-        ("app.api.routes.connector", "app.domain.device.sql_repository"),
-        ("app.api.routes.connector", "app.domain.team.repositories"),
+        ("app.api.routes.connector.connections", "app.domain.device.repository"),
+        ("app.api.routes.connector.devices", "app.domain.device.sql_repository"),
+        ("app.api.routes.connector.connections", "app.domain.team.repositories"),
         ("app.api.routes.dashboard", "app.domain.project.repositories"),
         ("app.api.routes.dashboard", "app.domain.usage.repositories"),
         ("app.api.routes.feedback_proposals", "app.domain.block.repositories"),
@@ -298,9 +361,13 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.tasks.roster", "app.domain.task.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.team.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.user.repositories"),
+        # teams 的两个共享名（`application_to_api_model` / `load_application_maps`）
+        # 连同 `get_team_service` / `_user_payload` 搬进了 `app/api/teams_deps.py`
+        # （team 那一路路由和个人的 `/users/me/team*` 都在用，而路由模块之间不互相
+        # import）。同一笔债换发起方：teams_deps 接走 user.repositories 的一条，
+        # `routes/teams.py` 自己留着 `UserRealNameRepository` 那条（它没搬）。
         ("app.api.routes.teams", "app.domain.user.repositories"),
-        ("app.api.routes.topic_members", "app.domain.identity.repositories"),
-        ("app.api.routes.topic_members", "app.domain.user.repositories"),
+        ("app.api.teams_deps", "app.domain.user.repositories"),
         ("app.api.routes.topics", "app.domain.block.repositories"),
         ("app.api.routes.topics", "app.domain.project.repositories"),
         ("app.api.routes.topics", "app.domain.usage.repositories"),
@@ -359,6 +426,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.topics_deps", "app.domain.block.repositories"),
         ("app.api.topics_deps", "app.domain.project.repositories"),
         ("app.api.topics_deps", "app.domain.usage.repositories"),
+        # --- topic_member_rows --- 2026-10 的第三轮：`room_snapshot` 要的房间成员
+        # 那一段原先住在 `routes/topic_members.py` 里，而 `room_snapshot` 不是路由、
+        # 却要 import 它，正是 C4 不许的形状。`roster_rows` 连同它那两个 repository
+        # （identity 的 `AgentBindingRepository`、user 的 `UserRepository`）搬到
+        # `app/api/topic_member_rows.py`，发起方从 `routes/topic_members` 换成新模块。
+        # 被摸的 repository 一个没多，所以按同一笔债入账，只是换了个名字。
+        ("app.api.topic_member_rows", "app.domain.identity.repositories"),
+        ("app.api.topic_member_rows", "app.domain.user.repositories"),
     }
 )
 

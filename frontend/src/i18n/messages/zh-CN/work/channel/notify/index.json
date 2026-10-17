@@ -1,0 +1,16 @@
+{
+  "all": "所有新消息",
+  "allHint": "主线的每条新消息都计数",
+  "forEightHours": "8 小时",
+  "forHour": "1 小时",
+  "forWeek": "1 周",
+  "mentions": "{'@'}我和我参与的支线",
+  "mentionsHint": "有人 {'@'}我或 {'@'}所有人，或我参与的支线有新回复时计数",
+  "mute": "静音",
+  "muteHint": "只有直接 {'@'}我时计数和通知",
+  "mutedForever": "静音中，直到你取消",
+  "mutedUntil": "静音到 {time}",
+  "title": "通知",
+  "untilTomorrow": "到明天上午 9 点",
+  "untilUnmuted": "直到我取消"
+}

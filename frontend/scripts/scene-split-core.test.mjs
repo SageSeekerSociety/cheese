@@ -58,6 +58,42 @@ export default { name: 'Legacy' }
 <template><div /></template>
 `
 
+// Two types the view needs come from one module: `EditorJS` is that module's
+// default export, `EditorConfig` a named one. `import type A, { B } from` — the
+// shape a page like `views/question/Ask.vue` produces — does not parse.
+const COMMENT = `<script setup lang="ts">
+import type EditorJS from '@editorjs/editorjs'
+
+import { defaultEditorConfig } from './editorConfig'
+
+const config = defaultEditorConfig()
+
+const onCreate = (instance: EditorJS) => {
+  console.log(instance)
+}
+</script>
+
+<template>
+  <div>
+    <RichEditor @create="onCreate" />
+    <p>{{ config.placeholder }}</p>
+  </div>
+</template>
+`
+
+const EDITOR_CONFIG = `import type { EditorConfig } from '@editorjs/editorjs'
+
+export function defaultEditorConfig(): EditorConfig {
+  return { placeholder: '' }
+}
+`
+
+const RICH_EDITOR = `<script setup lang="ts">
+defineEmits<{ create: [instance: unknown] }>()
+</script>
+<template><div /></template>
+`
+
 const ROUTER = `import { createRouter, createWebHistory } from 'vue-router'
 
 export const routes = [{ path: '/w/:id', name: 'w', component: () => import('../views/Widget.vue') }]
@@ -82,6 +118,9 @@ before(() => {
   write('src/views/BaseButton.vue', BUTTON)
   write('src/views/Slotted.vue', SLOTTED)
   write('src/views/Legacy.vue', NO_SETUP)
+  write('src/views/Comment.vue', COMMENT)
+  write('src/views/editorConfig.ts', EDITOR_CONFIG)
+  write('src/views/RichEditor.vue', RICH_EDITOR)
   write('src/router/index.ts', ROUTER)
 })
 
@@ -160,6 +199,17 @@ test('the generated page keeps the route, drops what moved, and renders the view
   assert.doesNotMatch(page, /BaseButton/)
   assert.match(page, /<WidgetView\n\s+:title="title"\n\s+:id="id"\n\s+v-model:draft="draft"\n\s+@save="save"\n\s+\/>/)
   assert.match(router.text, /component: \(\) => import\('\.\.\/views\/Widget\.vue'\), props: true/)
+})
+
+test('a default and a named type from one module become a legal import', () => {
+  const { view } = generate(analyze(pagePath('Comment.vue'), opts()))
+  // `import type EditorJS, { EditorConfig } from '...'` does not parse: a
+  // type-only import may carry a default *or* named bindings, not both.
+  assert.match(view, /import type \{ default as EditorJS, EditorConfig \} from '@editorjs\/editorjs'/)
+  assert.doesNotMatch(view, /import type [\w$]+,\s*\{/)
+  // Both types are still in scope for the two places the view needs them.
+  assert.match(view, /config: EditorConfig/)
+  assert.match(view, /create: \[instance: EditorJS\]/)
 })
 
 test('a slot in the template is reported, not guessed', () => {

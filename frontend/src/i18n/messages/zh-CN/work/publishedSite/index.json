@@ -1,0 +1,14 @@
+{
+  "entry": "网站入口",
+  "entryIs": "网站入口：",
+  "isCurrent": "线上的就是已采纳的这一版",
+  "noCandidates": "项目已采纳的版本里没有可发布的网站",
+  "none": "暂无已发布的网站",
+  "publish": "发布",
+  "publishFailed": "未能发布",
+  "publishRevision": "发布项目已采纳的版本",
+  "publishSite": "发布网站",
+  "revisionChanged": "项目已采纳的版本变了，确认之后再发布",
+  "stays": "发布之后网站持续可访问，后续修改需要再发布一次",
+  "update": "发布更新"
+}

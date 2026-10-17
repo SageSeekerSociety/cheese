@@ -16,7 +16,9 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 /** `defineField` 那一对的另一半：`error-messages` / `error`。 */
 type FieldControl = Record<string, any>
 
-defineProps<{
+const props = defineProps<{
+  /** 导师从这块板的管理员里挑。 */
+  mentorOptions?: { title: string; value: string }[]
   /** 改题时参与方式不能再换（领取记录按它分了人和队）。 */
   isEditing: boolean
   submitterTypeControl: FieldControl
@@ -35,6 +37,10 @@ const teamLockingPolicy = defineModel<TaskTeamMembershipLockPolicy | undefined>(
 })
 const minTeamSize = defineModel<number | undefined>('minTeamSize', { required: true })
 const maxTeamSize = defineModel<number | undefined>('maxTeamSize', { required: true })
+// 导师（#3830）：勾上就把导师加入领取者的项目，领取者领取前看到并同意，建项目时导师自动
+// 加入。人从空间管理员里挑，默认是出题人自己。
+const mentorsJoin = defineModel<boolean>('mentorsJoin', { default: false })
+const mentors = defineModel<string[]>('mentors', { default: () => [] })
 
 const { t } = useI18n()
 
@@ -195,6 +201,24 @@ const toNumber = (value: string | number | null) => (value === '' || value === n
           </template>
         </v-radio>
       </v-radio-group>
+    </BaseField>
+
+    <BaseField :hint="t('tasks.form.mentor.hint')">
+      <v-checkbox v-model="mentorsJoin" :label="t('tasks.form.mentor.require')" density="compact" hide-details />
+      <v-autocomplete
+        v-if="mentorsJoin"
+        autocomplete="off"
+        v-model="mentors"
+        :items="props.mentorOptions ?? []"
+        :label="t('tasks.form.mentor.label')"
+        multiple
+        chips
+        closable-chips
+        variant="outlined"
+        density="comfortable"
+        hide-details
+        class="mt-3"
+      />
     </BaseField>
   </TaskFormSection>
 </template>

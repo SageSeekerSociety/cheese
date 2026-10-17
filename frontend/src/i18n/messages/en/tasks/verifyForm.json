@@ -1,0 +1,20 @@
+{
+  "applyReason": "Reason for applying",
+  "applyReasonHint": "Briefly say why you want to join and what you hope to get from it",
+  "atLeastOne": "At least one",
+  "contact": "Contact details",
+  "email": "Email",
+  "emailInvalid": "Enter a valid email address",
+  "fill": "Fill in",
+  "ignore": "Ignore",
+  "phone": "Phone number",
+  "phoneInvalid": "Enter a valid phone number",
+  "phoneOrEmail": "Enter a phone number or an email",
+  "realNameTip": "This challenge requires your real name; your contact details are used for verification and notices",
+  "reasonTooLong": "The reason can be at most 500 characters",
+  "saveLocal": "Save my contact details in this browser for next time",
+  "saveLocalTip1": "To save typing next time, you can keep your contact details in this browser.",
+  "saveLocalTip2": "They stay on your device only; the platform does not collect or store them.",
+  "saveLocalTip3": "Your reason for applying is not saved.",
+  "savedFound": "Found contact details you saved before. Fill them in?"
+}

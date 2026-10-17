@@ -1,6 +1,8 @@
 // The address a sign-in code was last asked for, so the code page survives a
 // refresh. Kept for this tab only, and dropped once the sign-in is done.
 
+import { storageGetJson, storageRemove, storageSetJson } from '@/lib/browserStorage'
+
 const KEY = 'cheese.emailCodeSignIn'
 
 export interface PendingCode {
@@ -10,29 +12,17 @@ export interface PendingCode {
 }
 
 export function rememberCodeSent(email: string): void {
-  try {
-    sessionStorage.setItem(KEY, JSON.stringify({ email, sentAt: Date.now() }))
-  } catch {
-    // storage unavailable — a refresh sends the person back to enter the address
-  }
+  storageSetJson(KEY, { email, sentAt: Date.now() }, 'session')
 }
 
 export function pendingCode(): PendingCode | null {
-  try {
-    const raw = JSON.parse(sessionStorage.getItem(KEY) ?? 'null')
-    if (raw && typeof raw.email === 'string' && raw.email && typeof raw.sentAt === 'number') {
-      return { email: raw.email, sentAt: raw.sentAt }
-    }
-  } catch {
-    // as above
+  const raw = storageGetJson<{ email?: unknown; sentAt?: unknown }>(KEY, 'session')
+  if (raw && typeof raw.email === 'string' && raw.email && typeof raw.sentAt === 'number') {
+    return { email: raw.email, sentAt: raw.sentAt }
   }
   return null
 }
 
 export function forgetPendingCode(): void {
-  try {
-    sessionStorage.removeItem(KEY)
-  } catch {
-    // nothing was kept
-  }
+  storageRemove(KEY, 'session')
 }

@@ -481,3 +481,124 @@ def test_the_subject_is_visible_on_the_card_before_anyone_accepts(client, monkey
     [card] = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert card["change_subject"] == "fix: stop the crash"
     assert card["change_body"] == "why"
+
+
+# FB-96: a person moved the task's PR onto another base on GitHub; filing the
+# card then opened a second PR for the same branch against the task's old base,
+# and the card and the task named different PRs.
+
+
+class _GitHub(_FakeClient):
+    """GitHub as it answers a PR for a branch: "already exists" only for the
+    same head AND base, a fresh PR for any other base."""
+
+    def __init__(self, owner: str, repo: str, tokens, **_):
+        self.prs: dict[int, dict] = {}
+
+    def add(self, number: int, *, head: str, base: str, state: str = "open") -> None:
+        self.prs[number] = {
+            "number": number,
+            "html_url": f"https://github.com/acme/widgets/pull/{number}",
+            "head": {"ref": head},
+            "base": {"ref": base},
+            "state": state,
+            "title": "WIP: draft",
+            "body": "",
+            "draft": True,
+            "node_id": f"PR_node_{number}",
+        }
+
+    async def open_pr(self, *, head, base, title, body, draft=False) -> OpenedPR:
+        for pr in self.prs.values():
+            if (pr["head"]["ref"], pr["base"]["ref"], pr["state"]) == (
+                head,
+                base,
+                "open",
+            ):
+                return OpenedPR(pr)
+        number = max(self.prs, default=0) + 1
+        self.add(number, head=head, base=base)
+        return OpenedPR(self.prs[number])
+
+    async def pr_view(self, number: int) -> dict:
+        return dict(self.prs[number])
+
+    async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+        self.prs[number].update(title=title, body=body)
+        return self.prs[number]
+
+    async def mark_ready_for_review(self, node_id: str) -> None:
+        for pr in self.prs.values():
+            if pr["node_id"] == node_id:
+                pr["draft"] = False
+
+
+def _task_with_pr(client, tid: str, github: _GitHub, *, base: str, state: str):
+    from app.domain.room_task.models import Task
+
+    task_id = delivery_task_id(client, tid)
+
+    async def give():
+        async with client.test_factory() as session:
+            task = await session.get(Task, task_id)
+            github.add(1791, head=task.branch_name, base=base, state=state)
+            task.pr_number = 1791
+            task.pr_url = github.prs[1791]["html_url"]
+            await session.commit()
+            return task.id
+
+    return client.portal.call(give)
+
+
+def _task_pr(client, task_id) -> int | None:
+    from app.domain.room_task.models import Task
+
+    async def read():
+        async with client.test_factory() as session:
+            return (await session.get(Task, task_id)).pr_number
+
+    return client.portal.call(read)
+
+
+def _publish_with(client, monkeypatch, github: _GitHub, pid, tid, cid) -> dict:
+    from app.domain.review import pr_publish
+
+    monkeypatch.setattr(pr_publish, "proposal_client", AsyncMock(return_value=github))
+    monkeypatch.setattr(pr_publish, "branch_head", AsyncMock(return_value="a" * 40))
+    client.portal.call(
+        lambda: pr_publish._run(
+            client.test_request_factory,
+            card_id=uuid.UUID(cid),
+            topic_id=uuid.UUID(tid),
+            project_id=uuid.UUID(pid),
+        )
+    )
+    return client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
+
+
+def test_a_card_rides_the_task_s_open_pr_whatever_its_base(client, monkeypatch):
+    github = _GitHub("acme", "widgets", _FakeTokens())
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    task_id = _task_with_pr(client, tid, github, base="elsewhere", state="open")
+    cid = _make_card(client, tid)
+
+    card = _publish_with(client, monkeypatch, github, pid, tid, cid)
+
+    assert card["pr_number"] == 1791
+    assert list(github.prs) == [1791]
+    assert github.prs[1791]["draft"] is False
+    assert _task_pr(client, task_id) == 1791
+
+
+def test_a_task_whose_pr_was_closed_gets_a_new_one_and_names_it(client, monkeypatch):
+    github = _GitHub("acme", "widgets", _FakeTokens())
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    task_id = _task_with_pr(client, tid, github, base="main", state="closed")
+    cid = _make_card(client, tid)
+
+    card = _publish_with(client, monkeypatch, github, pid, tid, cid)
+
+    assert card["pr_number"] == 1792
+    assert _task_pr(client, task_id) == 1792

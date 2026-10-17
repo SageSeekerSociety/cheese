@@ -18,11 +18,15 @@ from app.domain.agent import live_notices as live_notices
 
 # Registers the listeners that tell a project's pages what changed in it.
 from app.domain.agent import project_feed as project_feed
+from app.domain.agent.admission import HostMemory
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool, build_compute_pool
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent.device_provider import topic_credential_expiry
+from app.domain.agent.document import box, thread
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.pending_messages import bind_runner
+from app.domain.agent.personal import service as personal
 from app.domain.agent.profiles import ProfileRegistry, build_registry
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.runtime import AgentWorkRunner
@@ -117,9 +121,6 @@ def consumptions_for(
     sessions: async_sessionmaker[AsyncSession] = async_session_factory,
 ) -> Consumptions:
     """The questions read on ``host``, each kind served by its consumer."""
-    from app.domain.agent.document import box, thread
-    from app.domain.agent.personal import service as personal
-
     consumptions = Consumptions(host, redis)
     consumptions.serve(personal.KIND, personal.Answers(sessions, consumptions, redis))
     consumptions.serve(thread.KIND, thread.Replies(chat, chat.session_factory))
@@ -166,9 +167,6 @@ def get_work_runner() -> AgentWorkRunner:
     # turn fast-fails with the true reason instead of burning the full fuse. Reads
     # the device hub's live screen state (in-memory, cheap); a topic on the local
     # tmux/SDK path has no screen there → None → the fuse is unchanged.
-    from app.domain.agent.admission import HostMemory
-    from app.domain.agent.device_provider import topic_credential_expiry
-
     runner = AgentWorkRunner(
         get_broker(),
         turn_timeout_s=settings.agent_turn_timeout_s,

@@ -1,0 +1,6 @@
+{
+  "lede": "这里的设置只对这台电脑生效",
+  "openAtLogin": "开机时启动",
+  "openAtLoginHint": "登录电脑后在后台运行，有事时通知你",
+  "saveFailed": "保存失败"
+}

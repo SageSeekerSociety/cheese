@@ -1,0 +1,11 @@
+{
+  "accept": "Accept",
+  "acceptAll": "Accept all",
+  "allDone": "All of {agent}'s suggestions reviewed · Accepted: {accepted} · Rejected: {rejected}",
+  "dismiss": "Close",
+  "pending": "{agent}'s suggestions · Left to review: {n}",
+  "position": "{i}/{n}",
+  "reject": "Reject",
+  "rejectAll": "Reject all",
+  "title": "{agent}'s suggestion"
+}

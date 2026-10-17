@@ -14,6 +14,7 @@ from app.api.routes.tasks._common import (
     JoinTaskAsTeamRequest,
     PatchTaskParticipantRequest,
     TaskParticipantRequest,
+    require_mentor_consent,
 )
 from app.api.task_deps import (
     get_task_membership_service,
@@ -32,6 +33,9 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.agent_instance.adapters import default_teammate
+from app.domain.living_doc.overview import seed_overview
+from app.domain.membership.services import seat_mentors
 from app.domain.notification.preferences import local_time
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
@@ -41,10 +45,12 @@ from app.domain.space.repositories import (
 from app.domain.task.access import (
     ensure_task_joinable,
 )
+from app.domain.task.adapters import TaskTerms, as_brief, as_claim
 from app.domain.task.claims import claim_of
 from app.domain.task.inputs import (
     map_approve_type_to_int,
 )
+from app.domain.task.mentors import mentors_of
 from app.domain.task.repositories import (
     TaskRepository,
 )
@@ -54,6 +60,7 @@ from app.domain.task.services import (
 )
 from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.services import team_service
+from app.domain.usage.adapters import ComputeCredits
 from app.domain.user.repositories import (
     UserRepository,
 )
@@ -116,13 +123,22 @@ async def _participation_response(db, task, membership, auth_user) -> dict:
     owner = await UserRepository(session=db).get_by_id(owner_id)
     if owner is None:
         raise NotFoundError("Participant user not found")
-    project = await ProjectService(db).for_participation(
-        task=task, membership=membership, owner_handle=owner.username
+    service = ProjectService(
+        db,
+        default_teammate=default_teammate,
+        compute_credits=ComputeCredits(db),
+        overview=seed_overview,
+        task_terms=TaskTerms(db),
+        seat_mentors=seat_mentors,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    mentors = tuple(await mentors_of(db, task.id))
+    project = await service.for_participation(
+        task=as_brief(task, mentors=mentors),
+        claim=as_claim(membership),
+        owner_handle=owner.username,
+    )
+    return ok(
+        {
             "participant": _membership_to_api_model(membership),
             "project": {
                 "id": str(project.id),
@@ -130,8 +146,8 @@ async def _participation_response(db, task, membership, auth_user) -> dict:
                 "root_topic_id": str(project.root_topic_id),
                 "team_id": project.team_id,
             },
-        },
-    }
+        }
+    )
 
 
 @router.post(
@@ -175,6 +191,10 @@ async def create_task_participant(
 
     # 可见性检查：禁止"看不到但能加入"
     await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
+    if member == auth_user.user_id:
+        # Someone claiming for themselves agrees to the mentors; a teacher
+        # enrolling a student is one of the people running the course.
+        await require_mentor_consent(db, task=task, agreed=payload.agree_mentors)
 
     # Rank check mirrors NT TaskMembershipEligibilityService.checkRankEligibility:
     # only gates the request when APPLICATION_RANK_CHECK_ENFORCED=true. The
@@ -260,6 +280,7 @@ async def join_task_as_user(
 
     # 可见性检查：禁止"看不到但能加入"
     await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
+    await require_mentor_consent(db, task=task, agreed=payload.agree_mentors)
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
@@ -324,6 +345,7 @@ async def join_task_as_team(
 
     # 可见性检查：禁止"看不到但能加入"
     await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
+    await require_mentor_consent(db, task=task, agreed=payload.agree_mentors)
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
@@ -397,16 +419,20 @@ async def patch_task_participant(
         phone=payload.phone,
     )
 
-    await ProjectService(db).activate_participation(task=task, membership=updated)
+    await ProjectService(
+        db,
+        default_teammate=default_teammate,
+        compute_credits=ComputeCredits(db),
+        overview=seed_overview,
+        task_terms=TaskTerms(db),
+    ).activate_participation(task=as_brief(task), claim=as_claim(updated))
     # Commit before answering: the participant told they are approved can reload
     # the task on their next request and must see it as theirs (download and
     # submit). Same reason as the commit in ``create_task``.
     await db.commit()
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "participant": _membership_to_api_model(updated),
-        },
-    }
+        }
+    )

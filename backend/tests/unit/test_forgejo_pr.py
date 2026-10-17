@@ -150,3 +150,71 @@ async def test_merge_refusal_does_not_echo_secret_or_claim_success():
 def test_unmerged_test_commit_is_never_reported_as_a_delivery():
     status = ForgejoClient.status(proposal(merge_commit_sha="temporary"))
     assert status.merge_commit_sha is None
+
+
+@pytest.mark.anyio
+async def test_commit_subject_is_the_messages_first_line():
+    """`GitHubPRClient.commit_subject` on this forge, and the read that keeps a
+    proposal from being marked ready under the wrong title: Forgejo has no
+    draft flag, so `mark_ready_for_review` un-drafts one by rewriting its
+    `WIP:` title, and the title left to rewrite is the placeholder minus the
+    prefix — the task's own title, not the change's.
+
+    Forgejo routes the single commit under `/git`, and only there: the mock
+    answers that one path and 404s the rest, so a read addressed at
+    `/commits/{sha}` (Gitea's GitHub-compatible alias, absent from Forgejo)
+    fails here instead of passing on a transport that answers anything."""
+    seen: list[httpx.Request] = []
+
+    def server(request):
+        seen.append(request)
+        if not request.url.path.endswith("/git/commits/reviewed"):
+            return httpx.Response(404, text="404 page not found")
+        return httpx.Response(
+            200,
+            json={
+                "commit": {"message": "fix(docs): the page says what it means\n\nBody."}
+            },
+        )
+
+    publisher = ForgejoPRClient(
+        "acme",
+        "docs",
+        Tokens(),
+        api_base="https://forge.example/api/v1",
+        transport=httpx.MockTransport(server),
+    )
+
+    assert (
+        await publisher.commit_subject("reviewed")
+        == "fix(docs): the page says what it means"
+    )
+    [request] = seen
+    assert request.url.path.endswith("/repos/acme/docs/git/commits/reviewed")
+    assert request.url.path == "/api/v1/repos/acme/docs/git/commits/reviewed"
+
+
+@pytest.mark.anyio
+async def test_commit_subject_with_no_message_is_no_title():
+    """A 200 with an empty body and a commit with no message are both "there
+    is no title here", which `mark_ready` treats as "leave the PR's alone".
+    Reading either as a crash would fail the ready action instead."""
+    empty_body = ForgejoPRClient(
+        "acme",
+        "docs",
+        Tokens(),
+        api_base="https://forge.example/api/v1",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"")),
+    )
+    no_message = ForgejoPRClient(
+        "acme",
+        "docs",
+        Tokens(),
+        api_base="https://forge.example/api/v1",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"commit": {"message": ""}})
+        ),
+    )
+
+    assert await empty_body.commit_subject("reviewed") is None
+    assert await no_message.commit_subject("reviewed") is None

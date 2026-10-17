@@ -1,0 +1,22 @@
+{
+  "downloadFailed": "下载失败",
+  "eventLabel": "{time}：{text}",
+  "liveNew": "{name}：{text}",
+  "loadingOlder": "加载更早的消息…",
+  "messageLabel": "{name}，{time}：{text}",
+  "newMessagesBelow": "以下是新消息",
+  "older": "更早的消息",
+  "pickTopic": "选择一个频道开始对话",
+  "reactionFailed": "表情更新失败",
+  "refMissing": "引用不存在",
+  "refMissingHint": "这里引用的频道、任务或支线不存在，或者你看不到它",
+  "refThread": "支线：{title}",
+  "sending": "发送中…",
+  "startAria": "开始项目协作",
+  "startTitle": "你想先做点什么？",
+  "timelineLabel": "对话记录",
+  "today": "今天",
+  "typing": "正在输入…",
+  "waitingConnection": "等待连接",
+  "yesterday": "昨天"
+}

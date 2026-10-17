@@ -8,8 +8,9 @@ a room picks too — the alternative is the room pointing at an agent, and then
 
 import uuid
 
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
 from tests.integration.conftest import (
     open_task,

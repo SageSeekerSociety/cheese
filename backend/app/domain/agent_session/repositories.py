@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import (
     delete,
     exists,
+    func,
     select,
 )
 from sqlalchemy.dialects.postgresql import insert
@@ -302,6 +303,26 @@ class AgentSessionRepository:
             .order_by(AgentSession.placed_at.desc(), AgentSession.id)
         )
         return list(result.scalars())
+
+    async def last_used_on(
+        self, channel: str, machines: list[str]
+    ) -> dict[str, datetime]:
+        """When a session of ``channel`` last ran on each of ``machines``: the
+        latest write to a session row placed there, which every turn makes
+        when it stores what the harness resumes by. A machine nothing ran on
+        is absent."""
+        if not machines:
+            return {}
+        machine = AgentSession.runtime_location["device_id"].as_string()
+        rows = await self._session.execute(
+            select(machine, func.max(AgentSession.updated_at))
+            .where(
+                AgentSession.runtime_location["channel"].as_string() == channel,
+                machine.in_(machines),
+            )
+            .group_by(machine)
+        )
+        return {device_id: at for device_id, at in rows.all()}
 
     async def placed_everywhere(
         self,

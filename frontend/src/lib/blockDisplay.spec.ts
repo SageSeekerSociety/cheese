@@ -111,13 +111,40 @@ function listBlock(steps: Step[]): Block {
 }
 
 describe('步骤清单在摘要里说什么', () => {
-  it('念一步，连它的记号；不念折成一行的那串记号', () => {
+  it('念正在做的那一步，不念早已做完的第一步，也不念折成一行的那串记号', () => {
     const block = listBlock([
       { subject: '读 main 源码', status: 'completed' },
       { subject: '改摘要行', status: 'in_progress' },
       { subject: '跑相关检查', status: 'pending' },
     ])
-    expect(replySnippet(block, maps, 200)).toBe('✓ 读 main 源码')
+    expect(replySnippet(block, maps, 200)).toBe('✱ 改摘要行')
+  })
+
+  it('没有正在做的，念还没做的第一步', () => {
+    const block = listBlock([
+      { subject: '读 main 源码', status: 'completed' },
+      { subject: '改摘要行', status: 'pending' },
+      { subject: '跑相关检查', status: 'pending' },
+    ])
+    expect(replySnippet(block, maps, 200)).toBe('○ 改摘要行')
+  })
+
+  it('全做完、写了结果，念结果', () => {
+    const block = listBlock([
+      { subject: '读 main 源码', status: 'completed' },
+      { subject: '改摘要行', status: 'completed' },
+    ])
+    block.meta = { checklist: { ...(block.meta?.checklist as ChecklistMeta), result: '摘要行改好了' } }
+    expect(replySnippet(block, maps, 200)).toBe('✅ 摘要行改好了')
+  })
+
+  it('还有没做完的步骤时，结果先不念', () => {
+    const block = listBlock([
+      { subject: '读 main 源码', status: 'completed' },
+      { subject: '改摘要行', status: 'pending' },
+    ])
+    block.meta = { checklist: { ...(block.meta?.checklist as ChecklistMeta), result: '先写一句' } }
+    expect(replySnippet(block, maps, 200)).toBe('○ 改摘要行')
   })
 
   it('太长了照旧截断', () => {
@@ -125,17 +152,17 @@ describe('步骤清单在摘要里说什么', () => {
     expect(replySnippet(block, maps, 6)).toBe('✱ 一步一步…')
   })
 
-  it('迁移前那种只有 `true` 的清单没有结构，仍按正文说', () => {
+  it('迁移前那种只有 `true` 的清单，也从正文里念那一步，不念一串记号', () => {
     const block = {
-      ...said('lin', '✓ 读代码\n✱ 改摘要行'),
+      ...said('lin', '✓ 读代码\n✱ 改摘要行\n○ 回结论'),
       meta: { checklist: true },
     } as Block
-    expect(replySnippet(block, maps, 200)).toBe('✓ 读代码 ✱ 改摘要行')
+    expect(replySnippet(block, maps, 200)).toBe('✱ 改摘要行')
   })
 })
 
 describe('支线摘要里那条最后回复', () => {
-  it('后端随它带上清单结构时，摘要念的是清单的一步', () => {
+  it('后端随它带上清单结构时，摘要念的是清单正在做的那一步', () => {
     const message = listBlock([
       { subject: '读 main 源码', status: 'completed' },
       { subject: '改摘要行', status: 'in_progress' },
@@ -146,7 +173,17 @@ describe('支线摘要里那条最后回复', () => {
       created_at: message.created_at,
       checklist: message.meta?.checklist as ChecklistMeta,
     }
-    expect(replySnippet(replyBlock(reply), maps, 200)).toBe('✓ 读 main 源码')
+    expect(replySnippet(replyBlock(reply), maps, 200)).toBe('✱ 改摘要行')
+  })
+
+  it('迁移前的清单（后端带来 `true`）也只念一步', () => {
+    const reply = {
+      author: 'cheese',
+      content: '✓ 取一份主干代码\n✓ 定位中间分割线\n✱ 查回复树的加载路径\n○ 在支线里回结论',
+      created_at: '2026-10-12T00:00:00Z',
+      checklist: true as const,
+    }
+    expect(replySnippet(replyBlock(reply), maps, 200)).toBe('✱ 查回复树的加载路径')
   })
 
   it('后端没带结构时，还是按正文说', () => {
@@ -189,8 +226,8 @@ describe('答过这道题的每一句', () => {
       })
     )
     expect(answers).toEqual([
-      { by: 'alice', text: 'a' },
-      { by: 'bob', text: '都不要' },
+      { by: 'alice', text: 'a', skipped: false },
+      { by: 'bob', text: '都不要', skipped: false },
     ])
   })
 
@@ -201,6 +238,6 @@ describe('答过这道题的每一句', () => {
           answer_log: [{ v: 1, kind: 'reject', option: null, note: null, by: 'u', at: null, client_op_id: 'x' }],
         })
       )
-    ).toEqual([{ by: 'u', text: '以上都不是' }])
+    ).toEqual([{ by: 'u', text: '以上都不是', skipped: false }])
   })
 })

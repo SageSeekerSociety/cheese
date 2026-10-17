@@ -354,7 +354,9 @@ fn main() {
                 // never sees the drop. Off, WebKit handles drags itself, which is
                 // what the page's drag code expects; nothing here listens for the
                 // events wry would send instead (`dragDrop` in the page is the DOM
-                // one, not Tauri's).
+                // one, not Tauri's). WebKit's own default for a file let go
+                // where the page takes none is to open it in place of the page;
+                // the page refuses those drops itself (frontend/src/lib/desktopNative.ts).
                 .disable_drag_drop_handler()
                 .theme(window_theme(&theme).flatten())
                 .title("Cheese")

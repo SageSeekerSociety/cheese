@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
-
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
@@ -11,14 +9,9 @@ const props = defineProps<{
   busy?: boolean
 }>()
 const emit = defineEmits<{ 'update:note': [note: string]; send: []; cancel: [] }>()
-const input = ref<HTMLInputElement | null>(null)
-watch(
-  () => props.target,
-  () => {
-    if (props.target) void nextTick(() => input.value?.focus())
-  },
-  { immediate: true }
-)
+/** 不在弹出时抢焦点。这个框是读者选中一段原文之后出来的，而页面上的选中只在窗口里
+ *  焦点还留在正文上时才画——把光标交给输入框，橙色就跟着灭了，读者看不到自己选的是
+ *  哪一段。要打字，点一下就进来。 */
 function send(event: KeyboardEvent | MouseEvent) {
   if (props.busy) return
   if ('isComposing' in event && (event.isComposing || event.keyCode === 229)) return
@@ -35,7 +28,6 @@ function send(event: KeyboardEvent | MouseEvent) {
         <span class="locator__quote" :title="target.quote">{{ target.quote }}</span>
       </div>
       <input
-        ref="input"
         :value="note"
         class="locator__input"
         autocomplete="off"

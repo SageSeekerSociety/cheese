@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from app.api import preview_relay
 from app.api.routes import app_preview
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import PreviewHub, preview_hub
@@ -83,7 +84,7 @@ async def test_owner_relay_preserves_application_status(upstream_status):
 
     @application.get("/")
     async def viewer(request: Request):
-        return await app_preview.relay_http(topic, "seat", request)
+        return await preview_relay.relay_http(topic, "seat", request)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application), base_url="http://viewer"
@@ -125,7 +126,12 @@ async def test_owner_relay_distinguishes_admission_from_application_response(
 
     @application.post("/")
     async def viewer(request: Request):
-        return await app_preview.relay_http(topic, "seat", request, instance="a" * 64)
+        return await preview_relay.relay_http(
+            topic,
+            "seat",
+            request,
+            instance="a" * 64,
+        )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application), base_url="http://viewer"
@@ -146,7 +152,7 @@ def test_hmr_cleanup_ignores_a_peer_gone_during_close(monkeypatch):
     stream.receive = AsyncMock(return_value=(wire.OP_WS_OK, wire.encode_meta({})))
     monkeypatch.setattr(preview_hub, "open_stream", lambda _topic_id, _seat: stream)
     monkeypatch.setattr(
-        app_preview,
+        preview_relay,
         "_pump",
         AsyncMock(side_effect=WebSocketDisconnect(code=1006)),
     )
@@ -165,7 +171,7 @@ def test_hmr_cleanup_ignores_a_peer_gone_during_close(monkeypatch):
         receive,
         send,
     )
-    asyncio.run(app_preview.relay_ws(websocket, uuid.uuid4(), "cheese-a"))
+    asyncio.run(preview_relay.relay_ws(websocket, uuid.uuid4(), "cheese-a"))
 
     assert sent == ["websocket.accept", "websocket.close"]
     stream.aclose.assert_awaited_once_with()
@@ -214,7 +220,7 @@ async def test_browser_message_limit_counts_wire_bytes_and_cancels_stream(
         {"type": "websocket", "path": "/hmr", "headers": []}, receive, send
     )
     await browser.accept()
-    await asyncio.wait_for(app_preview._pump(browser, stream), 1)
+    await asyncio.wait_for(preview_relay._pump(browser, stream), 1)
     messages = [payload for op, _, payload in frames if op == wire.OP_WS_MSG]
     assert len(messages) == (0 if overflow else 1)
     if not overflow:
@@ -257,7 +263,7 @@ async def test_relay_preserves_negotiated_close_without_decoding_legacy_text(
         capabilities=wire.CAPABILITIES if negotiated else frozenset(),
     )
     transport.machine = machine
-    monkeypatch.setattr(app_preview, "preview_hub", hub)
+    monkeypatch.setattr(preview_relay, "preview_hub", hub)
     connected = False
     sent = []
 
@@ -274,7 +280,7 @@ async def test_relay_preserves_negotiated_close_without_decoding_legacy_text(
     websocket = WebSocket(
         {"type": "websocket", "path": "/hmr", "headers": []}, receive, send
     )
-    await asyncio.wait_for(app_preview.relay_ws(websocket, topic, "seat"), 1)
+    await asyncio.wait_for(preview_relay.relay_ws(websocket, topic, "seat"), 1)
     closes = [m for m in sent if m["type"] == "websocket.close"]
     assert len(closes) == 1
     assert (closes[0]["code"], closes[0]["reason"]) == expected

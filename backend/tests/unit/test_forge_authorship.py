@@ -9,8 +9,8 @@ import httpx
 import pytest
 
 from app.core.errors import GatewayUnavailableError
-from app.domain.agent.forgejo_tokens import seal_forge_password
 from app.domain.project.forge import ensure_author_email
+from app.domain.project.forgejo_tokens import seal_forge_password
 
 
 @pytest.mark.anyio

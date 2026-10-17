@@ -47,9 +47,8 @@ from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent_session.models import AgentSession
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 from tests.turn_log import a_topic, open_turn
 
 # 在任何测试把 `asyncio.sleep` 换掉之前拿住真的那个：重派是一个先睡 3 秒再发的任务，
@@ -430,7 +429,7 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
         session.add(owner)
         await session.flush()
         await registered(session, "u")
-        project = await ProjectService(session).create(
+        project = await project_service(session).create(
             name="P", owner_handle="u", forge_kind="github_app"
         )
         topic = await TopicService(session).create(

@@ -24,10 +24,9 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.models import Block
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 from tests.support.threads import thread_in
 
 
@@ -88,7 +87,7 @@ async def _until(cond, timeout: float = 5.0) -> None:
 async def _a_topic(factory) -> uuid.UUID:
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         room = await TopicService(session).create(
             project_id=project.id, title="讨论", created_by="u"
         )

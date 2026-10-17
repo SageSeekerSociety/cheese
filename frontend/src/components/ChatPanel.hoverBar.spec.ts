@@ -11,6 +11,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 let vuetify: ReturnType<typeof createVuetify>
@@ -79,6 +80,8 @@ const replyButtons = (container: Element) =>
 async function pointAt(container: Element, selector: string) {
   await fireEvent.mouseOver(container.querySelector(selector)!)
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('消息的悬停条', () => {
   it('回复的是指针所在的那一条', async () => {

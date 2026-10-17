@@ -83,6 +83,12 @@ export function workspaceProject(
 // 工作区那一格落在你上次待的地方，一跳就能进话题——而不是先落到一个项目目录，
 // 那等于给每天的主路径加一跳。一个项目都没有的时候它没有落地上下文，此时唯一
 // 有意义的动作就是建一个，所以这一格就是那个动作。
+//
+// 地址里的项目写短名，和桌面那排项目头像同一套（railParts 的 `ref = p.slug || p.id`，
+// #3029）。底栏的当前格是 Vuetify 照地址算的：这个应用会把地址里的项目换成短名，
+// 这一格要是还写内部编号，就永远算不上当前——当前那一格的图标靠它才变黄，于是
+// 另外两格一点就黄，中间这格怎么点都不黄。桌面那排头像踩过同一个坑，这里是漏掉的
+// 那一处。
 function workspace(src: NavSources): NavItem {
   const tab = {
     key: 'Workspace',
@@ -90,9 +96,13 @@ function workspace(src: NavSources): NavItem {
     title: t('navigation.workspace'),
     icon: 'mdi-folder-multiple-outline',
   }
-  return src.workspaceProjectId
-    ? { ...tab, to: `/projects/${src.workspaceProjectId}` }
-    : { ...tab, action: src.createProject }
+  const id = src.workspaceProjectId
+  if (!id) return { ...tab, action: src.createProject }
+  // 还没拿到短名（或者清单里认不出这个项目）时照旧写内部编号：这时候地址栏里写的
+  // 也是它，两边照样对得上；短名到了就一起换成短名。
+  const project = src.projects.find((p) => p.id === id)
+  const ref = project?.slug || id
+  return { ...tab, to: `/projects/${ref}` }
 }
 
 /** 待办的记号：有待处理的事画件数；没有、但有没读的动态，画一颗小点。 */

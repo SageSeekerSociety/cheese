@@ -1,6 +1,7 @@
 """Acquire one session's execution capability when a tool actually needs it."""
 
 import asyncio
+import errno
 import json
 import logging
 import uuid
@@ -17,6 +18,7 @@ from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
 from app.core.sentences import say
+from app.domain.addressing import Event, Hand, address
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
@@ -25,18 +27,19 @@ from app.domain.agent.device_provider import (
 )
 from app.domain.agent.environment import VM, Sandbox, SelfHosted, spec_of
 from app.domain.agent.environment_failures import tell_failed
-from app.domain.agent.harness.channel import mint_session_token
+from app.domain.agent.harness.channel import ScreenSetupError, mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.machine_address import device_api_base, site_forward, ws_url
 from app.domain.agent.market import cloud_provisionable
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import OWNER_CHANNEL
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.agent_session.models import LOST_KEY, AgentSession
+from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
-from app.domain.delivery.addressing import Event, Hand, address
-from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.delivery.ledger import deliver
+from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.device import sandbox as device_sandbox
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -49,6 +52,7 @@ from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
+    DISK_FULL,
     EXECUTOR_SETUP_FAILED,
     SANDBOX_LOST,
     SANDBOX_PREPARING,
@@ -128,7 +132,7 @@ async def _agent_name(db, project, topic, handle: str) -> dict:
 
     teammate = await _session_teammate(db, project, handle)
     agent = (
-        await TopicService(db).resolve_agent(topic)
+        await AgentInstanceService(db).for_topic_by_id(topic.id)
         if teammate is None
         else AgentInstanceService.resolved(teammate)
     )
@@ -210,7 +214,9 @@ async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> No
     owner = await db.get(User, device.owner_user_id)
     if owner is None:
         return
-    if owner.username in await TopicMemberService(db).people_in(topic):
+    if owner.username in await TopicMemberService(db).people_in(
+        topic, team=project_team
+    ):
         return
     project = await ProjectService(db).get_or_404(topic.project_id)
     team = await db.get(Team, project.team_id)
@@ -377,6 +383,13 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
     }
 
 
+#: What the connector reports for a command that never exited on its own: it
+#: was killed at the deadline it was given — a hung install, the common case —
+#: or could not be started at all. A command that chose its own exit status
+#: reports 0 or up, so this is never one of them (`cli/internal/host`).
+NO_EXIT_STATUS = -1
+
+
 async def _start_executor(
     hub,
     lease,
@@ -397,10 +410,31 @@ async def _start_executor(
     ``isolated`` on the machine gets (`_sandboxed`). ``platform_machine``: a
     Cloud machine, where the install may add what a sandbox needs. Raises
     ``launch.SandboxRefused`` when the machine cannot give the room its
-    sandbox."""
-    if lease and lease.get("state"):
+    sandbox.
+
+    Every call into the machine is bounded by ``lease_claim.INSTALL_MOST_S``:
+    a machine that stopped answering — its connector gone silent, its executor
+    hung — fails this attempt instead of holding the tool call that asked for
+    its hands. What the failure leaves behind is answered by the caller.
+
+    A machine that stopped answering is not only one that says nothing: the
+    connector answers a command it had to kill with an ordinary result carrying
+    ``NO_EXIT_STATUS``, not an error. Raised as the answered failure, that read
+    as an install that ran and failed, and left the session on a host that never
+    brought its executor up. The two are told apart here, and the caller answers
+    the silent one as the machine it is.
+
+    A lease names the machine it is held on, and only there do the hands it
+    records exist. One that names another machine is not this attempt's hands:
+    the attempt after a host was left — for a full disk, for a connector that
+    went away — carries the lease of the machine just left, and dialing it would
+    answer with that machine's own failure and have it recorded against the one
+    this attempt is on (``_install``)."""
+    if lease and lease.get("state") and lease.get("device_id") == device_id:
         try:
-            running = await execution.call(lease, "ping", {}, hub=hub)
+            running = await execution.call(
+                lease, "ping", {}, hub=hub, timeout=lease_claim.INSTALL_MOST_S
+            )
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code != 500:
                 raise
@@ -425,6 +459,7 @@ async def _start_executor(
                     platform_machine=platform_machine,
                 ),
                 hub=hub,
+                timeout=lease_claim.INSTALL_MOST_S,
             )
     installed = await hub.exec(
         device_id,
@@ -437,21 +472,37 @@ async def _start_executor(
             sandbox=sandbox,
             platform_machine=platform_machine,
         ),
-        timeout=660,
+        timeout=lease_claim.INSTALL_MOST_S,
     )
     if (refusal := launch.refused(installed)) is not None:
         raise refusal
-    if installed.get("exit") != 0 or installed.get("truncated"):
-        raise ExecutorSetupFailed(installed.get("stderr") or "")
+    exit_status = installed.get("exit")
+    if exit_status != 0 or installed.get("truncated"):
+        raise ExecutorSetupFailed(
+            installed.get("stderr") or "", killed=exit_status == NO_EXIT_STATUS
+        )
     return json.loads(installed["stdout"])
 
 
 class ExecutorSetupFailed(RuntimeError):
     """The install exited non-zero on the machine. Its stderr is the machine's
     own account of why; the agent is told its last line instead of a bare
-    server error, so the reason reaches the room."""
+    server error, so the reason reaches the room.
+
+    ``killed``: the command never exited on its own (``NO_EXIT_STATUS``) — the
+    connector killed it at the deadline it was given, or never got it started.
+    That is not the install's own account of why it failed, and a shared host is
+    answered as a machine to be placed away from rather than told about. What
+    the connector leaves in ``stderr`` when it could not start the command is in
+    there too, and goes unread on that path."""
+
+    def __init__(self, stderr: str, *, killed: bool = False) -> None:
+        super().__init__(stderr)
+        self.killed = killed
 
     def reason(self) -> str:
+        if f"[Errno {errno.ENOSPC}]" in str(self):
+            return DISK_FULL
         lines = [line.strip() for line in str(self).splitlines() if line.strip()]
         return lines[-1] if lines else "Executor setup failed"
 
@@ -531,6 +582,21 @@ async def restart_executor(db, row, lease):
     )
 
 
+def _another_sandbox_wanted(environment: Sandbox | SelfHosted) -> bool:
+    """Whether a session asking for the environment it already has is asking
+    for another one anyway.
+
+    True for one of the platform's sandboxes: the pool places those and
+    replaces them freely, so a room whose sandbox is on a machine it cannot
+    work in — its disk full, say — asks for the spec it is already on to be
+    given a sandbox somewhere else, and answering "you are already there"
+    leaves it on that machine for good. False for the others: a person's
+    computers (``devices_of``) and a self-hosted machine each name one machine,
+    and the one the session is on is the one it asks for."""
+    spec = spec_of(environment.spec) if isinstance(environment, Sandbox) else None
+    return spec is not None and spec.platform
+
+
 async def switch_environment(
     db,
     *,
@@ -545,11 +611,16 @@ async def switch_environment(
 
     Only this agent moves: every agent in a conversation has its own. The
     checkpoint runs there with no transaction open, and the agent moves whether
-    or not it went through (``checkpoint``). A session leaving a sandbox on the
-    platform's machines gives its place there back. With ``if_idle`` a session
+    or not it went through (``checkpoint``). The sandbox it leaves is the idle
+    sweep's to destroy (``HostPool.leave``). With ``if_idle`` a session
     whose room is mid-turn is left alone (``SessionWorking``). Whether the
     environment may be chosen at all was answered by the caller
-    (``environments.check_allowed``)."""
+    (``environments.check_allowed``).
+
+    Asking for one of the platform's sandboxes that the session already has is
+    a move, not a no-op (`_another_sandbox_wanted`): it is how a room gets off
+    a sandbox it cannot work in, and the new one is placed away from the host
+    the old one was on (``LEFT_HOST_KEY``)."""
     # 房间那一把锁：这一条会话的租约和它的执行环境拿着它读、拿着它写，别的请求
     # 看到的是「搬之前」或者「搬之后」，没有中间态。
     await TopicService(db).lock_for_execution(topic_id)
@@ -558,7 +629,11 @@ async def switch_environment(
     if row is None or await room_of(db, row.conversation_id) != topic_id:
         raise NotFoundError("Session not found")
     current = await sessions.environment(row.conversation_id, row.agent_handle)
-    if current is not None and current.environment == environment.model_dump():
+    if (
+        current is not None
+        and current.environment == environment.model_dump()
+        and not _another_sandbox_wanted(environment)
+    ):
         return
     request = row.execution_request or {}
     old = row.work_lease
@@ -586,9 +661,9 @@ async def switch_environment(
         if still_preparing(old):
             raise ConflictError(say("machineAllocationInProgress"))
     on_platform = bool((old or {}).get("platform"))
-    # A place on the platform's machines is given back, whether or not the
-    # sandbox there was ever handed to the session.
-    await HostPool(db).leave(session_id)
+    # The sandbox left behind is the idle sweep's, whether or not it was ever
+    # handed to the session.
+    left = await HostPool(db).leave(session_id)
     # A person's machine keeps the session's directories; the room's cleanup
     # finds them there by this lease.
     kept = [] if old is None or on_platform else [old]
@@ -598,10 +673,16 @@ async def switch_environment(
         environment.model_dump(),
         chosen_by=asdict(actor),
     )
-    row.execution_request = {
+    request = {
         "generation": str(uuid.uuid4()),
         "retained_leases": [*request.get("retained_leases", []), *kept],
     }
+    if left is not None:
+        # The next sandbox is not put back on the host this one came from
+        # without this (`HostPool._moved_off`): the host it just left is the
+        # full one, and a full host is what placement prefers.
+        request[LEFT_HOST_KEY] = str(left.id)
+    row.execution_request = request
     row.work_lease = None
     await db.commit()
 
@@ -650,6 +731,24 @@ def _reachable(hub, device_id: str) -> bool:
     (``device_hub.reconnecting``). One that does not come back in time fails
     that call as offline, which each caller already answers."""
     return hub.is_online(device_id) or hub.reconnecting(device_id)
+
+
+def _out_of_space(exc: BaseException) -> bool:
+    """Whether this is a machine saying its disk or its supply of files ran out
+    while the session's executor was being set up.
+
+    Two ways that is said, and only these two are read: the report of an
+    install that ran and could not get through (``ExecutorSetupFailed``, whose
+    ``reason`` already names a machine that ran out of space — a machine that
+    failed for any other reason is reported to the room and its host kept), and
+    the machine's own answer to a call it could not carry out
+    (``DeviceCallError``, here the ``prepare`` a room with no space left cannot
+    write through)."""
+    if isinstance(exc, ExecutorSetupFailed):
+        return exc.reason() == DISK_FULL
+    if isinstance(exc, DeviceCallError):
+        return "[Errno 28]" in str(exc) or "No space left on device" in str(exc)
+    return False
 
 
 async def ensure(
@@ -935,7 +1034,7 @@ async def _attempt(
     # its caller left — leaves the installation running, and the claim ends
     # with it: handed over as ready, lapsed when it fails, or left to lapse
     # unrenewed when this process goes. Cancelled with the request instead, it
-    # left the claim standing for its full 660s with nobody installing, and
+    # left the claim standing for its full cap with nobody installing, and
     # every start of the session failed until then.
     work = asyncio.ensure_future(
         _install(
@@ -964,6 +1063,7 @@ async def _attempt(
             claim=claim,
             now=now,
             cloud_host_id=cloud_host.id if cloud_host is not None else None,
+            cloud_vm=cloud_host is not None and cloud_host.whole_machine,
             owner_device=selected is not None,
             own=isinstance(environment, Sandbox),
             tells_agent=tells_agent,
@@ -1022,6 +1122,10 @@ async def _install(
     claim,
     now,
     cloud_host_id,
+    # Whether the host is the session's own VM rather than a shared one. False
+    # by default, which is the case that may be given up: `leave_unusable`
+    # refuses a whole machine on its own (`services.leave_unusable`).
+    cloud_vm=False,
     owner_device,
     own,
     tells_agent=False,
@@ -1080,7 +1184,12 @@ async def _install(
                         target["status"] = "preparing"
                         target["environment_status"] = status
                 if target["status"] == "ready":
-                    await execution.call(target, "ping", {}, hub=hub)
+                    # Bounded like the install: an executor that installed and
+                    # then will not answer is a machine this attempt gives up on
+                    # too, not one that holds the call that asked for its hands.
+                    await execution.call(
+                        target, "ping", {}, hub=hub, timeout=lease_claim.INSTALL_MOST_S
+                    )
         except Exception as exc:
             # Setup is resumable at the same physical allocation; it is not a
             # dispatched model operation and must not create a replacement lease.
@@ -1098,16 +1207,59 @@ async def _install(
                 )
                 await db.commit()
                 return _Preparing(say("environmentPreparing"), _another_attempt)
+            # The host could not bring the session's executor up: its connector
+            # went away, the install outlasted the deadline every call into a
+            # machine is given (`_start_executor`), the connector killed the
+            # install at that deadline and reported no exit status for it, or a
+            # write refused for want of space said so (`_out_of_space`). A
+            # whole VM is the session's own, waited for where it is; a shared
+            # host is left when the pool has another that can run the sandbox,
+            # so the next attempt is placed there instead of being pinned to
+            # this one for the rest of the tool call.
+            full = _out_of_space(exc)
+            away = (
+                full
+                or isinstance(exc, (DeviceOffline, TimeoutError))
+                or (isinstance(exc, ExecutorSetupFailed) and exc.killed)
+            )
+            if away and cloud_host_id is not None:
+                pool = HostPool(db, hub=hub)
+                if full and not cloud_vm:
+                    # What the machine ran out of is its disk, not this
+                    # session's share of it: no new sandbox is placed there
+                    # until a reading finds room again, and the guard reads a
+                    # marked host every minute even with nothing left on it.
+                    await pool.ran_out_of_space(cloud_host_id)
+                moved = not cloud_vm and await pool.leave_unusable(
+                    session_id, cloud_host_id
+                )
+                await db.commit()
+                if moved:
+                    return _Preparing(SANDBOX_PREPARING, _another_attempt)
+                if full:
+                    # Nowhere else to put it and no room here: say what is
+                    # wrong rather than leave every tool call of the turn
+                    # waiting on a machine that cannot take any of them.
+                    return {
+                        "unavailable": EXECUTOR_SETUP_FAILED.format(reason=DISK_FULL)
+                    }
+                return _CLOUD_PREPARING
             if isinstance(exc, ExecutorSetupFailed):
                 logger.warning("executor installation failed: %s", exc)
                 return {
                     "unavailable": EXECUTOR_SETUP_FAILED.format(reason=exc.reason())
                 }
+            if isinstance(exc, ScreenSetupError):
+                # The machine answered, but could not say what it was asked
+                # (the project environment's state did not read there). Its
+                # sentence is written for the agent, and the next attempt asks
+                # again.
+                logger.warning("executor installation failed: %s", exc)
+                return {"unavailable": str(exc)}
             if isinstance(exc, DeviceOffline):
-                # The machine went away while its executor was being set up: the
-                # same answer as when it is away before setup starts (above).
-                if cloud_host_id is not None:
-                    return _CLOUD_PREPARING
+                # The machine went away while its executor was being set up, and
+                # is nobody's Cloud host: the same answer as when it is away
+                # before setup starts (above).
                 return {"unavailable": str(say("environmentDeviceOffline"))}
             raise
         current = await TopicService(db).lock_for_execution(room_id)

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.github_app import GitHubAppError
+from app.domain.project.github_app import GitHubAppError
 
 
 @pytest.fixture

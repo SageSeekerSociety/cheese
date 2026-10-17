@@ -1,0 +1,6 @@
+{
+  "deliveryGaveUp": "{agent} couldn't start within 30 minutes",
+  "labelTimedDeliveryNote": "What you wrote then",
+  "reminder": "Reminder: {text}",
+  "timedDelivery": "You asked the platform to hand you this at this time"
+}

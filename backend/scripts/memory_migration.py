@@ -32,6 +32,8 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.db import async_session_factory
+from app.domain.agent.announce import announce
+from app.domain.agent_instance.adapters import project_team
 from app.domain.memory.migration_service import MemoryMigrationService
 from app.domain.memory.models import MemoryMigrationPlan, MemoryMigrationStatus
 from app.domain.project.models import Project
@@ -79,7 +81,7 @@ async def _load(session, plan_id: str) -> MemoryMigrationPlan:
 async def _dry_run(project: str, report_out: str | None) -> int:
     async with async_session_factory() as session:
         project_id = await _resolve_project(session, project)
-        service = MemoryMigrationService(session)
+        service = MemoryMigrationService(session, announce=announce, team=project_team)
         print("读旧记忆、问模型…（这一步可能要几分钟）\n")
         row = await service.dry_run(project_id, by="script")
         await session.commit()
@@ -101,7 +103,7 @@ async def _dry_run(project: str, report_out: str | None) -> int:
 async def _approve(plan_id: str, by: str) -> int:
     async with async_session_factory() as session:
         row = await _load(session, plan_id)
-        await MemoryMigrationService(session).approve(row.id, by=by)
+        await MemoryMigrationService(session, announce=announce).approve(row.id, by=by)
         await session.commit()
         print(f"计划 {row.id} 已复核（{by}）。")
         return 0
@@ -110,7 +112,7 @@ async def _approve(plan_id: str, by: str) -> int:
 async def _apply(plan_id: str) -> int:
     async with async_session_factory() as session:
         row = await _load(session, plan_id)
-        service = MemoryMigrationService(session)
+        service = MemoryMigrationService(session, announce=announce, team=project_team)
         applied = await service.apply(row.id, by="script")
         await session.commit()
         print(applied.summary)
@@ -124,7 +126,9 @@ async def _apply(plan_id: str) -> int:
 async def _list_plans(project: str) -> int:
     async with async_session_factory() as session:
         project_id = await _resolve_project(session, project)
-        rows = await MemoryMigrationService(session).plans_of(project_id)
+        rows = await MemoryMigrationService(session, announce=announce).plans_of(
+            project_id
+        )
         if not rows:
             print("这个项目还没有搬过。")
             return 0

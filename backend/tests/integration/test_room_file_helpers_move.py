@@ -33,6 +33,7 @@ from tests.integration.test_file_panel_safety import (  # noqa: F401
     _put,
     task_machine,
 )
+from tests.support.pictures import picture
 
 #: The exact card an artifact block serialises to. A move that changed the wire
 #: would add or drop a key here, which is the first thing this pins.
@@ -214,16 +215,15 @@ def test_attachments_upload_library_and_raw_read_the_same(client):
     pid, tid = _room(client)
     pid_u, tid_u = uuid.UUID(pid), uuid.UUID(tid)
 
+    shot = picture("PNG")
     uploaded = client.post(
         f"/topics/{tid}/attachments",
-        files={"file": ("shot.png", b"\x89PNG\r\n\x1a\n0000", "image/png")},
+        files={"file": ("shot.png", shot, "image/png")},
     )
     assert uploaded.status_code == 200, uploaded.text
-    assert uploaded.json()["data"] == {
-        "bytes": 12,
-        "mime": "image/png",
-        "path": "library/shot.png",
-    }
+    sent = uploaded.json()["data"]
+    assert (sent["bytes"], sent["mime"]) == (len(shot), "image/png")
+    assert sent["path"].startswith("uploads/") and sent["path"].endswith("/shot.png")
 
     given = client.post(
         f"/projects/{pid}/library",
@@ -249,7 +249,9 @@ def test_attachments_upload_library_and_raw_read_the_same(client):
         "attachment; filename*=UTF-8''shot.png"
     )
     assert raw.headers["content-type"] == "application/octet-stream"
-    assert raw.headers["cache-control"] == "private, max-age=3600"
+    # 房间里这一份的字节会变（芝士重做一版、人编辑后又存一版，路径还是那一个），
+    # 所以浏览器不许把它留一小时自己答；`uploads/<随机串>/` 下的贴图才是那种。
+    assert raw.headers["cache-control"] == "private, no-cache"
 
 
 def test_attachments_pdf_converts_the_same(client, monkeypatch):

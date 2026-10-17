@@ -181,7 +181,9 @@ async def answer(
     try:
         async with factory() as db:
             await question.admit(db, asked.project_id, bound)
-            around = await question.surroundings(db, asked, seat=bound.agent_handle)
+            around = await question.surroundings(
+                db, asked, seat=bound.agent_handle, asker=None
+            )
             prompt = await thread_question(
                 db, around, document_id=asked.document_id, thread_id=thread_id
             )
@@ -205,6 +207,8 @@ async def answer(
                 asker=asker,
                 work=work,
                 may_edit=True,
+                # A thread is read by everyone who reads the document.
+                shown_to_readers=True,
             )
         return Prompt(work, prompt, acting=acting)
 

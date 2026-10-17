@@ -17,6 +17,7 @@ from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.library import service as library
 from app.main import app
 from tests.ask_fixtures import wait_turn_idle
 from tests.conftest import StubChannel
@@ -28,6 +29,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.pictures import BROKEN_PNG
 
 # A valid 1x1 transparent PNG (67 bytes) — small but real image bytes.
 PNG_1PX = bytes.fromhex(
@@ -76,8 +78,9 @@ def test_upload_then_raw_roundtrip(client):
     _, topic_id = _create_project_and_topic(client)
     att = _upload(client, topic_id)
     assert att["mime"] == "image/png"
-    # 挑出来的那一份按它自己的名字进资料库，消息里带的就是那个地址。
-    assert att["path"] == "library/screenshot.png"
+    # 发进来的那一份留在这段对话里（#3828），不进资料库。
+    assert att["path"].startswith("uploads/")
+    assert att["path"].endswith("/screenshot.png")
 
     raw = client.get(
         f"/topics/{topic_id}/attachments/raw", params={"path": att["path"]}
@@ -85,10 +88,46 @@ def test_upload_then_raw_roundtrip(client):
     assert raw.status_code == 200
     assert raw.headers["content-type"].startswith("image/png")
     assert raw.content == PNG_1PX
-    # 同一个地址下的字节会被替换（替换资料库文件），所以浏览器不许把它留一小时：
-    # 照资料库自己的字节端点的规矩。剪贴板贴进来的那一份相反，它钉在一次粘贴上、
-    # 字节不再变，留一小时是有意的（test_room_file_helpers_move.py）。
+    # 随机串把这个地址钉死在这一次上传上，字节不会再变，浏览器可以留着。另外两种
+    # 地址的规矩见下面那条测试。
+    assert raw.headers["cache-control"] == "private, max-age=3600"
+
+
+def test_a_room_file_that_can_change_is_never_left_to_the_browsers_cache(client):
+    """房间里同一份文件重做过之后，那个地址下的字节变了，浏览器不许自己答「没变」。
+
+    芝士把一版重做完再摆出来（`POST /topics/{id}/shown`），路径还是那一个。留下
+    一小时的话，新的一版摆出来之后整整一小时里，点开画的还是旧的——2026-10-15
+    报的「同名文件显示不了新改动」就是这个。贴进来的那一份相反：`uploads/<随机串>/
+    <名字>` 里的随机串把它钉死在一次粘贴上，字节写完不会再变，留一小时是有意的。
+    """
+    _, topic_id = _create_project_and_topic(client)
+
+    for png in (PNG_1PX, PNG_1PX + b"\x00"):
+        shown = client.post(
+            f"/topics/{topic_id}/shown",
+            json={"path": "预览图.png", "content_b64": base64.b64encode(png).decode()},
+        )
+        assert shown.status_code == 200, shown.text
+
+    raw = client.get(
+        f"/topics/{topic_id}/attachments/raw", params={"path": "预览图.png"}
+    )
+    assert raw.status_code == 200, raw.text
+    assert raw.content == PNG_1PX + b"\x00"
     assert raw.headers["cache-control"] == "private, no-cache"
+
+    pasted = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("shot.png", PNG_1PX, "image/png")},
+        data={"origin": "clipboard"},
+    )
+    assert pasted.status_code == 200, pasted.text
+    path = pasted.json()["data"]["path"]
+    assert path.startswith("uploads/")
+    kept = client.get(f"/topics/{topic_id}/attachments/raw", params={"path": path})
+    assert kept.status_code == 200, kept.text
+    assert kept.headers["cache-control"] == "private, max-age=3600"
 
 
 def test_video_can_be_referenced_and_seeked_without_opening_active_files(client):
@@ -119,9 +158,11 @@ def test_video_can_be_referenced_and_seeked_without_opening_active_files(client)
     assert partial.headers["content-range"] == "bytes 3-6/10"
     assert partial.content == b"3456"
 
+    saved = client.post(f"/topics/{topic_id}/shown/save", json={"path": att["path"]})
+    assert saved.status_code == 200, saved.text
     library_ref = client.post(
         f"/topics/{topic_id}/attachments",
-        data={"library_path": "screen.MP4"},
+        data={"library_path": saved.json()["data"]["name"]},
     )
     assert library_ref.status_code == 200, library_ref.text
     assert library_ref.json()["data"]["mime"] == "video/mp4"
@@ -136,6 +177,103 @@ def test_video_can_be_referenced_and_seeked_without_opening_active_files(client)
             params={"path": uploaded_bad["path"]},
         )
         assert blocked.status_code == 422
+
+
+# 压小的两道上限：「超过」与那个数多大无关，而两百兆的请求在测试里发不动。整 MB，
+# 报出去的那个数才认得出来。
+SMALL_FILE_CEILING = 1024 * 1024
+SMALL_VIDEO_CEILING = 2 * 1024 * 1024
+
+
+def test_a_video_gets_the_video_ceiling_and_every_other_file_keeps_its_own(
+    client, monkeypatch
+):
+    """手机录屏动辄几十上百 MB：视频按视频的上限收，别的文件照旧，拒的时候说的是
+    这一类自己的上限。"""
+    monkeypatch.setattr(library, "MAX_FILE_BYTES", SMALL_FILE_CEILING)
+    monkeypatch.setattr(library, "MAX_VIDEO_BYTES", SMALL_VIDEO_CEILING)
+    project_id, topic_id = _create_project_and_topic(client)
+    over_general = b"x" * (SMALL_FILE_CEILING + 1)
+
+    refused = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("report.pdf", over_general, "application/pdf")},
+    )
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["i18n"] == {
+        "key": "fileTooLarge",
+        "params": {"mb": 1},
+    }
+
+    # An iPhone records HEVC in a QuickTime container: `.MOV`, video/quicktime.
+    for filename, mime in (
+        ("screen.mp4", "video/mp4"),
+        ("IMG_0001.MOV", "video/quicktime"),
+    ):
+        taken = client.post(
+            f"/topics/{topic_id}/attachments",
+            files={"file": (filename, over_general, mime)},
+        )
+        assert taken.status_code == 200, taken.text
+        att = taken.json()["data"]
+        assert att["mime"] == mime
+        assert att["bytes"] == len(over_general)
+        played = client.get(
+            f"/topics/{topic_id}/attachments/raw", params={"path": att["path"]}
+        )
+        assert played.status_code == 200
+        assert played.headers["content-type"] == mime
+        assert played.content == over_general
+
+    too_long = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("long.mp4", b"x" * (SMALL_VIDEO_CEILING + 1), "video/mp4")},
+    )
+    assert too_long.status_code == 422, too_long.text
+    assert too_long.json()["error"]["i18n"] == {
+        "key": "fileTooLarge",
+        "params": {"mb": 2},
+    }
+
+
+def test_the_player_streams_a_video_with_the_cookie_its_first_read_left(client):
+    """`<video>` 自己发的按段请求带不了 Authorization：带着头读过一次之后，这个房间
+    的这条路上留下一个 cookie，播放器凭它接着按段读；它只在这条路上作数。"""
+    _, topic_id = _create_project_and_topic(client)
+    content = b"0123456789"
+    att = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("screen.mov", content, "video/quicktime")},
+    ).json()["data"]
+    raw = f"/topics/{topic_id}/attachments/raw"
+
+    first = client.get(
+        raw, params={"path": att["path"]}, headers={"Range": "bytes=0-0"}
+    )
+    assert first.status_code == 206
+    assert first.content == b"0"
+    cookie = first.headers["set-cookie"]
+    assert f"Path=/api/topics/{topic_id}/attachments/raw" in cookie
+    assert "HttpOnly" in cookie
+    name, value = cookie.split(";", 1)[0].split("=", 1)
+
+    client.headers.clear()
+    client.cookies.clear()
+    without = client.get(raw, params={"path": att["path"]})
+    assert without.status_code in (401, 403)
+
+    seek = client.get(
+        raw,
+        params={"path": att["path"]},
+        headers={"Range": "bytes=3-6", "Cookie": f"{name}={value}"},
+    )
+    assert seek.status_code == 206
+    assert seek.headers["content-range"] == "bytes 3-6/10"
+    assert seek.content == b"3456"
+
+    # The same cookie opens nothing else.
+    elsewhere = client.get(f"/topics/{topic_id}", headers={"Cookie": f"{name}={value}"})
+    assert elsewhere.status_code in (401, 403)
 
 
 @pytest.mark.parametrize(
@@ -423,7 +561,9 @@ def test_image_only_message_allowed(client, stub_hooks):
 
 @pytest.mark.parametrize("midturn", [False, True])
 def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
-    """The actual session input carries one image, not ZIP/PDF/unknown bytes."""
+    """The actual session input carries one image, not ZIP/PDF/unknown bytes,
+    and not a PNG whose bytes do not decode — the browser calling it image/png
+    at upload, or the message calling it that, changes nothing."""
     _, topic_id = _create_project_and_thread(client)
     image = _upload(client, topic_id)
     files = [
@@ -434,9 +574,16 @@ def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
         for name, data, mime in (
             ("source.zip", b"PK\x03\x04source", "application/zip"),
             ("paper.pdf", b"%PDF-1.7 test", "application/pdf"),
+            ("broken.png", BROKEN_PNG, "image/png"),
+            ("claimed.png", BROKEN_PNG, "image/png"),
             ("unknown.bin", b"unknown", "application/octet-stream"),
         )
     ]
+    broken, claimed = files[2], files[3]
+    # The upload keeps it, as a plain file.
+    assert broken["mime"] == claimed["mime"] == "application/octet-stream"
+    # A message may still call it a picture: a client's word is a claim too.
+    claimed["mime"] = "image/png"
     # Legacy records can have no MIME; never guess image/png from their path.
     files[-1]["mime"] = ""
 
@@ -495,6 +642,9 @@ def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
     assert "已附在本条消息里" in prompt
     for file in files:
         assert f"发来一个文件：{file['path']}" in prompt
+    for file in (broken, claimed):
+        line = next(x for x in prompt.splitlines() if file["path"] in x)
+        assert "不要用 Read 打开它" in line
 
 
 # --- 图片输入 on a backend that does NOT embed images -----------------------
@@ -577,7 +727,10 @@ def test_a_deleted_library_file_does_not_wedge_the_room(client, stub_hooks):
     turn: the turn finishes, 芝士 is told the file is gone instead of being
     handed an image, and the next message is not held behind it."""
     project_id, topic_id = _create_project_and_thread(client)
-    att = _upload(client, topic_id)
+    sent = _upload(client, topic_id)
+    saved = client.post(f"/topics/{topic_id}/shown/save", json={"path": sent["path"]})
+    assert saved.status_code == 200, saved.text
+    att = {**sent, "path": "library/screenshot.png"}
     gone = client.delete(
         f"/projects/{project_id}/library", params={"path": "screenshot.png"}
     )

@@ -7,7 +7,7 @@ analysis), each with its material and a follow-up edit. Each model writes
 every document with the guide as its system prompt, then makes the edit; a
 judge model scores each document against the rubric below without knowing
 which model wrote it. Run it after changing the guide
-(`app/domain/agent/skill_library/doc_writing.md` and `doc_blocks.md`) or the
+(`app/domain/skill_library/doc_writing.md` and `doc_blocks.md`) or the
 always-on writing rules, and compare the averages with the previous run.
 
 It calls models through the LLM gateway with the admin key, so it runs where

@@ -23,6 +23,7 @@ vi.mock('@/api', async (importOriginal) => ({
   listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false }),
   getPreview: vi.fn().mockResolvedValue(null),
   listFeedbackProposals: vi.fn().mockResolvedValue([]),
+  listTopics: vi.fn().mockResolvedValue({ data: [], has_more: false }),
 }))
 // 地址换短名要问后端；这里没有后端，换不成就照原地址打开。
 vi.mock('@/api/addresses', () => ({
@@ -30,11 +31,13 @@ vi.mock('@/api/addresses', () => ({
   resolveNumber: vi.fn().mockRejectedValue(new Error('offline')),
   addressOf: vi.fn().mockRejectedValue(new Error('offline')),
 }))
+vi.mock('@/lib/pdfPreload', () => ({ preloadPdfViewer: vi.fn() }))
 vi.mock('@/views/workspace/ProjectShell.vue', pageCode)
 vi.mock('@/views/workspace/ProjectSidebar.vue', pageCode)
 vi.mock('@/views/workspace/TopicView.vue', pageCode)
 
-import { getPreview, listBlocks, listFeedbackProposals } from '@/api'
+import { getPreview, listBlocks, listFeedbackProposals, listTopics } from '@/api'
+import { preloadPdfViewer } from '@/lib/pdfPreload'
 import { setCachedWindow } from '@/query/blocks'
 import router from '@/router'
 
@@ -49,6 +52,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.mocked(listBlocks).mockClear()
   vi.mocked(getPreview).mockClear()
+  vi.mocked(listTopics).mockClear()
   signedIn.id = '7'
 })
 
@@ -94,6 +98,26 @@ describe('opening a topic', () => {
     await vi.waitFor(() => expect(listBlocks).toHaveBeenCalledWith(task, expect.anything()), { timeout: 20_000 })
   }, 30_000)
 
+  // pdf.js 有半兆：和消息同时下载会把这一屏要等的那次读拖长，所以等消息落地再取。
+  it('leaves the PDF viewer download until the messages are in', async () => {
+    const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b0b'
+    let land!: () => void
+    vi.mocked(listBlocks).mockImplementationOnce(
+      () =>
+        new Promise(
+          (resolve) =>
+            (land = () =>
+              resolve({ data: [], total: 0, has_more: false, oldest_id: null, has_newer: false, newest_id: null }))
+        )
+    )
+    vi.mocked(preloadPdfViewer).mockClear()
+    void router.push(`/projects/${PROJECT}/channels/${topic}`)
+    await vi.waitFor(() => expect(listBlocks).toHaveBeenCalledWith(topic, expect.anything()), { timeout: 20_000 })
+    expect(preloadPdfViewer).not.toHaveBeenCalled()
+    land()
+    await vi.waitFor(() => expect(preloadPdfViewer).toHaveBeenCalled())
+  }, 30_000)
+
   // 频道没有「预览」那一格（那是任务的，见 WorkPanel 的 CHANNEL_TABS）：打开频道
   // 不替它问「当前预览是哪一份」，问了也没有地方用。
   it('asks a channel for no preview', async () => {
@@ -117,5 +141,26 @@ describe('opening a topic', () => {
     void router.push(`/projects/${PROJECT}/tasks/${task}`)
     await new Promise((r) => setTimeout(r, 20))
     expect(getPreview).not.toHaveBeenCalled()
+  })
+})
+
+// 侧栏和页面上的房间行都等项目的频道清单；它只要地址上的项目 id，不必等项目框的代码下完。
+describe('opening a project page', () => {
+  it("fetches the project's channel list while the page code is still loading", async () => {
+    const project = '3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b11'
+    void router.push(`/projects/${project}/channels/9b81c0de-1f22-4a33-9c44-5d6e7f8a9b09`)
+    await vi.waitFor(
+      () => expect(listTopics).toHaveBeenCalledWith(project, expect.anything(), undefined, expect.anything()),
+      {
+        timeout: 20_000,
+      }
+    )
+  }, 30_000)
+
+  it('fetches no channel list when nobody is signed in', async () => {
+    signedIn.id = ''
+    void router.push(`/projects/3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b12/channels/9b81c0de-1f22-4a33-9c44-5d6e7f8a9b0a`)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(listTopics).not.toHaveBeenCalled()
   })
 })

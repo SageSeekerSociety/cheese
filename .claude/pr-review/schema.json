@@ -15,7 +15,7 @@
         "required": ["severity", "kind", "file", "line", "title", "failure", "evidence", "rung", "confirm_with"],
         "properties": {
           "severity": {"enum": ["blocker", "major", "minor"]},
-          "kind": {"enum": ["runtime", "test", "ci", "rule", "claim"]},
+          "kind": {"enum": ["runtime", "test", "ci", "rule", "claim", "spec"], "description": "spec is a finding against the requirement contract: missing work, or work the contract did not ask for (step 5b)"},
           "file": {"type": "string"},
           "line": {"type": "integer", "minimum": 0},
           "title": {"type": "string", "description": "One line, the defect itself"},

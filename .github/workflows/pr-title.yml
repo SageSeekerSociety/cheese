@@ -11,6 +11,11 @@ name: PR title recheck
 # A run still in progress needs nothing: its title step has not run yet and
 # reads the PR as it is when it does. Fork PRs get a read-only token and are
 # left alone.
+#
+# This re-run is also the way out check-commit-title.py names: a `WIP:` title
+# that reaches a PR it judges — nobody marked the draft ready under a subject —
+# is refused as the platform's placeholder rather than as the author's format
+# mistake, and the answer it gives is the title edit this workflow answers.
 on:
   pull_request:
     types: [ready_for_review, edited]

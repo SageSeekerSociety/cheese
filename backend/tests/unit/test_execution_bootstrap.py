@@ -36,7 +36,7 @@ def test_prepared_executor_can_start_offline_forge_transport(tmp_path, monkeypat
 
 
 def test_executor_prepares_room_without_model_credentials(tmp_path):
-    pin = Path.home() / ".local/share/claude/versions/2.1.282"
+    pin = Path.home() / ".local/share/claude/versions/2.1.299"
     binary = os.environ.get("CHEESE_TEST_CLAUDE") or (
         str(pin) if pin.exists() else None
     )
@@ -46,7 +46,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
             "running the pure layer"
         )
     owner = tmp_path / "owner"
-    destination = owner / ".cheese/claude/versions/2.1.282"
+    destination = owner / ".cheese/claude/versions/2.1.299"
     destination.parent.mkdir(parents=True)
     destination.symlink_to(binary)
     project, resource = uuid.uuid4(), uuid.uuid4()
@@ -234,7 +234,7 @@ def test_a_new_executor_machine_is_given_the_platform_skills(tmp_path, monkeypat
     be there.
     """
     from app.domain.agent.harness.claude_code.remote_execution import bootstrap
-    from app.domain.agent.skills import native_skill_files
+    from app.domain.skill_library import native_skill_files
 
     payload = _executor_payload()
     assert payload["skills"], "the payload carries no skills at all"

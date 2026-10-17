@@ -24,6 +24,7 @@ import { TextSelection } from '@tiptap/pm/state'
 
 import { CALLOUT_KINDS, emptyItem } from '../../../../lib/docSchema/blocks'
 
+import { appNodeView } from './appView'
 import { chartView } from './chartView'
 import { codeBlockView } from './mermaidView'
 import { closePopover, controlButton, menuAt, popoverAt } from './popover'
@@ -414,7 +415,7 @@ const VIEWS: Record<string, ViewFactory> = {
 
 /** The document's extensions with the editor's views on its blocks. */
 export function withBlockViews(extensions: AnyExtension[], agent: AgentHook): AnyExtension[] {
-  const views: Record<string, ViewFactory> = { ...VIEWS, codeBlock: codeBlockView(agent) }
+  const views: Record<string, ViewFactory> = { ...VIEWS, codeBlock: codeBlockView(agent), app: appNodeView(agent) }
   return extensions.map((extension) => {
     const view = views[extension.name]
     if (!view || extension.type !== 'node') return extension

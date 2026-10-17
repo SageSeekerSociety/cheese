@@ -12,6 +12,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 let vuetify: ReturnType<typeof createVuetify>
@@ -75,6 +76,8 @@ function frame(data: Record<string, unknown>) {
 }
 
 const toastText = () => document.querySelector('.chat-error-toast')?.textContent ?? null
+
+beforeAll(loadMarkdownReader)
 
 describe('出错提示', () => {
   it('一次没成的事说一句，过几秒自己走', async () => {

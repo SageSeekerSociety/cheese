@@ -5,6 +5,13 @@ and email/push intent use stable event/recipient keys, so a partial batch can be
 retried without duplicating intent. SMTP and push happen only after commit in
 their own bounded consumers; provider acceptance can still be duplicated after
 a lost response. Agent receipt state is managed by delivery.agent.
+
+The other half — the notification code, the shape of one event, its stable id
+and its dedup key — is data, and lives at layer 1 in
+``app.domain.delivery_events`` so that every layer can say something happened
+without climbing to this one. This module re-exports it, because whoever reads
+the ledger usually wants both halves at once. Writing stays here: it lands
+rows, sends in-app notifications and mail.
 """
 
 from __future__ import annotations
@@ -21,15 +28,20 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
-from app.domain.delivery.addressing import Addressed
-from app.domain.delivery.models import ChannelDelivery, Delivery, TimedDelivery
+from app.domain.addressing import Addressed
+from app.domain.delivery.models import Delivery, TimedDelivery
+from app.domain.delivery_events import (
+    DeliveryEvent,
+    NotificationType,
+    dedup_key,
+)
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
     NotificationDelivery,
     NotificationEventHandler,
 )
-from app.domain.notification.models import Notification, NotificationType
+from app.domain.notification.models import ChannelDelivery, Notification
 from app.domain.notification.publisher import build_notification_event_handler
 from app.domain.user.services import user_by_handle
 
@@ -38,29 +50,9 @@ logger = logging.getLogger(__name__)
 #: 补发试到第几次为止。见模块说明「试到第几次为止」。
 MAX_ATTEMPTS: Final = 5
 
-#: 社交事件 id 的命名空间。固定值：换掉它等于把在途的去重键全部作废，同一件事会
-#: 再通知一遍。
-_EVENT_NAMESPACE: Final = uuid.uuid5(uuid.NAMESPACE_DNS, "notification.cheese")
-
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
-
-
-@dataclass(frozen=True, slots=True)
-class DeliveryEvent:
-    """一条要投出去的事件 —— 窄到只剩账本要记的部分。
-
-    `id` 是这条事件的身份（房间里那条 block 的 id），去重键跟着它走，所以调用点重
-    算一遍寻址不会变成第二次打扰。`occurred_at` 是事情发生的时刻，不是投递的时刻。
-    """
-
-    id: uuid.UUID
-    type: NotificationType
-    payload: dict
-    #: **必填**。给它一个「现在」的默认值，等于让每个调用点都可以不声不响地把投递的
-    #: 时刻当成事件的时刻，而这个字段整条设计都在说那两个不是一回事。
-    occurred_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,25 +64,6 @@ class Pending:
     type: NotificationType
     payload: dict
     dedup_key: str
-
-
-def dedup_key(event_id: uuid.UUID, handle: str) -> str:
-    """这条事件发给这个人的那一次投递的身份。跟事件走，不跟发送尝试走。"""
-    return f"{event_id}:{handle}"
-
-
-def event_id_for(type_: NotificationType, record_id: int | str) -> uuid.UUID:
-    """长在一条领域记录上的那种事件的身份：哪条记录，发生了哪件事。
-
-    `record_id` 是引发它的那条记录（申请、邀请、讨论回复，或一次会话开工的那份
-    租约），`type_` 是那条记录上发生的这一件事 —— 两样都要：一条邀请从发出到被
-    取消是同一条记录上的两件事，只按记录算，第二件就会撞上第一件的去重键，收件人再也收不到取消那一条。
-
-    算出来的 id 只取决于这两样，所以同一件事重算一遍得到同一个 id：重试、补发、同
-    一条事件被算两遍，收件人只被打扰一次。当场 `uuid4()` 得到的是**这一次调用**的
-    身份，那就等于没有去重。
-    """
-    return uuid.uuid5(_EVENT_NAMESPACE, f"{type_.value}:{record_id}")
 
 
 class Ledger:
@@ -344,6 +317,18 @@ async def settle(session: AsyncSession, event_id: uuid.UUID, outcome: dict) -> N
     据此说现在的状态；账本上的 `payload` 也跟着改，补发写回来的才是现在这句话。
     """
     keys = select(Delivery.dedup_key).where(Delivery.event_id == event_id)
+    await _settle(session, keys, outcome)
+
+
+async def settle_for(
+    session: AsyncSession, event_id: uuid.UUID, recipient: str, outcome: dict
+) -> None:
+    """`settle`, for one recipient only: the thing is done as far as he is
+    concerned, while the others it reached are still waited on (a person
+    skipping a question several people were asked)."""
+    keys = select(Delivery.dedup_key).where(
+        Delivery.event_id == event_id, Delivery.recipient_handle == recipient
+    )
     await _settle(session, keys, outcome)
 
 

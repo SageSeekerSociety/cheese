@@ -23,6 +23,12 @@ from starlette.status import (
     HTTP_504_GATEWAY_TIMEOUT,
 )
 
+from app.core.device_failures import (
+    DeviceCallError,
+    DeviceOffline,
+    LinkInterrupted,
+    offline_headers,
+)
 from app.core.sentences import NoticeText, say
 
 
@@ -452,15 +458,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register the error handlers: the BaseError family (AppError included),
     HTTP and request-validation errors, the device-link conditions, and the
     catch-all. Shared by main.py and the connection owner."""
-    # Imported here, not at module scope: nothing but this registration needs
-    # the names, and `app.core.obs` (for the logger below) only loads once the
-    # module is being finished.
-    from app.core.device_failures import (
-        DeviceCallError,
-        DeviceOffline,
-        LinkInterrupted,
-        offline_headers,
-    )
 
     async def _handle_device_offline(_: Request, exc: DeviceOffline) -> JSONResponse:
         """A machine that is off is an answer, not a fault of this server.

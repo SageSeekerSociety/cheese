@@ -1,0 +1,8 @@
+{
+  "dmFailed": "打开私聊失败",
+  "notFound": "这个频道不存在",
+  "notFoundHint": "它可能已被删除，或不属于这个项目",
+  "quoted": "《{title}》",
+  "resize": "拖动调整宽度，双击复位",
+  "untitledTask": "新任务"
+}

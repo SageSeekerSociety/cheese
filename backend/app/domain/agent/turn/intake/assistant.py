@@ -12,7 +12,7 @@ from app.domain.agent.queries import _agent_handle
 from app.domain.agent.turn.intake.events import _persist_room_event
 from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent.turn.store.assistant import persist_assistant_message
-from app.domain.block.models import AuthorType
+from app.domain.event_author import AuthorType
 from app.domain.topic.models import Topic
 from app.domain.topic.reads import load_topic
 

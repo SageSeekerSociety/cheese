@@ -15,6 +15,8 @@ import type { Block } from '../cx_types'
 
 import i18n, { t } from '../i18n'
 
+import { docLineInTurn } from './docEditLine'
+
 /** 一天有多少毫秒。算「隔了几天」用整天的边界，不是按 24 小时除。 */
 export const DAY_MS = 86_400_000
 
@@ -86,10 +88,23 @@ export function sameSpeaker(a: Block, b: Block): boolean {
  */
 export function runEdgeBetween(prev: Block | undefined, cur: Block, opts: { broken: boolean }): RunEdge {
   if (!prev) return 'start'
-  if (prev.kind === 'event' || cur.kind === 'event') return 'start'
+  if (prev.kind === 'event' || cur.kind === 'event') return !opts.broken && sameTurn(prev, cur) ? 'cont' : 'start'
   if (opts.broken) return 'start'
   if (!sameSpeaker(prev, cur) || dayKey(prev.created_at) !== dayKey(cur.created_at)) return 'start'
   return Date.parse(cur.created_at) - Date.parse(prev.created_at) >= REGROUP_GAP_MS ? 'regroup' : 'cont'
+}
+
+/**
+ * 队友在一轮里调工具改了文档，留下的那一行（lib/docEditLine）是这一轮的一部分：它和
+ * 同一位队友这一轮说的话接成一段，像一次工具调用夹在一轮回答里，不另起头像和名字。
+ * 别的事件行照旧和消息断开。
+ */
+function sameTurn(prev: Block, cur: Block): boolean {
+  const part = (b: Block) => docLineInTurn(b) || b.kind === 'message' || b.kind === 'attachment'
+  if (!docLineInTurn(prev) && !docLineInTurn(cur)) return false
+  if (!part(prev) || !part(cur)) return false
+  if (!prev.turn_id || prev.turn_id !== cur.turn_id || prev.author !== cur.author) return false
+  return dayKey(prev.created_at) === dayKey(cur.created_at)
 }
 
 /**
