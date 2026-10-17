@@ -21,6 +21,7 @@ import { useMentionOutside } from '../composables/useMentionOutside'
 import { noteFacts, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
+import { memberName } from '../lib/agentNames'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
@@ -152,7 +153,7 @@ const panelEmit = ((event: string, ...args: unknown[]) => {
 // 我 @ 了不在这个频道里的人：问要不要加进来（Slack 那样），见 useMentionOutside。
 const mentionOutside = useMentionOutside({
   place: () => props.conversationId ?? props.topic?.id ?? null,
-  nameOf: (handle) => props.members.find((m) => m.user_handle === handle)?.name || handle,
+  nameOf: (handle) => memberName(props.members.find((m) => m.user_handle === handle)) || handle,
 })
 const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
 
@@ -257,6 +258,7 @@ const {
   fmtTime,
   isMine,
   displayName,
+  authorTitle,
   isExternal,
   avatarSrc,
   myName,
@@ -455,6 +457,7 @@ useComposerShortcut({
           :is-external="isExternal"
           :avatar-of="avatarSrc"
           :display-name="displayName"
+          :author-title="authorTitle"
           :notice-agent="noticeAgent"
           :agent-faces="agentFaces"
           :parent-of="parentOf"

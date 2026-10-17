@@ -50,7 +50,7 @@ import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import MoveProjectDialog from '@/components/MoveProjectDialog.vue'
 import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
 import { t } from '@/i18n'
-import { memberName, teammateName } from '@/lib/agentNames'
+import { memberName, memberOriginalName, teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { isExternalMember } from '@/lib/externalMembers'
 import { mayIn } from '@/lib/projectPermissions'
@@ -144,7 +144,11 @@ const error = ref<string | null>(null)
 function matches(m: ProjectMemberRow): boolean {
   const q = query.value.trim().toLowerCase()
   if (!q) return true
-  return memberName(m).toLowerCase().includes(q) || m.user_handle.toLowerCase().includes(q)
+  return (
+    memberName(m).toLowerCase().includes(q) ||
+    memberOriginalName(m).toLowerCase().includes(q) ||
+    m.user_handle.toLowerCase().includes(q)
+  )
 }
 
 const people = computed(() => store.members.filter((m) => !m.agent && matches(m)))
@@ -480,6 +484,11 @@ useCommands(() => [
             <div class="min-w-0">
               <div class="d-flex align-center ga-2">
                 <span class="t-title text-truncate">{{ memberName(m) || m.user_handle }}</span>
+                <span
+                  v-if="m.remark && memberOriginalName(m) && memberOriginalName(m) !== m.remark"
+                  class="t-meta c-muted text-truncate"
+                  >({{ memberOriginalName(m) }})</span
+                >
                 <ExternalTag v-if="isExternalMember(m)" />
                 <span v-if="teamChip(m)" class="chip-neutral">{{ teamChip(m) }}</span>
                 <span v-if="m.user_handle === me" class="chip-neutral">{{ t('work.members.me') }}</span>
