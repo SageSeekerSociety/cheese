@@ -83,6 +83,7 @@ RELEASE_FILES = core.RELEASE_FILES
 CONTROL_INSPECT = commands.SHELL_INSPECT
 NATIVE_TOOLS = core.NATIVE_TOOLS
 COMMAND_ABANDONED_S = core.COMMAND_ABANDONED_S
+OUTPUT_KEPT_S = core.OUTPUT_KEPT_S
 EXECUTOR_IDLE_EXIT_S = core.EXECUTOR_IDLE_EXIT_S
 EXECUTOR_IDLE_CHECK_S = core.EXECUTOR_IDLE_CHECK_S
 STOP_SIGNALS = core.STOP_SIGNALS
@@ -311,7 +312,8 @@ class Executor:
                 except (OSError, ValueError):
                     continue
                 last = max(finished, self.collected.get(record.name, 0))
-                if meta.get("watched") and time.time() - last > COMMAND_ABANDONED_S:
+                kept = OUTPUT_KEPT_S if meta.get("kept") else COMMAND_ABANDONED_S
+                if meta.get("watched") and time.time() - last > kept:
                     shutil.rmtree(record, ignore_errors=True)
 
     def bash(self, args, key=None):

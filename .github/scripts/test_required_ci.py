@@ -429,6 +429,48 @@ class RequiredCITest(unittest.TestCase):
         del needs["scope"]["outputs"]["backend"]
         self.assertTrue(gate.failures(needs, "full"))
 
+    def test_pull_request_skips_e2e_and_remote_even_when_paths_match(self):
+        for path in (
+            "backend/app/api/rooms.py",
+            "e2e/tests/login.spec.ts",
+            "scripts/remote_execution/room_fixture.py",
+            ".github/scripts/required-ci.py",
+        ):
+            with self.subTest(path=path):
+                pr_selected = gate.select([path], "pull_request")
+                self.assertFalse(pr_selected["e2e"])
+                self.assertFalse(pr_selected["remote"])
+                self.assertTrue(pr_selected["guards"])
+        mg_selected = gate.select(
+            ["e2e/tests/login.spec.ts", "scripts/remote_execution/room_fixture.py"],
+            "merge_group",
+        )
+        self.assertTrue(mg_selected["e2e"])
+        self.assertTrue(mg_selected["remote"])
+
+    def test_check_accepts_skipped_e2e_and_remote_on_pull_request_only(self):
+        pr_needs = self.needs()
+        pr_needs["scope"]["outputs"]["branch_heavy"] = "false"
+        for suite in ("e2e", "remote"):
+            pr_needs["scope"]["outputs"][suite] = "false"
+            pr_needs[suite]["result"] = "skipped"
+        self.assertEqual(gate.failures(pr_needs, "full", "pull_request"), [])
+        raw_skipped = self.needs()
+        for suite in ("e2e", "remote"):
+            raw_skipped[suite]["result"] = "skipped"
+        self.assertEqual(gate.failures(raw_skipped, "full", "pull_request"), [])
+        mismatch = self.needs()
+        mismatch["scope"]["outputs"]["branch_heavy"] = "true"
+        for suite in ("e2e", "remote"):
+            mismatch[suite]["result"] = "skipped"
+        self.assertTrue(gate.failures(mismatch, "full", "pull_request"))
+        for suite in ("e2e", "remote"):
+            with self.subTest(suite=suite):
+                mg_needs = self.needs()
+                mg_needs["scope"]["outputs"]["branch_heavy"] = "true"
+                mg_needs[suite]["result"] = "skipped"
+                self.assertTrue(gate.failures(mg_needs, "full", "merge_group"))
+
 
 class TierForTest(unittest.TestCase):
     """The event → tier table, the single source of the whole scheme's safety.
@@ -992,6 +1034,64 @@ class WorkflowTextTest(unittest.TestCase):
         self.assertFalse(condition_holds(draft["if"], "pull_request", True, True))
         self.assertFalse(condition_holds(full["if"], "merge_group", None, True))
 
+    def test_backend_integration_is_deferred_to_merge_group(self):
+        jobs = jobs_of(self.text)
+        self.assertIn("branch_heavy", jobs["scope"]["text"])
+        self.assertIn(
+            "integration: ${{ needs.scope.outputs.branch_heavy == 'true' }}",
+            jobs["backend"]["text"],
+        )
+        test_yml = (WORKFLOW.parent / "test.yml").read_text()
+        test_jobs = jobs_of(test_yml)
+        self.assertIn("integration", test_jobs)
+        self.assertEqual(
+            test_jobs["integration"]["if"],
+            "${{ inputs.integration && github.event_name != 'pull_request' }}",
+        )
+        collect_body = run_body_containing(test_yml, "backend-expected")
+        compare_body = run_body_containing(test_yml, "assert_shards_complete")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            uv_log = tmp / "uv_args"
+            _stub(bindir, "uv", 'printf "%s\\n" "$*" >> "$UV_LOG"\n')
+            _stub(bindir, "python3", "exit 0\n")
+            env = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "RUNNER_TEMP": str(tmp),
+                "UV_LOG": str(uv_log),
+                "PLAN_ARTIFACT": "backend-expected",
+                "TEST_RESULT": "success",
+            }
+            subprocess.run(
+                ["bash", "-e", "-c", collect_body],
+                env={**env, "EXPECT_INTEGRATION": "false"},
+                cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            self.assertIn("-m not integration", uv_log.read_text())
+            uv_log.write_text("")
+            subprocess.run(
+                ["bash", "-e", "-c", collect_body],
+                env={**env, "EXPECT_INTEGRATION": "true"},
+                cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            self.assertNotIn("not integration", uv_log.read_text())
+
+            pr_ok = subprocess.run(
+                ["bash", "-e", "-c", compare_body],
+                env={**env, "EXPECT_INTEGRATION": "false", "INTEGRATION_RESULT": "skipped"},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertEqual(pr_ok.returncode, 0, pr_ok.stderr)
+            mg_fail = subprocess.run(
+                ["bash", "-e", "-c", compare_body],
+                env={**env, "EXPECT_INTEGRATION": "true", "INTEGRATION_RESULT": "skipped"},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertNotEqual(mg_fail.returncode, 0)
+
 
 class MainCliTest(unittest.TestCase):
     """The ``scope``/``check`` wiring that the runner actually invokes."""
@@ -1036,15 +1136,116 @@ class MainCliTest(unittest.TestCase):
                 "GITHUB_EVENT_PATH": self._event_file(tmp, {"pull_request": {"draft": True}}),
                 "GITHUB_OUTPUT": str(out),
             }
-            subprocess.run([sys.executable, str(tmp / "required-ci.py"), "scope", base],
-                           env=env, cwd=tmp, check=True, capture_output=True, text=True)
+            proc = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "scope", base],
+                env=env, cwd=tmp, check=True, capture_output=True, text=True,
+            )
             written = dict(line.split("=", 1) for line in out.read_text().splitlines())
-            # The changed backend file selects backend (and e2e/remote/guards);
+            # The changed backend file selects backend and guards on pull_request,
+            # while backend integration, e2e and remote are left to merge_group;
             # a draft event makes it the quick tier.
             self.assertEqual(written["tier"], "quick")
+            self.assertEqual(written["branch_heavy"], "false")
             self.assertEqual(written["backend"], "true")
+            self.assertEqual(written["e2e"], "false")
+            self.assertEqual(written["remote"], "false")
             self.assertEqual(written["cifast"], "false")
+            self.assertIn("e2e/remote 留给合并队列", proc.stdout)
             self.assertTrue(all(v in ("true", "false") for k, v in written.items() if k != "tier"))
+
+    def test_pull_request_defers_e2e_and_remote_while_merge_group_requires_them(self):
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+
+            def git(*args):
+                subprocess.run(
+                    ["git", "-c", "user.email=test@example.com", "-c", "user.name=test",
+                     "-c", "commit.gpgsign=false", *args],
+                    cwd=tmp, check=True, capture_output=True, text=True)
+
+            git("init", "-q", "-b", "main")
+            git("remote", "add", "origin", str(tmp))
+            (tmp / "base.txt").write_text("base\n")
+            git("add", "base.txt")
+            git("commit", "-qm", "base")
+            base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            git("checkout", "-qb", "entry")
+            for rel in ("backend/app/api/rooms.py", "e2e/tests/login.spec.ts"):
+                target = tmp / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("x = 1\n")
+                git("add", rel)
+            git("commit", "-qm", "touch backend and e2e")
+
+            pr_out = tmp / "pr_output"
+            pr_env = {
+                **os.environ,
+                "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_EVENT_PATH": self._event_file(tmp, {"pull_request": {"draft": False}}),
+                "GITHUB_OUTPUT": str(pr_out),
+            }
+            pr_scope = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "scope", base],
+                env=pr_env, cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            pr_written = dict(line.split("=", 1) for line in pr_out.read_text().splitlines())
+            self.assertEqual(pr_written["tier"], "full")
+            self.assertEqual(pr_written["branch_heavy"], "false")
+            self.assertEqual(pr_written["backend"], "true")
+            self.assertEqual(pr_written["e2e"], "false")
+            self.assertEqual(pr_written["remote"], "false")
+            self.assertIn("e2e/remote 留给合并队列", pr_scope.stdout)
+
+            pr_needs = {
+                "scope": {"result": "success", "outputs": pr_written},
+                "fast": {"result": "skipped"},
+                **{
+                    k: {"result": "success" if pr_written[k] == "true" else "skipped"}
+                    for k in gate.PATHS
+                },
+            }
+            pr_check = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "check"],
+                env={**pr_env, "CI_NEEDS": json.dumps(pr_needs)},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertEqual(pr_check.returncode, 0, pr_check.stderr)
+
+            mg_out = tmp / "mg_output"
+            mg_env = {
+                **os.environ,
+                "GITHUB_EVENT_NAME": "merge_group",
+                "GITHUB_EVENT_PATH": self._event_file(tmp, {}),
+                "GITHUB_OUTPUT": str(mg_out),
+            }
+            mg_scope = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "scope", base],
+                env=mg_env, cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            mg_written = dict(line.split("=", 1) for line in mg_out.read_text().splitlines())
+            self.assertEqual(mg_written["branch_heavy"], "true")
+            self.assertEqual(mg_written["e2e"], "true")
+            self.assertEqual(mg_written["remote"], "true")
+            self.assertNotIn("e2e/remote 留给合并队列", mg_scope.stdout)
+
+            mg_needs_skipped = {
+                "scope": {"result": "success", "outputs": mg_written},
+                "fast": {"result": "skipped"},
+                **{
+                    k: {"result": "success" if mg_written[k] == "true" else "skipped"}
+                    for k in gate.PATHS
+                },
+            }
+            mg_needs_skipped["e2e"]["result"] = "skipped"
+            mg_check_fail = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "check"],
+                env={**mg_env, "CI_NEEDS": json.dumps(mg_needs_skipped)},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertNotEqual(mg_check_fail.returncode, 0)
 
     def test_check_mode_fails_closed_when_the_event_is_unreadable(self):
         env = {**os.environ, "GITHUB_EVENT_NAME": "pull_request",
