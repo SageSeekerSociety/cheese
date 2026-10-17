@@ -460,23 +460,7 @@ repos:
       # instead of a red that misnames the cause.
       - id: guard-self-tests
         name: every guard's self-test goes red when the guard is silenced
-        entry: |
-          bash -c '
-          set -u
-          py=
-          for candidate in python3 python3.13 python3.12 python3.11 python3.10; do
-            if command -v "$candidate" >/dev/null 2>&1 \
-               && "$candidate" -c "import sys; raise SystemExit(sys.version_info < (3, 10))" >/dev/null 2>&1; then
-              py=$candidate
-              break
-            fi
-          done
-          if [ -z "$py" ]; then
-            printf "cannot judge: no Python 3.10+ on PATH for verify-guard-self-tests.py\n" >&2
-            exit 2
-          fi
-          "$py" .claude/scripts/verify-guard-self-tests.py --allow-unjudgeable scene-debt-ratchet.py
-          '
+        entry: 'bash -c ''py=; for c in python3 python3.13 python3.12 python3.11 python3.10; do command -v "$c" >/dev/null 2>&1 && "$c" -c "import sys; raise SystemExit(sys.version_info < (3, 10))" >/dev/null 2>&1 && py=$c && break; done; if [ -z "$py" ]; then printf "cannot judge: no Python 3.10+ on PATH for verify-guard-self-tests.py\n" >&2; exit 2; fi; "$py" .claude/scripts/verify-guard-self-tests.py --allow-unjudgeable scene-debt-ratchet.py'''
         language: system
         pass_filenames: false
         files: ^(\.claude/scripts/|\.pre-commit-config\.yaml$)

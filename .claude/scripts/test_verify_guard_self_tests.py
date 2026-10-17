@@ -3989,12 +3989,15 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("UNVERIFIED (allowed)", result.stdout)
 
-    def test_an_allowance_covers_a_self_test_that_cannot_start_in_this_lane(self) -> None:
-        """scene-debt-ratchet's shape: the self-test needs what the lane lacks.
+    def test_an_allowance_covers_a_self_test_that_is_red_in_this_lane(self) -> None:
+        """scene-debt-ratchet's shape in a lane without frontend/node_modules.
 
-        Silencing is irrelevant here — a self-test that does not start reports
-        `self-test-not-green`, which this lane cannot tell apart from a broken
-        one. The allowance is what says the breakage is the lane's.
+        Silencing is irrelevant here: the self-test runs and fails on what the
+        lane lacks, which is `self-test-not-green` — the same status a broken
+        self-test produces, so this lane cannot tell them apart. The allowance
+        is what says the breakage is the lane's. (The other shape, a self-test
+        that cannot start at all, is `unverified` and is covered by the first
+        case above; both statuses are in `ALLOWABLE_STATUSES`.)
         """
         result = self._allow(
             {"needsnode.py": NOT_GREEN}, {}, "--allow-unjudgeable", "needsnode.py"
