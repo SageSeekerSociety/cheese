@@ -1,10 +1,10 @@
-"""Ratchet: every ``# noqa`` names a rule this project actually runs.
+"""Ratchet: every ``# noqa`` in ``backend/app`` names a rule that runs.
 
-``backend/pyproject.toml`` selects E, F, I, UP, B, DTZ and A003. A directive
-naming anything else — ``# noqa: BLE001`` over a bare ``except``, say —
-suppresses nothing and cannot fail: no linter reads it, so nothing ever tells
-the reader it is inert. This test counts those inert directives per (file,
-rule) and holds them to the numbers written below.
+``backend/pyproject.toml`` selects E, F, I, UP, B, DTZ and A003 and ignores
+UP042. A directive naming anything else — ``# noqa: BLE001`` over a bare
+``except``, say — suppresses nothing and cannot fail: no linter reads it, so
+nothing ever tells the reader it is inert. This test counts those inert
+directives per (file, rule) and holds them to the numbers written below.
 
 Like the other ratchets here it is red both ways. A count that grew, or a pair
 that newly appeared, is a new inert directive: delete it, or enable its rule so
@@ -14,17 +14,30 @@ rule that runs, and ``RUF100`` in ``select`` can hold the rule without this
 file.
 
 Directives are read from the ``COMMENT`` tokens ``tokenize`` yields, so a
-``"# noqa: BLE001"`` inside a string literal is not a directive. A bare
-``# noqa`` with no rule list suppresses everything and is never inert; it is
-not counted. Only ``select`` decides what is enabled — ``per-file-ignores`` can
-add ignores but never enable a rule. A selector that names a group (``E``,
-``BLE``) enables every rule in that group; a selector that names one rule
-(``A003``) enables only that one. ``B`` and ``BLE`` are different groups even
-though one spells the other's first letter, which is why this compares whole
-group names rather than string prefixes.
+``"# noqa: BLE001"`` inside a string literal is not a directive. Every spelling
+ruff accepts is read: a clause anywhere in a comment (``## noqa: X``,
+``# type: ignore  # noqa: X``), a space before the colon, the file-level
+``# ruff: noqa: X``, and codes separated by commas, whitespace, or both. A
+trailing explanation is not part of the code list. A bare ``# noqa`` with no
+rule list suppresses everything and is never inert; it is not counted.
 
-``ruff check --extend-select RUF100 backend/app`` reports the same set on the
-tree this baseline was measured on. Run it if this test and the tree disagree.
+A selector that names a group (``E``, ``BLE``) enables every rule in that
+group; one that names a single rule (``A003``) enables only that one, and
+``ALL`` enables everything. ``B`` and ``BLE`` are different groups even though
+one spells the other's first letter, which is why this compares whole group
+names rather than string prefixes. ``ignore`` and ``extend-ignore`` subtract
+from the resolved set, so a directive naming an ignored rule is inert as well.
+
+Two limits: ``per-file-ignores`` is not modelled (none of them covers
+``app/`` today), and neither are partial prefixes such as ``E5``. A code-shaped
+word in an explanation (``# noqa: E501, HTTP2 support``) is read as a code;
+ruff drops codes it does not know, so such a line is counted here and not
+reported by RUF100.
+
+``ruff check --extend-select RUF100 backend/app`` agrees on the tree this
+baseline was measured on: its ``non-enabled:`` diagnostics are exactly the
+pairs below. It also reports enabled-but-unused directives (``unused:``), which
+this test does not count. Run it if this test and the tree disagree.
 """
 
 import re
@@ -37,24 +50,73 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _PYPROJECT = BACKEND_ROOT / "pyproject.toml"
 _APP = BACKEND_ROOT / "app"
 
-_NOQA = re.compile(r"#\s*noqa\b(.*)$", re.IGNORECASE)
-#: One rule code, at the start of a comma-separated list item. A trailing
-#: explanation (``# noqa: BLE001 — see above``) is not part of it.
-_CODE = re.compile(r"\s*([A-Z]+[0-9]+)\b")
+#: A ``noqa`` clause, wherever it sits in a comment: ruff reads the whole
+#: comment, so a second hash inside it (a doubled-hash prefix, or a trailing
+#: ``type: ignore`` comment) does not end the search. The optional ``ruff:``
+#: prefix is the file-level form. ``sep`` is the colon that introduces a rule
+#: list — whitespace may sit on either side of it — and its absence is the
+#: bare directive that suppresses everything.
+_NOQA = re.compile(
+    r"#\s*(?:ruff:\s*)?noqa\b\s*(?P<sep>:\s*)?(?P<codes>[^#]*)",
+    re.IGNORECASE,
+)
+#: One rule code: ``BLE001``. Codes are separated by commas, whitespace, or
+#: both; a trailing explanation contributes none of its words, because the list
+#: ends at the first thing that is not a code.
+_CODE = re.compile(r"[A-Z][A-Z0-9]+")
+_SEPARATOR = re.compile(r"[\s,]+")
 
 
-def _selected_rules() -> tuple[str, ...]:
+def _listed_codes(clause: str) -> list[str]:
+    """The codes at the head of a directive clause, in order."""
+    codes: list[str] = []
+    pos = 0
+    while (match := _CODE.match(clause, pos)) is not None:
+        codes.append(match.group())
+        pos = match.end()
+        separator = _SEPARATOR.match(clause, pos)
+        if separator is None:
+            break
+        pos = separator.end()
+    return codes
+
+
+def _ruleset() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The selectors ruff runs with, and the ones it subtracts.
+
+    ``extend-select`` and ``extend-ignore`` are read where the config has them.
+    """
     config = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["tool"]["ruff"][
         "lint"
     ]
-    selectors = list(config.get("select", []))
-    selectors.extend(config.get("extend-select", []))
-    return tuple(selectors)
+
+    def listed(key: str) -> tuple[str, ...]:
+        return tuple(config.get(key, ()))
+
+    selectors = listed("select") + listed("extend-select")
+    ignores = listed("ignore") + listed("extend-ignore")
+    return selectors, ignores
 
 
-def _enabled(code: str, selectors: tuple[str, ...]) -> bool:
+def _covered(code: str, selectors: tuple[str, ...]) -> bool:
+    """Whether a selector list names ``code``: the rule, its group, or ALL.
+
+    Matching is per group, not per string prefix, so ``B`` does not cover
+    ``BLE001`` even though one spells the other's first letter.
+    """
     group = code.rstrip("0123456789")
-    return any(s == code or (s.isalpha() and s == group) for s in selectors)
+    return any(
+        s == code or s == "ALL" or (s.isalpha() and s == group) for s in selectors
+    )
+
+
+def _enabled(code: str, selectors: tuple[str, ...], ignores: tuple[str, ...]) -> bool:
+    """Whether ruff runs ``code``: selected, and not ignored.
+
+    ``ignore`` subtracts whatever a selector enabled — the project's own
+    ``UP042`` is inert for exactly that reason.
+    """
+    return _covered(code, selectors) and not _covered(code, ignores)
 
 
 def _directives(path: Path) -> Counter[str]:
@@ -64,21 +126,15 @@ def _directives(path: Path) -> Counter[str]:
         for token in tokenize.tokenize(handle.readline):
             if token.type != tokenize.COMMENT:
                 continue
-            match = _NOQA.match(token.string)
-            if match is None:
-                continue
-            rules = match.group(1)
-            if not rules.startswith(":"):
-                continue
-            for part in rules[1:].split(","):
-                code = _CODE.match(part)
-                if code is not None:
-                    found[code.group(1)] += 1
+            for match in _NOQA.finditer(token.string):
+                if match.group("sep") is None:
+                    continue  # a bare directive suppresses everything
+                found.update(_listed_codes(match.group("codes")))
     return found
 
 
 def _scan() -> dict[tuple[str, str], int]:
-    selectors = _selected_rules()
+    selectors, ignores = _ruleset()
     found: dict[tuple[str, str], int] = {}
     for path in sorted(_APP.rglob("*.py")):
         # Tokenizing the whole tree costs more than a pure test may; a file
@@ -88,7 +144,7 @@ def _scan() -> dict[tuple[str, str], int]:
         inert = {
             code: count
             for code, count in _directives(path).items()
-            if not _enabled(code, selectors)
+            if not _enabled(code, selectors, ignores)
         }
         if not inert:
             continue
@@ -304,17 +360,44 @@ def test_the_scan_reads_comments_not_strings(tmp_path: Path) -> None:
         "        pass\n"
         'MARKER = "# noqa: BLE001"\n'
         "def g():\n"
-        "    return 1  # noqa: F401\n",
+        "    return 1  # noqa: F401\n"
+        "X = 1  # noqa\n"
+        "Y = 2  # noqa:  # nothing here\n",
         encoding="utf-8",
     )
     assert _directives(sample) == Counter({"BLE001": 1, "F401": 1})
 
 
+def test_every_spelling_ruff_accepts_is_read(tmp_path: Path) -> None:
+    # Ruff reads a noqa clause anywhere in the comment and takes the codes that
+    # follow, so a clause this scan misses is an inert directive it cannot see
+    # — the ratchet would stay green while the tree grows them.
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "import os  # noqa : F401\n"
+        "import sys  ## noqa: F401\n"
+        "import re  # type: ignore  # noqa: F401\n"
+        "import io  # noqa: F401 BLE001\n"
+        "import abc  # noqa: F401,BLE001\n"
+        "x = 1  # noqa: F401 -- os is re-exported\n"
+        "y = 2  # ruff: noqa: F401\n"
+        "z = 3  # noqa: BLE001 — surface failures (spec H4)\n",
+        encoding="utf-8",
+    )
+    # H4 is prose, not a rule: the code list ends at the first non-code word.
+    assert _directives(sample) == Counter({"F401": 7, "BLE001": 3})
+
+
 def test_a_selector_covers_its_own_group_not_a_spelled_prefix() -> None:
     # Bugbear is B; blind-except is BLE. Reading "B" as a string prefix would
     # call every BLE001 in the tree enabled and the ratchet would never fire.
-    assert _enabled("E501", ("E",))
-    assert _enabled("BLE001", ("BLE",))
-    assert not _enabled("BLE001", ("B",))
-    assert _enabled("A003", ("A003",))
-    assert not _enabled("A004", ("A003",))
+    assert _enabled("E501", ("E",), ())
+    assert _enabled("BLE001", ("BLE",), ())
+    assert not _enabled("BLE001", ("B",), ())
+    assert _enabled("A003", ("A003",), ())
+    assert not _enabled("A004", ("A003",), ())
+    # ALL selects everything, and ignore subtracts what a selector enabled.
+    assert _enabled("BLE001", ("ALL",), ())
+    assert not _enabled("UP042", ("UP",), ("UP042",))
+    assert _enabled("UP035", ("UP",), ("UP042",))
+    assert not _enabled("BLE001", ("E",), ())
