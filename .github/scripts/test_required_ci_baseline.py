@@ -1,4 +1,4 @@
-"""The queue's scope covers every unlanded entry, not just its last hop."""
+"""Each merge_group entry selects suites from its own diff against merge_group.base_sha."""
 
 import json
 import os
@@ -48,7 +48,7 @@ class QueueBaselineTests(unittest.TestCase):
         self.git("commit", "-m", "fixture change")
         return self.git("rev-parse", "HEAD")
 
-    def scope(self, event="merge_group", cwd=None):
+    def scope(self, event="merge_group", cwd=None, base=None):
         output = self.root / "output"
         output.write_text("")
         env = dict(self.env, GITHUB_EVENT_NAME=event, GITHUB_OUTPUT=str(output))
@@ -56,7 +56,7 @@ class QueueBaselineTests(unittest.TestCase):
         env.pop("GITHUB_EVENT_PATH", None)
         env.pop("MERGE_GROUP_MAIN_REF", None)
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "scope", self.prefix],
+            [sys.executable, str(SCRIPT), "scope", base or self.prefix],
             cwd=cwd or self.repo,
             check=False,
             env=env,
@@ -65,21 +65,20 @@ class QueueBaselineTests(unittest.TestCase):
         )
         return result, dict(line.split("=", 1) for line in output.read_text().splitlines())
 
-    def assert_cumulative(self, outputs):
-        self.assertEqual(outputs["backend"], "true")
+    def assert_entry_only(self, outputs):
+        self.assertEqual(outputs["backend"], "false")
         self.assertEqual(outputs["guards"], "true")
-        # Selecting everything would hide a broken baseline just as well.
         self.assertEqual(outputs["frontend"], "false")
         self.assertEqual(outputs["tier"], "full")
 
-    def test_queue_includes_backend_prefix_before_guard_only_successor(self):
+    def test_queue_uses_event_base_instead_of_unlanded_prefix(self):
         result, outputs = self.scope()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assert_cumulative(outputs)
+        self.assert_entry_only(outputs)
         self.assertIn(f"Event base: {self.prefix}", result.stdout)
-        self.assertIn(f"Effective base: {self.landed}", result.stdout)
-        self.assertIn("unlanded queue prefix", result.stdout)
-        self.assertIn("whose changes remain in coverage", result.stdout)
+        self.assertIn(f"Effective base: {self.prefix}", result.stdout)
+        self.assertIn("merge_group.base_sha", result.stdout)
+        self.assertIn("covered by their own queue runs", result.stdout)
 
     def test_receipt_base_is_the_base_used_by_the_suite_diff(self):
         result, outputs = self.scope()
@@ -94,9 +93,10 @@ class QueueBaselineTests(unittest.TestCase):
         )
         self.assertEqual(
             changed,
-            {"backend/app/queued.py", ".claude/scripts/narrow.py"},
+            {".claude/scripts/narrow.py"},
         )
-        self.assertEqual(outputs["backend"], "true")
+        self.assertEqual(outputs["backend"], "false")
+        self.assertEqual(outputs["guards"], "true")
         self.assertEqual(outputs["frontend"], "false")
 
     def test_non_queue_keeps_the_supplied_base(self):
@@ -113,15 +113,15 @@ class QueueBaselineTests(unittest.TestCase):
         self.assertEqual(outputs["backend"], "false")
         self.assertEqual(outputs["guards"], "true")
 
-    def test_main_advanced_on_another_branch_uses_common_ancestor(self):
+    def test_main_advanced_on_another_branch_still_uses_event_base(self):
         self.git("checkout", "main")
         self.commit("frontend/landed.ts")
         self.git("checkout", self.head)
         result, outputs = self.scope()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assert_cumulative(outputs)
+        self.assert_entry_only(outputs)
 
-    def test_depth_one_checkout_and_base_fetch_still_cover_prefix(self):
+    def test_depth_one_checkout_and_base_fetch_use_event_base_without_origin_main(self):
         checkout = self.root / "checkout"
         self.git(
             "clone", "--depth=1", "--no-local", "--branch",
@@ -139,21 +139,10 @@ class QueueBaselineTests(unittest.TestCase):
         )
         result, outputs = self.scope(cwd=checkout)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assert_cumulative(outputs)
+        self.assert_entry_only(outputs)
 
-    def test_unavailable_main_fails_without_publishing_partial_scope(self):
-        self.git("update-ref", "-d", "refs/heads/main")
-        result, outputs = self.scope()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(outputs, {})
-
-    def test_unrelated_main_fails_without_falling_back_to_last_hop(self):
-        self.git("checkout", "--orphan", "unrelated")
-        self.git("rm", "-rf", ".")
-        unrelated = self.commit("unrelated.txt")
-        self.git("update-ref", "refs/heads/main", unrelated)
-        self.git("checkout", self.head)
-        result, outputs = self.scope()
+    def test_unavailable_event_base_fails_without_publishing_partial_scope(self):
+        result, outputs = self.scope(base="deadbeef" * 5)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(outputs, {})
 

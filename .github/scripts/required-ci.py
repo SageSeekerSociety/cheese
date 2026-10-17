@@ -159,34 +159,21 @@ def failures(needs, expected_tier, event_name=""):
 
 def effective_base(event_base, head="HEAD"):
     """Resolve the one base both the receipt and suite diff must use."""
+    # In merge_group, event_base is merge_group.base_sha (the preceding queue
+    # entry's head) rather than the merge-base with origin/main: each preceding
+    # entry's changes are covered by its own merge_group run, so a narrow entry
+    # queued behind a broad one only selects suites for its own diff (while
+    # guards still runs per path).
+    base = subprocess.check_output(
+        ["git", "rev-parse", "--verify", f"{event_base}^{{commit}}"]
+    ).decode().strip()
     if os.environ.get("GITHUB_EVENT_NAME") == "merge_group":
-        # The event base may be the preceding queue entry's synthetic tree.
-        # Only landed main can exclude a prefix from this run's coverage.
-        main_ref = "+refs/heads/main:refs/remotes/origin/main"
-        subprocess.check_call(["git", "fetch", "--no-tags", "origin", main_ref])
-        shallow = subprocess.check_output(
-            ["git", "rev-parse", "--is-shallow-repository"]
-        ).decode().strip()
-        if shallow == "true":
-            # checkout and the workflow's base fetch are both depth one. Fetch
-            # the cumulative head too: fetching main alone cannot fill its DAG.
-            head_sha = subprocess.check_output(
-                ["git", "rev-parse", head]
-            ).decode().strip()
-            subprocess.check_call(
-                ["git", "fetch", "--no-tags", "--unshallow", "origin", main_ref, head_sha]
-            )
-        base = subprocess.check_output(
-            ["git", "merge-base", "refs/remotes/origin/main", head]
-        ).decode().strip()
         reason = (
-            "merge_group uses the landed origin/main ancestor; the event base may "
-            "contain an unlanded queue prefix, whose changes remain in coverage"
+            "merge_group uses the event-provided merge_group.base_sha (the "
+            "preceding queue entry's head); preceding entries are covered by "
+            "their own queue runs"
         )
     else:
-        base = subprocess.check_output(
-            ["git", "rev-parse", "--verify", f"{event_base}^{{commit}}"]
-        ).decode().strip()
         reason = "uses the event-provided base"
     return base, reason
 
