@@ -499,6 +499,38 @@ def test_a_turn_id_that_is_not_a_full_uuid_is_refused(client, platform_room):
     assert response.status_code == 400, response.text
 
 
+def test_an_open_turn_with_no_readable_session_says_unknown_not_zero(
+    client, platform_room
+):
+    """This test backend reads no session for the turn, so its last frame is
+    unknown — stated as a null, which a reader must not take for "no frame for
+    0 seconds". A closed turn is not asked at all: its frame is history."""
+    project, room = platform_room
+    now = datetime.now(UTC)
+    open_turn, closed = _seed(
+        client,
+        project,
+        room,
+        [
+            {"started_at": now - timedelta(minutes=5)},
+            {
+                "started_at": now - timedelta(minutes=15),
+                "stopped_at": now - timedelta(minutes=10),
+            },
+        ],
+    )
+
+    by_id = {t["turn_id"]: t for t in _turns(client, room, window="24h")["turns"]}
+
+    assert by_id[str(open_turn)]["last_frame_kind"] is None
+    assert by_id[str(open_turn)]["last_frame_age_s"] is None
+    assert "last_frame_kind" not in by_id[str(closed)]
+
+    one = _one_turn(client, room, open_turn).json()["data"]
+    assert one["last_frame_kind"] is None
+    assert one["last_frame_age_s"] is None
+
+
 def test_another_projects_room_cannot_read_one_turn(client, platform_room):
     project, room = platform_room
     now = datetime.now(UTC)

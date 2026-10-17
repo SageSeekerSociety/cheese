@@ -196,6 +196,50 @@ def test_the_agent_reads_one_row_per_turn_with_its_failure(client, projects):
     assert "不是记了成功" in listed
 
 
+def test_the_agent_reads_one_turn_by_id_with_its_records(client, projects):
+    """`turn_id` drills into the one turn the `turns` list showed: what it
+    left in the run records, and how it ended. This backend reads no session
+    for it, so its last frame says 未知 rather than 0."""
+    platform, _ = projects
+    topic = _room(client, platform)
+    agent = AgentHost(client, platform, topic)
+    now = datetime.now(UTC)
+    turn_id = uuid.uuid4()
+
+    async def seed() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                AgentTurn(
+                    id=turn_id,
+                    conversation_id=uuid.UUID(topic),
+                    continuation_id=turn_id,
+                    author="alice",
+                    started_at=now - timedelta(minutes=5),
+                )
+            )
+            s.add(
+                RunRecord(
+                    project_id=uuid.UUID(platform),
+                    conversation_id=uuid.UUID(topic),
+                    turn_id=turn_id,
+                    kind="environment",
+                    severity="info",
+                    content="机器连上了",
+                    created_at=now - timedelta(minutes=4),
+                )
+            )
+            await s.commit()
+
+    client.portal.call(seed)
+
+    drilled = agent.run(turn_id=str(turn_id))
+    assert str(turn_id) in drilled
+    assert "没记过失败" in drilled
+    assert "机器连上了" in drilled
+    assert "最近帧 未知" in drilled
+    assert "0s 前" not in drilled
+
+
 def test_an_agent_elsewhere_is_refused(client, projects):
     _, other = projects
     agent = AgentHost(client, other, _room(client, other))

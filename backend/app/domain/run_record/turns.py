@@ -135,6 +135,11 @@ class TurnOut(BaseModel):
     #: （`block.repositories.BlockRepository.forget_prompted_turn`）—— 失败的那一轮
     #: 恰恰最常读回空。批次的总次数还留在消息块上，但没有指针指回这一轮。
     prompt_attempts: int | None = None
+    #: 这一轮的会话最近发出一帧的种类，和那是多久以前。只由路由补在**还没结束**的
+    #: 轮次上（见 `api.routes.run_records._add_frames`）；空 = 不知道，不是 0 ——
+    #: 本进程不读这个会话，或者跑它的进程已经不在了，都是不知道。
+    last_frame_kind: str | None = None
+    last_frame_age_s: float | None = None
 
 
 class TurnListOut(BaseModel):
