@@ -129,8 +129,8 @@ Metric-page merge handling:
   (`node --test scripts/<name>.test.mjs`). `task ci:fast` never selects it. CI
   runs the whole set on every frontend change, and a few of those tests also
   read the rest of the tree (`mdi-` icon names across `src/`, `index.html`,
-  `nginx.conf`, `tsconfig.app.json`), so an ordinary change can still turn it
-  red there.
+  `demo.html`, `nginx.conf`, `src/styles/fonts.css`, `src/views/demo/`,
+  `tsconfig.app.json`), so an ordinary change can still turn it red there.
 - A dev server may already be running in this worktree; do not restart one you
   did not start.
 - A new page under `src/views/admin/features/`: the chart components take props

@@ -129,10 +129,10 @@ settings.redis_url = f"{_REDIS_BASE}/{_REDIS_DB}"
 os.environ["REDIS_URL"] = settings.redis_url
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB_NAME}")
 
-# Two tables live outside app.models: agent_turn_inputs and agent_seat_owner.
-# The per-test clear builds its table list from Base.metadata once per process
-# (`_clean_slate_queries`), so they must be registered before the first clear,
-# not only once a test happens to import the chat service.
+# agent_turn_inputs and agent_seat_owner are defined outside app.models and
+# used to be registered by the chat-stack import this file no longer makes. The
+# per-test clear builds its table list from Base.metadata once per process
+# (`_clean_slate_queries`), so they are registered here, before the first clear.
 import app.domain.agent.turn_inputs  # noqa: F401, E402
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
 from app.core.db import Base, get_db  # noqa: E402
