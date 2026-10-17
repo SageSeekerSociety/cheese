@@ -2,14 +2,16 @@
 """Verify paths in an orchestrator brief against the repository and in-flight work.
 
 Usage:
-    verify-brief-paths.py --brief brief.txt
-    verify-brief-paths.py --brief-path path/to/file.py --new-path path/to/new.py \\
+    python3 .claude/scripts/verify-brief-paths.py --brief brief.txt
+    python3 .claude/scripts/verify-brief-paths.py --brief brief.txt \
+        --brief-path path/to/file.py --new-path path/to/new.py \
         --in-flight-actual path/to/changed.py --in-flight-declared path/to/claimed.py
 
-The brief may be a text file, '-' for stdin, or omitted to read stdin. Paths
-marked "新建" / "new" are expected not to exist in HEAD or origin/main. In-flight
-actual and declared paths may be supplied repeatedly, or as newline-delimited
-files with --in-flight-actual-list / --in-flight-declared-list.
+The brief may be a text file, '-' for stdin, or omitted to read stdin when no
+explicit brief paths are given. Paths marked "新建" / "new" are expected not to
+exist in HEAD or origin/main. In-flight actual and declared paths may be supplied
+repeatedly, or as newline-delimited files with --in-flight-actual-list /
+--in-flight-declared-list.
 """
 
 from __future__ import annotations
@@ -21,14 +23,19 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PATH_TOKEN = re.compile(r"(?<![\w./-])(?:\.\.?/)?[\w.@+-][\w./@+-]*")
-NEW_MARKER = re.compile(r"(?:新建|新增|new(?:\s+file)?)\s*[:：]?\s*", re.IGNORECASE)
+PATH_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_./-])(?:\.\.?[/\\]|/)?[A-Za-z0-9_.@+-](?:[A-Za-z0-9_./@+-]|\\\\)*"
+)
+NEW_MARKER = re.compile(
+    r"(?:新建|新增|(?<![A-Za-z])new(?:\s+file)?(?![A-Za-z]))\s*[:：]?\s*",
+    re.IGNORECASE,
+)
 
 
 def normalize_path(value: str) -> str | None:
     """Return a safe repository-relative path, rejecting traversal and URLs."""
     value = value.strip().strip("`'\"()[]{}<>,;:。；，")
-    if not value or "://" in value or value.startswith("/"):
+    if not value or "://" in value or value.startswith("/") or "\\" in value:
         return None
     path = Path(value)
     if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
@@ -36,23 +43,34 @@ def normalize_path(value: str) -> str | None:
     return path.as_posix()
 
 
-def extract_brief_paths(text: str) -> tuple[dict[str, bool], list[str]]:
+def extract_brief_paths(
+    text: str, known_paths: set[str] | None = None
+) -> tuple[dict[str, bool], list[str]]:
     """Map paths to whether they are marked new; return unsafe path-like tokens."""
     paths: dict[str, bool] = {}
     unsafe: list[str] = []
+    known_paths = known_paths or set()
     for line in text.splitlines():
         matches = list(PATH_TOKEN.finditer(line))
         markers = list(NEW_MARKER.finditer(line))
         for match in matches:
             token = match.group().rstrip(".,;:!?")
-            # Ignore ordinary prose words; paths must look like paths or filenames.
-            if "/" not in token and "." not in token:
-                continue
             marked_new = any(
                 marker.end() <= match.start()
                 and not any(marker.end() <= prior.start() < match.start() for prior in matches)
+                and (
+                    marker.group().startswith(("新建", "新增"))
+                    or "file" in marker.group().lower()
+                    or token[:1].isupper()
+                    or "/" in token
+                    or "." in token
+                    or token in known_paths
+                )
                 for marker in markers
             )
+            looks_like_root_file = token in known_paths or marked_new
+            if "/" not in token and "." not in token and not looks_like_root_file:
+                continue
             path = normalize_path(token)
             if path is None:
                 unsafe.append(token)
@@ -64,6 +82,24 @@ def extract_brief_paths(text: str) -> tuple[dict[str, bool], list[str]]:
 def read_list_file(path: str) -> list[str]:
     text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
     return [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+
+def git_tree_paths(root: Path, refs: tuple[str, ...]) -> set[str]:
+    paths: set[str] = set()
+    for ref in refs:
+        result = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", "-z", ref],
+            cwd=root,
+            capture_output=True,
+        )
+        if result.returncode:
+            raise RuntimeError(f"required tree is unavailable: {ref}")
+        paths.update(
+            path.decode("utf-8", errors="surrogateescape")
+            for path in result.stdout.split(b"\0")
+            if path
+        )
+    return paths
 
 
 def git_path_exists(root: Path, ref: str, path: str) -> bool:
@@ -119,8 +155,31 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         root = args.root.resolve()
-        brief = sys.stdin.read() if args.brief in (None, "-") else Path(args.brief).read_text(encoding="utf-8")
-        brief_paths, unsafe = extract_brief_paths(brief)
+        list_paths = args.in_flight_actual_list + args.in_flight_declared_list
+        brief_uses_stdin = args.brief == "-" or (
+            args.brief is None and not (args.brief_path or args.new_path)
+        )
+        if brief_uses_stdin and "-" in list_paths:
+            raise ValueError("stdin cannot be used for both the brief and an in-flight list")
+        if brief_uses_stdin:
+            brief = sys.stdin.read()
+        elif args.brief is None:
+            brief = ""
+        else:
+            brief = Path(args.brief).read_text(encoding="utf-8")
+
+        in_flight_values = list(args.in_flight_actual) + list(args.in_flight_declared)
+        for list_path in list_paths:
+            in_flight_values.extend(read_list_file(list_path))
+        in_flight: set[str] = set()
+        for value in in_flight_values:
+            path = normalize_path(value)
+            if path is None:
+                raise ValueError(f"invalid in-flight path: {value}")
+            in_flight.add(path)
+
+        known_paths = git_tree_paths(root, ("HEAD", "origin/main")) | in_flight
+        brief_paths, unsafe = extract_brief_paths(brief, known_paths)
         for value in args.brief_path:
             path = normalize_path(value)
             if path is None:
@@ -133,16 +192,6 @@ def main(argv: list[str] | None = None) -> int:
                 unsafe.append(value)
             else:
                 brief_paths[path] = True
-
-        in_flight_values = list(args.in_flight_actual) + list(args.in_flight_declared)
-        for list_path in args.in_flight_actual_list + args.in_flight_declared_list:
-            in_flight_values.extend(read_list_file(list_path))
-        in_flight: set[str] = set()
-        for value in in_flight_values:
-            path = normalize_path(value)
-            if path is None:
-                raise ValueError(f"invalid in-flight path: {value}")
-            in_flight.add(path)
 
         errors = check(root, brief_paths, unsafe, in_flight)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
