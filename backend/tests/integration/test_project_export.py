@@ -60,16 +60,18 @@ def exported_project(client, monkeypatch, tmp_path):
             # A channel's number and its environment are the project's to hand
             # out, so this test asks it the same way the service does.
             project = await db.get(Project, pid)
-            number, environment = await ProjectService(db).channel_start(project)
+            start = ProjectService(db).channel_start
+            number, environment = await start(project)
             room = await TopicRepository(db).add(
                 project_id=pid,
                 number=number,
                 environment=environment,
                 title="Public room",
             )
+            private_number, environment = await start(project)
             private = await TopicRepository(db).add(
                 project_id=pid,
-                number=number,
+                number=private_number,
                 environment=environment,
                 title="Other person's private room",
             )
