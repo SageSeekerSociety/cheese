@@ -141,6 +141,7 @@ CONTRACT_IDS = (
     "turn-storage-purity",
     "routes-independent",
     "domain-layers",
+    "platform-not-claude-code",
 )
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
@@ -389,6 +390,11 @@ _BOUNDARY_FIXES = {
         "an unplaced child of app.domain goes into the layer table in "
         "`.importlinter` first — this contract is exhaustive, so every child of "
         "app.domain, package or top-level module, must be named in it."
+    ),
+    "H1": (
+        "H1 the platform side (chat*, runtime, room, turn) does not import the "
+        "Claude Code adapter. Take the finished `AgentEvent` from the room's session "
+        "path, or put the Claude Code knowledge in its session-host driver."
     ),
 }
 
@@ -1134,6 +1140,14 @@ _SEED = {
     "app/domain/alpha/__init__.py": "",
     "app/domain/agent/__init__.py": "",
     "app/domain/agent/chat.py": "",
+    # H1's sources and the adapter it keeps them from.
+    "app/domain/agent/chat_admission.py": "",
+    "app/domain/agent/chat_lifecycle.py": "",
+    "app/domain/agent/chat_live_input.py": "",
+    "app/domain/agent/chat_places.py": "",
+    "app/domain/agent/room/__init__.py": "",
+    "app/domain/agent/harness/__init__.py": "",
+    "app/domain/agent/harness/claude_code/__init__.py": "",
     "app/domain/agent/runtime.py": "",
     "app/domain/agent/fixture_bridge.py": "",
     "app/domain/agent/run_records.py": "",
@@ -1322,6 +1336,17 @@ _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
         BROKEN,
         "app.api.space_payloads is not allowed to import app.domain.bar.models",
         ("routes-touch-no-models",),
+    ),
+    (
+        "the platform side importing the Claude Code adapter (H1)",
+        {
+            "app/domain/agent/chat.py": (
+                "from app.domain.agent.harness.claude_code import ended\n"
+            )
+        },
+        BROKEN,
+        "app.domain.agent.chat -> app.domain.agent.harness.claude_code",
+        ("platform-not-claude-code",),
     ),
 ]
 
@@ -1707,9 +1732,18 @@ def self_test() -> int:
                 )
                 for contract_id in _broken:
                     # In `CONTRACT_IDS` order: the ids in `.importlinter` order.
-                    prefix = ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4", "C5")[
-                        CONTRACT_IDS.index(contract_id)
-                    ]
+                    prefix = (
+                        "C1",
+                        "C2",
+                        "C3",
+                        "T1",
+                        "T2",
+                        "T3",
+                        "T4",
+                        "C4",
+                        "C5",
+                        "H1",
+                    )[CONTRACT_IDS.index(contract_id)]
                     report(
                         f"{what}: specific fix",
                         code,
@@ -1802,7 +1836,7 @@ def self_test() -> int:
             if problem is None and expected == BROKEN:
                 for contract_id in broken:
                     fix = _BOUNDARY_FIXES[
-                        ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4", "C5")[
+                        ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4", "C5", "H1")[
                             CONTRACT_IDS.index(contract_id)
                         ]
                     ]
