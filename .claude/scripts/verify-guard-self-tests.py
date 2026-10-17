@@ -77,11 +77,13 @@ run went quiet instead of red, so neither verdict is earned. Give such a guard a
 inline `--self-test` that judges the guard in its own process to be checked.
 
 A self-test that needs something the lane does not install is a separate case:
-it does not start at all, and the run comes back `self-test-not-green`, which is
-also the shape of a broken self-test. This tool cannot tell those apart by
-looking, so it does not guess — a lane that cannot run a guard's self-test names
-that guard with `--allow-unjudgeable` (see below), and the guard's own lane still
-runs the self-test.
+it runs and fails on what the lane lacks, and the run comes back
+`self-test-not-green`, which is also the shape of a broken self-test. (One that
+cannot be started at all — a missing interpreter, an `OSError` — is `unverified`
+instead.) This tool cannot tell the not-green shapes apart by looking, so it
+does not guess — a lane that cannot run a guard's self-test names that guard
+with `--allow-unjudgeable` (see below), and the guard's own lane still runs the
+self-test.
 
     python3 .claude/scripts/verify-guard-self-tests.py
     python3 .claude/scripts/verify-guard-self-tests.py --guard check-file-sizes.py
@@ -145,8 +147,9 @@ FINDING_STATUSES = frozenset({"missing-self-test", "self-test-not-green", "self-
 
 #: Statuses a named guard may be excused under: the lane could not establish the
 #: bite, for a reason about the lane rather than the guard — the self-test hands
-#: the judgement to another process (`unverified`), or it needs an install this
-#: lane does not have (`self-test-not-green` where the self-test cannot start).
+#: the judgement to another process or cannot be started at all (`unverified`),
+#: or it runs and fails on something the lane does not install
+#: (`self-test-not-green`, which is also the shape of a broken self-test).
 #: `self-test-does-not-bite` is deliberately absent: there the self-test ran on
 #: this tree and stayed green, which is this lane's own judgement, not a gap.
 ALLOWABLE_STATUSES = frozenset({"unverified", "self-test-not-green"})
@@ -2095,11 +2098,15 @@ def report(
             unverified += 1
     if skipped:
         print(f"（另有 {len(skipped)} 个本地钩子的脚本不在 .claude/scripts 下，未核验：{', '.join(path.name for _, path, _, _ in skipped)}）")
+    # The allowance problems are counted separately from the guards' own
+    # findings: one entry can name a guard that is already one of those findings
+    # (a finding this lane can see is not waivable), and adding the two numbers
+    # would report two findings for one guard. Both still reach the exit code.
+    allowance = f"，名单问题 {excuses} 条" if excuses else ""
     print(
-        f"共 {len(checked)} 个守卫：有发现 {findings + excuses} 个，判不了 {unverified} 个"
+        f"共 {len(checked)} 个守卫：有发现 {findings} 个{allowance}，"
+        f"判不了 {unverified} 个"
     )
-    # The excuse count is folded in by the caller, which adds it to the exit
-    # code; returning it here as well would count it twice.
     return findings, unverified
 
 
