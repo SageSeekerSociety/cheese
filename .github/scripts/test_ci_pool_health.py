@@ -1,6 +1,7 @@
 """Two of three machines were down for hours and the check said the pool was up."""
 
 import contextlib
+import http.client
 import importlib.util
 import io
 import json
@@ -18,6 +19,15 @@ pool = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pool)
 
 
+def _outputs(path: pathlib.Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if "=" in line:
+            name, value = line.split("=", 1)
+            values[name] = value
+    return values
+
+
 def runner(name: str, box: str, status: str = "online", busy: bool = False) -> dict:
     labels = [{"name": "self-hosted"}, {"name": "cheese-ci"}]
     if box:
@@ -28,7 +38,12 @@ def runner(name: str, box: str, status: str = "online", busy: bool = False) -> d
 class PoolHealth(unittest.TestCase):
     def test_a_full_pool_is_quiet(self) -> None:
         healthy, problems = pool.assess(
-            [runner("r1", "1"), runner("r1b", "1"), runner("r2", "2"), runner("r2b", "2")]
+            [
+                runner("r1", "1"),
+                runner("r1b", "1"),
+                runner("r2", "2"),
+                runner("r2b", "2"),
+            ]
         )
         self.assertEqual(problems, [])
         self.assertEqual(len(healthy), 2)
@@ -67,8 +82,12 @@ class PoolHealth(unittest.TestCase):
         self.assertIn("no runner", problems[0])
 
     def test_other_pools_are_not_this_check_s_business(self) -> None:
-        dev = {"name": "cheese-dev-env1", "status": "offline", "busy": False,
-               "labels": [{"name": "cheese-dev"}]}
+        dev = {
+            "name": "cheese-dev-env1",
+            "status": "offline",
+            "busy": False,
+            "labels": [{"name": "cheese-dev"}],
+        }
         _healthy, problems = pool.assess([runner("r1", "1"), dev])
         self.assertEqual(problems, [])
 
@@ -108,17 +127,46 @@ class PoolHealth(unittest.TestCase):
         ):
             code = pool.main([])
         fetch.assert_called_once()
-        values: dict[str, str] = {}
-        for line in output.read_text(encoding="utf-8").splitlines():
-            if "=" in line:
-                name, value = line.split("=", 1)
-                values[name] = value
-        return code, values
+        return code, _outputs(output)
 
-    def test_a_healthy_pool_sends_no_alert(self) -> None:
-        code, outputs = self._run_main(runners=[runner("r1", "1")])
-        self.assertEqual(code, 0)
-        self.assertNotIn("alert", outputs)
+    def _run_main_against_response(
+        self, body: bytes | BaseException
+    ) -> tuple[int, dict[str, str]]:
+        """Run main([]) through the real fetch path against one canned body.
+
+        Injection at `fetch_runners` alone never executes the response-shape
+        checks, so a 200 whose body is JSON but not a runner list would still
+        go unread here.
+        """
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        output = pathlib.Path(directory.name) / "output"
+        output.touch()
+
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        if isinstance(body, BaseException):
+            response.read.side_effect = body
+        else:
+            response.read.return_value = body
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "REPO": "owner/repo",
+                    "GH_TOKEN": "token",
+                    "GITHUB_OUTPUT": str(output),
+                },
+            ),
+            mock.patch.object(
+                pool.urllib.request, "urlopen", mock.Mock(return_value=response)
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = pool.main([])
+        return code, _outputs(output)
 
     def test_a_missing_machine_says_a_machine_is_down(self) -> None:
         """The one failure that really is a machine lost has to say so, and
@@ -167,11 +215,52 @@ class PoolHealth(unittest.TestCase):
         self.assertIn("读不到", outputs["alert"])
         self.assertNotIn("CI 机器掉了", outputs["alert"])
 
+    def test_a_200_without_a_runners_list_says_it_could_not_judge(self) -> None:
+        """A 200 carrying some other JSON object is not an empty pool: reading
+        it as one reports a lost machine the response never mentioned."""
+        code, outputs = self._run_main_against_response(
+            b'{"message": "API rate limit exceeded"}'
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("读不到", outputs["alert"])
+        self.assertNotIn("CI 机器掉了", outputs["alert"])
+
+    def test_a_truncated_body_says_it_could_not_judge(self) -> None:
+        """A connection dropped mid-body raises IncompleteRead, which is
+        neither an OSError nor a ValueError. Uncaught it exits 1 and writes no
+        alert, and the workflow only speaks when there is one."""
+        code, outputs = self._run_main_against_response(
+            http.client.IncompleteRead(b"", 99974)
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("读不到", outputs["alert"])
+        self.assertNotIn("CI 机器掉了", outputs["alert"])
+
+    def test_missing_credentials_still_send_an_alert(self) -> None:
+        """The other exit-2 branch must speak too, or the workflow's
+        non-empty-alert gate turns it into silence."""
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        output = pathlib.Path(directory.name) / "output"
+        output.touch()
+        with (
+            mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}, clear=True),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = pool.main([])
+        self.assertEqual(code, 2)
+        self.assertIn("读不到", _outputs(output)["alert"])
+
     def test_the_workflow_sends_the_alert_the_script_decided(self) -> None:
         """The workflow's job is to send the script's sentence. A fallback of
         its own, such as "见运行日志", is how both failures used to arrive as
         the same message."""
         text = _WORKFLOW.read_text(encoding="utf-8")
+        # The step has to be addressable as `pool`, which is what the alert
+        # step reads its sentence from.
+        self.assertIn("id: pool", text)
+        self.assertIn("always()", text)
         self.assertIn("steps.pool.outputs.alert != ''", text)
         self.assertIn("ALERT: ${{ steps.pool.outputs.alert }}", text)
         self.assertIn('"$ALERT"', text)

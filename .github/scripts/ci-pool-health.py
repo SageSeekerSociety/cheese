@@ -51,7 +51,12 @@ def fetch_runners(repo: str, token: str) -> list[dict]:
         payload = json.load(response)
     if not isinstance(payload, dict):
         raise ValueError("response is not a JSON object")
-    runners = payload.get("runners", [])
+    if "runners" not in payload:
+        # A 200 that carries something else — a proxy's JSON error body, a
+        # changed response shape — says nothing about the pool. Falling back to
+        # an empty list here would report a lost machine instead.
+        raise ValueError("response has no runners list")
+    runners = payload["runners"]
     if not isinstance(runners, list):
         raise ValueError("response has no runners list")
     return runners
@@ -120,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         runners = fetch_runners(args.repo, args.token)
+        healthy, problems = assess(runners)
     except urllib.error.HTTPError as error:
         reason = f"HTTP {error.code}"
     except urllib.error.URLError as error:
@@ -130,8 +136,13 @@ def main(argv: list[str] | None = None) -> int:
         # like. Letting json's exception escape would exit 1 — the machine-down
         # answer — and page the team for a machine that is probably fine.
         reason = f"unreadable response: {error}"
+    except Exception as error:
+        # Anything else that escapes would also exit 1 without writing an
+        # alert, and the workflow only speaks when there is one — so an
+        # unforeseen failure would be silent rather than misworded. Name it
+        # instead of guessing; the run log has the traceback.
+        reason = f"{type(error).__name__}: {error}"
     else:
-        healthy, problems = assess(runners)
         for line in healthy:
             print(f"ok   {line}")
         for line in problems:
