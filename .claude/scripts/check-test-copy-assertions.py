@@ -110,6 +110,8 @@ SQL_QUERY_RE = re.compile(
     r"(?:SELECT\b.*\bFROM\b.*"
     r"(?:\bJOIN\b.*\bON\b|\bORDER\s+BY\b|\bGROUP\s+BY\b|\bLIMIT\b|"
     r"\bIS\s+(?:NOT\s+)?NULL\b|\bIN\s*\(|"
+    r"\w+\s+(?:LIKE|ILIKE)\s+(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|%\([^)]+\)s|%s|[\w.]+)|"
+    r"\w+\s+BETWEEN\s+(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+)\s+AND\s+(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+)|"
     r"\w+\s*(?:=|!=|<>|<=|>=|<|>)\s*(?:'[^']*'|\"[^\"]*\"|\$\d+|"
     r":\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|"
     r"[\w.]+(?:\([^)]*\))?))).*",
@@ -117,9 +119,27 @@ SQL_QUERY_RE = re.compile(
 )
 SQL_WHERE_RE = re.compile(
     r"WHERE\s+[\w.]+\s*(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|"
+    r"LIKE\s+(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|%\([^)]+\)s|%s|[\w.]+)|"
+    r"BETWEEN\s+(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+)\s+AND\s+(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+)|"
     r"(?:=|!=|<>|<=|>=|<|>)\s*(?:'[^']*'|\"[^\"]*\"|\$\d+|"
     r":\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)).*",
     re.DOTALL | re.IGNORECASE,
+)
+SQL_VALUE_PATTERN = r"(?:'[^']*'|\"[^\"]*\"|\$\d+|:\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)"
+SQL_PREDICATE_PATTERN = (
+    rf"(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|LIKE\s+{SQL_VALUE_PATTERN}|"
+    rf"BETWEEN\s+{SQL_VALUE_PATTERN}\s+AND\s+{SQL_VALUE_PATTERN}|"
+    rf"(?:=|!=|<>|<=|>=|<|>)\s*{SQL_VALUE_PATTERN})"
+)
+SQL_UPDATE_RE = re.compile(
+    rf"UPDATE\s+[\w.]+\s+SET\s+[\w.]+\s*=\s*{SQL_VALUE_PATTERN}"
+    rf"(?:\s*,\s*[\w.]+\s*=\s*{SQL_VALUE_PATTERN})*\s+WHERE\s+[\w.]+\s*{SQL_PREDICATE_PATTERN}",
+    re.IGNORECASE,
+)
+SQL_DELETE_RE = re.compile(rf"DELETE\s+FROM\s+[\w.]+\s+WHERE\s+[\w.]+\s*{SQL_PREDICATE_PATTERN}", re.IGNORECASE)
+SQL_INSERT_RE = re.compile(
+    r"INSERT\s+INTO\s+[\w.]+\s*\([^)]*\)\s*VALUES\s*\([^)]*\)(?:\s*,\s*\([^)]*\))*",
+    re.IGNORECASE,
 )
 SQL_SELECT_PREFIX_RE = re.compile(r"SELECT\s+(.+?)\s+FROM\s+([\w.]+)", re.DOTALL | re.IGNORECASE)
 SQL_PROSE_WORD_RE = re.compile(
@@ -184,6 +204,8 @@ def _test_files(root: Path) -> list[Path]:
 
 
 def _is_sql_value(value: str) -> bool:
+    if SQL_UPDATE_RE.fullmatch(value) or SQL_DELETE_RE.fullmatch(value) or SQL_INSERT_RE.fullmatch(value):
+        return True
     sql_text = re.sub(r"'[^']*'|\"[^\"]*\"", " ", value)
     sql_text = re.sub(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", " ", sql_text)
     sql_text = re.sub(r"\b(?:FROM|JOIN)\s+([\w.]+)\s+[A-Za-z_]\w*\b", r"\1", sql_text, flags=re.IGNORECASE)
