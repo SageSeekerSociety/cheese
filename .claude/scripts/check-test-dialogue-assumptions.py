@@ -116,6 +116,15 @@ ROW_KEYS = (
     "event_type", "event_types", "BlockKind",
 )
 
+#: The same keys as bare names, for reading a filter as an expression instead of
+#: as text. `ROW_KEYS` is for the spellings a comparison is written in; this is
+#: for asking which column a `Compare` is about — `.id` anywhere in the text is
+#: also `topic.id` on the right of a conversation pin, which narrows nothing.
+ROW_KEY_NAMES = frozenset({
+    "kind", "kinds", "author", "meta", "event_type", "event_types",
+    "reply_to", "id", "content", "turn_id", "reactions", "run_id", "tasks",
+})
+
 #: A conversation's blocks come from `/history`, `/transcript` or `/blocks` under
 #: `/topics/`. All three hand back the topic's timeline. The app's other
 #: `/history` endpoints are a team's credit log or a document's versions, which
@@ -353,25 +362,68 @@ def _url_narrows(node: ast.Call) -> bool:
     return False
 
 
+def _narrowing_column(node: ast.AST) -> bool:
+    """The column a filter compares: `Block.kind`, `b["author"]`, `b.tasks`.
+
+    Followed through the accessors SQLAlchemy puts on a JSON column, so
+    `Block.meta["event_type"].as_string()` reads as the `event_type` key it is,
+    and not as a filter on something unnamed.
+    """
+    if isinstance(node, ast.Attribute):
+        return node.attr in ROW_KEY_NAMES or _narrowing_column(node.value)
+    if isinstance(node, ast.Subscript):
+        key = node.slice
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            return key.value in ROW_KEY_NAMES
+        return _narrowing_column(node.value)
+    if isinstance(node, ast.Call):
+        return _narrowing_column(node.func)
+    return False
+
+
 def _query_narrows(node: ast.Call) -> bool:
     """A `select(Block)` chain whose `.where(…)` says which blocks it means.
 
     Only the filter arguments are read, not the select list: `.where(…)` on
     `select(Block.id)` narrows nothing, and `.id` in the select list used to
     read as a filter and retire the whole query.
+
+    Which column a comparison is ABOUT is read from the expression, not from
+    the text: the left side is the column (`Block.kind == "message"`), while a
+    key on the right is an argument (`Block.conversation_id == topic.id`).
+    Matching `.id` anywhere in the filter would read that pin as narrowing.
     """
-    texts: list[str] = []
+    filters: list[ast.AST] = []
+    keywords: list[str] = []
     current: ast.AST = node
     while isinstance(current, ast.Call):
         func = current.func
         if not isinstance(func, ast.Attribute):
             break
         if func.attr in ("where", "filter_by", "filter"):
-            texts.extend(ast.unparse(argument) for argument in current.args)
-            texts.extend(ast.unparse(keyword.value) for keyword in current.keywords)
+            filters.extend(current.args)
+            keywords.extend(
+                keyword.arg
+                for keyword in current.keywords
+                if keyword.arg is not None
+            )
         current = func.value
-    text = " ".join(texts)
-    return bool(text) and any(key in text for key in ROW_KEYS) and not _narrows_to_events(text)
+    if any(name in NARROWING for name in keywords):
+        return True
+    for argument in filters:
+        for inner in ast.walk(argument):
+            if isinstance(inner, ast.Compare) and _narrowing_column(inner.left):
+                if not _narrows_to_events(ast.unparse(inner)):
+                    return True
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr in ("in_", "notin_", "is_", "is_not")
+                and _narrowing_column(inner.func.value)
+                and not _narrows_to_events(ast.unparse(inner))
+            ):
+                return True
+    return False
 
 
 def _own_returns(func: ast.AST) -> list[ast.Return]:

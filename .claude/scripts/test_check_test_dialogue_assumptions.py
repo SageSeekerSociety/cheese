@@ -71,6 +71,16 @@ def test_a_db_read_narrowed_in_the_where_clause(client, session, topic):
         select(Block).where(Block.conversation_id == topic, Block.kind == "message")
     ).all()
     assert len(rows) == 2
+
+
+def test_a_db_read_narrowed_by_a_json_key(session, topic):
+    rows = session.scalars(
+        select(Block).where(
+            Block.conversation_id == topic,
+            Block.meta["event_type"].as_string() == "turn_failed",
+        )
+    ).all()
+    assert len(rows) == 1
 '''
 
 
@@ -169,6 +179,25 @@ def test_takes_the_first_block(session, topic):
 """,
             kind="index",
             repair="按位置取块",
+        )
+
+    def test_a_conversation_pin_whose_value_has_an_id_is_not_narrowing(self) -> None:
+        # `topic.id` is the argument, not the column: `.id` on the right of the
+        # conversation pin must not read as a filter over the blocks.
+        self._assert_rejected(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_counts_the_blocks(session, topic):
+    rows = session.scalars(
+        select(Block).where(Block.conversation_id == topic.id)
+    ).all()
+    assert len(rows) == 2
+""",
+            kind="length",
+            repair="钉死了这段对话里有几个块",
         )
 
     def test_a_variable_subscript_of_the_envelope_is_the_collection(self) -> None:
