@@ -12,9 +12,11 @@
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
+from app.domain.room_task.models import Task, TaskStatus
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
@@ -187,6 +189,39 @@ def test_closing_a_task_revokes_its_card_and_the_poller_stops_touching_it(
     fake.status_calls.clear()
     result = _poll(client)
     assert result["cards_checked"] == 0
+    assert fake.status_calls == []
+    assert fake.prs[number]["state"] == "open"
+
+
+def test_a_poll_converges_a_card_left_on_a_task_closed_behind_the_api(
+    client, app_world
+):
+    """第二道锁：活从别的路径关掉，卡漏在 pending 上，轮询器下一跳把它收掉。
+
+    这条是给修复之前就停在那里的行兜底的（测试频道那两张卡：10-12 关的活，
+    10-17 还 pending），所以这里直接改库把活设成 closed，不走关任务那条路。
+    """
+    fake = app_world["fake"]
+    _pid, tid, _cid, number, _head = _ready_card(client, app_world)
+    task_id = delivery_task_id(client, tid)
+
+    async def close_behind_the_api() -> None:
+        async with client.test_factory() as session:
+            task = await session.get(Task, uuid.UUID(str(task_id)))
+            assert task is not None
+            task.status = TaskStatus.closed
+            task.closed_at = datetime.now(UTC)
+            await session.commit()
+
+    asyncio.run(close_behind_the_api())
+
+    fake.status_calls.clear()
+    _poll(client)
+
+    card = _cards(client, tid)[0]
+    assert card["status"] == "revoked"
+    assert "任务已关闭" in card["note"]
+    assert f"#{number}" in card["note"]
     assert fake.status_calls == []
     assert fake.prs[number]["state"] == "open"
 
