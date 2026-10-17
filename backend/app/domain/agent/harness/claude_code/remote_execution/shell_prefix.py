@@ -43,6 +43,7 @@ if __package__:
         current_target,
         start_watcher,
     )
+    from app.domain.agent.pr_creation import refuse_in_shell
 else:
     # Source scripts find the shared module in agent/; deployed bundles ship
     # the same module beside this script, which remains first on sys.path.
@@ -54,6 +55,7 @@ else:
         session_path,
         to_machine,
     )
+    from pr_creation import refuse_in_shell
 
     # Its siblings sit beside it, which a script run has first on sys.path and
     # a file loaded by path has not.
@@ -157,8 +159,7 @@ def shell(target_path, command):
     if (
         len(words) >= 4
         and words[:2] == [sys.executable, helper]
-        and words[2]
-        in ("bridge", "guard", "context", "checkpoint", "transport", "reply")
+        and words[2] in ("guard", "context", "checkpoint", "transport", "reply")
         and words[3] == str(target_path)
     ):
         run_in_place(words)
@@ -237,6 +238,9 @@ def run_on_the_machine(target, command):
         # snapshot and cwd file. Its stdin is `/dev/null` by construction.
         body = command[head.end() if head else 0 : tail.start()]
         stdin = None
+        # The platform opens the task's PR (`pr_creation`).
+        if (refused := refuse_in_shell(body)) is not None:
+            return refused
     else:
         # A hook: its input arrives on stdin, spelled for this host.
         body = command

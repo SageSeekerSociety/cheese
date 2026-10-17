@@ -21,7 +21,6 @@ dropped three artifacts and a run that dropped none must not read the same.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Protocol
 
 import httpx
@@ -34,6 +33,7 @@ from app.domain.ratchet.artifacts import (
     Artifact,
     GitHubArtifacts,
     RatchetGitHubError,
+    _parse_time,
     read_snapshot,
 )
 from app.domain.ratchet.store import RatchetSnapshots
@@ -69,15 +69,6 @@ class Pulled:
     row: dict[str, Any] | None
     unreadable: bool
     failed: bool
-
-
-def _parse_time(raw: Any) -> datetime | None:
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def row_for(artifact: Artifact, read, repo: str) -> Pulled:

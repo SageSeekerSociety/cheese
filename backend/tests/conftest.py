@@ -31,6 +31,7 @@ import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
@@ -95,7 +96,7 @@ _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (ser
 # The runner slot this run is on, empty everywhere but a pool machine with more
 # than one. Two runs sharing a machine otherwise share every name below, and the
 # harness drops its databases WITH (FORCE) — see tests/isolation.py.
-_SLOT = os.environ.get("CHEESE_CI_SLOT", "")
+_SLOT = os.environ.get("CHEESEX_TEST_SLOT", os.environ.get("CHEESE_CI_SLOT", ""))
 _INTG_DB_NAME, _CLIENT_DB_NAME = isolation.database_names(_XDIST_WORKER, _SLOT)
 # Postgres server root (no database). Defaults to the TEST server the repo-root
 # docker-compose.yml publishes on :5433 (separate from the dev database on
@@ -116,21 +117,29 @@ settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
 # block of them so two runs sharing a machine cannot land on the same index.
 _REDIS_BASE = re.sub(r"/\d*$", "", os.environ.get("REDIS_URL", settings.redis_url))
 _REDIS_DB = isolation.redis_database(
-    _XDIST_WORKER, int(os.environ.get("CHEESE_CI_REDIS_BASE_DB", "0"))
+    _XDIST_WORKER,
+    int(os.environ.get("CHEESE_CI_REDIS_BASE_DB", "0")),
+    database_count=int(
+        os.environ.get(
+            "CHEESEX_REDIS_DB_COUNT", os.environ.get("CHEESE_CI_VALKEY_DATABASES", "16")
+        )
+    ),
 )
 settings.redis_url = f"{_REDIS_BASE}/{_REDIS_DB}"
 os.environ["REDIS_URL"] = settings.redis_url
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB_NAME}")
 
+# agent_turn_inputs and agent_seat_owner are defined outside app.models and
+# used to be registered by the chat-stack import this file no longer makes. The
+# per-test clear builds its table list from Base.metadata once per process
+# (`_clean_slate_queries`), so they are registered here, before the first clear.
+import app.domain.agent.turn_inputs  # noqa: F401, E402
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
-from app.api.deps import get_broker, get_chat_service, get_work_runner  # noqa: E402
 from app.core.db import Base, get_db  # noqa: E402
 from app.core.db import engine as app_engine  # noqa: E402
 from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.central_provider import Placed  # noqa: E402
-from app.domain.agent.chat import ChatService  # noqa: E402
-from app.domain.agent.compute import ComputePool  # noqa: E402
 from app.domain.agent.device_hub import DeviceCallError  # noqa: E402
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef  # noqa: E402
 from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
@@ -147,6 +156,14 @@ from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
 # `client` or `TestClient` at all. The two fixtures that drive the app
 # (`client`, `python_client`) import it inside their own bodies, so only a run
 # that actually asks for one of them pays for it.
+#
+# The chat service and the route dependencies (`app.api.deps`,
+# `app.domain.agent.chat`, `app.domain.agent.compute`) are deferred the same
+# way, into the helpers and fixtures that call them: together they are about a
+# third of what this file costs to import without bytecode — a fresh checkout,
+# a review worktree — and a pure test never touches them.
+if TYPE_CHECKING:
+    from app.domain.agent.compute import ComputePool
 from tests.support.collab import install as install_collab  # noqa: E402
 from tests.support.seat_channel import SeatChannel  # noqa: E402
 
@@ -242,7 +259,7 @@ def _topics_with_pending_records() -> set[str]:
     return pending
 
 
-def wait_work_idle() -> None:
+def wait_work_idle(runner=None) -> None:
     """Block until background turns (e.g. a new task's kickoff)
     finish: they run on the TestClient portal loop and write to this worker's DB —
     if a turn is still writing when the next test clears it, the test flakes.
@@ -253,8 +270,14 @@ def wait_work_idle() -> None:
     work teardown can drain. Waiting on idle lifecycles and giving up silently
     combined once to hide the suite's largest single cost: a test that stranded
     a turn paid the whole ceiling here and left no trace but a slower run.
+
+    The `client` fixture passes the runner it started with: by its teardown the
+    test may have replaced `app.api.deps.get_work_runner` with a stand-in.
     """
-    runner = get_work_runner()
+    if runner is None:
+        from app.api.deps import get_work_runner
+
+        runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
         moving = len(runner._tasks) or len(_topics_with_pending_records())
         if not moving:
@@ -945,9 +968,11 @@ async def finish_turn(service, topic_id) -> None:
     await close_topic_subscriptions(service, topic_id)
 
 
-def stub_compute(channel: StubChannel | None = None) -> ComputePool:
+def stub_compute(channel: StubChannel | None = None) -> "ComputePool":
     """A pool holding one screen, for the many tests that build a ChatService
     by hand. Pass the channel when the test asserts against it."""
+    from app.domain.agent.compute import ComputePool
+
     screen = channel or StubChannel()
     return ComputePool([screen.runtime])
 
@@ -1428,6 +1453,9 @@ def client(
     # Assembling the app is the expensive part of starting a pytest process, so
     # it happens here rather than at conftest import: only tests that actually
     # ask for `client` pay for it.
+    from app.api.deps import get_broker, get_chat_service, get_work_runner
+    from app.domain.agent.chat import ChatService
+    from app.domain.agent.compute import ComputePool
     from app.main import app
 
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
@@ -1446,6 +1474,9 @@ def client(
     # binding — seeded by the migration in prod, re-seeded here after the clear.
     asyncio.run(_clear_client_db(seed_agent_user=True))
     get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
+    # Taken now, not in teardown: by then the test may have replaced
+    # `app.api.deps.get_work_runner` (monkeypatch undoes it after this fixture).
+    work_runner = get_work_runner()
 
     async def override_get_db():
         async with test_factory() as session:
@@ -1457,7 +1488,7 @@ def client(
                 raise
 
     chat_service = ChatService(
-        work_runner=get_work_runner(),
+        work_runner=work_runner,
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -1494,7 +1525,7 @@ def client(
                 # Drain background turns BEFORE leaving the TestClient context:
                 # disposing the engine under a running kickoff turn makes flakes.
                 try:
-                    wait_work_idle()
+                    wait_work_idle(work_runner)
                 finally:
                     # Both pools were used on the portal loop. Close them before
                     # TestClient closes that loop, otherwise asyncpg connections
@@ -1509,8 +1540,8 @@ def client(
         # Leaving the app hands its work over and holds the runner's turns, which
         # is right for a process that exits next. This one goes on to run tests
         # that drive the same runner without an app around it.
-        get_work_runner().start_turns()
-        get_work_runner().own_sessions(True)
+        work_runner.start_turns()
+        work_runner.own_sessions(True)
         asyncio.run(setup_engine.dispose())
 
 
@@ -2357,7 +2388,19 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
 
 
 @pytest.fixture(scope="session")
-def _pg_schema():
+def _database_slot(testrun_uid):
+    """Only DB users claim resources; xdist workers share this run's identity."""
+    with isolation.claim_slot(
+        slot=_SLOT,
+        owner=testrun_uid,
+        postgres_urls=(settings.database_url, TEST_DATABASE_URL),
+        redis_url=settings.redis_url,
+    ):
+        yield
+
+
+@pytest.fixture(scope="session")
+def _pg_schema(_database_slot):
     """Create + migrate THIS worker's two dedicated databases once per session:
     the integration DB (settings.database_url, bound by the app engines) and the
     client/python_client DB (TEST_DATABASE_URL). Reached via the ``_pg_schema_gate``
@@ -2468,6 +2511,7 @@ async def business_db_factory(db_factory, stub_project_forge):
     installs. Keep this separate so live Forgejo and empty-database contract
     tests retain their deliberately narrower fixture.
     """
+    from app.api.deps import get_broker
     from app.domain.identity.services import IdentityService
 
     get_broker().reset()
@@ -2522,6 +2566,9 @@ async def python_client(
     awaitable inside anyio tests."""
     from httpx import ASGITransport, AsyncClient
 
+    from app.api.deps import get_broker, get_chat_service, get_work_runner
+    from app.domain.agent.chat import ChatService
+    from app.domain.agent.compute import ComputePool
     from app.main import app
 
     engine = _production_test_engine(TEST_DATABASE_URL)

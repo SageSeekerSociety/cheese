@@ -95,6 +95,23 @@ NATIVE_TOOLS = {
 # link drop a deploy of the device connection causes, which the prefix waits
 # out and then reattaches.
 COMMAND_ABANDONED_S = 600.0
+# How long an executor with no request and nothing of its own running waits
+# before it ends what its commands left behind and stops (`idle_stop`). Taking
+# the session's hands starts it again — at a session's launch
+# (`central_provider._starts_on_machine`) or at its next tool call
+# (`session_work._start_executor` pings, finds nobody, installs); a call that
+# takes no hands, such as a turn's Stop checkpoint, finds none until one has.
+# 30 minutes is three times the 600 s after which the
+# platform destroys an idle sandbox it records (`cloud_sandbox_idle_stop_s`) and
+# a runner lets an idle session go (`driven.runner.IDLE_EXIT_S`): where those
+# apply they act first, and this is the backstop for a home nothing records. It
+# is also long enough that a turn's own pauses — the model thinking, a subagent
+# working off the machine, a card waiting on CI — do not cost a cold start.
+# Read through `CHEESE_EXECUTOR_IDLE_EXIT_S` in `serve` so a test need not wait
+# half an hour; nothing on a machine sets it.
+EXECUTOR_IDLE_EXIT_S = 1800.0
+# How often an executor looks whether it has sat idle that long.
+EXECUTOR_IDLE_CHECK_S = 30.0
 # The stops a session's host sends, by their POSIX numbers: SIGHUP, SIGINT,
 # SIGKILL, SIGTERM. Not spelled through `signal`: Windows has no SIGHUP or
 # SIGKILL, so there every stop failed on the name before `signal_command`,

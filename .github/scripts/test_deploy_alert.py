@@ -118,6 +118,17 @@ class TheStepTheWorkflowRuns(unittest.TestCase):
         self.assertIn("【严重】部署失败：dev（okcheese.com）", written)
         self.assertIn("Docker deploy this commit", written)
 
+    def test_a_failed_run_with_no_deploy_job_still_pages(self) -> None:
+        """A renamed or removed job must not turn a failed deploy into silence."""
+        others = [{"name": "other", "conclusion": "success", "steps": []}]
+        written = self.run_main(others, DEPLOY_RESULT="failure", DEPLOY_JOB="deploy")
+        self.assertIn("【严重】部署失败：dev（okcheese.com）", written)
+        self.assertIn("部署工作流失败，且未找到目标 job `deploy`", written)
+
+    def test_a_run_that_did_not_fail_stays_quiet_without_a_deploy_job(self) -> None:
+        others = [{"name": "other", "conclusion": "success", "steps": []}]
+        self.assertEqual(self.run_main(others, DEPLOY_RESULT="cancelled", DEPLOY_JOB="deploy"), "")
+
     def test_a_refusal_the_workflow_passes_on_reaches_nobody(self) -> None:
         self.assertEqual(self.run_main([job("failure", [(GUARD, "failure")])], REFUSED="true"), "")
 

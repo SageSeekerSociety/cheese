@@ -39,8 +39,6 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
-from functools import partial
 from pathlib import Path
 
 if sys.platform != "win32":
@@ -85,6 +83,8 @@ RELEASE_FILES = core.RELEASE_FILES
 CONTROL_INSPECT = commands.SHELL_INSPECT
 NATIVE_TOOLS = core.NATIVE_TOOLS
 COMMAND_ABANDONED_S = core.COMMAND_ABANDONED_S
+EXECUTOR_IDLE_EXIT_S = core.EXECUTOR_IDLE_EXIT_S
+EXECUTOR_IDLE_CHECK_S = core.EXECUTOR_IDLE_CHECK_S
 STOP_SIGNALS = core.STOP_SIGNALS
 COMMAND_READ_WAIT_S = core.COMMAND_READ_WAIT_S
 COMMAND_READ_BYTES = core.COMMAND_READ_BYTES
@@ -138,6 +138,12 @@ class Executor:
         self.commands_dir.mkdir(exist_ok=True)
         self.running = {}
         self.command_lock = threading.RLock()
+        # The process groups its commands started and that still have a
+        # process in them, and when it last had a request or a command end:
+        # what it ends, and when, once it has sat idle (`idle_stop`).
+        self.groups = set()
+        self.active_at = time.monotonic()
+        self.stopping = False
         # Foreground Bash calls still waiting on their command (call → command),
         # and the ones told to stop waiting (`control` "background").
         self.foreground = {}
@@ -149,8 +155,15 @@ class Executor:
         self.collected, self.snapshot = {}, None
         self.snapshot_lock, self.cli_lock = threading.Lock(), threading.Lock()
         self.clients = {}
-        # Agent types' servers, by name: their definitions come with the calls.
-        self.agent_specs = {}
+        # Commands added in project settings and agent types' own, by name:
+        # their definitions come with the calls.
+        self.handed_specs = {}
+        # What the session's gateway hands with a local server's calls
+        # (`RemoteClient._local_start`): the values of the project secrets its
+        # definition names, and — on a member's computer — the fingerprints of
+        # the commands its owner lets run here. Read when the server starts.
+        self.server_values = {}
+        self.server_allowed = {}
         self.client_lock, self.log_lock = threading.Lock(), threading.Lock()
         self.db_lock, self.context_fs_entries = threading.Lock(), {}
         # Socket clients load this module without opening the service database.
@@ -265,6 +278,15 @@ class Executor:
     def shell(self, params):
         return commands.shell(self, params)
 
+    def prune_groups(self):
+        return commands.prune_groups(self)
+
+    def end_left_behind(self):
+        return commands.end_left_behind(self)
+
+    def idle_stop(self, idle_s):
+        return commands.idle_stop(self, idle_s)
+
     def _reap(self):
         """Stop a watched command whose reader is gone for good, and forget a
         finished one nobody collected (`COMMAND_ABANDONED_S`)."""
@@ -281,6 +303,7 @@ class Executor:
                 self.log(command_id, "abandoned")
                 with contextlib.suppress(Exception):
                     self.stop_command(command_id)
+            self.prune_groups()
             for record in list(self.commands_dir.iterdir()):
                 try:
                     meta = json.loads((record / "command.json").read_text())
@@ -321,7 +344,11 @@ class Executor:
 
     def dispatch(self, method, params):
         if isinstance(params, dict) and isinstance(params.get("spec"), dict):
-            self.agent_specs[params["server"]] = params["spec"]
+            self.handed_specs[params["server"]] = params["spec"]
+        if isinstance(params, dict) and isinstance(params.get("values"), dict):
+            self.server_values[params["server"]] = params["values"]
+        if isinstance(params, dict) and "allowed" in params:
+            self.server_allowed[params["server"]] = params["allowed"]
         if method == "begin_upgrade":
             with self.admission_lock:
                 busy = not self.upgrading and (
@@ -346,14 +373,21 @@ class Executor:
             and params.get("operation") in CONTROL_INSPECT
         ) or (method == "invoke" and params.get("tool") == "TaskStop")
         with self.admission_lock:
+            if self.stopping:
+                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+                raise RuntimeError(
+                    "Executor is stopping after sitting idle; request was not accepted"
+                )
             if self.upgrading and not inspect_task:
                 raise RuntimeError("Executor is upgrading; request was not accepted")
             self.active_calls += 1
+            self.active_at = time.monotonic()
         try:
             return self._dispatch(method, params)
         finally:
             with self.admission_lock:
                 self.active_calls -= 1
+                self.active_at = time.monotonic()
 
     def _dispatch(self, method, params):
         if method == "prepare":
@@ -493,89 +527,52 @@ def serve(state):
 
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
+        # A private chat's executor is not stopped for sitting idle: its
+        # container is reused across turns and `private.ensure` reaches a
+        # running container's executor with `request`, never `start`, so one
+        # that stopped itself would leave the chat without one until the
+        # container is released, which is what bounds it (`private.release`).
+        idle_s = float(
+            os.environ.get("CHEESE_EXECUTOR_IDLE_EXIT_S", EXECUTOR_IDLE_EXIT_S)
+        )
+        if not executor.config.get("private"):
+
+            def leave_when_idle():
+                while not executor.idle_stop(idle_s):
+                    time.sleep(min(EXECUTOR_IDLE_CHECK_S, idle_s / 4))
+                    # Every look, so a group that emptied is forgotten before
+                    # its number can be handed to a process of somebody else's.
+                    executor.prune_groups()
+                stop(None, None)
+
+            threading.Thread(target=leave_when_idle, daemon=True).start()
         try:
             server.serve_forever(poll_interval=0.1)
         finally:
-            executor.close()
+            # The socket goes first: from here a caller finds no executor, which
+            # it knows how to answer (an install starts one), rather than one
+            # that answers and refuses while what follows takes its time.
             path.unlink(missing_ok=True)
             if sys.platform != "win32":
                 Path(address).unlink(missing_ok=True)
+            if executor.stopping:
+                ended = executor.end_left_behind()
+                with contextlib.suppress(OSError):
+                    executor.log("service", "idle", idle_s=idle_s, ended_groups=ended)
+            executor.close()
     # server_close joins request handlers before their receipt database closes.
     executor.db.close()
-
-
-def bridge(state, server, *, call=None):
-    if call is None:
-        call = partial(request, state)
-
-    output_lock = threading.Lock()
-    bridge_id = uuid.uuid4().hex
-
-    def handle(data):
-        if "id" not in data:
-            return
-        try:
-            method = data["method"]
-            params = data.get("params", {})
-            if method == "initialize":
-                result = {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "cheese-execution", "version": "0.1.0"},
-                }
-            elif method == "ping":
-                result = {}
-            elif method == "tools/call":
-                value = call(
-                    "invoke",
-                    {
-                        "id": f"mcp-{bridge_id}-{data['id']}",
-                        "server": server,
-                        "tool": params["name"],
-                        "args": params.get("arguments", {}),
-                        # Claude Code, the only bridge user, fires the hooks.
-                        "platform": True,
-                    },
-                )
-                result = value.get("value") or {
-                    "content": [{"type": "text", "text": value["error"]}],
-                    "isError": True,
-                }
-            else:
-                result = call(
-                    "mcp", {"server": server, "method": method, "params": params}
-                )
-            response = {"jsonrpc": "2.0", "id": data["id"], "result": result}
-        except Exception as exc:
-            response = {
-                "jsonrpc": "2.0",
-                "id": data["id"],
-                "error": {"code": -32000, "message": str(exc)},
-            }
-        with output_lock:
-            print(json.dumps(response), flush=True)
-
-    threads = []
-    for line in sys.stdin:
-        thread = threading.Thread(target=handle, args=(json.loads(line),))
-        thread.start()
-        threads.append(thread)
-    for thread in threads:
-        thread.join()
 
 
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["start", "serve", "bridge", "request", "stop"])
+    parser.add_argument("mode", choices=["start", "serve", "request", "stop"])
     parser.add_argument("--state", required=True, type=Path)
-    parser.add_argument("--server", default="native")
     args = parser.parse_args()
     state = args.state if args.state.match("/proc/self/fd/*") else args.state.resolve()
     if args.mode == "serve":
         serve(state)
-    elif args.mode == "bridge":
-        bridge(state, args.server)
     elif args.mode == "request":
         value = json.load(sys.stdin)
         print(json.dumps(request(state, value["method"], value.get("params"))))

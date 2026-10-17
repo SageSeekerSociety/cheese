@@ -823,11 +823,15 @@ class AgentWorkRunner:
             # 机器死在手上，最需要说这句话的那一档。
             calls = (say("dispatchCall", tool=d.tool, id=d.key) for d in unknown)
             waiting = listing(calls)
+            # No `turn_id`: `unknown` spans every turn of the topic whose
+            # dispatch never wrote back, so no single turn can be named. Pinning
+            # one would make the run-record page blame that turn alone for calls
+            # that may belong to another; the topic is the honest scope here.
             await self._post_orphan_event(
                 chat_service,
                 topic_id,
                 say("dispatchUnknown", count=len(unknown)),
-                notice(
+                meta=notice(
                     EVENT_DISPATCH_UNKNOWN,
                     severity=SEVERITY_WARN,
                     # 平台到头了：做没做过只有那台机器知道，而它已经不说话了。
@@ -865,7 +869,10 @@ class AgentWorkRunner:
                 chat_service,
                 topic_id,
                 text,
-                notice(
+                # The turn this is about: the newest stranded one, which is also
+                # the one the stale/resendable verdict was read from.
+                turn_id=newest.turn_id,
+                meta=notice(
                     EVENT_DEPLOY_INTERRUPTED,
                     severity=SEVERITY_WARN,
                     # 平台不再自动做任何事了 —— 这条要人来。
@@ -903,10 +910,11 @@ class AgentWorkRunner:
         chat_service,
         topic_id: uuid.UUID,
         text: str,
+        turn_id: uuid.UUID | None = None,
         meta: dict | None = None,
     ) -> None:
         await runtime_orphans._post_orphan_event(
-            self, chat_service, topic_id, text, meta
+            self, chat_service, topic_id, text, turn_id=turn_id, meta=meta
         )
 
     # The re-send opener's wording (#316): name the platform as the cause —

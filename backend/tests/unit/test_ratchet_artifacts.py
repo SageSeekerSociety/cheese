@@ -3,6 +3,9 @@
 这一批钉的是「读不懂的时候不要猜」：未知版本、坏 zip、没有快照成员的工件，
 都必须落到 `unreadable`/`reason` 上，不能返回一份空 checks 的「快照」——那会
 在页面上变成一条「量过了，全 0」的点。
+
+时间解析只有 `artifacts` 里那一份，`ingest` 从它导入；没有偏移的时间戳按 UTC
+读，因为它要落进 TIMESTAMPTZ 列。
 """
 
 import io
@@ -10,6 +13,7 @@ import json
 import zipfile
 from datetime import UTC, datetime
 
+from app.domain.ratchet import artifacts, ingest
 from app.domain.ratchet.artifacts import read_snapshot
 from app.domain.ratchet.ingest import row_for
 
@@ -35,6 +39,28 @@ def _snapshot(**overrides) -> bytes:
     }
     payload.update(overrides)
     return json.dumps(payload).encode()
+
+
+def test_the_puller_parses_time_with_the_same_function_as_the_reader():
+    # 两份逐字相同的 `_parse_time` 里改一处、漏一处，没有任何行为测试会红；这里
+    # 钉住的是「只有一份」这个事实本身。
+    assert ingest._parse_time is artifacts._parse_time
+
+
+def test_a_snapshot_time_without_an_offset_is_stored_as_utc():
+    # 没有偏移的 ISO 字符串如果原样落进 TIMESTAMPTZ，会被数据库按会话时区换算。
+    # 采集器写的是 UTC，读的人就必须把它当 UTC。
+    pulled = row_for(
+        _artifact(),
+        read_snapshot(
+            _zip(
+                {"ratchet-snapshot.json": _snapshot(collected_at="2026-09-30T08:05:00")}
+            )
+        ),
+        "o/r",
+    )
+
+    assert pulled.row["collected_at"] == datetime(2026, 9, 30, 8, 5, tzinfo=UTC)
 
 
 def test_a_snapshot_is_read_with_its_version():

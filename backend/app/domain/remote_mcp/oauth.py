@@ -64,6 +64,9 @@ class Server:
     revocation_endpoint: str | None
     scope: str | None
     cimd: bool
+    #: The server says it names itself (`iss`) in every authorization response
+    #: (RFC 9207), so a response without it is not one of its own.
+    names_itself: bool = False
 
 
 @dataclass(frozen=True)
@@ -178,6 +181,8 @@ async def discover(server_url: str, resource: str) -> Server:
             revocation_endpoint=metadata.get("revocation_endpoint"),
             scope=scope or None,
             cimd=bool(metadata.get("client_id_metadata_document_supported")),
+            names_itself=metadata.get("authorization_response_iss_parameter_supported")
+            is True,
         )
 
 

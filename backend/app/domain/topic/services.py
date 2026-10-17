@@ -424,8 +424,11 @@ class TopicService:
         fail, which is what keeps it from crying wolf over slow work:
 
         1. **No heartbeat.** `live_turn` is what the runner is really executing
-           for this room (frames, tool calls included — activity the DB never
-           sees). Present and recently framed ⇒ alive, full stop.
+           for this room. `silent_for_s` is since the newer of two signs: a
+           frame the turn published, or the runner answering a read — the latter
+           arrives every `READ_WAIT_S` even through a long think or a long tool
+           call, activity the DB never sees. Present and recently heard ⇒ alive,
+           full stop.
         2. **The timeline stops mid-action.** The newest block is a tool action
            by 芝士 — the shape a turn leaves when it is cut off between doing
            something and reporting it. A turn that ends properly leaves a

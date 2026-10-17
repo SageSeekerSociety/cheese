@@ -3,6 +3,8 @@
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+
 from app.domain.agent.repositories import AgentTurnRepository
 from tests.conftest import seed_user
 from tests.integration.conftest import (
@@ -135,6 +137,61 @@ def test_active_room_refuses_application_but_project_can_save_future_config(clie
     assert applied.json()["error"]["i18n"]["key"] == "roomBusyFinishBeforeEnvironment"
     current = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
     assert current["pinned_revision"] != saved.json()["data"]["revision"]
+
+
+@pytest.mark.parametrize(
+    ("place", "stopped", "busy"),
+    [
+        ("room", False, True),
+        ("task", False, True),
+        ("task", True, False),
+        ("other", False, False),
+    ],
+)
+def test_room_environment_busy_covers_its_tasks_but_not_stopped_or_other_work(
+    client, place, stopped, busy
+):
+    from app.domain.agent.models import AgentTurn
+    from app.domain.room_task.models import Task
+
+    project_id, headers = project(client)
+    topic_id = room(client, project_id)
+    other_room = room(client, project_id) if place == "other" else None
+
+    async def seed_turn():
+        async with client.test_request_factory() as session:
+            conversation_id = uuid.UUID(other_room or topic_id)
+            if place == "task":
+                task = Task(
+                    project_id=uuid.UUID(project_id),
+                    room_id=conversation_id,
+                    title="Work using the room environment",
+                )
+                session.add(task)
+                await session.flush()
+                conversation_id = task.id
+            work = uuid.uuid4()
+            await AgentTurnRepository(session).open(
+                turn_id=work,
+                conversation_id=conversation_id,
+                continuation_id=work,
+                author="alice",
+                content="Work",
+                is_resume=False,
+                resendable=True,
+                started_at=datetime.now(UTC),
+            )
+            if stopped:
+                turn = await session.get(AgentTurn, work)
+                turn.stopped_at = datetime.now(UTC)
+            await session.commit()
+
+    client.portal.call(seed_turn)
+    response = client.get(
+        f"/projects/{project_id}/environment/rooms/{topic_id}", headers=headers
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"].get("busy", False) is busy
 
 
 async def test_image_migration_keeps_other_settings_and_pins_all_rooms(db_factory):

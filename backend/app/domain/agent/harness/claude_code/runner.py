@@ -89,6 +89,9 @@ RETENTION_EVERY_S = 3600
 # worth more than stdout would have carried.
 FILE_TEXT_MAX = 30_000
 FINISHED = frozenset({"completed", "failed", "killed", "stopped"})
+# What the build says of an input it will never echo now (``command_lifecycle``):
+# each is the one terminal state that input gets in this session.
+SETTLED = frozenset({"completed", "cancelled", "discarded", "refused"})
 # How much of what Claude Code said on a failed way up goes into the runner's
 # own log. The backend reads the last 1200 bytes of this launch's part of that
 # log (``channel._ended``), and the end of what a dying process printed is where
@@ -775,6 +778,16 @@ class Runner(runner.Runner[Journal]):
             if not self.working:
                 self._open(self._sent_input(str(record.get("command_uuid"))))
                 stamp["turn_start"] = True
+        elif kind == "command_lifecycle" and record.get("state") in SETTLED:
+            # An input is on its way in until its echo, but a turn aborted
+            # before its prompt was checked never echoes it. Counted as in
+            # flight it kept the session busy, and so running, for good.
+            # Nor is a reply owed on it any more: what becomes of a message the
+            # session never read is the platform's to decide (``input_holds``).
+            identifier = str(record.get("command_uuid"))
+            self.sent.pop(identifier, None)
+            if not self.working and self.owed == identifier:
+                self.reply_settled()
         elif main and kind == "user" and record.get("isReplay"):
             identifier = str(record.get("uuid"))
             sent = self._sent_input(identifier)
@@ -1075,6 +1088,7 @@ class Runner(runner.Runner[Journal]):
             "files": outcome.files,
             "refused": outcome.refused,
             "rejected": outcome.rejected,
+            "unindexed": list(outcome.unindexed),
             "held": list(outcome.held),
         }
 

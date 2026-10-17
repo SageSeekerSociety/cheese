@@ -14,6 +14,7 @@ from app.domain.agent.service import (
     STEP_ERROR_MAX,
     AgentMessage,
     AgentResult,
+    AgentStepCalls,
     AgentStepFailed,
     AgentStepOutput,
     AgentToolUse,
@@ -151,6 +152,63 @@ def test_a_long_failure_keeps_its_ending():
     assert len(failed.text) == STEP_ERROR_MAX
     # Cut at the front, and saying so: it does not open on half a word.
     assert failed.text.startswith("…")
+
+
+# ---- 一段脚本调过的工具 ----
+#
+# pi's codemode runs a script the model wrote, and the tools the script calls
+# are never the model's own calls: pi records them on the script's result
+# (`nestedCalls`, shape read off the 1.0.0 binary's NestedCallRecorder), and
+# that is the only place the room can learn them from.
+
+
+def test_the_tools_a_script_called_go_on_its_step():
+    entry = json.loads(json.dumps(_returns()[0]))
+    call = entry["message"]["toolCallId"]
+    entry["message"]["nestedCalls"] = {
+        "calls": [
+            {
+                "id": f"{call}/1",
+                "name": "mcp__linear__search_issues",
+                "arguments": {"query": "标注"},
+                "status": "ok",
+                "durationMs": 120,
+            },
+            {
+                "id": f"{call}/2",
+                "name": "read",
+                "arguments": {"path": "docs/选型.md"},
+                "status": "ok",
+                "durationMs": 3,
+            },
+            {
+                "id": f"{call}/3",
+                "name": "mcp__sentry__list_issues",
+                "argumentsBytes": 9000,
+                "status": "error",
+                "durationMs": 40,
+                "error": "401 Unauthorized",
+            },
+        ],
+        "complete": False,
+    }
+
+    events = Assembler("session-1", harness="pi").accept(entry)
+
+    [script] = [e for e in events if isinstance(e, AgentStepCalls)]
+    assert script.call_id == call
+    assert [(c["tool"], c["failed"]) for c in script.calls] == [
+        ("mcp__linear__search_issues", False),
+        ("read", False),
+        ("mcp__sentry__list_issues", True),
+    ]
+    assert "标注" in script.calls[0]["arg"]
+    assert "docs/选型.md" in script.calls[1]["arg"]
+    assert script.calls[2]["arg"] == "", "arguments pi did not keep are not made up"
+
+
+def test_a_step_that_called_nothing_on_its_own_has_no_calls():
+    assert not [e for e in landed() if isinstance(e, AgentStepCalls)]
 
 
 # ---- pi 1.0 记进日志、而我们不翻的那两条 ----
