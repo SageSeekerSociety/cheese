@@ -76,9 +76,9 @@ HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
 PATH_VALUE_RE = re.compile(
     r"(?:https?|wss?)://[^\s]+|"
-    r"(?:(?:[A-Za-z]:)?[\\/][\w.%+-]+(?:[\\/][\w.%+-]+)*|"
-    r"\.{1,2}[\\/][\w.%+-]+(?:[\\/][\w.%+-]+)*|"
-    r"[\w.%+-]+(?:[\\/][\w.%+-]+)+|"
+    r"(?:(?:[A-Za-z]:)?[\\/][\w.%+${}-]+(?:[\\/][\w.%+${}-]+)*|"
+    r"\.{1,2}[\\/][\w.%+${}-]+(?:[\\/][\w.%+${}-]+)*|"
+    r"[\w.%+${}-]+(?:[\\/][\w.%+${}-]+)+|"
     r"[\w.-]+\.(?:md|py|ts|tsx|js|jsx|cjs|mjs|json|txt|vue|docx))(?:\?[^\s]+)?",
     re.IGNORECASE,
 )
@@ -125,6 +125,12 @@ SQL_PROSE_WORD_RE = re.compile(
 SQL_ARTICLE_PROSE_RE = re.compile(r"^\s*a\s+[A-Za-z]+\b", re.IGNORECASE)
 TS_TYPE_DIAGNOSTIC_RE = re.compile(
     r"""^Type ['\"][^'\"]+['\"] (?:is not assignable(?: to type)?|has no property|does not satisfy the constraint|is missing the following properties|has no properties in common with type|cannot be used as an index type|does not have any construct or call signatures|is incompatible with type|is not comparable(?: to type)?|has no call signatures)\b""",
+    re.IGNORECASE,
+)
+TS_DIAGNOSTIC_RE = re.compile(
+    r"^(?:Property ['\"][^'\"]+['\"] does not exist on type ['\"][^'\"]+['\"]|"
+    r"Argument of type ['\"][^'\"]+['\"] is not assignable to (?:parameter|argument) of type |"
+    r"Cannot find module ['\"][^'\"]+['\"]|No overload matches this call)",
     re.IGNORECASE,
 )
 JS_ASSERTION_METHODS = {
@@ -187,6 +193,16 @@ def _is_sql_value(value: str) -> bool:
     return False
 
 
+def _is_structured_key_value(value: str) -> bool:
+    matches = list(KEY_VALUE_RE.finditer(value))
+    if KEY_VALUE_RE.fullmatch(value):
+        return True
+    if len(matches) < 2 or HAN_RE.search(value):
+        return False
+    remaining = KEY_VALUE_RE.sub(" ", value)
+    return len(WORD_RE.findall(remaining)) <= 2 * len(matches)
+
+
 def _is_explanatory_sentence(value: str) -> bool:
     value = " ".join(value.split())
     han_count = len(HAN_RE.findall(value))
@@ -195,7 +211,7 @@ def _is_explanatory_sentence(value: str) -> bool:
         or PATH_VALUE_RE.fullmatch(value)
         or EMAIL_RE.fullmatch(value)
         or COMMIT_TITLE_RE.match(value)
-        or KEY_VALUE_RE.search(value)
+        or _is_structured_key_value(value)
         or SHELL_COMMAND_RE.search(value)
         or WORKFLOW_EXPRESSION_RE.fullmatch(value)
         or value.startswith(("<", ":::" , "import ", "src/", "backend/", "frontend/", "deploy/", "可递：", "missing:", "since="))
@@ -205,6 +221,7 @@ def _is_explanatory_sentence(value: str) -> bool:
         or SQL_EXPRESSION_RE.fullmatch(value)
         or _is_sql_value(value)
         or TS_TYPE_DIAGNOSTIC_RE.match(value)
+        or TS_DIAGNOSTIC_RE.match(value)
         or (EMAIL_RE.search(value) and not han_count and len(WORD_RE.findall(value)) < 9)
         or IDENTIFIER_RE.fullmatch(value)
         or STATUS_CODES_RE.fullmatch(value)

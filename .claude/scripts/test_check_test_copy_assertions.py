@@ -81,10 +81,13 @@ class TestCopyAssertionGuardTests(unittest.TestCase):
                 "backend/tests/unit/test_values.py",
                 '''
 assert path == "https://example.test/api/a-long-route"
+assert actual == f"{base}/projects/p-1/topics/t-1/threads/th-1?block={block}"
 assert identifier == "a_long_identifier_name_that_is_not_copy"
 assert response == "429 429 429 429 429 429 429 429 429 429"
 assert status == "not found"
 assert command == "/usr/local/bin/python3 scripts/run.py --project demo one two"
+assert actual == "device link closed device=abc123 code=1000 after=42.0s"
+assert actual == "since=2026-09-24T00:00:00Z\\nuntil=2026-09-24T05:59:59Z"
 assert actual == "${{ inputs.integration && github.event_name != 'pull_request' }}"
 assert actual == "github.ref_name && startsWith(github.ref, 'refs/heads/')"
 assert actual == "SELECT name FROM users WHERE deleted_at IS NULL AND status IN ({})"
@@ -127,6 +130,7 @@ assert "archived/removed notices should preserve the relevant message for reader
                 "frontend/src/values.spec.ts",
                 '''
 expect(url).toBe('/topics/a-long-route')
+expect(templateUrl).toBe(`${primary}/users/auth/oauth/login/github?state=st&access_type=offline`)
 expect(code).toBe('a_long_identifier_name_that_is_not_copy')
 expect(actual).not.toBe("This explanatory sentence should be checked by its important parts")
 ''',
@@ -240,7 +244,8 @@ expect(actual).toBe(mapping["{LONG_COPY}"]);
             self._write(
                 root,
                 "backend/tests/unit/test_links.py",
-                'assert actual == "Open https://example.test/help if the browser does not show the correct account settings."',
+                'assert actual == "Open https://example.test/help if the browser does not show the correct account settings."\n'
+                'assert actual == "Open https://example.test/help?mode=brief&source=test and continue with the next step please."',
             )
             self._write(
                 root,
@@ -251,6 +256,7 @@ expect(actual).toBe(mapping["{LONG_COPY}"]);
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("test_links.py:1", result.stderr)
+        self.assertIn("test_links.py:2", result.stderr)
         self.assertNotIn("links.spec.ts:", result.stderr)
 
     def test_additional_test_roots_are_scanned(self) -> None:
