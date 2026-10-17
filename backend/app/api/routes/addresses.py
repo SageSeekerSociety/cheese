@@ -26,12 +26,14 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.topics_deps import _actor_in_place
 from app.core.errors import (
+    BaseError,
     ConflictError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
 )
 from app.core.sentences import say
+from app.domain.living_doc.services import Documents
 from app.domain.membership.services import MemberService
 from app.domain.mentions import conversation_refs
 from app.domain.project.address import (
@@ -159,9 +161,12 @@ async def resolve_refs(
     ids: Annotated[str, Query(max_length=REFS_PER_READ * 37)] = "",
 ) -> dict:
     """What each ``<#id>`` in ``ids`` (comma-separated) names: a channel, a
-    task or a 支线, its title and the room it is in. An id that names none of
-    them, or one the caller may not see, is absent from the answer — so a
-    private channel is not told apart from one that was never made."""
+    task, a 支线 or a document, its title and the room it is in. A channel, task
+    or 支线 the caller may not see is absent from the answer, like an id that
+    names nothing — so a private channel is not told apart from one that was
+    never made. A document the caller may not read is answered as
+    ``unreadable``, without its title: a document is linked to by name, and
+    the reader is told the link is there and closed to them (#3827)."""
     wanted: list[uuid.UUID] = []
     for raw in ids.split(",")[:REFS_PER_READ]:
         try:
@@ -179,18 +184,49 @@ async def resolve_refs(
         readable |= await resolver.readable_topic_ids(
             actor, project_id=project_id, topics=rooms
         )
-    return ok(
-        {
-            str(ref.id): {
-                "kind": ref.kind.value,
-                "title": ref.title,
-                "room_id": str(ref.room_id),
-                "project_id": str(ref.project_id),
-            }
-            for ref in refs.values()
-            if ref.room_id in readable
+    answer = {
+        str(ref.id): {
+            "kind": ref.kind.value,
+            "title": ref.title,
+            "room_id": str(ref.room_id),
+            "project_id": str(ref.project_id),
         }
-    )
+        for ref in refs.values()
+        if ref.room_id in readable
+    }
+    for doc_id in [i for i in wanted if i not in refs]:
+        answer.update(await _document_ref(db, resolver, doc_id))
+    return ok(answer)
+
+
+async def _document_ref(
+    db: AsyncSession, resolver: ActorResolver, document_id: uuid.UUID
+) -> dict[str, dict]:
+    """A document's entry in the answer: its title when the caller may read
+    it, ``unreadable`` when not; nothing when there is no such document."""
+    doc = await Documents(db).get(document_id)
+    if doc is None:
+        return {}
+    try:
+        reached = await reach(db, resolver, document_id)
+    except BaseError:
+        return {
+            str(document_id): {
+                "kind": "unreadable",
+                "title": "",
+                "room_id": "",
+                "project_id": str(doc.project_id),
+            }
+        }
+    title = doc.title or (reached.task.title if reached.task is not None else "")
+    return {
+        str(document_id): {
+            "kind": "document",
+            "title": title,
+            "room_id": str(doc.room_id) if doc.room_id else "",
+            "project_id": str(doc.project_id),
+        }
+    }
 
 
 class SlugIn(BaseModel):

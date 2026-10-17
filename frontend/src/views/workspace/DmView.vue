@@ -124,8 +124,8 @@ function backToMembers() {
   void router.push({ name: 'project-members', params: { projectId: props.projectId } })
 }
 
-function openTopic(topicId: string) {
-  void router.push(refRoute(props.projectId, topicId))
+function openTopic(topicId: string, blockId?: string) {
+  void router.push(refRoute(props.projectId, topicId, blockId))
 }
 
 function handleMentionClick(handle: string) {

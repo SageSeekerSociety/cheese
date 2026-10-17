@@ -7,6 +7,10 @@ import { setLocale } from '@/i18n'
 
 // 确认框回什么由这一格决定：`wait` 解出真就是人点了确定。
 const dialogMock = vi.hoisted(() => ({ confirm: vi.fn() }))
+
+// 文档的链接那一侧（#3827）：打开文档时问一次被引用、打 # 时问一次能引用的文档。这里不关心。
+vi.mock('@/api/docLinks', () => ({ getDocumentBacklinks: async () => ({ links_to: [], linked_from: [] }) }))
+vi.mock('@/lib/linkableDocuments', () => ({ linkableDocuments: async () => [] }))
 vi.mock('@/plugins/dialog', async () => ({
   ...(await vi.importActual<typeof import('@/plugins/dialog')>('@/plugins/dialog')),
   useDialog: () => ({ confirm: dialogMock.confirm }),

@@ -11,5 +11,7 @@
   "inProgress": "In progress",
   "library": "Library",
   "noFiles": "No matching files",
-  "noMatch": "No matches"
+  "noMatch": "No matches",
+  "channelGroup": "Channels",
+  "docGroup": "Documents"
 }
