@@ -873,40 +873,77 @@ describe('findGlobalFallbacks', () => {
   it('reads a wide graph of spreads by the names it ends up with', () => {
     const WIDTH = 8
     const LEVELS = 8
-    const graph = (leaf) => {
-      const lines = []
-      for (let i = 0; i < WIDTH; i += 1) lines.push(`const l0_${i} = ${leaf}`)
+    // Every node of a level spreads every node of the level below it, and the
+    // eight leaves are one object, so a walk that answers each route separately
+    // does 8^8 of them: a first version of this walk overflowed the stack on a
+    // legal 6 KB component. Nothing at the top of the graph decides what the
+    // names are — the answer is what the bottom of the graph ends up with, and
+    // the whole assertion depends on reading through all eight levels.
+    const graph = ({ binds, writes, viaAssign }) => {
+      const lines = [`const l0_0 = { props: ${binds ? "['open']" : '[]'} }`]
+      for (let i = 1; i < WIDTH; i += 1) lines.push(`const l0_${i} = l0_0`)
       for (let level = 1; level <= LEVELS; level += 1) {
-        const spread = Array.from({ length: WIDTH }, (_, j) => `...l${level - 1}_${j}`).join(', ')
-        for (let i = 0; i < WIDTH; i += 1) lines.push(`const l${level}_${i} = { ${spread} }`)
+        const sources = Array.from({ length: WIDTH }, (_, j) => `l${level - 1}_${j}`)
+        const spread = sources.map((source) => `...${source}`).join(', ')
+        for (let i = 0; i < WIDTH; i += 1) {
+          // A write placed at one level, on the node every level above spreads
+          // last, so it is the write the graph ends up with.
+          const write = writes === level && i === WIDTH - 1
+          lines.push(
+            viaAssign
+              ? `const l${level}_${i} = Object.assign({}, ${sources.join(', ')}${write ? ", { props: ['open'] }" : ''})`
+              : `const l${level}_${i} = { ${spread}${write ? ", props: ['open']" : ''} }`
+          )
+        }
       }
       return lines
     }
-    const component = (script) =>
+    const component = (lines) =>
       [
         '<script lang="ts">',
-        ...script,
-        'void defineComponent',
+        ...lines,
+        'export default l8_0',
         '</script>',
         '<template>',
         '  <button @click="open()">x</button>',
         '</template>',
         '',
       ].join('\n')
+    const hits = (shape) => found(component(graph(shape))).map((hit) => [hit.name, hit.where])
 
+    assert.deepEqual(hits({ binds: true }), [], 'followed the spreads down to the prop that binds `open`')
+    assert.deepEqual(hits({ binds: false }), [['open', TEMPLATE]], 'read a graph that binds nothing')
+    assert.deepEqual(hits({ binds: false, writes: 4 }), [], 'kept the write the graph ends up with')
     assert.deepEqual(
-      found(component([...graph("{ props: ['open'] }"), 'export default { ...l8_0, props: [] }'])).map((hit) => [
-        hit.name,
-        hit.where,
-      ]),
+      hits({ binds: false, viaAssign: true }),
       [['open', TEMPLATE]],
-      'kept the earlier spread for the entry a later property replaces'
+      'read the same graph built by Object.assign'
     )
     assert.deepEqual(
-      found(component([...graph('{ props: [] }'), "export default { ...l8_0, props: ['open'] }"])),
+      hits({ binds: false, writes: 4, viaAssign: true }),
       [],
-      'lost the prop a later property puts back'
+      'kept the Object.assign source written last'
     )
+  })
+
+  // A chain of spreads is a legal shape and can be arbitrarily long, so the
+  // walk has to be bounded somewhere other than the call stack. These are the
+  // two ends of that: a chain well past any hand-written options object still
+  // reads to the end, and one far past the walk's bound ends in an answer
+  // instead of `RangeError: Maximum call stack size exceeded`.
+  it('follows a chain of spreads instead of the call stack', () => {
+    const chain = (length, leaf) => {
+      const lines = [`const c0 = ${leaf}`]
+      for (let i = 1; i <= length; i += 1) lines.push(`const c${i} = { ...c${i - 1} }`)
+      return [...lines, `export default c${length}`]
+    }
+    const component = (lines) =>
+      ['<script lang="ts">', ...lines, '</script>', '<template><button @click="open()">x</button></template>', ''].join(
+        '\n'
+      )
+
+    assert.deepEqual(found(component(chain(300, "{ props: ['open'] }"))), [], 'stopped short of a chain it could read')
+    assert.doesNotThrow(() => found(component(chain(4000, "{ props: ['open'] }"))), 'overflowed the call stack')
   })
 
   // The value a name holds follows execution, and execution is not the order

@@ -337,14 +337,10 @@ function unassert(node) {
 }
 
 /**
- * The properties an object expression spells, in order, with `{ ...x }` and
- * `Object.assign(target, …)` expanded in place: the keys of the object it
- * copies are the object's keys, and the properties written after a spread are
- * the ones in the result. A later property of the same name replaces an
- * earlier one, so a caller reading a name takes the last entry.
- */
-/**
- * The properties an object literal spells, one entry per name.
+ * The properties an object expression spells, one entry per name, with
+ * `{ ...x }` and `Object.assign(target, …)` expanded in place: the keys of the
+ * object it copies are the object's keys, and the properties written after a
+ * spread are the ones in the result.
  *
  * A node's table is keyed by name and a later write replaces an earlier one,
  * because that is how the object reads: `{ ...a, props: [] }` has the spread's
@@ -383,11 +379,19 @@ function putEntry(entries, entry) {
 
 /** The work behind `objectEntries`; `done` says the whole node was walked. */
 function expandEntries(node, resolve, depth, seen, memo) {
+  // One recursion per spread followed. A chain of more spreads than this is a
+  // generated file, not a component, and reading the names under it is not
+  // worth a stack overflow that would take the whole check down with it.
+  if (depth > 512) return NO_ENTRIES
   const value = unassert(node)
   if (!value) return NO_ENTRIES
   if (value.type === 'Identifier') {
     const target = resolveValue(value, resolve)
-    if (!target || seen.has(target)) return CUT_ENTRIES
+    // A name this file does not resolve — an import, a parameter — has no
+    // entries and no more to say: that is a finished answer, not a cycle, so
+    // callers are free to keep it.
+    if (!target) return NO_ENTRIES
+    if (seen.has(target)) return CUT_ENTRIES
     // The identifier itself is not on the path — only the node it names is,
     // and the branch below adds that. An alias chain (`const a = b`) has both
     // of them on the path, because both name the object being walked.
@@ -400,7 +404,13 @@ function expandEntries(node, resolve, depth, seen, memo) {
     return expandEntries(target, resolve, depth + 1, seen, memo)
   }
   // `Object.assign(target, …)` writes every source into the target in order.
+  // A call is a node like any other here: one this walk is inside is a cycle,
+  // and one it has finished is answered the same way wherever it is met.
   if (isObjectAssign(value)) {
+    if (seen.has(value)) return CUT_ENTRIES
+    const cached = memo.get(value)
+    if (cached) return { entries: cached, done: true }
+    seen.add(value)
     const entries = new Map()
     let done = true
     for (const argument of value.arguments ?? []) {
@@ -408,6 +418,8 @@ function expandEntries(node, resolve, depth, seen, memo) {
       for (const entry of part.entries.values()) putEntry(entries, entry)
       done = done && part.done
     }
+    seen.delete(value)
+    if (done) memo.set(value, entries)
     return { entries, done }
   }
   if (value.type !== 'ObjectExpression') return NO_ENTRIES
