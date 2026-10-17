@@ -569,6 +569,8 @@ def test_an_empty_shard_does_not_refuse_a_run_that_covered_its_plan(
 
 
 def test_reports_that_hold_no_case_verified_nothing(tmp_path: Path) -> None:
+    # Every report is empty, so the run verified nothing — refused on the spot,
+    # rather than only because its plan happens to name cases.
     nodeids = ["tests/unit/test_a.py::test_one"]
     empty = shard_report(tmp_path, "first", [])
     with pytest.raises(SuiteDidNotRun, match="verified nothing"):
@@ -600,6 +602,14 @@ def test_one_report_named_by_two_spellings_is_read_once(
     assert assert_reports_complete(reports, plan(tmp_path, nodeids)) == 1
 
 
+def test_a_report_reached_through_a_symlink_is_read_once(tmp_path: Path) -> None:
+    nodeids = ["tests/unit/test_a.py::test_one"]
+    first = shard_report(tmp_path, "first", nodeids)
+    link = tmp_path / "link.xml"
+    link.symlink_to(first)
+    assert assert_reports_complete([first, link], plan(tmp_path, nodeids)) == 1
+
+
 def test_a_report_that_does_not_exist_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(SuiteDidNotRun, match="does not exist"):
         assert_reports_complete(
@@ -611,7 +621,7 @@ def test_a_report_that_does_not_exist_fails_closed(tmp_path: Path) -> None:
 def test_a_directory_holding_no_report_fails_closed(tmp_path: Path) -> None:
     empty = tmp_path / "no-reports"
     empty.mkdir()
-    with pytest.raises(SuiteDidNotRun, match="no JUnit report"):
+    with pytest.raises(SuiteDidNotRun, match="holds no JUnit report"):
         assert_reports_complete(
             [empty], plan(tmp_path, ["tests/unit/test_a.py::test_one"])
         )
@@ -628,8 +638,34 @@ def test_the_offline_shard_cli_judges_the_reports_together(
         "argv",
         ["assert_shards_complete", "--results", str(first), "--plan", str(planned)],
     )
-    assert shards_main() is None
+    shards_main()
     assert "All 1 planned cases ran on exactly one runner." in capsys.readouterr().out
+
+
+def test_the_offline_shard_cli_passes_the_retry_record_through(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    nodeids = ["tests/unit/test_a.py::test_one", "tests/unit/test_a.py::test_two"]
+    first = shard_report(tmp_path, "first", [nodeids[0], nodeids[0], nodeids[1]])
+    recorded = reruns(
+        tmp_path, {"nodeid": nodeids[0], "when": "teardown", "reason": "fixture died"}
+    )
+    planned = plan(tmp_path, nodeids)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "assert_shards_complete",
+            "--results",
+            str(first),
+            "--plan",
+            str(planned),
+            "--reruns",
+            str(recorded),
+        ],
+    )
+    shards_main()
+    assert "All 2 planned cases ran" in capsys.readouterr().out
 
 
 def test_the_offline_shard_cli_errors_on_a_report_that_does_not_exist(
