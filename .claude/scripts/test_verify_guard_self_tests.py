@@ -4030,6 +4030,24 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("this lane's own judgement", result.stdout + result.stderr)
 
+    def test_the_summary_counts_a_guard_and_its_stale_entry_separately(self) -> None:
+        """One guard that is both a finding and a bad entry is one finding line.
+
+        Adding the two numbers used to report `有发现 2 个` for a single guard;
+        the summary names the allowance problems as their own count instead.
+        """
+        result = self._allow_human(
+            {"fake.py": FAKE_GREEN}, {}, "--allow-unjudgeable", "fake.py"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("有发现 1 个，名单问题 1 条", result.stdout)
+
+    def test_the_summary_omits_the_allowance_count_when_there_is_no_problem(self) -> None:
+        result = self._allow_human({"fake.py": FAKE_GREEN}, {})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("有发现 1 个，判不了", result.stdout)
+        self.assertNotIn("名单问题", result.stdout)
+
     def test_an_allowance_never_waives_a_missing_self_test(self) -> None:
         """The lane can always see that a guard carries no self-test at all."""
         result = self._allow(
