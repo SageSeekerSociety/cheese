@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.api.deps import get_work_runner
 from app.core.config import settings
@@ -376,6 +376,65 @@ async def test_a_failing_seat_is_owed_one_resume_and_stops_after_its_streak(
     assert all(
         later > earlier for earlier, later in zip(waits, waits[1:], strict=False)
     )
+
+
+@pytest.mark.anyio
+async def test_a_failure_racing_the_hand_over_still_gets_its_resume(
+    business_db_factory,
+):
+    """The clock settles the owed row (here: drops it) while a newer failure of
+    the same seat is being recorded. The newer failure must end up owed a
+    resume of its own, not written onto the row the clock just settled."""
+    factory = business_db_factory
+    project, conversation, _seat, instance = await _room_with_agent(factory)
+    seat = agent_instance_handle(instance)
+    now = datetime.now(UTC)
+
+    def fail(turn_id, at):
+        return after_failure(
+            factory,
+            project_id=project,
+            conversation_id=conversation,
+            seat=seat,
+            failed_turn_id=turn_id,
+            result=_failed(RATE_LIMITED),
+            route="subscription",
+            now=at,
+        )
+
+    await fail(uuid.uuid4(), now)
+    second = uuid.uuid4()
+    async with factory() as clock:
+        # The clock's pass holds the row and settles it.
+        row = await clock.scalar(
+            select(TurnResume)
+            .where(TurnResume.conversation_id == conversation)
+            .with_for_update()
+        )
+        row.dropped_at = now
+        row.dropped_reason = "seat_ran_again"
+        await clock.flush()
+        recording = asyncio.create_task(fail(second, now + timedelta(seconds=5)))
+        # Wait until the newer failure is actually blocked on that row.
+        async with asyncio.timeout(HANG_S):
+            while True:
+                async with factory() as probe:
+                    waiting = await probe.scalar(
+                        text(
+                            "SELECT count(*) FROM pg_stat_activity "
+                            "WHERE wait_event_type = 'Lock' "
+                            "AND datname = current_database()"
+                        )
+                    )
+                if waiting or recording.done():
+                    break
+                await asyncio.sleep(0.05)
+        await clock.commit()
+    await asyncio.wait_for(recording, HANG_S)
+
+    rows = await _resumes(factory, conversation)
+    owed = [r for r in rows if r.handed_at is None and r.dropped_at is None]
+    assert [r.failed_turn_id for r in owed] == [second]
 
 
 @pytest.mark.anyio
