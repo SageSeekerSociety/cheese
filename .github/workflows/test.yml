@@ -29,6 +29,14 @@ on:
       integration:
         type: boolean
         default: true
+      # Whether `test-complete` runs here. required-ci.yml passes false and runs
+      # the same shard-coverage check inside its own `CI required` job, which
+      # takes the merge queue's critical path one runner hop shorter (each hop
+      # waited ~14 min at p90 on 2026-10-17); deploy-prod's x86 run has no
+      # aggregator of its own and keeps the default.
+      coverage-job:
+        type: boolean
+        default: true
 # Least privilege: none of these jobs write anything back to GitHub, so the
 # token they run with should not be able to.
 permissions:
@@ -825,7 +833,7 @@ jobs:
   test-complete:
     name: Backend coverage complete
     needs: [static, test, integration]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.coverage-job }}
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
     # cheese-ci pool (docs/infrastructure.md); fork PRs, a deleted fork and every
