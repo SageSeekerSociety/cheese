@@ -499,6 +499,16 @@ describe('findGlobalFallbacks', () => {
       // which is then the module's.
       "export default { setup() { const a = { 'open': () => {} }; const b = a; return b } }",
       "const vm = { 'open': () => {} }\nexport default { setup() { return vm } }",
+      // Scope, not the first declaration of the name in the file: a
+      // block-scoped `const` has ended by the time the return reads the name,
+      // and a `var` declared twice takes the initializer from either.
+      "const vm = { 'open': () => {} }\nexport default { setup() { if (x) { const vm = other() } return vm } }",
+      "const vm = { 'open': () => {} }\nexport default { setup() { for (const vm of list) { void vm } return vm } }",
+      "var options\nvar options = { props: ['open'] }\nexport default options",
+      // The same options object reaching the default export by name, and by
+      // an assignment after the declaration.
+      "const options = { props: ['open'] }\nexport { options as default }",
+      "let options\noptions = { props: ['open'] }\nexport default options",
     ]) {
       assert.deepEqual(found(component(script)), [], `reported options that reach the template:\n${script}`)
     }
@@ -545,17 +555,44 @@ describe('findGlobalFallbacks', () => {
   // template whatever that local ends up holding, not what a module-level
   // variable of the same name happens to hold.
   it('does not read a module variable a setup local shadows', () => {
+    const component = (method) =>
+      [
+        '<script lang="ts">',
+        "const vm = { 'open': () => {} }",
+        `export default { ${method} }`,
+        'void useSomething',
+        '</script>',
+        '<template>',
+        '  <button @click="open()">x</button>',
+        '</template>',
+        '',
+      ].join('\n')
+    for (const method of [
+      // A declared local, before it has a value.
+      'setup() { let vm; vm = useSomething(); return vm }',
+      // A parameter, a destructured name, a function and a class all bind the
+      // name in this scope just as a `const` does.
+      'setup(vm) { return vm }',
+      'setup() { const { vm } = useSomething(); return vm }',
+      'setup() { function vm() {} return vm }',
+      'setup() { class vm {} return vm }',
+    ]) {
+      assert.deepEqual(
+        found(component(method)).map((hit) => [hit.name, hit.where]),
+        [['open', TEMPLATE]],
+        `read a module variable this setup shadows:\n${method}`
+      )
+    }
+  })
+
+  // A namespace hands its members out as `NS.member`; the name is not a
+  // module-level binding, and `export default options` cannot name it.
+  it('does not read a namespace member as a module binding', () => {
     const code = [
       '<script lang="ts">',
-      "const vm = { 'open': () => {} }",
-      'export default {',
-      '  setup() {',
-      '    let vm',
-      '    vm = useSomething()',
-      '    return vm',
-      '  },',
-      '}',
-      'void useSomething',
+      "namespace N { export const options = { props: ['open'] } }",
+      'export default options',
+      'void N',
       '</script>',
       '<template>',
       '  <button @click="open()">x</button>',

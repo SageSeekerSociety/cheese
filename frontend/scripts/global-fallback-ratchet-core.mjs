@@ -277,9 +277,8 @@ export function collectDefinitions(modules) {
 /**
  * Depth-first walk over an AST, which carries `parent` links back up.
  *
- * A node `past` says true for is yielded and not descended into: the namespace
- * body in `internalDeclarations`, and the function and class bodies in
- * `moduleLevelDeclarations`.
+ * A node `past` says true for is yielded and not descended into: the one
+ * caller that prunes is `internalDeclarations`, over a namespace body.
  */
 function* walk(node, past = () => false) {
   if (!node || typeof node !== 'object') return
@@ -355,55 +354,48 @@ function propertyName(key) {
   return undefined
 }
 
-/** The node types whose bodies are their own scope. */
-const OWN_SCOPE = new Set([
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-  'ClassDeclaration',
-  'ClassExpression',
-])
-
 /**
- * The variable declarations that sit in the scope `statements` opens.
+ * Reads an identifier as the value this file gives its binding, through the
+ * bindings eslint-scope built for the same parse.
  *
- * At module level that includes one an `export` wraps — `export const options =
- * …` is still a module-level binding — and one inside a top-level block, which
- * `var` hoists out. It stops at a function or class body: a `const options`
- * inside some function must not be mistaken for the binding `export default
- * options` names, or a name the template cannot reach would count as bound and
- * hide the very call this rule is for.
+ * Whether a name means the module's variable or a local one is a question
+ * about scope, and scope is exactly what the parser already answered: a
+ * block-scoped `const` that has ended by the time the name is read, a
+ * parameter, a destructured name, a `var` hoisted out of a block, a namespace
+ * member that is reachable only as `NS.member` — reading declarations out of
+ * statement lists gets every one of those wrong in one direction or the other.
+ *
+ * Returns the initializer when the binding has one written here, `null` when
+ * the name is bound to something whose value this file does not spell (a
+ * parameter, an import, a function), and `undefined` when the identifier
+ * resolves to no binding at all.
  */
-function declarationsInScope(statements) {
-  const declarations = []
-  for (const node of walk(statements, (visited) => OWN_SCOPE.has(visited.type))) {
-    if (node.type === 'VariableDeclaration') declarations.push(node)
-  }
-  return declarations
-}
-
-/**
- * The declarator for a name in the scope `statements` opens, initialised or
- * not — the difference matters where a local shadows an outer name before it
- * has a value.
- */
-function declaredAs(name, statements) {
-  for (const declaration of declarationsInScope(statements)) {
-    for (const declarator of declaration.declarations) {
-      if (declarator.id?.type === 'Identifier' && declarator.id.name === name) return declarator
+function bindingResolver(scopeManager) {
+  const bindings = new Map()
+  for (const scope of scopeManager.scopes) {
+    for (const reference of scope.references) {
+      if (reference.identifier) bindings.set(reference.identifier, reference.resolved ?? null)
     }
   }
-  return undefined
-}
-
-/** The initializer of a name declared in the scope `statements` opens. */
-function initializerOf(name, statements) {
-  return declaredAs(name, statements)?.init
+  return (identifier) => {
+    const variable = bindings.get(identifier)
+    if (!variable) return undefined
+    for (const def of variable.defs ?? []) {
+      if (def.type === 'Variable' && def.node?.init) return def.node.init
+    }
+    // `let options; options = { … }` — the value is assigned after the
+    // declaration, and only an assignment to this binding counts.
+    for (const reference of variable.references ?? []) {
+      const parent = reference.identifier?.parent
+      if (parent?.type === 'AssignmentExpression' && parent.left === reference.identifier) return parent.right
+    }
+    return null
+  }
 }
 
 /**
- * The value a node stands for once the indirection is peeled off: a variable
- * this module declares, a call that wraps it (`defineComponent(…)`,
+ * The value a node stands for once the indirection is peeled off: a binding
+ * this file initialises, a call that wraps it (`defineComponent(…)`,
  * `withInstall(defineComponent(…))`, `Vue.extend(…)`, an alias of any of them),
  * or an assertion.
  *
@@ -413,13 +405,14 @@ function initializerOf(name, statements) {
  * `export default registerSomething({ … })` also reads what it wraps — a name
  * it would have to spell.
  */
-function resolveValue(node, statements, seen = new Set()) {
+function resolveValue(node, resolve, seen = new Set()) {
   let current = unassert(node)
   while (current) {
     if (current.type === 'Identifier') {
-      if (seen.has(current.name)) return undefined
-      seen.add(current.name)
-      current = unassert(initializerOf(current.name, statements))
+      const next = resolve(current)
+      if (!next || seen.has(next)) return undefined
+      seen.add(next)
+      current = unassert(next)
       continue
     }
     if (current.type === 'CallExpression') {
@@ -441,15 +434,21 @@ function resolveValue(node, statements, seen = new Set()) {
  * options: `{ props: […] }` in a component registered under `components:` is
  * another component's, and its props are not names this template can call.
  */
-function componentOptions(body) {
+function componentOptions(body, resolve) {
   const statements = Array.isArray(body) ? body : body.body ?? []
   const options = []
   const take = (node) => {
-    const value = resolveValue(node, statements)
+    const value = resolveValue(node, resolve)
     if (value?.type === 'ObjectExpression') options.push(value)
   }
   for (const node of statements) {
     if (node.type === 'ExportDefaultDeclaration') take(node.declaration)
+    // `export { options as default }` hands over the same options object.
+    if (node.type === 'ExportNamedDeclaration' && !node.source) {
+      for (const specifier of node.specifiers ?? []) {
+        if (propertyName(specifier.exported) === 'default') take(specifier.local)
+      }
+    }
   }
   for (const node of walk(body)) {
     if (node.type === 'CallExpression' && node.callee?.type === 'Identifier' && node.callee.name === 'defineOptions') {
@@ -460,8 +459,8 @@ function componentOptions(body) {
 }
 
 /** The names an options container declares: a list of names, or an object's keys. */
-function containerNames(node, statements) {
-  const value = resolveValue(node, statements)
+function containerNames(node, resolve) {
+  const value = resolveValue(node, resolve)
   const names = quotedKeys(value)
   if (value?.type === 'ArrayExpression') {
     for (const element of value.elements) {
@@ -472,33 +471,23 @@ function containerNames(node, statements) {
 }
 
 /** The keys of what a `data` or `setup` function hands back. */
-function returnedNames(node, body) {
+function returnedNames(node, resolve) {
   const fn = unassert(node)
   if (fn?.type !== 'FunctionExpression' && fn?.type !== 'ArrowFunctionExpression') return []
-  const scope = fn.body?.type === 'BlockStatement' ? fn.body.body : []
   const returned =
     fn.body?.type === 'BlockStatement'
       ? fn.body.body.flatMap((statement) => (statement.type === 'ReturnStatement' ? [statement.argument] : []))
       : [fn.body]
-  return returned.flatMap((expression) => {
-    // `setup() { const vm = { 'open': … }; return vm }` — the local is named in
-    // this function, not at module level, and only a name the function does not
-    // declare can be the module's. A `let vm; vm = useProbe(); return vm`
-    // shadows the module's `vm` even before it has a value, so it must not read
-    // what the module's holds.
-    let value = unassert(expression)
-    for (let hops = 0; hops < 4 && value?.type === 'Identifier'; hops += 1) {
-      const local = declaredAs(value.name, scope)
-      value = unassert(local ? local.init : initializerOf(value.name, body))
-    }
-    return quotedKeys(value)
-  })
+  // `setup() { const vm = { 'open': … }; return vm }` resolves through the
+  // binding; a name the function does not declare is the module's, and the
+  // scope manager already knows which of the two this read is.
+  return returned.flatMap((expression) => quotedKeys(resolveValue(expression, resolve)))
 }
 
 const OPTION_CONTAINERS = new Set(['props', 'methods', 'computed', 'inject'])
 
 /** The quoted names an options object declares to its template. */
-function collectOptions(options, into, body, seen) {
+function collectOptions(options, into, resolve, seen) {
   if (seen.has(options)) return
   seen.add(options)
   for (const property of options.properties) {
@@ -506,17 +495,17 @@ function collectOptions(options, into, body, seen) {
     const name = propertyName(property.key)
     if (name === undefined) continue
     if (OPTION_CONTAINERS.has(name)) {
-      for (const declared of containerNames(property.value, body)) into.add(declared)
+      for (const declared of containerNames(property.value, resolve)) into.add(declared)
     } else if (name === 'data' || name === 'setup') {
-      for (const declared of returnedNames(property.value, body)) into.add(declared)
+      for (const declared of returnedNames(property.value, resolve)) into.add(declared)
     } else if (name === 'mixins' || name === 'extends') {
       // A mixin's props merge into this component's, so the template can call
       // them. A mixin is often a variable, so resolve each one first.
-      const value = resolveValue(property.value, body)
+      const value = resolveValue(property.value, resolve)
       const mixins = value?.type === 'ArrayExpression' ? value.elements : [value]
       for (const mixin of mixins) {
-        const resolved = resolveValue(mixin, body)
-        if (resolved?.type === 'ObjectExpression') collectOptions(resolved, into, body, seen)
+        const resolved = resolveValue(mixin, resolve)
+        if (resolved?.type === 'ObjectExpression') collectOptions(resolved, into, resolve, seen)
       }
     }
   }
@@ -538,13 +527,13 @@ function collectOptions(options, into, body, seen) {
  * component's props only happen to spell the name. Counting those would hide
  * exactly the call this rule is for.
  */
-function stringBindings(body) {
+function stringBindings(body, resolve) {
   const names = new Set()
   for (const node of walk(body)) {
     if (node.type !== 'CallExpression' || node.callee?.type !== 'Identifier') continue
     const [first] = node.arguments ?? []
     if (node.callee.name === 'defineProps') {
-      for (const declared of containerNames(first, body)) names.add(declared)
+      for (const declared of containerNames(first, resolve)) names.add(declared)
     }
     // `defineModel('open')` declares a prop named `open` (and the emit beside
     // it), so the template's `open()` reaches that prop and is bound. The
@@ -555,7 +544,7 @@ function stringBindings(body) {
       if (name?.type === 'Literal' && typeof name.value === 'string') names.add(name.value)
     }
   }
-  for (const options of componentOptions(body)) collectOptions(options, names, body, new Set())
+  for (const options of componentOptions(body, resolve)) collectOptions(options, names, resolve, new Set())
   return names
 }
 
@@ -629,6 +618,7 @@ function parseComponent(code, file) {
  */
 export function unboundCalls(code, file) {
   const { ast, scopeManager } = parseComponent(code, file)
+  const resolve = bindingResolver(scopeManager)
   const calls = []
   const seen = new Set()
 
@@ -655,7 +645,7 @@ export function unboundCalls(code, file) {
   if (templateBody) {
     const bound = scriptMentions(ast.body)
     for (const name of templateLocals(templateBody)) bound.add(name)
-    for (const name of stringBindings(ast.body)) bound.add(name)
+    for (const name of stringBindings(ast.body, resolve)) bound.add(name)
     for (const node of walk(templateBody)) {
       if (node.type !== 'CallExpression') continue
       const callee = node.callee
