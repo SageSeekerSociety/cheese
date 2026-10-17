@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/arch-metrics.yml"
 BASH = shutil.which("bash") or "/bin/bash"
 
+
 # Stands in for the collector: writes a snapshot only when asked, then exits
 # with whatever the case under test needs. Nothing here reads the repository.
 STUB = """\
@@ -46,6 +47,7 @@ sys.exit(int(os.environ["STUB_EXIT"]))
 class RatchetCollectionTest(unittest.TestCase):
     def setUp(self):
         workflow = yaml.safe_load(WORKFLOW.read_text())
+        self.triggers = workflow[True]  # YAML reads the `on:` key as the boolean True
         self.steps = workflow["jobs"]["board"]["steps"]
         self.collect = next(
             step
@@ -59,6 +61,34 @@ class RatchetCollectionTest(unittest.TestCase):
             step
             for step in self.steps
             if step.get("with", {}).get("name") == "ratchet-snapshot"
+        )
+
+    def test_the_collection_cadence_is_three_hourly_on_main(self):
+        """Every other test here reads a step of the job, so the `on:` block is
+        the part nothing else guards: replacing it with `on: {}` leaves them all
+        green while the snapshot series silently stops receiving points.
+
+        The cadence is pinned rather than described in the abstract. It is a
+        decision — the page's 60 points are 7.5 days at one collection per three
+        hours, and 53.8 job minutes per three-hour window at one per merge is
+        what this trigger replaced — so a different cadence is a different
+        decision and updates this test with it.
+        """
+        self.assertIn("schedule", self.triggers, "no schedule: nothing collects")
+        self.assertEqual(
+            [entry["cron"] for entry in self.triggers["schedule"]],
+            ["23 */3 * * *"],
+            "the collection cadence changed; if that was intended, change this test",
+        )
+        self.assertIn(
+            "workflow_dispatch",
+            self.triggers,
+            "no workflow_dispatch: a revision that no run covers cannot be collected",
+        )
+        self.assertNotIn(
+            "push",
+            self.triggers,
+            "a push trigger collects per merge, and main cancels its own runs",
         )
 
     def run_step(
@@ -120,9 +150,7 @@ class RatchetCollectionTest(unittest.TestCase):
         self.assertIn("exit code: 2", record.read_text())
 
     def test_a_successful_collection_leaves_no_failure_record(self):
-        result, out, _ = self.run_step(
-            self.collect, os.environ["PATH"], writes=True
-        )
+        result, out, _ = self.run_step(self.collect, os.environ["PATH"], writes=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((out / "ratchet-snapshot.json").exists())
         self.assertFalse((out / "ratchet-snapshot.failed.txt").exists())

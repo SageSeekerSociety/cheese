@@ -320,3 +320,63 @@ def test_bad_checksum_never_installs_binary(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="checksum mismatch"):
         forge_cli.native_binary("fj")
     assert not (tmp_path / ".cheese/native/fj-0.6.0-cheese.2/fj").exists()
+
+
+def _probes(monkeypatch, answer):
+    """Every probe of the forge's API, answered by ``answer``."""
+    probes = []
+
+    def urlopen(url, *args, **kwargs):
+        probes.append(url)
+        return answer()
+
+    monkeypatch.setattr(forge_cli.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(
+        forge_cli.runpy, "run_path", lambda *_: {"handle_connection": lambda *_: None}
+    )
+    monkeypatch.setenv("CHEESE_API", "https://platform.invalid/api")
+    monkeypatch.setenv("CHEESE_TOKEN", "scoped-test-token")
+    # gh reaching the forge directly runs with no proxy of the platform's.
+    for name in ("HTTPS_PROXY", "https_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    return probes
+
+
+def test_gh_reaches_a_forge_that_refuses_an_anonymous_probe_directly(
+    invocation, monkeypatch
+):
+    """GitHub answers an anonymous caller over its rate limit 403: the forge is
+    reachable, and gh goes to it directly rather than through the platform."""
+    _, captured = invocation
+
+    def refused():
+        raise forge_cli.urllib.error.HTTPError(
+            "https://forge.invalid", 403, "rate limit exceeded", {}, None
+        )
+
+    _probes(monkeypatch, refused)
+    assert forge_cli.run("gh", ["pr", "list"]) == 7
+    assert json.loads(captured.read_text())["proxy"] is None
+
+
+@pytest.mark.parametrize("reachable", [True, False])
+def test_one_probe_decides_how_gh_reaches_the_forge_for_a_while(
+    invocation, monkeypatch, reachable
+):
+    _, captured = invocation
+
+    def answer():
+        if reachable:
+            return io.BytesIO()
+        raise forge_cli.urllib.error.URLError("unreachable")
+
+    probes = _probes(monkeypatch, answer)
+    clock = [1000.0]
+    monkeypatch.setattr(forge_cli.time, "time", lambda: clock[0])
+    for _ in range(3):
+        assert forge_cli.run("gh", ["pr", "list"]) == 7
+        assert (json.loads(captured.read_text())["proxy"] is None) is reachable
+    assert len(probes) == 1
+    clock[0] += max(forge_cli.REACH_KEPT_S.values())
+    forge_cli.run("gh", ["pr", "list"])
+    assert len(probes) == 2

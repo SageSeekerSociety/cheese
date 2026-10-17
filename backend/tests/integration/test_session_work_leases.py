@@ -38,6 +38,10 @@ pytestmark = pytest.mark.anyio
 async def test_each_session_in_a_room_acquires_its_own_environments_device(
     client, monkeypatch, old_online, background_state
 ):
+    # What the whole check does each time the hands are asked for again: the
+    # window in which hands just checked are handed out unchecked is not
+    # what this is about (`session_work.VERIFIED_FOR`).
+    monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     project = post_project(
         client, json={"name": "Session hands"}, owner="alice"
     ).json()["data"]
@@ -442,6 +446,10 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
 async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     client, monkeypatch, scenario, tmp_path
 ):
+    # What the whole check does each time the hands are asked for again: the
+    # window in which hands just checked are handed out unchecked is not
+    # what this is about (`session_work.VERIFIED_FOR`).
+    monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     project = post_project(
         client, json={"name": "Session hands"}, owner="alice"
     ).json()["data"]
@@ -928,6 +936,10 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
     tool, while its other calls — parallel tools, subagents, a running command
     being read — are in flight on them. Those calls reach the machine; they are
     not refused as belonging to a generation that is no longer current."""
+    # What the whole check does each time the hands are asked for again: the
+    # window in which hands just checked are handed out unchecked is not
+    # what this is about (`session_work.VERIFIED_FOR`).
+    monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     import asyncio
     import hashlib
     import threading
@@ -1047,6 +1059,10 @@ async def test_a_recheck_that_outlasts_its_request_leaves_the_session_startable(
     time, and once it is over a session starting with no wait at all — how a
     session takes its leased machine at start — gets the hands, instead of
     being refused as "being prepared" until the claim runs out by the clock."""
+    # What the whole check does each time the hands are asked for again: the
+    # window in which hands just checked are handed out unchecked is not
+    # what this is about (`session_work.VERIFIED_FOR`).
+    monkeypatch.setattr(work_lease, "VERIFIED_FOR", timedelta(0))
     import asyncio
     import hashlib
     import threading
