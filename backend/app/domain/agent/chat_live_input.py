@@ -25,6 +25,7 @@ from app.domain.agent.harness.prompt import (
     strip_platform_notice,
 )
 from app.domain.agent.input_registration import input_registrar
+from app.domain.agent.opening import OPENING, PURPOSE
 from app.domain.agent.prompt import live_inputs, model_images
 from app.domain.agent.turn.state import authority
 from app.domain.agent.turn.state.inputs import _pending_input_blocks
@@ -291,8 +292,9 @@ class LiveInput:
         turn (`room_task.closing`). So does a routine's run: its settlement
         reads the run's progress off its attempt's turn
         (`routine.service.settlement`), and that turn is assembled with the
-        routine owner's memory (`turn_speakers.routine_owner`). The caller
-        starts one as before.
+        routine owner's memory (`turn_speakers.routine_owner`). So does a
+        task's opening: the task page reads whether it started off its
+        attempt's turn (`agent.opening`). The caller starts one as before.
         ``False``: there is one and the input did not reach it; nothing was
         sent (`receipts.withdraw_input` puts the attempt back to ``claimed``),
         so the attempt is refused and retried like any other. ``True``: the
@@ -317,6 +319,7 @@ class LiveInput:
             or row.conversation_id is None
             or payload.get(CLOSES_TASK)
             or payload.get("eventType") == EVENT_ROUTINE_RUN
+            or payload.get(PURPOSE) == OPENING
         ):
             return None
         seat = row.recipient_handle
@@ -330,10 +333,9 @@ class LiveInput:
         if matched is None:
             return None
         consuming_turn_id, state = matched
-        # Framed as the turn it would otherwise have started frames it: the
-        # ledger's content is platform-written (a person's words inside a
-        # mention are quoted in it), and a platform turn reads it under the
-        # platform marker (`turn.intake.preparation.prompt`).
+        # Framed as the turn it would otherwise have started frames it: a
+        # ledger delivery's turn is a platform turn, which reads the content
+        # under the platform marker (`turn.intake.preparation.prompt`).
         line = platform_prompt(str(payload.get("content") or ""))
         by_person = payload.get("eventType") == BY_PERSON
         registrar = self._input_registrar(

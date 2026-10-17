@@ -12,8 +12,8 @@ The rules, as stated before the code was written:
   turn, and counts as delivered once the session has read it;
 - a platform instruction does not move the turn's foreground work aside; a
   person naming the agent does, as their own message would;
-- a finished task's write-up, and a routine's run, still wait for a turn of
-  their own;
+- a finished task's write-up, a routine's run and a task's opening still wait
+  for a turn of their own;
 - a delivery the running turn did not take is not lost: it is tried again.
 """
 
@@ -25,6 +25,7 @@ import pytest
 
 from app.api.deps import get_work_runner
 from app.domain.agent.chat import ChatService
+from app.domain.agent.opening import OPENING, PURPOSE
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.mention import BY_PERSON
 from app.domain.delivery.models import Delivery
@@ -182,8 +183,8 @@ async def test_a_person_naming_a_busy_agent_moves_its_work_aside(world):
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     "own_turn",
-    [{CLOSES_TASK: True}, {"eventType": EVENT_ROUTINE_RUN}],
-    ids=["task write-up", "routine run"],
+    [{CLOSES_TASK: True}, {"eventType": EVENT_ROUTINE_RUN}, {PURPOSE: OPENING}],
+    ids=["task write-up", "routine run", "task opening"],
 )
 async def test_a_delivery_that_is_its_own_turn_still_waits_for_one(world, own_turn):
     await world.busy()
