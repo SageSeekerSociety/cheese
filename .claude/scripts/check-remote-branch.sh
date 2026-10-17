@@ -177,6 +177,11 @@ case "$BRANCH" in
 esac
 [ -n "$BRANCH" ] || { echo "FAIL: the branch name is empty" >&2; exit 2; }
 
+# Git's own message, flattened onto one line so it fits a KEY: value report.
+one_line() {
+  tr '\n' ' ' < "$1" | tr -s '[:space:]' ' ' | sed -e 's/^ *//' -e 's/ *$//'
+}
+
 if ! git remote get-url "$REMOTE" >/dev/null 2>&1; then
   printf 'BRANCH: %s\nREMOTE: %s\nEXISTS: unknown\nREMOTE_SHA: -\nORIGIN_MAIN: unknown\nLOCAL_ORIGIN_MAIN: -\nREMOTE_MAIN: -\nNEXT: git remote add %s <url>\nVERDICT: cannot judge — there is no remote named %s here\n' \
     "$BRANCH" "$REMOTE" "$REMOTE" "$REMOTE"
@@ -192,7 +197,7 @@ trap 'rm -f "$tmp_err"' EXIT
 
 if ! remote_out="$(git ls-remote --heads -- "$REMOTE" "$ref" "$main_ref" 2>"$tmp_err")"; then
   printf 'BRANCH: %s\nREMOTE: %s\nEXISTS: unknown\nREMOTE_SHA: -\nORIGIN_MAIN: unknown\nLOCAL_ORIGIN_MAIN: -\nREMOTE_MAIN: -\nNEXT: check the network and credentials, then run this again\nVERDICT: cannot judge — %s did not answer (%s)\n' \
-    "$BRANCH" "$REMOTE" "$REMOTE" "$(tr '\n' ' ' < "$tmp_err" | sed 's/[[:space:]]\+/ /g; s/ $//')"
+    "$BRANCH" "$REMOTE" "$REMOTE" "$(one_line "$tmp_err")"
   exit 2
 fi
 
@@ -229,7 +234,7 @@ if [ "$FETCH" = 1 ] && [ "$origin_main" = stale ] && [ -n "$remote_main" ]; then
   if ! git fetch --quiet "$REMOTE" main 2>"$tmp_err"; then
     printf 'BRANCH: %s\nREMOTE: %s\nEXISTS: %s\nREMOTE_SHA: %s\nORIGIN_MAIN: stale\nLOCAL_ORIGIN_MAIN: %s\nREMOTE_MAIN: %s\nNEXT: git fetch %s main\nVERDICT: the branch answer stands, but the fetch failed (%s)\n' \
       "$BRANCH" "$REMOTE" "$exists" "${branch_sha:--}" "${local_main:--}" "$remote_main" "$REMOTE" \
-      "$(tr '\n' ' ' < "$tmp_err" | sed 's/[[:space:]]\+/ /g; s/ $//')"
+      "$(one_line "$tmp_err")"
     exit 3
   fi
   local_main="$(git rev-parse --verify --quiet "refs/remotes/$REMOTE/main" || true)"
