@@ -150,10 +150,26 @@ restore_stop() {
 # ~/.cheese/recovered/<任务 id>-<快照>，只往 stderr 说一句，`cheese worktree` 的
 # 退出码仍是 0（平台 backend/sandbox/cheese 的 _apply_snapshot 与 _recovery_dir）。
 # 这个目录会一直留着，直到人把东西取走或删掉：它在，就不能说「东西接回来了」。
+# 扫不动（权限、IO）不能当成「没有」：这个目录里可能是唯一一份没备份的活。
+# 取不到就返回非 0，由调用方决定是拒判还是只提醒——在命令替换里调它，变量
+# 传不出来，只有退出码传得出来。
 snapshot_set_aside() {
-  local task=$1 out
-  out=$(find "$HOME/.cheese/recovered" -maxdepth 1 -name "$task-*" 2>/dev/null) || true
-  printf '%s' "${out%%$'\n'*}"
+  local task=$1 found
+  task=$(printf '%s' "$task" | tr 'A-F' 'a-f')
+  [ -d "$HOME/.cheese/recovered" ] || return 0
+  found=$(find "$HOME/.cheese/recovered" -maxdepth 1 -name "$task-*" 2>/dev/null) ||
+    return 1
+  printf '%s' "${found%%$'\n'*}"
+}
+
+# 调用方用：把上一次 snapshot_set_aside 的结果和「没扫成」分开收着。
+read_set_aside() {
+  ASIDE=""
+  ASIDE_UNKNOWN=""
+  if ! ASIDE=$(snapshot_set_aside "$1"); then
+    ASIDE_UNKNOWN=yes
+    ASIDE=""
+  fi
 }
 
 # 平台连快照都没能套用（下载、解包、快进失败）时，只把原因写到 stderr，退出码
@@ -224,15 +240,20 @@ if [ "$sub" = save ]; then
   else
     reentry="cheese worktree <任务 id>（完整 id 见任务卡；也可以在任务目录里用 CHEESE_TOPIC 再跑一次）"
   fi
-  task_id=$(printf '%s' "$task_id" | tr 'A-F' 'a-f')
-
-  # 平台明确不套用的快照还在独立目录里时，这里先停：`cheese sync` 只在重试
-  # 标记还在时才先恢复，否则会把当前（没有那份改动的）检出做成新快照，平台
-  # 那份就不再是最近一版（_sync_task 与 _apply_snapshot）。
+  # 平台明确不套用的快照还在独立目录里时，这次同步会把当前检出做成新的最近
+  # 一版，那份快照不再是最近一版（_sync_task 与 _apply_snapshot）——平台自己
+  # 也是这么设计的（test_a_replaced_sandbox_comes_back_with_its_work）。拦下来
+  # 只会挡住这次推送，挡不住这个行为，所以在推送之前把它说清楚。
+  aside_before=""
   if uuid_like "$task_id"; then
-    aside=$(snapshot_set_aside "$task_id")
-    if [ -n "$aside" ]; then
-      die 3 "平台有一份快照没套进这个目录，它原样放在 $aside。现在同步会把当前状态做成新快照，把平台那份顶掉；先把它取回来、删掉那个目录，再 save。"
+    read_set_aside "$task_id"
+    aside_before=$ASIDE
+    if [ "${ASIDE_UNKNOWN:-}" = yes ]; then
+      printf '  没法确认平台有没有把这个任务的快照放到 %s/.cheese/recovered（扫描失败）。\n' "$HOME" >&2
+    elif [ -n "$aside_before" ]; then
+      printf '  平台有一份快照没套进这个目录，它原样放在 %s。\n' "$aside_before" >&2
+      printf '  这次同步之后，这里的内容会成为最近一版备份，那份快照里的改动不会。\n' >&2
+      printf '  先把 %s 里的东西取回来（或者确认不需要），再删掉那个目录。\n' "$aside_before" >&2
     fi
   fi
 
@@ -243,12 +264,18 @@ if [ "$sub" = save ]; then
   }
   if [ -n "$sync_out" ]; then printf '%s\n' "$sync_out"; fi
 
-  # 同步过程中平台才决定不套用（重试标记在这一步被处理掉）：快照已经放到独立
-  # 目录，而这次备份已经把当前状态做成了新的一版。不能报「存好了」。
+  # 同步过程中平台才决定不套用（重试标记已在这一步被处理掉）：快照放到独立
+  # 目录，这次备份已经把当前检出做成了新的一版，那份活不在其中。
+  aside_after="$aside_before"
   if uuid_like "$task_id"; then
-    aside=$(snapshot_set_aside "$task_id")
-    if [ -n "$aside" ]; then
-      die 3 "同步时平台把一份快照原样放到了 $aside，没套进这个目录。这里的内容已经做成新备份，但那份快照里的改动不在其中：先去 $aside 把东西取回来，别当成已经存好。"
+    read_set_aside "$task_id"
+    # 第二次没扫成时，别把同步之前已经认出来的那一份丢掉。
+    [ "${ASIDE_UNKNOWN:-}" = yes ] || aside_after=$ASIDE
+    if [ "${ASIDE_UNKNOWN:-}" = yes ]; then
+      printf '  没法确认平台有没有在同步时把快照放到 %s/.cheese/recovered（扫描失败）。\n' "$HOME" >&2
+    elif [ -n "$aside_after" ] && [ "$aside_after" != "$aside_before" ]; then
+      printf '  同步时平台把一份快照原样放到了 %s，没套进这个目录。\n' "$aside_after" >&2
+      printf '  这里的内容已经做成新备份，那份快照里的改动不在其中：先去 %s 把东西取回来。\n' "$aside_after" >&2
     fi
   fi
 
@@ -286,7 +313,11 @@ if [ "$sub" = save ]; then
     fi
   fi
 
-  printf '换机后接回来：%s\n' "$reentry"
+  if [ -n "$aside_after" ]; then
+    printf '换机后接回来：%s（只有分支上已推的内容；那份快照在 %s，要自己取）\n' "$reentry" "$aside_after"
+  else
+    printf '换机后接回来：%s\n' "$reentry"
+  fi
   report_outside "$root"
   exit 0
 fi
@@ -305,10 +336,6 @@ else
 fi
 uuid_like "$task_id" ||
   die 2 "「$task_id」不是完整的任务 id；cheese worktree 只认完整 UUID。用 --task <任务 id> 再跑"
-# 平台用 uuid.UUID(...) 归一化，任务目录和 recovered 下的目录名都是小写；大写
-# 输入照原样去匹配会漏掉那一份（CLI 自己认大写，所以这里也得认）。
-task_id=$(printf '%s' "$task_id" | tr 'A-F' 'a-f')
-
 printf '%s: cheese worktree %s\n' "$PROG" "$task_id" >&2
 worktree_out=$(cheese worktree "$task_id") ||
   die 1 "cheese worktree $task_id 失败（上面是它说的）"
@@ -330,7 +357,12 @@ if [ -n "$pending_mark" ]; then
   restore_stop "平台没能把最近的备份接回来，重试标记还在（$pending_mark）" \
     "这里只有分支上已推送的内容；下次 cheese worktree 或 cheese sync 会再试。在那之前别把这里当成接回来了。"
 fi
-aside=$(snapshot_set_aside "$task_id")
+read_set_aside "$task_id"
+aside=$ASIDE
+if [ "${ASIDE_UNKNOWN:-}" = yes ]; then
+  restore_stop "没法确认平台有没有把这个任务的快照放到独立目录（扫描 ~/.cheese/recovered 失败）" \
+    "先别在这个目录里接着改；把上面的输出原样报上来，说清没能确认到哪一步。"
+fi
 if [ -n "$aside" ]; then
   restore_stop "平台有一份快照没套进这个目录，它原样放在 $aside" \
     "这里只有分支上已推送的内容。先把 $aside 里的东西取回来；都取到了、或者确认不需要，就删掉那个目录，再接着改。别直接 sync：同步会做一份新备份，平台就不会再把那份快照当最近一版恢复。"

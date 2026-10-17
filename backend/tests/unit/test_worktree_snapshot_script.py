@@ -87,6 +87,7 @@ case ${1:-} in
     rm -f "$idx"
     snap=$(git commit-tree "$tree" -p "$head" -m "cheese snapshot")
     git push -q "$FAKE_REMOTE" "$head:refs/heads/$branch"
+    [ -n "${FAKE_SYNC_MARK:-}" ] && : > "$FAKE_SYNC_MARK"
     # 平台每备份一次就做一个新的快照提交，所以这个 ref 是往前顶的（真实现是本
     # 地用 update-ref + 传 bundle，这里用 --force 推同一个 ref 代替）。
     git push -q --force "$FAKE_REMOTE" "$snap:$(snapshot_ref)"
@@ -417,14 +418,15 @@ def test_save_checks_the_branch_the_sync_moved_to(machine: Machine) -> None:
     assert machine.remote_tip(f"refs/heads/{BRANCH}-2") == machine.head()
 
 
-def test_save_refuses_while_the_set_aside_backup_is_still_there(
+def test_save_says_the_set_aside_backup_will_not_be_the_latest_one(
     machine: Machine,
 ) -> None:
-    """故意违规：恢复没接回来，接着跑默认的 save 会把平台那份顶掉。
+    """恢复没接回来时，下一次同步会让当前检出成为最近一版备份。
 
-    `cheese sync` 只在重试标记还在时才先恢复；标记已被平台删掉、快照只剩在
-    `~/.cheese/recovered/` 里时，sync 会把当前（没有那份改动的）检出做成新的
-    最近一版。这时报「存好了」，等于把唯一一份没备份的活挤掉。
+    平台自己就是这么设计的（分支前进时快照不被套进工作区，当前检出接着备份
+    下去，见 test_a_replaced_sandbox_comes_back_with_its_work），所以 save 不
+    拦这次同步——拦也拦不住平台自己的 hook——但必须说清那份活不在备份里，
+    不能让它读成「换机后都接得回来」。
     """
     machine.commit("step.py", "print(1)\n")
     ran(machine.run("save"))
@@ -434,30 +436,31 @@ def test_save_refuses_while_the_set_aside_backup_is_still_there(
         3,
         ".cheese/recovered",
     )
-    tip = machine.remote_tip(f"refs/heads/{BRANCH}")
+    mark = machine.tmp / "sync-ran"
 
-    result = machine.run("save")
+    result = machine.run("save", FAKE_SYNC_MARK=str(mark))
 
-    refused(result, 3, ".cheese/recovered", "顶掉")
-    assert machine.remote_tip(f"refs/heads/{BRANCH}") == tip
-    assert "换机后接回来" not in result.stdout
+    out = ran(result)
+    assert mark.exists(), "这次同步没有跑"
+    assert ".cheese/recovered" in result.stderr
+    assert "那份快照里的改动不会" in result.stderr
+    assert "要自己取" in out
 
 
-def test_save_reports_a_snapshot_set_aside_during_the_sync(
+def test_save_says_when_the_snapshot_is_set_aside_during_the_sync(
     machine: Machine,
 ) -> None:
-    """故意违规：同步自己把快照放到独立目录时，不能只说「存好了」。
+    """同步过程中平台才把快照放到独立目录：本次备份会顶掉它，得说出来。
 
-    这一版的备份已经传上去了（提交确实到了远端），但那份快照里的改动不在
-    其中；人得先把它取回来。
+    提交确实推上去了，所以不是推送失败；但那份快照里的改动不在备份里。
     """
     machine.commit("step.py", "print(1)\n")
 
     result = machine.run("save", FAKE_SYNC_SET_ASIDE="1")
 
-    refused(result, 3, "同步时平台", ".cheese/recovered")
-    assert "换机后接回来" not in result.stdout
-    # 提交确实推上去了：拒绝的理由是恢复，不是推送。
+    out = ran(result)
+    assert "同步时平台把一份快照原样放到了" in result.stderr
+    assert "要自己取" in out
     assert machine.remote_tip(f"refs/heads/{BRANCH}") == machine.head()
 
 
@@ -648,6 +651,32 @@ def test_restore_refuses_when_the_backup_was_set_aside(
     assert "与远端一致" not in result.stdout
 
 
+def test_save_keeps_naming_the_set_aside_after_a_second_scan_fails(
+    machine: Machine,
+) -> None:
+    """同步前看到的那份快照，不会因为同步后的扫描失败就从输出里消失。"""
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+    (machine.home / ".cheese" / "recovered" / f"{TASK}-0123456789ab").mkdir(
+        parents=True
+    )
+    mark = machine.tmp / "sync-ran"
+    real_find = shutil.which("find")
+    fake_find = machine.bin / "find"
+    fake_find.write_text(
+        f'#!/usr/bin/env bash\n[ -e "{mark}" ] && exit 1\nexec "{real_find}" "$@"\n'
+    )
+    fake_find.chmod(0o755)
+
+    result = machine.run("save", FAKE_SYNC_MARK=str(mark))
+
+    out = ran(result)
+    assert "没法确认平台有没有在同步时" in result.stderr
+    assert f"{TASK}-0123456789ab" in out
+    assert "那份快照在" in out
+    assert "要自己取" in out
+
+
 def test_restore_still_refuses_after_a_set_aside_the_run_before(
     machine: Machine,
 ) -> None:
@@ -662,7 +691,8 @@ def test_restore_still_refuses_after_a_set_aside_the_run_before(
     machine.wipe()
 
     first = machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1")
-    second = machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1")
+    # 第二次平台什么都不做：目录是上一轮留下的，脚本仍要认出来。
+    second = machine.run("restore", "--task", TASK)
 
     refused(first, 3, ".cheese/recovered")
     refused(second, 3, ".cheese/recovered")
@@ -684,6 +714,29 @@ def test_restore_finds_a_set_aside_backup_for_an_upper_case_id(
     result = machine.run("restore", "--task", TASK.upper(), FAKE_WORKTREE_SET_ASIDE="1")
 
     refused(result, 3, ".cheese/recovered")
+    assert "与远端一致" not in result.stdout
+
+
+def test_restore_refuses_when_the_backup_directory_cannot_be_scanned(
+    machine: Machine,
+) -> None:
+    """扫不动不能当成「没有」：那目录里可能是唯一一份没备份的活。
+
+    和远端取不到时一样，这时没法核对接回来的状态，不能报「与远端一致」。
+    """
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+    # 目录在，但扫不动（权限、IO、PATH 上的同名程序）。
+    (machine.home / ".cheese" / "recovered").mkdir()
+    fake_find = machine.bin / "find"
+    fake_find.write_text("#!/usr/bin/env bash\nexit 1\n")
+    fake_find.chmod(0o755)
+
+    machine.wipe()
+
+    result = machine.run("restore", "--task", TASK)
+
+    refused(result, 3, "扫描", "没法确认")
     assert "与远端一致" not in result.stdout
 
 
