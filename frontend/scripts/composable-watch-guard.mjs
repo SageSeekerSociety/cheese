@@ -102,7 +102,7 @@ function memberPath(node, ctx = {}) {
     return null
   }
   if (ts.isIdentifier(node)) {
-    const alias = ctx.aliases?.get(node.text)
+    const alias = aliasAt(ctx, node.text, node.getStart())
     if (alias)
       return {
         root: alias.root,
@@ -126,16 +126,78 @@ function memberPath(node, ctx = {}) {
   return null
 }
 
-// Local `const x = <member chain>` declarations inside a scope, so a getter that
-// names the scope once and reads it through locals still resolves.
-function collectAliases(root, ctx) {
-  const bind = (name, member) => {
-    if (member && (member.root !== name || member.path.length)) ctx.aliases.set(name, member)
+// The local a read of `name` at `pos` sees: the innermost function that contains the
+// read, and inside it the latest declaration at or before the read. An alias declared
+// in a callback is that callback's local and is not visible outside it.
+function aliasAt(ctx, name, pos) {
+  let best
+  for (const alias of ctx.aliases ?? []) {
+    if (alias.name !== name || pos < alias.start || pos > alias.end) continue
+    if (!best) {
+      best = alias
+      continue
+    }
+    const span = alias.end - alias.start
+    const bestSpan = best.end - best.start
+    if (span !== bestSpan) {
+      if (span < bestSpan) best = alias
+      continue
+    }
+    const before = alias.at <= pos
+    const bestBefore = best.at <= pos
+    if (before !== bestBefore) {
+      if (before) best = alias
+      continue
+    }
+    if (before ? alias.at > best.at : alias.at < best.at) best = alias
   }
-  const visit = (node, nested) => {
+  return best?.member
+}
+
+// Calls that run the function they are handed again on every change: a local declared
+// in one of these names a fresh value each time. The rest of setup (`onMounted`,
+// `setTimeout`, a helper called once) runs its callback once, so the same
+// destructuring there is a snapshot.
+const RERUNNING_CALLS = new Set(['watch', 'watchEffect', 'watchPostEffect', 'watchSyncEffect', 'computed'])
+
+function calleeName(call) {
+  const callee = unwrap(call.expression)
+  if (ts.isIdentifier(callee)) return callee.text
+  if (ts.isPropertyAccessExpression(callee)) return callee.name.text
+  return null
+}
+
+function isFunctionNode(node) {
+  return (
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
+  )
+}
+
+// Local `const x = <member chain>` declarations inside a scope, so a getter that
+// names the scope once and reads it through locals still resolves. Each alias records
+// the function that declares it, so the same name in two scopes stays two names.
+function collectAliases(root, ctx) {
+  const aliases = (ctx.aliases ??= [])
+  const bind = (name, member, scope) => {
+    if (member && (member.root !== name.text || member.path.length))
+      aliases.push({
+        name: name.text,
+        member,
+        at: name.getStart(),
+        start: scope.getStart(),
+        end: scope.getEnd(),
+      })
+  }
+  const visit = (node, scope, live) => {
     if (ts.isVariableDeclaration(node) && node.initializer) {
       const member = memberPath(node.initializer, ctx)
-      if (ts.isIdentifier(node.name)) bind(node.name.text, member)
+      if (ts.isIdentifier(node.name)) bind(node.name, member, scope)
       // `const { topicId } = props` names the prop path too. Destructuring anything
       // else is not a name for the value it came from: `const { value } = toValue(x)`
       // takes a snapshot at setup, and a watch on the local never runs again, so it
@@ -145,31 +207,35 @@ function collectAliases(root, ctx) {
         ts.isObjectBindingPattern(node.name) &&
         (member.root === 'props' ||
           member.root === ctx.scopeParam ||
-          // Inside a callback the destructuring runs again on every invocation, so the
-          // local names what the call returned that time: a live read, unlike the
-          // setup-time snapshot the same statement takes at the top level.
-          (nested && ctx.bindings?.has(member.root)))
+          // Inside a callback that reruns on every change the destructuring runs
+          // again too, so the local names what that call returned that time: a live
+          // read, unlike the setup-time snapshot the same statement takes at the top.
+          (live && ctx.bindings?.has(member.root)))
       ) {
         for (const element of node.name.elements) {
           if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue
           const key = element.propertyName ? propertyName(element.propertyName) : element.name.text
           if (key !== null)
-            bind(element.name.text, {
-              root: member.root,
-              path: [...member.path, key],
-              unwrapped: new Set(member.unwrapped ?? []),
-            })
+            bind(
+              element.name,
+              {
+                root: member.root,
+                path: [...member.path, key],
+                unwrapped: new Set(member.unwrapped ?? []),
+              },
+              scope
+            )
         }
       }
     }
-    // Only a function handed to a call runs again later: `watch(() => ...)`,
-    // `computed(() => ...)`. A helper declared and called once while the composable is
-    // set up keeps taking a snapshot.
-    const callback = (child) =>
-      ts.isCallExpression(node) && (ts.isArrowFunction(unwrap(child)) || ts.isFunctionExpression(unwrap(child)))
-    ts.forEachChild(node, (child) => visit(child, nested || callback(child)))
+    ts.forEachChild(node, (child) => {
+      if (isFunctionNode(child)) {
+        const reruns = ts.isCallExpression(node) && RERUNNING_CALLS.has(calleeName(node))
+        visit(child, child, reruns)
+      } else visit(child, scope, live)
+    })
   }
-  visit(root, false)
+  visit(root, root, false)
 }
 
 function propertyName(node) {
@@ -514,7 +580,7 @@ function analyzeSfc(file, source) {
   const items = []
   for (const block of scriptBlocks(file, source)) {
     const sourceFile = parseModule(block.text, file)
-    const ctx = { aliases: new Map() }
+    const ctx = { aliases: [] }
     collectAliases(sourceFile, ctx)
     collectScriptWatchers(sourceFile, ctx, block.line, null, items)
   }
@@ -545,7 +611,7 @@ function exportedFunctionRanges(sourceFile) {
 }
 
 function scopeContext(found, callSites) {
-  const ctx = { ...callSites, bindings: new Map(), aliases: new Map() }
+  const ctx = { ...callSites, bindings: new Map(), aliases: [] }
   const param = found.param
   if (param) {
     if (ts.isIdentifier(param.name)) {
@@ -670,13 +736,40 @@ function callSiteMappings(vueFiles, fnName, readHead) {
   return byFile
 }
 
+// A component that no longer calls the composable has no call site of its own, so
+// there is no reading to judge it by. Fall back to what the remaining callers hand
+// over, permissively: a key any caller passes as a ref is readable everywhere.
+function callerMapping(byFile, caller) {
+  const own = byFile.get(caller)
+  if (own || !byFile.size) return own ?? {}
+  const merged = { scopeProps: new Map(), scopePropGetter: new Map(), scopeValue: new Map(), scopeWholeProps: false }
+  for (const scope of byFile.values()) {
+    for (const [name, keys] of scope.scopeProps ?? []) {
+      if (!merged.scopeProps.has(name)) {
+        merged.scopeProps.set(name, new Set())
+        merged.scopePropGetter.set(name, new Map())
+      }
+      for (const key of keys) {
+        merged.scopeProps.get(name).add(key)
+        const getter = scope.scopePropGetter?.get(name)?.get(key)
+        const seen = merged.scopePropGetter.get(name).get(key)
+        merged.scopePropGetter.get(name).set(key, (seen ?? true) && Boolean(getter))
+      }
+    }
+    if (scope.scopeWholeProps) merged.scopeWholeProps = true
+    for (const [key, asRef] of scope.scopeValue ?? [])
+      merged.scopeValue.set(key, Boolean(merged.scopeValue.get(key)) || asRef)
+  }
+  return merged
+}
+
 function analyzeComposable(file, source, caller, mappingFor) {
   const sourceFile = parseModule(source, file)
   const items = []
   const scopes = exportedFunctionRanges(sourceFile).map((found) => ({
     start: found.node.getStart(sourceFile),
     end: found.node.getEnd(),
-    ctx: scopeContext(found, mappingFor(found.name).get(caller) ?? {}),
+    ctx: scopeContext(found, callerMapping(mappingFor(found.name), caller)),
   }))
   const ctxFor = (start) => scopes.find((scope) => start >= scope.start && start <= scope.end)?.ctx ?? {}
   collectScriptWatchers(sourceFile, {}, 1, ctxFor, items)
