@@ -13,13 +13,16 @@ This guard turns that reading into a check: a file under
 `docs/reviews/artifacts/` must be named by at least one document under
 `docs/reviews/` (the `artifacts/` subtree itself is not a document).
 
-Names are matched with a left boundary, so `review.pdf` is not satisfied by a
-note that only links `trial-review.pdf` — the two are different artifacts, and
-a plain substring match would call both referenced.
+Citations are matched as whole path tokens, not substrings. That is what keeps
+`review.pdf` from being satisfied by `trial-review.pdf`, `2026.09.review.pdf`,
+`验收报告.pdf`, `review.pdf.bak` or `artifacts/run-42/detail.pdf` — all of them
+are different artifacts, and a substring match would call every one of them a
+citation. A percent-encoded link (`2026%20review.pdf`) is decoded before the
+comparison, so a correctly linked name is not reported as an orphan.
 
-What is deliberately NOT here: checking links in `docs/manual/**` or whether a
-note's prose still describes its artifact. Those are different defects with
-different owners; this one is only "the file is named nowhere".
+Cannot judge is not a pass: a missing `docs/reviews/` directory or a note that
+cannot be read exits 2 and says so, because a directory move must not turn this
+guard into a green no-op.
 
 Usage: check-review-artifacts.py             check the tree
        check-review-artifacts.py --root DIR  check another tree (tests)
@@ -30,6 +33,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 #: Where the artifacts and the notes that must cite them live.
 REVIEWS_DIR = Path("docs/reviews")
@@ -39,9 +43,48 @@ ARTIFACTS_DIRNAME = "artifacts"
 #: `docs/reviews/` (the PDFs themselves) is not a document.
 DOC_SUFFIXES = (".md",)
 
-#: Characters that may not directly precede a filename for it to count as a
-#: mention. Without this, `review.pdf` would match inside `trial-review.pdf`.
-NAME_BOUNDARY = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+#: Punctuation that continues a path token. Letters and digits of any script
+#: join via `str.isalnum()`, so `验收报告.pdf` stays one token and cannot
+#: satisfy `报告.pdf`.
+PATH_PUNCTUATION = frozenset("_-./%")
+
+
+def _is_path_char(character: str) -> bool:
+    return character.isalnum() or character in PATH_PUNCTUATION
+
+
+def path_tokens(text: str):
+    """The maximal path-shaped runs in `text`."""
+    start = None
+    for index, character in enumerate(text):
+        if _is_path_char(character):
+            if start is None:
+                start = index
+        elif start is not None:
+            yield text[start:index]
+            start = None
+    if start is not None:
+        yield text[start:]
+
+
+def _normalized(token: str) -> str:
+    """A token without a leading slash or `./`, percent-decoding applied."""
+    value = unquote(token).lstrip("/")
+    while value.startswith("./"):
+        value = value[2:]
+    # A sentence's full stop is not part of the filename; no artifact in this
+    # repo ends in `.`, and counting `kept.pdf.` as a different name would make
+    # a plain-text citation fail.
+    return value.rstrip(".")
+
+
+def cites(token: str, relative: str) -> bool:
+    """Whether one path token names `relative`, a path under the artifacts dir."""
+    value = _normalized(token)
+    if value == relative:
+        return True
+    canonical = f"{ARTIFACTS_DIRNAME}/{relative}"
+    return value == canonical or value.endswith(f"/{canonical}")
 
 
 def _artifact_paths(reviews: Path) -> list[Path]:
@@ -51,9 +94,10 @@ def _artifact_paths(reviews: Path) -> list[Path]:
     return sorted(path for path in artifacts.rglob("*") if path.is_file())
 
 
-def _document_texts(reviews: Path) -> list[str]:
+def _document_texts(reviews: Path) -> tuple[list[str], list[Path]]:
     artifacts = (reviews / ARTIFACTS_DIRNAME).resolve()
     texts = []
+    unreadable = []
     for path in sorted(reviews.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in DOC_SUFFIXES:
             continue
@@ -63,31 +107,19 @@ def _document_texts(reviews: Path) -> list[str]:
             texts.append(path.read_text(encoding="utf-8", errors="replace"))
         except OSError as exc:
             print(f"{path}: 无法读取: {exc}", file=sys.stderr)
-    return texts
+            unreadable.append(path)
+    return texts, unreadable
 
 
-def _mentions(text: str, candidate: str) -> bool:
-    """Whether `text` names `candidate` as a path, not as a suffix of a longer name."""
-    start = 0
-    while True:
-        index = text.find(candidate, start)
-        if index < 0:
-            return False
-        if index == 0 or text[index - 1] not in NAME_BOUNDARY:
-            return True
-        start = index + 1
-
-
-def unreferenced(reviews: Path) -> list[Path]:
+def unreferenced(reviews: Path, documents: list[str]) -> list[Path]:
     """Artifacts no note under `docs/reviews/` names."""
-    documents = _document_texts(reviews)
     missing = []
     for artifact in _artifact_paths(reviews):
-        referenced_in_reviews = artifact.relative_to(reviews).as_posix()
-        bare_name = artifact.relative_to(reviews / ARTIFACTS_DIRNAME).as_posix()
+        relative = artifact.relative_to(reviews / ARTIFACTS_DIRNAME).as_posix()
         if not any(
-            _mentions(text, referenced_in_reviews) or _mentions(text, bare_name)
+            cites(token, relative)
             for text in documents
+            for token in path_tokens(text)
         ):
             missing.append(artifact)
     return missing
@@ -96,9 +128,13 @@ def unreferenced(reviews: Path) -> list[Path]:
 def check(root: Path) -> int:
     reviews = root / REVIEWS_DIR
     if not reviews.is_dir():
-        print(f"评审文档目录不存在，跳过：{reviews}", file=sys.stderr)
-        return 0
-    missing = unreferenced(reviews)
+        print(f"无法判断：评审文档目录不存在：{reviews}", file=sys.stderr)
+        return 2
+    documents, unreadable = _document_texts(reviews)
+    if unreadable:
+        print(f"无法判断：{len(unreadable)} 篇评审文档读不出来", file=sys.stderr)
+        return 2
+    missing = unreferenced(reviews, documents)
     for artifact in missing:
         print(
             f"{artifact}: 没有被 docs/reviews/ 下任何文档引用；"

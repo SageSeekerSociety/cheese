@@ -305,6 +305,19 @@ repos:
         pass_filenames: false
         always_run: true
 
+      # `docs/reviews/artifacts/` is read by nothing — no build, no test, no
+      # link checker — so an artifact whose note was rewritten stays on disk
+      # named by nobody. Two one-off PDFs sat there until #4032 removed them by
+      # hand. The guard fails when a file under that directory is named by no
+      # note in `docs/reviews/`. always_run because the claim is about the
+      # tree: a deleted or rewritten note anywhere is what falsifies it.
+      - id: review-artifacts
+        name: review artifacts are cited by a review note
+        entry: python3 .claude/scripts/check-review-artifacts.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
       # A file-size ratchet, not a cliff: 7 files are already past their cap
       # (frontend/src 1000 lines, backend/app 1500) and each is frozen at the
       # size it had where this branch left main — the merge base, which is why
