@@ -34,7 +34,11 @@ def compact_windows() -> dict[str, dict[str, int]]:
     anyway. Claude Code caps each at the window it believes the session's
     model has (``gateway_usage.window_env``), and a subagent on a model with a
     smaller window than that compacts before it overflows its own. A
-    ``claude-`` id is left out: Claude Code knows its window itself."""
+    ``claude-`` id is left out: Claude Code knows its window itself. So is a
+    model nobody can pick (``selectable``), which no session runs on.
+
+    Sorted by id: the settings are part of what a launch is compared by, and
+    the gateway's row order is not something a session should restart for."""
     low, high = _COMPACT_RANGE
     return {
         m.id: {
@@ -43,8 +47,8 @@ def compact_windows() -> dict[str, dict[str, int]]:
                 max(low, m.compact_window or m.context_window or _ASSUMED_WINDOW),
             )
         }
-        for m in gateway_catalog.snapshot()
-        if not m.id.lower().startswith("claude-")
+        for m in sorted(gateway_catalog.snapshot(), key=lambda m: m.id)
+        if m.selectable and not m.id.lower().startswith("claude-")
     }
 
 

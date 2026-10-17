@@ -1183,6 +1183,10 @@ async def test_a_session_on_a_gateway_model_is_told_the_window_the_gateway_decla
         ),
         row("gpt-6.1-sol", max_input_tokens=922_000),
         row("kimi-k3"),
+        # Past what Claude Code accepts as an auto-compact window.
+        row("gemini-4-argon", max_input_tokens=1_048_576),
+        # Claude Code knows a claude- model's window itself.
+        row("claude-sonnet-5-5", max_input_tokens=1_000_000),
     ]
     answering = gw.LlmGateway(
         "http://gw",
@@ -1216,3 +1220,5 @@ async def test_a_session_on_a_gateway_model_is_told_the_window_the_gateway_decla
     assert compaction["deepseek-flash"] == {"autoCompactWindow": 786_432}
     assert compaction["gpt-6.1-sol"] == {"autoCompactWindow": 922_000}
     assert compaction["kimi-k3"] == {"autoCompactWindow": 200_000}
+    assert compaction["gemini-4-argon"] == {"autoCompactWindow": 1_000_000}
+    assert "claude-sonnet-5-5" not in compaction
