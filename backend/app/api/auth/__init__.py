@@ -166,9 +166,7 @@ async def session_in(
         raise NotFoundError("Topic not found")
     if claims.get("p") != str(project_id):
         raise ForbiddenError("This room belongs to another project")
-    await require_seated_agent(
-        session, token, project_id=project_id, topic_id=topic_id
-    )
+    await require_seated_agent(session, token, project_id=project_id, topic_id=topic_id)
     return project_id, claims
 
 

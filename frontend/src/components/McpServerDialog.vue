@@ -26,14 +26,18 @@ const auth = ref<'oauth' | 'headers'>('oauth')
 const header = ref('Authorization')
 const value = ref('')
 
-watch(open, (v) => {
-  if (!v) return
-  name.value = props.initial?.name ?? ''
-  url.value = props.initial?.url ?? ''
-  auth.value = props.initial?.auth ?? 'oauth'
-  header.value = props.initial?.header ?? 'Authorization'
-  value.value = ''
-})
+watch(
+  open,
+  (v) => {
+    if (!v) return
+    name.value = props.initial?.name ?? ''
+    url.value = props.initial?.url ?? ''
+    auth.value = props.initial?.auth ?? 'oauth'
+    header.value = props.initial?.header ?? 'Authorization'
+    value.value = ''
+  },
+  { immediate: true }
+)
 
 const NAME = /^[a-z0-9][a-z0-9-]*$/
 const nameOk = computed(() => NAME.test(name.value.trim()))

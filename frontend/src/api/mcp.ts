@@ -110,3 +110,11 @@ export function removeMcpServer(projectId: string, name: string): Promise<null> 
     method: 'DELETE',
   })
 }
+
+/** 电脑的主人答一条运行请求：允许这条命令在这台电脑上运行，或不允许。 */
+export function decideMcpRun(id: string, allow: boolean): Promise<{ id: string; allowed: boolean }> {
+  return request(`/mcp/approvals/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    body: JSON.stringify({ allow }),
+  })
+}
