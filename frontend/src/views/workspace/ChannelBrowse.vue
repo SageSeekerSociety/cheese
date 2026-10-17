@@ -59,6 +59,17 @@ async function setJoined(id: string, joined: boolean) {
   }
 }
 
+async function setArchived(id: string, archived: boolean) {
+  busyId.value = id
+  try {
+    if (archived) await store.archive(id)
+    else await store.unarchive(id)
+    await load()
+  } finally {
+    busyId.value = null
+  }
+}
+
 async function create(channel: { title: string; description: string; membersOnly: boolean }) {
   creating.value = true
   try {
@@ -84,6 +95,8 @@ async function create(channel: { title: string; description: string; membersOnly
     @open="open"
     @join="(id) => setJoined(id, true)"
     @leave="(id) => setJoined(id, false)"
+    @archive="(id) => setArchived(id, true)"
+    @unarchive="(id) => setArchived(id, false)"
     @create="create"
     @retry="load"
   />

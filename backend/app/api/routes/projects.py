@@ -23,7 +23,7 @@ from app.api.place import (
 )
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
-from app.api.room_task_rows import project_task_rows
+from app.api.room_task_rows import incomplete_tasks, project_task_rows
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
 from app.auth.project_roles import Standing, is_owner, may, standing, standings_in
@@ -533,7 +533,12 @@ async def list_project_tasks(
             me=actor.handle or "",
             accepted=accepted,
         )
-        items = await project_task_rows(db, chat, actor.handle or "", tasks)
+        incomplete = await incomplete_tasks(
+            db, [t.id for t in tasks if t.status == "open"]
+        )
+        items = await project_task_rows(
+            db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
+        )
         last = page_rows[-1] if page_rows and has_more else None
         return await conditional_json(
             ok(
@@ -549,7 +554,10 @@ async def list_project_tasks(
     tasks = await TaskService(db).list_in_project(
         project_id, accepted=accepted, rooms=seen, status=status
     )
-    items = await project_task_rows(db, chat, actor.handle or "", tasks)
+    incomplete = await incomplete_tasks(db, [t.id for t in tasks if t.status == "open"])
+    items = await project_task_rows(
+        db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
+    )
     return await conditional_json(ok(page(items, len(items))), if_none_match)
 
 

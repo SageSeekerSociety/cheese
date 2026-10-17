@@ -756,6 +756,19 @@ cmd_start() {
     print_env
 }
 
+# Only the two servers, for a stack that runs the app rather than the suite
+# (e2e/dev-stack.mjs): it needs no harness builds, which are the slowest part
+# of a first start. PG_BIN is where createdb and psql are.
+cmd_servers() {
+    resolve_bins
+    mkdir -p "$DATA_DIR"
+    start_pg
+    start_redis
+    echo "export TEST_PG_BASE=postgresql+asyncpg://$PG_USER:$PG_PASSWORD@127.0.0.1:$PG_PORT"
+    echo "export REDIS_URL=redis://127.0.0.1:$REDIS_PORT/0"
+    printf 'export PG_BIN=%q\n' "$PG_BIN"
+}
+
 # stop and status touch no install: they read the pid files the servers wrote
 # into $DATA_DIR, so they work offline, and when the install the servers run
 # from is damaged, which is when they are needed most.
@@ -827,16 +840,19 @@ cmd_status() {
 pick_redis_kind
 case "${1:-start}" in
     start)  cmd_start ;;
+    servers) cmd_servers ;;
     stop)   cmd_stop "${2:-}" ;;
     status) cmd_status ;;
     env)    resolve_harness; print_env ;;
     *)
         cat >&2 <<EOF
-usage: bash .claude/scripts/dev-db.sh <start|stop [--purge]|status|env>
+usage: bash .claude/scripts/dev-db.sh <start|servers|stop [--purge]|status|env>
 
   start           start postgres + redis (fakeredis where Valkey cannot be
                   built: no cc), install the pinned
                   harness builds, print export lines on stdout
+  servers         start postgres + redis only, no harness builds; print
+                  TEST_PG_BASE, REDIS_URL and PG_BIN (where psql is)
   stop            stop the servers; --purge also deletes $DATA_DIR
                   (the servers in $SERVER_HOME and downloads in
                   $TOOL_CACHE are kept)
