@@ -273,8 +273,9 @@ def test_a_listed_thread_says_whether_its_message_was_cut(client):
     assert roots[long["id"]]["truncated"] is True
 
 
-#: The read of messages by their ids: `_among` binds the ids as one array.
-_ROOTS_BY_ID = re.compile(r"FROM blocks\s+WHERE blocks\.id = ANY", re.IGNORECASE)
+#: Any read of messages by their ids — one array, an IN list, or one id at a
+#: time: a page that read its roots again in another spelling still counts.
+_ROOTS_BY_ID = re.compile(r"FROM blocks\s+WHERE blocks\.id\b", re.IGNORECASE)
 
 
 def _roots_read_while(client, read):
