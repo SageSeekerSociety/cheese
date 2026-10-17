@@ -10,10 +10,8 @@
 //
 // 取数都接在这里，画的那一半只收结果——panels/ 下的每个 SFC 都是场景棘轮里的「场景」，
 // 新场景必须第一天就是 A 档，所以取数一滴都不能漏到 `PanelRoutines.vue` 里去。
-import type { Routine, RoutineInput } from '@/lib/routine'
+import type { RoutineInput } from '@/lib/routine'
 import type { RoutineTemplateInput } from '@/lib/routineTemplates'
-
-import { nextTick, ref, watch } from 'vue'
 
 import { useRoutineList } from '@/composables/useRoutineList'
 import { useRoutineTemplates } from '@/composables/useRoutineTemplates'
@@ -21,7 +19,6 @@ import { useRoutineTemplates } from '@/composables/useRoutineTemplates'
 import PanelRoutines from '../panels/PanelRoutines.vue'
 
 import { t } from '@/i18n'
-import { focusRow } from '@/lib/focusRow'
 
 const props = withDefaults(
   defineProps<{
@@ -100,71 +97,6 @@ async function onSubmit(payload: { room: string; body: RoutineInput; keepAsTempl
   if (!(await addTemplate(payload.body))) error.value = t('routines.template.saveFailed')
 }
 
-/**
- * 房间里那一行提到这条规则、人点了它：就这一格打开这一条。
- *
- * 人点的是同一行上的两颗按钮，问的不是同一个问题，所以进到这一格也不是同一个样子：
- *
- * - 「打开这条」问的是「这条规则长什么样」—— 选中它、展开它最近三次、滚到跟前亮一下。
- * - 「看执行记录」问的是「它跑出来什么」—— 不用指到行上，直接开这一条的记录整页。
- *   刚被 AI 补齐的那条规则，人想一眼看到它填成什么样，那一页上有每次跑成什么、交回
- *   了哪几份文件。多一步「先滚到行、再点看全部」在这一问上是白走。
- *
- * 两件事都要先把这一格上别的东西收起来：新建那张表开着的话，名单根本不在眼前。
- *
- * 再等名单读回来（人是从一条旧消息点进来的，名单可能还在路上）—— `routines` 每次
- * 重读都换一个数组，所以那个 watch 是一次性的，落到了或者那一条确实不在了就收手，
- * 不会每读一次又闪一下。
- *
- * 那一条不在名单里（已经删了）就什么都不做：人从旧消息点过来，指不到是常态。
- */
-const wanted = ref<{ id: string; records: boolean } | null>(null)
-
-/** 名单回来了，把记着的那一件事做完。那一条还没到就留着，下一次重读再试。 */
-function land(target: { id: string; records: boolean }): void {
-  const row = routines.value.find((r) => r.id === target.id)
-  if (!row) return
-  wanted.value = null
-  closeForm()
-  if (target.records) {
-    openRecords(row)
-    return
-  }
-  closeRecords()
-  void pointAt(row)
-}
-
-async function pointAt(row: Routine): Promise<void> {
-  await toggleRuns(row, true)
-  await nextTick()
-  void focusRow(`[data-routine="${CSS.escape(row.id)}"]`)
-}
-
-watch(
-  routines,
-  () => {
-    if (wanted.value) land(wanted.value)
-  },
-  { immediate: true }
-)
-
-defineExpose({
-  /** 选它、展开它的记录、滚到它跟前亮一下。名单还没有就等它回来。 */
-  showRoutine(routineId: string) {
-    const target = { id: routineId, records: false }
-    wanted.value = target
-    closeRecords()
-    closeForm()
-    land(target)
-  },
-  /** 不用指到行上，直接开这一条的记录整页。名单还没有就等它回来。 */
-  showRoutineRecords(routineId: string) {
-    const target = { id: routineId, records: true }
-    wanted.value = target
-    closeForm()
-    land(target)
-  },
-})
 </script>
 
 <template>

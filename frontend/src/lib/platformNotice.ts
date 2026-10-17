@@ -235,6 +235,5 @@ export {
   environmentTarget,
   mailOutcomes,
   platformNotice,
-  routineTarget,
 } from './platformNoticeCards'
 export { collapseNotices, rendersInRoom } from './platformNoticeCollapse'

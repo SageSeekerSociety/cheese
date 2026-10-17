@@ -25,7 +25,5 @@
   "routineResultWithFiles": "{body}\n结果文件：{files}",
   "routineRunStarted": "开始执行「{title}」",
   "routineSkipped": "未执行",
-  "routineSucceeded": "已完成",
-  "routineSummaryNoNote": "名称：{title}\n目标：{goal}\n触发：{trigger}\n执行者：{agent}\n结果通知：{owner}",
-  "routineSummaryWithNote": "名称：{title}\n目标：{goal}\n补充说明：{note}\n触发：{trigger}\n执行者：{agent}\n结果通知：{owner}"
+  "routineSucceeded": "已完成"
 }

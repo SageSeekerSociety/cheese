@@ -956,7 +956,8 @@ PLATFORM_TOOLS = ToolTable(
             "cheese_routine_draft",
             "为当前频道建一条例行事务（到点让这个频道的队友开工一轮）。"
             "**存下就在跑**：没有人再点一次确认，所以你建之前先把配置说清楚，"
-            "建完告诉用户它已经开跑了，以及什么时候跑第一次。",
+            "建完自己说一句它已经开跑了、什么时候跑第一次，话里带上返回的那个"
+            "链接（就是规则的名字，点开是例行事那页上这一条）。",
             {
                 "title": _text("规则名字，一句话；不写就取目标的第一句"),
                 "instructions": _text("目标：到点要做的事，写清做什么、交出什么"),
@@ -3113,13 +3114,22 @@ def _say_todo(args, data, env) -> str:
 def _say_routine_draft(args, data, env) -> str:
     data = data or {}
     first = f"，第一次在 {data['next_run_at']}" if data.get("next_run_at") else ""
+    title = data.get("title") or args.get("title") or ""
+    project = data.get("project_id") or env.get("CHEESE_PROJECT") or ""
+    name = (
+        f"[{title}](/projects/{project}/routines?routine={data.get('id')})"
+        if project and data.get("id")
+        else f"「{title}」"
+    )
     return (
-        f"已为这个频道建了「{data.get('title')}」(id={data.get('id')})，"
-        "**它已经在跑了**，没有人再确认一次。\n"
+        f"已为这个频道建了{name}，**它已经在跑了**，没有人再确认一次。\n"
         f"什么时候跑：{data.get('trigger_text') or args.get('trigger') or 'schedule'}"
         f"{first}\n"
-        "把这条规则和什么时候跑第一次说给用户听，他要改或不要，在这个频道右侧的"
-        "「例行事务」里改。"
+        f"（id={data.get('id')}，你自己后面调用要用，别写给用户。）\n"
+        "现在你自己说一句告诉用户建好了：把那上面的名字原样带上 —— 它是这条规则的"
+        "标题，点开就是这个项目「例行事务」页上展开着的那一条。像平常说话那样说清楚"
+        "建了什么、什么时候第一次跑就够了；别说是链接、别写 id、也别把这段说明抄过去。"
+        "他要改或不要，在那页上改。"
     )
 
 

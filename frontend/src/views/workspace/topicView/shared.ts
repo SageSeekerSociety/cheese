@@ -17,10 +17,6 @@ export interface WorkPanelHandle {
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
   openDocument?: (document: OpenedDocument, review?: DocReviewRequest) => Promise<void>
-  /** 打开「例行事务」那一格并指到某一条规则上（房间里那一行提到它，人点了它）。 */
-  showRoutine?: (routineId: string) => Promise<void>
-  /** 同一行上的第二颗：那一格直接开成这一条的执行记录整页。 */
-  showRoutineRecords?: (routineId: string) => Promise<void>
   previewShown?: () => void
   /** 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。 */
   activeTab: () => string

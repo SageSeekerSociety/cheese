@@ -80,21 +80,6 @@ export function useTopicActions(opts: {
     'mention-click': handleMentionClick,
     'open-file': (path: string) => opts.panelRef.value?.openFile?.(path),
     'open-resource': handleOpenResource,
-    // 房间里提到一条规则的那一行（`RoomNotice`）：右栏切到「例行事务」、指到那一条上。
-    // 不带人去别的页面 —— 规则本来就长在这个房间里，人也正看着这个房间。专注模式里
-    // 对话让开了，内容和地址都得看得见，所以先退出专注模式，和上面 `open-resource`
-    // 那两处一样。
-    'open-routine': async (routineId: string) => {
-      opts.focusMode.value = false
-      await nextTick()
-      await opts.panelRef.value?.showRoutine?.(routineId)
-    },
-    // 同一行上的第二颗：右栏直接开成这一条的执行记录整页。
-    'open-routine-records': async (routineId: string) => {
-      opts.focusMode.value = false
-      await nextTick()
-      await opts.panelRef.value?.showRoutineRecords?.(routineId)
-    },
     'upgrade-message': opts.opening.upgradeMessage,
     'open-thread': opts.opening.onOpenThread,
     'open-topic': opts.openTopic,

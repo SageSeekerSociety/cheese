@@ -25,7 +25,5 @@
   "routineResultWithFiles": "{body}\nResult files: {files}",
   "routineRunStarted": "Started “{title}”",
   "routineSkipped": "did not run",
-  "routineSucceeded": "finished",
-  "routineSummaryNoNote": "Name: {title}\nGoal: {goal}\nTrigger: {trigger}\nRun by: {agent}\nResults sent to: {owner}",
-  "routineSummaryWithNote": "Name: {title}\nGoal: {goal}\nNote: {note}\nTrigger: {trigger}\nRun by: {agent}\nResults sent to: {owner}"
+  "routineSucceeded": "finished"
 }

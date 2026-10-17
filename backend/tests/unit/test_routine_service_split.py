@@ -24,7 +24,7 @@
 
 1. 旧路径仍然答得出那一组名字（22 个），而且**都是同一个对象**（不是抄了
    一份出来）。少一个，某个调用点就是 ImportError。
-2. ``RoutineService`` 的 19 个成员（含 ``__init__``）一个不少，而且是**真方法**
+2. ``RoutineService`` 的 18 个成员（含 ``__init__``）一个不少，而且是**真方法**
    （类自己的 ``__dict__`` 里就有），不是 ``__getattr__`` 之类动态转发的。
 3. ``__init__`` 没动：``_session`` 仍从这里赋值。
 4. **拆的是文件，不是行为**：每个方法体恰好一句转发，转给子模块里同名、首参为
@@ -61,7 +61,7 @@ from app.domain.routine.service import service as class_module
 # 子模块因此取不到属性，要从 sys.modules 里拿。
 sweep_module = importlib.import_module("app.domain.routine.service.sweep")
 
-# 19 个成员，按 `service/service.py` 里类体的定义先后抄的。
+# 18 个成员，按 `service/service.py` 里类体的定义先后抄的。
 ROUTINE_SERVICE_METHODS = [
     "__init__",
     "_check_feedback_batch",
@@ -71,7 +71,6 @@ ROUTINE_SERVICE_METHODS = [
     "latest_run_statuses",
     "_agent_for",
     "create",
-    "summary_text",
     "_activate",
     "_settled",
     "pause",
@@ -90,9 +89,6 @@ SIBLINGS = {"rules": rules, "archive": archive, "settlement": settlement}
 
 #: 转发到子模块时改了名的：模块级的 `list` 会盖掉内建（`runs` 要用 `list(...)`）。
 RENAMED = {"list": "list_for_project"}
-
-#: 不碰实例的那一个：类上仍是 ``@staticmethod``，子模块里的函数也没有实例参数。
-STATIC_METHODS = {"summary_text"}
 
 #: 拆之前那份 service.py 的模块名字空间。名字 -> 它现在定义在哪个子模块。
 #: 这就是「对外导出完全兼容」那份账：调用点读得出、且是同一个对象。
@@ -162,9 +158,9 @@ def test_the_sweep_patch_point_is_the_package_attribute() -> None:
     )
 
 
-def test_the_class_keeps_all_19_members() -> None:
-    """19 个成员一个不少，而且都是类自己定义的。"""
-    assert len(ROUTINE_SERVICE_METHODS) == 19
+def test_the_class_keeps_all_18_members() -> None:
+    """18 个成员一个不少，而且都是类自己定义的。"""
+    assert len(ROUTINE_SERVICE_METHODS) == 18
     found = {name for name, _ in inspect.getmembers(routine_service.RoutineService)}
     assert [n for n in ROUTINE_SERVICE_METHODS if n not in found] == []
 
@@ -236,19 +232,14 @@ def test_every_method_is_one_forward_to_its_sibling_module(name: str) -> None:
         f"{name} 转发去了另一个名字 {call.func.attr}"
     )
 
-    # 转发把服务原样交出去：子模块函数的首参就是它（不碰实例的那一个不带）。
-    if name in STATIC_METHODS:
-        assert [d.id for d in declaration.decorator_list] == ["staticmethod"]
-        first_parameter = "row"
-    else:
-        assert isinstance(call.args[0], ast.Name) and call.args[0].id == "self"
-        first_parameter = "svc"
+    # 转发把服务原样交出去：子模块函数的首参就是它。
+    assert isinstance(call.args[0], ast.Name) and call.args[0].id == "self"
     assert call.args[1:] == [], f"{name} 除了实例还多传了位置参数"
 
     forwarded = getattr(SIBLINGS[target_module.id], RENAMED.get(name, name))
     assert callable(forwarded)
     parameters = inspect.signature(forwarded).parameters
-    assert next(iter(parameters)) == first_parameter
+    assert next(iter(parameters)) == "svc"
     assert not hasattr(forwarded, "__wrapped__"), f"{name} 被子模块包了一层"
 
     # 一对一：每个形参一个同名的关键字实参，一个不漏、一个不多。
@@ -258,7 +249,7 @@ def test_every_method_is_one_forward_to_its_sibling_module(name: str) -> None:
     assert {n: passed[n].id for n in passed} == {n: n for n in passed}, (
         f"{name} 转发时换了名字：{ {n: passed[n].id for n in passed} }"
     )
-    expected = list(parameters) if name in STATIC_METHODS else list(parameters)[1:]
+    expected = list(parameters)[1:]
     missing = set(expected) - set(passed)
     extra = set(passed) - set(expected)
     assert set(passed) == set(expected), (

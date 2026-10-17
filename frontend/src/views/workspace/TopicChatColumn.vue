@@ -95,10 +95,6 @@ const emit = defineEmits<{
   // 参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，`review` 是「查看改动」要标出
   // 的那几处；只转第一个的话这两样都会静默降级成「整篇闪一下」。
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
-  // 这一行提到一条规则：房间右栏那一格打开、选中它（见 `RoomNotice` 那条说明）。
-  (e: 'open-routine', routineId: string): void
-  // 同一行上的第二颗：右栏直接开成这一条的「执行记录」整页。
-  (e: 'open-routine-records', routineId: string): void
   (e: 'upgrade-message', payload: unknown): void
   // 「在支线中回复」、点开消息下面那一行：页面换到那条支线。
   (e: 'open-thread', block: Block): void
@@ -265,8 +261,6 @@ defineExpose({
         (resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) =>
           emit('open-resource', resource, turnId, review, document)
       "
-      @open-routine="emit('open-routine', $event)"
-      @open-routine-records="emit('open-routine-records', $event)"
       @upgrade-message="emit('upgrade-message', $event)"
       @open-thread="emit('open-thread', $event)"
       @open-topic="emit('open-topic', $event)"

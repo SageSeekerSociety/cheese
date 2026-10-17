@@ -14,7 +14,6 @@ from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import REPORT_TIMEOUT, sweep
 from tests.integration.conftest import (
     post_project,
-    room_agent_seat,
     session_auth_headers,
 )
 
@@ -124,55 +123,25 @@ def test_a_teammates_rule_runs_from_the_moment_it_is_saved(client):
     assert len(runner.submitted) == 1
 
 
-def _rule_line(client, room: str, routine_id: str) -> dict:
-    """The room's line about this rule: the one the teammate's creation left."""
-    blocks = client.get(f"/topics/{room}/blocks", headers=PERSON).json()["data"]
-    [line] = [
-        b
-        for b in blocks["data"]
-        if (b.get("meta") or {}).get("event_type") == "routine_proposed"
-        and b["meta"].get("routine_id") == routine_id
-    ]
-    return line
-
-
-def test_the_rooms_line_about_a_rule_says_what_became_of_it(client):
+def test_a_teammates_rule_leaves_no_line_of_the_platforms_own_in_the_room(client):
+    """The teammate says it in its own words, in its own message; the platform
+    does not add a card of its own. Same on the way out: nothing to rewrite."""
     room = _room(client, _project(client))
-    kept = _weekly(client, room, owner_handle=OWNER).json()["data"]
-    line = _rule_line(client, room, kept["id"])
-    assert line["meta"]["who"] == "platform", (
-        "a rule that is already running read as one waiting on a person"
-    )
-    assert "建了例行事务" in line["content"], line["content"]
+    routine = _weekly(client, room, owner_handle=OWNER).json()["data"]
 
-    dropped = _weekly(client, room, owner_handle=OWNER, title="每日站会").json()["data"]
+    def about_the_rule() -> list[dict]:
+        blocks = client.get(f"/topics/{room}/blocks", headers=PERSON).json()["data"]
+        return [
+            b
+            for b in blocks["data"]
+            if (b.get("meta") or {}).get("routine_id") == routine["id"]
+        ]
+
+    assert about_the_rule() == []
     assert (
-        client.delete(f"/routines/{dropped['id']}", headers=PERSON).status_code == 200
+        client.delete(f"/routines/{routine['id']}", headers=PERSON).status_code == 200
     )
-    line = _rule_line(client, room, dropped["id"])
-    assert "删掉了例行事务" in line["content"], line["content"]
-    assert line["meta"]["state"] == "over"
-    assert not line["meta"]["who"]
-
-
-def test_the_rooms_line_about_a_rule_names_the_teammate_that_created_it(client):
-    """The line names the teammate by its handle, the way a mention chip does,
-    so a teammate called Nova is not announced as 「芝士」."""
-    room = _room(client, _project(client))
-    seat = room_agent_seat(client, room)
-    kept = _weekly(client, room, owner_handle=OWNER).json()["data"]
-    dropped = _weekly(client, room, owner_handle=OWNER, title="每日站会").json()["data"]
-    for routine in (kept, dropped):
-        line = _rule_line(client, room, routine["id"])
-        assert line["content"].startswith(f"<@{seat}> "), line["content"]
-        assert "芝士" not in line["content"]
-
-    # 删掉以后那一行说的是谁删的：把规则从房间里拿走的是人，不是芝士。
-    client.delete(f"/routines/{dropped['id']}", headers=PERSON)
-    line = _rule_line(client, room, dropped["id"])
-    assert line["meta"]["state"] == "over"
-    assert line["content"].startswith(f"<@{OWNER}> "), line["content"]
-    assert _rule_line(client, room, kept["id"])["content"].startswith(f"<@{seat}> ")
+    assert about_the_rule() == []
 
 
 def test_the_work_a_run_hands_over_is_labelled_with_the_teammates_name(client):

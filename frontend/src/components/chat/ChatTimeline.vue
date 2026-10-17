@@ -152,10 +152,6 @@ const emit = defineEmits<{
   (e: 'open-file', path: string): void
   (e: 'open-card', taskId: string): void
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
-  // 这一行提到了一条规则：房间右栏那一格打开、选中它。一路透传到 `TopicView`。
-  (e: 'open-routine', routineId: string): void
-  // 同一行上的第二颗：右栏开成这一条的「执行记录」整页。
-  (e: 'open-routine-records', routineId: string): void
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
   (e: 'ask-skip', block: Block): void
@@ -343,12 +339,6 @@ function emitChecklist(block: Block, items: TodoItem[]) {
 function emitOpenFile(path: string) {
   emit('open-file', path)
 }
-function emitOpenRoutine(routineId: string) {
-  emit('open-routine', routineId)
-}
-function emitOpenRoutineRecords(routineId: string) {
-  emit('open-routine-records', routineId)
-}
 function emitOpenResource(resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) {
   emit('open-resource', resource, turnId, review, document)
 }
@@ -529,8 +519,6 @@ const rowLabels = computed(() =>
               :aria-label="rowLabels[i]"
               @animationend="settleRow"
               @open-resource="emitOpenResource"
-              @open-routine="emitOpenRoutine"
-              @open-routine-records="emitOpenRoutineRecords"
               @open-card="emit('open-card', $event)"
               @retry="emit('retry')"
               @jump="emit('jump', $event)"

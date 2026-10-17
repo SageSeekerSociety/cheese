@@ -4,7 +4,6 @@
 // 填的是同一张表，差别只有范围：那一页是整个项目，这一格带着 `topicId` 去问后端。所以
 // 这一份钉的是三件只有这一格才成立的事：问的是这个房间、新建的规则长在这个房间（表单
 // 里连「在哪个房间执行」都不问）、删不掉的那一条不画「删除」。
-import { defineComponent, h } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -31,9 +30,7 @@ import RoutinePanelHost from './RoutinePanelHost.vue'
 const {
   createRoutine,
   createRoutineTemplate,
-  getRoutine,
   listProjectRoutines,
-  listRoutineRuns,
   listRoutineTemplates,
   updateRoutine,
 } = await import('../../api/routines')
@@ -100,30 +97,6 @@ function mount() {
     props: { topicId: 'room-1', projectId: 'p1' },
     global: { plugins: [vuetify, i18n] },
   })
-}
-
-/** 拿着 `defineExpose` 出来的那两样从外面调 —— 就像面板外壳那样。 */
-function mountWithApi() {
-  let api: {
-    showRoutine: (id: string) => void
-    showRoutineRecords: (id: string) => void
-  } | null = null
-  const Harness = defineComponent({
-    setup: () => () =>
-      h(RoutinePanelHost, {
-        topicId: 'room-1',
-        projectId: 'p1',
-        ref: (el: unknown) => {
-          api = el as typeof api
-        },
-      }),
-  })
-  render(Harness, { global: { plugins: [vuetify, i18n] } })
-  return {
-    get api() {
-      return api as NonNullable<typeof api>
-    },
-  }
 }
 
 function button(label: string, scope: ParentNode = document.body): HTMLElement | undefined {
@@ -230,21 +203,6 @@ describe('房间右侧的「例行事务」', () => {
     )
     await waitFor(() => expect(document.body.textContent).toContain('项目里存的'))
     expect(document.body.textContent).toContain('把这个房间今天的进展写成一页')
-  })
-
-  it('第二颗按钮：不用指到行上，这一格直接开成那一条的记录整页', async () => {
-    vi.mocked(listRoutineRuns).mockResolvedValue({ data: [], total: 0 })
-    const { api } = mountWithApi()
-    await waitFor(() => expect(document.body.textContent).toContain('这个房间的日报'))
-    expect(document.querySelector('[data-routine="live-1"]')).toBeTruthy()
-
-    api.showRoutineRecords('live-1')
-
-    // 那一串规则让位给记录整页：标题上写着是哪一条，读的是它的记录。
-    await waitFor(() => expect(document.body.textContent).toContain('执行记录'))
-    expect(listRoutineRuns).toHaveBeenCalledWith('live-1', { offset: 0, limit: 10, failedOnly: false })
-    // 行没有展开，也没有滚过去：这一条问的是「它跑出来什么」，不是「它长什么样」。
-    expect(getRoutine).not.toHaveBeenCalled()
   })
 
   it('改一条每日分诊的钟点：它附带的反馈条数跟着留下，不被表单丢掉', async () => {

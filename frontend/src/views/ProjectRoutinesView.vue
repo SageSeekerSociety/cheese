@@ -84,7 +84,8 @@ async function loadRooms() {
   }
 }
 
-// 从一条平台通知点进来（`?routine=<id>`）：那一条自己展开，滚到它跟前。
+// 点了一句提到这条规则的话里的链接（`?routine=<id>`，地址由芝士自己写在话里）：
+// 那一条自己展开，滚到它跟前。
 watch(
   routines,
   (rows) => {

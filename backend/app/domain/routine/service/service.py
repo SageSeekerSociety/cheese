@@ -95,10 +95,6 @@ class RoutineService:
             agent_handle=agent_handle,
         )
 
-    @staticmethod
-    def summary_text(row: Routine) -> str:
-        return rules.summary_text(row=row)
-
     def _activate(self, row: Routine) -> None:
         return rules._activate(self, row=row)
 

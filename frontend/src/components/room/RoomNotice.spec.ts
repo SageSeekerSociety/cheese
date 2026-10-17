@@ -139,7 +139,6 @@ describe('芝士起草、等人确认的那一行', () => {
       history: createMemoryHistory(),
       routes: [
         { path: '/', component: stub },
-        { name: 'project-routines', path: '/projects/:projectId/routines', component: stub },
         { name: 'project-skills', path: '/projects/:projectId/skills', component: stub },
         { name: 'project-settings', path: '/projects/:projectId/settings/:section?', component: stub },
       ],
@@ -160,49 +159,26 @@ describe('芝士起草、等人确认的那一行', () => {
     })
   }
 
-  it('提到一条规则：一颗「打开这条」，带的是这条的编号，不是一个去处', async () => {
-    const { getByTestId, emitted } = await mountWithRouter(
-      proposed({ event_type: 'routine_proposed', routine_id: 'r-9' })
-    )
-    const btn = getByTestId('notice-routine')
-    expect(btn.textContent?.trim()).toBe('打开这条')
-    // 它不换页：规则长在这个房间里，人也就在这个房间里。所以没有 href，只有一次上报。
-    expect(btn.getAttribute('href')).toBeNull()
-    await fireEvent.click(btn)
-    expect(emitted()['open-routine']).toEqual([['r-9']])
+  it('旧版留在房间里的那一行提到一条规则：只当一行字，不带任何按钮', async () => {
+    // 新版建规则不落这一行（芝士自己在对话里说），旧房间里的还在，照样读得懂。
+    const { container } = await mountWithRouter(proposed({ event_type: 'routine_proposed', routine_id: 'r-9' }))
+    expect(container.textContent).toContain('名称：每周进展')
+    expect(container.querySelector('.sys-btn')).toBeNull()
   })
 
-  it('紧挨着还有第二颗：直接看这一条的执行记录，一样是这个房间里的动作', async () => {
-    const { getByTestId, emitted } = await mountWithRouter(
-      proposed({ event_type: 'routine_proposed', routine_id: 'r-9' })
-    )
-    const btn = getByTestId('notice-routine-records')
-    expect(btn.textContent?.trim()).toBe('看执行记录')
-    expect(btn.getAttribute('href')).toBeNull()
-    await fireEvent.click(btn)
-    expect(emitted()['open-routine-records']).toEqual([['r-9']])
-  })
-
-  it('开始执行的那一句也带「打开这条」', async () => {
-    const { getByTestId } = await mountWithRouter(proposed({ event_type: 'routine_run', routine_id: 'r-9' }))
-    expect(getByTestId('notice-routine').textContent?.trim()).toBe('打开这条')
-  })
-
-  it('这两类都不再是「等人确认」的样子：没有「去确认」', async () => {
+  it('规则那两类都不是「等人确认」的样子：没有「去确认」', async () => {
     for (const kind of ['routine_proposed', 'routine_run']) {
       const { queryByTestId } = await mountWithRouter(proposed({ event_type: kind, routine_id: 'r-9' }))
       expect(queryByTestId('notice-confirm')).toBeNull()
     }
   })
 
-  it('规则删了以后：那一行只说结果，不再指过去', async () => {
+  it('规则删了以后：那一行只说结果', async () => {
     const block = proposed({ event_type: 'routine_proposed', routine_id: 'r-9', who: '', state: 'over' })
     block.content = '芝士删掉了例行事务「每周进展汇总」'
-    const { queryByTestId, container } = await mountWithRouter(block)
+    const { container } = await mountWithRouter(block)
     expect(container.textContent).toContain('删掉了例行事务')
-    expect(queryByTestId('notice-routine')).toBeNull()
-    // 两颗都收掉：那条规则已经不在了，看它的记录也看不到东西。
-    expect(queryByTestId('notice-routine-records')).toBeNull()
+    expect(container.querySelector('.sys-btn')).toBeNull()
   })
 
   it('整理的技能：通到技能页的那一条', async () => {
@@ -231,8 +207,5 @@ describe('芝士起草、等人确认的那一行', () => {
   it('别的平台提示不带这颗按钮', async () => {
     const { queryByTestId } = await mountWithRouter(proposed({ event_type: 'routine_result', routine_id: 'r-9' }))
     expect(queryByTestId('notice-confirm')).toBeNull()
-    // 一次执行的结果本身不带编号（编号在它上面那一行「开始执行」上），所以也不指。
-    expect(queryByTestId('notice-routine')).toBeNull()
-    expect(queryByTestId('notice-routine-records')).toBeNull()
   })
 })

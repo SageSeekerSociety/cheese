@@ -208,32 +208,10 @@ function occurrenceOf(block: Block): NoticeOccurrence {
 }
 
 /**
- * 房间里提到**一条规则**的那句话，说的是哪一条。
- *
- * 这一类句子（芝士建完说的那句、开始执行的那句）要带一颗按钮，点了不开新页面：就在
- * 这个房间右栏把「例行事务」那一格打开、选中这一条。规则本来就长在这个房间里，人也
- * 正看着这个房间，跳去项目那一页是白绕一圈。所以这里给的是规则的编号，不是去处 ——
- * 往哪儿开是这个房间的事（`TopicView` 有那一格）。
- *
- * 带编号的就那两类。人把它删了之后那一行改说结果（`state` 记成 `over`），也就不再
- * 指了 —— 指过去只有一条不存在的规则。「N 条例行事务随归档停止」那一行是好几条，
- * 不是「这一条」，不给。
- */
-export function routineTarget(block: Block): string | null {
-  const m = meta(block)
-  if (str(m?.state) === 'over') return null
-  const kind = str(m?.event_type)
-  if (kind !== 'routine_proposed' && kind !== 'routine_run') return null
-  return str(m?.routine_id) || null
-}
-
-/**
  * 「芝士整理了技能」那一行要带一颗「去确认」。
  *
  * 确认入口在项目名旁的 ⋯ 菜单里，人在房间读到这一行时不知道去哪找（chiruotong
  * 在 dev 上实测找不到）。这一行本身就知道是哪一条，所以直接指过去。
- *
- * 规则的同一句话不走这里：它已经在跑了，没什么要确认的（见 `routineTarget`）。
  */
 export function confirmTarget(block: Block, projectId: string | null | undefined): ConfirmTarget | null {
   const m = meta(block)

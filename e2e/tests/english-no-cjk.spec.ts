@@ -184,7 +184,6 @@ type Seed = {
   taskId: string;
   feedbackId: string;
   othersProjectId: string;
-  routineRoomId: string;
   routineIds: string[];
 };
 let seeded: Seed | null = null;
@@ -267,10 +266,9 @@ async function routineRoom(page: Page, projectId: string) {
   return { roomId: room.id, agentSeat: teammate.seat_handle };
 }
 
-/** Create through the isolated backend's agent entrance: this is the entrance
- * that leaves the configuration notice in the room, and the line the screen
- * below is about. Rules run from the moment they are saved, whoever saved
- * them; the room's notice is what puts them on the record.
+/** Create through the isolated backend's agent entrance — the path a teammate
+ * takes, with the seat's own token. Rules run from the moment they are saved,
+ * whoever saved them; nothing is left in the room for a person to confirm.
  * The signing secret follows the test backend's SANDBOX_TOKEN/JWT_SECRET env;
  * test-secret is the JWT_SECRET pinned by e2e.yml, not a deployment credential. */
 async function agentRoutines(page: Page, roomId: string, agentSeat: string): Promise<string[]> {
@@ -363,7 +361,6 @@ async function seed(page: Page): Promise<Seed> {
     taskId: task.id,
     feedbackId: feedback.id,
     othersProjectId: await othersProject(page),
-    routineRoomId: rules.roomId,
     routineIds: await agentRoutines(page, rules.roomId, rules.agentSeat),
   };
   return seeded;
@@ -376,7 +373,7 @@ test.beforeEach(async ({ page }) => {
 test("workspace: inbox, overview, tasks, room, accept card, library, project settings", async ({
   page,
 }) => {
-  const { projectId, roomId, taskId, routineRoomId, routineIds } = await seed(page);
+  const { projectId, roomId, taskId, routineIds } = await seed(page);
   const project = `/projects/${projectId}`;
   await check(page, [
     { name: "inbox", path: "/inbox" },
@@ -396,21 +393,6 @@ test("workspace: inbox, overview, tasks, room, accept card, library, project set
       // The card of the task its creator made on its own (「新建了任务」).
       ready: (page) =>
         page.getByTestId("task-created-post").first().waitFor({ timeout: 45_000 }),
-    },
-    {
-      name: "routine notices in the room",
-      path: `${project}/topics/${routineRoomId}`,
-      ready: visible('[data-testid="notice-routine"]'),
-      act: async (page) => {
-        const notices = page.locator('details[data-testid="platform-notice"]')
-          .filter({ has: page.getByTestId("notice-routine") });
-        expect(await notices.count()).toBeGreaterThan(0);
-        for (const notice of await notices.all())
-          await notice.locator(":scope > summary .sys-text").click();
-        await expect(notices.locator(".sys-meta").filter({ hasText: "This routine" })).toHaveCount(2);
-        await expect(page.locator(".sys-detail").filter({ hasText: "Weekly progress" })).toBeVisible();
-        await expect(page.locator(".sys-detail").filter({ hasText: "Library review" })).toBeVisible();
-      },
     },
     {
       name: "room's members and environments",

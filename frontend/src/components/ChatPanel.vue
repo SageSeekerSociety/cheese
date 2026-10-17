@@ -482,8 +482,6 @@ useComposerShortcut({
           @open-resource="
             (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)
           "
-          @open-routine="emit('open-routine', $event)"
-          @open-routine-records="emit('open-routine-records', $event)"
           @ask-reply="replyToQuestion"
           @ask-withdraw="withdrawQuestionAnswer"
           @ask-skip="skipQuestion"
