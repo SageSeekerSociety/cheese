@@ -1,73 +1,33 @@
-"""``is_private`` 的读点按文件登记，是一道棘轮（ARCH §9.1「私聊」行判据②）。
+"""``is_private`` 只在 ``app/domain/topic/models.py`` 里读（ARCH §9.1 判据②）。
 
-私聊是项目内名册两席的房间（结论 19）。凡是「私聊要不一样」的地方，答案都该从那
-两席、或者从「这一轮不租地点」推出来；各自再问一遍这个布尔，就是同一件事有 N 份
-声明，而 N 份声明各自漂移是必然的，不是可能的。
+私聊是项目内名册两席的房间（结论 19）。凡是「私聊要不一样」的地方，各自再问一遍这个
+布尔，就是同一件事有 N 份声明，而 N 份声明各自漂移是必然的，不是可能的。所以这一列
+在 ``models.py`` 里声明，也只在那里被读：``is_private_chat``（一间已经取到的房）、
+``private_chat`` / ``not_a_private_chat``（SQL 里的一行）、``new_private_chat``（建
+一间）。别处要区别私聊，就调这几个；直接碰这个属性，在任何一个文件里都红，没有登记表。
 
-所以这里把每个文件问它几次记成一个数。加一处就红，减一处也红——减了要把基线调下
-来，不然让出来的位置会被下一个人悄悄填回去。
-
-数的是 AST 里叫 ``is_private`` 的节点（属性、名字、实参、形参），不是文本出现次
-数：注释和 docstring 里说到它不算一次声明，说清楚反而是该做的事。
+数的是 AST 里叫 ``is_private`` 的节点（属性、名字、实参、形参），以及整个就是
+``"is_private"`` 的字符串（``getattr(t, "is_private")``、``c["is_private"]``、
+``column("is_private", …)``），不是文本出现次数：注释和 docstring 里说到它不算一次
+声明，说清楚反而是该做的事。也因此，夹在一段 SQL 文本里的 ``is_private``
+（``text("... t.is_private ...")``）这里看不见：``agent/project_feed.py`` 的
+``_PLACE`` 就是这样一处，它不在这条守卫之内。
 """
 
 import ast
 import pathlib
 
-#: 每个文件问 ``is_private`` 几次。
-#:
-#: ``agent/turn/intake/rooms.py`` 的 1 是定死的：``_is_dm``，
-#: 整个文件唯一读那个布尔的地方。
-#: ARCH §9.1 判据②的两类读点都从它推出来——``_private_owner``（名册恰好两席，这
-#: 间房的人是哪一位）和 ``_assemble_turn`` 的 ``needs_place``（这一轮不租地点，只
-#: 有会话自己那块 64 MiB 草稿区）——所以那两类各自在的地方不再碰这个布尔。
-#: 其余文件是登记，不是认可：它们多半是 ``WHERE is_private IS FALSE`` 这类「私聊
-#: 不进这张列表」的过滤，和轮次组装不是一回事，各自有各自的去向。
-BASELINE = {
-    # 0: the access rules ask it once, in `app/auth/audience.py`. auth 拆成包后
-    # 这条换个路径接着钉：`ActorResolver` 和它的授权方法都在 `resolver.py`。
-    "app/api/auth/resolver.py": 0,
-    # 1: `seats_only`. The policy's parameter is named for what it decides
-    # (a private chat or a private channel), not for this flag.
-    "app/auth/audience.py": 1,
-    # Environment data access owns the route's two private-chat filters.
-    "app/api/routes/project_environment.py": 0,
-    "app/domain/project/environment.py": 2,
-    # 0：项目这一侧本来有一处，现在推回 `_is_dm` 那一类了（结论 19）。留着这一行
-    # 是把它钉在 0，谁再加一处回来，红的就是这条。
-    "app/api/routes/projects.py": 0,
-    "app/domain/agent/turn/intake/rooms.py": 1,
-    "app/domain/agent_instance/services.py": 1,
-    "app/domain/dashboard/services.py": 1,
-    # 管理员看板「学习」那一格：私聊不进这张列表，`WHERE is_private IS FALSE` 一类
-    # 的过滤，和轮次组装不是一回事（见上面「登记，不是认可」）。
-    "app/domain/space/learning_service.py": 1,
-    # 私聊没有支线，只有频道主线上的消息能挂：`WHERE is_private IS FALSE` 一类过滤。
-    "app/domain/thread/services.py": 1,
-    # 置顶只在频道里有：私聊是两个人的，没有概览，也就没有置顶。
-    "app/domain/pin/services.py": 1,
-    # 任务和支线都不是两个人之间的事：这一处原来在 `topic/services.py`，2026-10-16
-    # 跟着任务的动词一起搬到 `room_task/dispatch.py`。总数没变，只是换了文件。
-    "app/domain/room_task/dispatch.py": 1,
-    "app/domain/topic/models.py": 1,
-    # 画布格子关联的任务，在谁都能读的频道里才写给 AI 队友看：`open_rooms` 是
-    # `WHERE is_private IS FALSE` 一类的过滤，和轮次组装不是一回事。
-    "app/domain/topic/reads.py": 1,
-    # 8，拆包之前是同一行的一条：这些读点现在散在四个子模块里（未读数 2、私聊
-    # 房间的取得 2、读点与列表过滤 4）。未读数里私聊默认每条都算
-    # （`unread_counts`），和「私聊不进这张列表」一类过滤同属登记。总数没变，
-    # 只是不再挤在一个路径上。
-    "app/domain/topic/repositories/reads.py": 3,
-    "app/domain/topic/repositories/statements.py": 1,
-    "app/domain/topic/repositories/unread.py": 2,
-    "app/domain/topic/repositories/writes.py": 2,
-    # 频道能加入、退出、要加入才能在主线说话，私聊是两席、不走这些：`_public`
-    # 是唯一读那个布尔的地方。2026-10-16 `topic_membership/services.py` 拆成包时
-    # `_public` 跟着搬进了 `housekeeping.py`，位置变了、数没变。
-    "app/domain/topic_membership/services/housekeeping.py": 1,
-}
-
 _APP = pathlib.Path(__file__).resolve().parents[2] / "app"
+
+#: 唯一读这一列的文件，和其中允许读它的地方：列的声明（在类体里，不在任何函数
+#: 里），以及四个答「是不是私聊」的函数。
+_HOME = "app/domain/topic/models.py"
+_DECISION_POINTS = {
+    "is_private_chat",
+    "private_chat",
+    "not_a_private_chat",
+    "new_private_chat",
+}
 
 
 def _naming_it(tree: ast.AST) -> list[ast.AST]:
@@ -81,11 +41,22 @@ def _naming_it(tree: ast.AST) -> list[ast.AST]:
             found.append(node)
         elif isinstance(node, ast.arg) and node.arg == "is_private":
             found.append(node)
+        elif isinstance(node, ast.Constant) and node.value == "is_private":
+            found.append(node)
     return found
 
 
-def _names_it(tree: ast.AST) -> int:
-    return len(_naming_it(tree))
+def _calls_of(tree: ast.AST, name: str) -> list[ast.Call]:
+    """Calls of ``name``, bare or through a module (``models.name(...)``)."""
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == name)
+            or (isinstance(node.func, ast.Attribute) and node.func.attr == name)
+        )
+    ]
 
 
 def _enclosing_function(tree: ast.AST, node: ast.AST) -> str | None:
@@ -102,49 +73,61 @@ def _enclosing_function(tree: ast.AST, node: ast.AST) -> str | None:
     return None
 
 
-def _counts() -> dict[str, int]:
-    found: dict[str, int] = {}
+def _reads() -> dict[str, list[tuple[int, str | None]]]:
+    """Every file that names ``is_private``: (line, enclosing function) per read."""
+    found: dict[str, list[tuple[int, str | None]]] = {}
     for path in sorted(_APP.rglob("*.py")):
         source = path.read_text()
         if "is_private" not in source:
             continue
-        count = _names_it(ast.parse(source))
-        if count:
-            found[str(path.relative_to(_APP.parent))] = count
+        tree = ast.parse(source)
+        naming = _naming_it(tree)
+        if naming:
+            found[str(path.relative_to(_APP.parent))] = [
+                (getattr(node, "lineno", 0), _enclosing_function(tree, node))
+                for node in naming
+            ]
     return found
 
 
 def test_is_private_is_asked_no_more_often_than_the_baseline():
-    found = _counts()
-    added = {f: n for f, n in found.items() if n > BASELINE.get(f, 0)}
-    assert not added, (
-        f"这些文件多问了一次 is_private：{added}。"
-        "私聊要不一样的地方，答案从「名册两席」或「不租地点」推出来"
-        "（结论 19，ARCH §9.1 判据②），不要在这里再问一遍这个布尔。"
-    )
-    dropped = {
-        f: (BASELINE[f], found.get(f, 0))
-        for f in BASELINE
-        if found.get(f, 0) < BASELINE[f]
+    """读点只有 ``models.py`` 里那几个：别的文件一处都没有，``models.py`` 里也只在列
+    的声明和四个判断函数里。"""
+    found = _reads()
+    elsewhere = {
+        f: [line for line, _ in reads] for f, reads in found.items() if f != _HOME
     }
-    assert not dropped, (
-        f"这些文件少问了 is_private：{dropped}（基线, 现在）。"
-        "这是好事——把 BASELINE 里的数字改成现在这个，"
-        "不然让出来的位置会被下一个人悄悄填回去。"
+    assert not elsewhere, (
+        f"这些地方直接读了 is_private：{elsewhere}。"
+        f"私聊要不一样的地方，调 {_HOME} 里的 is_private_chat / private_chat / "
+        "not_a_private_chat / new_private_chat（结论 19，ARCH §9.1 判据②），"
+        "不要在这里再问一遍这个布尔。"
+    )
+    home = found.get(_HOME, [])
+    declared = [line for line, function in home if function is None]
+    stray = [
+        (line, fn) for line, fn in home if fn is not None and fn not in _DECISION_POINTS
+    ]
+    assert len(declared) == 1, (
+        f"{_HOME} 里在函数之外碰 is_private 的不止列的声明：{declared}"
+    )
+    assert not stray, f"{_HOME} 里这些函数直接读了 is_private：{stray}"
+    assert {fn for _, fn in home if fn} == _DECISION_POINTS, (
+        f"{_HOME} 里的判断函数和这里写的不一致：{sorted({fn for _, fn in home if fn})}"
     )
 
 
 def test_a_turn_asks_it_once_and_derives_the_rest():
-    """整个文件只读一次那个布尔，而且是在 ``_is_dm`` 里读的。"""
+    """轮次组装整个文件只问一次「是不是私聊」，而且是在 ``_is_dm`` 里问的。"""
     source = (_APP / "domain" / "agent" / "turn" / "intake" / "rooms.py").read_text()
     tree = ast.parse(source)
-    naming = _naming_it(tree)
-    assert len(naming) == 1
+    asked = _calls_of(tree, "is_private_chat")
+    assert len(asked) == 1
     # 光数个数拦不住「把这一处搬到别的函数里、总数还是 1」的改法：那样一来判据又
     # 散回轮次组装里去了，而两类读点（名册两席、不租地点）本该都从这一个函数推出
     # 来。所以问的是「包着它的那个函数叫什么」。
-    assert _enclosing_function(tree, naming[0]) == "_is_dm", (
-        "``is_private`` 在 turn/intake/rooms.py 只能在 ``_is_dm`` 里读一次"
+    assert _enclosing_function(tree, asked[0]) == "_is_dm", (
+        "``is_private_chat`` 在 turn/intake/rooms.py 只能在 ``_is_dm`` 里问一次"
         "（结论 19，ARCH §9.1 判据②）：名册两席和不租地点两类答案都从它推出来。"
     )
     intake = (_APP / "domain" / "agent" / "turn" / "intake" / "human.py").read_text()

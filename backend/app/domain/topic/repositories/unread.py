@@ -43,6 +43,7 @@ from app.domain.topic.models import (
     TopicKind,
     TopicMembership,
     TopicReadState,
+    private_chat,
 )
 from app.domain.topic.repositories.statements import (
     KIND_MESSAGE,
@@ -118,7 +119,7 @@ async def unread_counts(
         select(
             _blocks.c.conversation_id,
             # A private room is two people talking: every message counts.
-            func.bool_or(Topic.is_private),
+            func.bool_or(private_chat()),
             func.count(),
             func.count().filter(_mentions(user_handle)),
             func.count().filter(_mentions_everyone()),
@@ -336,7 +337,7 @@ async def private_unread_counts(
         )
         .where(
             Topic.project_id == project_id,
-            Topic.is_private.is_(True),
+            private_chat(),
             select(func.count())
             .select_from(TopicMembership)
             .where(TopicMembership.topic_id == Topic.id)
