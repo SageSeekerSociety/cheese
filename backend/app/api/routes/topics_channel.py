@@ -16,7 +16,6 @@ from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.core.errors import AuthenticationRequiredError, NotFoundError
-from app.core.sentences import say
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
@@ -32,7 +31,7 @@ async def _person(db, resolver, topic_id: uuid.UUID):
     not a channel."""
     place = await place_or_404(db, topic_id)
     if place.conversation_id != place.room_id:
-        raise NotFoundError(say("topicNotFound"))
+        raise NotFoundError("Topic not found")
     actor = await resolver.resolve(topic_id=topic_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=topic_id

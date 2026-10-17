@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.errors import ConflictError, NotFoundError
-from app.core.sentences import say
 from app.domain.tag.services import TagService, _tag_to_dto
 
 NOW = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -163,7 +162,7 @@ class TestGetTopic:
         svc, repo = _make_service()
         repo.get_by_id.return_value = None
 
-        with pytest.raises(NotFoundError, match=say("topicNotFound")):
+        with pytest.raises(NotFoundError, match="Topic not found"):
             await svc.get_tag(999)
 
 

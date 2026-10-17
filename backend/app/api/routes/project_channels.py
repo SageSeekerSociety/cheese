@@ -43,7 +43,7 @@ async def _channel(db, project_id: uuid.UUID, topic_id: uuid.UUID):
     # A private chat is refused by the membership rules each route calls.
     topic = await TopicService(db).get_or_404(topic_id)
     if topic.project_id != project_id:
-        raise NotFoundError(say("topicNotFound"))
+        raise NotFoundError("Topic not found")
     return topic
 
 

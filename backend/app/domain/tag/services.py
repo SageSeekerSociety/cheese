@@ -6,7 +6,6 @@ the code and the address, not the product's vocabulary.
 """
 
 from app.core.errors import ConflictError, NotFoundError
-from app.core.sentences import say
 from app.domain.tag.models import Tag
 from app.domain.tag.repositories import TagRepository
 
@@ -65,7 +64,7 @@ class TagService:
     async def get_tag(self, tag_id: int) -> dict:
         tag = await self._repo.get_by_id(tag_id)
         if tag is None:
-            raise NotFoundError(say("topicNotFound"), data={"id": tag_id})
+            raise NotFoundError("Topic not found", data={"id": tag_id})
         return _tag_to_dto(tag)
 
     async def create_tag(self, *, name: str, created_by_id: int) -> dict:

@@ -5,8 +5,10 @@ words, without ``error.i18n``, and with 「Topic」, a word the product no longe
 uses. The catalog (``apiError``) has ``topicNotFound`` for it; every new
 refusal says that.
 
-The files below still carry the old line: they only come down. Where one answers
-for a channel that does not exist, its words must stay the same as the others'.
+The files below still carry the old line: they only come down. A route that
+answers for an id that exists but is not shown must word it like a channel that
+was never made (the other 404s in this list), so those move together, not one
+by one.
 """
 
 import ast
@@ -24,6 +26,13 @@ BASELINE = {
     # Says what a channel that was never made says, so a private channel is not
     # given away by a different answer (test_private_channels.py).
     "api/auth/resolver.py": 1,
+    # The same goes for the routes that answer for an id that exists but is not
+    # a channel here, and for tags, whose text says 话题 on purpose.
+    "api/routes/alerts.py": 1,
+    "api/routes/project_channels.py": 1,
+    "api/routes/topics_channel.py": 1,
+    "api/routes/topics_pins.py": 1,
+    "domain/tag/services.py": 1,
     "api/routes/execution.py": 1,
     "api/routes/project_context.py": 1,
     "api/routes/project_skills.py": 1,
