@@ -1,0 +1,15 @@
+{
+  "add": "添加",
+  "addFailed": "添加失败",
+  "addTitle": "添加「{title}」",
+  "back": "返回",
+  "file": "SKILL.md 或技能文件夹的 .zip",
+  "read": "读取",
+  "readFailed": "读取失败",
+  "scripts": "含 {n} 个脚本，会在环境里运行。添加前先看一遍",
+  "skipped": "以下文件不是文本或超过 200 KB，不会添加：{files}",
+  "title": "导入",
+  "upload": "上传文件",
+  "url": "GitHub 地址",
+  "urlLabel": "技能文件夹的地址"
+}

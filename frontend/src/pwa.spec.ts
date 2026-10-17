@@ -176,6 +176,25 @@ describe('新版本怎么换上', () => {
     await router.push('/b')
     expect(assign).toHaveBeenCalledWith('/b')
   })
+
+  // 这条问话排在每一次跳转前面。手机从后台回来、网络刚醒的那一瞬问出去，它可能一直
+  // 不回来；没有期限的话，之后所有跳转——包括返回——都排在它后面等着，界面从此点不动，
+  // 只有重开才清掉。
+  it('问服务器的话一直不回来：跳转照旧发生，不把人卡住', async () => {
+    pageRuns('/assets/main-old.js')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {}))
+    )
+    fakeBrowser({ waiting: true })
+    const router = await start()
+    vi.useFakeTimers()
+    sw.options!.onNeedRefresh!()
+    const going = router.push('/b')
+    await vi.advanceTimersByTimeAsync(60_000)
+    await going
+    expect(assign).toHaveBeenCalledWith('/b')
+  })
 })
 
 describe('房间连接一直连不上', () => {
@@ -231,6 +250,23 @@ describe('房间连接一直连不上', () => {
     const reloadIfBehind = await load()
 
     expect(await reloadIfBehind()).toBe(false)
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  // 同一条问话，同样的期限：它不能一直挂在那儿（这里没人等它，但一次问话不该永远不回）。
+  it('问话一直不回来：不刷新', async () => {
+    pageRuns('/assets/index-old.js')
+    fakeBrowser({ waiting: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {}))
+    )
+    const reloadIfBehind = await load()
+    vi.useFakeTimers()
+
+    const answer = reloadIfBehind()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(await answer).toBe(false)
     expect(reload).not.toHaveBeenCalled()
   })
 

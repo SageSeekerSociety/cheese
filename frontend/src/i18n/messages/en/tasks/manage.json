@@ -1,0 +1,6 @@
+{
+  "deleteConfirm": "Delete this challenge? This cannot be undone.",
+  "deleteConfirmTitle": "Confirm deletion",
+  "deleteFailed": "Couldn't delete",
+  "deleted": "Challenge deleted"
+}

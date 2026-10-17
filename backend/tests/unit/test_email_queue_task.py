@@ -14,10 +14,9 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification import maintenance, push_delivery
 from app.domain.notification.handlers import NotificationDelivery
-from app.domain.notification.models import NotificationType
+from app.domain.notification.models import ChannelDelivery, NotificationType
 from app.domain.notification.outbox import ChannelIntentHandler, drain_channel
 from app.domain.notification.preferences import EmailMode, default_preferences
 from app.domain.notification.preferences_models import PreferencesRepository
@@ -214,7 +213,7 @@ async def test_push_intent_follows_the_pushable_rules(db_factory):
     """推送给谁，按偏好矩阵与旧的 `PUSHABLE` 一起算。
 
     ROOM_NOTICE（旧 `PUSHABLE`）与 MENTION（矩阵里推送开）都该有一条推送；
-    DEADLINE_REMIND 两边都不在，就不该有。
+    TEAM_REQUEST_APPROVED 两边都不在，就不该有。
     """
     async with db_factory() as session:
         handler = ChannelIntentHandler(session, push_enabled=True, now=lambda: NOON)
@@ -231,9 +230,9 @@ async def test_push_intent_follows_the_pushable_rules(db_factory):
                 ),
                 NotificationDelivery(
                     10,
-                    NotificationType.DEADLINE_REMIND,
-                    {"content": "Soon"},
-                    "deadline:10",
+                    NotificationType.TEAM_REQUEST_APPROVED,
+                    {"content": "Approved"},
+                    "approved:10",
                 ),
             ]
         )

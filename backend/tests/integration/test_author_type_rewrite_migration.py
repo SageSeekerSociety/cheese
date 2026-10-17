@@ -27,7 +27,8 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import event, select, text
 
-from app.domain.block.models import AuthorType, Block
+from app.domain.block.models import Block
+from app.domain.event_author import AuthorType
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from tests.integration.conftest import a_team

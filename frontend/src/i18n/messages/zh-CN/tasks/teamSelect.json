@@ -1,0 +1,11 @@
+{
+  "choose": "请选择一个团队代表参与此题目",
+  "emptyNoTeam": "你可能需要创建一个团队或加入一个团队才能参与此题目",
+  "emptyRealName": "请确保你的团队所有成员都已完成实名认证，或创建一个新的团队",
+  "emptyTitle": "暂无可用团队",
+  "memberStatus": "成员认证状态",
+  "notEligible": "不满足参与条件",
+  "realNameText": "此题目要求实名参与，只有所有成员都已完成实名认证的团队才能参与",
+  "realNameTitle": "实名认证要求",
+  "title": "选择参与团队"
+}

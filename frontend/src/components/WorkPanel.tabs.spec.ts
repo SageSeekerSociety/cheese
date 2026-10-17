@@ -96,10 +96,10 @@ function selected(container: Element): string {
 }
 
 describe('tab 栏', () => {
-  it('频道只有概览、支线、定时与触发：没有电脑在它名下干活', async () => {
+  it('频道只有概览、支线、文件、定时与触发：没有电脑在它名下干活', async () => {
     const { findAllByRole } = mount()
     const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
-    expect(labels).toEqual(['概览', '支线', '定时与触发'])
+    expect(labels).toEqual(['概览', '支线', '文件', '定时与触发'])
   })
 
   it('一个还没跑过的任务也是这几格，顺序不变', async () => {

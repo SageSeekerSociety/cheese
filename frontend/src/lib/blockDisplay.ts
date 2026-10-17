@@ -14,7 +14,7 @@ import type { RefNames } from './refChip'
 import { isAgentBlock } from './authorship'
 import { docReadNow } from './docReadLoad'
 import { fileLabel, videoMimeOf } from './fileKind'
-import { plainRefs } from './refChip'
+import { plainRefs, toldByMessage } from './refChip'
 
 import { t } from '@/i18n'
 
@@ -47,7 +47,15 @@ export function replySnippet(block: Block, maps: RefNames, max = 24): string {
   if (step !== null) return clip(step, max)
   const read = isAgentBlock(block) ? docReadNow() : null
   const source = read ? read.plainText(block.content, 'chat') : block.content
-  return clip(plainRefs(source, maps).replace(/\s+/g, ' ').trim(), max)
+  // A message's @ told its person, so its quote keeps the "@" its chip shows.
+  const names = block.kind === 'message' ? toldByMessage(maps) : maps
+  return clip(plainRefs(source, names).replace(/\s+/g, ' ').trim(), max)
+}
+
+/** 一条支线的标题：它挂着的那条消息，去掉开头点的名（「@芝士 」），只留说的事。 */
+export function threadHeading(block: Block, maps: RefNames): string {
+  const said = block.content.replace(/^(\s*<@[^>\s]+>)+\s*/, '')
+  return replySnippet({ ...block, content: said || block.content }, maps, 120)
 }
 
 function clip(text: string, max: number): string {
@@ -142,7 +150,8 @@ export function artifactKind(block: Block): string {
 export type AskOption = { text: string; explain?: string }
 
 /** 答过这道题的一句话：谁说的、说的是什么。 */
-export type AskAnswer = { by: string; text: string }
+/** `skipped`：被问的人跳过了这道题、没有回答（`answer_log` 里 `kind: 'skipped'` 那一条）。 */
+export type AskAnswer = { by: string; text: string; skipped: boolean }
 
 /** 这一条是不是带选项的提问（`cheese_ask`）。不是就返回 null。 */
 export function askOptions(block: Block): AskOption[] | null {
@@ -158,7 +167,8 @@ export function askOptions(block: Block): AskOption[] | null {
 }
 
 /**
- * 答过这道题的每一句，按先后：点了选项的是那个选项，打字回的是他那句话。
+ * 答过这道题的每一句，按先后：点了选项的是那个选项，打字回的是他那句话；跳过的那一条
+ * 没有话，`skipped` 为真。
  * 房间里所有人看到的是同一份。
  */
 export function askAnswers(block: Block): AskAnswer[] {
@@ -171,5 +181,6 @@ export function askAnswers(block: Block): AskAnswer[] {
       entry.kind === 'reject'
         ? t('ask.replies.noneOfThese')
         : String((entry.kind === 'note' ? entry.note : entry.option) ?? ''),
+    skipped: entry.kind === 'skipped',
   }))
 }

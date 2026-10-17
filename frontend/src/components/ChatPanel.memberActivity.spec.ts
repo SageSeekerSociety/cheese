@@ -6,8 +6,8 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { render } from '@testing-library/vue'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
 const listTopicMembers = vi.fn()
@@ -31,6 +31,8 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic = {
   id: 'activity-topic',
@@ -104,6 +106,8 @@ beforeEach(() => {
 })
 afterEach(() => vi.useRealTimers())
 
+beforeAll(loadMarkdownReader)
+
 describe('who is busy in the room', () => {
   it('two teammates working are each named under the composer; one finishing drops only it', async () => {
     const view = mountPanel()
@@ -163,15 +167,15 @@ describe('who is busy in the room', () => {
     const view = mountPanel()
     await flush()
     const socket = FakeWebSocket.instances.at(-1)!
-    const input = view.container.querySelector('textarea') as HTMLTextAreaElement
-    await fireEvent.update(input, 'hel')
-    await fireEvent.update(input, 'hello')
+    const input = view.container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
+    await fillComposer(input, 'hel')
+    await fillComposer(input, 'hello')
     await flush()
     const typing = socket.sent.filter((m) => (m as { type: string }).type === 'typing')
     // At most one ping every few seconds, however fast the keys come.
     expect(typing).toEqual([{ type: 'typing' }])
 
-    await fireEvent.update(input, '')
+    await fillComposer(input, '')
     await flush()
     expect(socket.sent.at(-1)).toEqual({ type: 'typing', active: false })
   })

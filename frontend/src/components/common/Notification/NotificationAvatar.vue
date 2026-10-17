@@ -1,7 +1,8 @@
 <template>
-  <!-- 发来通知的那个人画成他自己的头像；他没有挑过头像就画彩色首字母 —— 一格空白
-       或一张所有人的共用脸，都不如「这个人的首字母和他的颜色」。没有可画的人时，
-       画的才是通知类型的图标。 -->
+  <!-- The sender is drawn as their own avatar, or their coloured initial when they
+       never picked one: a blank or a face everyone shares says less. With nobody to
+       draw, a faint mark for the kind of thing: decoration only, no tinted tile, so a
+       column of identical tiles is never the loudest thing on the row. -->
   <UserAvatar
     v-if="face"
     :size="size"
@@ -10,9 +11,7 @@
     :seed="face.handle || face.name"
     :kind="face.type === 'user' ? 'person' : 'org'"
   />
-  <v-avatar v-else :size="size" :color="color" variant="tonal">
-    <v-icon :icon="icon" :size="iconSize" :color="color"></v-icon>
-  </v-avatar>
+  <v-icon v-else :icon="icon" size="16" class="notification-avatar__icon" />
 </template>
 
 <script setup lang="ts">
@@ -21,29 +20,19 @@ import type { EntityInfo } from '@/types/apiNotifications'
 
 import { computed } from 'vue'
 
-import { getNotificationMark } from './registry'
+import { getNotificationIcon } from './registry'
 
 import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const props = defineProps<{
   notification: Notification
   size?: number | string
-  color?: string
 }>()
 
-// 默认头像大小
-const size = computed(() => props.size || 36)
+// 待办页的行左边那一格是 20px。
+const size = computed(() => props.size || 20)
 
-// 图标大小
-const iconSize = computed(() => {
-  const avatarSize = typeof props.size === 'number' ? props.size : parseInt(props.size as string, 10)
-  return isNaN(avatarSize) ? 18 : Math.max(Math.floor(avatarSize / 2), 16)
-})
-
-// 图标和颜色跟着这一条现在的状态走，不只看类型：答过的提问不再画成待处理
-const mark = computed(() => getNotificationMark(props.notification))
-const icon = computed(() => mark.value.icon)
-const color = computed(() => props.color || mark.value.color)
+const icon = computed(() => getNotificationIcon(props.notification))
 
 // 这一条通知该画谁的脸。
 //
@@ -84,3 +73,9 @@ const face = computed<EntityInfo | null>(() => {
   return null
 })
 </script>
+
+<style scoped>
+.notification-avatar__icon {
+  color: var(--faint);
+}
+</style>

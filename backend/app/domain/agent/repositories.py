@@ -1,7 +1,7 @@
 """Reading and writing the turn intervals in :mod:`app.domain.agent.models`."""
 
 import uuid
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -10,8 +10,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
+from app.domain.agent.checkout_sweep import sweep
 from app.domain.agent.models import AgentTurn
+from app.domain.room_task.closing import turns_ended
 from app.domain.room_task.live import turns_moved
+from app.domain.room_task.ports import SweepCheckouts
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +55,15 @@ class TurnRecord:
 
 
 class AgentTurnRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self, session: AsyncSession, *, machines: SweepCheckouts | None = None
+    ) -> None:
         self._session = session
+        # Ending an interval can close the task it belonged to, and that close
+        # sweeps the room's closed checkouts (`room_task.closing.turns_ended`).
+        # The sweep is this package's, so a repository built without one still
+        # hands in the real thing; a caller passes its own only to replace it.
+        self._machines = machines if machines is not None else sweep
 
     async def open(
         self,
@@ -210,6 +220,26 @@ class AgentTurnRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def open_turn_of(
+        self, topic_id: uuid.UUID, agent_handles: Sequence[str]
+    ) -> AgentTurn | None:
+        """The still-running turn at this place of the agent known by any of
+        ``agent_handles`` (a turn row names it by its instance's handle, a room
+        by its seat's), the latest if several."""
+        if not agent_handles:
+            return None
+        stmt = (
+            select(AgentTurn)
+            .where(
+                AgentTurn.conversation_id == topic_id,
+                AgentTurn.stopped_at.is_(None),
+                AgentTurn.agent_handle.in_(list(agent_handles)),
+            )
+            .order_by(AgentTurn.started_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def open_turn_author_for_topic(
         self, topic_id: uuid.UUID, *, agent_handle: str | None = None
     ) -> str | None:
@@ -296,7 +326,9 @@ class AgentTurnRepository:
             .values(stopped_at=at)
             .returning(AgentTurn.conversation_id)
         )
-        await turns_moved(self._session, closed.scalars())
+        conversations = list(closed.scalars())
+        await turns_moved(self._session, conversations)
+        await turns_ended(self._session, conversations, machines=self._machines)
 
     async def still_open(
         self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]
@@ -381,6 +413,7 @@ class AgentTurnRepository:
         )
         conversations = list(closed.scalars())
         await turns_moved(self._session, conversations)
+        await turns_ended(self._session, conversations, machines=self._machines)
         return len(conversations)
 
     async def started_at_of(
@@ -415,6 +448,70 @@ class AgentTurnRepository:
             (str(turn_id), _aware(started).timestamp(), agent)
             for turn_id, started, agent in rows
         ]
+
+    async def open_turn_seats(
+        self, conversation_ids: Collection[uuid.UUID] | None = None
+    ) -> dict[uuid.UUID, set[str | None]]:
+        """The seats with an interval still open, per conversation.
+
+        The durable half of 「这个座位有没有人在做」: the open ``AgentTurn`` row
+        is the authority, and this is the one place every cross-process reader
+        asks it. ``None`` in a set means an open turn whose seat was never
+        recorded (an interval that reached here before it was assembled) — a
+        reader tolerant of an unknown seat counts it as anybody's, which is how
+        the old process-local cache read its own state.
+
+        A conversation with no open interval is absent from the mapping;
+        ``conversation_ids`` (when given) only narrows the read, never widens
+        it — a listed conversation with nothing open is still absent.
+        """
+        stmt = select(AgentTurn.conversation_id, AgentTurn.agent_handle).where(
+            AgentTurn.stopped_at.is_(None)
+        )
+        if conversation_ids is not None:
+            ids = list(conversation_ids)
+            if not ids:
+                return {}
+            stmt = stmt.where(AgentTurn.conversation_id.in_(ids))
+        busy: dict[uuid.UUID, set[str | None]] = {}
+        for conversation, handle in await self._session.execute(stmt):
+            busy.setdefault(conversation, set()).add(handle)
+        return busy
+
+    async def open_turn_records(
+        self, conversation_id: uuid.UUID
+    ) -> list[tuple[uuid.UUID, str | None]]:
+        """``(turn id, seat)`` of every interval still open in this conversation.
+
+        The identity half of the open-interval read, for a reader that has to
+        hand a message to the one live turn it names rather than ask whether one
+        exists: the id steers the input, the seat names whose session takes it.
+        """
+        rows = await self._session.execute(
+            select(AgentTurn.id, AgentTurn.agent_handle).where(
+                AgentTurn.conversation_id == conversation_id,
+                AgentTurn.stopped_at.is_(None),
+            )
+        )
+        return [(turn_id, handle) for turn_id, handle in rows]
+
+    async def turn_is_open(self, turn_id: uuid.UUID) -> bool:
+        """Whether the authority still holds this one turn open.
+
+        The cheap confirm both write-through directions need and may not do
+        themselves: a mark confirms the row the lifecycle opened, a release
+        confirms the lifecycle ended it. Neither writes — inventing or closing a
+        row here would be the cache speaking for the authority.
+        """
+        row = (
+            await self._session.execute(
+                select(AgentTurn.stopped_at).where(AgentTurn.id == turn_id)
+            )
+        ).first()
+        # No row at all is NOT open: the lifecycle never opened this turn yet
+        # (the prompt-lock window), which is the same answer to confirm_open
+        # (nothing to confirm) and to confirm_closed (nothing to end).
+        return row is not None and row[0] is None
 
     async def open_turns(self) -> list[TurnRecord]:
         """Every interval still open, oldest first."""

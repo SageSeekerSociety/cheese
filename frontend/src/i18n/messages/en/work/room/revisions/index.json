@@ -1,0 +1,16 @@
+{
+  "accept": "Accept",
+  "acceptAll": "Accept all",
+  "anonymous": "Unnamed",
+  "count": "No revisions | 1 revision | {count} revisions",
+  "decideFailed": "Couldn't apply this revision",
+  "deleted": "Deleted “{removed}”",
+  "inserted": "Inserted “{added}”",
+  "libraryReadOnly": "The original in the library stays unchanged. To change this document, ask the AI teammate to make a new one from it",
+  "loadFailed": "Couldn't read the revisions",
+  "readOnlyNote": "This version is read-only, so revisions cannot be handled.",
+  "reject": "Reject",
+  "rejectAll": "Reject all",
+  "replaced": "Changed “{removed}” to “{added}”",
+  "where": "Paragraph {paragraph} · {author}"
+}

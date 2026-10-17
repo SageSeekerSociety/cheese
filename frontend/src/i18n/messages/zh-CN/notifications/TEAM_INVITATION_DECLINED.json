@@ -1,0 +1,5 @@
+{
+  "body": "拒绝了加入团队 \"{team}\" 的邀请",
+  "title": "{decliner} 拒绝了你的邀请",
+  "title_anonymous": "你的团队邀请已被拒绝"
+}

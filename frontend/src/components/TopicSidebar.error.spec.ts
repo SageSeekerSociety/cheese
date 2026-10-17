@@ -42,11 +42,6 @@ const Host = defineComponent({
 })
 
 function mount(inner: Record<string, unknown> = {}) {
-  if (!document.getElementById('app-bar-slot')) {
-    const slot = document.createElement('div')
-    slot.id = 'app-bar-slot'
-    document.body.appendChild(slot)
-  }
   const vuetify = createVuetify({ components, directives })
   return render(Host, {
     props: {

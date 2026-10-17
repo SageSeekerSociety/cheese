@@ -35,15 +35,18 @@ from app.core.storage import S3StorageBackend
 from app.domain.agent import device_storage
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.adapters import platform_line
 from app.domain.block.models import Block, BlockKind
+from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.session_work import checkpoint_room
-from app.domain.project.services import ProjectService
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import KeptRoomFiles, RoomCleanup
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered, session_auth_headers
+from tests.integration.conftest import project_service, registered, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
@@ -164,7 +167,7 @@ async def _old_room(client, tmp_path, *, files=True):
     from before rooms had an executor, with files in its directory."""
     async with client.test_factory() as session:
         owner = await registered(session, "owner")
-        project = await ProjectService(session).create(name="P", owner_handle="owner")
+        project = await project_service(session).create(name="P", owner_handle="owner")
         room = await TopicService(session).create(
             project_id=project.id, title="Room", created_by="owner"
         )
@@ -297,7 +300,14 @@ async def test_a_home_with_nothing_off_the_forge_is_recorded_and_says_nothing(
 async def _archive(client, monkeypatch, room_id, device_id, machine):
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
     async with client.test_factory() as session:
-        await TopicService(session).archive(room_id, by="owner")
+        await TopicService(session).archive(
+            room_id,
+            by="owner",
+            settle_card=settle_card,
+            cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
+            events=platform_line,
+        )
         await session.commit()
         cleanup_id = (await TopicService(session).get_or_404(room_id)).cleanup_id
     entry = {"kind": "device", "device_id": device_id, "resource_id": str(room_id)}

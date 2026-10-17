@@ -70,9 +70,12 @@ function statsRoute(path: string, name: string, kind: StatsKind, titleKey: strin
  * 是抽屉），内容区是 `AdminLayout`（门、全局键）里装的子页。所以 `/admin` 是一条带
  * `children` 的父路由。
  *
- * `/admin/feedback` 是队列的老地址，**留着**、渲染一个薄壳（`AdminFeedbackPage` →
- * `AdminQueuePage`）：老书签、老通知、别人贴在聊天里的链接都指到这里，重定向会把地址栏
- * 里那个旧地址悄悄换掉。`/admin/dashboard` 是拆成各页之前的看板，跳到平台总览。
+ * `/admin/feedback` 是队列的老地址，**留着** —— 它和 `/admin/queue` 指向同一个组件，
+ * 不重定向：老书签、老通知、别人贴在聊天里的链接都指到这里，重定向会把地址栏里那个
+ * 旧地址悄悄换掉，而人正在这一页上分诊时地址栏自己变一次是没必要的惊吓。**两条记录
+ * 各自写一份 `import()`，不要合成一条 `alias`**：别名不会替这条记录生成 name，而
+ * `AdminFeedback` 这个名字有别处在用（侧栏、守卫、测试）。
+ * `/admin/dashboard` 是拆成各页之前的看板，跳到平台总览。
  *
  * 看板原来的七屏各是一页（`statsRoute`），同一个容器 `AdminStatsPage` 按 `kind` 画其中
  * 一类；分在侧栏哪一组见 `@/lib/adminSections`。
@@ -174,6 +177,9 @@ export default [
         path: 'feature-stats/:id',
         name: 'AdminFeature',
         component: () => import('@/views/admin/AdminFeaturePage.vue'),
+        // 地址里那段 id 以 prop 送给页面，画面不用自己读地址（拆出来的
+        // `AdminFeaturePageView.vue` 只收 props）。
+        props: true,
         // 顶栏那行字对整块是同一个名字：从目录点进某一页时，它不该闪成另一句话。
         meta: { titleKey: 'navigation.admin.featureStats', isFullPage: true },
       },
@@ -209,11 +215,11 @@ export default [
         meta: { titleKey: 'navigation.admin.spaces', isFullPage: true },
       },
       {
-        // 老地址，见文件头。渲染的是同一个队列，所以标题也跟它一致 —— 顶栏上那行字
+        // 老地址，见文件头。指向的是同一个队列组件，所以标题也跟它一致 —— 顶栏上那行字
         // 不该因为用户是从哪个链接进来的而变。
         path: 'feedback',
         name: 'AdminFeedback',
-        component: () => import('@/views/feedback/AdminFeedbackPage.vue'),
+        component: () => import('@/views/admin/AdminQueuePage.vue'),
         meta: { titleKey: 'navigation.admin.queue', isFullPage: true },
       },
       {
@@ -229,21 +235,6 @@ export default [
         name: 'AdminIntegrations',
         component: () => import('@/views/admin/AdminIntegrationsPage.vue'),
         meta: { titleKey: 'navigation.admin.integrations', isFullPage: true },
-      },
-      {
-        // 外站题账号（`/admin/integrations/external-problem`）：平台去外站题（今天只有
-        // YOJ）读成绩用的一个账号，同样是平台级设置，挨着飞书应用放。
-        //
-        // 地址里带 `integrations/` 是为了让它读起来归在集成那一块，但它**不是**
-        // `integrations` 那条路由的子路由 —— 那样写会把它挂进 `AdminIntegrationsPage.vue`
-        // 的 `<router-view>`，而那一页里根本没有那个出口，页面会空掉。所以这里把它写成
-        // `/admin` 的**另一个平级孩子**：两条地址各自独立，`/admin/integrations` 那条
-        // 不受影响（vue-router 按完整路径匹配，`integrations` 和 `integrations/external-
-        // problem` 是两条不同的路）。
-        path: 'integrations/external-problem',
-        name: 'AdminExternalProblem',
-        component: () => import('@/views/admin/AdminExternalProblemPage.vue'),
-        meta: { titleKey: 'navigation.admin.externalProblem', isFullPage: true },
       },
     ],
   },

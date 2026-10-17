@@ -1,0 +1,15 @@
+{
+  "all": "所有人",
+  "allSub": "{'@'}all · 通知频道全体成员",
+  "archived": "已归档",
+  "back": "返回上一级",
+  "fileCount": "{count} 份文件",
+  "fileGroup": "文件",
+  "here": "在线成员",
+  "hereSub": "{'@'}here · 通知在线成员",
+  "imageGroup": "图片",
+  "inProgress": "进行中",
+  "library": "资料库",
+  "noFiles": "暂无匹配的文件",
+  "noMatch": "暂无匹配"
+}

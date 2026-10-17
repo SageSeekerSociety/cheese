@@ -2,11 +2,13 @@
 
 import asyncio
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 
 from app.api.routes.connector import router as connector_router
 from app.api.routes.execution import router as execution_router
@@ -93,8 +95,12 @@ app.include_router(execution_router, dependencies=[Depends(admit_execution_reque
 
 
 @app.get("/healthz")
-async def healthz() -> dict[str, bool]:
-    return {"ok": True}
+async def healthz() -> JSONResponse:
+    """503 while draining: an owner left draining refuses every call, and a
+    release must replace it rather than take it for a healthy one."""
+    if _release_draining:
+        return JSONResponse({"ok": False, "draining": True}, status_code=503)
+    return JSONResponse({"ok": True})
 
 
 @app.post("/internal/device-connection/release-drain")
@@ -321,8 +327,6 @@ async def _dispatch(name: str, body: dict[str, Any]) -> Any:
 
 
 def _uuids(body: dict[str, Any], *names: str) -> dict[str, Any]:
-    import uuid
-
     value = dict(body)
     for name in names:
         if value.get(name):

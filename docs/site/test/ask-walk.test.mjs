@@ -10,11 +10,11 @@
 // a browser, a signed-in session and a live model, so this drives the part that
 // decides the markup — and then checks the shipping build carries it.
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { scratchDir } from './scratch.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
@@ -40,7 +40,7 @@ try {
   process.exit(2)
 }
 
-const out = process.env.OUT || fs.mkdtempSync(path.join(os.tmpdir(), 'docs-walk-'))
+const out = process.env.OUT || scratchDir('docs-walk-')
 if (!process.env.OUT) {
   execFileSync(process.execPath, ['build.mjs'], { cwd: SITE, env: { ...process.env, OUT: out }, stdio: ['ignore', 'ignore', 'inherit'] })
 } else if (!fs.existsSync(path.join(out, 'sections.json'))) {

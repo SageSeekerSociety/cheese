@@ -298,7 +298,7 @@ describe('行 meta 与列表脚', () => {
     // fb-1036 是普通优先级：缺省即普通，不画字。
     expect(rowOf(container, 'FB-1036').querySelector('.qrow__pri')).toBeNull()
 
-    // 安全栏那条手写的 urgent（`proto-feedback-fixtures.ts` 里那条 urgent，私密 + 安全问题，
+    // 安全栏那条手写的 urgent（`proto-feedback-fixtures/handwritten.ts` 里那条 urgent，私密 + 安全问题，
     // 公共栏里看不见它，得换栏位 —— 换栏位是服务端的问法，会重新取数）。
     await fireEvent.click(getByRole('radio', { name: '安全' }))
     await waitFor(() =>

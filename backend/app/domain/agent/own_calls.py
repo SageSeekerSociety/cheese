@@ -14,12 +14,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
-    EVENT_TURN_FAILED,
-    SEVERITY_INFO,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own import (
     allows_own_agents,
@@ -27,6 +21,12 @@ from app.domain.agent_instance.own import (
     why_not,
 )
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import (
+    EVENT_TURN_FAILED,
+    SEVERITY_INFO,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.topic_membership.services import TopicMemberService
 
 

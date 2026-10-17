@@ -9,7 +9,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../api', async () => ({
@@ -26,6 +26,7 @@ import { listBlocks } from '../api'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const sockets: TestSocket[] = []
 class TestSocket {
@@ -131,6 +132,8 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('从一条旧消息打开对话', () => {
   it('停在点名的那一条上，显示它前后的一段，而不是最新的一页', async () => {

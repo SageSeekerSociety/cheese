@@ -34,7 +34,7 @@
 import ast
 import pathlib
 
-from app.domain.block.models import AuthorType
+from app.domain.event_author import AuthorType
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 
@@ -126,5 +126,8 @@ def test_no_one_reads_the_author_type_column_as_anything_but_a_member() -> None:
         + "\n  ".join(offenders)
         + "\n\n档位只有「参与者」和「平台」两档，取它的字符串去当字典键、或者拿它"
         "和一个字面量、一个变量比，问的一定是署名才答得了的问题"
-        "（looks_like_agent_handle），而档位本身用 app.domain.block.authorship 判。"
+        "（looks_like_agent_handle），而档位本身 import 第 1 层的 "
+        "app.domain.event_author 判 —— 第 2 层的 topic 也判这一列，够不到第 4 层。"
+        "\n（ORM 这一侧的两个孪生 is_participant / participant_blocks 在 "
+        "app.domain.block.authorship，那里不是档位本身。）"
     )

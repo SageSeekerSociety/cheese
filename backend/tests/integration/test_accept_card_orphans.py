@@ -267,8 +267,7 @@ def test_poller_skips_archived_topics_even_for_a_card_it_never_closed(
 
 def _flaky_app_tokens(monkeypatch):
     """让平台 App 凭据可开关地失效（None = 拿不到）。"""
-    from app.domain.agent import github_app
-    from app.domain.project import forge
+    from app.domain.project import forge, github_app
     from tests.integration.test_accept_pr import _FakeTokens
 
     holder: dict = {"broken": False}
@@ -356,7 +355,10 @@ def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, app_wo
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422, r.text
-    assert "dirty" in r.json()["message"]
+    # 这句话要说清是冲突：旧的「现在不能采纳（合并态：dirty）」把判据说给读者
+    # 听，读不出下一步该做什么（2026-10-16）。
+    assert "冲突" in r.json()["message"]
+    assert "现在不能采纳" not in r.json()["message"]
     assert _cards(client, tid)[0]["status"] == "pending"
     assert fake.merge_calls == []
 

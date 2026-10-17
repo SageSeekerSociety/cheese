@@ -55,9 +55,9 @@ What is deliberately not here. `_issue_sudo_ticket` stays in `users.py`: only
 that file mints, so moving it would put the minting side of the pair in a
 module named after what the *four* sides share while its sole caller sits
 somewhere else.
-`_trusted_device` stays: its callers read `trust is None` to pick the login
-method, so they still need the ORM row itself — only the session issue needed
-the id.
+`_trusted_device_id` stays in the route package's own `routes/users/_common.py`:
+both callers, `auth.py` and `oauth.py`, live in that package, and the helper
+answers with a plain `uuid.UUID` so no caller names a domain model.
 
 Boundaries. Nothing here imports a domain's `models` or `repositories` module:
 the imports are `app.common.auth` (the ticket format and the access token),

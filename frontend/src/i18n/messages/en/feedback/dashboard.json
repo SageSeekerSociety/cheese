@@ -1,0 +1,356 @@
+{
+  "chart": {
+    "created": "New",
+    "deployed": "Deployed",
+    "resolved": "Resolved",
+    "title": "New / resolved / deployed per day"
+  },
+  "column": {
+    "agent": "Agent-filed",
+    "note": "These four are filters, not a partition: \"Agent-filed\" is a source and overlaps public/private, so they don't sum to the total.",
+    "private": "Private",
+    "public": "Public",
+    "security": "Security",
+    "title": "By column"
+  },
+  "cost": {
+    "kpi": "Cost",
+    "note": "Cost is an estimate at list price, not money paid. Gateway calls are priced at each model's rate in the gateway's price table; subscription calls are estimated at the same model's rate, though the subscription is paid monthly; models the gateway serves from our own hardware are priced from the table too, and the platform does not pay per call for them. Unpriced tokens have no rate and are not in that figure.",
+    "unpricedLabel": "Unpriced tokens"
+  },
+  "credits": {
+    "burn": "Burn rate",
+    "eta": "Exhaust eta",
+    "exhausted": "Exhausted",
+    "low": "Running low",
+    "note": "Exhausted / low / unlimited are three mutually exclusive sets — unlimited is the ABSENCE of a grant. Burn rate is derived from resource_usage (compute_grants has no deduction ledger). ETA is linear extrapolation; unlimited and zero-burn both render —.",
+    "title": "Credits burnout",
+    "unlimited": "Unlimited"
+  },
+  "dwell": {
+    "days": "d",
+    "hours": "h",
+    "minutes": "min"
+  },
+  "empty": {
+    "desc": "The platform hasn't produced any data yet.",
+    "title": "No data yet"
+  },
+  "error": {
+    "title": "Couldn't load the data"
+  },
+  "extras": {
+    "disk": {
+      "note": "Covers only this host's workspace_root. Remote devices and cloud machines have their own disks and are invisible here.",
+      "title": "Disk (this backend)"
+    },
+    "hostSlots": {
+      "note": "Slots held by sessions / all slots across the host pool.",
+      "title": "Sandbox slots"
+    },
+    "hostStates": "Cloud hosts by status",
+    "hostStatus": {
+      "deleted": "Released",
+      "deleting": "Releasing",
+      "error": "Error",
+      "provisioning": "Provisioning",
+      "running": "Running",
+      "starting": "Starting",
+      "unknown": "Unknown"
+    },
+    "machineState": {
+      "claimed": "Claimed",
+      "error": "Error",
+      "preparing": "Preparing",
+      "ready": "Ready"
+    },
+    "machines": {
+      "note": "Rows and state distribution across four ledgers, not a container count — one-container-per-room has no transport yet."
+    },
+    "preview": {
+      "note": "Process memory, cleared on restart. This process only, not platform-wide.",
+      "title": "Preview tunnels"
+    },
+    "title": "Quotas and gaps",
+    "warmStates": "Warm machines by state"
+  },
+  "health": {
+    "alerting": "Alert channel",
+    "database": "Database",
+    "event_loop": "Event loop",
+    "note": "This moment only — not stock, not a window. Same checks as /health/detailed.",
+    "redis": "Redis",
+    "routes": "Route modules",
+    "title": "Platform health"
+  },
+  "integrations": {
+    "delivery": {
+      "dead": "Dead letters",
+      "note": "Two tiers: the first is still retried, the second is abandoned after MAX_ATTEMPTS. Collapsing them makes salvageable and hopeless look alike.",
+      "oldest": "Oldest pending {time}",
+      "title": "Delivery ledger",
+      "unsent": "Will retry"
+    },
+    "oauth": {
+      "expired": "Expired",
+      "expiring": "Expiring in 7 days",
+      "noRefresh": "No refresh_token",
+      "note": "Missing refresh_token is not the same as expired: an expired one can still be refreshed, one without refresh is permanently dead on expiry. token_expires is a fixed expiry, not a recent failure.",
+      "title": "OAuth credentials",
+      "total": "Connections"
+    },
+    "passkey": {
+      "note": "Denominator is all non-deleted accounts, not active ones (user has no last_login). TOTP lives in Redis, not the database — so this reports passkey, not 2FA coverage.",
+      "title": "Passkey coverage"
+    },
+    "unavailable": {
+      "githubAppMintFailureRate": "GitHub App mint failure rate: logged only, never counted.",
+      "githubAppPermissionGaps": "GitHub App permission gaps: granted_permissions() lives 10 minutes in process memory and is never stored.",
+      "loginLockoutStockAndRate": "Login lockout history: login_security rate-limiters are Redis keys with no history.",
+      "meteringPostFreeze": "Metering posting freeze: admission fails open on transport errors and leaves no trace outside the log.",
+      "note": "Needs instrumentation. A zero here would mean checked and empty.",
+      "title": "Not observable today"
+    }
+  },
+  "kpi": {
+    "createdInWindow": "New ({d}d)",
+    "inProgress": "In progress",
+    "resolvedInWindow": "Resolved ({d}d)",
+    "unread": "Unread",
+    "untriaged": "Untriaged",
+    "urgent": "{n} of them urgent and unassigned",
+    "vsPrev": "Previous {d}d: {v}"
+  },
+  "list": {
+    "all": "All {n}",
+    "title": "Needs action · {count}"
+  },
+  "machines": {
+    "devices": "Devices",
+    "hosted": "Hosted devices",
+    "hosts": "Cloud hosts",
+    "note": "These four are stock counts from four ledgers, not live online counts — online state lives in process memory and has no column in the database.",
+    "title": "Machines (stock)",
+    "warm": "Warm machines"
+  },
+  "noteTip": {
+    "aria": "About this metric"
+  },
+  "people": {
+    "admins": "Platform admins",
+    "agents": "Agents",
+    "chart": "New accounts per day",
+    "humans": "Humans",
+    "newInWindow": "New ({d}d)",
+    "total": "Accounts"
+  },
+  "perf": {
+    "active": "In flight",
+    "banner": "Slowest right now",
+    "bannerMeta": "p95 · {n} calls",
+    "col": {
+      "count": "Calls",
+      "errors": "Errors",
+      "route": "Endpoint"
+    },
+    "dropped": "{n} more samples dropped (overflow)",
+    "durationDays": "{d} d {h} h",
+    "durationHours": "{h} h {m} min",
+    "durationMinutes": "{n} min",
+    "filterEmpty": "No routes match \"{q}\"",
+    "filterPlaceholder": "Filter routes…",
+    "foldLess": "Collapse",
+    "foldMore": "Show {n} more · highest p95 {p95}",
+    "lag": "Event-loop lag",
+    "network": {
+      "api": "This process, HTTP",
+      "apiNote": "HTTP request-body bytes in and response-body bytes out of this backend process.",
+      "title": "Network throughput",
+      "uplink": "Host NIC",
+      "uplinkNote": "The default-route interface ({iface}). Uplink includes the metering proxy egress to model providers, repo sync and backups — this is the box total uplink, not just our users traffic. History is process memory and clears on restart."
+    },
+    "note": "Latency per route, held in process memory: this moment only, cleared on restart, and this process only (the business API). A weekly view would have to read the request log instead.",
+    "routes": "Routes with samples",
+    "routesNote": "Every registered endpoint gets a row, never-hit ones included (their call count shows an em-dash). The percentiles are exact over the last 256 samples, not lifetime.",
+    "routesOf": "{shown} sampled / {total} registered",
+    "routesTruncated": "{shown} of {total}",
+    "sparkTitle": "Per-minute mean, last 24 points",
+    "tableTitle": "Latency by route",
+    "uptime": "Process uptime"
+  },
+  "pipeline": {
+    "age": {
+      "days": "{d}d",
+      "hours": "{h}h",
+      "minutes": "{n}m"
+    },
+    "backlog": {
+      "note": "Backlog is stock. A live card blocks the room from re-filing, so in-flight is not just queueing slowly."
+    },
+    "code": {
+      "host_unreachable": "Host unreachable",
+      "other": "Other",
+      "prompt_undelivered": "Prompt undelivered",
+      "runtime_image_missing": "Runtime image missing",
+      "storage_exhausted": "Storage exhausted",
+      "subscription_credential_expired": "Subscription credential expired",
+      "turn_timeout": "Turn timeout",
+      "workspace_vcs_perms": "Workspace VCS perms"
+    },
+    "failures": {
+      "note": "Structured source is blocks.meta code, not agent_turns — that table has no failure column. Credits refusals are counted separately via credits_refused_at.",
+      "title": "Turn failures"
+    },
+    "host": {
+      "empty": "No hosts with a failure streak",
+      "note": "Current streak only — any success deletes the row, so this cannot answer how many were quarantined last week.",
+      "title": "Host failure streaks"
+    },
+    "kpi": {
+      "blockingRefile": "Refile blocked",
+      "dwell": "Filed to decision",
+      "live": "In flight",
+      "needsYou": "Needs you",
+      "stuck": "Stuck"
+    },
+    "needs": {
+      "breakdown": "Reviewer {r} · Reporter {p} · Mentioned {a}",
+      "empty": "Nothing is waiting on you",
+      "note": "Three reasons only — the closed set in delivery/addressing.py (reviewer / reporter / asked).",
+      "room": "Room",
+      "task": "Task",
+      "title": "Needs you"
+    },
+    "station": {
+      "archived": "Archived",
+      "decided": "Decided",
+      "filed": "Filed",
+      "merged": "Merged"
+    },
+    "stuck": {
+      "empty": "Nothing is stuck",
+      "note": "Stuck is judged by note_code in the stuck set, never by note text — a code left out of the set is silent forever.",
+      "title": "Stuck cards"
+    }
+  },
+  "pool": {
+    "allAvailable": "All {n} accounts available",
+    "allCooling": "All {n} accounts cooling",
+    "coolingCount": "{n} cooling",
+    "coolingUntil": "Cooling until {time}",
+    "counts": "{n} accounts: {parts}",
+    "disabledCount": "{n} disabled",
+    "earliest": "earliest recovery {time}",
+    "failures": "{n} consecutive failures",
+    "needsReset": "the disabled ones need a manual reset",
+    "note": "Read from a snapshot the metering proxy writes beside the usage ledger (accounts.json), not from the database — the accounts behind the subscription route live only on the proxy's machine. The states are the proxy's own: cooling is a rate limit with a reset time, disabled has none and needs a manual reset. The snapshot ages, so when it is old it says when it was written.",
+    "reason": {
+      "malformed": "The pool snapshot is not in a shape we can read",
+      "missing": "The metering proxy has not written a pool snapshot yet (it may not be running)",
+      "notConfigured": "This deployment has no subscription metering proxy, so the pool is not on the board",
+      "unknown": "The pool snapshot could not be read",
+      "unreadable": "The pool snapshot could not be read"
+    },
+    "separator": ", ",
+    "stale": "Snapshot written {age}",
+    "state": {
+      "available": "Available",
+      "cooling": "Cooling",
+      "disabled": "Disabled",
+      "unknown": "Unknown state"
+    },
+    "tailSeparator": " — ",
+    "title": "Claude account pool",
+    "unknownCount": "{n} unknown"
+  },
+  "product": {
+    "northStar": "Accepted in {d}d",
+    "northStarNote": "Bucketed by decided_at. It is the LAST decision time and revoke overwrites it — a card accepted then revoked loses its accept moment.",
+    "rejection": {
+      "conflict": "Merge conflict",
+      "gate": "Gate red / blocked",
+      "live": "Still live",
+      "note": "Returned = rejected + gate red/blocked + conflict + void. A true revoke is not a return. Denominator is cards filed in the window (including still-live).",
+      "rejected": "Rejected",
+      "revoked": "Revoked after accept",
+      "title": "Where filed cards ended",
+      "voided": "Voided"
+    },
+    "unavailable": {
+      "churn": "Churn after credits exhausted: compute_grants has no exhausted_at, user has no last_login.",
+      "note": "No data source. Any number here would have to be invented.",
+      "summon": "Acceptance rate after summoning the agent: agent_turns has no summon flag and accept_cards has no origin turn — there is no foreign key between them.",
+      "title": "Not computable today"
+    }
+  },
+  "reliability": {
+    "note": "Delivery backlog is stock, not a failure rate.",
+    "title": "Delivery"
+  },
+  "retry": "Retry",
+  "spine": {
+    "dwellDetail": "p90 {p90} · max {max}",
+    "note": "Four stations are throughput at different moments, not a funnel over one cohort. The merge station counts PR cards only — a card without a PR has pr_merged_at empty forever. The machine gate is retired and not on the chain (#296).",
+    "title": "Delivery chain"
+  },
+  "status": {
+    "declined": "Won't fix",
+    "deployed": "Deployed",
+    "inProgress": "In progress",
+    "received": "Received",
+    "resolved": "Resolved",
+    "title": "By status"
+  },
+  "updatedAt": "Updated {time} (Beijing time)",
+  "updatedAtStale": "Updated {time} (Beijing time) · {n} min ago",
+  "usage": {
+    "batch": "batch",
+    "batchTitle": "What the gateway totalled for this model over a stretch of time; it can cover many requests, and the ledger does not record how many.",
+    "byModel": "By model",
+    "byModelNote": "Bar is tokens; then money, unpriced tokens and the cache-hit rate. The first three together answer \"is it the model or the billing\"; a — rate means the model's calls did not record their cache.",
+    "byPlatform": "Platform",
+    "byRoute": "By supply route",
+    "byRouteNote": "The unpriced column is tokens with no rate; split by route, it shows which route they came from, and where the KPI's number comes from.",
+    "byUser": "Who triggered the usage",
+    "byUserNote": "Calls inside a project count for the person who started the turn; calls outside a project count for the person who made them. This is who triggered how much, not who contributed. Turns the platform started count for nobody: {tokens} tokens, {cost} in this window.",
+    "cacheCell": "cache {pct}",
+    "cacheKpi": "Cache hits",
+    "cacheNote": "Cache-read tokens ÷ input tokens (input includes cache reads and writes). Only calls that recorded their cache count: each route and kind of call counts from its first recorded cache read in the window. Gateway calls written before the gateway recorded cache show 0 only because nothing was recorded, so they are left out. {tokens} input tokens in this window are left out.",
+    "calls": "Calls · window",
+    "chart": "Tokens per day",
+    "col": {
+      "cache": "Cache hits",
+      "calls": "Calls",
+      "cost": "Cost",
+      "input": "Input",
+      "model": "Model",
+      "models": "Models",
+      "output": "Output",
+      "person": "Who",
+      "project": "Project",
+      "route": "Route",
+      "time": "Time",
+      "tokens": "Tokens"
+    },
+    "hourly": "Tokens per hour (Beijing time)",
+    "projectModels": "Models each project used",
+    "recent": "Recent usage rows",
+    "recentNote": "The latest {n} usage rows in the window, in Beijing time. A row is not always one request: a subscription row is one request; a gateway row (marked “batch”) is what the gateway totalled for one model over a stretch of time and can cover many requests; a row from own credentials or a member's own Claude Code totals one model over one turn. The ledger does not record how many requests a row covers. A — in the cache column means the row did not record its cache.",
+    "route": {
+      "gateway": "Gateway",
+      "native": "Pinned credentials",
+      "own": "Member's own Claude Code",
+      "subscription": "Subscription",
+      "unknown": "(old row, unlabelled)"
+    },
+    "tokens": "Tokens · window",
+    "top": "Top projects by tokens",
+    "unknownModel": "(unlabelled model)"
+  },
+  "window": {
+    "d30": "30 days",
+    "d7": "7 days",
+    "d90": "90 days",
+    "switchAria": "Stats window"
+  }
+}

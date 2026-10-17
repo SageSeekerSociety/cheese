@@ -1,0 +1,10 @@
+{
+  "cancel": "Cancel",
+  "failed": "Couldn't transfer the project",
+  "intro": "Pick someone in the project. Once they accept, the project is theirs and you become an admin",
+  "loadFailed": "Couldn't load members",
+  "noCandidates": "No one can take it over",
+  "ownMoves": "This is your personal project; it moves to their name once transferred",
+  "submit": "Send transfer",
+  "title": "Transfer project"
+}

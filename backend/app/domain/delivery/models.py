@@ -186,32 +186,3 @@ class TimedDelivery(UuidPk, Base):
     delivered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-
-
-class ChannelDelivery(UuidPk, Base):
-    """One independently retried email or push, committed with its source event."""
-
-    __tablename__ = "delivery_channels"
-    __table_args__ = (
-        UniqueConstraint("delivery_key", "channel", name="uq_delivery_channel"),
-    )
-    delivery_key: Mapped[str] = mapped_column(String(160))
-    channel: Mapped[str] = mapped_column(String(16))
-    receiver_id: Mapped[int] = mapped_column(BigInteger)
-    payload: Mapped[dict] = mapped_column(JSONB)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    state: Mapped[str] = mapped_column(
-        String(16), default="pending", server_default="pending"
-    )
-    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    claim_token: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    lease_until: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    retry_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    sent_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -99,6 +99,9 @@ from app.domain.review.services._shared import (
     _REQUIRED_CHECK_GRACE_MINUTES as _REQUIRED_CHECK_GRACE_MINUTES,
 )
 from app.domain.review.services._shared import (
+    EVENT_ACCEPT_CONFLICT as EVENT_ACCEPT_CONFLICT,
+)
+from app.domain.review.services._shared import (
     EVENT_ACCEPT_DISMISSED as EVENT_ACCEPT_DISMISSED,
 )
 from app.domain.review.services._shared import (

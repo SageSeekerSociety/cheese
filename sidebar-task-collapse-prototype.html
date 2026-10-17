@@ -139,9 +139,6 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .tk.is-on{background:var(--line-2);color:var(--ink);font-weight:600}
 .tk::before{content:'';position:absolute;left:16px;top:-3px;bottom:-3px;width:1px;background:var(--line-2)}
 .tk--last::before{bottom:50%}
-/* 频道收起时唯一留下的那一条：你正打开的任务 */
-.tk--pinned{color:var(--ink)}
-.tk--pinned::before{background:transparent}
 .tk__t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tk--help .tk__t{color:var(--muted)}
 .tk--pad .tk__t{color:var(--muted)}
@@ -387,11 +384,11 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
        fix:'不改。左边「综合」里你负责的 4 条在上面，你协助的 2 条在下面；补足的那几条排在最后。',
        ask:'',
        work:'不用改。'},
-    5:{t:'收起来以后留一条：你正打开的那条', s:'第 4 条的背面：收起来不能把信号和你手里的事一起收掉',
-       now:'没有这个状态，现在还收不起来。',
-       fix:'收起来的频道行尾巴上留一个小数字和一颗灯，看下面「客服值班」：数字是这个频道里进行中的任务数，灯沿用现有口径——绿 = 有队友在跑，黄 = 有事等你。你正打开的那条任务不会被收掉，单独留在下面并标上「你正打开的」。收一下左边「综合」就能看到。',
-       ask:'要不要留你正打开的那一条？这一版留着，理由是侧栏对频道已经有同一条规矩——正待着的频道即便没加入也留在列表上（useTopicRail.ts 的 hereChannelId）。不留的话，收起来就一起去掉。',
-       work:'TopicSidebar.vue 画 rollup 和这一条；选中任务从 useTopicRail.ts 的 selectedTaskId 拿。'},
+    5:{t:'收起来就是整块放下', s:'第 4 条的背面：收起来不能把信号一起收掉，但也不留单独一条',
+       now:'#3580 实现的版本留下你正打开的那一条；2026-10-13 改成不留（收起只收一半、人还留在一条看不见的任务里，比不收还难懂）。',
+       fix:'收起来的频道行尾巴上留一个小数字和一颗灯，看下面「客服值班」：数字是这个频道里进行中的任务数，灯沿用现有口径——绿 = 有队友在跑，黄 = 有事等你，只说这一块里的任务，不重复频道行自己那盏。下面一条都不留：正在这个频道下的任务里点收起，跟着回这个频道的页面。收一下左边「综合」就能看到。',
+       ask:'',
+       work:'TopicSidebar.vue 画 rollup；ProjectSidebar.vue 的 toggleTasksFold 收起时把正开着的那条任务一起放下（回频道页，不再拿 selectedTaskId 留一行）。'},
     6:{t:'「展开其余 N 个」这行留着', s:'你说留着，我改回来了——点一下把别人的接在下面，再点收起来',
        now:'现在它是频道下面最后一行，点一下把频道里其余进行中的任务接在下面。它当初是为了接回「你自己的第 6 条」，所以第 1 条改完以后我把它划掉了。',
        fix:'留着。第 1 条之后它管的事变了：和你有关的都直接挂着，它接的是这个频道里和你无关的任务——那些还是会有很多，所以这行照样有用。现在点一下原地展开，再点收起来。看「综合」：上面 6 条是你的，展开以后接着挂别人的。',
@@ -466,18 +463,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 
       // ---- 频道下面那一块 ----
       if (ch.archived) return;
-      if (folded) {
-        // 收起来以后只留一条：你正打开的那条。这是「收起不能把你正在做的事藏掉」
-        // 的意思（侧栏对频道已经有同名规矩：正待着的频道即便没加入也留着）。
-        var open = ch.mine.filter(function(t){ return t.t === selTask; })[0];
-        if (open) {
-          parts.push('<button class="tk tk--pinned is-on" data-task="'+esc(open.t)+'" data-chid="'+ch.id+'">'
-            + '<span class="tk__t">'+esc(open.t)+'</span>'
-            + '<span class="tk__tail"><span class="tk__tag">你正打开的</span>'
-            + dotHTML(open.dot) + '</span></button>');
-        }
-        return;
-      }
+      // 收起来就是整块放下：里面一条都不留（第 5 条）。
+      if (folded) return;
       var r = rowsFor(ch);
       var all = r.mine.map(function(t){ return {t:t.t, rel:t.rel, dot:t.dot, badge:t.badge}; })
         .concat(r.pad.map(function(t){ return {t:t.t, rel:'pad'}; }));
@@ -579,7 +566,13 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     if (fold) {
       e.stopPropagation();
       var id = fold.dataset.fold;
-      DATA.forEach(function(c){ if (c.id === id) c.folded = !c.folded; });
+      var fc = DATA.filter(function(c){ return c.id === id; })[0];
+      fc.folded = !fc.folded;
+      // 收起是整块放下：正开着的那条就在这一块里，跟着一起走——回到这个频道的页面。
+      if (fc.folded && selTask && fc.mine.filter(function(t){ return t.t === selTask; }).length) {
+        selChannel = fc.id; selTask = '';
+        DATA.forEach(function(c){ c.on = (c.id === selChannel); });
+      }
       render();
       return;
     }

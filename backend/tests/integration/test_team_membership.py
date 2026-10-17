@@ -9,7 +9,7 @@ import asyncio
 from datetime import UTC, datetime
 
 from tests.conftest import seed_user
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import hand_over, offer_project, session_auth_headers
 
 
 def auth(token: str) -> dict[str, str]:
@@ -208,9 +208,10 @@ def test_a_team_admin_manages_the_project_and_a_plain_member_does_not(client):
     assert invite(client, pid, by="adm5", who="g5a").status_code == 200
     assert invite(client, pid, by="mem5", who="g5b").status_code == 403
     flags = {
-        who: client.get(
-            f"/projects/{pid}", headers=auth(seed_user(client, who))
-        ).json()["data"]["can_manage_members"]
+        who: "manage_members"
+        in client.get(f"/projects/{pid}", headers=auth(seed_user(client, who))).json()[
+            "data"
+        ]["my_permissions"]
         for who in ("own5", "adm5", "mem5")
     }
     assert flags == {"own5": True, "adm5": True, "mem5": False}
@@ -302,24 +303,26 @@ def test_a_room_only_takes_the_projects_people(client):
     assert added.status_code == 200, added.text
 
 
-def test_the_project_goes_only_to_someone_on_its_team(client):
+def test_the_project_goes_only_to_someone_in_it(client):
+    """Someone outside the project is not offered it; an external member, who
+    is in it, may take it over."""
     tid = team_of(client, owner="own10", members=("mem10",))
     pid = project_in(client, tid, owner="own10")
+    seed_user(client, "stranger10")
     seed_user(client, "guest10")
     accept(
         client,
         invite(client, pid, by="own10", who="guest10").json()["data"]["id"],
         "guest10",
     )
-    token = seed_user(client, "own10")
-    refused = client.put(
-        f"/projects/{pid}/owner", json={"owner_handle": "guest10"}, headers=auth(token)
-    )
-    assert refused.status_code == 422
-    moved = client.put(
-        f"/projects/{pid}/owner", json={"owner_handle": "mem10"}, headers=auth(token)
-    )
+    refused = offer_project(client, pid, "stranger10", by="own10")
+    assert refused.status_code == 422, refused.text
+    moved = hand_over(client, pid, "guest10", by="own10")
     assert moved.status_code == 200, moved.text
+    owner = client.get(
+        f"/projects/{pid}", headers=auth(seed_user(client, "guest10"))
+    ).json()["data"]["owner_handle"]
+    assert owner == "guest10"
 
 
 def test_an_account_is_found_only_by_its_exact_username_or_email(client):

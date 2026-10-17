@@ -1,0 +1,9 @@
+{
+  "appAgentOnly": "小程序的代码只能由 AI 队友编写",
+  "appCodeTooLarge": "小程序的代码超过 {limit} KB，内容这么多时应做成项目中的网站",
+  "appDrewNothing": "运行后页面没有内容：输出的内容高度为 0",
+  "appNotFound": "没有这个小程序",
+  "appRunFailed": "小程序运行出错，未保存：{why}",
+  "appShotMissing": "这一版没有这个宽度的截图",
+  "appVersionNotFound": "这个小程序没有第 {version} 版"
+}

@@ -7,7 +7,7 @@ import jwt
 from fastapi import Header
 
 from app.core.config import settings
-from app.core.errors import AuthenticationRequiredError
+from app.core.errors import AuthenticationRequiredError, BaseError
 
 
 def _utcnow() -> datetime:
@@ -225,6 +225,15 @@ class AccessClaims(NamedTuple):
     # authenticates to the handle-keyed layer only.
     user_id: int | None
     handle: str
+    # Whether ``handle`` is a name the token itself states (its ``handle``
+    # claim) or is the ``sub`` claim standing in for a missing one. Nothing in
+    # the value tells them apart: ``sub`` is the int user PK whenever the token
+    # carries one, and a username may be all digits too
+    # (``app.domain.user.services._USERNAME_RE`` takes ``2026201782``), so a
+    # handle-keyed check that reads the standing-in value as a name hands that
+    # caller a handle matching no roster — every permission they hold, revoked
+    # in silence.
+    handle_from_claim: bool
     sid: uuid.UUID | None
 
 
@@ -332,10 +341,15 @@ def verify_access_token(token: str) -> AccessClaims | None:
         sid = uuid.UUID(decoded["sid"]) if decoded.get("sid") else None
     except (TypeError, ValueError):
         return None
-    handle = decoded.get("handle")
+    stated = decoded.get("handle")
+    if isinstance(stated, str) and stated:
+        name, handle_from_claim = stated, True
+    else:
+        name, handle_from_claim = sub, False
     return AccessClaims(
         user_id=int(sub) if sub.isdigit() else None,
-        handle=handle if isinstance(handle, str) and handle else sub,
+        handle=name,
+        handle_from_claim=handle_from_claim,
         sid=sid,
     )
 
@@ -367,8 +381,6 @@ async def get_current_user_id(
         return claims.user_id
 
     if x_user_id is not None:
-        from app.core.config import settings
-
         if settings.deployed_via_compose or settings.environment not in (
             "development",
             "test",
@@ -400,8 +412,6 @@ async def get_optional_user_id(
     用于那些「可选」依赖当前用户上下文的查询（例如 task 列表的 joined 过滤），
     不强制要求调用方携带认证信息。
     """
-    from app.core.errors import BaseError
-
     try:
         return await get_current_user_id(
             x_user_id=x_user_id, authorization=authorization

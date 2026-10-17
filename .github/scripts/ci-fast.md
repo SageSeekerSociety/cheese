@@ -7,7 +7,7 @@ surface before a PR. It is **not** a substitute for full CI: green here means
 the selected local checks really ran and passed, nothing more.
 
 ```
-task ci:fast                 # quick tier (default): 180s, static hooks + tests/types
+task ci:fast                 # quick tier: CPU-sized budget, static hooks + tests/types
 task ci:fast -- --types      # quick + the full pyright / vue-tsc manual hooks
 python3 .github/scripts/ci-fast.py --tier quick   # equivalent without `task`
 python3 .github/scripts/ci-fast.py --tier static --pre-push   # the push-time report
@@ -21,25 +21,37 @@ tier, which is *not* what `task ci:fast` runs — the Taskfile passes
 
 | tier | budget | runs |
 |------|--------|------|
-| `static` | 180s | only the pre-commit static hooks the path map selects (guards always run). No pytest, no types. This is the legacy direct-invocation default. |
-| `quick` | 180s | static hooks **plus** the selected backend `pure` tests and frontend narrow-typecheck / related Vitest. This is what `task ci:fast` runs. |
+| `static` | 180–720s, CPU-sized | only the pre-commit static hooks the path map selects (guards always run). No pytest, no types. This is the legacy direct-invocation default. |
+| `quick` | 180–720s, CPU-sized | static hooks **plus** the selected backend `pure` tests and frontend narrow-typecheck / related Vitest. This is what `task ci:fast` runs. |
 | `extended` | 900s | the **same selection** as quick, only the whole-tier budget is raised to 900s. It does not expand coverage. |
 
 `extended` is the same work with more wall clock. It does not add suites, and a
 run that still exhausts 900s is reported **unknown**, never trimmed to green.
 
-The quick tier's 180s is the work machine's own limit, not a property of the
-selection. A narrowed frontend run seeds the read-off-disk specs beside the
-changed roots, and those cost ~70s on the work machine (127 tests, 71.4s wall,
-one worker per file, measured when there were fifteen of them): on a tight local
-budget the tier can exhaust it and report unknown where the runner (1200s) has
-room. That is the budget talking, not the change.
+Default budgets use the process's available CPUs, the same affinity-aware
+count as the Vitest worker planner: quick/static get `ceil(180 * max(1, 4 / CPUs))`
+seconds. One CPU gets 720s, two get 360s, three get 240s, and four or more keep
+180s. An unavailable CPU count is treated as one. This is a bounded scheduling
+heuristic, not a performance guarantee: a CPU quota or contention can make the
+machine slower than its affinity mask suggests.
 
-Both bounds are overridable, because they describe the machine rather than the
-tier: `--budget` and `--memory-mib` default to the work machine's own limits
-(the 3072 MiB default is literally its session cap), and a machine that can back
-more gets more. Required CI's draft job passes its own pair (below); `extended`
-raises only the budget.
+`--budget` takes precedence over `CI_FAST_BUDGET_SECONDS`, which takes precedence
+over the tier default. The environment value must be finite and positive and is
+floored at 180s; an explicit `--budget` stays exact, including a shorter bound.
+`extended` defaults to 900s. Neither override changes the selected checks or the
+per-check timeout (`--timeout`, default 900s). The report records `budget_seconds`
+and `budget_source`; exhausting either bound still reports unknown, never pass.
+
+For example, `CI_FAST_BUDGET_SECONDS=600 task ci:fast` gives a quota-constrained
+machine ten minutes without changing repository config. Required CI's draft job
+already passes `--budget 1200`, so its bound is unchanged. `--memory-mib` remains
+independent (default 3072 MiB, the work machine's session cap).
+
+The `.cheese/pre-push` wrapper retains a separate 240s wall-clock limit,
+configurable with `CI_FAST_PRE_PUSH_TIMEOUT`. It can terminate a larger automatic
+or environment budget before ci-fast writes its report. That interrupted run is
+unverified; raise the wrapper limit as well when using a longer push-time budget.
+Direct `task ci:fast` runs do not have this wrapper limit.
 
 ## The pre-push entry point
 
@@ -48,8 +60,17 @@ hook runs on every push (`cheese worktree` writes that hook; the mechanism is
 described in `docs/workflows.md`). It calls this script as
 `--tier static --pre-push`.
 
-`--pre-push` is a modifier, not a tier, and it changes two things:
+`--pre-push` is a modifier, not a tier, and it changes three things:
 
+- It adds the checks in `PRE_PUSH_HOOKS`, which the other tiers do not select:
+  today `openapi-document` for a backend-scoped push. Those are steps of a
+  Required CI job that a first push can be the first to break, and that a work
+  machine can still run — no service, no pinned harness, no node toolchain.
+  They are added here rather than to `FAST_HOOKS` because that table is what
+  `task ci:fast` and Required CI's draft job read, and neither should spend
+  time on a check this entry point is the one trying to close a gap for.
+  Measured on a work machine 2026-10-15: 23.3s, 497 MiB peak, against the
+  180s static tier budget; the whole entry point run took 46.3s.
 - The three hooks that spawn the node toolchain (`eslint`, `stylelint`,
   `boundary-check-frontend`) leave the selection and are recorded in `not_run`,
   never silently dropped: a report from this entry point says it could not
@@ -245,8 +266,8 @@ everything is still allowed to answer unknown.
   deletion with no surviving root, a path outside `frontend/` that the scope map
   still routes here (a site stylesheet, a ratchet script). Whether a change
   carries that content is read from the paths the scope map routed into frontend
-  scope, not from the whole diff: a backend route change rides in through a
-  regenerated `backend/openapi.json`, and its own `.py` files are not frontend
+  scope, not from the whole diff: a backend route change rides in through the
+  digest of the rebuilt document, and its own `.py` files are not frontend
   content — the one reader of that document writes types-only, so the suite has
   nothing to execute for it. A config outside the watched list does not widen by
   itself: `frontend/collab/vitest.config.ts` beside a changed source file still
@@ -256,9 +277,9 @@ everything is still allowed to answer unknown.
   catalog, stylesheet or prose edit next
   to a changed source file, still seed `related` from those roots. Only a change
   that seeds nothing *and* leaves the suite nothing to judge — prose (`.md`), a
-  declaration file, or a types-only input such as `backend/openapi.json` — leaves
-  the tier running the guards alone with `frontend-unit` recorded not-run and a
-  reason.
+  declaration file, or a types-only input such as `backend/openapi.sha256` —
+  leaves the tier running the guards alone with `frontend-unit` recorded not-run
+  and a reason.
 
   A narrowed run is seeded with the changed source roots **and** every spec that
   judges a frontend file by reading it off disk rather than importing it
@@ -286,7 +307,10 @@ everything is still allowed to answer unknown.
   narrow type project
   extends the real `frontend/tsconfig.json`,
   bridges `node_modules`, and checks only the surviving changed files against the
-  existing tsc-ratchet baseline; a deleted non-spec source file forces the full
+  existing tsc-ratchet baseline, after the type check builds the backend's
+  OpenAPI document and generates the API types from it
+  (`frontend/scripts/typecheck.mjs` — neither half is committed, and the path map
+  watches the document's digest); a deleted non-spec source file forces the full
   typecheck instead, since only the whole project sees its dangling importers.
   Non-spec is read from the name's ending, not from the text: a helper module
   called `migrationContract.spec.helper.ts` is imported by thirteen surviving

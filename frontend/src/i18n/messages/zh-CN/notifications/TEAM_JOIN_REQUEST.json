@@ -1,0 +1,8 @@
+{
+  "toast": {
+    "approveFailed": "批准申请失败，请稍后再试",
+    "approved": "已批准申请",
+    "rejectFailed": "拒绝申请失败，请稍后再试",
+    "rejected": "已拒绝申请"
+  }
+}

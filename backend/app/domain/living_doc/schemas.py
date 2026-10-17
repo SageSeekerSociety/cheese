@@ -57,8 +57,8 @@ class PassageEditsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     edits: list[PassageEdit] = Field(min_length=1, max_length=50)
-    #: "suggest" proposes the changes instead of making them. Left out, the
-    #: platform decides (see ``app.api.doc_edits``).
+    #: "suggest": an AI teammate proposes the changes instead of making them.
+    #: Left out, or from a person, the changes are made.
     mode: Literal["direct", "suggest"] | None = None
     #: Why, in a sentence: shown next to a suggestion.
     reason: str | None = Field(default=None, max_length=500)
@@ -118,7 +118,27 @@ def document_snapshot(doc: Document) -> dict:
         "author": doc.author,
         "created_at": doc.created_at.isoformat(),
         "updated_at": doc.updated_at.isoformat(),
+        # Whether the library lists it: one a conversation keeps is not there
+        # until someone saves it (#3828).
+        "in_library": doc.room_id is None or doc.kept_at is not None,
     }
+
+
+class DocumentRowOut(BaseModel):
+    """A document as a list names it (`document_row`)."""
+
+    id: str
+    project_id: str
+    number: int | None
+    kind: str
+    title: str | None
+    doc_version: int
+    author: str
+    created_at: str
+    updated_at: str
+    #: Whether the library lists it: one a conversation keeps is not there
+    #: until someone saves it (#3828).
+    in_library: bool
 
 
 def document_row(doc: Document) -> dict:
@@ -133,6 +153,7 @@ def document_row(doc: Document) -> dict:
         "author": doc.author,
         "created_at": doc.created_at.isoformat(),
         "updated_at": doc.updated_at.isoformat(),
+        "in_library": doc.room_id is None or doc.kept_at is not None,
     }
 
 

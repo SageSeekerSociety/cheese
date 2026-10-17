@@ -17,11 +17,8 @@ from urllib.parse import quote
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.forge_http import forge_client
-from app.domain.project.forge import (
-    binding_for_project,
-    proposal_client,
-    tokens_for_project,
-)
+from app.domain.project.forge import binding_for_project, tokens_for_project
+from app.domain.review.forge_clients import proposal_client
 
 
 class ForgeUnavailable(Exception):

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from app.core.config import settings
 from app.domain.agent.harness.channel import mint_session_token
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
@@ -135,6 +136,41 @@ def test_the_agent_cannot_react_in_a_room_it_does_not_sit_in(client, room):
     )
 
 
+def test_the_agent_does_not_change_the_projects_environment(client, room, monkeypatch):
+    """The default environment is a project setting, and an AI teammate never
+    changes the project's settings, whoever it works for (#3830)."""
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    monkeypatch.setattr(settings, "microcloud_vm_offering_id", "vm-offering")
+    pid, _, _, agent = room
+    alice = session_auth_headers("alice")
+    before = client.get(f"/projects/{pid}/compute-configs", headers=alice).json()[
+        "data"
+    ]["default"]
+
+    status = agent.refused(
+        "PUT",
+        f"/projects/{pid}/compute-configs",
+        {"default": {"kind": "sandbox", "spec": "vm"}},
+    )
+
+    assert status == 403
+    after = client.get(f"/projects/{pid}/compute-configs", headers=alice).json()[
+        "data"
+    ]["default"]
+    assert after == before
+
+
+def test_the_agent_cannot_change_what_stays_a_managers(room):
+    pid, *_, agent = room
+
+    status = agent.refused(
+        "PUT", f"/projects/{pid}/tier-policy", {"allowed_tiers": ["included"]}
+    )
+
+    assert status == 403
+
+
 def test_a_plain_member_agent_is_refused_the_roster(client, room):
     _, tid, seat, agent = room
     assert _roster(client, tid)[seat] == "member"
@@ -145,20 +181,14 @@ def test_a_plain_member_agent_is_refused_the_roster(client, room):
     assert _roster(client, tid)["alice"] == "owner"
 
 
-def test_a_managing_agent_manages_the_channel_as_a_person_would(client, room):
-    """An agent that manages the project — an admin of its team, as a person
-    would be — manages its channels too, under the same rules."""
+def test_an_agent_made_team_admin_still_does_not_manage_channels(client, room):
+    """An AI teammate never manages every channel, even one its team made an
+    admin (#3830): seating people is a person's decision."""
     pid, tid, seat, agent = room
     join_project_team(client, pid, seat, admin=True)
 
-    agent.call("POST", f"/topics/{tid}/members", {"handle": "bob"})
-    assert _roster(client, tid)["bob"] == "member"
-    agent.call("DELETE", f"/topics/{tid}/members/bob")
+    assert agent.refused("POST", f"/topics/{tid}/members", {"handle": "bob"}) == 403
     assert "bob" not in _roster(client, tid)
-
-    # What no manager may do, it may not either: seat someone the project
-    # does not have.
-    assert agent.refused("POST", f"/topics/{tid}/members", {"handle": "eve"}) == 422
 
 
 def test_the_agent_reads_its_own_inbox_and_nobody_elses(client, room):

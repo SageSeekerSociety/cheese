@@ -162,15 +162,15 @@ def test_the_platform_admin_can_mint_an_invite_code(
 ):
     """对照组：管理员建得出来，回的是那个码本身。
 
-    断言的是**信封里的 `code`**（201）而不是 HTTP 状态码：这条路由历来就是
-    「HTTP 200 + `{"code":201}`」（审计的原始输出也是这个形状），前端 `request()`
+    断言的是**信封里的 `code`**（200）而不是 HTTP 状态码：这条路由历来就是
+    「HTTP 200 + 信封」（审计的原始输出也是这个形状），前端 `request()`
     解包靠的就是信封 —— 顺手把 HTTP 码改成 201 会是一次没人要的契约改动。
     """
     response = _mint(api_client, _headers(as_admin))
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["code"] == 201
+    assert body["code"] == 200
     assert body["data"]["code"]
     assert body["data"]["maxUses"] == 3
 

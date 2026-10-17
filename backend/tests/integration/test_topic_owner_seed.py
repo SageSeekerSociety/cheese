@@ -17,7 +17,8 @@ import uuid
 from sqlalchemy import delete, select
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from tests.integration.conftest import (

@@ -14,9 +14,9 @@ from contextlib import contextmanager
 from app.api.deps import get_chat_service, get_work_runner
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.runtime import addressed_to_agent
-from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import looks_like_agent_handle
 from tests.conftest import settle_turn
 from tests.integration.conftest import post_message, room_agent_seat, room_socket
@@ -131,7 +131,7 @@ def question_row(client, topic, *, seat=None, author=None, **extra):
     question = extra.pop("question", "分页方案选哪个？")
     meta = {
         "options": [{"text": "cursor"}, {"text": "pageStart"}],
-        "asked": None,
+        "asked": [],
         "answer_log": [],
         **extra,
     }

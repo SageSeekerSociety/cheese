@@ -13,9 +13,11 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+import fitz
 from sqlalchemy import delete, func, literal, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.errors import ConflictError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
@@ -36,6 +38,7 @@ def _new_row(
     *,
     added_by: str | None,
     room_id: uuid.UUID | None,
+    source_path: str | None = None,
 ) -> LibraryFileRecord:
     record_id = uuid.uuid4()
     size, sha256 = measured
@@ -47,6 +50,7 @@ def _new_row(
         sha256=sha256,
         added_by=added_by,
         room_id=room_id,
+        source_path=source_path,
         location=blobs.LOCAL,
         blob_key=blobs.new_key(project_id, record_id),
     )
@@ -167,12 +171,60 @@ async def read_attachment_text(
     return bytes_text_payload(await _bytes_of(row), path)
 
 
+#: 一份 PDF 读成文字时最多读多少页、留多少字：读的是芝士，它要的是要求和要点，
+#: 不是整本书。
+PDF_TEXT_PAGES = 40
+PDF_TEXT_CHARS = 60_000
+
+
+def _pdf_text(data: bytes) -> str | None:
+    """PDF 里的文字层，一页一段；打不开、或者全是扫描图没有文字，是 None。"""
+    try:
+        with fitz.open(stream=data, filetype="pdf") as pdf:
+            pages = [
+                str(pdf[i].get_text()).strip()
+                for i in range(min(pdf.page_count, PDF_TEXT_PAGES))
+            ]
+            more = pdf.page_count > PDF_TEXT_PAGES
+    except Exception:  # noqa: BLE001 — a file that is not a readable PDF reads as binary
+        return None
+    text = "\n\n".join(page for page in pages if page)
+    if not text:
+        return None
+    if more or len(text) > PDF_TEXT_CHARS:
+        text = text[:PDF_TEXT_CHARS] + "\n\n（后面还有，没有读完）"
+    return text
+
+
+async def read_text(session: AsyncSession, project_id: uuid.UUID, name: str) -> dict:
+    """资料库里一份文件读成文本：文本文件照原样，PDF 取它的文字层；别的二进制文件
+    只回大小和版本。给芝士读资料用，读的人不必在哪个房间里。"""
+    row = await _current_or_404(session, project_id, name)
+    data = await _bytes_of(row)
+    payload = bytes_text_payload(data, f"library/{name}")
+    if payload["binary"] and name.lower().endswith(".pdf"):
+        text = await asyncio.to_thread(_pdf_text, data)
+        if text is not None:
+            payload = {**payload, "binary": False, "content": text}
+    return payload
+
+
 async def stored(
     session: AsyncSession, project_id: uuid.UUID
 ) -> list[tuple[str, str, str]]:
     """现在每一份的名字、存储和键：给要在事务结束之后才搬字节的人（项目导出）。"""
     rows = await session.scalars(_current(project_id).order_by(LibraryFileRecord.name))
     return [(row.name, row.location, row.blob_key) for row in rows]
+
+
+def read_blob(location: str, key: str) -> bytes:
+    """``stored`` 交回的那一双 ``(存储, 键)`` 底下的字节。
+
+    和 ``stored`` 是一对：行和字节分开给，是因为搬字节的时机在事务结束之后（见它
+    的说明）。「存储 + 键」这双地址怎么读回字节是本包自己的事，不该让搬的人去认
+    字节存放在哪儿。
+    """
+    return blobs.store(location).get(key)
 
 
 async def add(
@@ -182,17 +234,26 @@ async def add(
     data: service.Content,
     added_by: str | None,
     room_id: uuid.UUID | None,
+    source_path: str | None = None,
 ) -> str:
     """放进一份新资料，记下是谁在哪放的。撞名不覆盖：拿下一个 `(n)`。返回它的名字。
 
     `filename` 可以带文件夹（`合同/报价.xlsx`），编号加在最后一层上。占名字就是插
-    入那一行：同一时刻两份同名的上传，唯一索引让后到的那一份去拿下一个号。"""
+    入那一行：同一时刻两份同名的上传，唯一索引让后到的那一份去拿下一个号。
+    `source_path` 是从房间文件区里哪一份存过来的（`saved_from`）。"""
     measured = await asyncio.to_thread(service.measure, data)
     for attempt in range(1, 1000):
         name = service.next_name(filename, attempt)
         if await _taken(session, project_id, name):
             continue
-        row = _new_row(project_id, name, measured, added_by=added_by, room_id=room_id)
+        row = _new_row(
+            project_id,
+            name,
+            measured,
+            added_by=added_by,
+            room_id=room_id,
+            source_path=source_path,
+        )
         try:
             async with session.begin_nested():
                 session.add(row)
@@ -201,6 +262,28 @@ async def add(
         await _put(row, data)
         return name
     raise UnprocessableEntityError(say("tooManySameNameFiles", name=filename))
+
+
+async def saved_from(session: AsyncSession, room_id: uuid.UUID) -> set[str]:
+    """这个房间文件区里已经存进资料库的那几份的路径（`add` 的 `source_path`）。
+
+    资料库里那一份后来被替换、改名都还算：它还在资料库里（替换记的是新的一行，存进来
+    的那一行成了旧版本，名字跟着改名一起改）。删掉了就不算。"""
+    now = aliased(LibraryFileRecord)
+    rows = await session.scalars(
+        select(LibraryFileRecord.source_path).where(
+            LibraryFileRecord.room_id == room_id,
+            LibraryFileRecord.source_path.is_not(None),
+            select(now.id)
+            .where(
+                now.project_id == LibraryFileRecord.project_id,
+                now.name == LibraryFileRecord.name,
+                now.superseded_at.is_(None),
+            )
+            .exists(),
+        )
+    )
+    return {path for path in rows if path}
 
 
 async def replace(

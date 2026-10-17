@@ -4,7 +4,9 @@
 // 面板只吃 props，取数在它的接线外壳（`components/work/PanelDocHost.vue`）里。
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { ProjectMemberRow, Topic } from '../../cx_types'
+import type { DocReviewRequest } from '../../lib/docReview'
 
+import { ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import PanelDocHost from '../work/PanelDocHost.vue'
@@ -12,10 +14,11 @@ import PanelDocHost from '../work/PanelDocHost.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 
-defineProps<{
+const props = defineProps<{
   projectId: string
   /** 还在读的时候是 null。 */
   document: PanelDocument | null
+  review?: DocReviewRequest
   error: string
   agentName: string
   agentHandle: string | null
@@ -30,6 +33,14 @@ const emit = defineEmits<{
 }>()
 
 const { mdAndUp } = useDisplay()
+const docRef = ref<InstanceType<typeof PanelDocHost> | null>(null)
+watch(
+  [docRef, () => props.review, () => props.document?.id],
+  ([host, review]) => {
+    if (host && review) host.reviewEdits(review)
+  },
+  { flush: 'post' }
+)
 </script>
 
 <template>
@@ -45,6 +56,8 @@ const { mdAndUp } = useDisplay()
     <p v-if="error" role="alert" class="t-body c-danger pa-6">{{ error }}</p>
     <PanelDocHost
       v-if="document"
+      :key="document.id"
+      ref="docRef"
       class="library-doc"
       :bar-to="mdAndUp ? '#library-doc-bar' : undefined"
       :topic="null"

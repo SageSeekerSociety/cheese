@@ -1,0 +1,9 @@
+{
+  "archived": "archived 1 channel | archived {n} channels",
+  "docEdited": "edited documents once | edited documents {n} times",
+  "line": "{actor} {parts}",
+  "only": "{line} and {n} actions in all",
+  "others": "and 1 other action | and {n} other actions",
+  "sep": ", ",
+  "unarchived": "unarchived 1 channel | unarchived {n} channels"
+}

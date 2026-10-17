@@ -76,9 +76,13 @@ async function openSite(blocks: Block[], props: Record<string, unknown> = {}) {
     props: { topicId: topic.id, active: true, ...props },
     global: { plugins: [vuetify] },
   })
-  // 正文是懒加载的阅读器画的（common/MarkdownView），首帧那一块是空的：
-  // 等它真的画出来再交回去，不然下面断言读的是还没画的那一帧。
-  await waitFor(() => expect(utils.container.querySelector('.site-msg__body')?.textContent?.trim()).toBeTruthy())
+  // 正文是懒加载的阅读器画的（common/MarkdownView），首帧那一块是照原文先画的：
+  // 等阅读器真的画出来再交回去，不然下面断言读的是原文那一帧。
+  await waitFor(() => {
+    const body = utils.container.querySelector('.site-msg__body')
+    expect(body?.textContent?.trim()).toBeTruthy()
+    expect(body?.querySelector('.md-plain-first')).toBeNull()
+  })
   return utils
 }
 
@@ -99,13 +103,13 @@ describe('现场里芝士说的话', () => {
     expect(container.querySelector('.site-msg__body pre code')?.textContent?.trim()).toBe('make test')
   })
 
-  it('@人 的 token 用名册上的名字，点了把 handle 报上去', async () => {
+  it('@人 的 token 用名册上的名字（芝士在现场说的话不通知谁，所以只是名字），点了把 handle 报上去', async () => {
     const { container, emitted } = await openSite([say('1', '等 <@caisongyang> 定位置')], {
       memberNames: { caisongyang: '蔡松洋' },
     })
 
-    const chip = container.querySelector<HTMLElement>('.mention[data-handle="caisongyang"]')!
-    expect(chip.textContent).toBe('@蔡松洋')
+    const chip = container.querySelector<HTMLElement>('[data-handle="caisongyang"]')!
+    expect(chip.textContent).toBe('蔡松洋')
 
     await fireEvent.click(chip)
     expect(emitted()['mention-click']).toEqual([['caisongyang']])

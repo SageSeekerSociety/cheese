@@ -57,7 +57,7 @@ class TestTopicsCreateIntegration:
             )
             assert response.status_code == 201
             data = response.json()
-            assert data["code"] == 201
+            assert data["code"] == 200
             assert data["data"]["id"] is not None
             self.topic_ids.append(data["data"]["id"])
         assert len(self.topic_ids) == 15

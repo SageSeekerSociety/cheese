@@ -144,16 +144,24 @@ preview_connection_running() {
 # Keeping every owner query column-limited (app/domain/device/owner_reads.py)
 # had not prevented it.
 #
-# So the deploy compares what each running owner's image maps with what this
-# release's image maps. A migration only drops what the release before it no
-# longer mapped (.claude/scripts/check-migration-safety.py), so anything the
-# owner maps and this release does not is schema the migrations may take from
-# under it. Such an owner is released in this deploy: the device owner is
-# drained before the migrations, so its callers wait and retry rather than fail,
-# and both are recreated on this release's image after them. Not before: the
-# new image may need what the migrations add.
+# So before migrating, the deploy reads what the pending migrations drop,
+# rename or alter (deploy/migration-touches.py, run in this release's image
+# against the database) and what each running owner's image maps
+# (deploy/schema-map.py, run in the owner). An owner is released in this deploy
+# only when the two meet: the device owner is drained before the migrations, so
+# its callers wait and retry rather than fail, and both are recreated on this
+# release's image after them. Not before: the new image may need what the
+# migrations add. A release that only stops mapping a column (the first half of
+# a drop, .claude/rules/migrations.md) leaves the owners running; the deploy
+# that carries the drop releases whichever owner still maps it.
+#
+# An owner that already maps something the database lacks is released the
+# same way. Migrations commit one by one, so a deploy whose second migration
+# failed keeps the first one's drop and resumes the old owner on it; the next
+# deploy no longer lists that migration as pending, and only the database
+# itself says the owner is behind.
 SCHEMA_HELD_OWNERS=""
-RELEASE_SCHEMA_MAP=""
+PENDING_TOUCHES=""
 
 # schema_map <command…>: run deploy/schema-map.py in an image, one table or
 # table.column per line.
@@ -161,34 +169,63 @@ schema_map() {
   "$@" python - < "$HERE/schema-map.py" | sed -n 's/^schema-map //p' | LC_ALL=C sort -u
 }
 
-read_release_schema_map() {
-  [ -z "$RELEASE_SCHEMA_MAP" ] || return 0
-  RELEASE_SCHEMA_MAP="$(schema_map dc run --rm --no-deps -T backend || true)"
-  [ -n "$RELEASE_SCHEMA_MAP" ] \
-    || fail "could not read the schema this release's models map; nothing was migrated"
+# What the pending migrations touch, one table, table.column or * per line, and
+# a `pending <revision>` line for each of them. An answer that did not finish
+# is read as touching everything: unreadable is not proof that nothing moves.
+read_pending_touches() {
+  local answer
+  answer="$(dc run --rm --no-deps -T backend python - < "$HERE/migration-touches.py" \
+    | sed -n 's/^migration-touches //p' || true)"
+  if [ "$(printf '%s\n' "$answer" | tail -n 1)" != ok ]; then
+    log "WARNING: could not read what the pending migrations change; treating them as touching every table"
+    answer="pending (unreadable)
+*
+ok"
+  fi
+  PENDING_TOUCHES="$(printf '%s\n' "$answer" | sed '$d')"
 }
 
-# owner_schema_behind <container>: what the owner maps and this release does not.
-owner_schema_behind() {
-  local owner_map
+# owner_schema_touched <container>: what the owner maps that the pending
+# migrations touch, or that the database no longer has.
+owner_schema_touched() {
+  local owner_map touches present
   owner_map="$(schema_map docker exec -i "$1" || true)"
   if [ -z "$owner_map" ]; then
     # Unreadable is not proof of agreement.
     echo "(its schema map could not be read)"
     return
   fi
-  LC_ALL=C comm -23 <(printf '%s\n' "$owner_map") <(printf '%s\n' "$RELEASE_SCHEMA_MAP")
+  if printf '%s\n' "$PENDING_TOUCHES" | grep -Fqx '*'; then
+    echo "(a pending migration whose changes could not be read)"
+    return
+  fi
+  touches="$(printf '%s\n' "$PENDING_TOUCHES" | sed '/^present /d; /^pending /d')"
+  present="$(printf '%s\n' "$PENDING_TOUCHES" | sed -n 's/^present //p')"
+  printf '%s\n' "$owner_map" | awk -v touched="$touches" -v present="$present" '
+    BEGIN {
+      n = split(touched, items, "\n"); for (i = 1; i <= n; i++) hit[items[i]] = 1
+      m = split(present, have, "\n"); for (i = 1; i <= m; i++) there[have[i]] = 1
+    }
+    ($0 in hit) || (substr($0, 1, index($0 ".", ".") - 1) in hit) { print; next }
+    m > 0 && !($0 in there) { print $0 " (not in the database)" }
+  '
 }
 
 hold_owners_behind_schema() {
-  local container behind
+  local container touched pending
+  read_pending_touches
+  pending="$(printf '%s\n' "$PENDING_TOUCHES" | sed -n 's/^pending //p')"
+  if [ -n "$pending" ]; then
+    log "pending migrations: $(printf '%s\n' "$pending" | tr '\n' ' ')"
+  else
+    log "no migrations pending"
+  fi
   container="$(dc ps -q device-connection 2>/dev/null | head -n 1 || true)"
   if [ -n "$container" ] \
     && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]; then
-    read_release_schema_map
-    behind="$(owner_schema_behind "$container")"
-    if [ -n "$behind" ]; then
-      log "device connection owner maps schema this release does not: $(printf '%s ' $behind)"
+    touched="$(owner_schema_touched "$container")"
+    if [ -n "$touched" ]; then
+      log "the device connection owner maps schema the migrations change or the database lacks: $(printf '%s\n' "$touched" | tr '\n' ' ')"
       log "draining the device connection owner across the migrations; it is recreated on this release after them"
       # A call still running after the drain's wait is interrupted rather than
       # stopping the deploy: left alone, the owner would fail every call that
@@ -196,15 +233,18 @@ hold_owners_behind_schema() {
       DEVICE_CONNECTION_INTERRUPT=late bash "$HERE/release-device-connection.sh" "$SHA" "$COMPOSE" drain \
         || fail "could not drain the device connection owner; nothing was migrated"
       SCHEMA_HELD_OWNERS="device"
+    else
+      log "the migrations change nothing the device connection owner maps, and the database has all of it; it is left running"
     fi
   fi
   if [ "$PREVIEW_CONNECTION_MODE" = owner ] && preview_connection_running; then
-    read_release_schema_map
-    behind="$(owner_schema_behind "$(preview_connection_container)")"
-    if [ -n "$behind" ]; then
-      log "preview connection owner maps schema this release does not: $(printf '%s ' $behind)"
+    touched="$(owner_schema_touched "$(preview_connection_container)")"
+    if [ -n "$touched" ]; then
+      log "the preview connection owner maps schema the migrations change or the database lacks: $(printf '%s\n' "$touched" | tr '\n' ' ')"
       log "the preview connection owner is recreated on this release after the migrations; its tunnels redial"
       SCHEMA_HELD_OWNERS="${SCHEMA_HELD_OWNERS:+$SCHEMA_HELD_OWNERS }preview"
+    else
+      log "the migrations change nothing the preview connection owner maps, and the database has all of it; it is left running"
     fi
   fi
 }
@@ -352,6 +392,7 @@ ensure_forge_events() {
     --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
     --relay-env "$FORGE_EVENTS_ENV_FILE" \
     || fail "could not configure GitHub event subscriptions"
+  pin_relay_by_code
   dc up -d --no-deps forge-events || fail "forge event relay did not start"
   while [ "$waited" -lt 60 ]; do
     if curl -fsS -m 3 "http://127.0.0.1:${FORGE_EVENTS_PORT:-8093}/healthz" >/dev/null; then
@@ -419,9 +460,27 @@ ensure_journal_retention() {
   log "journal retention applied from journald-cheese.conf"
 }
 
+# What api-front's configuration says, as one digest: every file it reads that
+# a deploy writes, without the comments, indentation and blank lines that change
+# nothing it does. A reload retires api-front's workers, and with them, once
+# their shutdown deadline passes, every device link, terminal, model tunnel and
+# preview tunnel they carry; so the deploy reloads it only when this differs
+# from the digest it last loaded, kept in .api-front-loaded beside those files.
+# That is what api-front runs, which the files on disk are not when a deploy
+# stopped between writing them and the reload.
+api_front_digest() {
+  local file
+  for file in "$1" "$ACTIVE_BACKEND_DIR/preview-routing.conf" "$ACTIVE_BACKEND_DIR"/sites*.conf \
+    ${ACTIVE_FRONTEND_DIR:+"$ACTIVE_FRONTEND_DIR/sites-frontend.conf"}; do
+    [ -f "$file" ] || continue
+    printf '== %s\n' "${file##*/}"
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d' "$file"
+  done | sha256sum | cut -d ' ' -f 1
+}
+
 ensure_application_router() {
   [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
-  local config backup frontend_backup changed=false router_changed=false
+  local config backup frontend_backup router_changed=false loaded rendered
   local owner_port routing_backup sites_backup site_domain
   config="${API_FRONT_CONF:-$(dirname "$ACTIVE_BACKEND_DIR")/nginx.conf}"
   [ -f "$config" ] || fail "api-front config not found: $config"
@@ -446,6 +505,19 @@ ensure_application_router() {
       || fail "application router cannot reach the serving frontend"
   fi
 
+  # What api-front runs. The record is trusted only while the files on disk
+  # still match it: anything else that wrote them since (tls-renew.sh, a
+  # release of an older commit, an operator) reloaded api-front without
+  # updating it, or did not reload it at all, so what runs is unknown and the
+  # deploy reloads. A box that never recorded it runs what is on disk, which
+  # is what the deploy compared against before the record existed.
+  loaded="$(cat "$ACTIVE_BACKEND_DIR/.api-front-loaded" 2>/dev/null || true)"
+  if [ -z "$loaded" ]; then
+    loaded="$(api_front_digest "$config")"
+  elif [ "$loaded" != "$(api_front_digest "$config")" ]; then
+    log "api-front's config on disk is not the one it last loaded here; reloading it"
+    loaded=""
+  fi
   # Everything api-front reads that this deploy may rewrite is backed up first,
   # so a rejected config restores all of it together.
   backup="${config}.pre-device-connection"
@@ -475,14 +547,7 @@ ensure_application_router() {
   else
     bash "$HERE/llm-tunnel/configure-preview.sh" legacy "$ACTIVE_BACKEND_DIR"
   fi || fail "could not write the preview routing file"
-  if [ ! -s "$routing_backup" ] \
-    || ! cmp -s "$routing_backup" "$ACTIVE_BACKEND_DIR/preview-routing.conf"; then
-    changed=true
-  fi
-  if ! cmp -s "$HERE/llm-tunnel/nginx.conf" "$config"; then
-    cp "$HERE/llm-tunnel/nginx.conf" "$config"
-    changed=true
-  fi
+  cmp -s "$HERE/llm-tunnel/nginx.conf" "$config" || cp "$HERE/llm-tunnel/nginx.conf" "$config"
   # Preview content hosts are matched by the content domain's wildcard server,
   # and no server_name can beat it (a middle wildcard is invalid; a regex loses).
   # So the split lives inside active/sites.conf, and this re-renders that file
@@ -498,7 +563,6 @@ ensure_application_router() {
       cp "$ACTIVE_BACKEND_DIR/sites.conf" "$sites_backup"
       bash "$HERE/llm-tunnel/configure-sites.sh" "$site_domain" "$ACTIVE_BACKEND_DIR" "$owner_port" \
         || fail "could not write the content-host routing"
-      cmp -s "$sites_backup" "$ACTIVE_BACKEND_DIR/sites.conf" || changed=true
     fi
   fi
   frontend_backup=""
@@ -506,9 +570,10 @@ ensure_application_router() {
     frontend_backup="$ACTIVE_FRONTEND_DIR/sites-frontend.conf.pre-app-router"
     cp "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" "$frontend_backup"
     bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" 18086 "$FRONTEND_PROXY_PORT" "$owner_port"
-    cmp -s "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" || changed=true
   fi
-  if [ "$changed" = false ]; then
+  rendered="$(api_front_digest "$config")"
+  if [ "$rendered" = "$loaded" ]; then
+    printf '%s\n' "$rendered" > "$ACTIVE_BACKEND_DIR/.api-front-loaded"
     rm -f "$backup" ${frontend_backup:+"$frontend_backup"} ${sites_backup:+"$sites_backup"} "$routing_backup"
     return 0
   fi
@@ -529,6 +594,7 @@ ensure_application_router() {
     rm -f "$backup"
     fail "api-front could not reload the preview/owner route; restored its config"
   fi
+  printf '%s\n' "$rendered" > "$ACTIVE_BACKEND_DIR/.api-front-loaded"
   rm -f "$backup" ${frontend_backup:+"$frontend_backup"} ${sites_backup:+"$sites_backup"} "$routing_backup"
   log "api-front routes application traffic through app-router; later business switches leave persistent connections untouched"
 }
@@ -848,10 +914,17 @@ reclaim_docker_disk() {
 # to fail. The trap closes every exit path, including `fail`, `set -e` aborts and
 # a runner cancelling the job (the concurrency policy does this routinely).
 RECLAIM_PENDING=0
+# The backend traffic has left, until retire_old_backend stops it (rollout_app).
+RETIRING_BACKEND="" RETIRING_BACKEND_SERVICE="" RETIRING_BACKEND_PORT="" RETIRING_DEADLINE=0
+
 on_exit() {
   local rc=$?
   [ "$#" -eq 0 ] || rc="$1"
   trap - EXIT INT TERM
+  # A release never leaves two backends behind it, nor waits on the way out.
+  # (Set only by rollout_app, so retire_old_backend is defined by then.)
+  [ -z "$RETIRING_BACKEND_SERVICE" ] \
+    || retire_old_backend now "the deploy is exiting with status $rc"
   resume_owners_held_for_schema
   [ -z "$SLOTS_OVERLAY" ] || rm -f "$SLOTS_OVERLAY"
   if [ "$RECLAIM_PENDING" = 1 ]; then
@@ -958,6 +1031,97 @@ service_image() {
   docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null || true
 }
 
+# ---- Unchanged services are not recreated ----
+# Compose recreates a container whenever the image reference it was created
+# from changes, and every commit's images carry that commit's tag, including
+# the ones build.yml only promoted because nothing in them changed. So collab,
+# browser-render and office-render were replaced on every release, closing
+# every open document's socket and every page a renderer was holding. They are
+# named by digest instead (repo@sha256:…), and when the image this release
+# pulled has the same content as the one running, by the running one's digest:
+# the reference compose sees does not change, and neither does the container.
+#
+# Content, not digest: a rebuild of unchanged inputs (every image is rebuilt
+# on a dispatched build) gets a new digest, because the image records when and
+# from which commit it was built, while its layers and runtime config are
+# identical. image_content is exactly those, without the build's own labels.
+image_content() {
+  docker image inspect --format '{{json .RootFS.Layers}} {{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .Config.Env}} {{json .Config.WorkingDir}} {{json .Config.User}} {{json .Config.ExposedPorts}} {{json .Config.Volumes}} {{json .Config.Healthcheck}} {{json .Config.StopSignal}} {{range $k, $v := .Config.Labels}}{{$k}}={{$v}};{{end}}' \
+    "$1" 2>/dev/null | sed 's/org\.opencontainers\.image\.[^=;]*=[^;]*;//g' || true
+}
+
+# repo_digest <image> <repository>: the image as <repository>@sha256:…, if the
+# registry gave it one.
+repo_digest() {
+  docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$1" 2>/dev/null \
+    | grep -F -m 1 "$2@" || true
+}
+
+# pin_by_content <variable> <service> <pulled image>: point the service's
+# image variable at the running image when the pulled one has the same
+# content, and at the pulled one by digest when it does not. An image the
+# operator named (the variable already set) or one without a registry digest
+# (a local build) is left as it is.
+pin_by_content() {
+  local variable="$1" service="$2" pulled="$3" repository="${3%:*}" pinned container running content
+  [ -z "${!variable:-}" ] || return 0
+  pinned="$(repo_digest "$pulled" "$repository")"
+  [ -n "$pinned" ] || return 0
+  container="$(service_container "$service")"
+  running="$([ -z "$container" ] || docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true)"
+  content="$(image_content "$pulled")"
+  if [ -n "$running" ] && [ -n "$content" ] && [ "$(image_content "$running")" = "$content" ] \
+    && [ -n "$(repo_digest "$running" "$repository")" ]; then
+    pinned="$(repo_digest "$running" "$repository")"
+    log "$service: $pulled has the content already running; keeping $pinned"
+  else
+    log "$service: $pulled is new content; it runs as $pinned"
+  fi
+  export "$variable=$pinned"
+  PINNED_IMAGES="$PINNED_IMAGES $variable"
+}
+PINNED_IMAGES=""
+
+# The collab image a rollback returns to: the one that ran before this release;
+# with none running, the previous release's by its tag, as compose names it
+# when nothing pins it.
+rollback_collab_image() {
+  if [ -n "$PREV_COLLAB_IMAGE" ]; then
+    printf '%s' "$PREV_COLLAB_IMAGE"
+  else
+    case " $PINNED_IMAGES " in
+      *" COLLAB_IMAGE "*) ;;
+      *) printf '%s' "${COLLAB_IMAGE:-}" ;;
+    esac
+  fi
+}
+
+# The forge event relay runs the backend image, which changes with nearly
+# every backend commit while the relay's own code rarely does, and recreating
+# the relay drops every deployment's event socket. So it keeps the image it
+# runs, by digest, until the code it runs differs (deploy/code-digest.py in the
+# running relay and in this release's image).
+pin_relay_by_code() {
+  local container repository release running pinned
+  repository="${FORGE_EVENTS_IMAGE%@*}"
+  repository="${repository%:*}"
+  container="$(service_container forge-events)"
+  release="$(dc run --rm --no-deps -T backend python - app.forge_events_app < "$HERE/code-digest.py" \
+    | sed -n 's/^code-digest //p' || true)"
+  running="$([ -z "$container" ] || docker exec -i "$container" python - app.forge_events_app < "$HERE/code-digest.py" 2>/dev/null \
+    | sed -n 's/^code-digest //p' || true)"
+  if [ -n "$release" ] && [ "$running" = "$release" ]; then
+    pinned="$(repo_digest "$(docker inspect --format '{{.Image}}' "$container")" "$repository")"
+    FORGE_EVENTS_IMAGE="${pinned:-$(service_image "$container")}"
+    log "forge event relay: its code is unchanged (${release:0:12}); keeping $FORGE_EVENTS_IMAGE"
+  else
+    pinned="$(repo_digest "$FORGE_EVENTS_IMAGE" "$repository")"
+    FORGE_EVENTS_IMAGE="${pinned:-$FORGE_EVENTS_IMAGE}"
+    log "forge event relay: its code differs from the running relay's; it runs $FORGE_EVENTS_IMAGE"
+  fi
+  export FORGE_EVENTS_IMAGE
+}
+
 NEXT_BACKEND="${PROJECT}-backend-next"
 NEXT_FRONTEND="${PROJECT}-frontend-next"
 # The one-off successors releases before the two slots started, on the ports
@@ -989,6 +1153,7 @@ PREV_BACKEND_CONTAINER="$(running_backend)"
 PREV_FRONTEND_CONTAINER="$(running_frontend)"
 PREV_BACKEND_IMAGE="$(service_image "$PREV_BACKEND_CONTAINER")"
 PREV_FRONTEND_IMAGE="$(service_image "$PREV_FRONTEND_CONTAINER")"
+PREV_COLLAB_IMAGE="$(service_image "$(service_container collab)")"
 # The release running now is the tag its backend was started from, in whichever
 # slot it serves. Reading only the `backend` service left every release that
 # started while `backend-b` served with no previous release, so a failed health
@@ -1034,6 +1199,7 @@ case "$APP_IMAGE_SOURCE" in
       || [[ ! "${collab_err,,}" =~ manifest\ unknown|no\ such\ manifest|not\ found ]]; then
       retry_pull "collab pull" dc pull collab
       COLLAB_EXPECTED=true
+      pin_by_content COLLAB_IMAGE collab "$collab_ref"
     else
       log "$collab_ref does not exist: this release predates the collaboration service"
     fi
@@ -1042,13 +1208,21 @@ case "$APP_IMAGE_SOURCE" in
     # fetching falls back a rung (measured: 19 of 20 real sites becomes 17) and
     # everything else is unaffected, whereas failing the deploy over it would
     # trade the whole platform for one rung.
-    dc pull browser-render >/dev/null 2>&1 \
-      || log "WARNING: browser-render image unavailable; fetching will fall back a rung"
+    if dc pull browser-render >/dev/null 2>&1; then
+      pin_by_content BROWSER_RENDER_IMAGE browser-render \
+        "ghcr.io/sageseekersociety/cheese/browser-render:$IMAGE_TAG"
+    else
+      log "WARNING: browser-render image unavailable; fetching will fall back a rung"
+    fi
     # Same shape, same reason: without the renderer a Word or PowerPoint
     # deliverable falls back to a download, which the preview panel reports on
     # screen. Nothing else in the platform is affected.
-    dc pull office-render >/dev/null 2>&1 \
-      || log "WARNING: office-render image unavailable; documents will offer download only"
+    if dc pull office-render >/dev/null 2>&1; then
+      pin_by_content OFFICE_RENDER_IMAGE office-render \
+        "ghcr.io/sageseekersociety/cheese/office-render:$IMAGE_TAG"
+    else
+      log "WARNING: office-render image unavailable; documents will offer download only"
+    fi
     dc pull office-editor >/dev/null 2>&1 \
       || log "WARNING: office-editor image unavailable; room files stay read-only"
     # Same shape again: without the executor a private chat fails with an
@@ -1165,14 +1339,14 @@ API_FRONT_CONTAINER="${API_FRONT_CONTAINER:-cheese-api-front}"
 BACKEND_START_TIMEOUT="${DEPLOY_BACKEND_START_TIMEOUT:-180}"
 # How long the slots traffic left keep answering what they already have before
 # they are stopped. App-router's old workers do not cut those requests off at
-# this point: its worker_shutdown_timeout is set well above this drain plus the
-# backend's stop grace (deploy/llm-tunnel/app-router.conf), so what ends a
-# connection on the old slots is the old slot stopping, once.
+# this point: its worker_shutdown_timeout is set above this drain plus the wait
+# for model streams and the backend's stop grace (deploy/llm-tunnel/app-router.conf),
+# so what ends a connection on the old slots is the old slot stopping, once.
 DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-31}"
 # Matches the backend's stop_grace_period in the compose files.
 BACKEND_STOP_GRACE_SECONDS="${DEPLOY_BACKEND_STOP_GRACE_SECONDS:-60}"
 # How long the old frontend's nginx may take to finish its requests after the
-# drain: they then had 5 + 31 + 120 s, inside app-router's 240 s worker deadline.
+# drain: they then had 5 + 31 + 120 s, inside app-router's 1080 s worker deadline.
 FRONTEND_STOP_GRACE_SECONDS="${DEPLOY_FRONTEND_STOP_GRACE_SECONDS:-120}"
 # Opt in only after the public ingress uses the standing frontend proxy.
 ACTIVE_FRONTEND_DIR="${ACTIVE_FRONTEND_DIR:-}"
@@ -1359,6 +1533,51 @@ hand_over_running_work() {
   fi
 }
 
+# A model stream relayed through /llm/v1 runs for minutes on a reasoning model
+# and cannot move to the next backend: stopping the one that relays it ends it,
+# and the harness that asked loses the whole answer. So the old backend is
+# stopped only once the streams it relays have ended, or this bound, counted
+# from the switch, has run out (deploy/wait-model-streams.sh). app-router's
+# worker_shutdown_timeout (deploy/llm-tunnel/app-router.conf) stays above the
+# handover pause, the drain, this bound and the stop grace together, so the
+# worker carrying such a stream does not end it first.
+MODEL_STREAM_GRACE_SECONDS="${DEPLOY_MODEL_STREAM_GRACE_SECONDS:-900}"
+MODEL_STREAM_POLL_SECONDS="${DEPLOY_MODEL_STREAM_POLL_SECONDS:-5}"
+# A rollback is already the second switch of a failed release; the streams on
+# the release it leaves get only this long.
+ROLLBACK_MODEL_STREAM_GRACE_SECONDS="${DEPLOY_ROLLBACK_MODEL_STREAM_GRACE_SECONDS:-30}"
+
+# $1 = the old backend's host port, $2 = its container, $3 = how long to wait.
+wait_for_model_streams() {
+  local line
+  bash "$HERE/wait-model-streams.sh" "$1" "$2" "$3" "$MODEL_STREAM_POLL_SECONDS" 2>&1 \
+    | while IFS= read -r line; do log "$line"; done || true
+}
+
+# The old backend is the last thing a release stops, after its health check:
+# waiting for its model streams any earlier would hold a release that then
+# fails its health check on the broken build for that long before it rolls
+# back. rollout_app names it here; retire_old_backend stops and removes it.
+# $1 = streams: wait for its model streams up to the bound's deadline.
+# $1 = now: stop it at once, saying why ($2) — a failed release, an exit.
+retire_old_backend() {
+  local left
+  [ -n "$RETIRING_BACKEND_SERVICE" ] || return 0
+  if [ -n "$RETIRING_BACKEND" ]; then
+    if [ "$1" = streams ]; then
+      left=$((RETIRING_DEADLINE - SECONDS))
+      [ "$left" -gt 0 ] || left=0
+      wait_for_model_streams "$RETIRING_BACKEND_PORT" "$RETIRING_BACKEND" "$left"
+    else
+      log "stopping $RETIRING_BACKEND without waiting for its model streams: $2"
+    fi
+    docker stop --time "$BACKEND_STOP_GRACE_SECONDS" "$RETIRING_BACKEND" >/dev/null 2>&1 || true
+  fi
+  dc rm -f "$RETIRING_BACKEND_SERVICE" >/dev/null 2>&1 || true
+  log "$RETIRING_BACKEND_SERVICE stopped"
+  RETIRING_BACKEND="" RETIRING_BACKEND_SERVICE="" RETIRING_BACKEND_PORT="" RETIRING_DEADLINE=0
+}
+
 wait_for_frontend() {
   local port="$1" container="$2" waited=0 step="$HEALTH_INTERVAL_SECONDS"
   [ "$step" -gt 0 ] 2>/dev/null || step=1
@@ -1375,12 +1594,14 @@ wait_for_frontend() {
 }
 
 rollout_app() {
-  local backend_from backend_to backend_port old_backend handover
+  local backend_from backend_to backend_port old_backend old_backend_port handover switched_at
   local frontend_from="" frontend_to="" frontend_port="" old_frontend="" collab_failed=false
   local frontend_holds_ports=false frontend_stop_grace="$FRONTEND_STOP_GRACE_SECONDS" ports_failed=false
   read_slots "$ACTIVE_BACKEND_DIR/backend.conf" backend "$BACKEND_PORT" "$BACKEND_PORT_NEXT"
   backend_from="$SLOT_FROM" backend_to="$SLOT_TO" backend_port="$SLOT_TO_PORT"
   old_backend="$(service_container "$backend_from")"
+  old_backend_port="$BACKEND_PORT"
+  [ "$backend_from" = backend ] || old_backend_port="$BACKEND_PORT_NEXT"
   if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
     [ -f "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" ] || fail "frontend proxy must be configured before enabling rollout"
     read_slots "$ACTIVE_BACKEND_DIR/frontend.conf" frontend "$FRONTEND_SLOT_PORT" "$FRONTEND_PORT_NEXT" "$FRONTEND_PORT"
@@ -1421,8 +1642,10 @@ rollout_app() {
     dc rm -f -s "$backend_to" ${frontend_to:+"$frontend_to"} >/dev/null 2>&1 || true
     fail "app-router did not take the switch; its upstream files are restored and traffic stays on $backend_from${frontend_from:+ and $frontend_from}"
   fi
-  # From here nothing exits early: the old slots are always stopped, so a
-  # failure leaves one backend and one frontend, and the next release starts
+  switched_at=$SECONDS
+  # From here nothing exits early: the old frontend is always stopped and the
+  # old backend handed to retire_old_backend, which the exit trap runs too, so
+  # a failure leaves one backend and one frontend, and the next release starts
   # from a clean state.
   #
   # The handover keeps its own clock from the switch.
@@ -1441,19 +1664,21 @@ rollout_app() {
   # have: through the drain, then a graceful stop — SIGQUIT for the frontend's
   # nginx, which closes its sockets as its requests end, and SIGTERM for the
   # backend, which still hands over whatever it holds (`rm -f` alone is a
-  # SIGKILL that cuts that off). Both stop at once.
+  # SIGKILL that cuts that off). The backend is stopped by retire_old_backend,
+  # after the release's health check, once the model streams it still relays
+  # have ended or their bound has run out.
   sleep "$DRAIN_SECONDS"
   if [ -n "$old_frontend" ]; then
     docker stop --time "$frontend_stop_grace" "$old_frontend" >/dev/null 2>&1 &
   fi
-  if [ -n "$old_backend" ]; then
-    docker stop --time "$BACKEND_STOP_GRACE_SECONDS" "$old_backend" >/dev/null 2>&1 || true
-  fi
+  RETIRING_BACKEND="$old_backend" RETIRING_BACKEND_SERVICE="$backend_from"
+  RETIRING_BACKEND_PORT="$old_backend_port"
+  RETIRING_DEADLINE=$((switched_at + HANDOVER_AFTER_SECONDS + DRAIN_SECONDS + MODEL_STREAM_GRACE_SECONDS))
+  [ -n "$old_backend" ] || retire_old_backend now
   wait || true
   if [ "$frontend_holds_ports" = true ] && ! take_frontend_ports "$old_frontend" "$frontend_port"; then
     ports_failed=true
   fi
-  dc rm -f "$backend_from" >/dev/null 2>&1 || true
   # A frontend started again to keep the ports is left for the next release,
   # which replaces it in its slot and takes the ports over at that switch.
   if [ -n "$frontend_from" ] && [ "$ports_failed" = false ]; then
@@ -1462,7 +1687,7 @@ rollout_app() {
   [ "$ports_failed" = false ] \
     || fail "app-router could not take the box's ports :$FRONTEND_PORT and $FRONTEND_DIRECT_LISTEN (see the nginx error above); $old_frontend serves them again, and the next release takes them over"
   [ "$collab_failed" = false ] || fail "compose up collab failed"
-  log "$backend_from${frontend_from:+ and $frontend_from} stopped; $backend_to${frontend_to:+ and $frontend_to} serve this release"
+  log "${frontend_from:+$frontend_from stopped; }$backend_to${frontend_to:+ and $frontend_to} serve this release; $backend_from stops after the health check"
   if [ "$backend_to" = backend-b ]; then
     # The script before the two slots starts its one-off successors on these
     # ports and refuses while app-router names them.
@@ -1573,10 +1798,15 @@ code=""
 app_tier=""
 for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
   sleep "$HEALTH_INTERVAL_SECONDS"
-  app_tier="$(docker ps -a \
+  app_tier="$(docker ps -a --no-trunc \
     --filter "label=com.docker.compose.project=$PROJECT" \
     --format '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
     2>/dev/null || true)"
+  # The old backend still finishing its model streams is not part of this
+  # release; retire_old_backend removes it after this check.
+  if [ -n "$RETIRING_BACKEND_SERVICE" ]; then
+    app_tier="$(printf '%s\n' "$app_tier" | awk -F '\t' -v old="$RETIRING_BACKEND_SERVICE" '$1 != old')"
+  fi
   if printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" \
     >/dev/null 2>&1; then
     code=ok
@@ -1590,6 +1820,8 @@ if [ "$code" != ok ]; then
   if [ -f "$FORGE_CUTOVER_PENDING" ]; then
     fail "repository migration completed; refusing to restart the legacy repository writer; retry this release from migration receipts"
   fi
+  # The previous release goes back into the slot the old backend holds.
+  retire_old_backend now "this release failed its health check"
   if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "$SHA" ]; then
     log "rolling back to ${PREV_SHA}…"
     # Rolling the images back without rolling the ownership back is not a
@@ -1619,20 +1851,31 @@ if [ "$code" != ok ]; then
           export BACKEND_IMAGE="$PREV_BACKEND_IMAGE" FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE"
         fi
         export IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE"
+        # shellcheck disable=SC2030 # the rollback's own choice, for this subshell only
+        COLLAB_IMAGE="$(rollback_collab_image)"
+        export COLLAB_IMAGE
         write_slots_overlay
+        MODEL_STREAM_GRACE_SECONDS="$ROLLBACK_MODEL_STREAM_GRACE_SECONDS"
+        # A subshell does not run the script's exit trap.
+        trap 'retire_old_backend now "the rollback did not complete"' EXIT
         rollout_app
+        retire_old_backend streams
       ) || log "WARNING: the rollback to $PREV_SHA did not complete; see the lines above"
     elif [ -n "$PREV_BACKEND_IMAGE" ] && [ -n "$PREV_FRONTEND_IMAGE" ]; then
       BACKEND_IMAGE="$PREV_BACKEND_IMAGE" \
-        FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE" \
+        FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE" COLLAB_IMAGE="$(rollback_collab_image)" \
         IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE" \
         dc up -d backend frontend collab || true
     else
-      IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE" dc up -d backend frontend collab || true
+      COLLAB_IMAGE="$(rollback_collab_image)" IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE" \
+        dc up -d backend frontend collab || true
     fi
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
 fi
+
+# Healthy: now the backend traffic left may finish its model streams and stop.
+retire_old_backend streams
 
 # Keep the cutover guard across failed releases until the new app is healthy.
 if [ -f "$FORGE_EXECUTOR_RESTART" ]; then
@@ -1703,4 +1946,12 @@ bash "$HERE/reclaim-room-caches.sh" --apply 2>&1 | sed 's/^/  /' || true
 # user's only copy of it, and is kept and reported instead.
 python3 "$HERE/reclaim-legacy-room-checkouts.py" --apply 2>&1 | sed 's/^/  /' || true
 echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
+# What this release chose for the services named by digest, for the checks
+# that run outside a deploy (deploy-drift.yml, scripts/whats-live.sh).
+mkdir -p "$HOME/ops"
+{
+  # shellcheck disable=SC2031 # this release's choice; only a rollback changed it, in its subshell
+  [ -z "${COLLAB_IMAGE:-}" ] || printf 'COLLAB_IMAGE=%s\n' "$COLLAB_IMAGE"
+  [ -z "${FORGE_EVENTS_IMAGE:-}" ] || [ "${FORGE_EVENTS_LOCAL:-false}" != true ] || printf 'FORGE_EVENTS_IMAGE=%s\n' "$FORGE_EVENTS_IMAGE"
+} > "$HOME/ops/app-tier-pins"
 log "DEPLOY OK: sha=$SHA healthy"

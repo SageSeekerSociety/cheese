@@ -1,0 +1,20 @@
+{
+  "backupLede": "Enter one of your 8-character backup codes",
+  "backupRequired": "A backup code is 8 letters or numbers",
+  "backupSubmit": "Verify backup code",
+  "backupUsedBody": "Each backup code works only once. Consider generating a new set now.",
+  "backupUsedTitle": "Backup code used",
+  "later": "Later",
+  "lockout": "Five wrong codes in a row lock verification for 15 minutes",
+  "regenerate": "Generate new codes",
+  "sessionExpired": "Verification expired. Please sign in again.",
+  "title": "Two-step verification",
+  "totpLede": "Enter the 6-digit code from your authenticator app",
+  "totpRequired": "The code is 6 digits",
+  "totpSubmit": "Verify",
+  "trustDevice": "Don't ask again on this device for 30 days",
+  "useBackup": "Use a backup code",
+  "useTotp": "Use an authenticator code",
+  "wrongCode": "Wrong code. Please try again.",
+  "wrongCodeRemaining": "Wrong code. Attempts left: {count}"
+}

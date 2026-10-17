@@ -41,7 +41,9 @@ from app.domain.machine.sandbox_wait import SANDBOX_LOST
 from app.domain.machine.services import HostPool
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.models import Project
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.room_task.models import Task
 from app.domain.run_record.models import RunRecord
 from app.domain.team.models import Team
@@ -345,6 +347,8 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
     recorded the home on that host when it took its inventory — the rooms
     PR #2749 left waiting on "device … is offline". Returns what one sweep of
     room cleanups answered."""
+    from app.domain.block.adapters import platform_line
+    from app.domain.delivery.ledger import settle_card
     from app.domain.room_cleanup import retire
     from app.domain.topic.services import TopicService
 
@@ -352,7 +356,14 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
 
     async def archive():
         async with case.client.test_request_factory() as db:
-            await TopicService(db).archive(seat.room, by="alice")
+            await TopicService(db).archive(
+                seat.room,
+                by="alice",
+                settle_card=settle_card,
+                cards=close_cards_for_archived_topic,
+                close_tasks=close_room_tasks,
+                events=platform_line,
+            )
             await db.commit()
 
     run(case, archive)
@@ -612,6 +623,57 @@ def test_a_destroyed_sandbox_frees_its_slot_for_another_session(cloud):
 
     three = cloud.seats[2]
     assert tool_call(cloud, three)["target"]["device_id"] == "host-a"
+
+
+def test_a_sandbox_its_agent_left_is_destroyed_and_holds_its_slot_until_then(
+    cloud, monkeypatch
+):
+    """An agent that moves to another environment leaves a sandbox still
+    running on its host. That sandbox is destroyed there once idle, as any
+    other is, and the host counts it until then: placing another session in
+    its slot meanwhile packed hosts past what they can run (dev, 2026-10: a
+    host running 16 sandboxes where the pool counted 4, all of them short of
+    memory)."""
+    monkeypatch.setattr(settings, "microcloud_vm_offering_id", 1)
+    one, two, three = cloud.seats
+    home = working_on(cloud, one, "host-a")
+    server = subprocess.Popen(["sleep", "600"], cwd=home / "room")
+    try:
+        moved = cloud.client.put(
+            f"/topics/{one.room}/sessions/{one.session}/environment",
+            headers=session_auth_headers("alice"),
+            json={"environment": {"kind": "sandbox", "spec": "vm"}},
+        )
+        assert moved.status_code == 200, moved.text
+
+        # Host A runs one sandbox at a time, and the one left still runs there.
+        assert tool_call(cloud, two).get("preparing")
+        assert host_of(cloud, two).id != host_of_machine_row(cloud, "host-a")
+        assert home.exists()
+
+        left_idle(cloud, home.name, timedelta(minutes=11))
+        assert sweep(cloud)["destroyed"] == 1
+        assert server.wait(timeout=30) is not None
+    finally:
+        server.kill()
+    assert not home.exists()
+    assert tool_call(cloud, three)["target"]["device_id"] == "host-a"
+
+
+def left_idle(case, resource: str, idle: timedelta):
+    """The sandbox in ``resource``, which its session left, was last used
+    ``idle`` ago."""
+
+    async def age():
+        async with case.client.test_request_factory() as db:
+            await db.execute(
+                update(SandboxHome)
+                .where(SandboxHome.resource_id == resource)
+                .values(active_at=datetime.now(UTC) - idle)
+            )
+            await db.commit()
+
+    run(case, age)
 
 
 def host_of_machine_row(case, device_id):

@@ -82,7 +82,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **行为**：输入栏发消息，默认**不** @芝士（人与人对话）；**正文里 @ 了它**它才回复——输入栏的「交给芝士」按钮和 ⌘/Ctrl+Enter 是把那个 @ 写进正文的两个入口，不是另一个开关。所有消息都会进库；**未 @ 的消息芝士下次被召唤时也会看到**，每条带 `[发言人]:` 标签（多人话题里芝士能分清谁说的，Batch I）。回复一条消息并 @ 它，被回复的那条原文跟着这次回复一起给它：那条往往已经被前一轮读过，不在待读里。
 - **实现**：发消息是 `POST /api/topics/{id}/messages`（`backend/app/api/routes/topics_messages.py`），人和 AI 队友走同一条路由，按发送者在这个房间里的席位决定它是人说的话还是队友的发言；房间里落下的东西经 WebSocket `/api/rooms/live`（`backend/app/api/routes/chat.py`）推给所有在看的人：一个页面一条连接，看着的每个房间在上面订阅、退订，这条 socket 不写任何东西。一轮失败之后的「重试」是 `POST /api/topics/{id}/summon`——它只开一轮，让待读窗口把没读到的消息捎上，房间已经在干活或没有待读内容时它什么都不做并说明是哪一种。
   帧：`user_block` → `delta`*（流式 token）→ `tool`*（工具调用：原生 Bash/Write/Edit/Read + cheese Skill）→ `assistant_block` → `done`（或 `error`）。
-  编排：`ChatService.converse`（`backend/app/domain/agent/chat.py`）：tx1 存用户块+拼带标签的上下文+加载记忆 → 流式（不持事务）→ tx2 存 🔧 事件块 + 芝士消息 + token 用量。每话题一把 `asyncio.Lock` 串行。
+  编排：`ChatService.converse`（`backend/app/domain/agent/chat.py`）：tx1 存用户块+拼带标签的上下文+加载记忆 → 流式（不持事务）→ tx2 存 🔧 事件块 + 芝士消息 + token 用量。每个座位一条跨进程租约串行（`admission.Lease`，见[串行只在座位内](/dev/turn#seats-serial)）。
 
 #### 3.1.1 双实时：活消息(working log) + 实况文档  🟡 目标
 
@@ -98,7 +98,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.2 芝士（Agent）  ✅ 链路 / 🟡 部分能力
 
-- **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件由会话核心从 runner 的日志读回来（`backend/app/domain/agent/session_host/`，房间那一份在 `agent/room/sessions.py`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
+- **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件由会话核心从 runner 的日志读回来（`backend/app/domain/agent/session_host/`，房间那一份在 `agent/room/sessions/`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
 - **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每话题一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该话题的 git worktree + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记记忆、创建任务、发通知/决策请求、递验收卡、关闭任务）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
 - **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），只收芝士凭据的写路由在路由上声明 `CHEESE_ONLY_IN_ROOM` / `CHEESE_ONLY_IN_PROJECT`（`backend/app/api/write_access.py`），前端只读这些路径、不受影响。
@@ -109,14 +109,15 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 行为 | 接口 | 现状 |
 |---|---|---|
 | 新建任务 | `POST /api/topics/{room}/tasks` | ✅ 只有人能建，建的人是负责人；房间 ⋯ 菜单里的「新建任务」 |
-| 讨论升级为任务（A1） | `POST /api/blocks/{id}/upgrade` | ✅ 幂等；升级的人是负责人，任务的会话收到一段开场提示（那条消息和它前面的讨论）；私聊里的块升级成一个房间 |
-| AI 创建任务 | `POST /api/topics/{支线}/teammate-tasks`（`cheese_task`） | ✅ 负责人是要这件事的人；有人让它做时建好就开始，它自己想到的停在讨论中 |
-| 开始 | `POST /api/topics/{task}/start` | ✅ 只有负责人；记下开始时间、开始的人、那一刻实况文档的版本；之前任务会话的改动留不下 |
+| 讨论转为任务（A1） | `POST /api/blocks/{id}/upgrade` | ✅ 转的人是负责人。主线消息：它的支线原地转成任务，沿用支线的 id，对话和会话接着用（`api/thread_task.turn_into_task`），转两次是同一件；支线里的回复、主线上的文件：另开一件，任务的会话收到一段开场提示（那条消息和它前面的讨论）；私聊里不能转 |
+| AI 创建任务 | `POST /api/topics/{支线}/teammate-tasks`（`cheese_task`） | ✅ 只在有人说要做时调，负责人是要这件事的人；`here` 原地转这条支线，否则另开一件。自己看出来的先用 `cheese_ask` 问一句 |
 | 转交 | `PATCH /api/topics/{task}/task` | ✅ 负责人交给房间里另一个人，或换一位 AI 队友 |
 | 关闭 | `POST /api/topics/{task}/close` | ✅ 负责人或任务自己的会话（`cheese_close_task`）；带不带结论都显示已关闭；房间里落一条平台消息（带结论的把结论写在后面） |
-| 在任务里说话 | `POST /api/topics/{task}/messages` | ✅ 只收负责人和任务自己的会话；其他人能读，在房间里说 |
+| 在任务里说话 | `POST /api/topics/{task}/messages` | ✅ 项目里的人都能说，AI 队友里只收任务自己的会话；负责人和协作者的话叫醒任务的队友，别人的话 `@` 了它才叫醒 |
 
-实现：`TopicService.create_task / upgrade_block_to_place`、`TaskService.start / hand_over`（`backend/app/domain/room_task/services.py`）、关闭任务的唯一入口 `room_task/closing.close_task`，路由在 `api/routes/topics_tasks.py`。任务是一段对话，地址就是任务的 id：和房间同一套 `/api/topics/{id}/…` 接口。任务有自己的会话（`agent_sessions.conversation_id` = 任务 id），平台对任务说的话经投递账本直接交给它。
+任务建出来就在做，没有「开始」这一步；审阅人在建任务时定下（`TaskService.default_reviewer`）。
+
+实现：`TopicService.create_task / upgrade_block_to_place`、`TaskService.default_reviewer / hand_over`（`backend/app/domain/room_task/services.py`）、关闭任务的唯一入口 `room_task/closing.close_task`，路由在 `api/routes/topics_tasks.py`。任务是一段对话，地址就是任务的 id：和房间同一套 `/api/topics/{id}/…` 接口。任务有自己的会话（`agent_sessions.conversation_id` = 任务 id），平台对任务说的话经投递账本直接交给它。
 
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡
 

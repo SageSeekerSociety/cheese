@@ -149,6 +149,29 @@ CHECKS: tuple[Check, ...] = (
             "frontend/scripts/tsc-ratchet-core.mjs",
             # BETTER and the status mapping both live here, for all three.
             "frontend/scripts/ratchet-report.mjs",
+            # Reading eslint's JSON output into per-file counts, shared with the
+            # a11y and storage ratchets — the boundary's counts come from it.
+            "frontend/scripts/eslint-ratchet-json.mjs",
+        ),
+    ),
+    Check(
+        id="fe-storage",
+        area=BOUNDARY,
+        argv=("node", "scripts/browser-storage-ratchet.mjs", "--json"),
+        cwd="frontend",
+        rules=(
+            "frontend/eslint.browser-storage.config.mjs",
+            # The storage config builds on the base one; a rule added there
+            # decides this check too.
+            "frontend/eslint.config.mjs",
+            "frontend/scripts/browser-storage-ratchet.mjs",
+            "frontend/scripts/browser-storage-ratchet-core.mjs",
+            # What the safe module does is what the rule means by "safe" — a
+            # change to its API is a change to the fix the ratchet asks for.
+            "frontend/src/lib/browserStorage.ts",
+            "frontend/scripts/eslint-ratchet-json.mjs",
+            "frontend/scripts/tsc-ratchet-core.mjs",
+            "frontend/scripts/ratchet-report.mjs",
         ),
     ),
     Check(
@@ -212,9 +235,27 @@ CHECKS: tuple[Check, ...] = (
     Check(
         id="vue-tsc",
         area=TYPES,
-        argv=("node", "scripts/tsc-ratchet.mjs", "--json"),
+        # Through the wrapper, not `tsc-ratchet.mjs` directly: the types the
+        # ratchet reads are generated rather than committed, and a bare run on
+        # a checkout that has not run the type check yet reports four TS2307
+        # cannot-find-module errors for `api/openapi` and calls them type errors.
+        #
+        # The wrapper spawns both of its halves by name, and the closure follows
+        # that (see `_JS_SCRIPT`), so the guard still walks everything this
+        # check reads. The ratchet's baseline — frontend/tsc-baseline.json, the
+        # frozen per-file error counts — is the measured debt, not a rule, and
+        # stays excused in NOT_A_RULE.
+        argv=("node", "scripts/typecheck.mjs", "--json"),
         cwd="frontend",
         rules=(
+            "frontend/scripts/typecheck.mjs",
+            # The generator decides the types being judged, so it is a rule too,
+            # and so is the exporter behind it: the document the generator reads
+            # is built by `backend/scripts/export_openapi.py` (through `uv run`,
+            # which is not a path the closure can follow), and what that file
+            # renders is what the types are generated from.
+            "frontend/scripts/gen-api-types.mjs",
+            "backend/scripts/export_openapi.py",
             "frontend/scripts/tsc-ratchet.mjs",
             "frontend/scripts/tsc-ratchet-core.mjs",
             "frontend/scripts/ratchet-report.mjs",
@@ -240,6 +281,29 @@ CHECKS: tuple[Check, ...] = (
         area=TYPES,
         argv=("bash", ".claude/scripts/check-repo-rules.sh", "--json"),
         rules=(".claude/scripts/check-repo-rules.sh",),
+    ),
+    Check(
+        id="fe-contrast",
+        area=TYPES,
+        # The one check that needs a browser: it walks the three public pages in
+        # both themes and judges the colours they actually painted, which no
+        # reading of the source can decide. The driver starts the frontend and a
+        # headless Chromium itself, so this is still one command whose stdout is
+        # one record. It is the same walk the e2e gate runs on a pull request —
+        # e2e/contrast-walk.mjs, shared — so the number frozen here and the
+        # verdict that blocks a change come out of one piece of code.
+        argv=("node", "contrast-ratchet.mjs", "--json"),
+        cwd="e2e",
+        rules=(
+            "e2e/contrast-ratchet.mjs",
+            "e2e/contrast-walk.mjs",
+            # The rule itself: the floors, the ratio, the ratchet logic and the
+            # walker that runs inside the page.
+            "frontend/scripts/contrast-ratchet-core.mjs",
+            # The record's shape and the cannot-judge path, shared with the
+            # other ratchets.
+            "frontend/scripts/ratchet-report.mjs",
+        ),
     ),
 )
 
@@ -442,9 +506,11 @@ def run_check(check: Check, root: Path) -> dict:
 def _strip_ignore_imports(text: str) -> bytes:
     """`.importlinter` with every `ignore_imports` block removed.
 
-    The baseline lives in the same file as the contracts there, so a fingerprint
-    over the whole file would call every exemption change a change of rule. It
-    is not: the rules are the contract declarations.
+    The exceptions live in the same file as the contracts, so a fingerprint over
+    the whole file would call writing one of them down a change of rule. It is
+    not: the rules are the contract declarations. (The bulk of what used to be
+    here — the frozen baseline — is not in the file at all any more; the gate
+    measures it from the tree at the merge base on every run.)
     """
     kept: list[str] = []
     skipping = False
@@ -548,16 +614,17 @@ def fingerprint(
 NOT_A_RULE: dict[str, dict[str, str]] = {
     **{check_id: {
         "frontend/scene-debt-baseline.json": "baseline: exact child, route and network debt sets",
-        "frontend/scene-baseline.json": "baseline: the scene rule's frozen ready and debt sets",
     } for check_id in ("scene-non-a-children", "scene-use-route", "legacy-network")},
-    "scene-ratchet": {
-        "frontend/scene-baseline.json": "baseline: the frozen scene debt",
-    },
     "catalog-ratchet": {
         "frontend/catalog-baseline.json": "baseline: the grade-A components not in the catalog yet",
     },
     "fe-boundary": {
         "frontend/import-boundary-baseline.json": "baseline: the frozen boundary violations",
+    },
+    "fe-storage": {
+        "frontend/browser-storage-baseline.json": (
+            "baseline: the frozen direct Web Storage references"
+        ),
     },
     "be-contracts": {
         "backend/scripts/__init__.py": (
@@ -579,6 +646,16 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     },
     "vue-tsc": {
         "frontend/tsc-baseline.json": "baseline: the frozen per-file error counts",
+        # `backend/openapi.json` was the second entry here — a subject, the
+        # schema the generated types are judged against. It stopped being a file
+        # in the repository (2026-10-14), so there is nothing left to excuse: the
+        # generator asks the backend to build it, and the guard below requires
+        # every excused path to exist.
+    },
+    "fe-contrast": {
+        "frontend/contrast-baseline.json": (
+            "baseline: the frozen rendered-contrast debt on the public pages"
+        ),
     },
     "palette": {
         "frontend/palette-baseline.json": "baseline: the frozen colour literals",
@@ -605,6 +682,10 @@ _PATH_LITERAL = re.compile(r"""['"][^'"]*?([\w][\w./-]*\.(?:py|mjs|cjs|js|json|i
 #: a name in a docstring is not one.
 _PY_IMPORT = re.compile(r"^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))", re.M)
 _JS_SPEC = re.compile(r"""(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]""")
+#: A script a checker hands to a runner by name: `run('tsc-ratchet.mjs', [])`.
+#: That is neither an import nor a path built for a reader, so without it a
+#: wrapper that runs its halves by name hides both of them from the guard.
+_JS_SCRIPT = re.compile(r"""\b\w+\s*\(\s*['"]([\w][\w./-]*\.(?:mjs|cjs|js))['"]""")
 _SH_SOURCE = re.compile(r"^\s*(?:source|\.)\s+['\"]?([^\s'\"]+)", re.M)
 
 
@@ -630,11 +711,12 @@ def _rule_paths(root: Path, check: Check) -> set[str]:
 def _deps_of(path: Path, root: Path, cwd: Path) -> list[Path]:
     """Every repo file `path` reads, as code or as data.
 
-    A checker names a file in two ways, and it uses both: it imports the module
-    beside it, and it builds a path and hands it to a reader. The second is the
-    one that hides — `resolve(ROOT, 'eslint.boundary.config.mjs')` decides the
-    check as much as an `import` does, and nothing in a hand-written registry
-    notices it going missing.
+    A checker names a file in three ways. It imports the module beside it, it
+    builds a path and hands it to a reader, and it names a script and hands it
+    to a runner. The last two are the ones that hide —
+    `resolve(ROOT, 'eslint.boundary.config.mjs')` decides the check as much as
+    an `import` does, so does `run('tsc-ratchet.mjs', [])`, and nothing in a
+    hand-written registry notices either going missing.
     """
     text = path.read_text(encoding="utf-8", errors="replace")
     found: list[Path] = []
@@ -659,6 +741,10 @@ def _deps_of(path: Path, root: Path, cwd: Path) -> list[Path]:
             )
             if hit is not None:
                 found.append(hit)
+        for name in _JS_SCRIPT.findall(text):
+            target = (path.parent / name).resolve()
+            if target.is_file() and target != path.resolve():
+                found.append(target)
     elif path.suffix == ".sh":
         for target in _SH_SOURCE.findall(text):
             candidate = (path.parent / target).resolve()
@@ -1067,15 +1153,15 @@ def self_test() -> int:
               _runnable(root, "no_such_module_anywhere"), False)
         check("... and one it does have is", _runnable(root, "json"), True)
 
-        # The .importlinter exception: freezing one more import is not a change
-        # of rule, and must not open a new comparison run.
+        # The .importlinter exception: writing one more exception down is not a
+        # change of rule, and must not open a new comparison run.
         base = "root_package = app\n\n[importlinter:contract:c1]\ntype = layers\nlayers =\n    a\n    b\n"
         with_one = base + "ignore_imports =\n    a.x -> b.y\n"
         with_two = base + "ignore_imports =\n    a.x -> b.y\n    a.z -> b.w\n"
         (root / "contracts.ini").write_text(with_one)
         first = fingerprint(root, ("contracts.ini",), "ignore_imports")
         (root / "contracts.ini").write_text(with_two)
-        check("freezing another exception is not a rule change", fingerprint(root, ("contracts.ini",), "ignore_imports"), first)
+        check("writing another exception is not a rule change", fingerprint(root, ("contracts.ini",), "ignore_imports"), first)
         (root / "contracts.ini").write_text(with_two.replace("type = layers", "type = forbidden"))
         check("changing the contract is", fingerprint(root, ("contracts.ini",), "ignore_imports") != first, True)
 

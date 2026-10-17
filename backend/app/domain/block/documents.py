@@ -6,21 +6,21 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Uuid, column, select, table
+from sqlalchemy import String, Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
 from app.core.sentences import NoticeList, listing, say
-from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
-    AuthorType,
     Block,
     BlockKind,
     agent_notice,
     consumed_turn,
 )
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.living_doc.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.living_doc.models import Document
@@ -29,7 +29,12 @@ from app.domain.living_doc.services import DocumentJournal, Documents
 # The task a document is the living document of. A bare table: ``room_task``
 # depends on this domain.
 _tasks = table(
-    "tasks", column("id", Uuid), column("room_id", Uuid), column("document_id", Uuid)
+    "tasks",
+    column("id", Uuid),
+    column("room_id", Uuid),
+    column("document_id", Uuid),
+    column("title", String),
+    column("title_source", String),
 )
 
 
@@ -56,13 +61,15 @@ def _doc_conflict(current_version: int) -> ConflictError:
 DOC_NOTICE_MERGE_WINDOW = timedelta(minutes=10)
 _DOC_FROM_VERSION_KEY = "doc_from_version"
 _DOC_ACTORS_KEY = "doc_actors"
-#: An edit the room's agent made for someone: who asked, and the passages it
-#: changed (``[{old, new}]``, every edit of the run).
-DOC_REQUESTED_BY_KEY = "doc_requested_by"
+#: The passages a run of passage edits changed (``[{old, new}]``);
+#: 「查看改动」 marks them in the document.
 DOC_EDITS_KEY = "doc_edits"
 #: Changes proposed, not made: the suggestion ids the line covers.
 DOC_SUGGESTED_KEY = "doc_suggested"
 DOC_SUGGESTIONS_KEY = "doc_suggestions"
+#: The name a conversation's own document goes by (its title, or its task's),
+#: so its line can say which document it was.
+DOC_TITLE_KEY = "doc_title"
 
 
 def _actor_label(handles: list[str]) -> NoticeList:
@@ -76,14 +83,10 @@ def _actor_label(handles: list[str]) -> NoticeList:
 
 
 def _notice_kind(meta: dict) -> str:
-    """The three lines a document change can be: somebody edited it
-    ("plain"), the agent edited it for somebody ("requested"), changes were
-    proposed ("suggested"). A run extends a line of its own kind only."""
-    if meta.get(DOC_SUGGESTED_KEY):
-        return "suggested"
-    if meta.get(DOC_REQUESTED_BY_KEY):
-        return "requested"
-    return "plain"
+    """The two lines a document change can be: somebody edited it ("plain"),
+    or changes were proposed ("suggested"). A run extends a line of its own
+    kind only."""
+    return "suggested" if meta.get(DOC_SUGGESTED_KEY) else "plain"
 
 
 def persisted_notice(block: Block) -> str | None:
@@ -106,23 +109,22 @@ async def whose_document(
     return owner[1], owner[0]
 
 
-async def seed(session: AsyncSession, doc: Document, content: str) -> None:
-    """The first version of a document, written by the platform from words it
-    already had (a new project's goals). The caller holds its lock."""
-    if doc.version != 0:
-        raise _doc_conflict(doc.version)
-    written = await Documents(session).write(
-        doc, content, author="system", expected_version=0
-    )
-    if written is None:
-        raise _doc_conflict(doc.version)
-    await DocumentJournal(session).append(
-        document_id=doc.id,
-        version=doc.version,
-        content=content,
-        actor="system",
-        base_version=0,
-    )
+async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
+    """The name ``doc`` is shown under: its own title, else the title of the
+    task whose document it is. None when it has neither (a task still
+    unnamed)."""
+    if doc.title:
+        return doc.title
+    row = (
+        await session.execute(
+            select(_tasks.c.title, _tasks.c.title_source).where(
+                _tasks.c.document_id == doc.id
+            )
+        )
+    ).first()
+    if row is None or row.title_source == "placeholder" or not row.title:
+        return None
+    return row.title
 
 
 class DocumentWriter:
@@ -143,8 +145,8 @@ class DocumentWriter:
         actors: list[str],
         operation_id: uuid.UUID | None = None,
         quiet: bool = False,
-        requested_by: str | None = None,
         edits: list[dict] | None = None,
+        turn_id: uuid.UUID | None = None,
     ) -> tuple[Document | None, Block | None]:
         """改文档即指令 (eval B2): record a new version of a room's living doc
         and drop a '编辑了文档' event into the conversation. The agent reads the
@@ -161,10 +163,10 @@ class DocumentWriter:
         not change. A ``quiet`` version gets no conversation event, like a
         brief seed, and leaves the document's author as it was.
 
-        ``requested_by`` is the person an edit was made for (the agent edited
-        at their request), and ``edits`` the passages it changed: the line
-        then says who asked, and only extends a line about the same person's
-        request.
+        ``edits`` are the passages a passage edit changed, which its line
+        keeps for 「查看改动」; it extends only a line of passage edits.
+        ``turn_id`` is the AI teammate's running turn the edit was a step of;
+        the line is part of that turn.
         """
         if not actors:
             raise ValueError("a document version needs the actor who wrote it")
@@ -204,7 +206,6 @@ class DocumentWriter:
                 actor=author,
                 base_version=base_version,
                 operation_id=operation_id,
-                requested_by=requested_by,
             )
             return doc, None
         landed = landing(
@@ -217,11 +218,12 @@ class DocumentWriter:
         # the last "编辑了文档" is extended while nothing else has been said
         # since and it was last touched within the window. It then names
         # everyone in the run, and its diff spans the run.
-        earlier = await self._mergeable_notice(
-            landed, doc.id, kind="requested" if requested_by else "plain"
-        )
-        if earlier is not None and (earlier.meta or {}).get(DOC_REQUESTED_BY_KEY) != (
-            requested_by or None
+        earlier = await self._mergeable_notice(landed, doc.id, kind="plain")
+        # A passage edit's line lists the passages it changed, for 「查看改动」;
+        # typing in the editor names none. A run is one or the other, so the
+        # list always covers its whole run.
+        if earlier is not None and (DOC_EDITS_KEY in (earlier.meta or {})) != bool(
+            edits
         ):
             earlier = None
         everyone = list(actors)
@@ -270,6 +272,7 @@ class DocumentWriter:
             "doc_version": doc.version,
             _DOC_FROM_VERSION_KEY: from_version,
             _DOC_ACTORS_KEY: everyone,
+            DOC_TITLE_KEY: await _shown_title(self._session, doc),
             AGENT_NOTICE_META_KEY: for_agent,
             "detail_label": say("labelDocEditDiff"),
             "detail": "\n".join(
@@ -282,16 +285,14 @@ class DocumentWriter:
                 )
             ),
         }
-        if requested_by:
-            meta[DOC_REQUESTED_BY_KEY] = requested_by
+        if changed:
             meta[DOC_EDITS_KEY] = changed
-            line = say("docEditedFor", requester=f"<@{requested_by}>", agent=actor)
-        else:
-            line = say("docEdited", actor=actor)
+        line = say("docEdited", actor=actor)
         if earlier is not None:
             earlier.author = author
             earlier.content = line
             earlier.meta = meta
+            earlier.turn_id = turn_id
             # It is the newest thing said in the room, and says so.
             earlier.created_at = datetime.now(UTC)
             self.notice_merged = True
@@ -306,6 +307,7 @@ class DocumentWriter:
                 kind=BlockKind.event,
                 refs=[str(doc.id)],
                 meta=meta,
+                turn_id=turn_id,
             )
         await journal.append(
             document_id=doc.id,
@@ -315,7 +317,6 @@ class DocumentWriter:
             base_version=base_version,
             operation_id=operation_id,
             event_id=notice.id,
-            requested_by=requested_by,
         )
         await self._session.flush()
         return doc, notice
@@ -327,6 +328,7 @@ class DocumentWriter:
         actor: str,
         suggestion_ids: list[str],
         reason: str | None = None,
+        turn_id: uuid.UUID | None = None,
     ) -> Block | None:
         """Tell the conversation whose document it is that ``actor`` proposed
         changes to it.
@@ -357,6 +359,7 @@ class DocumentWriter:
             "doc_version": doc.version,
             _DOC_FROM_VERSION_KEY: doc.version,
             _DOC_ACTORS_KEY: [actor],
+            DOC_TITLE_KEY: await _shown_title(self._session, doc),
             DOC_SUGGESTED_KEY: True,
             DOC_SUGGESTIONS_KEY: ids,
             "doc_reason": reason,
@@ -365,6 +368,7 @@ class DocumentWriter:
         if earlier is not None:
             earlier.content = line
             earlier.meta = meta
+            earlier.turn_id = turn_id
             earlier.created_at = datetime.now(UTC)
             self.notice_merged = True
             await self._session.flush()
@@ -378,6 +382,7 @@ class DocumentWriter:
             kind=BlockKind.event,
             refs=[str(doc.id)],
             meta=meta,
+            turn_id=turn_id,
         )
 
     async def _mergeable_notice(
@@ -418,13 +423,15 @@ async def tell_room_of_document(
     created: bool = False,
     edits: list[dict] | None = None,
     suggested: list[str] | None = None,
+    turn_id: uuid.UUID | None = None,
 ) -> tuple[Block, bool]:
     """Put in the room (or its task ``task_id``, or its 支线 ``thread_id``) that
     ``actor`` made or changed
     ``doc``, a document of the project's own: a line with the document on it, to
     open beside the conversation. ``suggested`` are the ids of changes proposed
     instead of made. A run of changes of one kind to the same document by the same
-    actor is one line, as with a room's document. Returns the line and whether it
+    actor is one line, as with a room's document. ``turn_id`` is the actor's
+    running turn the change was a step of. Returns the line and whether it
     extended the last one."""
     blocks = BlockRepository(session)
     landed = (
@@ -459,6 +466,7 @@ async def tell_room_of_document(
                 *suggested,
             ]
         last.meta = extended
+        last.turn_id = turn_id
         last.created_at = datetime.now(UTC)
         await session.flush()
         return last, True
@@ -490,5 +498,6 @@ async def tell_room_of_document(
                 else {}
             ),
         },
+        turn_id=turn_id,
     )
     return block, False

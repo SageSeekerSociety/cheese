@@ -1,0 +1,6 @@
+{
+  "loadFailed": "Couldn't load the default model",
+  "reset": "Restore the default model",
+  "save": "Save",
+  "saveFailed": "Couldn't save the default model"
+}

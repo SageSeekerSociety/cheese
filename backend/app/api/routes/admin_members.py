@@ -26,9 +26,10 @@ from fastapi import APIRouter, Header, Query, Response
 from app.api.admin_deps import AdminServiceDep, PlatformAdminDep
 from app.api.conditional import etag_for_json, if_none_match_hits
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.domain.admin.schemas import AdminAdd
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[ROUTE_DECIDES])
 
 #: 这份名单是**平台管理员**专有的，所以只能是 `private` —— 一份被 CDN 或中间代理
 #: 缓存下来的管理员名单，等于把它发给任何一个请求同一个 URL 的人。这是安全要求，

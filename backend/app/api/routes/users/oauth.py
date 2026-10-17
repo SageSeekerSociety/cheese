@@ -27,6 +27,7 @@ from app.api.deps import (
     get_user_auth_service,
 )
 from app.api.legal_deps import client_context
+from app.api.response import ok
 from app.api.routes.users._common import (
     OAuthEmailCodeRequest,
     OAuthEmailVerifyRequest,
@@ -37,7 +38,7 @@ from app.api.routes.users._common import (
     _own_email,
     _send_email_code,
     _signup_consent,
-    _trusted_device,
+    _trusted_device_id,
     logger,
 )
 from app.api.users_deps import (
@@ -79,11 +80,7 @@ async def get_oauth_providers(
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> dict:
     providers = oauth_service.get_providers_config()
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"providers": providers},
-    }
+    return ok({"providers": providers})
 
 
 def _oauth_frontend_url(path: str, **params: str | None) -> str:
@@ -299,10 +296,10 @@ async def _oauth_login_redirect(
     as a password login would: the provider stands in for the password only,
     and a trusted browser skips the second step here as it does there.
     """
-    trust = None
+    trust_id = None
     if await TOTPService(session).is_2fa_enabled(user_id):
-        trust = await _trusted_device(request, session, user_id)
-        if trust is None:
+        trust_id = await _trusted_device_id(request, session, user_id)
+        if trust_id is None:
             return RedirectResponse(
                 _oauth_frontend_url(
                     settings.frontend_2fa_verify_path,
@@ -331,7 +328,7 @@ async def _oauth_login_redirect(
         user_id=user_id,
         handle=user_obj.username,
         login_method=f"oauth:{provider_id}",
-        trust_device_id=trust.id if trust else None,
+        trust_device_id=trust_id,
     )
     return redirect
 
@@ -535,16 +532,15 @@ async def get_oauth_state(
     suggested_username, suggested_nickname = await _suggest_oauth_identity(
         auth_service, user_info
     )
-    return {
-        "code": 200,
-        "message": "Get OAuth state successfully.",
-        "data": {
+    return ok(
+        {
             "providerId": provider_id,
             "userInfo": user_info,
             "suggestedUsername": suggested_username,
             "suggestedNickname": suggested_nickname,
         },
-    }
+        "Get OAuth state successfully.",
+    )
 
 
 @router.post(
@@ -556,7 +552,7 @@ async def send_oauth_email_code(
 ) -> dict:
     _decode_oauth_state_token(payload.state_token)
     await _send_email_code(request, _own_email(payload.email))
-    return {"code": 200, "message": "Verification code sent."}
+    return ok(None, "Verification code sent.")
 
 
 @router.post(
@@ -578,24 +574,20 @@ async def verify_oauth_email(
 
     owner = await auth_service.get_user_by_email(email)
     if owner is None:
-        return {
-            "code": 200,
-            "message": "Email verified.",
-            "data": {
+        return ok(
+            {
                 "stateToken": _reissue_oauth_state_token(
                     payload.state_token, verifiedEmail=email
                 )
             },
-        }
+            "Email verified.",
+        )
     if not await _redeem_oauth_state_token(jti):
         raise AuthenticationRequiredError("Invalid or expired OAuth state token")
-    return {
-        "code": 200,
-        "message": "Email belongs to an existing account.",
-        "data": {
-            "ownership": await _start_oauth_ownership(provider_id, user_info, owner)
-        },
-    }
+    return ok(
+        {"ownership": await _start_oauth_ownership(provider_id, user_info, owner)},
+        "Email belongs to an existing account.",
+    )
 
 
 async def _complete_oauth_binding(

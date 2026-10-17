@@ -1,6 +1,6 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">
+    <div class="n-title">
       <i18n-t scope="global" keypath="notifications.DEVICE_IN_USE.title" tag="span">
         <template #agent>
           <UserRef :handle="text('agentHandle')" :name="agentName" :project-id="text('projectId') || null" />
@@ -8,7 +8,7 @@
         <template #device>{{ text('deviceName') }}</template>
       </i18n-t>
     </div>
-    <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
+    <div class="n-sub">{{ body }}</div>
   </div>
 </template>
 
@@ -62,10 +62,3 @@ defineExpose({
   content,
 })
 </script>
-
-<style scoped>
-.notification-content {
-  display: flex;
-  flex-direction: column;
-}
-</style>

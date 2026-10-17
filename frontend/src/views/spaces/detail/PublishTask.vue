@@ -27,10 +27,11 @@ import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimi
 import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
-import { setTaskExternalProblem } from '@/api/externalProblem'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
+import { mentorOptions } from '@/lib/taskMentors'
 import { isTeachingBlank } from '@/lib/teaching'
+import { myAccount, myHandle } from '@/me'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
 
@@ -198,6 +199,13 @@ const teachingPayload = computed(() =>
 
 const publishing = ref(false)
 
+// 能当导师的人：出题人自己和空间管理员（#3830）；新发的题默认是出题人自己。
+const mentorChoices = computed(() => {
+  const handle = myHandle()
+  const me = handle ? { handle, name: myAccount()?.nickname || handle } : null
+  return mentorOptions(spaceStore.currentSpace?.admins, me)
+})
+
 async function publish(form: TaskFormSubmitData) {
   const id = currentSpaceId.value
   if (!id || publishing.value) return
@@ -207,12 +215,8 @@ async function publish(form: TaskFormSubmitData) {
     return
   }
 
-  // 题号单独挑出来：它不在题目那一份正文里，发出去之后要单独写一次
-  // （见 `api/externalProblem.ts` 开头）。
-  const { externalProblemNo: problemNo, ...taskFields } = form
-
   const options = {
-    ...taskFields,
+    ...form,
     submissionSchema: TASK_SUBMISSION_SCHEMA,
     space: id,
     attachmentIds: uploads.ids.value.length ? uploads.ids.value : undefined,
@@ -231,17 +235,8 @@ async function publish(form: TaskFormSubmitData) {
       toast.success(t('spaces.detail.publishTask.publishedMany', { n: data.count || data.tasks.length }))
     } else {
       const {
-        task: { id: createdId, approved },
+        task: { approved },
       } = await TaskBoardApi.create(options)
-      // 题号那一次写放在题目存住之后（`POST /tasks` 不认它）。没填就不写；
-      // 这一次没成功也不拦着后面的跳转 —— 题目已经发出去了，题号可以回题目页再挂。
-      if (problemNo) {
-        try {
-          await setTaskExternalProblem(createdId, problemNo)
-        } catch {
-          toast.error(t('spaces.detail.publishTask.externalProblemFailed'))
-        }
-      }
       toast.success(
         approved
           ? t('spaces.detail.publishTask.createSuccess')
@@ -280,6 +275,8 @@ async function publish(form: TaskFormSubmitData) {
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
     :publishing="publishing"
+    :mentor-options="mentorChoices"
+    :default-mentor="myHandle() || undefined"
     @cancel="router.push(listTo)"
     @use-template="useTemplate"
     @import="importFile"

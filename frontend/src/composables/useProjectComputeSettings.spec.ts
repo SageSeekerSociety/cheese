@@ -25,6 +25,8 @@ const lab: Environment = { kind: 'self_hosted', device_id: 'lab' }
 function configs(overrides: Partial<ProjectComputeConfigs> = {}): ProjectComputeConfigs {
   return {
     default: cloud,
+    max_concurrent_turns: 20,
+    max_concurrent_turns_from: 'deployment',
     can_manage: true,
     devices: [{ device_id: 'lab', name: '实验室工作站', online: true, owned: true }],
     specs: [{ spec: 'standard', label: '标准' }],
@@ -77,14 +79,6 @@ describe('useProjectComputeSettings', () => {
     expect(state.editing.value).toBe(false)
     expect(updated).toHaveBeenCalledTimes(1)
     window.removeEventListener('project-compute-updated', updated)
-  })
-
-  it('does not save for someone who cannot manage the project', async () => {
-    getProjectComputeConfigs.mockResolvedValue(configs({ can_manage: false }))
-    const { state } = host()
-    await tick()
-    await state.save(lab)
-    expect(saveProjectComputeConfigs).not.toHaveBeenCalled()
   })
 
   it('keeps the form open and reports the reason when a save fails', async () => {

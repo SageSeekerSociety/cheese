@@ -9,7 +9,8 @@
 //
 // The same connection carries what the backend says about the document that is
 // not its text (stateless messages from the service): a stored version moved on
-// (`stores` counts them), its comments changed, an agent is answering a thread
+// (`stores` counts them), a store of mine @-mentioned someone who cannot open it
+// (`mentionedOutside`), its comments changed, an agent is answering a thread
 // (both passed on through lib/docCommentSignals), one of its canvases changed
 // (lib/docCanvasSignals).
 //
@@ -23,6 +24,7 @@
 // it needs a refresh.
 
 import type { DocTicket } from '../api/docCollab'
+import type { MentionedOutside } from '../api/messages'
 
 import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider'
@@ -35,7 +37,7 @@ import { collabWsUrl, getDocTicket } from '../api/docCollab'
 import { announceCanvas } from '../lib/docCanvasSignals'
 import { announceComments } from '../lib/docCommentSignals'
 import { DOC_SCHEMA_MISMATCH } from '../lib/docSchema/version'
-import { myAccount } from '../me'
+import { myAccount, myHandle } from '../me'
 
 import { ensureDefaultAvatarId, isChosenAvatar } from './useChosenAvatar'
 
@@ -87,6 +89,8 @@ interface Heard {
   renamed: () => void
   /** 被删了：之后打的字不会存下来。 */
   deleted: () => void
+  /** 我存回的这一版 @ 了打不开这份文档的人（后端 `api.doc_mentions`，只对我说）。 */
+  mentionedOutside: (outside: MentionedOutside) => void
 }
 
 function heard(document: string, payload: string, on: Heard) {
@@ -102,6 +106,13 @@ function heard(document: string, payload: string, on: Heard) {
   else if (frame.type === 'state' && frame.resource === 'comments') announceComments(document, { kind: 'changed' })
   else if (frame.type === 'state' && frame.resource === 'canvas' && typeof frame.canvas === 'string')
     announceCanvas(frame.canvas)
+  else if (frame.type === 'mention_outside' && frame.to === myHandle() && Array.isArray(frame.handles))
+    on.mentionedOutside({
+      room_id: String(frame.room_id),
+      handles: frame.handles.map(String),
+      may_add: !!frame.may_add,
+      members_only: !!frame.members_only,
+    })
   else if (frame.type === 'comment_activity' && typeof frame.thread === 'string') {
     const state = frame.state === 'working' ? 'working' : 'queued'
     const tool = typeof frame.tool === 'string' ? frame.tool : undefined
@@ -130,6 +141,8 @@ export function useDocCollab(document: () => string | null) {
   const renames = ref(0)
   /** Somebody deleted it while it was open: nothing typed here is kept any more. */
   const deleted = ref(false)
+  /** The last store of mine that @-mentioned people who cannot open the document. */
+  const mentionedOutside = shallowRef<MentionedOutside | null>(null)
   let close: (() => void) | null = null
   let generation = 0
 
@@ -182,6 +195,7 @@ export function useDocCollab(document: () => string | null) {
       if (mine !== generation) return
       heard(id, payload, {
         stored: () => stores.value++,
+        mentionedOutside: (outside) => (mentionedOutside.value = outside),
         renamed: () => renames.value++,
         deleted: () => {
           generation++
@@ -242,5 +256,5 @@ export function useDocCollab(document: () => string | null) {
     teardown()
   })
 
-  return { session, connection, synced, readOnly, peers, error, outdated, stores, renames, deleted }
+  return { session, connection, synced, readOnly, peers, error, outdated, stores, renames, deleted, mentionedOutside }
 }

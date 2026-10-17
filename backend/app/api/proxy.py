@@ -14,11 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.websockets import WebSocket
 
+from app.auth.caller import handle_named_by
 from app.auth.project_access import may_read_project
 from app.common.auth import verify_access_token
 from app.core.config import GATEWAY_MOUNT
 from app.domain.topic.services import TopicService
-from app.domain.user.repositories import UserRepository
 
 # How long the path-scoped sub-request cookie stays valid. Short: it only has to
 # outlive one open drawer, and it is re-issued on every page load.
@@ -55,18 +55,6 @@ def credential(conn: Request | WebSocket, cookie_name: str) -> str | None:
     return conn.query_params.get("token") or conn.cookies.get(cookie_name) or None
 
 
-async def _resolve_handle(session: AsyncSession, token: str) -> str | None:
-    """Handle behind an access token, or None. 2.0 membership is keyed by
-    handle; a token that names none is resolved through its user id."""
-    claims = verify_access_token(token)
-    if claims is None:
-        return None
-    if claims.handle.isdigit():
-        user = await UserRepository(session).get_by_id(int(claims.handle))
-        return getattr(user, "handle", None)
-    return claims.handle
-
-
 async def may_view_topic(
     session: AsyncSession,
     topic_id: uuid.UUID,
@@ -79,13 +67,20 @@ async def may_view_topic(
     shows whatever the agent is doing, so anyone who learns an id would otherwise
     get a read of the project's contents. Gate is the same as the device
     viewer's: a logged-in member or owner of the topic's project.
+
+    2.0 membership is keyed by handle, and the token is turned into one by
+    ``app.auth.caller.handle_named_by`` — the same answer the workspace routes
+    read — rather than by reading the claims a second time here. Two readings
+    of one token had already drifted apart: both took an all-digit NAME for a
+    user id, and neither could find the ``User.handle`` column to answer with.
     """
     token = credential(conn, cookie_name)
     if not token:
         return False
-    handle = await _resolve_handle(session, token)
-    if not handle:
+    claims = verify_access_token(token)
+    if claims is None:
         return False
+    handle = await handle_named_by(session, claims)
     topic = await TopicService(session).get_or_404(topic_id)
     project_id = topic.project_id
     if project_id is None:

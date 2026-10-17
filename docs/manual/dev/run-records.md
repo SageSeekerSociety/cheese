@@ -22,7 +22,7 @@ covers:
 
 ## 记什么、不记什么 {#kinds}
 
-对话里只留人要知道或者要动手的事；平台自己的运行过程记成运行记录。`platform_notices.RUN_RECORD_EVENTS` 是那张清单，`post_system_event` 遇到清单里的类别就改记，调用点不用自己判断：
+对话里只留人要知道或者要动手的事；平台自己的运行过程记成运行记录。`notice_meta.RUN_RECORD_EVENTS` 是那张清单，`post_system_event` 遇到清单里的类别就改记，调用点不用自己判断：
 
 | 类别 | `kind` | 在哪出现 |
 |---|---|---|

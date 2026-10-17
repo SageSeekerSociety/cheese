@@ -17,6 +17,7 @@ const listAwaitingMe = vi.fn()
 const resolveAlert = vi.fn()
 const markRead = vi.fn()
 const markAllAlertsRead = vi.fn()
+const respondToInvitation = vi.fn()
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
@@ -25,12 +26,26 @@ vi.mock('@/api', async () => {
     resolveAlert: (...a: unknown[]) => resolveAlert(...a),
     markRead: (...a: unknown[]) => markRead(...a),
     markAllAlertsRead: (...a: unknown[]) => markAllAlertsRead(...a),
+    respondToInvitation: (...a: unknown[]) => respondToInvitation(...a),
   }
 })
+
+const teams = vi.hoisted(() => ({
+  acceptInvitation: vi.fn(),
+  declineInvitation: vi.fn(),
+  approveJoinRequest: vi.fn(),
+  rejectJoinRequest: vi.fn(),
+}))
+vi.mock('@/api/teams', () => ({ TeamsApi: teams }))
 
 const refreshProjects = vi.fn()
 const store = { projectsSettled: true, projects: [] as { id: string }[], refreshProjects }
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
+
+const spaceJoin = vi.fn()
+vi.mock('@/api/spaces', () => ({
+  SpacesApi: { join: (...a: unknown[]) => spaceJoin(...a), list: async () => ({ spaces: [] }) },
+}))
 
 const showNewProject = vi.fn()
 vi.mock('@/composables/useNewProjectDialog', () => ({
@@ -56,6 +71,16 @@ beforeAll(() => {
       disconnect() {}
     }
   }
+  // 加入空间那个弹窗是 Vuetify 的浮层：它要量视口，happy-dom 里没有。
+  vi.stubGlobal('visualViewport', {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    scale: 1,
+    addEventListener() {},
+    removeEventListener() {},
+  })
 })
 
 beforeEach(async () => {
@@ -64,12 +89,16 @@ beforeEach(async () => {
   store.projects = []
   listAwaitingMe.mockReset().mockResolvedValue({ data: [], total: 0 })
   refreshProjects.mockReset().mockResolvedValue(undefined)
+  respondToInvitation.mockReset().mockResolvedValue({})
+  for (const call of Object.values(teams)) call.mockReset().mockResolvedValue(undefined)
   showNewProject.mockReset()
+  spaceJoin.mockReset()
   router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'home', component: { template: '<div />' } },
       { path: '/teams', name: 'HomeTeamsExplore', component: { template: '<div />' } },
+      { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: { template: '<div />' } },
       { path: '/p/:projectId/t/:topicId', name: 'workspace-topic', component: { template: '<div />' } },
       { path: '/p/:projectId/t/:topicId/tasks/:taskId', name: 'workspace-task', component: { template: '<div />' } },
       { path: '/p/:projectId/overview', name: 'workspace-overview', component: { template: '<div />' } },
@@ -106,6 +135,19 @@ describe('待办页零项目时的第一屏', () => {
     await utils.findByText(t('work.startPaths.project.title', termParams(DEFAULT_SHELL)))
     await utils.getByRole('button', { name: t('navigation.newProject', termParams(DEFAULT_SHELL)) }).click()
     expect(showNewProject).toHaveBeenCalled()
+  })
+
+  // 这一页上的「用邀请码加入」和首页目录里那一行是同一件事（同一个 `useJoinSpace`）：
+  // 加进去了就直接进那个空间，留在原地等于什么都没发生。
+  it('用邀请码加入：加进去了就进那个空间', async () => {
+    spaceJoin.mockResolvedValue({ space: { id: 9 } })
+    await render(View, { global: { plugins: [vuetify, router], stubs: { NotificationFeed: true } } })
+    await fireEvent.click(await screen.findByRole('button', { name: t('work.startPaths.invite.action') }))
+    await fireEvent.update(await screen.findByLabelText(t('work.joinLabel')), 'abc123')
+    await fireEvent.click(screen.getByRole('button', { name: t('work.joinSubmit') }))
+
+    await waitFor(() => expect(spaceJoin).toHaveBeenCalledWith({ code: 'abc123' }))
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/spaces/9/tasks'))
   })
 
   it('手上有项目的人看到的还是平常那一页，不摆起步路', async () => {
@@ -148,6 +190,7 @@ describe('待办页读不到待处理事项时', () => {
 /** 待办上的一件事：点下去去哪，要你拍板的就地拍板。 */
 describe('待办上的一件事', () => {
   const item = (over: Record<string, unknown>) => ({
+    kind: 'work',
     projectId: 'p1',
     projectName: '课程项目',
     topicId: 'c1',
@@ -259,6 +302,7 @@ describe('待办上的一件事', () => {
 /** 没带选项的决策请求：库里还留着以前写进来的。它得能就地答复掉，不然永远挂在清单和角标上。 */
 describe('没带选项的决策请求', () => {
   const decision = {
+    kind: 'work',
     projectId: 'p1',
     projectName: '课程项目',
     topicId: 'c1',
@@ -293,5 +337,95 @@ describe('没带选项的决策请求', () => {
     await mount()
     await fireEvent.click(await screen.findByRole('button', { name: t('home.inbox.answer') }))
     expect(resolveAlert).not.toHaveBeenCalled()
+  })
+})
+
+/** 等你回答的邀请和加入申请：在「等你处理」里，就地回答，答完离开清单。 */
+describe('等你回答的邀请和申请', () => {
+  const person = { name: '王晨曦', handle: 'wangcx', avatarUrl: null }
+  const ask = (over: Record<string, unknown>) => ({
+    kind: 'project_invite',
+    id: 'inv-1',
+    placeId: 'p9',
+    place: { name: '课程设计', handle: null, avatarUrl: null },
+    person,
+    role: null,
+    message: '',
+    at: '2026-10-07T10:00:00Z',
+    ...over,
+  })
+
+  it('接受项目邀请：答复交上去，这一行离开清单，左边那一列重读项目', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({ data: [ask({})], total: 1 })
+    await mount()
+    await screen.findByText('课程设计')
+
+    await fireEvent.click(screen.getByRole('button', { name: t('home.inbox.invite.accept') }))
+
+    expect(respondToInvitation).toHaveBeenCalledWith('inv-1', true)
+    await waitFor(() => expect(screen.queryByText('课程设计')).toBeNull())
+    expect(refreshProjects).toHaveBeenCalled()
+  })
+
+  it('拒绝团队邀请：交的是拒绝，这一行离开清单', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({
+      data: [
+        ask({
+          kind: 'team_invite',
+          id: '42',
+          placeId: '7',
+          place: { name: '知是', handle: 'zhishi', avatarUrl: null },
+        }),
+      ],
+      total: 1,
+    })
+    await mount()
+    await screen.findByText('知是')
+
+    await fireEvent.click(screen.getByRole('button', { name: t('home.inbox.invite.decline') }))
+
+    expect(teams.declineInvitation).toHaveBeenCalledWith(42)
+    expect(teams.acceptInvitation).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByText('知是')).toBeNull())
+  })
+
+  it('同意加入申请：按申请的那个团队交上去', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({
+      data: [
+        ask({
+          kind: 'join_request',
+          id: '55',
+          placeId: '7',
+          place: { name: '知是', handle: 'zhishi', avatarUrl: null },
+          message: '想参与前端',
+        }),
+      ],
+      total: 1,
+    })
+    await mount()
+    expect(await screen.findByText('想参与前端')).toBeTruthy()
+
+    await fireEvent.click(screen.getByRole('button', { name: t('home.inbox.invite.approve') }))
+
+    expect(teams.approveJoinRequest).toHaveBeenCalledWith(7, 55)
+    await waitFor(() => expect(screen.queryByText('想参与前端')).toBeNull())
+  })
+
+  it('交不上去时这一行留着', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({ data: [ask({})], total: 1 })
+    respondToInvitation.mockRejectedValue(new Error('网络错误'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await mount()
+    await screen.findByText('课程设计')
+
+    await fireEvent.click(screen.getByRole('button', { name: t('home.inbox.invite.accept') }))
+
+    await waitFor(() => expect(respondToInvitation).toHaveBeenCalled())
+    expect(screen.getByText('课程设计')).toBeTruthy()
+    expect(refreshProjects).not.toHaveBeenCalled()
   })
 })

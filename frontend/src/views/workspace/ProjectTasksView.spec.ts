@@ -82,9 +82,9 @@ const titles = (view: ReturnType<typeof mount>) =>
 it('下一步在人手上的那一组排在最前面', () => {
   const building = task({ title: '在做的' })
   const waiting = task({ title: '等人的', presentation: { column: 'needs_you', phrase: 'awaiting_review' } })
-  const fresh = task({ title: '没开始的', presentation: { column: 'not_started', phrase: 'discussing' } })
-  const view = mount([building, fresh, waiting])
-  expect(titles(view)).toEqual(['等人的', '在做的', '没开始的'])
+  const checking = task({ title: '在检查的', presentation: { column: 'delivering', phrase: 'awaiting_checks' } })
+  const view = mount([building, checking, waiting])
+  expect(titles(view)).toEqual(['等人的', '在检查的', '在做的'])
 })
 
 it('等你的那一件写成「待你…」，等别人的照通用的说法', () => {
@@ -92,12 +92,12 @@ it('等你的那一件写成「待你…」，等别人的照通用的说法', (
     title: '我的',
     owner_handle: 'alice',
     awaits_me: true,
-    presentation: { column: 'not_started', phrase: 'discussing' },
+    presentation: { column: 'needs_you', phrase: 'awaiting_review' },
   })
-  const theirs = task({ title: '别人的', presentation: { column: 'not_started', phrase: 'discussing' } })
+  const theirs = task({ title: '别人的', presentation: { column: 'needs_you', phrase: 'awaiting_review' } })
   const view = mount([mine, theirs])
-  expect(view.getByText(t('work.board.mine.discussing'))).toBeTruthy()
-  expect(view.getByText(t('work.board.phrase.discussing'))).toBeTruthy()
+  expect(view.getByText(t('work.board.mine.awaiting_review'))).toBeTruthy()
+  expect(view.getByText(t('work.board.phrase.awaiting_review'))).toBeTruthy()
 })
 
 it('十四天没动静的收进「已停滞」，点开才列出来', async () => {

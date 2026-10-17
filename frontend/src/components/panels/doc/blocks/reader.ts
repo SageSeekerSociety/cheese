@@ -18,6 +18,7 @@ import { readMarkdown, schema } from '../../../../lib/docRead'
 import { lowlight } from '../../../../lib/docSchema'
 import { refChip, refTokens } from '../../../../lib/refChip'
 
+import { appBlock } from './appView'
 import { chartCanvas, chartToggle, kindLabel, tableRows } from './chartView'
 import { diagramFigure } from './mermaidView'
 import { controlButton, popoverAt } from './popover'
@@ -231,6 +232,15 @@ function serializer(doc: PMNode, later: Later, opts: ReadOptions): DOMSerializer
         return destroy
       })
       return { dom, contentDOM: data }
+    },
+    app(node) {
+      const block = appBlock({
+        app: node.attrs.app as string,
+        version: node.attrs.version as number,
+        title: node.attrs.title as string,
+      })
+      later(block.dom, block.start)
+      return { dom: block.dom, contentDOM: block.text }
     },
     codeBlock(node) {
       if (node.attrs.language !== 'mermaid') return opts.copyCode ? withCopy(codeShape(node)) : codeShape(node)

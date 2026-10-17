@@ -3,10 +3,11 @@
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_type.library import preset_types
-from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
     add_external_member,
+    approve_overseas,
     post_project,
+    project_service,
     put_on_plan,
     registered,
     session_auth_headers,
@@ -16,7 +17,7 @@ from tests.integration.conftest import (
 def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
     async def run():
         await registered(db_session, "owner")
-        project = await ProjectService(db_session).create(
+        project = await project_service(db_session).create(
             owner_handle="owner", name="Agents", forge_kind="github_app"
         )
         service = AgentInstanceService(db_session)
@@ -67,6 +68,7 @@ def test_a_saved_agent_can_override_model_but_not_harness(client):
     async def reserve() -> None:
         async with client.test_request_factory() as session:
             await put_on_plan(session, project["team_id"], "reserve")
+            await approve_overseas(session, project["team_id"])
             await session.commit()
 
     client.portal.call(reserve)
@@ -151,9 +153,10 @@ def test_a_teammate_saves_how_hard_it_thinks_and_when_it_compacts(client):
         assert answer.status_code == 400, answer.text
 
 
-def test_only_a_manager_changes_a_teammates_advanced_settings(client):
-    """The highest effort, compaction and skills are a manager's, as the project
-    main model is; anything else on a teammate is any member's to change."""
+def test_a_member_changes_a_teammates_costly_settings_and_the_project_is_told(client):
+    """The highest effort, compaction and skills change what every turn of a
+    teammate costs or can do. Any member may change them; the project's 综合
+    says who changed which, from what to what."""
     project = post_project(client, json={"name": "Advanced"}, owner="alice").json()[
         "data"
     ]
@@ -165,45 +168,42 @@ def test_only_a_manager_changes_a_teammates_advanced_settings(client):
     ]
     url = f"/projects/{pid}/agents/{default['id']}"
 
-    for advanced in (
-        {"effort": "max"},
-        {"compact_percent": 60},
-        {"skills": ["documents"]},
-    ):
-        refused = client.put(url, json={"configuration": advanced}, headers=bob)
-        assert refused.status_code == 403, (advanced, refused.text)
-
-    for advanced in ({"skills": ["documents"]}, {"compact_percent": 60}):
-        made = client.post(
-            f"/projects/{pid}/agents",
-            json={"display_name": "x", "configuration": advanced},
-            headers=bob,
-        )
-        assert made.status_code == 403, (advanced, made.text)
-    preset = client.post(
+    saved = client.put(
+        url,
+        json={"configuration": {"compact_percent": 60, "skills": ["documents"]}},
+        headers=bob,
+    )
+    assert saved.status_code == 200, saved.text
+    # A save that leaves them as they were says nothing more.
+    renamed = client.put(
+        url,
+        json={
+            "configuration": {
+                "body": "Review",
+                "compact_percent": 60,
+                "skills": ["documents"],
+            }
+        },
+        headers=bob,
+    )
+    assert renamed.status_code == 200, renamed.text
+    made = client.post(
         f"/projects/{pid}/agents",
-        json={"display_name": "y", "type_name": "fullstack-engineer"},
+        json={"display_name": "x", "configuration": {"effort": "max"}},
         headers=bob,
     )
-    assert preset.status_code == 200, preset.text
+    assert made.status_code == 200, made.text
 
-    basic = client.put(
-        url,
-        json={"configuration": {"body": "Review", "effort": "high"}},
-        headers=bob,
-    )
-    assert basic.status_code == 200, basic.text
-
-    owner = client.put(
-        url,
-        json={"configuration": {"body": "Review", "compact_percent": 60}},
+    blocks = client.get(
+        f"/topics/{project['root_topic_id']}/blocks",
         headers=session_auth_headers("alice"),
-    )
-    assert owner.status_code == 200, owner.text
-    # Saving it back as it is, with the role rewritten, is still bob's to do.
-    kept = client.put(
-        url,
-        json={"configuration": {"body": "Review again", "compact_percent": 60}},
-        headers=bob,
-    )
-    assert kept.status_code == 200, kept.text
+    ).json()["data"]["data"]
+    told = [
+        (b["author"], b["meta"]["agent"], b["meta"]["setting"], b["meta"]["to"])
+        for b in blocks
+        if (b.get("meta") or {}).get("event_type") == "setting_changed"
+    ]
+    assert told == [
+        ("bob", default["seat_handle"], "compact_percent", 60),
+        ("bob", default["seat_handle"], "skills", ["documents"]),
+    ]

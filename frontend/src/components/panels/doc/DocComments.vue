@@ -4,6 +4,8 @@
 //
 // 评论串从上面递进来（useDocThreads），写也交给上面；这一层只管草稿、筛选、在看哪一串。
 import type { SendDocComment } from '../../../composables/useDocCommentDraft'
+import type { useMentionOutside } from '../../../composables/useMentionOutside'
+import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
 
@@ -11,7 +13,10 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { scrollBehavior } from '@/utils/motion'
 
+import { useCommentMentions } from '../../../composables/useCommentMentions'
 import { useDocCommentDraft } from '../../../composables/useDocCommentDraft'
+import MentionOutsidePrompt from '../../chat/MentionOutsidePrompt.vue'
+import MentionMenu from '../../room/MentionMenu.vue'
 
 import DocThreadCard from './DocThreadCard.vue'
 
@@ -29,6 +34,10 @@ const props = defineProps<{
   placeOf: (id: string) => ThreadPlace
   agentName: string
   mentionNames: Record<string, string>
+  /** 评论里能 @ 的人：项目里的人和文档的 AI 队友。 */
+  mentionPeople?: MentionPoolEntry[]
+  /** 我刚写的评论 @ 了打不开这份文档的人：问一句要不要把他们加进频道。 */
+  outside?: ReturnType<typeof useMentionOutside>
   nameOf: (handle: string) => string
   /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
   avatarOf?: (handle: string) => string
@@ -69,6 +78,10 @@ const threads = computed(() => props.threadState.threads.filter((thread) => thre
 
 const root = ref<HTMLElement | null>(null)
 const input = ref<HTMLTextAreaElement | null>(null)
+const mentions = useCommentMentions({ text, people: () => props.mentionPeople ?? [], input })
+const { menu: mentionMenu, at: mentionAt, matches: mentionMatches, activeIndex: mentionActive } = mentions
+const mentionVisible = mentions.menuVisible
+const outsidePrompt = computed(() => props.outside?.prompt.value ?? null)
 let disposed = false
 onBeforeUnmount(() => {
   disposed = true
@@ -94,6 +107,7 @@ function open(spot: CommentSpot, prefill?: string) {
   })
 }
 function onKey(e: KeyboardEvent) {
+  if (mentions.onKey(e)) return
   if (e.isComposing || e.keyCode === 229) return
   if (e.key === 'Escape') {
     // 收起来，草稿留着。
@@ -164,6 +178,17 @@ defineExpose({ open, locate })
 
 <template>
   <div ref="root" class="doc-comments">
+    <MentionOutsidePrompt
+      v-if="outside && outsidePrompt"
+      class="doc-comments__outside"
+      :names="outside.names(outsidePrompt.handles)"
+      :members-only="outsidePrompt.members_only"
+      :may-add="outsidePrompt.may_add"
+      :adding="outside.adding.value"
+      in-document
+      @add="outside.add"
+      @dismiss="outside.dismiss"
+    />
     <div v-if="draft" class="doc-comments__draft">
       <div v-if="draft.quote" class="doc-comments__quote" dir="auto">{{ draft.quote }}</div>
       <textarea
@@ -176,6 +201,17 @@ defineExpose({ open, locate })
         :placeholder="t('work.room.comments.placeholder')"
         :title="t('work.room.comments.keyHint')"
         @keydown="onKey"
+      />
+      <MentionMenu
+        ref="mentionMenu"
+        :open="mentionVisible"
+        :matches="mentionMatches"
+        :active-index="mentionActive"
+        level="root"
+        enter-sends
+        :at="mentionAt"
+        @pick="mentions.pick"
+        @hover="mentions.hover"
       />
       <p v-if="errorMsg" class="doc-comments__error" role="alert">{{ errorMsg }}</p>
       <div class="doc-comments__draft-actions">
@@ -210,6 +246,7 @@ defineExpose({ open, locate })
         :error="threadState.errors[thread.comment.id]"
         :agent-name="agentName"
         :mention-names="mentionNames"
+        :mention-people="mentionPeople"
         :name-of="nameOf"
         :avatar-of="avatarOf"
         :writable="writable"
@@ -245,7 +282,11 @@ defineExpose({ open, locate })
   flex-direction: column;
   gap: 12px;
 }
+.doc-comments__outside {
+  margin: 0;
+}
 .doc-comments__draft {
+  position: relative;
   padding: 12px;
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);

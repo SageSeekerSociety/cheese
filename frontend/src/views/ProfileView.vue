@@ -10,31 +10,17 @@
 // 自己的主页多两样：「编辑资料」（去设置里的个人资料），和「芝士眼中的你」——各个
 // 项目里的芝士记下的关于你的事，只有你看得到，可以一条条删掉。
 //
-// 活动图上点一格，下面的话题列表就只看那一周；再点一次同一周，或者点「回到最近」，
-// 回到最近参与的那几个。
-import type {
-  MemberSummary,
-  ProfileProject,
-  ProfileProjectRole,
-  ProfileTopic,
-  ProfileUnderstanding,
-  UserProfile,
-} from '@/cx_types'
-import type { ActivityWeek } from '@/lib/activityYear'
+// 取数、那一周的话题、删一条笔记，分别在同目录 `profile/` 下的三个 composable 里；
+// 这一页自己的样式在 `profile/profile.css`。
+import type { ProfileProject, ProfileProjectRole } from '@/cx_types'
 
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
-import { useQuery } from '@tanstack/vue-query'
 
-import { getAvatarUrl } from '@/utils/materials'
+import { useProfileNotes } from './profile/useProfileNotes'
+import { useProfilePage } from './profile/useProfilePage'
+import { useProfileTopics } from './profile/useProfileTopics'
 
-import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
-import { usePageActive } from '@/composables/usePageActive'
-import { usePageTitle } from '@/composables/usePageTitle'
-import { holdRevealUntil } from '@/composables/useRevealGate'
-
-import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -42,94 +28,37 @@ import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import ActivityHeatmap from '@/components/profile/ActivityHeatmap.vue'
-import i18n, { t } from '@/i18n'
+import { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
-import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
+import { activityWeeks, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
-import { patchQuery, queryClient } from '@/query/client'
 
 defineOptions({ name: 'ProfileView' })
 
 const props = defineProps<{ handle: string; projectId?: string }>()
 
-/** 「最近参与的话题」列几个；选中一周时列那一周的全部（接口上限 50）。 */
-const RECENT_TOPICS = 8
-const WEEK_TOPICS = 50
-
 const { mdAndUp } = useDisplay()
 const compact = computed(() => !mdAndUp.value)
 const isSelf = computed(() => myHandle() === props.handle)
 
-ensureDefaultAvatarId()
-
-interface Page {
-  profile: UserProfile
-  member: MemberSummary | null
-  /** 最近参与的话题；这一段单独失败时是 null，页面其余部分照常。 */
-  recent: ProfileTopic[] | null
-}
-
-// 回到看过的主页先照着上一次的画，背后重取（query/client）。
-const pageKey = computed(() => ['user', props.handle, 'profile', props.projectId ?? null] as const)
-// 保活着离开时停下，回来时过期了的再读（usePageActive）。
-const pageActive = usePageActive()
-const page = useQuery(
-  computed(() => ({
-    enabled: pageActive.value,
-    queryKey: pageKey.value,
-    queryFn: async (): Promise<Page> => {
-      const [profile, member, recent] = await Promise.all([
-        getUserProfile(props.handle),
-        props.projectId ? getMemberSummary(props.projectId, props.handle).catch(() => null) : Promise.resolve(null),
-        getUserTopics(props.handle, { limit: RECENT_TOPICS })
-          .then((r) => r.topics)
-          .catch(() => null),
-      ])
-      return { profile, member, recent }
-    },
-  })),
-  queryClient
-)
-holdRevealUntil(() => !page.isPending.value)
-const data = page.data
-// 只在没有任何内容可画时转圈、报错；有内容时背后那次没取到就照常显示。
-const loading = page.isPending
-const error = computed(() => (page.data.value ? null : page.error.value))
-function refresh() {
-  void page.refetch()
-}
-
-const profile = computed(() => data.value?.profile ?? null)
-const member = computed(() => data.value?.member ?? null)
-// 平台上没有这个 handle 的账号：后端照样回一份空的主页，加入时间是空的。
-const missing = computed(() => profile.value !== null && profile.value.joined_at === null)
-const displayName = computed(() => profile.value?.name || props.handle)
-
-const avatarUrl = computed(() => {
-  const id = profile.value?.avatar_id
-  return isChosenAvatar(id) ? getAvatarUrl(id!) : ''
-})
-
-const locale = computed(() => i18n.global.locale.value)
-const joined = computed(() => {
-  const at = profile.value?.joined_at
-  if (!at) return ''
-  const date = new Intl.DateTimeFormat(locale.value, { year: 'numeric', month: 'long' }).format(new Date(at))
-  return t('users.profile.joined', { date })
-})
-
-// 顶栏（手机）和标签页标题写这个人的名字，而不是路由上那个泛泛的「成员」。
-const { setDynamicTitle } = usePageTitle()
-watch(
-  () => (profile.value ? displayName.value : ''),
-  (name) => {
-    if (name) setDynamicTitle(name, props.projectId ? 'member' : 'UserPage')
-  },
-  { immediate: true }
+const { data, pageKey, loading, error, refresh, profile, member, missing, displayName, avatarUrl, locale, joined } =
+  useProfilePage(
+    () => props.handle,
+    () => props.projectId
+  )
+const { selectedWeek, weekPending, pickWeek, clearWeek, topicsTitle, topics, topicsFailed, topicsEmpty } =
+  useProfileTopics(
+    () => props.handle,
+    () => data.value?.recent,
+    () => locale.value
+  )
+const { forget } = useProfileNotes(
+  () => pageKey.value,
+  () => data.value
 )
 
 // ---- 活动 ----
@@ -160,85 +89,8 @@ function bars(weekly: number[]): number[] {
   return weekly.map((n) => (n === 0 ? 2 : Math.max(4, Math.round((n / most) * 24))))
 }
 
-// ---- 话题：最近，或者选中的那一周 ----
-const selectedWeek = ref<ActivityWeek | null>(null)
-const weekTopics = ref<ProfileTopic[] | null>(null)
-const weekPending = ref(false)
-const weekFailed = ref(false)
-let weekRequest = 0
-
-function clearWeek() {
-  weekRequest += 1
-  selectedWeek.value = null
-  weekTopics.value = null
-  weekPending.value = false
-  weekFailed.value = false
-}
-
-async function pickWeek(week: ActivityWeek) {
-  if (selectedWeek.value?.from === week.from) {
-    clearWeek()
-    return
-  }
-  const seq = ++weekRequest
-  selectedWeek.value = week
-  weekPending.value = true
-  weekFailed.value = false
-  try {
-    const { topics } = await getUserTopics(props.handle, { from: week.from, to: week.to, limit: WEEK_TOPICS })
-    if (seq !== weekRequest) return
-    weekTopics.value = topics
-  } catch {
-    if (seq !== weekRequest) return
-    weekTopics.value = null
-    weekFailed.value = true
-  } finally {
-    if (seq === weekRequest) weekPending.value = false
-  }
-}
-
-// 换了一个人，上一个人选中的那一周不跟过来。
-watch(() => props.handle, clearWeek)
-
-const topicsTitle = computed(() => {
-  const week = selectedWeek.value
-  if (!week) return t('users.profile.topics.recent')
-  const day = (d: string) => formatUtcDay(d, locale.value, { month: 'long', day: 'numeric' })
-  return t('users.profile.topics.range', { from: day(week.from), to: day(week.to) })
-})
-
-// 选中一周、新的那一份还没回来时，列表先留着原来的几行（淡一点），不先清空再填满。
-const topics = computed<ProfileTopic[]>(() => {
-  if (selectedWeek.value && weekTopics.value) return weekTopics.value
-  return data.value?.recent ?? []
-})
-const topicsFailed = computed(() => (selectedWeek.value ? weekFailed.value : data.value?.recent === null))
-const topicsEmpty = computed(() => !weekPending.value && !topicsFailed.value && topics.value.length === 0)
-
 function topicDot(status: string): string {
   return status === 'active' ? 'status-dot--ok' : 'status-dot--muted'
-}
-
-// 先从列表里拿掉，再去删；服务器不肯就放回原处。
-async function forget(note: ProfileUnderstanding) {
-  const key = pageKey.value
-  const notes = data.value?.profile.understanding
-  const at = notes?.findIndex((n) => n.id === note.id) ?? -1
-  if (at < 0) return
-  const withNotes = (change: (notes: ProfileUnderstanding[]) => ProfileUnderstanding[]) =>
-    patchQuery<Page>(key, (held) => ({
-      ...held,
-      profile: { ...held.profile, understanding: change(held.profile.understanding ?? []) },
-    }))
-  await withNotes((list) => list.filter((n) => n.id !== note.id))
-  try {
-    await deleteUnderstanding(note.id)
-  } catch {
-    await withNotes((list) =>
-      list.some((n) => n.id === note.id) ? list : [...list.slice(0, at), note, ...list.slice(at)]
-    )
-    toast.error(t('users.profile.notes.deleteFailed'))
-  }
 }
 
 // ---- 在这个项目里 ----
@@ -566,372 +418,4 @@ const dmRoute = computed(() => {
   </component>
 </template>
 
-<style scoped>
-.profile {
-  --id-w: 232px;
-  --col-gap: 48px;
-
-  max-width: var(--page-w);
-  margin-inline: auto;
-  padding: 48px 16px;
-}
-/* 项目框里：AppPage 已经给了一栏 --page-w 和四周的边距，左栏窄一档。 */
-.profile--in-project {
-  --id-w: 200px;
-  --col-gap: 40px;
-
-  padding: 16px 0;
-}
-.profile--compact {
-  padding: 24px 16px;
-}
-.profile--compact.profile--in-project {
-  padding: 0;
-}
-.profile__grid {
-  display: grid;
-  grid-template-columns: var(--id-w) minmax(0, 1fr);
-  align-items: start;
-  column-gap: var(--col-gap);
-}
-.profile--compact .profile__grid {
-  grid-template-columns: minmax(0, 1fr);
-  row-gap: 32px;
-}
-
-/* ---- 左栏 ---- */
-.profile__id {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
-}
-.profile__who {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.profile--compact .profile__who {
-  flex-direction: row;
-  align-items: center;
-}
-.profile__names {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.profile__name {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.profile__role {
-  margin-top: 8px;
-}
-.profile__bio {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.profile__facts {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-.profile--compact .profile__facts {
-  flex-flow: row wrap;
-  gap: 4px 16px;
-  padding-top: 0;
-  border-top: 0;
-}
-.profile__fact {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-width: 0;
-}
-.profile__fact .v-icon {
-  flex: none;
-  margin-top: 2px;
-}
-.profile__teams {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.profile__teams a {
-  color: inherit;
-  text-decoration: none;
-}
-.profile__teams a:hover {
-  color: var(--ink);
-  text-decoration: underline;
-}
-
-/* ---- 右栏 ---- */
-.profile__main {
-  display: flex;
-  flex-direction: column;
-  gap: 32px;
-  min-width: 0;
-}
-.profile__section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.profile__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-.profile__head h2 {
-  margin: 0;
-}
-.profile__card {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  transition: opacity var(--dur-quick) var(--ease-standard);
-}
-.profile__card--pad {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-}
-.profile__card--pending {
-  opacity: 0.6;
-}
-.profile__card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.profile__pair {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
-}
-.profile__ink {
-  color: var(--ink);
-}
-.profile__waiting {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.profile__active {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: inherit;
-  text-decoration: none;
-}
-.profile__active:hover .profile__ink {
-  text-decoration: underline;
-}
-.profile__empty {
-  margin: 0;
-  padding: 24px 16px;
-  color: var(--muted);
-  text-align: center;
-}
-
-/* 列表行：项目、笔记、话题共用一种行 */
-.profile__row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--line);
-  color: inherit;
-  text-decoration: none;
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-.profile__row:first-child {
-  border-top: 0;
-}
-a.profile__row:hover {
-  background: var(--fill);
-}
-.profile__row--project {
-  padding-block: 14px;
-}
-.profile--compact .profile__row {
-  min-height: 44px;
-}
-.profile__row-text {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.profile__row-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.profile__project-name {
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 项目格子自己就是 UserAvatar（见模板）：尺寸、圆角、底色都由它画，这里只留
-   「在行里不参与伸缩」这一条布局。 */
-.profile__tile {
-  flex: none;
-}
-.profile__spark {
-  display: flex;
-  flex: none;
-  align-items: flex-end;
-  gap: 2px;
-  height: 24px;
-}
-.profile__spark span {
-  width: 4px;
-  background: var(--muted);
-}
-.profile__topic-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.profile--compact .profile__topic-title {
-  white-space: normal;
-}
-.profile--compact .profile__row--topic {
-  align-items: flex-start;
-}
-.profile--compact .profile__row--topic .status-dot {
-  margin-top: 7px;
-}
-.profile__row--topic .status-dot {
-  flex: none;
-}
-.profile__topic-project {
-  flex: none;
-  max-width: 30%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.profile__topic-count {
-  flex: none;
-  min-width: 64px;
-  text-align: end;
-  white-space: nowrap;
-}
-.profile__topic-when {
-  flex: none;
-  min-width: 72px;
-  text-align: end;
-  white-space: nowrap;
-}
-.profile__private {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.profile__link {
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-.profile__link span {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  transition: color var(--dur-quick) var(--ease-standard);
-}
-.profile__link:hover span {
-  color: var(--ink);
-}
-
-/* 笔记：删掉的一条先淡出，下面的几条滑上来补位（§9.2）。 */
-.profile__notes {
-  position: relative;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.profile__row--note {
-  align-items: flex-start;
-  background: var(--surface);
-}
-.note-move {
-  transition: transform var(--dur-base) var(--ease-standard);
-}
-.note-leave-active {
-  position: absolute;
-  inset-inline: 0;
-  transition: opacity var(--dur-quick) var(--ease-in);
-}
-.note-leave-to {
-  opacity: 0;
-}
-.note-enter-active {
-  transition: opacity var(--dur-base) var(--ease-out);
-}
-.note-enter-from {
-  opacity: 0;
-}
-
-/* ---- 加载中、出错、查无此人 ---- */
-.profile__state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  padding: 64px 16px;
-  color: var(--muted);
-}
-.profile__state p {
-  margin: 0;
-}
-.skel {
-  border-radius: var(--radius-md);
-  background: var(--fill);
-}
-.skel--avatar {
-  width: 96px;
-  height: 96px;
-  border-radius: var(--radius-pill);
-}
-.profile--compact .skel--avatar {
-  width: 64px;
-  height: 64px;
-}
-.skel--line {
-  width: 60%;
-  height: 18px;
-}
-.skel--name {
-  width: 80%;
-  height: 33px;
-}
-.skel--block {
-  height: 160px;
-  border-radius: var(--radius-lg);
-}
-.skel--heatmap {
-  height: 200px;
-}
-</style>
+<style scoped src="./profile/profile.css"></style>

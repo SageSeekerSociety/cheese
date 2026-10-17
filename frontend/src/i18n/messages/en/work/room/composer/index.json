@@ -1,0 +1,18 @@
+{
+  "attachFiles": "Upload files (up to 10 MB each, videos 200 MB)",
+  "cancelReply": "Cancel reply",
+  "keysHint": "Enter to send, Shift+Enter for a new line, ⌘/Ctrl+Enter to send and hand to {name}. You can paste images",
+  "keysHintSend": "Enter to send, Shift+Enter for a new line. You can paste images",
+  "more": "More actions",
+  "pasteHint": "You can paste images",
+  "placeholder": "Type a message, or {'@'}{name} to hand it over",
+  "placeholderDm": "Message {name}",
+  "removeAttachment": "Remove {name}",
+  "replyTo": "Replying to {name}: {text}",
+  "send": "Send",
+  "sendPhotos": "Send photos or videos",
+  "sendUploading": "Uploading attachments — send once they finish",
+  "summon": "Hand to {name}",
+  "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)",
+  "summonOn": "{'@'}{name} is mentioned. Click to remove"
+}

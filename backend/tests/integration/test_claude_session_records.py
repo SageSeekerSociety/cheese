@@ -428,17 +428,34 @@ def test_a_message_after_a_dead_runner_gets_a_turn(client, stub_hooks):
         assert _until_done(ws)[-1]["type"] == "error"
 
     # The work's inputs are ended where the death was heard: unfinished they
-    # would refuse the seat, and no sweep reaches a closed interval.
+    # would refuse the seat, and no sweep reaches a closed interval. The room
+    # hears the death before the row carries it — the ending is a transaction
+    # of its own, behind the same news — so wait for that ending rather than
+    # reading once and judging: a run where the room heard the death a moment
+    # before the row was stamped reads as unfinished, and is not.
     async def ended_for_good():
-        async with client.test_factory() as session:
-            rows = list(
-                await session.scalars(
-                    select(NativeInput).where(NativeInput.conversation_id == topic)
+        async def read() -> list[NativeInput]:
+            async with client.test_factory() as session:
+                return list(
+                    await session.scalars(
+                        select(NativeInput).where(NativeInput.conversation_id == topic)
+                    )
                 )
-            )
-            assert rows, "the killed turn held no input"
-            assert all(row.termination == "orphaned" for row in rows)
-            assert all(row.completed_at is None for row in rows)
+
+        rows = await read()
+        assert rows, "the killed turn held no input"
+        deadline = time.monotonic() + 10
+        while not all(row.termination == "orphaned" for row in rows):
+            # Not "eventually", but "under a stamp of the death it reports": a
+            # death the room heard that never ends its inputs is the bug here.
+            assert time.monotonic() < deadline, [
+                (str(row.id), row.termination, row.terminated_at) for row in rows
+            ]
+            await asyncio.sleep(0.1)
+            rows = await read()
+        assert all(row.completed_at is None for row in rows), [
+            (str(row.id), row.completed_at, row.termination) for row in rows
+        ]
 
     client.portal.call(ended_for_good)
 
