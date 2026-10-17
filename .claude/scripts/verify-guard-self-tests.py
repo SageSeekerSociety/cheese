@@ -498,20 +498,44 @@ _SELF_TEST_ARGV = ["guard.py", "--self-test"]
 
 
 def _name_is_reassigned(scope: ast.AST, name: str) -> bool:
-    """True when this function's own body assigns `name`, nested functions aside.
+    """True when this scope's own body assigns `name`, nested scopes aside.
 
     A parameter is an `ast.arg`, not a stored `ast.Name`, so this finds only the
     rebindings: `argv = argv[1:]`, an annotated or augmented assignment, a
     walrus, a `for argv in ...`. Those change what the name holds, and the
-    entry call alone cannot say what is left.
+    entry call alone cannot say what is left. Nested functions, lambdas, class
+    bodies and comprehensions have scopes of their own: a store inside one
+    leaves the outer name alone, so the walk stops at them.
     """
     for child in ast.iter_child_nodes(scope):
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        if isinstance(
+            child,
+            (
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.Lambda,
+                ast.ClassDef,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+            ),
+        ):
             continue
         if isinstance(child, ast.Name) and child.id == name and isinstance(child.ctx, ast.Store):
             return True
         if _name_is_reassigned(child, name):
             return True
+    return False
+
+
+def _imports_name(scope: ast.Module, name: str) -> bool:
+    """True when a top-level `import` binds `name`: `from sys import argv`."""
+    for statement in scope.body:
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            for alias in statement.names:
+                if (alias.asname or alias.name.split(".")[0]) == name:
+                    return True
     return False
 
 
@@ -548,12 +572,17 @@ def _self_test_argv(tree: ast.Module) -> list[str] | None:
     usable when the entry call can be identified: a helper that also calls
     `main` may be the one this function finds, `main()` hands over no argv at
     all, and a `main` that reassigns `argv` replaces whatever it was given.
+    A module that binds `argv` itself — `from sys import argv`, `argv =
+    sys.argv` — reads that name from the process command line wherever no
+    parameter shadows it, so the entry call does not say what it holds either.
     Each of those comes back `None`, and the name `argv` then stays unsettled —
     an unsettled gate keeps the block on the path instead of inventing a
     finding from it. `sys.argv` is not affected: it is the process command
     line, the same two words whatever the entry call passes.
     """
     nodes = list(ast.walk(tree))
+    if _name_is_reassigned(tree, "argv") or _imports_name(tree, "argv"):
+        return None
     if any(
         _name_is_reassigned(node, "argv")
         for node in nodes

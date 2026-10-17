@@ -2010,15 +2010,13 @@ if __name__ == "__main__":
 '''
 
 #: A helper rebinds its own `argv`; the entry call hands over everything, so
-#: the gate on `main`'s argv really is false and the finding must stand.
+#: the gate on `main`'s argv really is false and the finding must stand. If the
+#: helper's store were read as `main`'s, the argv would go unsettled and the
+#: hand-off inside the gate would come back `unverified` instead.
 PY_UNRELATED_REBIND = '''#!/usr/bin/env python3
 import subprocess
 import sys
 from pathlib import Path
-
-
-def violations_in(root):
-    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
 
 
 def helper(items):
@@ -2034,19 +2032,52 @@ def check():
 
 def main(argv):
     if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
         try:
             sys.exit(1)
         except SystemExit:
             return check()
-    problems = violations_in(argv[1] if len(argv) > 1 else ".")
-    if "--self-test" in argv:
-        print("PASS: 什么都没测")
-        return 0
-    return 1 if problems else 0
+    print("PASS: 什么都没测")
+    return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
+'''
+
+#: `argv` is stored inside a class body in `main`. That scope has its own name
+#: table, so `main`'s parameter is untouched and the gate really is false.
+PY_SCOPED_ARGV = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    class Options:
+        argv = None
+    if len(argv) > 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return check()
+        return 1 if violations_in(argv[1]) else 0
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
 '''
 
 #: An annotated assignment rebinds `argv` just as a plain one does; the
@@ -2079,6 +2110,38 @@ def main(argv):
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
+'''
+
+#: `argv` is imported from `sys` at module level and read through the gate,
+#: while the entry call trims a differently named parameter. The name holds
+#: the process command line here, so the entry call must not settle it.
+PY_IMPORTED_ARGV = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(params):
+    if len(argv) > 1:
+        if "--self-test" in params:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
 '''
 
 #: The entry call passes the command line as a keyword argument; it is the same
@@ -2919,6 +2982,15 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
 
+    def test_a_store_in_a_nested_scope_does_not_rebind_the_parameter(self) -> None:
+        """A class body's `argv` is its own name; `main`'s parameter is untouched."""
+        code, guard, output = self._only(
+            {"scoped.py": PY_SCOPED_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
     def test_an_argv_the_guard_trims_itself_keeps_the_hand_off(self) -> None:
         """`argv = argv[1:]` inside `main`: the call site alone cannot settle it."""
         code, guard, output = self._only(
@@ -2933,6 +3005,16 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         """`argv: list[str] = ...` stores the name even though it is not `ast.Assign`."""
         code, guard, output = self._only(
             {"annotated.py": PY_ANNOTATED_REBIND},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_an_argv_imported_from_sys_is_not_the_trimmed_parameter(self) -> None:
+        """A module-level `from sys import argv` holds the process command line."""
+        code, guard, output = self._only(
+            {"imported.py": PY_IMPORTED_ARGV},
             {"test_counted.py": ELSE_SIBLING},
         )
         self.assertEqual(code, 2, output)
