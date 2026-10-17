@@ -74,6 +74,36 @@ class AgentDefinitionGuardTests(unittest.TestCase):
             GOOD_DEFINITION.replace("name: check-runner", "name: check-runner  # the slug"),
         )
 
+    def test_a_quoted_block_marker_is_a_description(self) -> None:
+        """`description: ">"` is that one character, not a block header: unlike the
+        unquoted form above it carries a description, and reporting it would refuse a
+        definition that is written correctly."""
+        self._accept_definition(
+            "check-runner.md",
+            GOOD_DEFINITION.replace("description: >\n  Run the checks and report a pass or fail per hook.\n",
+                                    'description: ">"\n'),
+        )
+
+    def test_a_doubled_single_quote_is_part_of_the_name(self) -> None:
+        """YAML spells one quote inside a single-quoted scalar as two, so
+        `name: 'check-runner'''` is `check-runner'` — not a slug, and not the file's stem
+        either, however much the text before the last quote looks like it."""
+        self._reject_definition(
+            "check-runner.md",
+            GOOD_DEFINITION.replace("name: check-runner", "name: 'check-runner'''"),
+            "不是 slug",
+        )
+
+    def test_an_empty_quoted_description_says_nothing(self) -> None:
+        """A quoted value is text even when it looks like a block header, but an empty one
+        is still no description — the two rules have to hold at once."""
+        self._reject_definition(
+            "check-runner.md",
+            GOOD_DEFINITION.replace("description: >\n  Run the checks and report a pass or fail per hook.\n",
+                                    "description: ''\n"),
+            "description",
+        )
+
     def test_a_byte_order_mark_before_the_fence_is_still_frontmatter(self) -> None:
         self._accept_definition("check-runner.md", chr(0xFEFF) + GOOD_DEFINITION)
 
@@ -141,7 +171,9 @@ class AgentDefinitionGuardTests(unittest.TestCase):
             result = self._run(root)
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertNotIn("name: CheckRunner", result.stderr)
-            self.assertIn("CheckRunner.md", result.stderr)
+            # The message body, not the `path:line:` prefix the line already carries,
+            # which would satisfy a bare mention of the file name.
+            self.assertIn("这个名字和文件名", result.stderr)
 
     def test_a_definition_that_is_not_utf8_is_reported_with_the_others(self) -> None:
         """One unreadable file must not turn the run into a traceback that hides every

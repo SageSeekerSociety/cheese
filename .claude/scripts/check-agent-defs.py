@@ -78,21 +78,37 @@ class Finding(NamedTuple):
     message: str
 
 
-def scalar(raw: str) -> str:
-    """A plain frontmatter value: quotes removed, a trailing `#` comment dropped.
+def scalar(raw: str) -> tuple[str, bool]:
+    """A frontmatter value as `(text, was quoted)`: quotes removed, a trailing `#` comment
+    dropped, and whether the YAML value was written as a quoted string.
 
-    Both are ordinary YAML — `model: "sonnet"` and `model: sonnet  # why` name the same
-    alias — so reading them as text without this would report a legal definition. A `#`
-    that no space precedes is part of the value, as YAML says."""
-    value = raw.strip()
-    if value[:1] in ("'", '"'):
-        close = value.find(value[0], 1)
-        if close != -1:
-            return value[1:close]  # a `#` inside the quotes is part of the value
-    comment = re.search(r"(?:^|\s)#", value)
+    Both shapes are ordinary YAML — `model: "sonnet"` and `model: sonnet  # why` name the
+    same alias — so reading them as text without this would report a legal definition.
+    The flag is what tells `description: ">"` (the character) from `description: >` (a
+    block header), which look alike once the quotes are gone. A `#` that no space
+    precedes is part of the value, as YAML says."""
+    text = raw.strip()
+    quote = text[:1]
+    if quote in ("'", '"'):
+        i = 1
+        while i < len(text):
+            if quote == "'" and text[i : i + 2] == "''":
+                i += 2  # two single quotes inside a single-quoted scalar are one quote
+                continue
+            if text[i] == quote:
+                break
+            i += 1
+        rest = text[i + 1 :].strip() if i < len(text) else ""
+        if i < len(text) and (not rest or rest.startswith("#")):
+            body = text[1:i]
+            # The interior of a double-quoted scalar is taken as written: only the single
+            # quotes state an escape, and backslash escapes do not change any value the
+            # guard judges.
+            return (body.replace("''", "'") if quote == "'" else body), True
+    comment = re.search(r"(?:^|\s)#", text)
     if comment:
-        value = value[: comment.start()].strip()
-    return value
+        text = text[: comment.start()].strip()
+    return text, False
 
 
 def frontmatter(text: str) -> dict[str, dict] | None:
@@ -122,17 +138,21 @@ def frontmatter(text: str) -> dict[str, dict] | None:
         match = KEY_RE.match(line)
         if match:
             current = match.group(1)
-            keys[current] = {"value": scalar(match.group(2)), "line": offset, "body": []}
+            value, quoted = scalar(match.group(2))
+            keys[current] = {"value": value, "quoted": quoted, "line": offset, "body": []}
     return keys
 
 
 def has_text(entry: dict) -> bool:
     """True when a frontmatter key carries text, inline or as a block scalar. A block
-    header with nothing indented under it, and an empty quoted value, both say nothing."""
+    header with nothing indented under it, and an empty quoted value, both say nothing —
+    but a quoted `>` is that character, so the block-header test only applies unquoted."""
     if entry["body"]:
         return True
     value = entry["value"]
-    return bool(value) and BLOCK_MARKER_RE.match(value) is None
+    if not value:
+        return False
+    return entry["quoted"] or BLOCK_MARKER_RE.match(value) is None
 
 
 def read_definition(path: Path, rel: str) -> tuple[str | None, Finding | None]:
