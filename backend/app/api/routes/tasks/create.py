@@ -18,6 +18,7 @@ from app.api.task_serialization import (
     _enrich_task_models,
     _task_to_api_model,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
@@ -25,10 +26,7 @@ from app.db.session import get_db
 router = APIRouter(prefix="/tasks")
 
 
-@router.post(
-    "",
-    summary="Create Task",
-)
+@router.post("", summary="Create Task", dependencies=[ROUTE_DECIDES])
 async def create_task(
     payload: CreateTaskRequest,
     db=Depends(get_db),

@@ -51,6 +51,7 @@ from app.api.space_payloads import (
     PatchSpaceInviteCodeRequest,
     _invite_codes_to_api_models,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
@@ -87,6 +88,7 @@ async def list_space_invite_codes(
     "/{spaceId}/invite-codes",
     summary="Create Space Invite Code",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_space_invite_code(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -112,6 +114,7 @@ async def create_space_invite_code(
 @router.patch(
     "/{spaceId}/invite-codes/{codeId}",
     summary="Update Space Invite Code",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_space_invite_code(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -143,6 +146,7 @@ async def patch_space_invite_code(
     "/{spaceId}/invite-codes/{codeId}",
     summary="Revoke Space Invite Code",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def revoke_space_invite_code(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],

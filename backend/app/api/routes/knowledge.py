@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query
 from pydantic import BaseModel, ConfigDict
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
@@ -41,9 +42,7 @@ async def get_knowledge_service(db=Depends(get_db)) -> KnowledgeService:
 
 
 @router.post(
-    "",
-    summary="Create Knowledge",
-    status_code=201,
+    "", summary="Create Knowledge", status_code=201, dependencies=[ROUTE_DECIDES]
 )
 async def create_knowledge(
     payload: dict = Body(...),
@@ -163,10 +162,7 @@ async def get_knowledge_by_id(
     return ok({"knowledge": knowledge})
 
 
-@router.patch(
-    "/{knowledgeId}",
-    summary="Patch Knowledge",
-)
+@router.patch("/{knowledgeId}", summary="Patch Knowledge", dependencies=[ROUTE_DECIDES])
 async def patch_knowledge(
     knowledge_id: Annotated[int, Path(ge=1, alias="knowledgeId")],
     payload: PatchKnowledgeRequest,
@@ -185,8 +181,7 @@ async def patch_knowledge(
 
 
 @router.delete(
-    "/{knowledgeId}",
-    summary="Delete Knowledge",
+    "/{knowledgeId}", summary="Delete Knowledge", dependencies=[ROUTE_DECIDES]
 )
 async def delete_knowledge(
     knowledge_id: Annotated[int, Path(ge=1, alias="knowledgeId")],
@@ -200,6 +195,7 @@ async def delete_knowledge(
 @router.post(
     "/{knowledgeId}/upvote",
     summary="Upvote Knowledge Item",
+    dependencies=[ROUTE_DECIDES],
 )
 async def upvote_knowledge(
     knowledge_id: Annotated[int, Path(ge=1, alias="knowledgeId")],
@@ -218,6 +214,7 @@ async def upvote_knowledge(
 @router.delete(
     "/{knowledgeId}/upvote",
     summary="Remove Knowledge Upvote",
+    dependencies=[ROUTE_DECIDES],
 )
 async def remove_upvote_knowledge(
     knowledge_id: Annotated[int, Path(ge=1, alias="knowledgeId")],

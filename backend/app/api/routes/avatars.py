@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Header, Path, Query, Response, Upl
 
 from app.api.conditional import if_none_match_hits
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core import raster_images
@@ -101,11 +102,7 @@ async def get_avatar_service(db=Depends(get_db)) -> AvatarService:
     return AvatarService(repo=repo)
 
 
-@router.post(
-    "",
-    summary="Upload Avatar",
-    status_code=201,
-)
+@router.post("", summary="Upload Avatar", status_code=201, dependencies=[ROUTE_DECIDES])
 async def create_avatar(
     avatar: UploadFile = File(...),
     auth_user: AuthUserInfo = Depends(require_auth_user),

@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
@@ -101,10 +102,7 @@ async def get_group(
     return ok({"group": group})
 
 
-@router.put(
-    "/{group_id}",
-    summary="Update Group",
-)
+@router.put("/{group_id}", summary="Update Group", dependencies=[ROUTE_DECIDES])
 async def update_group(
     group_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
@@ -125,9 +123,7 @@ async def update_group(
 
 
 @router.delete(
-    "/{group_id}",
-    summary="Delete Group",
-    status_code=204,
+    "/{group_id}", summary="Delete Group", status_code=204, dependencies=[ROUTE_DECIDES]
 )
 async def delete_group(
     group_id: Annotated[int, Path(ge=0)],
@@ -161,6 +157,7 @@ async def list_group_members(
     "/{group_id}/members",
     summary="Join Group",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def join_group(
     group_id: Annotated[int, Path(ge=0)],
@@ -172,8 +169,7 @@ async def join_group(
 
 
 @router.delete(
-    "/{group_id}/members",
-    summary="Leave Group",
+    "/{group_id}/members", summary="Leave Group", dependencies=[ROUTE_DECIDES]
 )
 async def leave_group(
     group_id: Annotated[int, Path(ge=0)],
@@ -230,6 +226,7 @@ async def list_group_targets(
     "/{group_id}/targets",
     summary="Create Group Target",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_group_target(
     group_id: Annotated[int, Path(ge=0)],
@@ -282,6 +279,7 @@ async def get_group_target(
 @router.put(
     "/{group_id}/targets/{target_id}",
     summary="Update Group Target",
+    dependencies=[ROUTE_DECIDES],
 )
 async def update_group_target(
     group_id: Annotated[int, Path(ge=0)],
@@ -319,6 +317,7 @@ async def update_group_target(
     "/{group_id}/targets/{target_id}",
     summary="Delete Group Target",
     status_code=204,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_group_target(
     group_id: Annotated[int, Path(ge=0)],
@@ -354,6 +353,7 @@ async def list_group_questions(
 @router.post(
     "/{group_id}/questions",
     summary="Add Question to Group",
+    dependencies=[ROUTE_DECIDES],
 )
 async def add_group_question(
     group_id: Annotated[int, Path(ge=0)],
@@ -376,6 +376,7 @@ async def add_group_question(
     "/{group_id}/questions/{question_id}",
     summary="Remove Question from Group",
     status_code=204,
+    dependencies=[ROUTE_DECIDES],
 )
 async def remove_group_question(
     group_id: Annotated[int, Path(ge=0)],

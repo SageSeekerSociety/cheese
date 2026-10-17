@@ -11,6 +11,7 @@ from app.api.teams_deps import (
     get_team_service,
     load_application_maps,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import (
@@ -442,7 +443,9 @@ async def get_team_by_handle(
     return await _team_profile(team, auth_user.user_id, service, membership_service, db)
 
 
-@router.post("/{teamId}/join", summary="Join Team, or ask to")
+@router.post(
+    "/{teamId}/join", summary="Join Team, or ask to", dependencies=[ROUTE_DECIDES]
+)
 async def join_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     payload: JoinTeamBody | None = None,
@@ -474,7 +477,9 @@ async def get_team_join_link(
     return _join_link_payload(team)
 
 
-@router.patch("/{teamId}/join-link", summary="Update Team Join Link")
+@router.patch(
+    "/{teamId}/join-link", summary="Update Team Join Link", dependencies=[ROUTE_DECIDES]
+)
 async def update_team_join_link(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     payload: JoinLinkSettings,
@@ -487,7 +492,11 @@ async def update_team_join_link(
     return _join_link_payload(team)
 
 
-@router.post("/{teamId}/join-link/reset", summary="Reset Team Join Link")
+@router.post(
+    "/{teamId}/join-link/reset",
+    summary="Reset Team Join Link",
+    dependencies=[ROUTE_DECIDES],
+)
 async def reset_team_join_link(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     service: TeamService = Depends(get_team_service),
@@ -511,7 +520,11 @@ async def get_team_by_join_link(
     return await _team_profile(team, auth_user.user_id, service, membership_service, db)
 
 
-@invites_router.post("/{token}/join", summary="Join Team Through Its Join Link")
+@invites_router.post(
+    "/{token}/join",
+    summary="Join Team Through Its Join Link",
+    dependencies=[ROUTE_DECIDES],
+)
 async def join_team_by_join_link(
     token: str,
     payload: JoinTeamBody | None = None,
@@ -591,6 +604,7 @@ async def get_team_members(
     "",
     summary="Create Team",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_team(
     payload: CreateTeamRequest,
@@ -623,10 +637,7 @@ async def create_team(
     )
 
 
-@router.patch(
-    "/{teamId}",
-    summary="Update Team",
-)
+@router.patch("/{teamId}", summary="Update Team", dependencies=[ROUTE_DECIDES])
 async def patch_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     payload: PatchTeamRequest,
@@ -666,6 +677,7 @@ async def patch_team(
     "/{teamId}",
     summary="Disband Team",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -690,6 +702,7 @@ async def delete_team(
     "/{teamId}/members/{userId}",
     summary="Remove Team Member",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_team_member(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -708,6 +721,7 @@ async def delete_team_member(
 @router.patch(
     "/{teamId}/members/{userId}",
     summary="Update Team Member Role",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_team_member_role(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -751,8 +765,7 @@ async def patch_team_member_role(
 
 
 @router.put(
-    "/{teamId}/owner",
-    summary="Transfer Team Ownership",
+    "/{teamId}/owner", summary="Transfer Team Ownership", dependencies=[ROUTE_DECIDES]
 )
 async def put_team_owner(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -792,6 +805,7 @@ async def put_team_owner(
     "/{teamId}/members",
     summary="Add Team Member",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def add_team_member_entry(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -978,6 +992,7 @@ async def list_team_invitations(
     "/{teamId}/invitations",
     summary="Create Team Invitation",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_team_invitation(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1017,6 +1032,7 @@ async def create_team_invitation(
     "/{teamId}/invitations/{invitationId}",
     summary="Cancel Team Invitation",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def cancel_team_invitation(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1038,6 +1054,7 @@ async def cancel_team_invitation(
     "/{teamId}/join-requests/{requestId}/approve",
     summary="Approve Team Join Request",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def approve_team_join_request(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1059,6 +1076,7 @@ async def approve_team_join_request(
     "/{teamId}/requests/{requestId}/approve",
     summary="Approve Team Request",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def approve_team_request_alias(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1080,6 +1098,7 @@ async def approve_team_request_alias(
     "/{teamId}/join-requests/{requestId}/reject",
     summary="Reject Team Join Request",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def reject_team_join_request(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1101,6 +1120,7 @@ async def reject_team_join_request(
     "/{teamId}/requests/{requestId}/reject",
     summary="Reject Team Request",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def reject_team_request_alias(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
