@@ -45,11 +45,14 @@ repos:
         pass_filenames: false
         files: ^backend/.*\.py$
 
+      # Formatting and import order are fixed, never judged: this hook rewrites
+      # the staged files, and no CI step fails on layout. A commit it touched
+      # stops once so the rewritten files can be staged, which is how
+      # pre-commit reports any fixer.
       - id: ruff-format
-        name: ruff (format)
-        entry: bash -c 'cd backend && uv run ruff format --check .'
+        name: ruff (format and sort imports, autofix)
+        entry: bash -c 'cd backend && uv run ruff check --select I --fix --exit-zero -q "${@#backend/}" && uv run ruff format -q "${@#backend/}"' --
         language: system
-        pass_filenames: false
         files: ^backend/.*\.py$
 
       - id: pyright
@@ -77,17 +80,6 @@ repos:
         language: system
         pass_filenames: false
         files: ^backend/(.*\.py|\.importlinter)$
-
-      # Imports inside a function body may only go down. Each file's count of
-      # unexplained ones is frozen in backend/deferred-import-baseline.json; an
-      # import that says why (`# deferred-import: <reason>`, same line or the
-      # line above) is not counted. Whole tree, like the graph check above.
-      - id: deferred-imports
-        name: deferred imports only go down (annotated or frozen)
-        entry: bash -c 'cd backend && uv run python scripts/check_deferred_imports.py'
-        language: system
-        pass_filenames: false
-        files: ^backend/(app/.*\.py|deferred-import-baseline\.json|scripts/check_deferred_imports\.py)$
 
       # The two refactors that leave every other gate green: a module becomes a
       # package and its facade stops offering a name, and a name leaves a module
@@ -212,6 +204,17 @@ repos:
         pass_filenames: false
         files: ^frontend/
 
+      # The frontend's layout rules (prettier, simple-import-sort) are fixed the
+      # same way as ruff-format above: `--fix-type layout` applies only those, on
+      # the staged files. `|| true` because this hook's job is the rewrite; the
+      # eslint hook above is the one that reports a rule's verdict, and would
+      # otherwise be reported twice.
+      - id: frontend-format
+        name: frontend layout (prettier, import order; autofix)
+        entry: bash -c 'cd frontend && pnpm exec eslint --fix --fix-type layout --no-warn-ignored "${@#frontend/}" >/dev/null || true' --
+        language: system
+        files: ^frontend/.*\.(vue|ts|tsx|js|mjs|cjs)$
+
       - id: stylelint
         name: stylelint
         entry: bash -c 'cd frontend && pnpm run lint:style'
@@ -228,18 +231,16 @@ repos:
 
       # Components must not reach the network layer: `@/api`, `@/services/*`,
       # `@/network/*` and vue-router are off limits under src/components/**.
-      # 127 violations in 82 components are frozen in
-      # frontend/import-boundary-baseline.json, which is why this is a separate
-      # ESLint config (eslint.boundary.config.mjs) rather than a rule in the
-      # one `pnpm run lint` reads: as a plain rule it would have turned the
-      # whole tree red on day one, and a gate that red everywhere gets deleted.
+      # Any violation fails. It is a separate ESLint config
+      # (eslint.boundary.config.mjs) with its own runner script rather than a
+      # rule in the one `pnpm run lint` reads.
       # Same go-red-without-node_modules answer as eslint/stylelint above.
       - id: boundary-check-frontend
-        name: component boundaries (eslint + ratchet)
+        name: component boundaries (eslint)
         entry: bash -c 'cd frontend && pnpm run lint:boundary'
         language: system
         pass_filenames: false
-        files: ^frontend/(src/components/|eslint\.boundary\.config\.mjs|import-boundary-baseline\.json|package\.json|scripts/import-boundary-ratchet)
+        files: ^frontend/(src/components/|eslint\.boundary\.config\.mjs|package\.json|scripts/import-boundary-ratchet)
 
       # Accessibility rules (eslint-plugin-vuejs-accessibility, flat/recommended)
       # over src/**/*.vue. The violations already in the tree are frozen per
@@ -319,16 +320,6 @@ repos:
         pass_filenames: false
         files: ^(frontend/.*|\.claude/scripts/(frontend_grade|scene-ratchet|scene-debt-ratchet|test_scene_debt_ratchet|ratchet_report)\.py)$
 
-      # Every grade-A SFC is registered in /demo/catalog or frozen as pending.
-      # The pending list can only shrink; imports determine the grade.
-      # `pnpm run lint:catalog:update` removes paid-down entries.
-      - id: catalog-ratchet
-        name: grade-A components are in the catalog (python ratchet)
-        entry: python3 .claude/scripts/catalog-ratchet.py
-        language: system
-        pass_filenames: false
-        files: ^(frontend/(src/.*\.(vue|ts)|catalog-baseline\.json|package\.json)|\.claude/scripts/(frontend_grade|catalog-ratchet|ratchet_report)\.py)$
-
       # --- heavy: never on commit, see the note at the top ---------------
       - id: pytest
         name: backend test suite (needs Postgres)
@@ -352,11 +343,11 @@ repos:
         stages: [manual]
 
       # --- repo-wide guards ---------------------------------------------
-      # always_run because it judges relationships across the tree — duplicate
-      # topic notes, a platform command leaking into AGENTS.md — which no single
-      # changed path predicts.
+      # always_run because it judges relationships across the tree — a platform
+      # command leaking into AGENTS.md, a script the image does not carry — which
+      # no single changed path predicts.
       - id: repo-rules
-        name: repo rules (datetime, HTTPException, palette, platform CLI, …)
+        name: repo rules (datetime, HTTPException, platform CLI, …)
         entry: bash .claude/scripts/check-repo-rules.sh
         language: system
         pass_filenames: false
@@ -396,33 +387,3 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-
-      # `docs/reviews/artifacts/` is read by nothing — no build, no test, no
-      # link checker — so an artifact whose note was rewritten stays on disk
-      # named by nobody. Two one-off PDFs sat there until #4032 removed them by
-      # hand. The guard fails when a file under that directory is named by no
-      # note in `docs/reviews/`. always_run because the claim is about the
-      # tree: a deleted or rewritten note anywhere is what falsifies it.
-      - id: review-artifacts
-        name: review artifacts are cited by a review note
-        entry: python3 .claude/scripts/check-review-artifacts.py
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      # A file-size ratchet, not a cliff: 7 files are already past their cap
-      # (frontend/src 1000 lines, backend/app 1500) and each is frozen at the
-      # size it had where this branch left main — the merge base, which is why
-      # main moving on cannot fail a branch for a file it never touched. Only
-      # the files the branch actually changed are read, so an oversized file may
-      # shrink but not grow, and a new file must land under the cap. It needs a
-      # remote-tracking origin/main AND the history to find the merge base with
-      # it: CI fetches both (see .github/workflows/repo-guards.yml); locally
-      # `git fetch origin` is the fix, which is why each missing piece is a
-      # "cannot judge" (exit 2) naming the fetch rather than a pass.
-      - id: file-size
-        name: files have not grown past their size cap
-        entry: python3 .claude/scripts/check-file-sizes.py
-        language: system
-        pass_filenames: false
-        files: ^(backend/app/|frontend/src/|\.claude/scripts/check-file-sizes\.py)

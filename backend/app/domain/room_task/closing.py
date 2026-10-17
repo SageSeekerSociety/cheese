@@ -483,7 +483,7 @@ async def _keep_stopped_turns(
                     ),
                     turn_id=work.turn_id,
                 )
-    except Exception:  # noqa: BLE001 — the close stands; this is its record
+    except Exception:  # the close stands; this is its record
         logger.warning(
             "could not keep the stopped turns of task %s", task.id, exc_info=True
         )

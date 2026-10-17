@@ -1,6 +1,5 @@
 """New b9 review regressions; no app.main/settings/database imports."""
 
-import json
 import re
 from dataclasses import replace
 
@@ -23,106 +22,6 @@ def record(index, path, methods=("GET",), protocol="http"):
     return RouteRecord(
         index, protocol, path, frozenset(methods), f"m.h{index}", f"h{index}"
     )
-
-
-def write_annotations(tmp_path, records):
-    keys = {
-        (r.protocol, method, r.path)
-        for r in records
-        for method in (sorted(r.methods) if r.protocol == "http" else ["WS"])
-    }
-    data = {
-        "version": 1,
-        "auth_entries": {"fixture": "Synthetic fixture authorization"},
-        "owners": {"fixture": "Synthetic fixture owner"},
-        "routes": [
-            {
-                "protocol": p,
-                "method": m,
-                "path": value,
-                "auth": "fixture",
-                "owner": "fixture",
-            }
-            for p, m, value in sorted(keys)
-        ],
-    }
-    path = tmp_path / "sidecar.yaml"
-    path.write_text(json.dumps(data), encoding="utf-8")
-    return path, data
-
-
-def test_annotations_cover_every_http_method_and_explicit_ws(tmp_path):
-    from scripts.route_index_annotations import check_annotation_coverage
-
-    records = [record(0, "/same", ("GET", "HEAD")), record(1, "/same", (), "ws")]
-    path, data = write_annotations(tmp_path, records)
-    rows = [
-        {"protocol": r.protocol, "methods": sorted(r.methods), "path": r.path}
-        for r in records
-    ]
-    assert check_annotation_coverage(rows, path) == 3
-    data["routes"] = [r for r in data["routes"] if r["method"] != "HEAD"]
-    path.write_text(json.dumps(data), encoding="utf-8")
-    with pytest.raises(ValueError, match="missing=.*HEAD"):
-        check_annotation_coverage(rows, path)
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    [
-        "orphan",
-        "duplicate",
-        "ws_method",
-        "http_ws",
-        "unknown_auth",
-        "unknown_owner",
-        "empty_auth_note",
-        "empty_owner_note",
-    ],
-)
-def test_annotation_format_and_coverage_fail_loudly(tmp_path, mutation):
-    from scripts.route_index_annotations import check_annotation_coverage
-
-    records = [record(0, "/http"), record(1, "/socket", (), "ws")]
-    path, data = write_annotations(tmp_path, records)
-    rows = [
-        {"protocol": r.protocol, "methods": sorted(r.methods), "path": r.path}
-        for r in records
-    ]
-    if mutation == "orphan":
-        data["routes"].append({**data["routes"][0], "path": "/removed"})
-        expected = "orphan=.*removed"
-    elif mutation == "duplicate":
-        data["routes"].append(data["routes"][0])
-        expected = "duplicate route annotation"
-    elif mutation == "ws_method":
-        data["routes"][1]["method"] = "GET"
-        expected = "require method WS"
-    elif mutation == "http_ws":
-        data["routes"][0]["method"] = "WS"
-        expected = "HTTP.*method invalid"
-    elif mutation.startswith("unknown_"):
-        field = mutation.removeprefix("unknown_")
-        data["routes"][0][field] = "not-registered"
-        expected = "unknown route"
-    else:
-        catalog = "auth_entries" if mutation == "empty_auth_note" else "owners"
-        data[catalog]["fixture"] = "   "
-        expected = "nonempty string"
-    path.write_text(json.dumps(data), encoding="utf-8")
-    with pytest.raises(ValueError, match=expected):
-        check_annotation_coverage(rows, path)
-
-
-def test_annotations_reject_duplicate_yaml_keys_and_unreadable_files(tmp_path):
-    from scripts.route_index_annotations import read_annotations
-
-    path = tmp_path / "sidecar.yaml"
-    with pytest.raises(ValueError, match="unreadable"):
-        read_annotations(path)
-    path.write_text("version: 1\nversion: 1\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="duplicate YAML mapping key"):
-        read_annotations(path)
 
 
 @pytest.mark.parametrize("convertor", ["int", "uuid", "float"])

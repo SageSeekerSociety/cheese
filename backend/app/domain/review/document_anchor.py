@@ -32,5 +32,5 @@ def still_there(raw: bytes, path: str, place: str, quote: str) -> bool:
         else:
             body = "".join(text for _title, text in slide_texts(raw))
         return wanted in _squash(body)
-    except Exception:  # noqa: BLE001 — an unreadable document holds nothing
+    except Exception:  # an unreadable document holds nothing
         return False

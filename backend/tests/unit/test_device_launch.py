@@ -875,7 +875,7 @@ def _bundle_server(bundle: bytes | None):
     hits: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802
+        def do_GET(self):
             hits.append(self.path)
             if bundle is None or "/connector/skill-bundles/" not in self.path:
                 self.send_response(404)
@@ -1388,7 +1388,7 @@ def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
     home, _up_script = _tunnel_up_home(tmp_path)
     port_file = home / ".cheese" / "cheese-tunnel.port"
     tmux = shutil.which("tmux") or "tmux"  # the skipif above already found it
-    sock = f"/tmp/cu{os.getpid()}.sock"  # noqa: S108 — ephemeral, killed below
+    sock = f"/tmp/cu{os.getpid()}.sock"  # ephemeral, killed below
     try:
         subprocess.run(
             [tmux, "-S", sock, "new-session", "-d", "-s", "s", "sleep 60"], check=True
@@ -1911,7 +1911,7 @@ def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_pa
     from app.domain.agent import environment_runner
     from app.domain.project.environment import EnvironmentConfig
 
-    socket_path = f"/tmp/ce{os.getpid()}.sock"  # noqa: S108 — test-owned tmux socket
+    socket_path = f"/tmp/ce{os.getpid()}.sock"  # test-owned tmux socket
     home = tmp_path / "home"
     helpers = home / ".cheese"
     helpers.mkdir(parents=True)

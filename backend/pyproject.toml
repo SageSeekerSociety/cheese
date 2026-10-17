@@ -92,13 +92,18 @@ target-version = "py313"
 # A001/A002 (variable and argument shadowing) are deliberately NOT selected: 12
 # existing sites, and `id`/`type` as a parameter name is idiomatic enough that
 # the rule would cost more attention than it saves.
-select = ["E", "F", "I", "UP", "B", "DTZ", "A003"]
+#
+# Layout is fixed, never judged: import order (I) is applied by the pre-commit
+# `ruff-format` hook together with `ruff format`, and line length (E501) is left
+# to the formatter. RUF100 reports a `# noqa` that suppresses nothing, so
+# `ruff check --fix` deletes it instead of a test keeping count of them.
+select = ["E", "F", "UP", "B", "DTZ", "A003", "RUF100"]
 # UP042 wants `class X(str, Enum)` → `class X(StrEnum)`. That is NOT behaviour-
 # preserving: `str(member)` returns "X.MEMBER" for (str, Enum) but the raw value
 # for StrEnum, which silently changes serialization/logging output. The existing
 # (str, Enum) pattern is valid and intentional across the merged tree, so we keep
 # it rather than risk a subtle behaviour change for a stylistic modernization.
-ignore = ["UP042"]
+ignore = ["UP042", "E501"]
 
 [tool.ruff.lint.per-file-ignores]
 # A test that pins behaviour to a fixed instant writes `datetime(2026, 1, 1)`,
@@ -108,10 +113,6 @@ ignore = ["UP042"]
 # code, since it lands in a TIMESTAMPTZ column and reads back shifted. Three of
 # those were live in the contract data factory when this rule was switched on.
 "tests/**" = ["DTZ001"]
-
-# Alembic migrations are generated/historical and carry long inline seed-data
-# strings; line length there is noise, not a defect.
-"alembic/versions/*" = ["E501"]
 
 # FastAPI's dependency-injection markers are CALLED in parameter defaults
 # (`x = Depends(dep)`, `q = Query(...)`) — that's the framework's idiom, not the

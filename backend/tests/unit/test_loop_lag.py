@@ -39,7 +39,7 @@ async def test_a_loop_nobody_blocks_reports_no_stall(caplog) -> None:
 async def test_work_that_never_awaits_is_named_with_how_long_it_held(caplog) -> None:
     async def block_once() -> None:
         await asyncio.sleep(0.02)
-        time.sleep(0.3)  # noqa: ASYNC251 — the thing being measured
+        time.sleep(0.3)  # the thing being measured
 
     watching = asyncio.create_task(
         loop_lag.watch_loop_lag(interval_s=0.01, stall_s=0.1, iterations=40)
@@ -61,7 +61,7 @@ async def test_a_loop_that_keeps_stalling_says_so_once_a_minute(caplog) -> None:
     async def block() -> None:
         for _ in range(3):
             await asyncio.sleep(0.02)
-            time.sleep(0.2)  # noqa: ASYNC251 — the thing being measured
+            time.sleep(0.2)  # the thing being measured
 
     watching = asyncio.create_task(
         loop_lag.watch_loop_lag(interval_s=0.01, stall_s=0.1, iterations=80)

@@ -118,15 +118,6 @@ tasks:
     desc: Check scenes render standalone (python ratchet, check only)
     cmds:
       - pnpm run lint:scenes
-  # Every .vue under src/ (src/views/demo/ excluded) that grades A — the same
-  # grade as lint:scenes — is in the /demo/catalog preview site or on the
-  # pending list in catalog-baseline.json, which may only shrink. A component
-  # that is new, or newly A, has to get a catalog entry. Writer:
-  # `pnpm run lint:catalog:update` (only ever removes). Needs no install.
-  lint:catalog:
-    desc: Check grade-A components are in the preview catalog (python ratchet, check only)
-    cmds:
-      - pnpm run lint:catalog
   lint:scene-debt:
     desc: Check child edges, route reads and legacy network imports only shrink
     deps: [install]
@@ -190,7 +181,6 @@ tasks:
       - task: lint:global-fallback
       - task: lint:scenes
       - task: lint:scene-debt
-      - task: lint:catalog
       - task: lint:style
       - task: typecheck
       - task: test

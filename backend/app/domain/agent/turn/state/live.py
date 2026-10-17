@@ -327,7 +327,7 @@ class LiveWork:
             if self._confirm_closed is not None:
                 try:
                     closed = await self._confirm_closed(topic_id, work_id)
-                except Exception:  # noqa: BLE001 — a failed confirm is not a close
+                except Exception:  # a failed confirm is not a close
                     logger.exception(
                         "could not confirm turn %s closed (topic=%s)", work_id, topic_id
                     )

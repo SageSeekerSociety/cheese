@@ -13,8 +13,8 @@ reminder.
 The gates pass on a tree that still holds violations: the existing ones are
 frozen in a baseline and only NEW ones are blocked. So a green gate does not
 mean the file open in front of you is clean — it may well be one of the frozen
-ones. `frontend/stylelint-baseline.json` and `frontend/palette-baseline.json`
-say which files have an allowance; check there before copying a neighbour. After
+ones. `frontend/stylelint-baseline.json` says which files have an allowance;
+check there before copying a neighbour. After
 a change, `frontend-design` (a skill) walks the whole checklist including the
 parts no gate can see.
 
@@ -39,7 +39,7 @@ parts no gate can see.
   `var(--text)` / `var(--muted)` / `var(--surface)` in CSS; use `background` /
   `surface` / `surface-light` / `surface-bright` / `on-surface-variant` /
   `primary` in Vuetify, **including in `withDefaults` prop defaults**. Both
-  halves are gates (see the ratchets below). Replacement table: §1.2.
+  halves are gates (see below). Replacement table: §1.2.
   - Exception, and write the reason in the code when you take it: where the
     BACKGROUND is itself theme-invariant, the ink on it must be too. The default
     avatar's background is the `#rrggbb` `avatarColor()` computes at a fixed
@@ -98,7 +98,7 @@ avoid a white flash before first paint. Change the storage key
 
 Font size, line height and spacing are in
 [`docs/design-system.md` §3](../../docs/design-system.md#3-尺度); radius is a
-four-step ladder stylelint enforces — `--radius-sm` 6 / `--radius-md` 8 /
+four-step ladder — `--radius-sm` 6 / `--radius-md` 8 /
 `--radius-lg` 12 / `--radius-pill` 999, nothing else, picked by what the element
 is and not by the pixels it used to carry. Two things from §3 that are not
 visible in the code:
@@ -190,11 +190,11 @@ Full rules: [`docs/i18n.md`](../../docs/i18n.md). What bites on turn one:
   reason fails.
 - The gate is two commands, seconds each, runs anywhere: `pnpm exec vitest run
   --dir src/i18n` and `pnpm run lint:i18n` (Chinese typed into `src/` outside the
-  catalog, none allowed except annotated data lines; a Chinese HTML comment in a
-  template is counted against `frontend/i18n-comments-baseline.json`, which only
-  goes down — `pnpm run lint:i18n:update` after removing some).
+  catalog, none allowed except annotated data lines; comments are not scanned,
+  but a Chinese `<!-- -->` in a template reaches the DOM vitest renders, so the
+  no-Chinese specs read it — write template comments in English).
 
-## The two ratchets
+## The colour gates
 
 `frontend/stylelint-baseline.json` freezes the pre-existing violations and the
 gate blocks only NEW ones — same mechanism as `tsc-baseline.json`, and for the
@@ -208,20 +208,17 @@ pnpm run lint:style:update   # after fixing some, ratchet the baseline DOWN
 
 Palette NAMES are a **separate** gate, because stylelint parses CSS and can
 therefore never see a `<template>` attribute or a `<script>` prop default. It
-lives in `.claude/scripts/check-repo-rules.sh` with its own frozen baseline
-(`frontend/palette-baseline.json`) and runs in `task check` and in CI's Repo
-Guards:
+lives in `.claude/scripts/check-repo-rules.sh`, has no baseline (the tree holds
+none), and runs in `task check` and in CI's Repo Guards:
 
 ```bash
-bash .claude/scripts/check-repo-rules.sh                            # check
-bash .claude/scripts/check-repo-rules.sh --update-palette-baseline  # ratchet DOWN
-bash .claude/scripts/check-repo-rules.sh --self-test                # prove it still fires
+bash .claude/scripts/check-repo-rules.sh              # check
+bash .claude/scripts/check-repo-rules.sh --self-test  # prove it still fires
 ```
 
-`--update-palette-baseline` refuses to raise an entry and names the file it
-refused on, and `lint:style:update` clamps every count with `Math.min` against
-the baseline it already holds, so neither can be used to launder a regression in.
-Do not raise a baseline to make a gate green; baselines only go down.
+`lint:style:update` clamps every count with `Math.min` against the baseline it
+already holds, so it cannot be used to launder a regression in. Do not raise a
+baseline to make a gate green; baselines only go down.
 
 **Never add `--fix` to a gate script.** It rewrites the checkout and can exit 0
 on a violation it silently repaired — the writing forms are `lint:style:fix` and

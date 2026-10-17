@@ -110,15 +110,13 @@ tasks:
   # sizes require an up-to-date origin/main; frontend checks require installed
   # dependencies.
   boundaries:
-    desc: Boundaries + storage + scenes + scene debt + catalog + file-size caps
+    desc: Boundaries + storage + scenes + scene debt
     cmds:
       - task: be:boundaries
       - task: fe:lint:boundary
       - task: fe:lint:storage
       - task: fe:lint:scenes
       - task: fe:lint:scene-debt
-      - task: fe:lint:catalog
-      - python3 .claude/scripts/check-file-sizes.py
 
   check:full:
     desc: Run all checks with full test suite

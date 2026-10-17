@@ -289,7 +289,7 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 
 先问「这个元素是什么」，再看它原来写了几像素：一个 10px 的小标签折到 `--radius-sm`，一个 10px 的输入框折到 `--radius-md`；进度条是胶囊，折到 `--radius-pill`。
 
-- 只圆某几个角时写长写法（`border-top-right-radius` 等）；简写 `0 8px 8px 0` 过不了闸门。
+- 只圆某几个角时写长写法（`border-top-right-radius` 等），每个角各取一档。
 - Vuetify 的部分组件自带 `!important` 的圆角（例如 `VCard` 是 24px），scoped 样式压不过它：在组件上显式写 `rounded="lg"`，否则圆角静默失效。
 
 ### 3.2 字号与行高
@@ -638,10 +638,9 @@ const { saving, saved, dirty, error, run } = useSaveState({
 | 闸门 | 拦什么 | 在哪 |
 |---|---|---|
 | stylelint 颜色规则 | 新增的写死颜色（hex / rgb / hsl / 颜色名），包括文档站的 `docs/site/src/style.css` | `frontend/stylelint.config.cjs` |
-| stylelint 圆角规则 | 不在档位里的 `border-radius` | 同上 |
 | 固定调色板闸门 | 模板和 script 里的 `color="grey-*"` / `bg-white` / `text-grey-*` | `.claude/scripts/check-repo-rules.sh` |
 | 组件闸门 | 裸 `<v-btn>`（§3.6）和裸 `<v-empty-state>`（§3.12）；每一处例外都要上一行带原因的 `eslint-disable-next-line`。它只看得见 `.vue` 模板里带前缀的裸标签名，所以 `.ts` 的 `template:` 字符串、`<VDialog>` 这类别名、以及不带原因的 disable 注释都拦不到——那三种情况靠 review | `frontend/eslint.config.mjs` |
-| 存量棘轮 | 以上只拦**新增**；存量冻结在基线里，只能减少 | `frontend/stylelint-baseline.json`、`frontend/palette-baseline.json` |
+| 存量棘轮 | stylelint 颜色规则只拦**新增**；存量冻结在基线里，只能减少。固定调色板闸门没有基线，一处就红 | `frontend/stylelint-baseline.json` |
 
 ```bash
 cd frontend
@@ -650,14 +649,13 @@ pnpm run lint:style:fix      # 自动修可修的部分
 pnpm run lint:style:update   # 修好一批后把基线降下来并提交
 
 cd ..
-bash .claude/scripts/check-repo-rules.sh                            # 检查固定调色板
-bash .claude/scripts/check-repo-rules.sh --update-palette-baseline  # 修好一批后降基线
-bash .claude/scripts/check-repo-rules.sh --self-test                # 证明闸门本身没坏
+bash .claude/scripts/check-repo-rules.sh              # 检查固定调色板
+bash .claude/scripts/check-repo-rules.sh --self-test  # 证明闸门本身没坏
 ```
 
 基线只能降不能升。`--self-test` 不是摆设：一个悄悄失效的闸门和一棵干净的树，输出一模一样。
 
-排版（§3.2）、文案（§8）、动效（§9）没有闸门，靠 review。[`frontend-design`](../.claude/skills/frontend-design/SKILL.md) skill 把能人工逐条过的部分做成了一次体检。
+圆角（§3.1）、排版（§3.2）、文案（§8）、动效（§9）没有闸门，靠 review。[`frontend-design`](../.claude/skills/frontend-design/SKILL.md) skill 把能人工逐条过的部分做成了一次体检。
 
 ---
 

@@ -174,7 +174,7 @@ class Docs:
             return "开发文档不对外，只有公开的使用文档可以读。"
         try:
             text = await library.read_page(slug, dev=False, transport=self.transport)
-        except Exception:  # noqa: BLE001 — a failed read is the model's to see, not the reader's
+        except Exception:  # a failed read is the model's to see, not the reader's
             logger.warning("docs assistant: reading %s failed", slug, exc_info=True)
             return f"读 {slug} 的时候出错了，换一页或再试一次。"
         if text is None:

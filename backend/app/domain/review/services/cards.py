@@ -318,7 +318,7 @@ async def _warn_about_a_second_pending_migration(
                 for entry in (comparison or {}).get("files", [])
                 if entry.get("status") == "added"
             ]
-        except Exception:  # noqa: BLE001 — a diagnostic must not break 递卡
+        except Exception:  # a diagnostic must not break 递卡
             return []
         return [p for p in added if _ALEMBIC_VERSIONS_DIR in p]
 

@@ -80,6 +80,6 @@ async def record_visit(body: VisitIn, request: Request, db: DbSession) -> Respon
         return Response(status_code=204)
     try:
         await visits.record(db, visitor=who, user_id=user_id, page=body.page)
-    except Exception:  # noqa: BLE001 — a lost counter must not reach the page
+    except Exception:  # a lost counter must not reach the page
         logger.warning("recording a docs visit failed", exc_info=True)
     return Response(status_code=204)

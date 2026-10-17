@@ -11,10 +11,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import app.main  # noqa: E402,F401 — imports routers → services → all models
-from app.core.db import Base as CxBase  # noqa: E402
-from app.core.db import engine as cx_engine  # noqa: E402
-from app.db.base_class import Base as MainBase  # noqa: E402
+import app.main  # noqa: F401 — imports routers → services → all models
+from app.core.db import Base as CxBase
+from app.core.db import engine as cx_engine
+from app.db.base_class import Base as MainBase
 
 
 async def main() -> None:

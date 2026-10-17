@@ -36,7 +36,7 @@ async def note_turn_context(
                 turn_id, route=route, reply_to=reply_to, agent_handle=agent_handle
             )
             await session.commit()
-    except Exception:  # noqa: BLE001 — bookkeeping must not stop a turn
+    except Exception:  # bookkeeping must not stop a turn
         logger.exception("could not record the context of turn %s", turn_id)
 
 

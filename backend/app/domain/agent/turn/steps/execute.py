@@ -473,7 +473,7 @@ async def execute(
             block = await effects.post_system_event(
                 topic_id, text, turn_id, meta=fuse_meta or timeout_meta
             )
-        except Exception:  # noqa: BLE001 — best effort
+        except Exception:  # best effort
             logger.exception("failed to persist timeout event")
         if block is not None:
             await publish(channel, {"type": "event_block", "block": block})
@@ -503,7 +503,7 @@ async def execute(
         await publish(channel, error_frame(exc.message, type="error"))
         # Ends the stream, for the reason spelled out on the timeout path.
         await publish(channel, {"type": "done"})
-    except Exception as exc:  # noqa: BLE001 — surface runtime failures (spec H4)
+    except Exception as exc:  # surface runtime failures (spec H4)
         rec["status"] = "crashed"
         rec["duration_s"] = round(time.monotonic() - t0, 1)
         logger.exception("turn %s failed for topic %s", turn_id, topic_id)
@@ -534,7 +534,7 @@ async def execute(
             block = await effects.post_system_event(
                 topic_id, text, turn_id, meta=event_meta
             )
-        except Exception:  # noqa: BLE001 — best effort, never mask the error
+        except Exception:  # best effort, never mask the error
             logger.exception("failed to persist turn-failure event")
         if block is not None:
             await publish(channel, {"type": "event_block", "block": block})
@@ -569,6 +569,6 @@ async def execute(
     if not session_owns_ending:
         try:
             await close_turns(sessions, [turn_id])
-        except Exception:  # noqa: BLE001 — the turn already finished
+        except Exception:  # the turn already finished
             logger.exception("could not close the interval for turn %s", turn_id)
     clear_context("turn", "topic")

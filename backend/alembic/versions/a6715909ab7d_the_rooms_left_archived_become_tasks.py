@@ -163,7 +163,7 @@ def _move_to_general() -> None:
         op.execute(f"""
             UPDATE {table} x SET {column} = c.general_id
             FROM converted c WHERE x.{column} = c.id
-        """)  # noqa: S608
+        """)
     op.execute("""
         UPDATE room_file_revisions x SET room_id = c.general_id
         FROM converted c WHERE x.room_id = c.id AND x.path LIKE 'uploads/%'

@@ -507,7 +507,7 @@ async def _override_github_checks(
             state=state,
             line=tail.splitlines()[0] if tail else "",
         )
-    except Exception as exc:  # noqa: BLE001 — a broken read must not lock a human out
+    except Exception as exc:  # a broken read must not lock a human out
         logger.warning("force-merge check read failed for card %s: %s", card.id, exc)
         state = None
         checks_at_merge = say("forceMergedChecksUnread")

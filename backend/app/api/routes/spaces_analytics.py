@@ -288,7 +288,7 @@ async def export_space_analytics_participants(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"  # noqa: E501
+            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"
         },
     )
 
@@ -572,6 +572,6 @@ async def export_space_analytics_publishers(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'  # noqa: E501
+            "Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'
         },
     )

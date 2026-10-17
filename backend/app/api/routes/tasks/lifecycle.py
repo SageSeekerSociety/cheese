@@ -107,7 +107,7 @@ async def get_task(
     # 题目的附属读路由（材料清单）走同一个判断。
     await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
 
-    # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。  # noqa: E501
+    # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。
     participation: dict
     if auth_user.user_id == 0:
         participation = {
@@ -173,7 +173,7 @@ async def get_task(
             "hasParticipation": bool(identities),
         }
 
-    # 组装 task DTO，并按当前用户补充 joined/submittable/userDeadline/participationEligibility 等字段（部分字段为简化版）。  # noqa: E501
+    # 组装 task DTO，并按当前用户补充 joined/submittable/userDeadline/participationEligibility 等字段（部分字段为简化版）。
     task_dict = _task_to_api_model(task)
 
     joined = False
@@ -818,7 +818,7 @@ async def patch_task_membership_by_member(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
-    """Patch a TaskMembership identified by (taskId, memberId) and return all participants."""  # noqa: E501
+    """Patch a TaskMembership identified by (taskId, memberId) and return all participants."""
     task = await service.get_task(task_id)
     if task is None:
         raise NotFoundError("Task not found")

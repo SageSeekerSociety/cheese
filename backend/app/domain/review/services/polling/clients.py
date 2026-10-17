@@ -56,12 +56,12 @@ async def _app_credentials(
     try:
         write, _ = await tokens.write_token()
         read, _ = await tokens.installation_token()
-    except Exception as exc:  # noqa: BLE001 — pause this tick, don't crash
+    except Exception as exc:  # pause this tick, don't crash
         return None, f"获取代码托管凭据失败（{type(exc).__name__}）"
     return _GitHubCredentials(write=write, read=read), ""
 
 
-async def _app_pr_client(self: pkg.AcceptService, topic: Topic):  # noqa: ANN202 — GitHubPRClient
+async def _app_pr_client(self: pkg.AcceptService, topic: Topic):  # GitHubPRClient
     """The App-token client for this project's upstream, or None when the
     project has no GitHub side at all (no installation, or an upstream that
     is not a GitHub https remote)."""

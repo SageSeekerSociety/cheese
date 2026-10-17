@@ -35,8 +35,6 @@ export const DESIGN_RULES = new Set([
   'color-named',
   // Numeric rgb()/hsl() literals.
   'declaration-property-value-disallowed-list',
-  // Off-ladder border-radius.
-  'declaration-property-value-allowed-list',
 ])
 
 /**

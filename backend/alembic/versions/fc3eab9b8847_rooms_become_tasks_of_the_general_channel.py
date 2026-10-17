@@ -226,7 +226,7 @@ def _move_to_general() -> None:
         op.execute(f"""
             UPDATE {table} x SET {column} = c.general_id
             FROM converted c WHERE x.{column} = c.id
-        """)  # noqa: S608
+        """)
     op.execute("""
         UPDATE room_file_revisions x SET room_id = c.general_id
         FROM converted c WHERE x.room_id = c.id AND x.path LIKE 'uploads/%'
@@ -301,7 +301,7 @@ def _retire_rooms() -> None:
     for table in ("room_cleanups", "device_topic"):
         op.execute(f"""
             DELETE FROM {table} x USING room_fate c WHERE x.topic_id = c.id
-        """)  # noqa: S608
+        """)
     op.execute("""
         DELETE FROM topics t USING converted c WHERE t.id = c.id
     """)

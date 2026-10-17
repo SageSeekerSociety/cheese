@@ -71,12 +71,11 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 
 加一个组件：
 
-1. `node scripts/catalog-scaffold.mjs <src/...vue>` 按 props 打出骨架；`--pending <目录前缀>` 一次打出白名单里这个目录下的全部。
-2. 把骨架贴进一个已被 `catalog.ts` 导入并展开的 `catalog*.ts` 分册（新开分册就要在 `catalog.ts` 里 `import` 它的数组并 `...` 展开进 `CATALOG`，否则页面、测试和收录闸都看不见它），补上 `about`、每格的名字和说明，换上真实形状的示例数据。每格的 `expect`（一句字）或 `expectSelector`（一个选择器）要能证明画出来的是这一格，而不是兄弟格也有的东西。骨架里要人补的句子和占位值都标着 `TODO(catalog)`，不改完目录测试会报红。
+1. `node scripts/catalog-scaffold.mjs <src/...vue>` 按 props 打出骨架。
+2. 把骨架贴进一个已被 `catalog.ts` 导入并展开的 `catalog*.ts` 分册（新开分册就要在 `catalog.ts` 里 `import` 它的数组并 `...` 展开进 `CATALOG`，否则页面和测试都看不见它），补上 `about`、每格的名字和说明，换上真实形状的示例数据。每格的 `expect`（一句字）或 `expectSelector`（一个选择器）要能证明画出来的是这一格，而不是兄弟格也有的东西。骨架里要人补的句子和占位值都标着 `TODO(catalog)`，不改完目录测试会报红。
 3. 跑 `pnpm exec vitest run src/views/demo/catalog.spec.ts`。它按每格声明的插件逐格挂载，有任何 warning 或 error 就红。
-4. 跑 `pnpm run lint:catalog:update`，把这个组件从白名单里划掉。
 
-**收录闸**（`pnpm run lint:catalog`，CI 里跑）：评级为 A（只靠 props 和事件就能渲染，判据见[架构指标](/dev/arch-metrics#metrics)）的组件，要么进目录，要么在白名单 `frontend/catalog-baseline.json` 里。白名单是今天的存量，只许缩短：新写的或刚改成 A 级的组件，从第一个提交起就要进目录。「进目录」看代码不看 `file:` 标签：`catalog.ts` 本身或它导入并展开的分册（递归；`*Fixtures.ts` 不读）里，`import` 了这个 `.vue` 并写成某条条目的 `component:`。`demoRouter.ts` 里路由的 `component:`、没被导入的分册、注释里的 `component:` 都不算。详见[场景清单](/dev/scenes#catalog-ratchet)。
+「进目录」看代码不看 `file:` 标签：`catalog.ts` 本身或它导入并展开的分册（递归；`*Fixtures.ts` 不读）里，`import` 了这个 `.vue` 并写成某条条目的 `component:`。`demoRouter.ts` 里路由的 `component:`、没被导入的分册、注释里的 `component:` 都不算。哪些组件在目录里、哪些 A 级还没进，[组件总览](/dev/ref-components)每次构建从代码读一遍。
 
 ## 壳与路由 {#shell}
 
@@ -221,7 +220,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 棘轮的形状都一样：跑检查、解析报告、和基线比，**只拦新增**，`--update` 把基线降下来（`import-boundary-baseline.json` / `a11y-baseline.json` / `browser-storage-baseline.json` / `tsc-baseline.json` / `stylelint-baseline.json`）。读 eslint 的 JSON 报告这件事由 `frontend/scripts/eslint-ratchet-json.mjs` 一处做（按规则 id 计数、把绝对路径变成相对路径、把解析不了的文件单列为「判不了」），边界、无障碍、存储三道都从这里取。今天的 `tsc-baseline.json` 是**空的**（一个类型错误都不许有），其余四份各冻着多少存量违规，看基线本身（`frontend/stylelint-baseline.json`、`frontend/import-boundary-baseline.json`、`frontend/a11y-baseline.json`、`frontend/browser-storage-baseline.json`）——数字不抄进文档，各账户的计数独立变化（`.claude/rules/metric-snapshots.md`）。`lint:a11y:update` 遇到新增会拒绝写入，冻结新违规要显式加 `--freeze-new`。脚本都显式解析 `node_modules/.bin` 下的二进制而不是信 PATH：**一个只是缺失的 vue-tsc / stylelint 不能长得像一次干净的检查**；一个非零退出但解析不出任何诊断，是崩溃而不是「零违规」。
 
-仓库根还有两道：调色板（`color="grey-*"`、`bg-white` 这类固定色）与 `src/` 单文件行数上限（后端 1500、前端 1000，只判与 `origin/main` 不同的文件），分别在 `.claude/scripts/check-repo-rules.sh` 和 `.claude/scripts/check-file-sizes.py`，样式表那条的存量冻在 `frontend/palette-baseline.json`。所有基线都**只能降不能升**，理由见 `docs/design-system.md` §7：一个悄悄失效的闸门和一棵干净的树，输出一模一样。那里也列了没有闸门、只能靠 review 的部分（排版、文案、动效）。
+仓库根还有一道：调色板（`color="grey-*"`、`bg-white` 这类固定色），在 `.claude/scripts/check-repo-rules.sh`，没有基线，一处就红。所有基线都**只能降不能升**，理由见 `docs/design-system.md` §7：一个悄悄失效的闸门和一棵干净的树，输出一模一样。那里也列了没有闸门、只能靠 review 的部分（圆角、排版、文案、动效）。
 
 ## 测试约定 {#tests}
 

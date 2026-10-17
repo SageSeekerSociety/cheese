@@ -634,10 +634,10 @@ class TaskPdfDraftService:
             "3. 可以将图片中提取的文本（picture text部分）删除；\n"
             "4. 将修正后的 Markdown 放入 JSON 的 `description` 字段；\n"
             "5. 从内容中提炼出合适的 `name`（赛题名称）和 `intro`（简短介绍）。\n\n"
-            "**输出格式要求**：直接输出一个 JSON 对象，包含 name、intro、description 三个字段。"  # noqa: E501
+            "**输出格式要求**：直接输出一个 JSON 对象，包含 name、intro、description 三个字段。"
             "形如 "
             '{"name": "...", "intro": "...", "description": "..."}。\n\n'
-            "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"  # noqa: E501
+            "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"
         )
 
     def _build_user_prompt(self, *, text: str, template: dict[str, Any]) -> str:

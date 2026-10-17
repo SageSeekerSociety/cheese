@@ -275,7 +275,7 @@ async def join_task_as_user(
 
     if task.submitter_type != 0:
         raise BadRequestError(
-            "This endpoint is for USER tasks only. Use /participations/team for team tasks."  # noqa: E501
+            "This endpoint is for USER tasks only. Use /participations/team for team tasks."
         )
 
     # 可见性检查：禁止"看不到但能加入"
@@ -340,7 +340,7 @@ async def join_task_as_team(
 
     if task.submitter_type != 1:
         raise BadRequestError(
-            "This endpoint is for TEAM tasks only. Use /participations/user for user tasks."  # noqa: E501
+            "This endpoint is for TEAM tasks only. Use /participations/user for user tasks."
         )
 
     # 可见性检查：禁止"看不到但能加入"

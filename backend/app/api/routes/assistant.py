@@ -176,7 +176,7 @@ async def _prestart(
     try:
         # Only when the host has room now: a question waits for it, and says so.
         await people.start(ref, replace(spec, host_wait_s=0), access)
-    except Exception:  # noqa: BLE001 — the question starts it, or says why not
+    except Exception:  # the question starts it, or says why not
         logger.info("pre-starting a person's session failed", exc_info=True)
 
 

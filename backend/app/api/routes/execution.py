@@ -380,5 +380,5 @@ async def _settle(
     try:
         await dispatch_log.settle(db, dispatch, outcome)
         await db.commit()
-    except Exception:  # noqa: BLE001 — 见上：结不上账比毁掉这次调用的结局便宜
+    except Exception:  # 见上：结不上账比毁掉这次调用的结局便宜
         logger.exception("dispatch %s not settled as %s", dispatch, outcome.value)

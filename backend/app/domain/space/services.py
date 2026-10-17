@@ -710,7 +710,7 @@ class SpaceService:
         else:
             if relation.role == SpaceAdminRole.OWNER.value:
                 raise BadRequestError(
-                    "Cannot demote owner directly. Transfer ownership to another admin first."  # noqa: E501
+                    "Cannot demote owner directly. Transfer ownership to another admin first."
                 )
             relation.role = new_role.value
             relation.updated_at = datetime.now(UTC)

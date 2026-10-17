@@ -363,11 +363,9 @@ def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     claims are the minter's own, re-signed with only ``exp`` moved, so an
     expired token differs from a live one in nothing else.
 
-    Nothing else under ``backend/tests/`` may mint a handle-only token —
-    ``tests/unit/test_no_adhoc_auth_helpers.py`` enforces it. Fourteen
-    hand-rolled copies of this had accumulated — 9 named ``_auth``, 3 named
-    ``_login``, 2 inlined into headers — which is why the rule is now a test
-    rather than a sentence in a rules file.
+    Use this rather than minting a handle-only token by hand: fourteen
+    hand-rolled copies of it had accumulated — 9 named ``_auth``, 3 named
+    ``_login``, 2 inlined into headers.
     """
     token = create_access_token(None, handle=handle)
     if ttl_s is None:

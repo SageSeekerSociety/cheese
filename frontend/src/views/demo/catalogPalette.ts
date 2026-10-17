@@ -3,9 +3,7 @@
  * 「还能做什么」的清单、底栏。
  *
  * 单独一份的理由和 `catalogLibrary.ts` 那几份一样：这四件是同一个浮层的四块
- * （合起来才是 `/` 唤出来的那个面板），搁在一块儿才看得清哪块管什么；不放进
- * `catalog/navigation.ts` 是因为那一册的条目先后被 `catalog/catalogShards.spec.ts`
- * 钉着，往中间添会动到那一次拆分钉下的顺序。
+ * （合起来才是 `/` 唤出来的那个面板），搁在一块儿才看得清哪块管什么。
  *
  * 四件都只吃 props：搜什么、选中第几条、清单开没开、键怎么按，全在
  * `CommandPalette.vue` 和 `src/commands/palette/` 那两个 composable 里，所以这里

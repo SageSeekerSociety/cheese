@@ -1287,7 +1287,7 @@ class Runner(runner.Runner[Journal]):
                 raise RuntimeError(err.decode(errors="replace")[-600:])
             if json.loads(out or b"{}").get("changed"):
                 await self.command("/reload-skills")
-        except Exception as error:  # noqa: BLE001 — the turn goes on regardless
+        except Exception as error:  # the turn goes on regardless
             print(
                 f"project context not synchronized before the turn: {error!r}",
                 file=sys.stderr,

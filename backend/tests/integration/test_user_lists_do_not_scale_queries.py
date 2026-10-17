@@ -20,7 +20,7 @@ def _count_statements(client):
     """记录一次请求发出的全部语句；返回 (语句列表, 停止函数)。"""
     statements: list[str] = []
 
-    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    def record(conn, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
     engine = client.test_app_engine.sync_engine  # type: ignore[attr-defined]

@@ -100,7 +100,7 @@ async def remove_closed_checkouts(
             raise RuntimeError("checkout sweep was not handed in")
         try:
             outcome = await machines(device, str(project), resource, tasks)
-        except Exception:  # noqa: BLE001 — one machine must not stop the others
+        except Exception:  # one machine must not stop the others
             # WARNING, not ERROR: a machine going away mid-run is the usual
             # cause, and its next connection runs this again.
             logger.warning(

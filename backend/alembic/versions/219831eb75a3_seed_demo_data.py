@@ -10,8 +10,6 @@ Note: password must be >=8 chars and username must be >=4 chars to pass frontend
 validation (see cheese-frontend src/views/account/SignIn.vue).
 """
 
-# ruff: noqa: S608
-
 from alembic import op
 
 revision = "219831eb75a3"
@@ -40,7 +38,7 @@ def upgrade() -> None:
 
     # avatar uses autoincrement
     op.execute(
-        "SELECT setval(pg_get_serial_sequence('avatar', 'id'), (SELECT COALESCE(MAX(id),0) FROM avatar), true)"  # noqa: E501
+        "SELECT setval(pg_get_serial_sequence('avatar', 'id'), (SELECT COALESCE(MAX(id),0) FROM avatar), true)"
     )
 
     # ── Users ────────────────────────────────────────────────────────
@@ -92,7 +90,7 @@ def upgrade() -> None:
     """)
     # topic uses autoincrement (implicit sequence topic_id_seq)
     op.execute(
-        "SELECT setval(pg_get_serial_sequence('topic', 'id'), (SELECT COALESCE(MAX(id),0) FROM topic), true)"  # noqa: E501
+        "SELECT setval(pg_get_serial_sequence('topic', 'id'), (SELECT COALESCE(MAX(id),0) FROM topic), true)"
     )
 
     # ── Teams ────────────────────────────────────────────────────────
@@ -239,7 +237,7 @@ def upgrade() -> None:
             1,
             "手写数字识别模型训练",
             "使用 MNIST 数据集训练一个手写数字分类器",
-            "请使用 PyTorch 或 TensorFlow 实现一个卷积神经网络，在 MNIST 数据集上达到 98% 以上的测试准确率。"  # noqa: E501
+            "请使用 PyTorch 或 TensorFlow 实现一个卷积神经网络，在 MNIST 数据集上达到 98% 以上的测试准确率。"
             "需要提交训练代码、模型文件和实验报告。",
             1,
             1,
@@ -401,7 +399,7 @@ def upgrade() -> None:
             1,
             3,
             "如何选择合适的深度学习框架？",
-            "目前主流的框架有 PyTorch、TensorFlow、JAX 等，各有优劣。想请教大家在实际项目中是如何选择的？",  # noqa: E501
+            "目前主流的框架有 PyTorch、TensorFlow、JAX 等，各有优劣。想请教大家在实际项目中是如何选择的？",
             0,
             5,
         ),
@@ -409,7 +407,7 @@ def upgrade() -> None:
             2,
             4,
             "Python 异步编程最佳实践有哪些？",
-            "在使用 asyncio 和 FastAPI 开发时，遇到了一些并发问题。希望了解异步编程的最佳实践和常见陷阱。",  # noqa: E501
+            "在使用 asyncio 和 FastAPI 开发时，遇到了一些并发问题。希望了解异步编程的最佳实践和常见陷阱。",
             0,
             0,
         ),
@@ -450,7 +448,7 @@ def upgrade() -> None:
 
     # question uses autoincrement
     op.execute(
-        "SELECT setval(pg_get_serial_sequence('question', 'id'), (SELECT COALESCE(MAX(id),0) FROM question), true)"  # noqa: E501
+        "SELECT setval(pg_get_serial_sequence('question', 'id'), (SELECT COALESCE(MAX(id),0) FROM question), true)"
     )
 
     # Question-topic relations
@@ -470,7 +468,7 @@ def upgrade() -> None:
             ON CONFLICT (id) DO NOTHING
         """)
     op.execute(
-        "SELECT setval(pg_get_serial_sequence('question_topic_relation', 'id'), (SELECT COALESCE(MAX(id),0) FROM question_topic_relation), true)"  # noqa: E501
+        "SELECT setval(pg_get_serial_sequence('question_topic_relation', 'id'), (SELECT COALESCE(MAX(id),0) FROM question_topic_relation), true)"
     )
 
     # ── Answers ──────────────────────────────────────────────────────
@@ -516,12 +514,12 @@ def upgrade() -> None:
 
     # answer uses autoincrement
     op.execute(
-        "SELECT setval(pg_get_serial_sequence('answer', 'id'), (SELECT COALESCE(MAX(id),0) FROM answer), true)"  # noqa: E501
+        "SELECT setval(pg_get_serial_sequence('answer', 'id'), (SELECT COALESCE(MAX(id),0) FROM answer), true)"
     )
 
     # Set accepted answer for Q1
     op.execute(
-        "UPDATE question SET accepted_answer_id = 1 WHERE id = 1 AND accepted_answer_id IS NULL"  # noqa: E501
+        "UPDATE question SET accepted_answer_id = 1 WHERE id = 1 AND accepted_answer_id IS NULL"
     )
 
     # ── Knowledge ────────────────────────────────────────────────────
@@ -549,7 +547,7 @@ def upgrade() -> None:
             "数据可视化工具对比",
             "Matplotlib、Seaborn、Plotly、ECharts 对比分析",
             "TEXT",
-            '{"text": "Matplotlib 功能最全但语法繁琐，Plotly 适合交互式图表，ECharts 适合前端集成"}',  # noqa: E501
+            '{"text": "Matplotlib 功能最全但语法繁琐，Plotly 适合交互式图表，ECharts 适合前端集成"}',
             3,
             3,
         ),
@@ -558,7 +556,7 @@ def upgrade() -> None:
             "Git 工作流规范",
             "团队 Git 分支管理和 commit 规范",
             "TEXT",
-            '{"text": "推荐使用 trunk-based development，配合 conventional commits 规范"}',  # noqa: E501
+            '{"text": "推荐使用 trunk-based development，配合 conventional commits 规范"}',
             2,
             2,
         ),
@@ -574,7 +572,7 @@ def upgrade() -> None:
             ON CONFLICT (id) DO NOTHING
         """)
     op.execute(
-        "SELECT setval('knowledge_seq', (SELECT COALESCE(MAX(id),0) FROM knowledge), true)"  # noqa: E501
+        "SELECT setval('knowledge_seq', (SELECT COALESCE(MAX(id),0) FROM knowledge), true)"
     )
 
     # Knowledge labels

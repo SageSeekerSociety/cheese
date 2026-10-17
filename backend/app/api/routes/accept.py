@@ -336,7 +336,7 @@ async def topic_pr_checks(
         return ok(await _pr_checks_payload(place.room_id, db, task_id=place.task_id))
     except NotFoundError:
         raise  # 404 for a topic that does not exist stays a 404
-    except Exception as exc:  # noqa: BLE001 — display-only endpoint, see above
+    except Exception as exc:  # display-only endpoint, see above
         logger.exception("pr-checks read failed for topic %s", topic_id)
         return ok({"available": False, "reason": f"{type(exc).__name__}: {exc}"[:200]})
 

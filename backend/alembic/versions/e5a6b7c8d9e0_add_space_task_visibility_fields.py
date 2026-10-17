@@ -26,7 +26,7 @@ def upgrade() -> None:
     )
     op.add_column("space", sa.Column("visible_task_limit", sa.Integer(), nullable=True))
     op.execute(
-        "UPDATE task SET published_at = updated_at WHERE approved = 0 AND published_at IS NULL"  # noqa: E501
+        "UPDATE task SET published_at = updated_at WHERE approved = 0 AND published_at IS NULL"
     )
 
 

@@ -1,4 +1,3 @@
-# ruff: noqa: E501 — one route per line, path templates unbroken
 """Write routes that predated write-access declarations, frozen as they were.
 
 Each entry is (method, path template) of a route that declares nothing and is

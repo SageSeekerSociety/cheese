@@ -47,7 +47,7 @@ def backend_over_http(client):
     requests: list[str] = []
 
     class Relay(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802 — the stdlib's name
+        def do_POST(self):  # the stdlib's name
             requests.append(self.path)
             body = self.rfile.read(int(self.headers["Content-Length"]))
             answer = client.post(

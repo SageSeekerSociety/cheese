@@ -105,7 +105,7 @@ class TestPublishersParticipationNameResolution:
 
     @pytest.mark.anyio
     async def test_name_from_user_when_profile_has_no_nickname(self):
-        """Line 113, 127-128: profile exists but nickname is None, fallback to username."""  # noqa: E501
+        """Line 113, 127-128: profile exists but nickname is None, fallback to username."""
         tasks = [_task(1, 5, 1, 0, 10)]
         memberships = []
 

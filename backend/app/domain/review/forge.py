@@ -246,7 +246,7 @@ async def resolve(
 
     try:
         binding = await binding_for_project(project_id, session)
-    except Exception as exc:  # noqa: BLE001 — cannot pick a lane blind
+    except Exception as exc:  # cannot pick a lane blind
         raise ValidationError(BINDING_UNKNOWN_MESSAGE) from exc
     if binding is None:
         raise ValidationError(say("reviewNoRepositoryForAccept"))
@@ -258,7 +258,7 @@ async def resolve(
         raise ValidationError(say("forgeKindUnknown")) from exc
     try:
         writable = await tokens_for_project(project_id, session) is not None
-    except Exception as exc:  # noqa: BLE001 — cannot declare unreadable capabilities
+    except Exception as exc:  # cannot declare unreadable capabilities
         raise ValidationError(BINDING_UNKNOWN_MESSAGE) from exc
     return provider(
         ForgeCapabilities(
