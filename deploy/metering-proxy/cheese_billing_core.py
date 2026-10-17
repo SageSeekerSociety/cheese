@@ -23,6 +23,7 @@ with the backend via env; rotate them together.
 """
 
 import base64
+import fcntl
 import gzip
 import hashlib
 import hmac
@@ -37,6 +38,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -226,38 +228,116 @@ def usage_from_sse(body: bytes) -> tuple[dict, str]:
     return ex.usage, ex.model
 
 
-class Meter:
-    """Rolling token total over a window, plus a durable JSONL trail."""
+@contextmanager
+def file_lock(path: Path):
+    """Hold an exclusive lock on ``path`` (created if missing) for the block.
 
-    def __init__(self, usage_log: Path, cap_window_s: int) -> None:
+    A release runs two proxies side by side until the old one has drained
+    (deploy/release-metering-proxy.sh), and both write the same files: the
+    ledger, the credentials they refresh, the account cooldowns. A
+    ``threading.Lock`` covers only one of them; this covers both."""
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # closing the descriptor releases the lock
+
+
+class Meter:
+    """Rolling token total over a window, plus a durable JSONL trail.
+
+    With ``follow`` (the cap is on) the window also takes in the rows another
+    proxy appends to the same ledger, read on each cap check. During a release
+    the old proxy finishes its turns while the new one admits new ones, and a
+    turn it finishes counts against the cap the new one enforces."""
+
+    def __init__(
+        self, usage_log: Path, cap_window_s: int, *, follow: bool = False
+    ) -> None:
         self._lock = threading.Lock()
         self._window = cap_window_s
         self._log = usage_log
+        self._follow = follow
         self._events: list[tuple[float, int]] = []  # (ts, total_tokens)
         # Turns admitted but not yet recorded, each holding an estimate of its
         # own cost against the cap: reservation handle → (tokens, reserved_at).
         self._inflight: dict[int, tuple[int, float]] = {}
         self._next_reservation = 0
+        # How far into the ledger the window has read, and which file that
+        # was; the rows this process wrote past that point, by where they
+        # start, so following does not count them twice.
+        self._read_to = 0
+        self._read_inode: int | None = None
+        self._mine: set[int] = set()
         self._log.parent.mkdir(parents=True, exist_ok=True)
         self._restore()
+
+    def _count(self, line: bytes, cutoff: float) -> None:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            return
+        if rec.get("ts", 0) >= cutoff:
+            self._events.append((rec["ts"], rec.get("total_tokens", 0)))
 
     def _restore(self) -> None:
         """Survive a proxy restart — otherwise the cap resets to zero on crash,
         which is the one moment it most needs to hold."""
-        if not self._log.exists():
-            return
         cutoff = time.time() - self._window
         try:
-            with self._log.open() as fh:
+            with self._log.open("rb") as fh:
+                self._read_inode = os.fstat(fh.fileno()).st_ino
                 for line in fh:
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if rec.get("ts", 0) >= cutoff:
-                        self._events.append((rec["ts"], rec.get("total_tokens", 0)))
+                    if not line.endswith(b"\n"):
+                        break  # a row still being written; following reads it later
+                    self._read_to += len(line)
+                    self._count(line, cutoff)
         except OSError:
             pass
+
+    def _catch_up(self) -> None:
+        """Count the rows other writers appended since the last look."""
+        cutoff = time.time() - self._window
+        try:
+            with self._log.open("rb") as fh:
+                stat = os.fstat(fh.fileno())
+                if self._read_inode is not None and (
+                    stat.st_ino != self._read_inode or stat.st_size < self._read_to
+                ):
+                    # Replaced or truncated: a new file, read from its start.
+                    self._read_to = 0
+                    self._mine.clear()
+                self._read_inode = stat.st_ino
+                fh.seek(self._read_to)
+                for line in fh:
+                    if not line.endswith(b"\n"):
+                        break
+                    start = self._read_to
+                    self._read_to += len(line)
+                    if start in self._mine:
+                        self._mine.discard(start)
+                        continue
+                    self._count(line, cutoff)
+        except OSError:
+            pass
+
+    def _append(self, line: bytes) -> int:
+        """Append one whole row; returns where it starts.
+
+        One ``write`` under an exclusive lock: two proxies append to this file
+        during a release, and the backend's ingest reads it by byte offset, so
+        rows must never interleave."""
+        fd = os.open(self._log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o666)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            start = os.fstat(fd).st_size
+            view = memoryview(line)
+            while view:
+                view = view[os.write(fd, view) :]
+            return start
+        finally:
+            os.close(fd)
 
     def _prune(self, now: float) -> None:
         cutoff = now - self._window
@@ -265,6 +345,8 @@ class Meter:
 
     def used(self) -> int:
         with self._lock:
+            if self._follow:
+                self._catch_up()
             self._prune(time.time())
             return sum(t for _, t in self._events)
 
@@ -306,6 +388,8 @@ class Meter:
             return False  # cap off: identical to before reservations existed
         now = time.time()
         with self._lock:
+            if self._follow:
+                self._catch_up()
             self._prune(now)
             used = sum(t for _, t in self._events)
             return used + self._inflight_tokens(now) >= cap
@@ -361,8 +445,9 @@ class Meter:
         with self._lock:
             self._events.append((now, total))
             self._prune(now)
-        with self._log.open("a") as fh:
-            fh.write(json.dumps(rec) + "\n")
+            start = self._append((json.dumps(rec) + "\n").encode())
+            if self._follow:
+                self._mine.add(start)
 
 
 SUBSCRIPTION = "subscription"
@@ -1252,7 +1337,10 @@ class PlatformCredential:
 
         Blocking; the addon runs it off the event loop.
         """
-        with self._lock:
+        # Both locks: this process's threads, and the other proxy that runs
+        # beside this one during a release. A refresh rotates the pair, so two
+        # holders refreshing the same one leave one of them with a spent token.
+        with self._lock, file_lock(self.path.with_name(f".{self.path.name}.lock")):
             # Re-read under the lock: whoever held it before may have refreshed
             # already, or someone may have logged in again meanwhile.
             read = self._read()
@@ -1566,7 +1654,9 @@ class ChatGPTCredential:
 
         Blocking; the addon runs it off the event loop.
         """
-        with self._lock:
+        # Across processes too, as PlatformCredential.refresh_if_due: OpenAI
+        # answers a reused refresh token with refresh_token_reused.
+        with self._lock, file_lock(self.path.with_name(f".{self.path.name}.lock")):
             doc = self._read()
             if doc is None or not self._due(doc):
                 return
