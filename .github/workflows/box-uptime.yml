@@ -51,15 +51,21 @@ jobs:
           REPO: ${{ github.repository }}
         run: python3 .github/scripts/ci-pool-health.py
 
-      - name: Tell the team a CI machine is missing
-        if: ${{ failure() && env.WEBHOOK != '' }}
+      # Two different failures leave the step above red: a machine is missing
+      # (exit 1), or the check reached no conclusion about the pool (exit 2 —
+      # the runner list could not be read, or it arrived and could not be
+      # interpreted). The script decides which sentence each one is; this step
+      # sends that sentence and adds nothing of its own, so a could-not-judge
+      # case can never arrive as "a machine is missing". A healthy pool writes
+      # no alert and stays quiet.
+      - name: Tell the team what the pool check found
+        if: ${{ always() && env.WEBHOOK != '' && steps.pool.outputs.alert != '' }}
         env:
-          PROBLEMS: ${{ steps.pool.outputs.problems }}
+          ALERT: ${{ steps.pool.outputs.alert }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
-          text="$(printf 'CI 机器掉了：%s\n这一轮：%s' \
-            "${PROBLEMS:-见运行日志}" "$RUN_URL")"
+          text="$(printf '%s\n这一轮：%s' "$ALERT" "$RUN_URL")"
           curl -sS -m 15 -X POST "$WEBHOOK" \
             -H 'Content-Type: application/json' \
             --data "$(jq -n --arg t "$text" '{msg_type:"text",content:{text:$t}}')" \
