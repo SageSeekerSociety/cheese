@@ -74,7 +74,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main id="top" class="landing" :class="{ 'menu-open': menuOpen }" :lang="i18n.global.locale.value">
-    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- Escape bubbles here from the menu button or a link in the open menu and closes it; a role here would cost the header its banner landmark -->
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- Escape bubbles here from the menu button or a link in the open menu and closes it; the header itself is not a control, so it takes no role -->
     <header ref="siteBar" class="site-bar" @keydown.esc="closeMenu">
       <router-link class="brand" :to="homeHref" :aria-label="t('publicSite.cheeseHome')">
         <BrandLockup />

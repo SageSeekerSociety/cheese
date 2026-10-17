@@ -381,7 +381,7 @@ function claudePlan(plan: string | null | undefined): string {
           </BaseButton>
         </BaseEmptyState>
 
-        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused controls (the keyboard's Menu key fires it too); the rename and unbind buttons in the row do the same -->
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused controls, and the keyboard's Menu key fires it too -->
         <div
           v-for="d in devices"
           :key="d.device_id"

@@ -68,7 +68,7 @@ function rewind() {
       <template v-else>{{ t('publicSite.filmCaption') }}</template>
     </figcaption>
     <div ref="frame" class="film-frame" :style="near ? { '--film-poster': `url(${poster})` } : undefined">
-      <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- clicking the film starts it; the play button in the caption above is the keyboard's way -->
+      <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- clicking the film starts, pauses and resumes it; the caption's play button starts it from the keyboard, but once it plays there is no keyboard way to pause it yet -->
       <video
         v-if="near"
         ref="video"
