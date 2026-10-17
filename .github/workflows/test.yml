@@ -335,12 +335,11 @@ jobs:
       - name: Give this run an empty database
         if: matrix.layer != 'pure'
         env:
-          PGPASSWORD: postgres
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh postgresql-client
-          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
-          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
 
       # DATABASE_URL comes from the slot step above.
