@@ -43,8 +43,3 @@ async function install(): Promise<void> {
     void i18next.changeLanguage(locale)
   })
 }
-
-/** 测试用：回到还没装过的状态。 */
-export function resetZodErrorMap(): void {
-  installed = null
-}

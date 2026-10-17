@@ -27,6 +27,7 @@ import {
 
 import DocAgentBox from '@/components/panels/doc/DocAgentBox.vue'
 import DocAgentResult from '@/components/panels/doc/DocAgentResult.vue'
+import DocBacklinks from '@/components/panels/doc/DocBacklinks.vue'
 import DocCommentPanel from '@/components/panels/doc/DocCommentPanel.vue'
 import DocComments from '@/components/panels/doc/DocComments.vue'
 import DocProse from '@/components/panels/doc/DocProse.vue'
@@ -643,6 +644,44 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         },
         props: { editor: demoProseEditor(DOC_MARKDOWN), loading: false, keyFocus: true, placeholder: '' },
         expectSelector: '.doc-editor--keyfocus',
+      },
+    ],
+  },
+  {
+    id: 'panel-doc-backlinks',
+    title: 'DocBacklinks · 被引用',
+    about:
+      '文档末尾的「被引用」（#3827）：引用了这份文档的文档在前，对话每个一行，写最近一条引用它的消息和条数。没有被引用时整段不画，所以这里只有一格。',
+    file: 'src/components/panels/doc/DocBacklinks.vue',
+    component: DocBacklinks,
+    needs: UI,
+    args: { names: { alice: '张华', liming: '李明', wangyue: '王悦' } },
+    states: [
+      {
+        name: '文档和对话',
+        note: '点一行打开那份文档，或那个对话里的那条消息。',
+        props: {
+          items: [
+            {
+              kind: 'conversation',
+              conversation: { kind: 'room', id: 'c1', title: '课题组周会', room_id: 'c1', project_id: 'p1' },
+              message_id: 'b1',
+              excerpt: '第二批 400 段清洗完了，字段和说明里写的一致',
+              author: 'wangyue',
+              at: '2026-10-17T08:00:00.000Z',
+              count: 3,
+            },
+            {
+              kind: 'document',
+              id: 'd1',
+              project_id: 'p1',
+              title: '标注规范 v2',
+              updated_by: 'alice',
+              updated_at: '2026-10-17T07:00:00.000Z',
+            },
+          ],
+        },
+        expect: '被引用',
       },
     ],
   },

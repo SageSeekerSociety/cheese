@@ -18,5 +18,7 @@
   "today": "今天",
   "typing": "正在输入…",
   "waitingConnection": "等待连接",
-  "yesterday": "昨天"
+  "yesterday": "昨天",
+  "refUnreadable": "无权查看",
+  "refUnreadableHint": "你没有权限查看这里引用的文档"
 }

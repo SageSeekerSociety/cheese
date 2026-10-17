@@ -299,7 +299,7 @@ useCommands(() => {
           :agent-handle="workspace?.agentHandle"
           :members="workspace?.members ?? []"
           :topic-list="workspace?.topics ?? []"
-          @open-topic="(id: string) => router.push(refRoute(projectId, id))"
+          @open-topic="(id: string, block?: string) => router.push(refRoute(projectId, id, block))"
         />
         <div v-else class="text-medium-emphasis text-body-2 py-2">{{ t('project.docs.noCharter') }}</div>
       </template>

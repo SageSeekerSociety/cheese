@@ -240,7 +240,7 @@ def scan(paths: list[Path]) -> tuple[list[str], Counter[str], list[str]]:
 #: one converted: lower or delete its line here. The file is the list — adding
 #: to it goes through review, as ``test_legacy_error_ratchet.py`` puts it.
 _BASELINE: dict[str, int] = {
-    "app/api/auth/__init__.py": 5,
+    "app/api/auth/__init__.py": 4,
     "app/api/auth/resolver.py": 9,
     "app/api/preview_host.py": 4,
     "app/api/preview_owner_internal.py": 8,
@@ -347,7 +347,6 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/announce.py": 1,
     # 2026-10: `chat.py` 按职责拆成门面加四块 mixin，它那两句英文句子跟着抛它们
     # 的 `converse` 走去 chat_admission，chat.py 自己不再写英文句子。
-    "app/domain/agent/chat_admission.py": 2,
     # 2026-10: the checkout sweep left `room_task/checkouts.py` for
     # `agent/checkout_sweep.py`, carrying its one English sentence.
     "app/domain/agent/checkout_sweep.py": 1,
