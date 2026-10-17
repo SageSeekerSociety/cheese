@@ -77,13 +77,23 @@ def is_message_attachment(path: str) -> bool:
 
 #: 一份文件落地时的字节上限。房间文件（:func:`write_room_file`）与资料库
 #: （:mod:`app.domain.library.records`）落的是同一批字节，用同一条规则
-#: （:func:`max_bytes_for`）；路由那一层的 ``MAX_ARTIFACT_BYTES`` /
-#: ``MAX_LIBRARY_UPLOAD_BYTES`` 都指回这里，别在别处再写一遍。
+#: （:func:`max_bytes_for`）；路由那一层的 ``MAX_LIBRARY_UPLOAD_BYTES`` 也指回这里，
+#: 别在别处再写一遍。
 #:
 #: 这道上限不是「上传那一层」的事：``client_max_body_size`` 只在网关后面那一条路
 #: 上（``frontend/nginx.conf``），而 ``main.py`` 的 OpenAPI ``servers`` 把「直连后
 #: 端端口、前面没有网关」列为合法入口 —— 那条路上没有这道门。
-MAX_FILE_BYTES = 10 * 1024 * 1024
+#:
+#: ``: int`` 是给类型检查看的：不标的话 pyright 把全大写的常量收成
+#: ``Literal[10485760]``，而 ``project.ports.FileStore`` 要一个可变的 ``int``，
+#: 那边就收不下这个模块了。
+MAX_FILE_BYTES: int = 10 * 1024 * 1024
+
+#: 交出去的一份产物（artifact）多大算太大。和 :data:`MAX_FILE_BYTES` 是同一条线：
+#: 两边都是「一个人会在这个房间里打开的东西」—— 一份大到贴不进聊天的报告，也大到
+#: 不该被当成交付物摆出来。它们落在同一棵树里（``.room-files/`` 与 ``.artifacts/``），
+#: 所以这个数只在这里写一遍，路由读它。
+MAX_ARTIFACT_BYTES = MAX_FILE_BYTES
 
 #: 一段视频的上限。手机录屏是拿来报问题的，30–60 秒的 iPhone 录屏常常有几十到一百
 #: 多 MB，10MB 装不下一段。这个数和网关上传附件那一条路的 ``client_max_body_size``

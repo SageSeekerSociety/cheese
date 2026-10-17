@@ -36,6 +36,7 @@
 import type { Block, ChatAttachment } from '@/cx_types'
 import type { QuotedContext } from './quotedContext'
 
+import { storageGetJson, storageKeys, storageRemove, storageSetJson } from './browserStorage'
 import { frozenQuote, isQuotedContext } from './quotedContext'
 
 const KEY_PREFIX = 'cheese.composer.v1:'
@@ -117,15 +118,6 @@ function storageKey(topicId: string): string | null {
   return id ? `${KEY_PREFIX}${encodeURIComponent(id)}` : null
 }
 
-function storage(): Storage | null {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage
-  } catch {
-    // 站点数据被禁用时连读这个属性都会抛。
-    return null
-  }
-}
-
 function validAttachment(value: unknown): value is ChatAttachment {
   if (typeof value !== 'object' || value === null) return false
   const att = value as { path?: unknown; mime?: unknown }
@@ -133,8 +125,8 @@ function validAttachment(value: unknown): value is ChatAttachment {
 }
 
 /** 只信我们自己写下去的、且还认得出来的那些字段。 */
-function parse(raw: string, now: number): StoredComposerDraft | null {
-  const parsed = JSON.parse(raw) as Partial<StoredComposerDraft>
+function parse(value: unknown, now: number): StoredComposerDraft | null {
+  const parsed = value as Partial<StoredComposerDraft> | null
   if (typeof parsed?.savedAt !== 'number' || now - parsed.savedAt > MAX_AGE_MS) return null
   if (typeof parsed.draft !== 'string') return null
   const reply = parsed.reply ?? null
@@ -151,23 +143,17 @@ function parse(raw: string, now: number): StoredComposerDraft | null {
 }
 
 /** 记着的话题太多时，把最旧的几条丢掉（连带过期的）。 */
-function prune(store: Storage, now: number) {
+function prune(now: number): void {
   const entries: { key: string; savedAt: number }[] = []
-  for (let i = 0; i < store.length; i++) {
-    const key = store.key(i)
-    if (!key?.startsWith(KEY_PREFIX)) continue
-    let savedAt = 0
-    try {
-      const parsed = JSON.parse(store.getItem(key) ?? '') as { savedAt?: unknown }
-      savedAt = typeof parsed?.savedAt === 'number' ? parsed.savedAt : 0
-    } catch {
-      // 读不出来的当最旧，顺手清掉。
-    }
-    if (now - savedAt > MAX_AGE_MS) store.removeItem(key)
+  for (const key of storageKeys(KEY_PREFIX)) {
+    const parsed = storageGetJson<{ savedAt?: unknown }>(key)
+    const savedAt = typeof parsed?.savedAt === 'number' ? parsed.savedAt : 0
+    // 读不出来的当最旧，顺手清掉。
+    if (now - savedAt > MAX_AGE_MS) storageRemove(key)
     else entries.push({ key, savedAt })
   }
   entries.sort((a, b) => a.savedAt - b.savedAt)
-  for (const entry of entries.slice(0, Math.max(0, entries.length - MAX_TOPICS))) store.removeItem(entry.key)
+  for (const entry of entries.slice(0, Math.max(0, entries.length - MAX_TOPICS))) storageRemove(entry.key)
 }
 
 /**
@@ -180,45 +166,31 @@ export function saveComposerDraft(
   now: number = Date.now()
 ): void {
   const key = storageKey(topicId)
-  const store = storage()
-  if (!key || !store) return
+  if (!key) return
   const empty = !draft.draft.trim() && !draft.quotedContext && !draft.reply && !draft.atts.length
   if (empty) {
     forgetComposerDraft(topicId)
     return
   }
-  try {
-    const record: StoredComposerDraft = {
-      savedAt: now,
-      draft: draft.draft,
-      reply: draft.reply,
-      atts: draft.atts,
-      ...(draft.quotedContext ? { quotedContext: draft.quotedContext } : {}),
-    }
-    const serialized = JSON.stringify(record)
-    if (serialized.length > MAX_CHARS) return
-    store.setItem(key, serialized)
-    prune(store, now)
-  } catch {
-    // 写满了、被禁用了、或者草稿本身序列化不了 —— 都不该让输入框出问题。
+  const record: StoredComposerDraft = {
+    savedAt: now,
+    draft: draft.draft,
+    reply: draft.reply,
+    atts: draft.atts,
+    ...(draft.quotedContext ? { quotedContext: draft.quotedContext } : {}),
   }
+  // 写满了、被禁用了、或者草稿本身序列化不了，都是「这一次没记住」—— 不该让输入框出问题。
+  if (!storageSetJson(key, record, 'local', MAX_CHARS)) return
+  prune(now)
 }
 
 /** 取回话题的草稿；没有、过期、或者读不懂时返回 null。 */
 export function loadComposerDraft(topicId: string, now: number = Date.now()): StoredComposerDraft | null {
   const key = storageKey(topicId)
-  const store = storage()
-  if (!key || !store) return null
-  try {
-    const raw = store.getItem(key)
-    if (!raw) return null
-    const parsed = parse(raw, now)
-    if (!parsed) store.removeItem(key)
-    return parsed
-  } catch {
-    store.removeItem(key)
-    return null
-  }
+  if (!key) return null
+  const parsed = parse(storageGetJson(key), now)
+  if (!parsed) storageRemove(key)
+  return parsed
 }
 
 /**
@@ -231,13 +203,7 @@ export function loadComposerDraft(topicId: string, now: number = Date.now()): St
  */
 export function forgetComposerDraft(topicId: string): void {
   const key = storageKey(topicId)
-  const store = storage()
-  if (!key || !store) return
-  try {
-    store.removeItem(key)
-  } catch {
-    // 同上：存储不可用时静默跳过。
-  }
+  if (key) storageRemove(key)
 }
 
 /**
@@ -249,16 +215,5 @@ export function forgetComposerDraft(topicId: string): void {
  */
 export function clearComposerDrafts(): void {
   composerMemory.clear()
-  const store = storage()
-  if (!store) return
-  try {
-    const keys: string[] = []
-    for (let i = 0; i < store.length; i++) {
-      const key = store.key(i)
-      if (key?.startsWith(KEY_PREFIX)) keys.push(key)
-    }
-    for (const key of keys) store.removeItem(key)
-  } catch {
-    // 同上。
-  }
+  for (const key of storageKeys(KEY_PREFIX)) storageRemove(key)
 }

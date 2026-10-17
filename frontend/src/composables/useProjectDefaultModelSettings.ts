@@ -70,7 +70,7 @@ export function useProjectDefaultModelSettings(
   }
 
   async function save(model: string | null, subagent: string | null) {
-    if (!state.value?.can_manage) return
+    if (!state.value) return
     const current = generation
     await run(async () => {
       const result = await setProjectDefaultModel(projectId(), model, subagent)

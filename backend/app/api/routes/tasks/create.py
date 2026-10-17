@@ -2,9 +2,11 @@
 
 from fastapi import APIRouter, Depends
 
+from app.api.response import ok
 from app.api.routes.tasks._common import (
     CreateTaskRequest,
     _create_task_entity,
+    set_task_mentors,
 )
 from app.api.task_deps import (
     _task_attachment_service,
@@ -48,6 +50,14 @@ async def create_task(
         creator_user_id=auth_user.user_id,
     )
 
+    if payload.mentors:
+        await set_task_mentors(
+            db,
+            task=task,
+            handles=payload.mentors,
+            creator_user_id=auth_user.user_id,
+        )
+
     if payload.attachment_ids:
         # 材料是随题一起发出去的，所以挂在这里做：题目已经建好（``_create_task_entity``
         # 里 flush 过），权限那道门也已经在同一个请求里过了一次。文件先由调用者经
@@ -71,10 +81,9 @@ async def create_task(
         0
     ]
 
-    return {
-        "code": 200,
-        "message": "Task created successfully.",
-        "data": {
+    return ok(
+        {
             "task": task_model,
         },
-    }
+        "Task created successfully.",
+    )

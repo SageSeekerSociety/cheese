@@ -28,31 +28,14 @@
  * 另在 `meta.i18n` 里带着它的键和参数；显示时一律经 `noticeText()` 按读者的语言渲染。
  *
  * 缺少结构化字段的事件仍保留原文；没有作者或类别依据时，不猜它属于哪个 agent。
+ *
+ * 这一份是契约的形状、平台自己那几种事件的清单，和调用方取东西的入口：一条 block 怎么
+ * 判成某一种卡、`meta` 里的载荷怎么读在 `platformNoticeCards.ts`，一串 block 怎么折成
+ * 时间线上的行在 `platformNoticeCollapse.ts`。
  */
 import type { Block } from '../cx_types'
 import type { DocEdit } from './docEdits'
 import type { PlatformErrorPresentation } from './platformEvents'
-
-import { foldRepeats } from './noticeRepeats'
-import { noticeText } from './noticeText'
-import { platformErrorPresentation } from './platformEvents'
-
-import { t } from '@/i18n'
-
-/**
- * 这条事件在对话里露不露面。
- *
- * 「露不露面」和「谁写的」是两件事，过去挤在 `author_type` 一个字段里：
- * system 出现、ai 不出现。于是一条确实由芝士产生、又该让人看见的事件无法表达，
- * 而任何想知道作者的人读到的是一个在回答别的问题的字段。现在它自己有一格；没有
- * 这一格的都露面 —— 平台其它所有写入方都是往房间里说话。
- *
- * 对**消息**同样生效：一条通篇没有中文的 AI 消息不占聊天区（后端在落库时就打上
- * 这一格）。它照常存着、照常在历史里，只是聊天区不显示 —— 藏起来，不是删掉。
- */
-function showsInRoom(block: Block): boolean {
-  return meta(block)?.in_room !== false
-}
 
 /** 谁在管这件事。扫一眼不点开就能决定跟不跟自己有关。 */
 export type WhoTag = 'platform' | 'cheese' | 'human'
@@ -73,33 +56,104 @@ export interface ChangeSummary {
   filesOmitted: number
 }
 
-function changeSummary(block: Block): ChangeSummary | null {
-  const raw = meta(block)?.changeset
-  if (!raw || typeof raw !== 'object') return null
-  const c = raw as Record<string, unknown>
-  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
-  return {
-    filesTotal: num(c.files_total),
-    added: num(c.added),
-    removed: num(c.removed),
-    files: Array.isArray(c.files)
-      ? c.files
-          .map((f) => {
-            const file = (f ?? {}) as Record<string, unknown>
-            return { path: String(file.path ?? ''), added: num(file.added), removed: num(file.removed) }
-          })
-          .filter((f) => f.path)
-      : [],
-    filesOmitted: num(c.files_omitted),
-  }
+/** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */
+export interface NoticeOccurrence {
+  /** 这一次的那行人话。 */
+  line: string
+  /** 展开区标题，如「CI 日志」；后端没给就是空串。 */
+  label: string
+  /** 原话 / 日志尾巴 / traceback。 */
+  detail: string
 }
 
-// Catalog keys, looked up when a row is built so a language switch re-reads them.
-const WHO_LABEL: Record<WhoTag, string> = {
-  platform: 'work.room.notice.who.platform',
-  cheese: 'work.room.notice.who.cheese',
-  human: 'work.room.notice.who.human',
+/** 芝士写好、等邮箱主人确认的一封邮件（`meta.mail`）。 */
+export interface MailDraftView {
+  draftId: string
+  owner: string
+  account: string
+  to: string[]
+  cc: string[]
+  subject: string
+  body: string
+  attachments: { name: string; size: number | null }[]
 }
+
+/** 那封草稿后来怎样了（`mail_result` 事件）。 */
+export interface MailOutcome {
+  status: 'sent' | 'failed' | 'discarded'
+  sentAt: string | null
+  reason: string | null
+}
+
+/** 平台替哪位 AI 队友写的这一条：名字给人读，handle 给头像定颜色。 */
+export interface NoticeAgent {
+  name: string
+  handle: string | null
+}
+
+export type PlatformNotice =
+  /** 现场抽屉的东西（前端报错），房间里不显示。 */
+  /** 芝士写好的一封邮件：在房间里看全、由邮箱主人在这里确认发送。 */
+  | { mode: 'mail-draft'; mail: MailDraftView; outcome: MailOutcome | null }
+  /** 基础设施事故卡：正文压成一行，剩下的进展开区。 */
+  | {
+      mode: 'incident'
+      incident: PlatformErrorPresentation
+      /** 卡面上唯一可见的一句。 */
+      lead: string
+      /** 被收起来的剩余正文 + detail，展开才看得到。 */
+      rest: string
+      detailLabel: string
+    }
+  /** 后端报错：本来就是目标形态，原样保留（它是这套东西的样板）。 */
+  /** 芝士这轮干的活（更新了文档 / 提交了验收卡…）。 */
+  | {
+      mode: 'action'
+      resource: string
+      text: string
+      detail?: string
+      detailLabel?: string
+      /** 文档：这一串改动改了哪几处（逐处改的才有）。 */
+      docEdits?: DocEdit[]
+      /** 文档：AI 队友提的修改建议有几处。 */
+      docSuggestions?: number
+      /** 项目资料库里的一份文档：AI 队友在这个对话里新建了它或者改了它。 */
+      libraryDoc?: LibraryDocCard
+    }
+  /**
+   * 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么，外加它顺带动过的平台资源。
+   *
+   * 一轮里「更新了文档」「记录了决策」「提交了验收卡」各占一行，说的全是右边那栏
+   * 自己会亮的事；而**这一轮到底改了哪些文件**——房间里唯一没有别处可看的东西
+   * ——过去只在现场里躺着一行灰字。合成一行，噪音反而少了三行。
+   */
+  | {
+      mode: 'turn-summary'
+      changes: ChangeSummary | null
+      /** 同一轮里的动作行，按发生顺序；每条带自己的按钮资源码。 */
+      actions: { resource: string; text: string }[]
+      /** 「查看改动」要打开的那一轮。 */
+      turnId: string | null
+    }
+  /** 折叠行：一行 summary + ×N + who 尾标，原文在展开区。 */
+  | {
+      mode: 'fold'
+      line: string
+      /** 谁在管这件事的**码**——形态统一之后，只有它决定这一行的记号颜色。 */
+      who: WhoTag | ''
+      whoLabel: string
+      /** >1 时显示 ×N；1 表示没有折叠。 */
+      count: number
+      /** 一个人自己写的那句话（退回的理由），跟着这一行直接写出来，不收进展开区。 */
+      quote?: string
+      occurrences: NoticeOccurrence[]
+      /** 后端说现在点一下重试有用（`meta.retryable`）。 */
+      retryable: boolean
+    }
+  /** 同一个人连着做的同一种操作，合成一行；点开列出每一条（lib/noticeRepeats）。 */
+  | { mode: 'repeats'; actor: string; rows: NoticeRow[] }
+  /** 老样子：居中、灰、12px、一行。 */
+  | { mode: 'plain' }
 
 // These events describe the room agent's work or execution environment. `who`
 // instead names the next responder, so it cannot decide the message's identity.
@@ -144,178 +198,6 @@ export const AGENT_STATUS_EVENTS = new Set([
   'doc_missing',
 ])
 
-/** detail 是一个人写的一句话（不是日志）的事件：这句话直接跟在那一行后面。 */
-const QUOTED_DETAIL = new Set(['card_rejected'])
-
-/** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */
-export interface NoticeOccurrence {
-  /** 这一次的那行人话。 */
-  line: string
-  /** 展开区标题，如「CI 日志」；后端没给就是空串。 */
-  label: string
-  /** 原话 / 日志尾巴 / traceback。 */
-  detail: string
-}
-
-/** 芝士写好、等邮箱主人确认的一封邮件（`meta.mail`）。 */
-export interface MailDraftView {
-  draftId: string
-  owner: string
-  account: string
-  to: string[]
-  cc: string[]
-  subject: string
-  body: string
-  attachments: { name: string; size: number | null }[]
-}
-
-/** 那封草稿后来怎样了（`mail_result` 事件）。 */
-export interface MailOutcome {
-  status: 'sent' | 'failed' | 'discarded'
-  sentAt: string | null
-  reason: string | null
-}
-
-function mailDraftView(block: Block): MailDraftView | null {
-  const m = meta(block)
-  if (str(m?.event_type) !== 'mail_drafted') return null
-  const mail = m?.mail as Record<string, unknown> | undefined
-  const draftId = str(m?.mail_draft_id)
-  if (!mail || !draftId) return null
-  const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : [])
-  return {
-    draftId,
-    owner: str(mail.owner),
-    account: str(mail.account),
-    to: list(mail.to),
-    cc: list(mail.cc),
-    subject: str(mail.subject),
-    body: str(mail.body),
-    attachments: Array.isArray(mail.attachments)
-      ? mail.attachments.map((a) => {
-          const item = a as Record<string, unknown>
-          return { name: str(item.name), size: typeof item.size === 'number' ? item.size : null }
-        })
-      : [],
-  }
-}
-
-/** 房间里每封草稿的下落：draft id → 最后一条结果。 */
-export function mailOutcomes(blocks: Block[]): Map<string, MailOutcome> {
-  const found = new Map<string, MailOutcome>()
-  for (const block of blocks) {
-    const m = meta(block)
-    if (block.kind !== 'event' || str(m?.event_type) !== 'mail_result') continue
-    const status = str(m?.status)
-    if (status !== 'sent' && status !== 'failed' && status !== 'discarded') continue
-    found.set(str(m?.mail_draft_id), {
-      status,
-      sentAt: str(m?.sent_at) || null,
-      reason: str(m?.detail) || null,
-    })
-  }
-  return found
-}
-
-/** 平台替哪位 AI 队友写的这一条：名字给人读，handle 给头像定颜色。 */
-export interface NoticeAgent {
-  name: string
-  handle: string | null
-}
-
-export type PlatformNotice =
-  /** 现场抽屉的东西（前端报错），房间里不显示。 */
-  /** 芝士写好的一封邮件：在房间里看全、由邮箱主人在这里确认发送。 */
-  | { mode: 'mail-draft'; mail: MailDraftView; outcome: MailOutcome | null }
-  /** 基础设施事故卡：正文压成一行，剩下的进展开区。 */
-  | {
-      mode: 'incident'
-      incident: PlatformErrorPresentation
-      /** 卡面上唯一可见的一句。 */
-      lead: string
-      /** 被收起来的剩余正文 + detail，展开才看得到。 */
-      rest: string
-      detailLabel: string
-    }
-  /** 后端报错：本来就是目标形态，原样保留（它是这套东西的样板）。 */
-  /** 芝士这轮干的活（更新了文档 / 提交了验收卡…）。 */
-  | {
-      mode: 'action'
-      resource: string
-      text: string
-      detail?: string
-      detailLabel?: string
-      /** 文档：有人让 AI 队友改的，谁让改的（handle）和改的那几处。 */
-      docRequest?: { requestedBy: string; edits: DocEdit[] }
-      /** 文档：AI 队友提的修改建议有几处。 */
-      docSuggestions?: number
-      /** 项目资料库里的一份文档：AI 队友在这个对话里新建了它或者改了它。 */
-      libraryDoc?: LibraryDocCard
-    }
-  /**
-   * 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么，外加它顺带动过的平台资源。
-   *
-   * 一轮里「更新了文档」「记录了决策」「提交了验收卡」各占一行，说的全是右边那栏
-   * 自己会亮的事；而**这一轮到底改了哪些文件**——房间里唯一没有别处可看的东西
-   * ——过去只在现场里躺着一行灰字。合成一行，噪音反而少了三行。
-   */
-  | {
-      mode: 'turn-summary'
-      changes: ChangeSummary | null
-      /** 同一轮里的动作行，按发生顺序；每条带自己的按钮资源码。 */
-      actions: { resource: string; text: string }[]
-      /** 「查看改动」要打开的那一轮。 */
-      turnId: string | null
-    }
-  /** 折叠行：一行 summary + ×N + who 尾标，原文在展开区。 */
-  | {
-      mode: 'fold'
-      line: string
-      /** 谁在管这件事的**码**——形态统一之后，只有它决定这一行的记号颜色。 */
-      who: WhoTag | ''
-      whoLabel: string
-      /** >1 时显示 ×N；1 表示没有折叠。 */
-      count: number
-      /** 一个人自己写的那句话（退回的理由），跟着这一行直接写出来，不收进展开区。 */
-      quote?: string
-      occurrences: NoticeOccurrence[]
-      /** 后端说现在点一下重试有用（`meta.retryable`）。 */
-      retryable: boolean
-    }
-  /** 同一个人连着做的同一种操作，合成一行；点开列出每一条（lib/noticeRepeats）。 */
-  | { mode: 'repeats'; actor: string; rows: NoticeRow[] }
-  /** 老样子：居中、灰、12px、一行。 */
-  | { mode: 'plain' }
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function meta(block: Block): Record<string, unknown> | null {
-  return (block.meta as Record<string, unknown> | null) ?? null
-}
-
-function whoTag(block: Block): WhoTag | '' {
-  const who = str(meta(block)?.who)
-  return who in WHO_LABEL ? (who as WhoTag) : ''
-}
-
-function whoLabel(block: Block): string {
-  const who = whoTag(block)
-  return who ? t(WHO_LABEL[who]) : ''
-}
-
-/**
- * meta.action（结构化）优先，老的 `action:<resource>` ref 仍然认。
- * 从 ChatPanel 搬过来，行为一字不改。
- */
-export function actionResource(block: Block): string | null {
-  const metaAction = meta(block)?.action
-  if (typeof metaAction === 'string') return metaAction
-  const r = (block.refs || []).find((x) => x.startsWith('action:'))
-  return r ? r.slice('action:'.length) : null
-}
-
 /** 聊天里那张文档卡：哪一份、是不是刚建的、这一串改了哪几处。 */
 export interface LibraryDocCard {
   id: string
@@ -326,171 +208,11 @@ export interface LibraryDocCard {
   suggestions: number
 }
 
-function docEdits(raw: unknown): DocEdit[] {
-  return Array.isArray(raw)
-    ? raw.flatMap((e: unknown) => {
-        const item = e as { old?: unknown; new?: unknown } | null
-        return typeof item?.old === 'string' && typeof item?.new === 'string' ? [{ old: item.old, new: item.new }] : []
-      })
-    : []
-}
-
-/** 文档那一行带的「谁让改的、改了哪几处」和「提了几处建议」（后端写在 meta 里）。 */
-function docChange(block: Block): {
-  docRequest?: { requestedBy: string; edits: DocEdit[] }
-  docSuggestions?: number
-  libraryDoc?: LibraryDocCard
-} {
-  const m = meta(block)
-  if (!m) return {}
-  const doc = m.document as { id?: unknown; title?: unknown } | undefined
-  if (doc && typeof doc.id === 'string') {
-    return {
-      libraryDoc: {
-        id: doc.id,
-        title: typeof doc.title === 'string' ? doc.title : '',
-        created: m.doc_created === true,
-        edits: docEdits(m.doc_edits),
-        suggestions: m.doc_suggested === true && Array.isArray(m.doc_suggestions) ? m.doc_suggestions.length : 0,
-      },
-    }
-  }
-  if (m.doc_suggested === true) {
-    const ids = Array.isArray(m.doc_suggestions) ? m.doc_suggestions.filter((id) => typeof id === 'string') : []
-    return { docSuggestions: ids.length }
-  }
-  const by = str(m.doc_requested_by)
-  const edits = docEdits(m.doc_edits)
-  return by && edits.length ? { docRequest: { requestedBy: by, edits } } : {}
-}
-
-/** meta.action 事件的 content 自带主语（张衡/芝士 编辑了文档）；老卡片要补「芝士」。 */
-function actionText(block: Block): string {
-  return typeof meta(block)?.action === 'string'
-    ? noticeText(block)
-    : t('topic.notice.legacyAction', { action: block.content })
-}
-
-/** 卡面上留一句就够了，超过这个长度就切断 —— 切掉的部分原样进展开区，不丢。 */
-const LEAD_MAX = 60
-
-/**
- * 取第一句当可见的那一行，其余全部收起来。
- *
- * 中文句号和换行都算断句；一句话本身就超长时按 LEAD_MAX 硬切 —— 卡面高度是产品
- * 约束（≤2-3 行），不能交给内容长度决定。
- *
- * 中文的 。！？ 后面不跟空格，所以它们单独就算断句；英文的 . ! ? 要后跟空白或
- * 结尾才算，否则 "PR #1.2 没过" 会被从小数点上切开。
- */
-function splitLead(text: string): { lead: string; rest: string } {
-  const body = text.trim()
-  if (!body) return { lead: '', rest: '' }
-
-  const match = /[。！？]|\n|[.!?](?=\s|$)/.exec(body)
-  let cut = match ? match.index + (body[match.index] === '\n' ? 0 : 1) : body.length
-  let ellipsis = false
-  if (cut > LEAD_MAX) {
-    cut = LEAD_MAX
-    ellipsis = true
-  }
-
-  const lead = body.slice(0, cut).trim()
-  const rest = body.slice(cut).trim()
-  return { lead: ellipsis ? `${lead}…` : lead, rest }
-}
-
-function occurrenceOf(block: Block): NoticeOccurrence {
-  return {
-    line: noticeText(block),
-    label: noticeText(block, 'detail_label'),
-    detail: noticeText(block, 'detail'),
-  }
-}
-
-/**
- * 这条事件怎么渲染。
- *
- * @param block 事件块；不是 event 的（消息、附件）返回 null，由调用方按消息渲染。
- * @param run   被折叠进这一行的连续同类事件（含 block 自己）。默认只有它自己。
- */
-export function platformNotice(block: Block, run: Block[] = [block]): PlatformNotice | null {
-  if (block.kind !== 'event') return null
-
-  const m = meta(block)
-
-  // 顺序即优先级，和改动前的模板一致：事故卡 > 动作行 > 后端报错 > 折叠行 > 淡行。
-  const incident = platformErrorPresentation(block)
-  if (incident) {
-    const { lead, rest } = splitLead(incident.body)
-    const detail = noticeText(block, 'detail')
-    return {
-      mode: 'incident',
-      incident,
-      lead,
-      // 被切掉的正文和 detail 都收进同一个展开区：卡面只留一句，原文一个字不少。
-      rest: [rest, detail].filter(Boolean).join('\n\n'),
-      detailLabel: noticeText(block, 'detail_label'),
-    }
-  }
-
-  const resource = actionResource(block)
-  if (resource)
-    return {
-      mode: 'action',
-      resource,
-      text: actionText(block),
-      detail: noticeText(block, 'detail'),
-      detailLabel: noticeText(block, 'detail_label'),
-      ...docChange(block),
-    }
-
-  const mail = mailDraftView(block)
-  if (mail) return { mode: 'mail-draft', mail, outcome: null }
-
-  if (str(m?.detail)) {
-    // 退回的理由是审阅的人写给芝士的话，不是日志：读时间线的人要一眼看到为什么退回，
-    // 不该再点开一次。
-    const quote = run.length === 1 && QUOTED_DETAIL.has(str(m?.event_type)) ? noticeText(block, 'detail') : ''
-    return {
-      mode: 'fold',
-      line: noticeText(block),
-      who: whoTag(block),
-      whoLabel: whoLabel(block),
-      count: run.length,
-      ...(quote ? { quote } : {}),
-      occurrences: quote ? [] : run.map(occurrenceOf).filter((o) => o.detail),
-      retryable: m?.retryable === true,
-    }
-  }
-
-  return { mode: 'plain' }
-}
-
 /** 芝士起草、等人确认的那一件：它在哪一页、哪一条。 */
 export interface ConfirmTarget {
   name: 'project-routines' | 'project-skills'
   params: { projectId: string }
   query: Record<string, string>
-}
-
-/**
- * 「芝士起草了规则 / 整理了技能」那一行要带一颗「去确认」。
- *
- * 确认入口在项目名旁的 ⋯ 菜单里，人在房间读到这一行时不知道去哪找（chiruotong
- * 在 dev 上实测找不到）。这一行本身就知道是哪一条，所以直接指过去。
- */
-export function confirmTarget(block: Block, projectId: string | null | undefined): ConfirmTarget | null {
-  const m = meta(block)
-  if (!projectId) return null
-  // 人已经定下来了（保存、拒绝、删除）：这一行只说结果，没有要去确认的了。
-  if (str(m?.state) === 'over') return null
-  const kind = str(m?.event_type)
-  if (kind === 'routine_proposed' && str(m?.routine_id))
-    return { name: 'project-routines', params: { projectId }, query: { routine: str(m?.routine_id) } }
-  if (kind === 'skill_proposed' && str(m?.skill_id))
-    return { name: 'project-skills', params: { projectId }, query: { skill: str(m?.skill_id) } }
-  return null
 }
 
 /** 「环境准备失败」那一行指向的地方：项目设置的「环境」，先看出事的那个频道。 */
@@ -500,40 +222,6 @@ export interface EnvironmentTarget {
   query: Record<string, string>
 }
 
-export function environmentTarget(block: Block, projectId: string | null | undefined): EnvironmentTarget | null {
-  const m = meta(block)
-  if (!projectId || str(m?.event_type) !== 'environment_failed') return null
-  const room = str(m?.room_id)
-  return {
-    name: 'project-settings',
-    params: { projectId, section: 'environment' },
-    query: room ? { room } : {},
-  }
-}
-
-/** 连续折叠时，这条事件归哪一类；null = 不参与按类别折叠。 */
-function foldKey(block: Block): string | null {
-  const m = meta(block)
-  // 每封草稿是一张要单独确认的卡，折在一起就只剩一张能点。
-  if (str(m?.event_type) === 'mail_drafted') return null
-  // 只有「折叠行」这一档参与按类别折叠：它有展开区，能把被折进来的每一条原文都
-  // 摆出来。事故卡和后端报错各自只有一份正文/traceback，折进去就真丢了；而老事件
-  // 压根没有 event_type，误折会把两件不同的事说成一件。
-  if (!str(m?.detail)) return null
-  const eventType = str(m?.event_type)
-  return eventType || null
-}
-
-/**
- * 说「这件任务在这里开始」的那种行（`task_created`、更早的 `split`）：它画成那件任务的
- * 卡，一行一件。两件都是没起名时新建的，正文一字不差（「创建了任务「新任务」」），按
- * 正文折就把后一件的卡整张吞了。
- */
-function startsTask(block: Block): boolean {
-  const action = meta(block)?.action
-  return action === 'task_created' || action === 'split'
-}
-
 /** 时间线上的一行：要渲染的块，以及被折进它的那一串。 */
 export interface NoticeRow {
   block: Block
@@ -541,188 +229,5 @@ export interface NoticeRow {
   notice: PlatformNotice | null
 }
 
-/**
- * 把原始块流变成时间线的行：藏掉不属于房间的、折叠连续同类的系统事件。
- *
- * 两条折叠规则并存：
- *  1. content 全等 —— 老规则，管住 `编辑了文档` 这类一模一样的连发。只对**两边都
- *     没有 detail** 的事件生效：淡行和动作行没有展开区，把带原话的那条折进去就
- *     真丢了；新建任务的行也不折，每一行是一件任务的卡；
- *  2. 同 `meta.event_type` —— 新规则，管住失败类事件。它们带时间、耗时、HTTP 码，
- *     content 永远不相等，规则 1 从来没在它们身上生效过。折进来的每一条原话都摆
- *     在展开区里，一条不少。
- *
- * 只对系统事件生效，消息之间不折叠；中间隔了一条消息，折叠就断。
- */
-export function collapseNotices(blocks: Block[]): NoticeRow[] {
-  const rows: NoticeRow[] = []
-  for (const block of blocks) {
-    // 露不露面先问，再问它是什么 —— 这一格从来就不是事件专有的（见 showsInRoom
-    // 的注释：它单独立一格，正是因为「谁写的」和「露不露面」是两个问题）。放在
-    // 分支外面，芝士自己写的、但不该占住聊天区的那种消息才藏得住。
-    if (!showsInRoom(block)) continue
-    if (block.kind !== 'event') {
-      // 白名单，所以每加一种块都要在这里认一次——`artifact`（芝士摆出来给人看的
-      // 一份东西，`cheese show`）就是漏在这儿的：后端一直往时间线写它，这一行一直
-      // 不认，于是它连一个字都到不了屏幕上。人在房间里等着看那份报告，而唯一的
-      // 线索是右边预览格上一个小点。
-      if (block.kind === 'message' || block.kind === 'attachment' || block.kind === 'artifact') {
-        rows.push({ block, run: [block], notice: null })
-      }
-      continue
-    }
-    const prev = rows[rows.length - 1]
-    const prevBlock = prev?.block
-    if (prevBlock && prevBlock.kind === 'event' && showsInRoom(prevBlock)) {
-      const key = foldKey(block)
-      const sameType = key !== null && key === foldKey(prevBlock)
-      const bothPlain =
-        !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail) && !startsTask(block) && !startsTask(prevBlock)
-      // 平台替一轮写的通知署名都是 system：是哪位队友的那一轮在 `seat` 上，两位的
-      // 并成一行，后一位的就署成了前一位。
-      const sameAuthor =
-        prevBlock.author === block.author &&
-        prevBlock.author_type === block.author_type &&
-        str(meta(prevBlock)?.agent_id) === str(meta(block)?.agent_id) &&
-        str(meta(prevBlock)?.seat) === str(meta(block)?.seat)
-      if (sameAuthor && (sameType || (bothPlain && prevBlock.content === block.content))) {
-        prev.run.push(block)
-        continue
-      }
-    }
-    rows.push({ block, run: [block], notice: null })
-  }
-
-  // 草稿卡片的下落记在后来的 `mail_result` 事件里，只有看得到整条块流的这里对得上。
-  const mailEnds = mailOutcomes(blocks)
-  for (const row of rows) {
-    row.notice = platformNotice(row.block, row.run)
-    if (row.notice?.mode === 'mail-draft') row.notice.outcome = mailEnds.get(row.notice.mail.draftId) ?? null
-  }
-  settleOwners(rows)
-  return foldRepeats(foldTurnSummary(rows))
-}
-
-/**
- * 一张验收卡从递上来到合并（或作废）一路上的那些提示。它们说的是同一件事 —— 这张卡
- * 现在停在哪、归谁 —— 所以后一句会让前一句过时。
- */
-const CARD_EVENTS = new Set([
-  'card_filed',
-  'card_rejected',
-  'card_voided',
-  'card_redescribed',
-  'ci_failed',
-  'gate_failed',
-  'gate_blocked',
-  'gate_abandoned',
-  'pr_review',
-  'pr_conflict',
-  'upstream_conflict',
-  'merge_refused',
-  'merge_withheld',
-  'migration_collision',
-  'accept_ready',
-  'accept_conflict',
-  'accept_stopped',
-  'accept_dismissed',
-  'accept_done',
-  'force_merged',
-  'pr_closed',
-])
-
-function aboutTheCard(block: Block): boolean {
-  return block.kind === 'event' && CARD_EVENTS.has(str(meta(block)?.event_type))
-}
-
-/**
- * 卡上的「谁在管这件事」只对最新的那一句成立。
- *
- * `who` 是写下这一行那一刻的事实：「等 alice 采纳 · 等人处理」「退回了 · 芝士正在
- * 处理」。之后这段对话里关于这张卡又有一句说了现在归谁（芝士重新递了卡、PR 合了），
- * 前一句的尾标就过时了 —— 留着它，一张早已采纳的卡还在说等人手动处理。所以卡的那
- * 些提示里，尾标只留在最后一句说了归谁的那一行上，更早的只剩那件事本身。别的提示
- * （某位队友这一轮怎么了）各说各的事，不受影响。
- */
-function settleOwners(rows: NoticeRow[]): void {
-  let superseded = false
-  for (let i = rows.length - 1; i >= 0; i -= 1) {
-    const row = rows[i]
-    if (!aboutTheCard(row.block)) continue
-    if (superseded && row.notice?.mode === 'fold') row.notice = { ...row.notice, who: '', whoLabel: '' }
-    if (row.run.some((block) => aboutTheCard(block) && whoTag(block))) superseded = true
-  }
-}
-
-/**
- * 这一块在房间里画得出来吗——和 `collapseNotices` 同一套判据（不露面的、前端错误、
- * 不在白名单里的都画不出任何一行）。
- *
- * 时间线窗口（`useTimeline`）用它只装画得出来的块。装进去却不画的块白占窗口额度：
- * 上限一满，`capNewest` 会把「最新的一截」收进背后供「回到最新」换上来，而一串不画
- * 的块正好塞满这一截时，换上来就是一屏空的，最新那条看得见的消息反被挤丢。数的对象
- * 换成画得出来的那些，这个问题就没有了。
- */
-export function rendersInRoom(block: Block): boolean {
-  return collapseNotices([block]).length > 0
-}
-
-/** 这一行是不是「本轮里平台顺手做的事」——够格被折进本轮摘要。 */
-function summaryPart(row: NoticeRow): boolean {
-  if (row.notice?.mode === 'action' && row.notice.detail) return false
-  // 带着「查看改动 / 查看建议」的文档行要有自己的按钮，不折进摘要。
-  if (row.notice?.mode === 'action' && (row.notice.docRequest || row.notice.docSuggestions || row.notice.libraryDoc))
-    return false
-  return row.notice?.mode === 'action' || changeSummary(row.block) !== null
-}
-
-/**
- * 把同一轮里连续的动作行和改动摘要折成一行。
- *
- * 只折**同一个 turn_id** 的连续行：一轮的收尾动作本来就是挨着落的，而跨轮合并会
- * 把两次不同的工作说成一次。turn_id 为空的老块不参与（分不出轮次就别猜）。
- */
-function foldTurnSummary(rows: NoticeRow[]): NoticeRow[] {
-  const out: NoticeRow[] = []
-  for (let i = 0; i < rows.length; i += 1) {
-    const row = rows[i]
-    const turnId = row.block.turn_id ?? null
-    if (!turnId || !summaryPart(row)) {
-      out.push(row)
-      continue
-    }
-    let end = i
-    while (
-      end + 1 < rows.length &&
-      rows[end + 1].block.turn_id === turnId &&
-      rows[end + 1].block.author === row.block.author &&
-      str(meta(rows[end + 1].block)?.agent_id) === str(meta(row.block)?.agent_id) &&
-      summaryPart(rows[end + 1])
-    ) {
-      end += 1
-    }
-    const run = rows.slice(i, end + 1)
-    // 一条孤零零的动作行没什么可折的，保持原样——本轮摘要那一行的存在理由是
-    // 「这一轮改了什么」，没有改动摘要时它只是换个壳说同一句话。
-    const changes = run.map((r) => changeSummary(r.block)).find((c) => c !== null) ?? null
-    if (changes === null && run.length === 1) {
-      out.push(row)
-      i = end
-      continue
-    }
-    out.push({
-      block: run[run.length - 1].block,
-      run: run.flatMap((r) => r.run),
-      notice: {
-        mode: 'turn-summary',
-        changes,
-        actions: run
-          .map((r) => (r.notice?.mode === 'action' ? { resource: r.notice.resource, text: r.notice.text } : null))
-          .filter((a): a is { resource: string; text: string } => a !== null),
-        turnId,
-      },
-    })
-    i = end
-  }
-  return out
-}
+export { actionResource, confirmTarget, environmentTarget, mailOutcomes, platformNotice } from './platformNoticeCards'
+export { collapseNotices, rendersInRoom } from './platformNoticeCollapse'

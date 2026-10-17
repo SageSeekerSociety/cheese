@@ -10,17 +10,17 @@ their homes.
 """
 
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.platform_notices import (
-    EVENT_DEPLOY_INTERRUPTED,
-    EVENT_TURN_FAILED,
-    EVENT_TURN_TIMEOUT,
-    SEVERITY_INFO,
-)
 from app.domain.block.indexed_rows import FAILED_TURN_EVENTS
 from app.domain.block.models import (
     PROMPT_ATTEMPTS_META_KEY,
     PROMPTED_TURN_META_KEY,
     Block,
+)
+from app.domain.notice_meta import (
+    EVENT_DEPLOY_INTERRUPTED,
+    EVENT_TURN_FAILED,
+    EVENT_TURN_TIMEOUT,
+    SEVERITY_INFO,
 )
 from app.domain.run_record import turns
 

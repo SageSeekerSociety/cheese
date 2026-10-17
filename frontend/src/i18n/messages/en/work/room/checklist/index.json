@@ -1,0 +1,15 @@
+{
+  "advance": "{step}: {status}",
+  "compose": "Post a checklist",
+  "newTitle": "New checklist",
+  "post": "Post",
+  "saveFailed": "Couldn't save the checklist",
+  "statusCompleted": "Done",
+  "statusInProgress": "In progress",
+  "statusPending": "Not started",
+  "stepTooLong": "Each step can be at most {max} characters",
+  "stepsHint": "One step per line",
+  "stepsLabel": "Steps",
+  "tooManySteps": "At most {max} steps",
+  "updatedAt": "Checklist updated {time}"
+}

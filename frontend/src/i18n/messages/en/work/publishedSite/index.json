@@ -1,0 +1,14 @@
+{
+  "entry": "Site entry",
+  "entryIs": "Site entry: ",
+  "isCurrent": "The live site is already this accepted version",
+  "noCandidates": "The project's accepted version has no site to publish",
+  "none": "No published site",
+  "publish": "Publish",
+  "publishFailed": "Couldn't publish",
+  "publishRevision": "Publish the project's accepted version",
+  "publishSite": "Publish site",
+  "revisionChanged": "The project's accepted version changed. Check it, then publish",
+  "stays": "Once published, the site stays online. Later changes need publishing again",
+  "update": "Publish update"
+}

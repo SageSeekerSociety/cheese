@@ -18,13 +18,15 @@ import type { NoticeAgent, PlatformNotice } from '../../lib/platformNotice'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { parseDiffLines } from '../../lib/diff'
+import { docLineInTurn, docLineOf, isDocLine } from '../../lib/docEditLine'
 import { repeatsLine } from '../../lib/noticeRepeats'
-import { noticeText } from '../../lib/noticeText'
+import { noticeNotified, noticeText } from '../../lib/noticeText'
 import { confirmTarget, environmentTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import NavLink from '../common/NavLink.vue'
 
+import DocEditLine from './DocEditLine.vue'
 import MailDraftCard from './MailDraftCard.vue'
 import RollingNumber from './RollingNumber.vue'
 
@@ -73,7 +75,23 @@ const emit = defineEmits<{
   // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
 }>()
 
-const name = computed(() => props.agent?.name ?? null)
+// 队友改了一份文档那一行（lib/docEditLine）：在它自己那一轮里的，外框照旧是它的头像和
+// 名字（接在这一轮上面的话下面时只剩空着的头像列）；不在哪一轮里的，是不署名的一行。
+const MENTION = /<@([\w-]+)>/g
+function nameOf(handle: string): string {
+  if (props.agent?.handle === handle) return props.agent.name
+  return props.refs.mentionNames[handle] || handle
+}
+const docLine = computed(() => docLineOf(props.block, props.notice, nameOf))
+// 这一行的名字按 nameOf 的叫法画（这一轮的队友按它在这里的名字）。
+const docNames = computed(() =>
+  props.agent?.handle
+    ? { ...props.refs, mentionNames: { ...props.refs.mentionNames, [props.agent.handle]: props.agent.name } }
+    : props.refs
+)
+const docInTurn = computed(() => !!docLine.value && !!props.agent && docLineInTurn(props.block))
+
+const name = computed(() => (docLine.value && !docInTurn.value ? null : props.agent?.name ?? null))
 /** 没有署名的一行字：房间里发生的事，不是谁做的事。 */
 const happening = computed(() => {
   const own = props.notice.mode === 'repeats' ? props.notice.rows[0].notice : props.notice
@@ -87,6 +105,7 @@ const frame = computed(() =>
     : {
         name: name.value,
         handle: props.agent?.handle ?? null,
+        mark: docLine.value ? 'mdi-file-document-edit-outline' : undefined,
         cont: props.cont,
         face: props.face ?? null,
         faceLabel: props.faceLabel ?? null,
@@ -97,10 +116,14 @@ const frame = computed(() =>
 
 // 同一个人连着做的几件事合成的那一行：收起时一句概括，点开列出每一条。
 const repeatsOpen = ref(false)
-const repeatsText = computed(() =>
-  // 队友做的，名字照队友的叫法；人做的，正文里那个 <@handle> 渲染成他的名字。
-  props.notice.mode === 'repeats' ? repeatsLine(props.notice.rows, props.agent?.name ?? props.notice.actor) : ''
-)
+const repeatsText = computed(() => {
+  if (props.notice.mode !== 'repeats') return ''
+  // 队友做的，名字照队友的叫法；人做的，正文里那个 <@handle> 渲染成他的名字。改文档的
+  // 那几行合成的，和它们各自一样写成普通的名字，不画 @。
+  const docs = props.notice.rows.every((row) => isDocLine(row.block))
+  const actor = docs ? props.notice.actor.replace(MENTION, (_m, handle: string) => nameOf(handle)) : props.notice.actor
+  return repeatsLine(props.notice.rows, props.agent?.name ?? actor)
+})
 
 /** 本轮改动先列三个文件；其余的点一下再展开，不必去别处看。 */
 const FILES_SHOWN = 3
@@ -133,8 +156,12 @@ const showRetry = computed(
 const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
 const environmentAt = computed(() => environmentTarget(props.block, props.projectId))
 
+// 提示里的人只是被提到（浅色 chip、不带 @）；这件事同时叫醒的那一位（交给它的 AI 队友、
+// 被派去修合并后检查的那一位）才是带 @ 的实心 chip（lib/noticeText 的 noticeNotified）。
+const refs = computed(() => ({ ...props.refs, notified: noticeNotified(props.block) }))
+
 function renderPlain(text: string): string {
-  return renderPlainWith(text, props.refs)
+  return renderPlainWith(text, refs.value)
 }
 
 // 文档 diff 里的空行不画出来：一行只有空白时留一个空格子比留一条假的「改动」好。
@@ -155,36 +182,6 @@ const pinnedBlock = computed(() => {
   const id = (props.block.meta as Record<string, unknown> | null | undefined)?.pinned_block_id
   return typeof id === 'string' && id ? id : null
 })
-
-// 有人让 AI 队友改的文档：行尾是「改了 N 处 · 查看改动」，打开文档一处处看、可以还原。
-// 名字按房间里的叫法（昵称），找不到就用 handle。
-const docRequest = computed(() => (props.notice.mode === 'action' ? props.notice.docRequest ?? null : null))
-function reviewDoc() {
-  const req = docRequest.value
-  if (!req) return
-  const requester = props.refs.mentionNames[req.requestedBy] || req.requestedBy
-  emit('open-resource', 'doc', props.block.turn_id ?? undefined, { requester, edits: req.edits })
-}
-const docSuggestions = computed(() => (props.notice.mode === 'action' ? props.notice.docSuggestions ?? 0 : 0))
-
-// 项目资料库里的一份文档：AI 队友在这里新建了它或改了它。卡片一点，文档在对话旁边打开；
-// 改过的，打开时一处处标出来。
-const libraryDoc = computed(() => (props.notice.mode === 'action' ? props.notice.libraryDoc ?? null : null))
-// 卡上那一句：新建的、提了建议的、改了几处的，整篇重写的只说「已更新」。
-const libraryDocState = computed(() => {
-  const doc = libraryDoc.value
-  if (!doc) return ''
-  if (doc.created) return t('work.room.notice.docCard.created')
-  if (doc.suggestions) return t('work.room.notice.docCard.suggested', { n: doc.suggestions })
-  if (doc.edits.length) return t('work.room.notice.docEditCount', { n: doc.edits.length })
-  return t('work.room.notice.docCard.updated')
-})
-function openLibraryDoc() {
-  const doc = libraryDoc.value
-  if (!doc) return
-  const review = !doc.created && !doc.suggestions && doc.edits.length ? { requester: '', edits: doc.edits } : undefined
-  emit('open-resource', 'doc', props.block.turn_id ?? undefined, review, { id: doc.id, title: doc.title })
-}
 
 // 哪些资源的行尾带一颗「去看看」按钮，以及那颗按钮上写什么（目录里的键）。
 const ACTION_META: Record<string, { btn: string }> = {
@@ -315,26 +312,14 @@ const ACTION_META: Record<string, { btn: string }> = {
         {{ t('work.room.notice.moreFiles', { n: hiddenFiles }) }}
       </div>
     </div>
-    <!-- 芝士在这个对话里新建或改了资料库里的一份文档：一张卡，点开在旁边看。 -->
-    <div v-else-if="libraryDoc && notice.mode === 'action'" class="sys-row action-card">
-      <div class="sys-line">
-        <span class="sys-text" v-html="renderPlain(notice.text)" />
-      </div>
-      <button type="button" class="doc-card" @click="openLibraryDoc">
-        <v-icon icon="mdi-file-document-edit-outline" size="20" class="doc-card__icon" />
-        <span class="doc-card__id">
-          <span class="t-body doc-card__name">{{ libraryDoc.title || t('work.room.doc.untitled') }}</span>
-          <span class="t-meta c-faint">{{ libraryDocState }}</span>
-        </span>
-        <span class="t-meta c-muted doc-card__action">{{
-          libraryDoc.suggestions
-            ? t('work.room.notice.viewSuggestions')
-            : libraryDoc.created || !libraryDoc.edits.length
-              ? t('work.room.notice.docCard.open')
-              : t('work.room.notice.viewChanges')
-        }}</span>
-      </button>
-    </div>
+    <DocEditLine
+      v-else-if="docLine"
+      :block="block"
+      :line="docLine"
+      :in-turn="docInTurn"
+      :names="docNames"
+      @open-resource="(...a) => emit('open-resource', ...a)"
+    />
     <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
     <div v-else-if="notice.mode === 'action'" class="sys-row action-card">
       <div class="sys-line">
@@ -342,23 +327,8 @@ const ACTION_META: Record<string, { btn: string }> = {
          through the shared token→chip path so the actor is clickable. -->
         <span class="sys-text">
           <span v-html="renderPlain(notice.text)" />
-          <template v-if="docRequest">
-            <span class="sys-sep"> · </span>
-            <span>{{ t('work.room.notice.docEditCount', { n: docRequest.edits.length }) }}</span>
-            <button type="button" class="sys-btn sys-btn--inline" @click="reviewDoc">
-              {{ t('work.room.notice.viewChanges') }}
-            </button>
-          </template>
           <button
-            v-else-if="docSuggestions"
-            type="button"
-            class="sys-btn sys-btn--inline"
-            @click="emit('open-resource', 'doc', block.turn_id ?? undefined)"
-          >
-            {{ t('work.room.notice.viewSuggestions') }}
-          </button>
-          <button
-            v-else-if="ACTION_META[notice.resource]?.btn"
+            v-if="ACTION_META[notice.resource]?.btn"
             type="button"
             class="sys-btn sys-btn--inline"
             @click="
@@ -371,8 +341,7 @@ const ACTION_META: Record<string, { btn: string }> = {
           </button>
         </span>
       </div>
-      <!-- 有人让改的那一种，改了哪几处在「查看改动」里看，不再摊一份差异。 -->
-      <details v-if="notice.detail && !docRequest" class="sys-more">
+      <details v-if="notice.detail" class="sys-more">
         <summary class="sys-line">
           <span class="sys-text">{{ notice.detailLabel || t('work.room.notice.showDetail') }}</span>
           <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
@@ -411,7 +380,8 @@ const ACTION_META: Record<string, { btn: string }> = {
       data-testid="platform-notice"
     >
       <summary class="sys-line">
-        <span class="sys-text" :class="{ 'sys-lead': notice.who === 'human' }">{{ notice.line }}</span>
+        <!-- 这一行里提到的人是 `<@handle>` token，和别的提示行一样画成名字，不露出原文。 -->
+        <span class="sys-text" :class="{ 'sys-lead': notice.who === 'human' }" v-html="renderPlain(notice.line)" />
         <span v-if="notice.quote" class="sys-quote" data-user-content>{{
           t('work.room.notice.quote', { text: notice.quote })
         }}</span>
@@ -620,44 +590,6 @@ details[open]::details-content {
   color: var(--faint);
   margin-top: 4px;
 }
-.doc-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: min(380px, 100%);
-  margin-top: 4px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-.doc-card:hover {
-  background: var(--fill);
-}
-.doc-card__icon {
-  flex: none;
-  color: var(--muted);
-}
-.doc-card__id {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-width: 0;
-}
-.doc-card__name {
-  overflow: hidden;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.doc-card__action {
-  flex: none;
-}
-
 .doc-edit-diff {
   margin-top: 8px;
   border: 1px solid var(--line);
@@ -792,12 +724,15 @@ details[open]::details-content {
 .cv-measure .room-happening {
   content-visibility: visible;
 }
-.room-happening :deep(.mention) {
+/* 居中的淡行（置顶、归档、加入、改设置……）里的频道、文件：淡字、不垫底，悬停加下划线。
+   提到的人照常是浅色 chip（.name-ref），叫醒了谁的那一颗照常是实心 @chip——这一行和
+   别处同一条规则。 */
+.room-happening :deep(.mention:is(.file-ref, .topic-ref)) {
   color: var(--muted);
   background: none;
   cursor: pointer;
 }
-.room-happening :deep(.mention:hover) {
+.room-happening :deep(.mention:is(.file-ref, .topic-ref):hover) {
   text-decoration: underline;
 }
 .room-happening__go {

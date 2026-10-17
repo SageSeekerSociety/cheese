@@ -1,0 +1,22 @@
+{
+  "allTasks": "All tasks",
+  "cancel": "Cancel",
+  "collapse": "Show less",
+  "description": "About this channel",
+  "edit": "Edit",
+  "editProject": "Edit project goals",
+  "expand": "Show all",
+  "latest": "{name}: {text}",
+  "moreRunning": "{count} more in all tasks",
+  "noDescription": "No description",
+  "noProject": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
+  "noRunning": "No tasks in progress",
+  "owner": "{name} owns it · {when}",
+  "project": "Project goals",
+  "projectNote": "{name} reads this in every conversation",
+  "quietRunning": "Nothing moved in the last 7 days; {count} in all tasks",
+  "recentDone": "Recently closed",
+  "running": "Tasks in progress · {count}",
+  "save": "Save",
+  "writeProject": "Write project goals"
+}

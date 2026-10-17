@@ -1,0 +1,10 @@
+{
+  "added": "Email address added",
+  "emailTaken": "This email is used by another account",
+  "lede": "Your email is used to recover your account and to sign in",
+  "send": "Send code",
+  "signInAgain": "Sign in again to add an email address",
+  "signOut": "Sign out",
+  "submit": "Verify and continue",
+  "title": "Add an email address"
+}

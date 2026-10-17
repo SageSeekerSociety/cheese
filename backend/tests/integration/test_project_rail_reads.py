@@ -17,7 +17,8 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.notes import NoteCode
 from app.domain.room_task.models import Task
@@ -163,14 +164,12 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
             room_id=uuid.UUID(room),
             title="第一件",
             created_at=OLDER,
-            started_at=OLDER,
         )
         second = Task(
             project_id=uuid.UUID(project),
             room_id=uuid.UUID(room),
             title="第二件",
             created_at=NEWER,
-            started_at=NEWER,
         )
         s.add_all([first, second])
         await s.flush()
@@ -237,7 +236,6 @@ def _carded_tasks(client, project: str, room: str, cards: list[dict]) -> dict[st
                 room_id=uuid.UUID(room),
                 title=f"活 {i}",
                 created_at=OLDER,
-                started_at=OLDER,
             )
             s.add(task)
             await s.flush()

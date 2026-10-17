@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.errors import ValidationError
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.input_identity import (
     InputEffects,
@@ -31,6 +31,7 @@ from app.domain.delivery.receipts import (
     register_input,
     terminate_work_inputs,
 )
+from app.domain.event_author import AuthorType
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
 
 

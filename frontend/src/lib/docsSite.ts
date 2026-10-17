@@ -1,7 +1,9 @@
 // Where the docs site is. VITE_DOCS_ORIGIN is a placeholder in the image that
 // frontend/docker-entrypoint.sh fills from DOCS_ORIGIN when the container starts:
 // the docs' own host ("https://docs.okcheese.com"), or empty when this
-// deployment serves them under /docs/ (frontend/nginx/docs/).
+// deployment serves them under /docs/ (frontend/nginx/docs/). The prerendered
+// public pages have these links written out already; scripts/docs-mode.sh
+// fills them with the same fallback, so change the two together.
 
 /** A page of the docs by its path within the site: `/`, `/quickstart#talk`. */
 export function docsUrl(path = '/'): string {

@@ -173,9 +173,9 @@ def test_a_stray_worker_report_opens_nothing(client, stub_hooks):
 def test_a_teammates_own_turn_stays_the_teammates(client, stub_hooks):
     """一位不是项目默认的队友，它的会话自己开了一轮：那一轮是它的，不是默认队友的。
     这时有人点它的名插一句话，话当场进它正在跑的会话，不用排队。"""
-    from app.domain.agent.platform_notices import EVENT_DELIVERY_FALLBACK
     from app.domain.block.models import Block
     from app.domain.identity.handles import agent_instance_handle
+    from app.domain.notice_meta import EVENT_DELIVERY_FALLBACK
 
     project = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
         "id"

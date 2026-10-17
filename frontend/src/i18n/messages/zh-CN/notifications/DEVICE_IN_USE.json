@@ -1,0 +1,5 @@
+{
+  "body": "{project} · {room}",
+  "title": "{agent} 开始在「{device}」上工作",
+  "wholeMachine": "能访问整台电脑"
+}

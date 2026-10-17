@@ -1,0 +1,7 @@
+{
+  "CAUTION": "Actions that can break things",
+  "IMPORTANT": "Conclusions, decisions",
+  "NOTE": "Extra context",
+  "TIP": "Advice",
+  "WARNING": "Risks"
+}

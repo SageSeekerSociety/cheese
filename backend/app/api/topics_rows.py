@@ -3,7 +3,7 @@
 路由不该按名字 import 对方领域的 `models`（C2，`.importlinter`），而它手上的行都是
 ORM 行：属性是 SQLAlchemy `Mapped` 描述符。所以这里按模型的原样声明 `Mapped[...]`，
 pyright 才拿得它比得过调用方那一行；读一位仍旧得到它裹着的值。契约本身在
-`room_task.presentation`（`TopicSignals` / `CardRow`），这里只把路由这一层多读的几位
+`room_task.presentation`（`TopicRow` / `CardRow`），这里只把路由这一层多读的几位
 接上去。
 
 摆成独立模块是为了让 `topics.py` 守在文件大小上限之内 —— 协议是类型，不是行为，
@@ -23,13 +23,16 @@ from sqlalchemy.orm import Mapped
 from app.domain.room_task import presentation
 
 
-class TopicRow(presentation.TopicSignals, Protocol):
+class TopicRow(presentation.TopicRow, Protocol):
     """这一层从一个房间行上读到的形状。
 
     结构协议，不是 ORM 类：它手上的每一行都来自同域的 `TopicService`（ORM 行）。成员
-    按模型的原样声明 `Mapped[...]`（`presentation.TopicSignals`），pyright 才拿得它
-    比得过那一行；`TopicOut.model_validate` 只读属性、不认类，所以这几位就是这里需要
-    的全部。
+    按模型的原样声明 `Mapped[...]`（`presentation.TopicRow`，那份是**行**的契约），
+    pyright 才拿得它比得过那一行；`TopicOut.model_validate` 只读属性、不认类，所以这
+    几位就是这里需要的全部。
+
+    和 `presentation.TopicSignals` 分得开：那一份是 `topic` 窄读出口交出来的**纯值**
+    （`topic.repositories.ListedRoom`），属性是普通标量，接不住 ORM 行。
     """
 
 

@@ -9,11 +9,16 @@ each module's cases kept together in their collected order. Under
 ``--dist loadfile --no-loadscope-reorder`` a worker takes the next module from
 the head of that order whenever it runs low, so the run ends on short modules
 instead of one worker finishing a long one alone.
+
+Query recorded test durations without running pytest:
+``python -m scripts.ci_shard --top-tests 20`` prints nodeid and seconds as TSV.
 """
 
+import argparse
 import hashlib
 import json
 import statistics
+import sys
 from pathlib import Path
 
 import pytest
@@ -109,3 +114,27 @@ def _longest_module_first(items):
 
     order = sorted(modules.items(), key=lambda kv: -estimate(*kv))
     return [item for _, cases in order for item in cases]
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--top-tests", type=int, help="print N slowest recorded tests")
+    args = parser.parse_args(argv)
+    if args.top_tests is None:
+        return 0
+    if args.top_tests <= 0:
+        parser.error("--top-tests must be positive")
+    recorded = json.loads(DURATIONS.read_text()) if DURATIONS.exists() else {}
+    tests = recorded.get("tests", {})
+    if not tests:
+        print("no test durations; refresh with scripts.test_durations", file=sys.stderr)
+        return 1
+    for nodeid, seconds in sorted(tests.items(), key=lambda kv: (-kv[1], kv[0]))[
+        : args.top_tests
+    ]:
+        print(f"{nodeid}\t{seconds:.2f}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

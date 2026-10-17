@@ -1,0 +1,6 @@
+{
+  "comment": "评语: {comment}",
+  "passed": "已通过 {score} 分",
+  "pending": "等待评审中",
+  "rejected": "已驳回"
+}

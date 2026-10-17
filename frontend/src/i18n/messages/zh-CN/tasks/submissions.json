@@ -1,0 +1,9 @@
+{
+  "empty": "暂无提交记录",
+  "identity": "查看身份",
+  "individualIdentity": "个人参与",
+  "pending": "(待审核)",
+  "rejected": "(已驳回)",
+  "teamIdentity": "队伍: {name}",
+  "unnamedTeam": "未命名队伍"
+}

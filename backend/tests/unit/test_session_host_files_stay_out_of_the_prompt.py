@@ -27,6 +27,7 @@ import pytest
 from app.domain.agent.harness.claude_code.remote_execution import client, release
 from app.domain.skill_library import native_skill_files
 from tests.pinned_claude import claude_binary
+from tests.support.processes import end_processes_under
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -166,6 +167,8 @@ def test_host_instruction_files_stay_out_while_the_rooms_own_arrive(
         server.shutdown()
         server.server_close()
         worker.join()
+        # The build's session hook outlives it (`end_processes_under`).
+        end_processes_under(tmp_path)
     assert result.returncode == 0, result.stderr
     assert "ACCEPTANCE_DONE" in result.stdout, result.stdout
     requests = server.state["requests"]

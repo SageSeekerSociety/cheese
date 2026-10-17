@@ -109,8 +109,10 @@ class TaskPdfDraftService:
         timeout_seconds: float | None = None,
         max_pages: int | None = None,
         max_concurrency: int | None = None,
+        sees_pictures: bool = False,
     ) -> None:
         self._chat = chat
+        self._sees_pictures = sees_pictures
         self._rate_table = rate_table
         self.spent = Usage()
         self.model = chat.model
@@ -126,13 +128,14 @@ class TaskPdfDraftService:
 
     @classmethod
     async def on_gateway(
-        cls, db: Any, rate_table: RateTable | None
+        cls, db: Any, rate_table: RateTable | None, *, sees_pictures: bool
     ) -> "TaskPdfDraftService":
         key = await service_key(db, task_draft_key_spec())
         if key is None:
             raise SystemBusyError(_NOT_OPEN)
         return cls(
             rate_table=rate_table,
+            sees_pictures=sees_pictures,
             chat=GatewayChat(
                 key,
                 settings.task_draft_model,
@@ -298,10 +301,10 @@ class TaskPdfDraftService:
     def _model_reads_images(self) -> bool:
         """这一版的草稿模型读不读图。
 
-        默认草稿模型是文本模型 —— 一份 PNG 发给读不了图的模型只是白白花一次调用的
-        钱，所以只有部署在 ``task_draft_vision_models`` 里点过名的模型才走兜底。
+        一份 PNG 发给读不了图的模型只是白白花一次调用的钱，所以只有网关标了
+        ``supports_vision`` 的模型才走兜底（调用方查好了传进来）。
         """
-        return self.model in settings.task_draft_vision_models
+        return self._sees_pictures
 
     async def generate_task_payloads_from_pdf(
         self,

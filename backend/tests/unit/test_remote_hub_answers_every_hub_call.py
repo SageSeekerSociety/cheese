@@ -26,10 +26,27 @@ from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 
 APP = Path(app.__file__).parent
+# The hub's own bodies — device_hub.py and the modules it was split into
+# (2026-10-16) — plus the owner's glue. A call in one of these lands on the
+# in-process DeviceHub, which has every method; what this test guards is the
+# business backend calling a hub that may be a RemoteDeviceHub.
 OWNER_ONLY = {
     APP / "device_connection_app.py",
-    APP / "api" / "routes" / "connector.py",
-    APP / "domain" / "agent" / "device_hub.py",
+    # The connector routes became a package (2026-10-16). The two files holding
+    # the owner's sockets are what needs skipping: nginx sends `/connector/agent`
+    # and the screen socket to the owner and the rest of `/connector/` to the
+    # business backend, where `connections.py` calls `device_hub.target`. Listing
+    # the whole package would put that call, and any other the HTTP handlers
+    # make, out of this guard's sight.
+    APP / "api" / "routes" / "connector" / "devices.py",
+    APP / "api" / "routes" / "connector" / "screen.py",
+    APP / "domain" / "agent" / "device_hub" / "__init__.py",
+    APP / "domain" / "agent" / "device_hub" / "calls.py",
+    APP / "domain" / "agent" / "device_hub" / "inbound.py",
+    APP / "domain" / "agent" / "device_hub" / "link.py",
+    APP / "domain" / "agent" / "device_hub" / "local_fs.py",
+    APP / "domain" / "agent" / "device_hub" / "sessions.py",
+    APP / "domain" / "agent" / "device_hub" / "viewers.py",
     APP / "domain" / "agent" / "device_hub_rpc.py",
 }
 

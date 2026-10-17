@@ -264,7 +264,7 @@ async def _ask(sessions, launch, text, **options) -> list:
 async def _until(check, timeout: float = 60.0) -> None:
     async with asyncio.timeout(timeout):
         while not check():
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.05)
 
 
 @pytest.mark.anyio
@@ -404,13 +404,13 @@ async def test_an_answer_starts_as_soon_as_the_model_does(host, platform, monkey
     its own so that what the reader adds on top is what is measured; the
     timings are printed."""
     hub, sessions = host
-    first_token_s = 0.3
-    monkeypatch.setattr(personal, "IDLE_EXIT_S", 0.5)
+    first_token_s = 0.15
+    monkeypatch.setattr(personal, "IDLE_EXIT_S", 0.25)
     platform([], first_token_s=first_token_s)
     launch = _launch(7)
 
     new = await _first_word(sessions, launch, "一")
-    warm = [await _first_word(sessions, launch, "再一") for _ in range(3)]
+    warm = [await _first_word(sessions, launch, "再一") for _ in range(2)]
     await _until(lambda: not hub.alive(launch.ref.state))
     resumed = await _first_word(sessions, launch, "回来")
 

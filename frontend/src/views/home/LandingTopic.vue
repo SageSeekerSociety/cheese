@@ -104,7 +104,7 @@ const groups = computed(() => [
 .topic-sample {
   font-size: 12px;
   line-height: var(--lh-12);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .topic-title {
@@ -181,7 +181,11 @@ const groups = computed(() => [
   height: 24px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--inverse-ink);
+  /* 底色由 avatarColor() 按 handle 算出来，两套主题下同一个值，压在上面的字也得
+     是定值：--inverse-ink 深色下是 #f3f4f6，几个深色相上只剩 4.37:1，够不到 4.5。
+     design-system §1.2 唯一的例外，必须写明理由，否则下一个人会顺手换回 token。 */
+  /* stylelint-disable-next-line color-no-hex -- 压在头像底色上的墨色，底色不随主题变。 */
+  color: #fff;
   /* 人是圆的，旁边的 AI 队友是 CheeseAvatar 的超椭圆。 */
   border-radius: var(--radius-pill);
   align-items: center;

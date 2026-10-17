@@ -22,6 +22,7 @@ import type { RowLight } from './roomLight'
 import { brightest } from './roomLight'
 
 import { t } from '@/i18n'
+import { storageGetStrings, storageRemove, storageSetJson } from '@/lib/browserStorage'
 
 export interface TopicNodeLike {
   id: string
@@ -239,29 +240,17 @@ function storageKey(projectId: string | null | undefined): string | null {
 
 export function loadExpandedTopics(projectId: string | null | undefined): Set<string> {
   const key = storageKey(projectId)
-  if (!key || typeof localStorage === 'undefined') return new Set()
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return new Set()
-    const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) {
-      localStorage.removeItem(key)
-      return new Set()
-    }
-    return new Set(parsed.filter((v): v is string => typeof v === 'string'))
-  } catch {
-    // 读坏了就回到默认的收起态。一条脏数据不该把两百行活摊到主导航上。
-    return new Set()
-  }
+  if (!key) return new Set()
+  // 不是数组、解析不出来，都是默认的收起态：一条脏数据不该把两百行活摊到主导航上。
+  // 解析不出来的那条存储层会删掉，解不成数组的（上一版换过形状）下次存的时候被盖掉。
+  return new Set(storageGetStrings(key))
 }
 
 export function saveExpandedTopics(projectId: string | null | undefined, expanded: ReadonlySet<string>): void {
   const key = storageKey(projectId)
-  if (!key || typeof localStorage === 'undefined') return
-  try {
-    if (expanded.size === 0) localStorage.removeItem(key)
-    else localStorage.setItem(key, JSON.stringify([...expanded]))
-  } catch {
-    // 隐私模式/配额满：展开仍然在内存里生效，只是这次刷新后不保留。
-  }
+  if (!key) return
+  // 一个都没展开就把这条记录删掉（「全都收起来」是默认态）；删不动也只是留着上一次的。
+  // 隐私模式/配额满：展开仍然在内存里生效，只是这次刷新后不保留。
+  if (expanded.size === 0) storageRemove(key)
+  else storageSetJson(key, [...expanded])
 }

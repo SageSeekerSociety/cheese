@@ -375,9 +375,9 @@ def test_a_clean_write_back_carries_no_warning():
 
 
 def test_a_document_is_written_with_the_machine_out_of_reach():
-    """A task before its owner starts it reads its machine and writes nothing
-    there, yet drafting its document is what it is there to do. A document is
-    the platform's, so writing one asks nothing of the machine."""
+    """A session whose machine is out of reach still writes its task's
+    document: a document is the platform's, so writing one asks nothing of
+    the machine."""
     host = _doc_host()
     host.sync = RuntimeError(cheese_out_of_reach)
 
@@ -391,50 +391,47 @@ def test_a_document_is_written_with_the_machine_out_of_reach():
 # --- tasks and acceptance --------------------------------------------------
 
 
-def test_a_task_someone_asked_for_is_created_started_and_touches_nothing_else():
-    """Asked to do something, an AI teammate creates the task and starts it for
-    the person who asked. Creating one reads no file and pushes no branch."""
+def test_a_task_someone_asked_for_is_created_and_touches_nothing_else():
+    """Asked to do something, an AI teammate creates the task for the person
+    who asked. Creating one reads no file and pushes no branch."""
     host = Host(
         {
             ("POST", f"/topics/{_ROOM}/teammate-tasks"): {
                 "id": "task-1",
                 "title": "查一下分页",
                 "owner_handle": "lisi",
-                "started": True,
+                "here": False,
             }
         }
     )
     out = run(
         "cheese_task",
-        {"title": "查一下分页", "summary": "干这个", "owner": "lisi", "start": True},
+        {"title": "查一下分页", "summary": "干这个", "owner": "lisi"},
         host,
     )
     [plan] = host.requests
     assert plan["path"] == f"/topics/{_ROOM}/teammate-tasks"
-    assert plan["body"]["start"] is True
+    assert plan["body"]["here"] is False
     assert plan["body"]["owner_handle"] == "lisi"
     assert host.synced == []
     assert "查一下分页" in out
 
 
-def test_a_task_that_could_not_start_tells_the_teammate_to_ask():
+def test_a_thread_turned_into_the_task_tells_the_teammate_it_may_change_the_project():
     host = Host(
         {
             ("POST", f"/topics/{_ROOM}/teammate-tasks"): {
-                "id": "task-1",
-                "title": "查一下分页",
+                "id": _ROOM,
+                "title": "登录验证码",
                 "owner_handle": "lisi",
-                "started": False,
-                "not_started_because": "没有审阅人",
+                "here": True,
             }
         }
     )
-    out = run(
-        "cheese_task",
-        {"title": "查一下分页", "summary": "干这个", "start": True},
-        host,
-    )
-    assert "没有审阅人" in out
+    out = run("cheese_task", {"title": "登录验证码", "here": True}, host)
+    [plan] = host.requests
+    assert plan["body"]["here"] is True
+    assert "cheese worktree" in out
 
 
 # --- memory, roster, status and the rest -----------------------------------
@@ -720,3 +717,95 @@ def test_a_time_with_an_offset_is_shown_in_utc():
     out = run("cheese_chat_get", {"message_id": block["id"]}, host)
 
     assert "2026-10-07 00:17:43 UTC" in out
+
+
+# --- mini-apps: what the writer sees of what it saved ------------------------
+
+_WIDE = base64.b64encode(b"wide png").decode()
+_NARROW = base64.b64encode(b"narrow png").decode()
+
+
+class _AppHost(Host):
+    """The save routes as the backend answers them: the pictures only to a
+    save that asked for them (`?pictures=true`)."""
+
+    def request(self, plan):
+        answer = super().request(plan)
+        data = answer["data"]
+        if "pictures=true" not in plan["path"] and isinstance(data, dict):
+            answer["data"] = {k: v for k, v in data.items() if k != "pictures"}
+        return answer
+
+
+def _app_host(saved, document_text="", *, sees_pictures=True):
+    return _AppHost(
+        {
+            ("POST", f"/documents/{_DOC}/apps"): saved,
+            ("POST", "/apps/k1/versions"): saved,
+            ("GET", "/apps/k1"): {"document_id": _DOC},
+            ("GET", f"/documents/{_DOC}"): {"content": document_text, "version": 1},
+        },
+        environ={
+            "CHEESE_DOCUMENT": _DOC,
+            **({"CHEESE_PICTURES": "1"} if sees_pictures else {}),
+        },
+    )
+
+
+def test_a_saved_app_comes_back_with_its_pictures_and_the_block_still_to_place():
+    """The writer looks at what the platform ran before it moves on; looking
+    must not make it forget that a new app is not in the document yet."""
+    host = _app_host(
+        {
+            "key": "k1",
+            "version": 1,
+            "checked": True,
+            "pictures": {"400": _NARROW, "720": _WIDE},
+        }
+    )
+    said = run("cheese_app_save", {"code": "<p>x</p>", "title": "试算"}, host)
+
+    assert [i["data"] for i in said.images] == [_WIDE, _NARROW]
+    assert all(i["mimeType"] == "image/png" for i in said.images)
+    assert ":::app k1@1 试算" in said
+    assert "截图" in said and said.rstrip().endswith("最后都要把块放进文档。")
+
+
+def test_a_writer_whose_model_cannot_read_pictures_is_neither_handed_nor_told_of_any():
+    """Pictures sent to a model that cannot read them are a refused request or
+    a billed one for nothing, and a text that says they are attached when the
+    model sees none is untrue."""
+    host = _app_host(
+        {
+            "key": "k1",
+            "version": 1,
+            "checked": True,
+            "pictures": {"400": _NARROW, "720": _WIDE},
+        },
+        sees_pictures=False,
+    )
+    said = run("cheese_app_save", {"code": "<p>x</p>", "title": "试算"}, host)
+
+    assert getattr(said, "images", ()) == ()
+    assert "截图" not in said
+    assert ":::app k1@1 试算" in said
+
+
+def test_an_app_kept_unchecked_comes_back_without_pictures():
+    host = _app_host({"key": "k1", "version": 1, "checked": False})
+    said = run("cheese_app_save", {"code": "<p>x</p>", "title": "试算"}, host)
+
+    assert said.images == ()
+    assert "截图" not in said.replace("也没有截图", "")
+    assert ":::app k1@1 试算" in said
+
+
+def test_a_new_version_of_an_app_not_yet_in_the_document_says_which_version_to_place():
+    """Fixed after looking, before the block went in: the block it was handed
+    names version 1, and placing that would show the version it just fixed."""
+    host = _app_host(
+        {"key": "k1", "version": 2, "checked": True}, document_text="正文\n"
+    )
+    said = run("cheese_app_save", {"code": "<p>y</p>", "app": "k1"}, host)
+
+    assert ":::app k1@2" in said

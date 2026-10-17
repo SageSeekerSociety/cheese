@@ -86,7 +86,16 @@ async def test_machine_wait_releases_the_request_connection(_pg_schema, monkeypa
     async with sessions() as session:
         await session.execute(text("SELECT 1"))
         task = SimpleNamespace(id=uuid.uuid4(), room_id=room_id)
-        reader = ProjectFiles(session, project_id, task.id, release_session=True)
+
+        async def remote(*args):
+            assert not session.in_transaction()
+            async with sessions() as other:
+                assert await other.scalar(text("SELECT 1")) == 1
+            return {"files": []}
+
+        reader = ProjectFiles(
+            session, project_id, task.id, release_session=True, executor=remote
+        )
         monkeypatch.setattr(reader, "task", AsyncMock(return_value=task))
         monkeypatch.setattr(
             session,
@@ -98,14 +107,6 @@ async def test_machine_wait_releases_the_request_connection(_pg_schema, monkeypa
             "working_copy",
             AsyncMock(return_value=({"kind": "device"}, False)),
         )
-
-        async def remote(*args):
-            assert not session.in_transaction()
-            async with sessions() as other:
-                assert await other.scalar(text("SELECT 1")) == 1
-            return {"files": []}
-
-        monkeypatch.setattr(forge_files.execution, "call", remote)
         assert await reader.live("tree") == {"files": []}
     await engine.dispose()
 

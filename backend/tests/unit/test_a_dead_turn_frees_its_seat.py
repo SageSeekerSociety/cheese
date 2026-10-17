@@ -22,12 +22,13 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.models import Conversation
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks, record_receipt, register_input
+from app.domain.event_author import AuthorType
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic

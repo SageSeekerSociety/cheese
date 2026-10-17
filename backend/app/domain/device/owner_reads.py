@@ -20,9 +20,9 @@ it; a column dropped from anywhere else in those tables cannot reach it.
 `app/api/routes/execution.py` asks its hosted-device question through this
 module; its Cloud question lives in `machine.owner_reads`. Device authentication
 and viewer membership also read only the fields needed for those decisions.
-A deploy whose migrations may drop schema the owner's image still maps also
-releases the owner (`hold_owners_behind_schema` in `deploy-docker.sh`); naming
-columns keeps every other release from depending on that.
+A deploy whose migrations drop, rename or alter schema the owner's image maps
+also releases the owner (`hold_owners_behind_schema` in `deploy-docker.sh`);
+naming columns keeps every other release from depending on that.
 
 Outliving the app cuts the other way as well: a release that moves a read onto
 a shape only the new backend writes leaves THIS process reading the old one

@@ -122,7 +122,13 @@ def _call_as(client, tid: str, pid, seat: str, name: str, method: str, params=No
 def _session_target(client, pid, tid, seat):
     async def compose():
         async with client.test_factory() as session:
-            return await service.session_target(session, pid, uuid.UUID(tid), seat)
+            return await service.session_target(
+                session,
+                pid,
+                uuid.UUID(tid),
+                seat,
+                type_of_seat=agent_instances.type_of_seat,
+            )
 
     return client.portal.call(compose)
 

@@ -1,0 +1,7 @@
+{
+  "body": "The channel goes away along with its messages, tasks and docs. This can't be undone.",
+  "confirm": "Delete channel",
+  "hint": "Type the channel name to confirm",
+  "nameLabel": "Channel name",
+  "title": "Delete “{name}”?"
+}

@@ -1,0 +1,33 @@
+{
+  "claims": "Claims",
+  "guard": "Only this challenge's publisher and admins can open this page.",
+  "loadFailed": "Couldn't load this challenge's data",
+  "noLimit": "No limit",
+  "noStalled": "Nobody is stuck",
+  "notFound": "Couldn't find this challenge",
+  "passRate": "Pass rate",
+  "passRateHint": "Passed / submitted",
+  "people": "1 person | {n} people",
+  "placesLeft": "{n} places left",
+  "progressNote": "Pass rate {rate}%, {rejected} not passed. Compare this with the space average to see whether the challenge is on the hard or easy side.",
+  "progressTitle": "Where everyone is",
+  "solo": "Individual",
+  "stalled": "No activity since claiming",
+  "stalledHint": "Still \"In progress\" more than 5 days after claiming",
+  "status": {
+    "inProgress": "In progress",
+    "passed": "Passed",
+    "rejected": "Not passed",
+    "submitted": "Submitted"
+  },
+  "submitted": "Submitted",
+  "submittedHint": "Includes passed",
+  "team": "Team",
+  "teamsEmpty": "No teams yet",
+  "teamsTitle": "Teams",
+  "trendEmptyText": "The trend appears once the challenge is published.",
+  "trendEmptyTitle": "No claims yet",
+  "trendSeries": "Total claims",
+  "trendSubtitle": "Total claims over the last 12 days",
+  "trendTitle": "Claims over time"
+}

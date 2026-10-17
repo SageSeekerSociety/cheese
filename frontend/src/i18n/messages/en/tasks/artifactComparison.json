@@ -1,0 +1,21 @@
+{
+  "binary": "This format has no line-by-line diff. Preview or download both versions to compare them",
+  "changedLink": "These versions recorded different addresses",
+  "downloadOnly": "This format or size cannot be previewed. Download it from the version history",
+  "identical": "These versions have identical content",
+  "link": "Only the recorded addresses are compared; historical page content was not retained",
+  "loadError": "Could not compare these versions",
+  "loading": "Comparing delivered content",
+  "loadingPreview": "Loading the delivered file",
+  "many": "Too many files changed to show a line-by-line diff for this one",
+  "noPreview": "This version has no file to preview",
+  "oversized": "This file exceeds 1 MB. Preview or download both versions to compare them",
+  "previewError": "Could not preview this version",
+  "sameLink": "These versions recorded the same address",
+  "showPreviews": "Preview side by side",
+  "source": "Comparing the complete project source at the two deliveries",
+  "title": "Compare versions",
+  "unavailable": "These versions use different delivery formats, or have no retained content to compare",
+  "unsupported": "This file format or size does not support line-by-line comparison",
+  "version": "Version {number}"
+}

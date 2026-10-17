@@ -48,6 +48,7 @@ from app.domain.agent.harness.launch import ExecutorPlan, MachinePlace, MachineP
 from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.place import (
     CHECKOUT_DIR,
+    OWN_KEY,
     SANDBOXES_DIR,
     footprint_root,
     launcher_path,
@@ -202,6 +203,15 @@ async def environment_status(
     if result.get("exit") != 0:
         raise ScreenSetupError(say("screenSetupStateUnreadable"))
     return json.loads(result.get("stdout") or '{"state":"pending"}')
+
+
+def _another_session(running: dict | None, wanted: dict | None) -> bool:
+    """Whether a screen started for the session ``running`` names is asked to
+    serve the different one ``wanted`` names. A target that names no session
+    (a private chat's scratch, a screen from before targets did) is no answer."""
+    was = (running or {}).get("session_id")
+    now = (wanted or {}).get("session_id")
+    return bool(was and now and was != now)
 
 
 def _launcher_command(topic_id: uuid.UUID, seat: str = "") -> list[str]:
@@ -879,6 +889,22 @@ class DeviceChannel(Channel):
                 reason="closing" if existing.closing else "credential_expiring",
             )
             existing = None
+        if existing is not None and _another_session(
+            existing.execution_target, execution_target
+        ):
+            # Two sessions of one conversation can come to one seat: a task
+            # given to a teammate not seated in its room acts under the room's
+            # seat, as the teammate it was given before did. The process keeps
+            # the session its target named at birth, while reusing it rewrites
+            # the credential file with this session's, so every call it makes
+            # was refused with 「Execution credential does not own this
+            # session」 (FB-99). Deferring the relaunch for running work, as a
+            # changed launch does below, would keep that up for as long as a
+            # background command runs, so it is not deferred.
+            await self._retire_screen(
+                existing, topic_id=topic_id, reason="another_session"
+            )
+            existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         # The home is per room: the session's config, transcripts and credentials
@@ -886,7 +912,11 @@ class DeviceChannel(Channel):
         home_dir = device_home_dir(project_id, resource_id)
         work_dir = self._work_dir(project_id, resource_id)
         api_base = await self._device_api_base(device_id)
-        own_login = (env or {}).get("CHEESE_OWN_LOGIN") == "1"
+        # A member's own Claude Code: on its owner's login on their machine, or
+        # on a connection its owner's account holds (`own_key`). Neither goes
+        # through the metering proxy, so neither has a tunnel to watch.
+        own_key = (env or {}).get(OWN_KEY) == "1"
+        own_login = (env or {}).get("CHEESE_OWN_LOGIN") == "1" or own_key
         model_env, ca_pem, credential_expires = screen_model_env(
             env,
             token=token,
@@ -920,7 +950,8 @@ class DeviceChannel(Channel):
             execution_target=execution_target,
             ca_pem=ca_pem,
             seat=seat,
-            own_login=own_login,
+            own_login=own_login and not own_key,
+            own_key=own_key,
         )
         settled_with = screen_identity.settled_with(
             agent_configuration=agent_configuration, place=place, token=token
@@ -934,7 +965,8 @@ class DeviceChannel(Channel):
                 valid_after=int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S,
             )
             and not (
-                not own_login and await self._tunnel_helper_is_down(existing, home_dir)
+                not own_login
+                and await self._tunnel_helper_is_down(existing, home_dir, seat)
             )
         ):
             mark("screen_settled")
@@ -1025,7 +1057,7 @@ class DeviceChannel(Channel):
                 self._runner(device_id, place.state, "ping"),
                 _false()
                 if own_login
-                else self._tunnel_helper_is_down(existing, home_dir),
+                else self._tunnel_helper_is_down(existing, home_dir, seat),
                 self._refresh_screen_files(
                     device_id,
                     home_dir,
@@ -1244,7 +1276,9 @@ class DeviceChannel(Channel):
             return False
         return exp <= int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
 
-    async def _tunnel_helper_is_down(self, screen: HubScreen, home_dir: str) -> bool:
+    async def _tunnel_helper_is_down(
+        self, screen: HubScreen, home_dir: str, seat: str
+    ) -> bool:
         """Whether the machine-local tunnel helper this screen's `claude` dials has
         stopped listening — the second half of the reuse gate, alongside
         `_credential_is_stale`.
@@ -1257,7 +1291,9 @@ class DeviceChannel(Channel):
 
         The port is the machine's answer: the probe reads it from the SEAT's own
         directory, where that seat's helper recorded it — per seat, because a room
-        may seat several agents and one helper carries one credential.
+        may seat several agents and one helper carries one credential. ``seat``
+        is the screen's seat key (`place.seat_key`): a task's session has a
+        helper of its own beside its room's, and is judged by that one.
 
         Conservative like the runner check: only an explicit `down` retires a
         screen. A failed exec, a non-zero exit, or an `unknown` (unreadable port
@@ -1271,11 +1307,7 @@ class DeviceChannel(Channel):
             result = await self._hub.exec(
                 screen.device_id,
                 ["sh", "-c", DEVICE_TUNNEL_PROBE],
-                env={
-                    "CHEESE_TUNNEL_PROBE_DIR": seat_dir(
-                        home_dir, screen.agent_handle or ""
-                    )
-                },
+                env={"CHEESE_TUNNEL_PROBE_DIR": seat_dir(home_dir, seat)},
                 timeout=_ALIVE_PROBE_TIMEOUT_S,
             )
         except Exception:  # noqa: BLE001 — a probe failure is not proof of death

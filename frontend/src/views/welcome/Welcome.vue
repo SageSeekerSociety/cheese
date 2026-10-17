@@ -15,6 +15,7 @@ import WelcomeView from './WelcomeView.vue'
 
 import { finishOnboarding, uploadAttachment } from '@/api'
 import { t } from '@/i18n'
+import { storageSetJson } from '@/lib/browserStorage'
 import { saveComposerDraft } from '@/lib/composerDrafts'
 import { desktopBridge, startConnecting } from '@/lib/desktop'
 import { inDesktopApp } from '@/lib/desktopApp'
@@ -67,7 +68,7 @@ function rememberOnAccount(answers: WelcomeFinish['answers'], skipAll: boolean) 
     nickname: answers.nickname.trim() || user.nickname,
     ...(skipAll ? {} : { work_role: answers.work_role ?? null, organization: answers.organization?.trim() || null }),
   }
-  localStorage.setItem('user', JSON.stringify(AccountService.user))
+  storageSetJson('user', AccountService.user)
 }
 
 // 桌面端选了「用这台电脑」：先接上这台电脑，建项目时把它带上，服务端把它加进项目、

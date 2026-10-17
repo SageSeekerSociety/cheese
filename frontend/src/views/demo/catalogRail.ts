@@ -84,7 +84,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     id: 'topic-rail-light',
     title: 'TopicRailLight',
     about:
-      '行尾那盏灯：一个 8px 的点。四盏说这一行自己的状态，判据在 `lib/roomLight.ts`；第五盏是蓝的，说的是「这条不归我」，由父级按归谁盖上（`useTopicRail.taskLight`），压过那四盏。这一件只管画。',
+      '行尾那盏灯：一个 8px 的点。四盏说这一行自己的状态，判据在 `lib/roomLight.ts`；第五盏是蓝的，说的是「这条归我」，由父级按归谁盖上（`useTopicRail.taskLight`），垫在那四盏下面。这一件只管画。',
     file: 'src/components/topic-sidebar/TopicRailLight.vue',
     component: TopicRailLight,
     // `lightTitle` 要读词表（无障碍名字和 hover 那句话），所以得多装一个 i18n。
@@ -115,8 +115,8 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         expectSelector: '.row-light--green:not(.row-light--breathe)',
       },
       {
-        name: '蓝：这条不归我',
-        note: '别人负责的任务行用它，压过上面那四盏——这条活是别人的，先看清这个，再看它在跑还是卡住。它自己一个色相：红黄绿说的是状态，蓝说的是归谁。频道行没有蓝灯（频道不归谁）。',
+        name: '蓝：这条归我',
+        note: '我负责的（以及没主的）任务行，在上面那四盏都没话说时才用它——红黄绿说的是这条活现在怎么了，蓝说的是这条归谁，谁轻谁重一眼看得出。别人的活不画蓝灯。它自己一个色相：红黄绿说的是状态，蓝说的是归谁。频道行没有蓝灯（频道不归谁）。',
         props: { light: { kind: 'blue', breathe: false } },
         expectSelector: '.row-light--blue',
       },

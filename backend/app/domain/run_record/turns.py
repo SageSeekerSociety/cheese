@@ -6,9 +6,10 @@
 （`agent.models.AgentTurn`），所以任何窗口问得出来。
 
 **失败的身份只在 `blocks.meta` 里。** 一轮失败时，平台在房间里落一条事件
-（`agent.platform_notices`），`meta.event_type` 是它的类别码，`blocks.turn_id` 是
-这一轮的号 —— 前提是调用方把轮次号传给了 `post_system_event`。所以「这一轮有没有
-失败」= 有没有一条 `turn_id` 指着它的终态事件。
+（话是 `agent/platform_notices.py` 说的，码在 `notice_meta`），`meta.event_type`
+是该类别码，`blocks.turn_id` 是这一轮的号 —— 前提是调用方把轮次号传给了
+`post_system_event`。所以「这一轮有没有失败」= 有没有一条 `turn_id` 指着它的
+终态事件。
 
 **类别码不是全部：`severity=info` 的那一条不是失败。** 平台把 `turn_failed` 这个码
 也用在几条「没事，只是要等」的提示上 —— 主人不在线（`initial_admission`）、这一轮
@@ -75,7 +76,7 @@ _blocks = table(
     column("created_at", DateTime(timezone=True)),
 )
 
-#: 平台为「这一轮没有把话说完」落下的类别码，和 `agent.platform_notices` 的
+#: 平台为「这一轮没有把话说完」落下的类别码，和 `notice_meta` 的
 #: `EVENT_*` 逐字相同。`turn_failed` 是平台认不出的失败（缺陷信号，不重试）；
 #: `platform_error` 是平台认得的故障（带 `code`，见 `agent.platform_failures`）；
 #: `turn_timeout` 是一个字都没等到；`deploy_interrupted` 是部署把轮次掐了（孤儿
@@ -101,7 +102,7 @@ TURN_FAILURE_EVENTS: tuple[str, ...] = (
 PROMPTED_TURN_META_KEY = "prompted_turn"
 PROMPT_ATTEMPTS_META_KEY = "prompt_attempts"
 
-#: `blocks.meta.severity` 的值之一，和 `agent.platform_notices` 的 `SEVERITY_INFO`
+#: `blocks.meta.severity` 的值之一，和 `notice_meta` 的 `SEVERITY_INFO`
 #: 逐字相同。事件带这个 severity 时它是提示不是失败 —— 理由见模块 docstring。
 #: 没有这个键的老行照算失败：它们不是平台写的提示。
 NOT_A_FAILURE_SEVERITY = "info"

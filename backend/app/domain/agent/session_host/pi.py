@@ -19,6 +19,7 @@ from app.domain.agent.harness.pi.launch import (
     HostLaunch,
     arguments,
     extension,
+    model_entry,
     on_host,
     provider,
 )
@@ -112,7 +113,7 @@ def _models(api: str, model: str, settings: ModelSettings) -> str | None:
         return None
     shape = json.loads(provider(api, model))
     cheese = shape["providers"]["cheese"]
-    entry: dict = {"id": model}
+    entry = model_entry(model)
     if not settings.thinking:
         cheese["compat"]["thinkingFormat"] = "deepseek"
         entry["reasoning"] = True

@@ -1,0 +1,8 @@
+{
+  "toast": {
+    "acceptFailed": "Couldn’t accept the invitation. Try again later",
+    "accepted": "Invitation accepted",
+    "declineFailed": "Couldn’t decline the invitation. Try again later",
+    "declined": "Invitation declined"
+  }
+}

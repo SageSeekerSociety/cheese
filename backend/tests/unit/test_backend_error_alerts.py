@@ -295,6 +295,22 @@ def test_the_room_in_a_message_does_not_make_it_a_different_problem(logger, keys
     assert len(set(keys)) == 1
 
 
+def test_a_count_in_a_message_does_not_make_it_a_different_problem(logger, keys):
+    """A poller that says how long it has been failing changes its words every
+    tick; the outage it describes is still one outage, reported once."""
+    for ticks in (3, 4, 34):
+        logger.error(
+            {
+                "event": "poll_open_prs has been unable to reach the network "
+                f"for card 14cb56ea-8abe-4cbe-b3a8-86f8a0e4f05c for {ticks} ticks"
+            }
+        )
+    logger.error("Exception closing connection <Connection at 0x7f47cc2d59a0>")
+    logger.error("Exception closing connection <Connection at 0x7f1b7a83eba0>")
+
+    assert len(set(keys)) == 2
+
+
 def test_different_failures_keep_different_keys(logger, keys):
     logger.error({"event": "unhandled_error", "path": "/topics/x/agent/control"})
     logger.error({"event": "unhandled_error", "path": "/projects/y/environment"})

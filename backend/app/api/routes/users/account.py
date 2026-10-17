@@ -11,7 +11,6 @@ from fastapi import (
     Path,
     Request,
 )
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -43,6 +42,7 @@ if TYPE_CHECKING:
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.exc import IntegrityError
 
+from app.api.response import ok
 from app.api.routes.users._common import (
     AddEmailCodeRequest,
     AddEmailRequest,
@@ -53,7 +53,7 @@ from app.api.routes.users._common import (
     _send_email_code,
 )
 from app.core.client_address import resolved_client_address
-from app.domain.passkey.models import PasskeyCredential
+from app.domain.passkey.services import PasskeyService
 from app.domain.user.login_security import TOTPService
 from app.domain.user.verification_service import (
     EmailCodePurpose,
@@ -92,13 +92,12 @@ async def get_current_user(
         profile=profile,
         viewer_id=auth_user.user_id,
     )
-    return {
-        "code": 200,
-        "message": "Query current user successfully.",
-        "data": {
+    return ok(
+        {
             "user": user_dto,
         },
-    }
+        "Query current user successfully.",
+    )
 
 
 # How recent the sign-in behind a request must be for it to add the account's
@@ -153,7 +152,7 @@ async def send_add_email_code(
     if await auth_service.get_user_by_email(email) is not None:
         raise _email_taken()
     await _send_email_code(request, email)
-    return {"code": 200, "message": "Verification code sent."}
+    return ok(None, "Verification code sent.")
 
 
 @router.post(
@@ -185,11 +184,7 @@ async def add_email(
     user_dto = await auth_service.build_user_dto(
         user=user, profile=profile, viewer_id=user.id
     )
-    return {
-        "code": 200,
-        "message": "Email added.",
-        "data": {"user": user_dto},
-    }
+    return ok({"user": user_dto}, "Email added.")
 
 
 @router.get(
@@ -207,23 +202,17 @@ async def get_my_auth_methods(
     user = await auth_service.get_user(auth_user.user_id)
     if user is None:
         raise NotFoundError("User not found")
-    passkeys = await session.scalar(
-        select(func.count())
-        .select_from(PasskeyCredential)
-        .where(PasskeyCredential.user_id == user.id)
-    )
+    passkey = await PasskeyService.for_session(session).has_passkey(user.id)
     two_factor = await TOTPService(session).is_2fa_enabled(user.id)
-    return {
-        "code": 200,
-        "message": "Success",
-        "data": {
+    return ok(
+        {
             # An account created through a third-party sign-in may have none.
             "password": bool(user.hashed_password),
-            "passkey": bool(passkeys),
+            "passkey": passkey,
             "twoFactor": two_factor,
             "emailCode": _email_code_confirms(user.email, two_factor=two_factor),
-        },
-    }
+        }
+    )
 
 
 @router.post(
@@ -253,7 +242,7 @@ async def request_sudo_email_code(
         ).send_verification_code(user.email, resolved_client_address(request))
     finally:
         await redis.aclose()
-    return {"code": 200, "message": "Code sent.", "data": {"email": user.email}}
+    return ok({"email": user.email}, "Code sent.")
 
 
 @router.get(
@@ -278,13 +267,12 @@ async def get_user(
         profile=profile,
         viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
-    return {
-        "code": 200,
-        "message": "Query user successfully.",
-        "data": {
+    return ok(
+        {
             "user": user_dto,
         },
-    }
+        "Query user successfully.",
+    )
 
 
 @router.patch(
@@ -305,7 +293,7 @@ async def patch_user_profile(
         intro=payload.get("intro"),
         avatar_id=payload.get("avatarId"),
     )
-    return {"code": 200, "message": "Success", "data": {}}
+    return ok({})
 
 
 @router.put(
@@ -326,4 +314,4 @@ async def put_user_profile(
         intro=payload.get("intro"),
         avatar_id=payload.get("avatarId"),
     )
-    return {"code": 200, "message": "Success", "data": {}}
+    return ok({})

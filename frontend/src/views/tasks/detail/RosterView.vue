@@ -21,14 +21,6 @@
         <v-icon size="16">mdi-magnify</v-icon>
         <input v-model="query" type="search" :placeholder="t('tasks.roster.search')" autocomplete="off" />
       </label>
-      <!-- 外站那一列的数**不是实时的**：它们是上一次同步那一刻的。所以「上次同步」
-           和「同步」按钮挨在这一行：看数的人一眼知道这是几点的，想新的就点一下。 -->
-      <div v-if="extOn" class="rs__ext-bar">
-        <span class="rs__ext-when t-meta-read" :data-failed="onlineJudge?.status === 'failed'">{{ syncState }}</span>
-        <BaseButton size="sm" :loading="syncing" @click="emit('sync')">
-          {{ t('tasks.roster.external.sync') }}
-        </BaseButton>
-      </div>
     </div>
 
     <p v-if="loading" class="rs__note">{{ t('tasks.roster.loading') }}</p>
@@ -49,20 +41,13 @@
       :title="rows.length ? t('tasks.roster.noMatch') : t('tasks.roster.empty')"
     />
 
-    <BaseTable
-      v-else
-      class="rs__grid"
-      :cols="cols"
-      :label="t('tasks.roster.tableLabel')"
-      :min-width="extOn ? '966px' : '842px'"
-    >
+    <BaseTable v-else class="rs__grid" :cols="ROSTER_COLS" :label="t('tasks.roster.tableLabel')" min-width="842px">
       <template #head>
         <tr>
           <BaseTableTh>{{ t('tasks.roster.col.who') }}</BaseTableTh>
           <BaseTableTh>{{ t('tasks.roster.col.claimedAt') }}</BaseTableTh>
           <BaseTableTh>{{ t('tasks.roster.col.status') }}</BaseTableTh>
           <BaseTableTh>{{ t('tasks.roster.col.latest') }}</BaseTableTh>
-          <BaseTableTh v-if="extOn">{{ t('tasks.roster.col.external') }}</BaseTableTh>
           <BaseTableTh>{{ t('tasks.roster.col.deadline') }}</BaseTableTh>
           <BaseTableTh>
             <span class="rs__sr">{{ t('tasks.roster.col.ops') }}</span>
@@ -109,24 +94,6 @@
             }}</template>
             <span v-else class="rs__meta">—</span>
           </td>
-          <!-- 外站那一格：过了的点开看什么时候过的（那里的时间是对面给的，名单这边没有）。
-               没过的不做按钮 —— 点开也没别的可说。还没同步到这个人（没有学号、或者名单上
-               是新领的）画「—」，和「未过」分开。 -->
-          <td v-if="extOn">
-            <button
-              v-if="extByParticipant.get(row.id)?.solved"
-              type="button"
-              class="rs__ext-pass"
-              :aria-label="t('tasks.roster.external.openAccepted')"
-              @click="openAccepted(row)"
-            >
-              {{ t('tasks.roster.external.passed') }}
-            </button>
-            <span v-else-if="extByParticipant.has(row.id)" class="rs__ext-fail">
-              {{ t('tasks.roster.external.notPassed') }}
-            </span>
-            <span v-else class="rs__meta">—</span>
-          </td>
           <td class="rs__meta t-num">{{ row.deadline ? day(row.deadline) : '—' }}</td>
           <td>
             <div class="rs__ops">
@@ -161,7 +128,7 @@
           </td>
         </tr>
         <tr v-if="expanded === row.id" class="rs__detail">
-          <td :colspan="cols.length">
+          <td colspan="6">
             <dl>
               <div v-if="row.m.realNameInfo?.realName">
                 <dt>{{ t('tasks.roster.detail.realName') }}</dt>
@@ -224,24 +191,6 @@
       />
     </AdaptiveDialog>
 
-    <!-- 「过没过」点开看的是**什么时候**过的：那个时间是外站给的，知是这边没有别的
-         地方能看到它。没给主操作 —— 这一屏只念给人听。 -->
-    <AdaptiveDialog v-model="acceptedOpen" :title="t('tasks.roster.external.acceptedTitle')" size="sm">
-      <p class="rs__dialog-lead">
-        {{ t('tasks.roster.external.acceptedLead', { name: acceptedRow?.name ?? '' }) }}
-      </p>
-      <dl class="rs__ext-detail">
-        <div>
-          <dt>{{ t('tasks.roster.external.studentNo') }}</dt>
-          <dd class="t-num">{{ acceptedResult?.studentNo || '—' }}</dd>
-        </div>
-        <div>
-          <dt>{{ t('tasks.roster.external.acceptedAt') }}</dt>
-          <dd class="t-num">{{ acceptedWhen }}</dd>
-        </div>
-      </dl>
-    </AdaptiveDialog>
-
     <AdaptiveDialog
       v-model="rejectOpen"
       :title="t('tasks.roster.rejectTitle')"
@@ -265,7 +214,6 @@
 </template>
 
 <script setup lang="ts">
-import type { ExternalProblemResult, TaskExternalProblem } from '@/api/externalProblem'
 import type { MenuAction } from '@/components/common/menuAction'
 import type {
   Task,
@@ -303,39 +251,6 @@ type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDI
 // 窄了字就压到下一列上。
 const ROSTER_COLS = [null, '104px', '140px', '208px', '104px', '150px']
 
-/** 这道题接了外站才有那一列：没接的题目不该白占一列空格子。 */
-const extOn = computed(() => props.onlineJudge !== null)
-
-/** participantId → 那个人在这道外站题上的结论。 */
-const extByParticipant = computed(() => {
-  const map = new Map<number, ExternalProblemResult>()
-  for (const result of props.onlineJudge?.results ?? []) map.set(result.participantId, result)
-  return map
-})
-
-/** 外站那一列插在「最新提交」和「截止」之间（上面定宽顺序同此）。 */
-const cols = computed(() => {
-  const list = [...ROSTER_COLS]
-  if (extOn.value) list.splice(4, 0, '124px')
-  return list
-})
-
-/**
- * 「这一列是几点的数」。
- *
- * 失败也写「上回去外站看了」的时刻，而失败的**结果**留着上一次成功的（见
- * `service.py`）—— 所以失败时这句话必须说清「下面那一列不是这一趟的数」，否则
- * 屏幕上摆着旧数、旁边写着刚同步过。
- */
-const syncState = computed(() => {
-  const at = props.onlineJudge?.lastSyncedAt
-  if (!at) return t('tasks.roster.external.neverSynced')
-  const when = day(dayjs(at).valueOf())
-  return props.onlineJudge?.status === 'failed'
-    ? t('tasks.roster.external.lastFailed', { when })
-    : t('tasks.roster.external.lastSynced', { when })
-})
-
 const STATUS: Record<Status, { label: string; tone: string }> = {
   CLAIM_PENDING: { label: 'tasks.roster.claimPending', tone: 'muted' },
   CLAIM_REJECTED: { label: 'tasks.roster.rejected', tone: 'muted' },
@@ -365,11 +280,6 @@ const props = defineProps<{
   participants: TaskMembership[]
   /** participantId → 最新那一版提交。 */
   latestByParticipant: Map<number, Latest>
-  /**
-   * 这道题挂在 YOJ 上的那一块（题号、每个人过没过）。`null` = 这道题没接外站，或者
-   * 这块这次没读到 —— 两种都不画那一列，取数在 `Roster.vue`。
-   */
-  onlineJudge: TaskExternalProblem | null
   loading: boolean
   /** 名单接口由服务端按 `may_teach_task` 把关；403 是「不给你看」，说的是这一句。 */
   denied: boolean
@@ -379,8 +289,6 @@ const props = defineProps<{
   failureReason: string | null
   /** 正在批准的那一行。 */
   busyId: number | null
-  /** 正在同步外站成绩。 */
-  syncing: boolean
 }>()
 
 const emit = defineEmits<{
@@ -388,8 +296,6 @@ const emit = defineEmits<{
   reject: [id: number, reason: string]
   deadline: [id: number, at: number]
   review: [who: { id: number; name: string }]
-  /** 现在去外站核一遍。 */
-  sync: []
   retry: []
 }>()
 
@@ -514,24 +420,6 @@ const selected = ref<Row | null>(null)
 const rejectOpen = ref(false)
 const rejectReason = ref('')
 
-// ── 「什么时候过的」那张只读的对话框 ───────────────────────────────────────────
-
-const acceptedRow = ref<Row | null>(null)
-const acceptedOpen = ref(false)
-const acceptedResult = computed(() =>
-  acceptedRow.value ? extByParticipant.value.get(acceptedRow.value.id) : undefined
-)
-/** 外站给的那个时刻；没给（过了但对面没写时间）画「—」。 */
-const acceptedWhen = computed(() => {
-  const at = acceptedResult.value?.acceptedAt
-  return at ? dayTimeText(dayjs(at).valueOf()) : '—'
-})
-
-function openAccepted(row: Row) {
-  acceptedRow.value = row
-  acceptedOpen.value = true
-}
-
 function openReject(row: Row) {
   selected.value = row
   rejectReason.value = ''
@@ -635,54 +523,6 @@ function saveDeadline() {
   color: var(--ink);
   font-size: 13px;
   outline: none;
-}
-
-.rs__ext-bar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-left: auto;
-}
-
-/* 上一趟没同成时那句话要说清「下面那列是旧数」，不能只是灰着。 */
-.rs__ext-when[data-failed='true'] {
-  color: var(--warn-ink);
-}
-
-/* 「已过」是个按钮（点开看什么时候过的），但读起来还是一格状态，别长得像操作。 */
-.rs__ext-pass {
-  padding: 0;
-  color: var(--ok-ink);
-  font: inherit;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-
-.rs__ext-fail {
-  color: var(--muted);
-}
-
-.rs__ext-detail {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-}
-
-.rs__ext-detail > div {
-  display: flex;
-  gap: 12px;
-}
-
-.rs__ext-detail dt {
-  flex: none;
-  width: 64px;
-  color: var(--muted);
-}
-
-.rs__ext-detail dd {
-  margin: 0;
 }
 
 .rs__note {

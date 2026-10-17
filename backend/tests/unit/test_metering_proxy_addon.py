@@ -296,6 +296,52 @@ def test_recorded_native_child_choices_replay_through_proxy_admission(
     assert set(admitted) == {"claude-sonnet-5", "claude-opus-5"}
 
 
+def test_recorded_child_models_replay_through_the_deferred_body_road(
+    monkeypatch, tmp_path
+):
+    """2.1.283 起 harness 自己的模型请求不再走 JS 层 fetch，`x-cheese-child-model`
+    就此不再出现（2.1.299 实测：整个回合零次 fetch 调用）。这一段录的是那之后的
+    真分身请求：体里照旧写着指名模型，头里没有指定。计量代理为分身的
+    /v1/messages 缓冲请求体，把它从体里读出来随准入带上去，绑定、改写与头部那
+    条路一致——上面那条 2.1.277 的录制走的是头部，这一条走的是请求体。"""
+    fixture = json.loads(
+        (
+            REPO_ROOT
+            / "backend/tests/fixtures/provider-recordings"
+            / "claude-2.1.299-child-models.json"
+        ).read_text()
+    )
+    records = fixture["requests"]
+    canonical = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+    assert hashlib.sha256(canonical).hexdigest() == fixture["sha256"]
+    assert all("x-cheese-child-model" not in record["headers"] for record in records)
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    admitted = []
+
+    def admit(
+        url, bearer, timeout, *, subagent=False, child_model="", requested_model="", **_
+    ):
+        assert subagent
+        admitted.append(child_model or requested_model)
+        return _verdict(model=child_model or requested_model)
+
+    mod.ADMISSION = core.AdmissionGate(mod.ADMISSION_URL, post=admit)
+    for record in records:
+        flow = _make_flow()
+        flow.request.headers.update({**record["headers"], "x-cheese-attr": "p/t"})
+        asyncio.run(mod.requestheaders(flow))
+        # No name in a header: this body is buffered whole before admission is
+        # asked, so the header hook turns streaming off and returns.
+        assert flow.request.stream is False
+        assert flow.response is None
+        flow.request.content = json.dumps(record["body"]).encode()
+        asyncio.run(mod.request(flow))
+        assert flow.response is None
+        assert json.loads(flow.request.content)["model"] == record["body"]["model"]
+    assert admitted == [record["body"]["model"] for record in records]
+
+
 def _with_admission(mod, monkeypatch, **named):
     """Point the addon at a control plane that returns one verdict for everyone."""
     verdict = _verdict(**{"pool": "subscription", **named})
@@ -1483,6 +1529,25 @@ def test_a_streamed_message_is_metered_through_the_response_tee(monkeypatch, tmp
     flow.response.stream(b"")  # sentinel
 
     assert mod.METER.used() == 100  # 10 input + 90 output
+
+
+def test_a_metered_turn_names_the_claude_account_that_served_it(monkeypatch, tmp_path):
+    """With several subscription accounts in the pool, the ledger line names the
+    one the turn was sent to, so a seat's spend traces back to its rooms."""
+    mod = _load_addon(monkeypatch, tmp_path)
+
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
+    flow.metadata["cheese_claude_account"] = "extra"
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+    flow.response.stream(
+        b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+        b'"usage":{"input_tokens":10,"output_tokens":1}}}\n'
+    )
+    flow.response.stream(b"")  # sentinel
+
+    assert [line.get("account") for line in _usage_lines(tmp_path)] == ["extra"]
 
 
 def _usage_lines(tmp_path) -> list[dict]:
@@ -3245,3 +3310,35 @@ async def test_a_line_the_metering_tolerates_does_not_break_the_observer(
     assert watch.complete is True
     await asyncio.gather(*mod._failure_reports)
     assert _recorded(posted) == []
+
+
+def test_a_turn_admission_names_as_the_dream_lands_on_the_meter_as_the_dream(
+    monkeypatch, tmp_path
+):
+    """Admission names the kind once, at request time; the usage line written
+    when the response ends carries it, so the subscription's books say the
+    call was the project's memory consolidation."""
+    mod, flow = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    monkeypatch.setattr(
+        mod,
+        "ADMISSION",
+        SimpleNamespace(
+            check=lambda project, topic, bearer: _verdict(
+                pool="subscription", fail_open=False, usage_kind="memory_dream"
+            )
+        ),
+    )
+    asyncio.run(mod.requestheaders(flow))
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+    body = (
+        b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+        b'"usage":{"input_tokens":10,"output_tokens":1}}}\n'
+        b'data: {"type":"message_delta","usage":{"output_tokens":9}}\n\n'
+    )
+    flow.response.stream(body)
+    flow.response.stream(b"")
+
+    assert [line.get("kind") for line in _usage_lines(tmp_path)] == ["memory_dream"]

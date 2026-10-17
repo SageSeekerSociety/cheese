@@ -1,0 +1,16 @@
+{
+  "agent": "AI 队友",
+  "cancel": "取消",
+  "collapse": "收起",
+  "confirm": "确认删除",
+  "delete": "删除",
+  "deleteAsk": "删掉这条评论？",
+  "deleteAskWithReplies": "删掉这条评论，连同它下面的 {n} 条回复一起？",
+  "like": "赞",
+  "likeAria": "点赞这条评论",
+  "liked": "已赞",
+  "reply": "回复",
+  "replyPlaceholder": "回复 {handle}",
+  "replyTo": "回复 {handle}",
+  "unlikeAria": "取消点赞"
+}

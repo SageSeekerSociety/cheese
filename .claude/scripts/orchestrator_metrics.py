@@ -2,18 +2,34 @@
 """One day of orchestrator metrics, to tell whether a patrol change worked. Read-only.
 
 Usage: OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_metrics.py <channel topic id> <YYYY-MM-DD>
+       python3 .claude/scripts/orchestrator_metrics.py --week [<YYYY-MM-DD>|ISO instant>]
        python3 .claude/scripts/orchestrator_metrics.py --self-test   (offline: no token, no network, no gh)
 For that UTC day:
+  行动项核对表  上一份《总调度复盘 …》的行动项原样带出，一列 owner、一列层、一列
+                怎么核；复盘开头先核的就是这张表（工作流 v2 §5 第 1 步、§9 S6）
   等采纳      mergeable (accept_ready) -> entered the merge queue: p50/p90/max, and how many took > 10 min
   未就绪递卡  cards whose first signal was a CI failure, or that took > 20 min to become mergeable
   出队        removals from the queue other than merging, and minutes until re-queued
   失败轮次    failed turns per line
 Accepting emits no platform event, so "entered the queue" is GitHub's AddedToMergeQueueEvent;
 accept_done is sent after the merge and is never used as the acceptance time.
-"""
-import json, re, statistics, subprocess, sys
 
-from orchestrator_sweep import REPO, events, login, meta, ts
+For the week ending at `--week` (UTC, default now):
+  同文件先合率  本周合并的 PR 里，开着期间有别的 PR 改到同一文件、并且先合进了 main
+                的比例；另报只算代码文件的版本（登记类文件之外的都算代码）和贡献
+                最多的前 5 个文件
+That mode reads GitHub through `gh` and needs no OKCHEESE_* login, which is why it is
+`--week` and not another day: the day mode's numbers come from the platform's event
+log, and this one has nothing to do with it. `--week 2026-10-14T02:30:00Z` is the
+week the study measured; a bare date means that day at 00:00 UTC.
+"""
+import importlib.util
+import contextlib, io, json, re, statistics, subprocess, sys, time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from orchestrator_actions import action_table, last_retro
+from orchestrator_sweep import REPO, events, get, login, meta, ts
 
 _cache = {}
 
@@ -65,11 +81,316 @@ def drops_line(drops):
         f"#{n}({r}) {'未重排' if b is None else str(b) + '分后重排'}" for n, r, b in sorted_drops(drops)) or "无")
 
 
+# ------------------------------------------------------ 同文件先合率（按周）
+
+_ARCH = None
+
+
+def registry_file(path):
+    """文件是不是登记类：arch-metrics.py 里那一份判断，加载过来用。
+
+    「只算代码文件」和指标二「只冲突在登记类文件」用的是同一条界定。在这里抄
+    一份就会有第二个定义，以后各说各的；所以照 arch-metrics.py 自己加载
+    check-file-sizes.py 的办法把它加载过来，不重写。
+    """
+    global _ARCH
+    if _ARCH is None:
+        source = Path(__file__).resolve().parent / "arch-metrics.py"
+        spec = importlib.util.spec_from_file_location("_arch_metrics", source)
+        if spec is None or spec.loader is None:
+            raise SystemExit(f"读不到 {source}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_arch_metrics"] = module
+        spec.loader.exec_module(module)
+        _ARCH = module
+    return _ARCH.registry_file(path)
+
+
+def gh_json(args, what, tries=3, pause=2):
+    """调一次 gh，返回解析好的 JSON；网络抖一下重试，试完都不成才报错。
+
+    TLS 握手超时在这种代理后面真的发生过，一周要打几十次 REST，一次超时就让整
+    周没有数——这是最坏的一种失败，看上去像「查不了」，其实只是没重试。重试之间
+    等一下，因为超时通常意味着对面正忙。stdout 怎么变成 JSON 见 `parse_gh_stdout`。
+    """
+    err = ""
+    for attempt in range(tries):
+        if attempt:
+            time.sleep(pause * attempt)
+        r = subprocess.run(["gh", "api", *args], capture_output=True, text=True)
+        try:
+            return parse_gh_stdout(r.stdout)
+        except ValueError:
+            err = (r.stderr or r.stdout).strip()[:200]
+    raise SystemExit(f"GitHub {what} 失败：{err}")
+
+
+def parse_gh_stdout(stdout):
+    """gh 的 stdout 解析成 JSON，对象和数组都认；认不出抛 ValueError。
+
+    从第一个 `{` 起解析：stdout 前面可能顶着一行 gh 自己的说明。REST 那族接口
+    有一半整个回一个数组，从 `{` 起切会把数组第一个元素当开头、末尾多一个
+    `]`，所以那份不成时再找第一个能解析成数组的 `[`。先试 `{` 是为了 GraphQL
+    和单个对象的调用保持原样。
+    """
+    try:
+        return json.loads(stdout[stdout.find("{"):])
+    except ValueError:
+        pass
+    for start, char in enumerate(stdout):
+        if char != "[":
+            continue
+        try:
+            return json.loads(stdout[start:])
+        except ValueError:
+            continue
+    raise ValueError("no JSON object or array in gh's output")
+
+
+def gh_graphql(variables, what="GraphQL 调用"):
+    return gh_json(["graphql", *variables], what)
+
+
+def gh_search(query, after=None):
+    """搜索结果的一页，最多 100 条。`after` 是上一页的 endCursor。"""
+    fields = ("number author{login} createdAt mergedAt "
+              "files(first:100){nodes{path} pageInfo{hasNextPage}}")
+    if after:
+        doc = ('query($q:String!,$after:String){search(query:$q,type:ISSUE,first:100,after:$after)'
+               '{pageInfo{hasNextPage endCursor}nodes{... on PullRequest{%s}}}}' % fields)
+        variables = ["-f", "query=" + doc, "-f", "q=" + query, "-f", "after=" + after]
+    else:
+        doc = ('query($q:String!){search(query:$q,type:ISSUE,first:100)'
+               '{pageInfo{hasNextPage endCursor}nodes{... on PullRequest{%s}}}}' % fields)
+        variables = ["-f", "query=" + doc, "-f", "q=" + query]
+    body = gh_graphql(variables, "搜索")
+    try:
+        return body["data"]["search"]
+    except (KeyError, TypeError):
+        raise SystemExit("GitHub 搜索失败：" + json.dumps(body)[:200])
+
+
+def gh_rest(path):
+    """REST 那一步试几次就够：它一次一页，一周要打几十次。
+
+    代理后面的 REST 会整段握手超时，试多少次都一样；补文件列表那份有 GraphQL
+    兜底（见 complete_files），在这里多耗时间没有意义。
+    """
+    return gh_json([path], f"REST 调用（{path}）", tries=3, pause=2)
+
+
+def merged_prs(start, end):
+    """合并时间在 [start, end) 的 PR，带 createdAt、mergedAt 和文件列表。
+
+    `merged:` 只到天，所以先按天框一个范围、再按 mergedAt 精确筛。搜索一次最多
+    回 1000 条：一周的量在它以下，撞上上限就报错，不拿半份名单当真。
+    """
+    query = (f"repo:{REPO[0]}/{REPO[1]} is:pr is:merged "
+             f"merged:{start:%Y-%m-%d}..{end:%Y-%m-%d} -author:app/dependabot")
+    nodes, after, pages = [], None, 0
+    while True:
+        page = gh_search(query, after)
+        nodes += page["nodes"]
+        pages += 1
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        after = page["pageInfo"]["endCursor"]
+        if pages >= 10:
+            raise SystemExit(f"搜索超过 1000 条，窗口太长：{query}")
+    out = []
+    for node in nodes:
+        if not node or not node.get("mergedAt"):
+            continue
+        if (node.get("author") or {}).get("login") == "app/dependabot":
+            continue
+        when = ts(node["mergedAt"])
+        if not start <= when < end:
+            continue
+        out.append({
+            "number": node["number"],
+            "createdAt": ts(node["createdAt"]),
+            "mergedAt": when,
+            "files": [f["path"] for f in node["files"]["nodes"]],
+            "more_files": node["files"]["pageInfo"]["hasNextPage"],
+        })
+    return out
+
+
+def complete_files(pr):
+    """文件列表超过 100 个的 PR，用 REST 补全。
+
+    GraphQL 的 files 连接一页最多 100 条，搜索结果里的嵌套连接又翻不了页，所以
+    超过 100 个文件的 PR 在搜索里只拿得到前 100 个。补不到就报错：拿半份文件列表
+    算出来的比例偏小，而且看不出来。
+
+    补这一下先走 REST；代理后面的 REST 会整段握手超时，那就退回单独查一次这个
+    PR——`repository.pullRequest.files(after:)` 能翻页，同一个连接、同一份数据。
+    """
+    if not pr["more_files"]:
+        return pr["files"]
+    paths = []
+    try:
+        page = 1
+        while True:
+            arr = gh_rest(f"repos/{REPO[0]}/{REPO[1]}/pulls/{pr['number']}/files"
+                          f"?per_page=100&page={page}")
+            if not isinstance(arr, list) or not arr:
+                break
+            paths += [f["filename"] for f in arr]
+            if len(arr) < 100:
+                break
+            page += 1
+    except SystemExit:
+        paths = []
+    if paths:
+        return paths
+
+    head = ('query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,'
+            'name:$name){pullRequest(number:$n){files(first:100){nodes{path}'
+            'pageInfo{hasNextPage endCursor}}}}}')
+    tail = ('query($owner:String!,$name:String!,$n:Int!,$after:String!){repository('
+            'owner:$owner,name:$name){pullRequest(number:$n){files(first:100,'
+            'after:$after){nodes{path} pageInfo{hasNextPage endCursor}}}}}')
+    after = None
+    while True:
+        variables = ["-f", "query=" + (head if after is None else tail),
+                     "-f", "owner=" + REPO[0], "-f", "name=" + REPO[1],
+                     "-F", f"n={pr['number']}"]
+        if after is not None:
+            variables += ["-f", "after=" + after]
+        try:
+            files = gh_graphql(variables, "查单个 PR 的文件列表")["data"]["repository"]["pullRequest"]["files"]
+        except (KeyError, TypeError, SystemExit):
+            break
+        paths += [f["path"] for f in files["nodes"]]
+        if not files["pageInfo"]["hasNextPage"]:
+            break
+        after = files["pageInfo"]["endCursor"]
+    if not paths:
+        raise SystemExit(f"PR #{pr['number']} 的文件列表补不全")
+    return paths
+
+
+def landed_first(week, pool, files_of):
+    """(命中数, {文件: 因为和它重叠而命中的 PR 数})。
+
+    命中：本周合并的 PR p，在它开着的那段时间里（createdAt <= Q.mergedAt <
+    mergedAt）有另一个已合并的 PR Q 改到同一个文件。只比合并时间，不看 Q 是从
+    哪个分支合的；Q 没合并就不可能「先合进 main」，所以 pool 里只放合并了的
+    PR。p 在自己这轮里不算 Q，不然每个 PR 都会和自己重叠。
+    """
+    landed = [(p["number"], p["mergedAt"]) for p in pool]
+    hit, contrib = 0, {}
+    for p in week:
+        mine = files_of.get(p["number"], frozenset())
+        if not mine:
+            continue
+        got = set()
+        for number, when in landed:
+            if number == p["number"] or not (p["createdAt"] <= when < p["mergedAt"]):
+                continue
+            got |= mine & files_of.get(number, frozenset())
+        if got:
+            hit += 1
+            for path in got:
+                contrib[path] = contrib.get(path, 0) + 1
+    return hit, contrib
+
+
+def top_line(contrib, count=5):
+    return "、".join(f"{path} {n}" for path, n in sorted(
+        contrib.items(), key=lambda kv: (-kv[1], kv[0]))[:count]) or "无"
+
+
+def week_report(end):
+    """一周的同文件先合率。窗口是 [end - 7 天, end)。
+
+    「只算代码」是「登记类文件之外的都算」，和指标二「只冲突在登记类文件」用同
+    一条界定：文档、配置、测试都在代码这一边。按扩展名挑过一版，研究那两个基线
+    对不上，这个口径能一分数不差地对上，所以用的是它。
+
+    重叠对象往前多取一周：能当 Q 的只有已合并的 PR，而 Q 可能早在 start 前一周
+    就合进了 main，却仍在某个 P 开着的时候。PR 生命很短（研究中位数 0.9 小时），
+    再往前取不会改变结果。
+    """
+    start = end - timedelta(days=7)
+    pool = merged_prs(start - timedelta(days=7), end)
+    for pr in pool:
+        pr["files"] = complete_files(pr)
+    week = [pr for pr in pool if pr["mergedAt"] >= start]
+    files_all = {pr["number"]: frozenset(pr["files"]) for pr in pool}
+    files_code = {n: frozenset(f for f in fs if not registry_file(f)) for n, fs in files_all.items()}
+
+    hit_all, contrib_all = landed_first(week, pool, files_all)
+    hit_code, contrib_code = landed_first(week, pool, files_code)
+    total = len(week)
+    print(f"同文件先合率：{start:%Y-%m-%dT%H:%M:%SZ} → {end:%Y-%m-%dT%H:%M:%SZ}，本周合并 PR {total} 个")
+    if not total:
+        print("  这一周没有合并的 PR，比例无从谈起")
+        return 0
+    print(f"  全部文件：{hit_all / total * 100:.1f}%（{hit_all} 个）")
+    print(f"  只算代码：{hit_code / total * 100:.1f}%（{hit_code} 个）")
+    print(f"  贡献最多的文件：{top_line(contrib_all)}")
+    print(f"  只算代码时：{top_line(contrib_code)}")
+    return 0
+
+
+def parse_instant(args):
+    """`--week` 的结束时刻：给日期是当天 00:00 UTC，不给是现在。
+
+    没写时区的都按 UTC 算。写死了的日期本来就按 UTC，而 GitHub 给的
+    mergedAt 永远带时区；放过一个不带时区的时刻进去，后面拿它和 mergedAt
+    比会在搜索请求已经发出去之后抛 TypeError。
+    """
+    if not args:
+        return datetime.now(timezone.utc)
+    raw = args[0]
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            return datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
+        parsed = ts(raw)
+    except ValueError:
+        raise SystemExit(f"--week {raw} 要写成 2026-10-14 或 2026-10-14T02:30:00Z")
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def action_checklist(tok):
+    """上一份复盘的行动项，原样带出成核对表（工作流 v2 §5 第 1 步、§9 S6）。
+
+    「上一份复盘」是资料库里最新的一份《总调度复盘 …》：这次复盘开头要核的就是
+    它那份列表，所以排在当天的数字前面。周深度复盘是另一份文档、另一套流程
+    （§6），不从这里取。挑哪一份和画表都在 orchestrator_actions 里，那边离线
+    测；这一层只负责读平台。资料库里还没有复盘时说清楚原因，不摆一张空表：
+    「行动项：0 条」读起来像列了 0 条，不像还没写过复盘。
+    """
+    rows = []
+    for project in (get(tok, "/projects") or {}).get("data") or []:
+        cursor = None
+        for _ in range(5):
+            page = get(tok, f"/projects/{project['id']}/documents?limit=50"
+                            + (f"&cursor={cursor}" if cursor else "")) or {}
+            rows += page.get("data") or []
+            cursor = page.get("next")
+            if not cursor:
+                break
+    retro = last_retro(rows)
+    if retro is None:
+        print("行动项核对表：资料库里还没有《总调度复盘 …》")
+        return
+    body = get(tok, f"/documents/{retro['id']}") or {}
+    print(f"行动项核对表（{retro['title']}）")
+    print(action_table(body.get("content") or ""))
+
+
 def main():
     if sys.argv[1:2] == ["--self-test"]:
         return self_test()
+    if sys.argv[1:2] == ["--week"]:
+        return week_report(parse_instant(sys.argv[2:3]))
     room, day = sys.argv[1], sys.argv[2]
     tok = login()
+    action_checklist(tok)
+    print()
     evs = [m for m in events(tok, room, "accept", pages=10) + events(tok, room, "system", pages=10)
            if m["created_at"].startswith(day)]
     evs.sort(key=lambda m: m["created_at"])
@@ -142,6 +463,154 @@ def self_test():
         drops_line([("9", "manual", 3), ("9", "manual", 3)]),
         "出队：#9(manual) 3分后重排",
     )
+
+    # -- 同文件先合率，纯函数部分 ------------------------------------------
+    # 手写的 PR 表，不碰网络也不碰 gh。Q 全部早于 P 合并，唯一变的是「合进了
+    # main 没有」和「改到同一文件没有」，这样每一条断言只考一件事。
+    def pr(number, created, merged, files):
+        return {"number": number, "createdAt": ts(created), "mergedAt": ts(merged),
+                "files": files}
+
+    pool = [
+        pr(1, "2026-10-07T09:00:00Z", "2026-10-07T10:00:00Z", ["backend/app/a.py", "frontend/src/b.ts"]),
+        pr(2, "2026-10-07T08:00:00Z", "2026-10-07T09:30:00Z", ["backend/app/a.py", "frontend/src/b.ts"]),
+        pr(3, "2026-10-07T09:10:00Z", "2026-10-07T11:00:00Z", ["backend/app/b.py"]),
+        # 比 3 早合并，但早于 3 创建：3 开着的时候它已经在 main 上了，不算
+        pr(4, "2026-10-07T07:00:00Z", "2026-10-07T08:00:00Z", ["backend/app/b.py"]),
+        # 只碰登记类文件：全文件口径里算命中，只算代码的版本里连分母都不参与比较
+        pr(5, "2026-10-07T09:00:00Z", "2026-10-07T12:00:00Z",
+           ["i18n/messages/en/work.json"]),
+        pr(6, "2026-10-07T08:00:00Z", "2026-10-07T09:30:00Z",
+           ["i18n/messages/en/work.json"]),
+        # 和 7 同时刻合并：不算「先」，不算命中
+        pr(7, "2026-10-07T09:00:00Z", "2026-10-07T13:00:00Z", ["backend/app/c.py"]),
+        pr(8, "2026-10-07T08:00:00Z", "2026-10-07T13:00:00Z", ["backend/app/c.py"]),
+    ]
+    week = [p for p in pool if p["number"] in (1, 3, 5, 7)]
+
+    files_all = {p["number"]: frozenset(p["files"]) for p in pool}
+    check(
+        "同一时刻合并不算先合进 main",
+        landed_first([p for p in week if p["number"] == 7], pool, files_all)[0],
+        0,
+    )
+    hit, contrib = landed_first(week, pool, files_all)
+    check("全文件口径命中 1 和 5", hit, 2)
+    # 3 只和 4 重叠，而 4 在 3 创建之前就已经在 main 上了，所以 3 不算命中；
+    # 3 是唯一碰 b.py 的本周 PR，b.py 进不了贡献表就是这条成立。
+    check("3 没被别人先合过同名文件", "backend/app/b.py" in contrib, False)
+    check("命中算在两个文件上", contrib["backend/app/a.py"], 1)
+    check("登记类文件也被算进来了", contrib["i18n/messages/en/work.json"], 1)
+    check("命中的文件按贡献数排，并列按名字", top_line(contrib),
+          "backend/app/a.py 1、frontend/src/b.ts 1、i18n/messages/en/work.json 1")
+
+    files_code = {n: frozenset(f for f in fs if not registry_file(f))
+                  for n, fs in files_all.items()}
+    check("登记类文件不是代码文件", registry_file("i18n/messages/en/work.json"), True)
+    check("普通模块是", registry_file("backend/app/a.py"), False)
+    hit_code, contrib_code = landed_first(week, pool, files_code)
+    check("只算代码时 5 不算命中", hit_code, 1)
+    check("只算代码时的贡献不含登记类文件",
+          sorted(contrib_code), ["backend/app/a.py", "frontend/src/b.ts"])
+    check("只有登记类文件的 PR 不进贡献表", "i18n/messages/en/work.json" in contrib_code, False)
+    # 「只算代码」是「登记类之外的都算」，不是按扩展名挑：文档和配置也算在
+    # 里面。研究那两个基线（31.9% → 26.6%）只有这个口径能一分数不差地对上。
+    check("登记类之外的文件都算代码", registry_file("docs/manual/dev/architecture.md"), False)
+    check("后端测试也算", registry_file("backend/tests/integration/test_x.py"), False)
+
+    check("没有命中时写「无」", top_line({}), "无")
+    check("贡献前 5 名之外的不列", top_line({f"f{i}.py": 1 for i in range(7)}),
+          "f0.py 1、f1.py 1、f2.py 1、f3.py 1、f4.py 1")
+
+    check("--week 给日期就是当天 00:00 UTC",
+          parse_instant(["2026-10-14"]), datetime(2026, 10, 14, tzinfo=timezone.utc))
+    check("--week 收 ISO 时刻", parse_instant(["2026-10-14T02:30:00Z"]),
+          datetime(2026, 10, 14, 2, 30, tzinfo=timezone.utc))
+    # 少写一个 Z 的写法也收：不给时区的都按 UTC，不然它会在和 mergedAt 比
+    # 的时候抛 TypeError，而不是在这里被收下。
+    check("--week 收没写时区的时刻，按 UTC", parse_instant(["2026-10-14T02:30:00"]),
+          datetime(2026, 10, 14, 2, 30, tzinfo=timezone.utc))
+    check("--week 收紧凑写法，也按 UTC", parse_instant(["20261014"]),
+          datetime(2026, 10, 14, tzinfo=timezone.utc))
+    check("--week 不给就是现在（是个带时区的时刻）",
+          parse_instant([]).utcoffset(), timedelta(0))
+
+    # -- gh stdout 的解析 --------------------------------------------------
+    # 这条分支原先只从第一个 `{` 起切。REST 那族接口整个回一个数组，切出来
+    # 末尾多一个 `]`，于是 `>100` 个文件的那几次调用每次都要重试三遍、最后
+    # 报「GitHub 拉取失败」——多出来的 REST 分支等于没有。数组这两条就是它。
+    check("对象照旧从第一个 `{` 起解析",
+          parse_gh_stdout('{"number": 1}'), {"number": 1})
+    check("stdout 前面顶着 gh 的说明也认",
+          parse_gh_stdout('notice: something\n{"number": 1}'), {"number": 1})
+    check("整个回一个数组时按数组解析",
+          parse_gh_stdout('[{"filename":"a"},{"filename":"b"}]'),
+          [{"filename": "a"}, {"filename": "b"}])
+    # 一个元素的数组也得是数组：从 `{` 起切出来的是那个元素本身，长度不对。
+    check("一个元素的数组还是数组",
+          parse_gh_stdout('[{"filename":"a"}]'), [{"filename": "a"}])
+    check("空数组是空数组", parse_gh_stdout("[]"), [])
+    check("数组前面顶着说明也认",
+          parse_gh_stdout('notice: something\n[{"filename":"a"}]'),
+          [{"filename": "a"}])
+    # 认不出就抛 ValueError，由 gh_json 收下重试或报错；静默回 None 会一路
+    # 变成「这一周没有 PR」。
+    try:
+        parse_gh_stdout("gh: Not Found (HTTP 404)")
+    except ValueError:
+        check("认不出时抛 ValueError", True, True)
+    else:
+        check("认不出时抛 ValueError", "没抛", "ValueError")
+
+    # -- 行动项核对表这一节真的会打进当天的报告 ------------------------------
+    # 这一节是 S6 的交付物。只测 action_checklist 这个函数不够：删掉 main() 里
+    # 那次调用照样全绿，整节从报告里消失而 CI 不红。所以这里走 main() 的当天
+    # 模式，把 login / get / events 换成假的，看它打出来的 stdout。
+    def day_report(docs, body):
+        def fake_get(tok, path):
+            if path == "/projects":
+                return {"data": [{"id": "p1"}], "next": None}
+            if path.startswith("/projects/p1/documents"):
+                return {"data": docs, "next": None}
+            if path.startswith("/documents/"):
+                return {"content": body}
+            raise AssertionError(f"unstubbed path: {path}")
+
+        saved = {n: globals()[n] for n in ("login", "get", "events")}
+        argv = sys.argv
+        buf = io.StringIO()
+        try:
+            globals()["login"] = lambda: "tok"
+            globals()["get"] = fake_get
+            globals()["events"] = lambda *a, **k: []
+            sys.argv = ["orchestrator_metrics.py", "room", "2026-10-14"]
+            with contextlib.redirect_stdout(buf):
+                main()
+        finally:
+            for n, fn in saved.items():
+                globals()[n] = fn
+            sys.argv = argv
+        return buf.getvalue()
+
+    out = day_report(
+        [{"id": "d1", "title": "总调度复盘 10-14 07:15–10:15（UTC）",
+          "created_at": "2026-10-14T10:18:56Z"}],
+        "## 行动项\n\n- 一条。owner 张三，落点 L5，怎么核：跑一次。\n",
+    )
+    check("当天报告里先出核对表这一节", "## 行动项核对表" in out, True)
+    check("表里带着上一份的条目和三个字段",
+          "| 一条。owner 张三，落点 L5，怎么核：跑一次。 | 张三 | L5 | 跑一次 |" in out,
+          True)
+    check("标题里写清带的是哪一份",
+          "行动项核对表（总调度复盘 10-14 07:15–10:15（UTC））" in out, True)
+    check("核对表排在当天的数字前面",
+          ("## 行动项核对表" in out and "失败轮次" in out
+           and out.index("## 行动项核对表") < out.index("失败轮次")),
+          True)
+
+    out = day_report([], "")
+    check("资料库里还没有复盘时说清楚，不摆空表",
+          out.splitlines()[0], "行动项核对表：资料库里还没有《总调度复盘 …》")
 
     for f in failures:
         print("FAIL", f)

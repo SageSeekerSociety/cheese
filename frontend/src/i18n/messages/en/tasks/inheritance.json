@@ -1,0 +1,20 @@
+{
+  "avoid": "Not yet in use",
+  "credits": "{n} compute credits",
+  "from": {
+    "category": "From the category",
+    "project": "From the project",
+    "space": "From the space",
+    "task": "From this challenge"
+  },
+  "guidance": "AI teammate guidance",
+  "guidanceNone": "Nothing set",
+  "materialCount": "{n} files",
+  "materials": "Materials",
+  "materialsNone": "Nothing on this space yet",
+  "pack": "Resource pack",
+  "packNone": "No compute credits",
+  "title": "What this project inherits",
+  "topics": "This week covers",
+  "week": "Week {n}"
+}

@@ -1,0 +1,68 @@
+{
+  "advance": {
+    "deployed": "Mark shipped",
+    "inProgress": "Start",
+    "resolved": "Mark fixed"
+  },
+  "col": {
+    "assignee": "Assignee",
+    "next": "Next",
+    "title": "Title",
+    "updated": "Updated"
+  },
+  "comments": "No comments | 1 comment | {n} comments",
+  "empty": {
+    "desc": "Nobody has submitted feedback yet. New submissions show up in this queue.",
+    "title": "No feedback yet"
+  },
+  "error": {
+    "retry": "Retry",
+    "title": "Couldn't load the queue"
+  },
+  "filtered": {
+    "clear": "Clear filters",
+    "desc": "Try another keyword, or click \"All\" to clear the filters.",
+    "title": "No feedback matches"
+  },
+  "foot": {
+    "end": "End of list",
+    "rows": "{n} rows"
+  },
+  "label": "Feedback queue",
+  "lane": {
+    "agent": "From agents",
+    "label": "Scope",
+    "private": "Private",
+    "public": "Public",
+    "security": "Security"
+  },
+  "pager": {
+    "next": "Next",
+    "prev": "Previous"
+  },
+  "refresh": "Refresh",
+  "search": {
+    "placeholder": "Search feedback",
+    "scope": "Titles, summaries, bodies and submitters"
+  },
+  "sub": "A triage queue pushed one item at a time — who owns it and what happens next are on this page.",
+  "supports": "Supports {n}",
+  "tab": {
+    "all": "All",
+    "scope": "This page only",
+    "scopeHint": "Status tabs filter only the page in hand; other pages may have more with this status"
+  },
+  "unread": "{n} unread",
+  "view": {
+    "list": "List",
+    "table": "Table"
+  },
+  "window": {
+    "clear": "Clear this date filter: {chip}",
+    "days": "Last {n} days",
+    "deployed": "Deployed: {v}",
+    "label": "Date filters",
+    "resolved": "Resolved: {v}",
+    "since": "Submitted: {v}"
+  }
+}

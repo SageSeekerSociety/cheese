@@ -10,8 +10,10 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
+from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
+from app.domain.room_task.place import place_or_404
 from app.domain.topic.models import room_ref
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
@@ -41,8 +43,8 @@ async def rooms_seen(
     private channels it sits in. On the development credential alone, which
     names nobody (``ActorResolver.on_the_dev_credential``), every channel."""
     viewer = None if resolver.on_the_dev_credential(actor) else actor.handle
-    rooms = await TopicRepository(db).list_for_project(project_id, only_seen_by=viewer)
-    return {room.id for room in rooms}
+    rooms = await TopicRepository(db).ids_for_project(project_id, only_seen_by=viewer)
+    return set(rooms)
 
 
 async def live_rooms_seen(
@@ -50,8 +52,10 @@ async def live_rooms_seen(
 ) -> set[uuid.UUID]:
     """``rooms_seen`` without the archived channels: what is still going on."""
     viewer = None if resolver.on_the_dev_credential(actor) else actor.handle
-    rooms = await TopicRepository(db).list_for_project(project_id, only_seen_by=viewer)
-    return {room.id for room in rooms if str(room.status) != "archived"}
+    rooms = await TopicRepository(db).ids_for_project(
+        project_id, only_seen_by=viewer, unarchived=True
+    )
+    return set(rooms)
 
 
 async def channels_unseen(
@@ -72,9 +76,7 @@ async def task_conversation(
 ):
     """The task this conversation id names, with who is calling — whoever may
     see its room; 404 when the id is a room's or nobody's."""
-    from app.core.errors import NotFoundError
-
-    place = await TopicService(db).place_or_404(conversation_id)
+    place = await place_or_404(db, conversation_id)
     if place.task is None:
         raise NotFoundError(say("taskNotFound"))
     actor = await resolver.resolve(

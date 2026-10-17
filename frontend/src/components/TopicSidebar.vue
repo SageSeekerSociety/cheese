@@ -14,10 +14,11 @@ import type { MenuAction } from './common/menuAction'
 import type { VirtualListHandle } from './common/VirtualList.vue'
 import type { MoreTasks, RailTask } from './topic-sidebar/moreTasks'
 
-import { computed, ref, watch } from 'vue'
+import { computed, ref, unref, watch } from 'vue'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useLongPress } from '@/composables/useLongPress'
+import { useScreenHeader } from '@/composables/useScreenHeader'
 import { useTopicRail } from '@/composables/useTopicRail'
 import { useTopicRailRoutes } from '@/composables/useTopicRailRoutes'
 
@@ -176,24 +177,14 @@ function moreLabel(channelId: string): string {
 }
 
 // ---- 这一块收起来了 ----
-// 收起那一块不能把你手里的事一起收掉：正打开的那条留在下面（侧栏对频道已经有同一条
-// 规矩——正待着的频道即便没加入也留在列表上，见 `useTopicRail` 的 hereChannelId）。
-// 留哪一条按「我现在开着哪个任务」问，而不是按它有没有挂在 `roomTasks` 里：收起来只
-// 收画法，不动数据。
+// 收起是整块放下：里面所有行都不画，也不留单独一条（2026-10-13 之前留正打开的那一条，
+// 现在不留）。留一半会让人停在一条已经收进去的任务上——那一行是「这一块」的入口，块
+// 没了，它也就没了。收起来时把正开着的那条一起带走这件事，在 `ProjectSidebar` 的
+// `toggleTasksFold` 里做（这里只负责画，不认识路由）。
 function tasksFoldOf(channelId: string): boolean {
   return props.foldedChannels?.[channelId] === true
 }
-function pinnedTask(channelId: string): RailTask | null {
-  const id = props.selectedTaskId
-  if (!id || !tasksFoldOf(channelId)) return null
-  return (props.roomTasks?.[channelId] ?? []).find((task) => task.id === id) ?? null
-}
-/** 收起来了还留在下面那一条（没有就是空）。 */
-function pinnedRows(channelId: string): RailTask[] {
-  const task = pinnedTask(channelId)
-  return task ? [task] : []
-}
-/** 展开着才挂任务行：收起来时只留正打开的那一条。 */
+/** 展开着才挂任务行：收起来时一条都不画。 */
 function taskRows(channelId: string): RailTask[] {
   return tasksFoldOf(channelId) ? [] : props.roomTasks?.[channelId] ?? []
 }
@@ -202,11 +193,12 @@ function showMoreRow(channelId: string): boolean {
   return !tasksFoldOf(channelId) && hasMoreRow(channelId)
 }
 /** 这块任务此刻该画的灯：里面所有行里最亮的那一盏（`brightest`）——黄压过绿，红压过黄。
- *  开着的时候不画（每行自己的灯就在下面）；收起时才用它替这一块报信。 */
+ *  开着的时候不画（每行自己的灯就在下面）；收起时才用它替这一块报信。
+ *  只说这一块里的任务，不含这个频道自己那盏（频道行已经在左边画过了）——同一行上那个
+ *  管子话题的开关有同一条规矩：「不含这一行自己的灯…不重复画」（`TopicRailRow`）。 */
 function tasksLight(channelId: string): RowLight | null {
   if (!tasksFoldOf(channelId)) return null
   return brightest([
-    lightOf(channelId),
     ...(props.roomTasks?.[channelId] ?? []).map((task) => taskLight(task)),
     ...(props.moreTasks?.[channelId]?.state === 'ready' ? props.moreTasks[channelId].rows : []).map((task) =>
       taskLight(task)
@@ -278,9 +270,9 @@ function hoverProjectPage(name: string) {
   prefetchPage(name)
 }
 
-// 「转让项目」在这个菜单里也有一条（成员页那颗按钮保留，别删）。谁转得动，项目行
-// 自己就说得出：所有者，或者管得了这个项目的团队管理员（`can_manage_members`）——
-// 和成员页那颗按钮同一个判据，后端动手时按同一条规则再判一次。
+// 「转让项目」在这个菜单里也有一条（成员页那颗按钮保留，别删）。只有所有者转得动
+// （#3830），项目行上的 `my_role` 说得出——和成员页那颗按钮同一个判据，后端动手时
+// 按同一条规则再判一次。
 //
 // 「退出项目」这里也有一条（成员页那颗按钮保留，别删）——所有者换「转让项目」，其余
 // 的人换「退出项目」，两句是同一件事的两半。
@@ -291,12 +283,8 @@ function hoverProjectPage(name: string) {
 const transferOpen = ref(false)
 const leaveOpen = ref(false)
 const currentProject = computed(() => props.projects.find((p) => p.id === props.selectedProjectId) ?? null)
-const canTransfer = computed(
-  () =>
-    !!currentProject.value &&
-    (currentProject.value.owner_handle === myHandle() || currentProject.value.can_manage_members === true)
-)
-const canLeave = computed(() => !!currentProject.value && currentProject.value.owner_handle !== myHandle())
+const canTransfer = computed(() => currentProject.value?.my_role === 'owner')
+const canLeave = computed(() => !!currentProject.value && currentProject.value.my_role !== 'owner')
 // 项目名上面那一行：这个项目归哪个团队，点了进团队的项目列表。地址和顶栏那颗 ← 退到
 // 的是同一处（ParentBackButton 的 owningTeam）：个人项目只有本人打得开自己那一页，
 // 对他写「个人」，对被邀请进来的人不画这一行。
@@ -435,6 +423,34 @@ const noOtherChannels = computed(
 // 这一行在任何一种文档打开时都是选中态。
 const onDocs = computed(() => !!props.activeDocs)
 
+// 项目名那一行：标识、搜索、项目菜单。手机上整页形态的频道列表把它交给顶栏。
+const railHeaderInBar = computed(() => props.page === true && props.column !== true)
+const railHeaderBinding = computed(() => ({
+  page: props.page === true,
+  column: props.column === true,
+  projectName: currentProjectName.value,
+  team: owningTeam.value,
+  privateUnreadTotal: unref(privateUnreadTotal),
+  searchTitle: searchTitle.value,
+  menuOpen: projectSheetOpen.value,
+  menuPages: menuPages.value,
+  docsActive: onDocs.value,
+  routeName: unref(routeName),
+  terms: terms.value,
+  projectSelected: !!props.selectedProjectId,
+  canTransfer: canTransfer.value,
+  canLeave: canLeave.value,
+  'onOpen-page': openProjectPage,
+  'onOpen-palette': () => openPalette(),
+  'onOpen-sheet': () => (projectSheetOpen.value = true),
+  'onSelect-docs': () => emit('select-docs', 'charter'),
+  'onOpen-transfer': () => (transferOpen.value = true),
+  'onOpen-leave': () => (leaveOpen.value = true),
+}))
+useScreenHeader(() =>
+  railHeaderInBar.value ? { content: { component: TopicRailHeader, props: railHeaderBinding.value } } : null
+)
+
 // ---- 交给虚拟列表的那两组要的两件小事 ----
 // 行的身份（和 v-for 的 key 同义）。写成具名函数而不是模板里的箭头：模板里那个箭头
 // 参数没有类型来源，strict 下会报隐式 any。
@@ -468,28 +484,8 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
          撤掉了：私聊的未读改挂在「成员」那一行上，而那一行在头下面的置顶组里，
          本来就不随话题列表滚。 -->
     <div class="d-flex flex-column fill-height">
-      <TopicRailHeader
-        :page="page === true"
-        :column="column === true"
-        :project-name="currentProjectName"
-        :team="owningTeam"
-        :private-unread-total="privateUnreadTotal"
-        :search-title="searchTitle"
-        :menu-open="projectSheetOpen"
-        :menu-pages="menuPages"
-        :docs-active="onDocs"
-        :route-name="routeName"
-        :terms="terms"
-        :project-selected="!!selectedProjectId"
-        :can-transfer="canTransfer"
-        :can-leave="canLeave"
-        @open-page="openProjectPage"
-        @open-palette="openPalette()"
-        @open-sheet="projectSheetOpen = true"
-        @select-docs="emit('select-docs', 'charter')"
-        @open-transfer="transferOpen = true"
-        @open-leave="leaveOpen = true"
-      />
+      <!-- 整页形态（手机的频道列表）下这一行是顶栏的内容，由这一屏声明；别处画在这里。 -->
+      <TopicRailHeader v-if="!railHeaderInBar" v-bind="railHeaderBinding" />
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
@@ -605,17 +601,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 @select="emit('select-task', $event)"
                 @press="emit('press-task', $event)"
               />
-              <!-- 收起来以后只留你正打开的那一条：「收起」不能把你手里的事一起收掉。 -->
-              <TopicRailTaskRow
-                v-for="task in rootTopic ? pinnedRows(rootTopic.id) : []"
-                :key="task.id"
-                :task="task"
-                :selected="true"
-                :light="taskLight(task)"
-                :unread="unreadOf(task.id)"
-                @select="emit('select-task', $event)"
-                @press="emit('press-task', $event)"
-              />
               <TopicRailMoreTasksRow
                 v-if="rootTopic && showMoreRow(rootTopic.id)"
                 :channel-id="rootTopic.id"
@@ -726,18 +711,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :task="task"
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
-                        :light="taskLight(task)"
-                        :unread="unreadOf(task.id)"
-                        @select="emit('select-task', $event)"
-                        @press="emit('press-task', $event)"
-                      />
-                      <!-- 收起来以后只留你正打开的那一条。 -->
-                      <TopicRailTaskRow
-                        v-for="task in pinnedRows(item.topic.id)"
-                        :key="task.id"
-                        :task="task"
-                        :depth="item.depth"
-                        :selected="true"
                         :light="taskLight(task)"
                         :unread="unreadOf(task.id)"
                         @select="emit('select-task', $event)"

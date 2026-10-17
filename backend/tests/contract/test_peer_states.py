@@ -47,7 +47,7 @@ import httpx
 import pytest
 
 from app import device_connection_app
-from app.api.routes.connector import recover_business_state
+from app.api.routes.connector.devices import recover_business_state
 from app.core.config import settings
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
@@ -62,6 +62,10 @@ from tests.support import wire
 OWNER_SECRET = "test-owner-secret"
 DEVICE = "machine-7"
 STATE = "/home/cheese/rooms/8b1f2a/.cheese/executor"
+
+#: `routes/connector.py` became a package; `recover_business_state` and the
+#: logger it writes through moved into `routes/connector/devices.py`.
+DEVICES_LOGGER = "app.api.routes.connector.devices"
 
 #: The connector's own words when the runner's socket is not there, taken from
 #: the committed wire fixture rather than retyped — a hand-typed copy drifts
@@ -400,9 +404,9 @@ async def test_a_peer_state_on_reconnect_is_waited_out_not_alerted(
     one of these same states. Its next connection runs recovery again, which is
     what makes it a state to wait out rather than an alert."""
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: _Chat(failure))
-    with caplog.at_level(logging.WARNING, logger="app.api.routes.connector"):
+    with caplog.at_level(logging.WARNING, logger=DEVICES_LOGGER):
         await recover_business_state(DEVICE)
-    records = [r for r in caplog.records if r.name == "app.api.routes.connector"]
+    records = [r for r in caplog.records if r.name == DEVICES_LOGGER]
     assert [r.levelname for r in records] == ["WARNING"]
     # The line has to name the machine this is about, or the words it said —
     # 「recovery failed」 with neither is what nobody could act on.
@@ -419,9 +423,9 @@ async def test_a_recovery_failure_that_is_not_a_peer_state_is_still_an_error(
     monkeypatch.setattr(
         "app.api.deps.get_chat_service", lambda: _Chat(ValueError("bad row"))
     )
-    with caplog.at_level(logging.WARNING, logger="app.api.routes.connector"):
+    with caplog.at_level(logging.WARNING, logger=DEVICES_LOGGER):
         await recover_business_state(DEVICE)
-    records = [r for r in caplog.records if r.name == "app.api.routes.connector"]
+    records = [r for r in caplog.records if r.name == DEVICES_LOGGER]
     assert [r.levelname for r in records] == ["ERROR"]
 
 

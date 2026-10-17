@@ -1,16 +1,16 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">{{ title }}</div>
-    <div class="text-body-2 text-medium-emphasis mt-1">
+    <div class="n-title">{{ title }}</div>
+    <div class="n-sub">
       <i18n-t v-if="rejector" scope="global" keypath="notifications.TEAM_REQUEST_REJECTED.body" tag="span">
         <template #rejector><UserRef :handle="rejector.handle" :name="rejector.name" :project-id="null" /></template>
         <template #team>{{ team?.name || t('notifications.common.unknownTeam') }}</template>
       </i18n-t>
       <template v-else>{{ body }}</template>
     </div>
-    <div v-if="rejectReason" class="text-body-2 text-medium-emphasis mt-2 message-box">
-      <div class="text-caption mb-1">{{ t('notifications.common.reason') }}:</div>
-      <div class="reason-text">{{ rejectReason }}</div>
+    <div v-if="rejectReason" class="n-quote">
+      <span class="n-label">{{ t('notifications.common.reason') }}</span
+      >{{ rejectReason }}
     </div>
   </div>
 </template>
@@ -67,26 +67,3 @@ defineExpose({
   content,
 })
 </script>
-
-<style scoped>
-.notification-content {
-  display: flex;
-  flex-direction: column;
-}
-
-.error-box {
-  border-left: 3px solid var(--v-theme-error);
-}
-
-.message-box {
-  background-color: rgba(var(--v-theme-surface-variant), 0.7);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin-top: 8px;
-  position: relative;
-}
-
-.reason-text {
-  font-style: italic;
-}
-</style>

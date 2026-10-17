@@ -1,145 +1,53 @@
 <template>
-  <v-list-item
-    v-if="hasRouterLink"
-    :active="!notification.read"
-    :class="{ 'unread-notification': !notification.read }"
-    class="notification-item py-2 px-4 transition-fast-in-fast-out"
-    @contextmenu="rowMenu.open('item', $event)"
-    @click="navigateToTarget"
+  <!-- One entry of the activity feed, drawn as the inbox page's row (`InboxRow`): the
+       sender (or a mark for the kind) on the left, this type's renderer in the middle,
+       the time on the right, swapped for mark-read / delete under the pointer. Opening
+       it goes where it points and marks it read. -->
+  <InboxRow
+    class="notification-item"
+    :opens="hasRouterLink"
+    :time="time"
+    :at="at"
+    :unread="!notification.read"
+    @open="navigateToTarget"
+    @menu="rowMenu.open('item', $event)"
   >
-    <AdaptiveMenu v-bind="rowMenu.bind('item')" :actions="itemActions">
-      <template #activator />
-    </AdaptiveMenu>
-    <div class="d-flex align-start w-100">
-      <notification-avatar :notification="notification" class="me-3 mt-1" />
+    <template #lead>
+      <NotificationAvatar :notification="notification" />
+    </template>
 
-      <div class="flex-grow-1 d-flex flex-column">
-        <div class="d-flex flex-row justify-space-between align-center notification-item__top">
-          <!-- 这一条属于哪一档（需我处理 / 仅通知 / 系统提醒）。正文自己不知道自己在
-               哪一档，由列表按事由算好递进来。 -->
-          <span v-if="categoryLabel" class="chip-neutral me-2 flex-shrink-0">{{ categoryLabel }}</span>
-          <component
-            :is="contentComponent"
-            ref="contentRef"
-            :notification="notification"
-            class="flex-grow-1"
-            @update-notification="onUpdateNotification"
-          />
-          <span class="notification-item__time text-caption text-medium-emphasis">{{ formattedTime }}</span>
-        </div>
+    <component
+      :is="contentComponent"
+      ref="contentRef"
+      :notification="notification"
+      class="notification-item__content"
+    />
 
-        <!-- Generic row actions (mark read / delete) stay out of the way until the
-             pointer hovers the row or keyboard focus lands inside it; touch devices
-             have no hover, so they are always shown there. Type-specific actions
-             (accept / decline) do not carry this class and stay visible. -->
-        <div
-          class="d-flex justify-end align-center mt-3"
-          :class="{ 'notification-item__actions': !(renderedActions && renderedActions.length > 0) }"
-        >
-          <template v-if="renderedActions && renderedActions.length > 0">
-            <BaseButton
-              v-for="(action, index) in renderedActions"
-              :key="index"
-              :kind="action.color === 'error' ? 'danger' : 'ghost'"
-              size="sm"
-              density="comfortable"
-              class="px-2 ms-2"
-              @click.stop="action.handler"
-            >
-              {{ action.text }}
-            </BaseButton>
-          </template>
-          <template v-else>
-            <BaseButton
-              v-if="!notification.read"
-              kind="ghost"
-              size="sm"
-              density="comfortable"
-              class="px-2"
-              @click.stop="markAsRead"
-            >
-              {{ t('notifications.common.markAsRead') }}
-            </BaseButton>
-            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-4" @click.stop="askDelete">
-              {{ t('notifications.common.delete') }}
-            </BaseButton>
-          </template>
-        </div>
-      </div>
-    </div>
-  </v-list-item>
+    <template #hover>
+      <BaseButton
+        v-if="!notification.read"
+        icon="mdi-check"
+        size="sm"
+        :aria-label="t('notifications.common.markAsRead')"
+        :title="t('notifications.common.markAsRead')"
+        @click.stop="markAsRead"
+      />
+      <BaseButton
+        icon="mdi-delete-outline"
+        size="sm"
+        :aria-label="t('notifications.common.delete')"
+        :title="t('notifications.common.delete')"
+        @click.stop="askDelete"
+      />
+    </template>
+  </InboxRow>
 
-  <v-list-item
-    v-else
-    :active="!notification.read"
-    :class="{ 'unread-notification': !notification.read }"
-    class="notification-item py-2 px-4 transition-fast-in-fast-out"
-    @contextmenu="rowMenu.open('item', $event)"
-  >
-    <AdaptiveMenu v-bind="rowMenu.bind('item')" :actions="itemActions">
-      <template #activator />
-    </AdaptiveMenu>
-    <div class="d-flex align-start w-100">
-      <notification-avatar :notification="notification" class="me-3 mt-1" />
+  <AdaptiveMenu v-bind="rowMenu.bind('item')" :actions="itemActions">
+    <template #activator />
+  </AdaptiveMenu>
 
-      <div class="flex-grow-1 d-flex flex-column">
-        <div class="d-flex flex-row justify-space-between align-center notification-item__top">
-          <!-- 这一条属于哪一档（需我处理 / 仅通知 / 系统提醒）。正文自己不知道自己在
-               哪一档，由列表按事由算好递进来。 -->
-          <span v-if="categoryLabel" class="chip-neutral me-2 flex-shrink-0">{{ categoryLabel }}</span>
-          <component
-            :is="contentComponent"
-            ref="contentRef"
-            :notification="notification"
-            class="flex-grow-1"
-            @update-notification="onUpdateNotification"
-          />
-          <span class="notification-item__time text-caption text-medium-emphasis">{{ formattedTime }}</span>
-        </div>
-
-        <!-- Generic row actions (mark read / delete) stay out of the way until the
-             pointer hovers the row or keyboard focus lands inside it; touch devices
-             have no hover, so they are always shown there. Type-specific actions
-             (accept / decline) do not carry this class and stay visible. -->
-        <div
-          class="d-flex justify-end align-center mt-3"
-          :class="{ 'notification-item__actions': !(renderedActions && renderedActions.length > 0) }"
-        >
-          <template v-if="renderedActions && renderedActions.length > 0">
-            <BaseButton
-              v-for="(action, index) in renderedActions"
-              :key="index"
-              :kind="action.color === 'error' ? 'danger' : 'ghost'"
-              size="sm"
-              density="comfortable"
-              class="px-2 ms-2"
-              @click.stop="action.handler"
-            >
-              {{ action.text }}
-            </BaseButton>
-          </template>
-          <template v-else>
-            <BaseButton
-              v-if="!notification.read"
-              kind="ghost"
-              size="sm"
-              density="comfortable"
-              class="px-2"
-              @click.stop="markAsRead"
-            >
-              {{ t('notifications.common.markAsRead') }}
-            </BaseButton>
-            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-4" @click.stop="askDelete">
-              {{ t('notifications.common.delete') }}
-            </BaseButton>
-          </template>
-        </div>
-      </div>
-    </div>
-  </v-list-item>
-
-  <!-- 删除是一条不可撤销的动，所以先问一句（设计系统 §3.7）：确认键写动作本身、
-     实心红，且不在悬停里出现。点遮罩或按 Esc 都不关。 -->
+  <!-- Deleting cannot be undone, so it asks first (design-system §3.7): the confirm
+       button names the action, solid red, never shown on hover. -->
   <ConfirmDialog
     v-model="confirmingDelete"
     :title="t('notifications.common.deleteTitle')"
@@ -157,15 +65,14 @@ import type { MenuAction } from '@/components/common/menuAction'
 import type { Notification } from '@/types/apiNotifications'
 import type { RenderedNotificationContent } from './renders/NotificationRenderUtils'
 
-import { computed, markRaw, onMounted, onUpdated, ref, shallowRef, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
-
-import { useFormattedTime } from '@/utils/dateTime'
 
 import { useNavigation } from '@/composables/useNavigation'
 import { useRowMenu } from '@/composables/useRowMenu'
 
+import InboxRow from './InboxRow.vue'
 import NotificationAvatar from './NotificationAvatar.vue'
 import { getNotificationRenderer } from './registry'
 
@@ -175,43 +82,26 @@ import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 
 const props = defineProps<{
   notification: Notification
-  // 这一条属于哪一档，已经译好；列表按事由算好递进来，行自己不做这个判断。
-  categoryLabel?: string
+  /** 右边写的时间，列表按自己的口径写好递进来（动态按天分组，这里只写几点几分）。 */
+  time?: string
   onMarkAsRead: (notificationId: number) => void
   onDelete: (notificationId: number) => void
 }>()
 
 const { t } = useI18n()
-const { formatTime } = useFormattedTime()
 
-const formattedTime = computed(() => formatTime(props.notification.createdAt))
+const at = computed(() => new Date(props.notification.createdAt).toISOString())
 
-const contentComponent = computed<Component>(() => {
-  return getNotificationRenderer(props.notification.type)
-})
+const contentComponent = computed<Component>(() => getNotificationRenderer(props.notification.type))
 
+// 渲染器把它算好的去处交出来（`defineExpose({ content })`）。
 const contentRef = ref<{ content: RenderedNotificationContent } | null>(null)
+const routerLink = computed(() => contentRef.value?.content?.routerLink)
+const hasRouterLink = computed(() => !!routerLink.value)
 
-const contentCache = shallowRef<RenderedNotificationContent | undefined>(undefined)
-const updateContentCache = () => {
-  if (contentRef.value?.content) {
-    contentCache.value = markRaw({ ...contentRef.value.content })
-  }
-}
-
-const renderedActions = computed(() => contentCache.value?.actions || [])
-
-// 右键一条通知：行里那几颗（这一类自己的，或标为已读、删除）收成一份，弹在鼠标那一点上。
+// 右键或长按一条：标为已读、删除，弹在那一点上。触屏上那两颗悬停按钮不画，靠的就是它。
 const rowMenu = useRowMenu<'item'>()
 const itemActions = computed<MenuAction[]>(() => {
-  if (renderedActions.value.length > 0)
-    return renderedActions.value.map((action, index) => ({
-      key: `action.${index}`,
-      label: action.text,
-      icon: action.color === 'error' ? 'mdi-close' : 'mdi-check',
-      danger: action.color === 'error',
-      onSelect: () => void action.handler(),
-    }))
   const actions: MenuAction[] = []
   if (!props.notification.read)
     actions.push({
@@ -230,54 +120,11 @@ const itemActions = computed<MenuAction[]>(() => {
   return actions
 })
 
-const hasRouterLink = computed(() => {
-  return !!contentCache.value?.routerLink
-})
+const markAsRead = () => props.onMarkAsRead(props.notification.id)
 
-const routerLinkTarget = computed(() => {
-  const link = contentCache.value?.routerLink
-  if (!link) return { name: 'home' }
-
-  return {
-    name: String(link.name),
-    params: link.params ? { ...link.params } : {},
-    query: link.query ? { ...link.query } : {},
-  }
-})
-
-let updateQueued = false
-const queueContentUpdate = () => {
-  if (!updateQueued) {
-    updateQueued = true
-    setTimeout(() => {
-      updateContentCache()
-      updateQueued = false
-    }, 0)
-  }
-}
-
-const checkContentUpdate = () => {
-  if (contentRef.value?.content) {
-    queueContentUpdate()
-  }
-}
-
-onMounted(checkContentUpdate)
-onUpdated(checkContentUpdate)
-// A renderer can change what it offers without this row re-rendering: an
-// invitation answered from its own buttons takes them away. Follow its content too.
-watch(() => contentRef.value?.content, checkContentUpdate)
-
-const markAsRead = (event: Event) => {
-  event.stopPropagation()
-  props.onMarkAsRead(props.notification.id)
-}
-
-// 删除不可撤销，点一下先弹确认框：这颗按钮就在正文旁边，条条都常驻，误触的代价是
-// 一条再也回不来的通知。确认之后再真的删。
+// 删除不可撤销，点一下先弹确认框：误触的代价是一条再也回不来的动态。确认之后再真的删。
 const confirmingDelete = ref(false)
-const askDelete = (event: Event) => {
-  event.stopPropagation()
+const askDelete = () => {
   confirmingDelete.value = true
 }
 const doDelete = () => {
@@ -289,70 +136,69 @@ const doDelete = () => {
 const nav = useNavigation()
 
 const navigateToTarget = () => {
-  if (hasRouterLink.value) {
-    props.onMarkAsRead(props.notification.id)
-    nav?.navigate(routerLinkTarget.value)?.catch((error) => {
-      if (error.name !== 'NavigationDuplicated') {
-        console.error('导航错误:', error)
-        toast.error(t('notifications.common.unreachable'))
-      }
-    })
-  }
-}
-
-const onUpdateNotification = (notificationId: number) => {
-  props.onMarkAsRead(notificationId)
+  const link = routerLink.value
+  if (!link) return
+  props.onMarkAsRead(props.notification.id)
+  nav?.navigate({ name: String(link.name), params: { ...link.params }, query: { ...link.query } })?.catch((error) => {
+    if (error.name !== 'NavigationDuplicated') {
+      console.error('导航错误:', error)
+      toast.error(t('notifications.common.unreachable'))
+    }
+  })
 }
 </script>
 
 <style scoped>
-/* 未读靠 wash 底色区分，不靠左竖条。原来的写法还有一个更实际的问题：hover 和
-   未读用的是同一个 4% 主色底，两者唯一的区别就是那条竖条——把条纹删掉而不换
-   底色，未读态会直接消失。所以 hover 收回中性的 --fill，未读改用 --accent-wash。 */
-.notification-item {
-  transition: background-color 0.2s ease;
+/* 渲染器各自画标题、细节和引文，用的是下面这几个类名；样子在这里定一次，和待办页上面
+   那一块的行同一套字号和颜色。 */
+.notification-item__content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
-.notification-item:hover {
-  background-color: var(--fill);
-}
-
-.unread-notification {
-  background-color: var(--accent-wash);
-}
-
-/* 通用的「标为已读 / 删除」是辅助动作：不占常驻的一行，悬停或键盘焦点落进来
-   时才现身。只在真有指针的设备上这么做——触屏没有 hover，藏了就再也点不到。 */
-@media (hover: hover) {
-  .notification-item__actions {
-    opacity: 0;
-    transition: opacity var(--dur-quick) var(--ease-standard);
-  }
-
-  .notification-item:hover .notification-item__actions,
-  .notification-item:focus-within .notification-item__actions {
-    opacity: 1;
-  }
-}
-
-/* 时间戳不许被挤：内容那一列可以收窄换行，它按原样待着。不这么写时，窄屏上
-   「1 小时前」会被正文压成一列一个字，竖着排下来。 */
-.notification-item__time {
-  flex: none;
-  margin-inline-start: 8px;
+.notification-item :deep(.n-title) {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: var(--lh-14);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 窄屏上正文占满一行，时间挪到它下面一行右对齐；上面那条留出的 8px 换成行距。 */
-@media (max-width: 599.98px) {
-  .notification-item__top {
-    flex-wrap: wrap;
-  }
+.notification-item.inbox-row--unread :deep(.n-title) {
+  font-weight: 600;
+}
 
-  .notification-item__time {
-    flex-basis: 100%;
-    margin-inline-start: 0;
-    text-align: right;
-  }
+.notification-item :deep(.n-sub) {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-item :deep(.n-quote) {
+  overflow: hidden;
+  margin-top: 2px;
+  padding-left: 8px;
+  border-left: 2px solid var(--line-2);
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 引文前面那个说它是什么的词（「原因」）。 */
+.notification-item :deep(.n-label) {
+  margin-right: 6px;
+  color: var(--muted);
+}
+
+.notification-item :deep(.n-emoji) {
+  margin-left: 6px;
 }
 </style>

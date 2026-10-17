@@ -17,7 +17,7 @@ from litellm.router import Router
 
 from cheese_billing_line import handler
 
-BILLING = "x-anthropic-billing-header: cc_version=2.1.282.772; cc_entrypoint=sdk-cli; cch=64903;"
+BILLING = "x-anthropic-billing-header: cc_version=2.1.299.772; cc_entrypoint=sdk-cli; cch=64903;"
 SYSTEM = [
     {"type": "text", "text": BILLING},
     {"type": "text", "text": "You are Claude Code."},

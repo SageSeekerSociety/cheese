@@ -308,7 +308,6 @@ export function createCollabServer(config: CollabConfig): Server {
           content: exportMarkdown(copy),
           actors: [body.actor],
           suggestions: liveSuggestions(copy),
-          requested_by: body.requested_by ?? null,
           edits: result.edits,
           suggested: body.mode === 'suggest',
           reason: body.reason ?? null,
@@ -358,7 +357,6 @@ export function createCollabServer(config: CollabConfig): Server {
 interface EditBody {
   edits: Edit[]
   actor: string
-  requested_by?: string | null
   mode: EditMode
   reason?: string | null
   /** The writer (``actor``) is an agent seat (the backend judges it). */

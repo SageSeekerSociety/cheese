@@ -129,7 +129,7 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
     eq(w.querySelectorAll('[data-walk-step]').length, Number(w.querySelector('[data-walk-panel]').dataset.beats), `walk ${i + 1}: one frame per step`)
     ok(!w.querySelector('figcaption, [data-dp-replay], input[type=range], progress'), `walk ${i + 1}: no caption, no replay, no progress bar — the steps are all of it`)
   })
-  ok(restWalk[0].includes('已开始') && restWalk[0].includes('芝士这一轮的清单'), `walk 1 rests on the started task with its checklist: ${restWalk[0]}`)
+  ok(restWalk[0].includes('进行中') && restWalk[0].includes('芝士这一轮的清单'), `walk 1 rests on the task in progress with its checklist: ${restWalk[0]}`)
   ok(restWalk[1].includes('已采纳') && restWalk[1].includes('任务已关闭'), `walk 2 rests on 已采纳 and 任务已关闭: ${restWalk[1]}`)
 
   // Reduced motion: nothing walks by itself, the last screen stays; a click switches.
@@ -143,7 +143,7 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
     eq(onStep(ws[0]), '1', 'reduced motion: clicking step 1 highlights it')
     const f1 = seen(ws[0].querySelector('[data-walk-panel]'))
     const docShown = [...ws[0].querySelectorAll('[data-walk-panel] .dp-doc')].some((d) => !d.closest('[hidden]'))
-    ok(f1.includes('讨论中') && docShown, `reduced motion: and shows the task page with its document, not yet started: ${f1}`)
+    ok(f1.includes('进行中') && docShown, `reduced motion: and shows the task page with its document: ${f1}`)
   }
 
   // Walking through once, then a click.
@@ -153,7 +153,7 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
     await sleep(150)
     const ws = [...w.document.querySelectorAll('[data-walk]')]
     const p0 = ws[0].querySelector('[data-walk-panel]')
-    ok(seen(p0).includes('1 条回复') && !seen(p0).includes('已开始'), `walk 1 starts on the screen before step 1: ${seen(p0)}`)
+    ok(seen(p0).includes('1 条回复') && !seen(p0).includes('芝士这一轮的清单'), `walk 1 starts on the screen before step 1: ${seen(p0)}`)
     eq(onStep(ws[0]), '', 'no step is highlighted before step 1 starts')
     ok(await until(() => onStep(ws[0]) === '1', 3000), 'walk 1 highlights step 1')
     ok(await until(() => onStep(ws[0]) === '3' && seen(p0) === restWalk[0], 40000), 'walk 1 ends on step 3 with the last screen')
@@ -181,7 +181,10 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
   const { renderDemo, registerUiStrings } = await import(path.join(SITE, 'src/demos.mjs'))
   const dir = path.join(REPO, 'frontend/src/i18n/messages/zh-CN')
   const leaves = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [])
-  registerUiStrings(fs.readdirSync(dir).filter((f) => f.endsWith('.json')).flatMap((f) => leaves(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')))))
+  // Same walk as build.mjs: the catalog is a tree of files (docs/i18n.md §2).
+  const catalogFiles = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? catalogFiles(path.join(d, e.name)) : e.name.endsWith('.json') ? [path.join(d, e.name)] : [])
+  registerUiStrings(catalogFiles(dir).flatMap((f) => leaves(JSON.parse(fs.readFileSync(f, 'utf8')))))
   const run = (fence) => { try { renderDemo('demo-panel', fence, 'test'); return '' } catch (e) { return e.message } }
   eq(run('title: 好的\ncaption: 一行\nparts:\n  - kind: composer\n    placeholder: 输入消息，@芝士 交给它处理\n    button: 交给芝士\n    type: 你好\n    at: 1\n    press: 2'), '', 'a panel quoting real labels builds')
   const made = run('title: 假按钮\ncaption: 一行\nparts:\n  - kind: composer\n    placeholder: 输入消息，@芝士 交给它处理\n    button: 立即派活\n    type: 你好\n    at: 1\n    press: 2')

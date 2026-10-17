@@ -21,7 +21,7 @@ Notion 通过 MCP 连接。MCP 是一种让 AI 调用外部服务的通用接口
 在项目根目录加一个 .mcp.json，声明 Notion 的远程 MCP 服务：名字叫 notion，type 为 http，url 为 https://mcp.notion.com/mcp。只加这一个文件。
 ```
 
-芝士创建一个任务，建好就开始。等芝士提交后，在「改动」中确认只新增了 `.mcp.json`，点「采纳并完成任务」。交给芝士、开始任务和采纳的步骤见[把一件事交给芝士并验收](/working-with-cheese#working-with-cheese)。
+芝士把这条支线转为任务，接着动手。等芝士提交后，在「改动」中确认只新增了 `.mcp.json`，点「采纳并完成任务」。交给芝士、跟进任务和采纳的步骤见[把一件事交给芝士并验收](/working-with-cheese#working-with-cheese)。
 
 平台只读取项目已采纳的版本，所以采纳之后 notion 才出现在项目设置里。
 

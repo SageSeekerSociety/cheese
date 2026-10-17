@@ -1,0 +1,8 @@
+{
+  "draftEdit": "{name} 提议修改",
+  "draftNew": "{name} 提议新增",
+  "originCheese": "{name} 整理",
+  "originImport": "导入",
+  "originPerson": "手写",
+  "revision": "第 {revision} 版 · {date}"
+}

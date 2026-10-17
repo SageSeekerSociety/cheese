@@ -8,17 +8,34 @@
       "reviewer": "Waiting for your review",
       "reporter": "Your request has been delivered",
       "asked": "Waiting for your answer",
-      "start": "Ready for you to start",
       "checksFailed": "Checks failed",
       "bounced": "Returned",
       "decide": "Awaiting your decision",
-      "read": "Change alert"
+      "read": "Change alert",
+      "invited": "Awaiting your reply",
+      "joinRequest": "Awaiting your approval"
     },
     "markRead": "Mark as read",
     "answerLabel": "Write your decision",
     "answer": "Reply",
     "actionFailed": "Something went wrong",
-    "markAllRead": "Mark all as read"
+    "markAllRead": "Mark all as read",
+    "invite": {
+      "project": "{person} invited you to a project",
+      "team": "{person} invited you to a team",
+      "request": "{person} asked to join the team",
+      "asRole": "Joins as {role}",
+      "accept": "Accept",
+      "approve": "Approve",
+      "decline": "Decline",
+      "transfer": "{person} is transferring a project to you"
+    },
+    "role": {
+      "MEMBER": "member",
+      "ADMIN": "admin",
+      "OWNER": "owner",
+      "mentor": "mentor"
+    }
   },
   "nav": {
     "teamProjects": "Projects",

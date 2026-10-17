@@ -28,6 +28,7 @@ import { searchLibraryFiles } from '../../lib/libraryApi'
 import MessageEditor from './MessageEditor.vue'
 
 import { setLocale } from '@/i18n'
+import { composerText, fillComposer } from '@/test/composerInput'
 
 const POOL: MentionPoolEntry[] = [
   { handle: 'alice', label: 'Alice', avatar: null, agent: false },
@@ -48,6 +49,7 @@ function mount(opts: Options = {}) {
       h(MessageEditor, {
         text: opts.text ?? '周五交初稿',
         saving: opts.saving ?? false,
+        refs: { mentionNames: {}, topicTitles: {} },
         mentionPool: POOL,
         topicList: [],
         onSave,
@@ -56,7 +58,7 @@ function mount(opts: Options = {}) {
   })
 
   const utils = render(Wrapper, { global: { plugins: [createVuetify({ components, directives })] } })
-  const box = () => utils.container.querySelector('textarea')!
+  const box = () => utils.container.querySelector<HTMLElement>('.ProseMirror')!
   return { ...utils, box, onSave, onCancel }
 }
 
@@ -78,8 +80,8 @@ async function flush() {
   for (let i = 0; i < 6; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-async function type(box: HTMLTextAreaElement, value: string) {
-  await fireEvent.update(box, value)
+async function type(box: HTMLElement, value: string) {
+  await fillComposer(box, value)
   await flush()
 }
 
@@ -97,14 +99,28 @@ describe('编辑一条消息时的 @ 候选', () => {
     expect(menuLabels(container)).toContain('Alice')
   })
 
-  it('候选里挑中一个人，写进框里的是他的名字', async () => {
+  it('候选里挑中一个人，框里是写着他名字的标签，存下的是他这个人', async () => {
     const { box, container } = mount()
     await type(box(), '看一下 @')
 
     await fireEvent.click(named(container, '芝士'))
     await flush()
 
-    expect(box().value).toBe('看一下 @芝士 ')
+    expect(composerText(box())).toBe('看一下 <@cheese-topica> ')
+    expect(container.querySelector('.mention')?.textContent).toBe('@芝士')
+  })
+
+  it('改一条点过名的消息：框里是名字，不是内部写法，保存时原样存回', async () => {
+    const { box, container, onSave } = mount({ text: '<@alice> 周五交初稿' })
+    await flush()
+
+    expect(container.querySelector('.mention')?.textContent).toBe('@Alice')
+    const boxEl = box()
+    boxEl.focus()
+    await fireEvent.keyDown(boxEl, { key: 'Enter' })
+    await flush()
+
+    expect(onSave).toHaveBeenCalledWith('<@alice> 周五交初稿')
   })
 
   it('有候选时回车是挑人，不是保存', async () => {
@@ -117,7 +133,7 @@ describe('编辑一条消息时的 @ 候选', () => {
     await flush()
 
     expect(onSave).not.toHaveBeenCalled()
-    expect(box().value).toBe('看一下 @芝士 ')
+    expect(composerText(box())).toBe('看一下 <@cheese-topica> ')
   })
 
   it('编辑框不 @ 资料库：打一个 @ 不去取项目的文件', async () => {
@@ -154,7 +170,7 @@ describe('编辑一条消息时的 @ 候选', () => {
     expect(onCancel).not.toHaveBeenCalled()
     expect(container.querySelector('.mention-menu')).toBeNull()
     // `@` 还留在正文里——那只是一次临时收起。
-    expect(box().value).toBe('看一下 @')
+    expect(composerText(box())).toBe('看一下 @')
 
     await fireEvent.keyDown(boxEl, { key: 'Escape' })
     expect(onCancel).toHaveBeenCalled()

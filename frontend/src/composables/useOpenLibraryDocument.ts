@@ -7,6 +7,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { closeOverlay } from '@/lib/backOut'
+import { documentCardContext } from '@/lib/libraryDocumentNavigation'
 
 export function useOpenLibraryDocument(
   projectId: () => string,
@@ -17,6 +18,14 @@ export function useOpenLibraryDocument(
   const router = useRouter()
   const selectedDocId = computed(() => docId() ?? '')
   const openDocument = ref<PanelDocument | null>(null)
+  const cardContext = computed(() => {
+    // Read the context again when this view is reused for another document.
+    return router.currentRoute.value.name === 'project-document'
+      ? documentCardContext(router, projectId(), selectedDocId.value)
+      : null
+  })
+  const documentReview = computed(() => cardContext.value?.review)
+  const fromThread = computed(() => !!cardContext.value)
 
   /** 回频道，给了任务就进那个任务。 */
   function openRoom(topicId: string, taskId?: string | null) {
@@ -43,10 +52,13 @@ export function useOpenLibraryDocument(
   return {
     selectedDocId,
     openDocument,
+    documentReview,
+    fromThread,
     openRoom,
     openDoc: (id: string) =>
       void router.push({ name: 'project-document', params: { projectId: projectId(), docId: id } }),
-    closeDoc: () => closeOverlay(router, { name: 'project-library', params: { projectId: projectId() } }),
+    closeDoc: () =>
+      closeOverlay(router, cardContext.value?.from ?? { name: 'project-library', params: { projectId: projectId() } }),
     /** 标题在文档页上改了：开着的这一份和列表里那一行都跟着。 */
     titled(title: string) {
       if (openDocument.value) openDocument.value = { ...openDocument.value, title }

@@ -28,6 +28,7 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic = {
   id: 'typing-topic',
@@ -106,13 +107,6 @@ function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1
 }
 
-// A message body is drawn by the Markdown reader, which MarkdownView imports the
-// first time it draws. Loaded here, that import resolves at once; left to the
-// first test, it can outlast `flush()` on a busy machine and the body is blank.
-beforeAll(async () => {
-  await import('@/components/panels/doc/blocks/reader')
-})
-
 beforeEach(() => {
   // These assertions read the Chinese copy.
   setLocale('zh-CN')
@@ -124,6 +118,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('队友正在写的那条消息', () => {
   it('正文随着一帧帧长出来，标着正在输入', async () => {

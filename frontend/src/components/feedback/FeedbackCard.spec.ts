@@ -9,6 +9,10 @@
  * 第二条钉的是它和「支持」的关系：正文那条链接里**不能**套着支持按钮。`<button>`
  * 套在 `<a>` 里是「交互内容套交互内容」，浏览器会各画各的，而真嵌进去之后点支持
  * 会顺手打开详情。
+ *
+ * 第三条钉的是这一件**不自己发请求**：点支持只在原地报一个 `support` 事件（带这一条
+ * 的 id），谁渲染它谁去调 store。所以这一件挂起来**不需要 pinia** —— 下面这几条都
+ * 只装 Vuetify 和路由。把 pinia 装回来（或者让卡片重新读 store）会让这里当场红。
  */
 import type { Component } from 'vue'
 import type { FeedbackCard as FeedbackCardItem } from '@/cx_types'
@@ -18,9 +22,8 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
-import { createPinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { fireEvent, render } from '@testing-library/vue'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import FeedbackCard from './FeedbackCard.vue'
 
@@ -57,6 +60,9 @@ function item(extra: Partial<FeedbackCardItem> = {}): FeedbackCardItem {
   }
 }
 
+/** 挂一行。**不装 pinia**：卡片只收 props、只发事件（`support`），请求由页面发 ——
+ *  它要是又偷偷读起 store，这里会当场抛「getActivePinia() was called but there was
+ *  no active Pinia」，而不是悄悄绿过去。 */
 function mount(card: FeedbackCardItem = item()) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -67,7 +73,7 @@ function mount(card: FeedbackCardItem = item()) {
   })
   return render(FeedbackCard as Component, {
     props: { item: card },
-    global: { plugins: [vuetify, createPinia(), router] },
+    global: { plugins: [vuetify, router] },
   })
 }
 
@@ -98,5 +104,41 @@ describe('反馈列表里的一行', () => {
 
     expect(queryByRole('button', { name: /支持/ })).toBeNull()
     expect(container.querySelector('a')?.getAttribute('href')).toBe('/feedback/c-1')
+  })
+
+  it('点支持只报一个带 id 的事件，不自己改数字、不自己发请求', async () => {
+    let fired: unknown = null
+    const onSupport = vi.fn((id: string) => {
+      fired = id
+    })
+    const { getByRole, baseElement } = render(FeedbackCard as Component, {
+      props: { item: item({ supports: 3 }), onSupport },
+      global: {
+        plugins: [
+          vuetify,
+          createRouter({
+            history: createMemoryHistory(),
+            routes: [
+              { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
+              { path: '/:any(.*)*', component: blank },
+            ],
+          }),
+        ],
+      },
+    })
+
+    await fireEvent.click(getByRole('button', { name: /支持/ }))
+
+    // 报上去的是**这一条**的 id：页面可能同时摆着好几行，得知道按的是哪一条。
+    expect(onSupport).toHaveBeenCalledTimes(1)
+    expect(fired).toBe('c-1')
+    // 数字仍是数据里的那个（3），不是本地 +1 猜出来的 4 —— 服务端回的才是准的。
+    expect(baseElement.querySelector('.fb-card__count')?.textContent).toBe('3')
+  })
+
+  it('办完了的条目：支持按钮画得出来，但按不动', () => {
+    const { getByRole } = mount(item({ status: 'deployed' }))
+
+    expect(getByRole('button', { name: /支持/ }).hasAttribute('disabled')).toBe(true)
   })
 })
