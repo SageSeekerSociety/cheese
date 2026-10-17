@@ -3935,11 +3935,12 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
     # --- the allowance, which has to be a claim and not a waiver -----------
     #
     # `--allow-unjudgeable NAME` exists for a guard this lane cannot judge: its
-    # self-test judges it in another process (`unverified`), or needs an install
-    # the lane does not have (its self-test does not start, which also reads as
-    # `self-test-not-green`). The point of these cases is that the flag stays
-    # narrow — it tolerates those two statuses for one named guard, the entry is
-    # checked, and this lane's own judgement is never waived.
+    # self-test judges it in another process or cannot be started at all
+    # (`unverified`), or it runs and fails on an install the lane does not have
+    # (`self-test-not-green`, which is also the shape of a broken self-test).
+    # The point of these cases is that the flag stays narrow — it tolerates
+    # those two statuses for one named guard, the entry is checked, and this
+    # lane's own judgement is never waived.
 
     def _allow(self, guards: dict[str, str], extra: dict[str, str], *allowed: str):
         with tempfile.TemporaryDirectory() as raw:
@@ -4043,9 +4044,20 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertIn("有发现 1 个，名单问题 1 条", result.stdout)
 
     def test_the_summary_omits_the_allowance_count_when_there_is_no_problem(self) -> None:
-        result = self._allow_human({"fake.py": FAKE_GREEN}, {})
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("有发现 1 个，判不了", result.stdout)
+        """An allowance that works is not a problem: no allowance count is shown.
+
+        The allowance is really there — the guard is `unverified` and excused —
+        so a summary that keyed the suffix off `allowed` rather than off the
+        problem list would print `名单问题 0 条` here and fail.
+        """
+        result = self._allow_human(
+            {"delegating.py": DELEGATING},
+            {"test_delegating.py": DELEGATING_SIBLING},
+            "--allow-unjudgeable",
+            "delegating.py",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("有发现 0 个，判不了 0 个", result.stdout)
         self.assertNotIn("名单问题", result.stdout)
 
     def test_an_allowance_never_waives_a_missing_self_test(self) -> None:
