@@ -130,6 +130,18 @@ async def test_a_failure_someone_can_fix_is_told_at_once(monkeypatch, kind, cate
     assert alerts[0][1]["key"] != "model-failure-burst"
 
 
+async def test_a_task_snapshot_that_failed_is_told_to_operators(monkeypatch):
+    """A task's platform snapshot is told to no room when it fails, so the
+    operators are told, once per step it failed at."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(backend_log, topic, "TaskBackupFailed", n=3, where="cheese sync:backup")
+    await _fail(backend_log, topic, "TaskBackupFailed", where="cheese sync:snapshot")
+    assert {alert[1]["key"] for alert in alerts} == {
+        "task-backup:cheese sync:backup",
+        "task-backup:cheese sync:snapshot",
+    }
+
+
 STACK = 'Traceback:\n  File "app/api/routes/x.py", line 12, in go\nValueError: nope'
 
 

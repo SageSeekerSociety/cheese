@@ -138,6 +138,10 @@ def payload_for(
         if values.get("CHEESE_ENVIRONMENT")
         else None
     )
+    # Whether `cheese sync` snapshots tasks here: a snapshot is what moving a
+    # room or rebuilding one of the platform's machines restores from, and a
+    # machine a person enrolled is neither moved nor rebuilt by the platform.
+    values["CHEESE_MACHINE_SUPPLY"] = "cloud" if platform_machine else "self_hosted"
     return {
         "protocol_version": runtime.PROTOCOL_VERSION,
         "toolchain_fonts": toolchain.fonts_pin(),

@@ -107,12 +107,12 @@ covers:
 
 ## 同步、备份、恢复 {#sync}
 
-`cheese sync` 做两件事，顺序不能换（`_sync_task`）：
+`cheese sync` 做两件互不牵连的事（`_sync_task`）：快照是平台的，推送是 agent 的。快照没成功（或没做）从不挡推送，也不让命令失败。
 
-1. **备份未提交的文件**：用另一个索引文件（`GIT_INDEX_FILE=…/cheese-snapshot-index`）`read-tree HEAD` + `add -u`，再加上该带的未跟踪文件，`write-tree`，把树写成一个挂在当前 HEAD 上的临时提交（`commit-tree`）。工作树自己的暂存区不受影响。带哪些见下面的[备份里有什么](#backup-contents)。
+1. **给平台做快照**（只在平台自己的机器上做，`CHEESE_MACHINE_SUPPLY` 不是 `self_hosted` 时；快照是平台挪房间、重建机器时恢复用的，一个人自己登记的机器平台不挪也不重建，文件就在那台机器上）：用另一个索引文件（`GIT_INDEX_FILE=…/cheese-snapshot-index`）`read-tree HEAD` + `add -u`，再加上该带的未跟踪文件，`write-tree`，把树写成一个挂在当前 HEAD 上的临时提交（`commit-tree`）。工作树自己的暂存区不受影响。带哪些见下面的[备份里有什么](#backup-contents)。
 2. **推 HEAD**（`_deliver_task_branch`）：HEAD 已在本检出上次推送或 fetch 时记下的分支尖（`refs/remotes/origin/<branch>`）里，就不问托管平台、什么都不推：托管平台一时连不上时，问一句只会把它已经有的工作报成「没能推回」，而且每次 sync 都报一遍。否则先读托管平台上这条分支的尖。HEAD 已在其中——同一任务的另一个检出走得更远——就什么都不推；尖在 HEAD 的历史里就普通推送；两边分叉而那个尖是本检出自己在这条分支上有过、后来 amend/rebase 掉的提交，就以它为 lease 替换（`--force-with-lease`），整理本任务的提交（比如移除依赖）本来就是工作的一部分；尖里有本检出从没有过的提交就拒绝，替换会把别人的工作从 PR 上删掉。
 
-任务的 PR 在合并队列里时（任务数据里的 `merge_queued_pr`），托管平台锁着这条分支：有新东西要推就不推，只备份，房间里说清楚这些提交为什么不在 PR 里——重试推不上去，合并后在新任务里交付，或由验收人退回、PR 撤出队列。
+任务的 PR 在合并队列里时（任务数据里的 `merge_queued_pr`），托管平台锁着这条分支：有新东西要推就不推，房间里说清楚这些提交为什么不在 PR 里——重试推不上去，合并后在新任务里交付，或由验收人退回、PR 撤出队列。
 
 任务已结束时只做第 1 步：不推，也不看检出当前在哪个分支——结束后被拿去干别的（切到别的分支、detach）的检出，里面的东西照样进备份。备份失败时 `cheese sync --all` 那一行写成「已结束的任务 X 同步失败」，换工作电脑时平台按它区别对待（见 [turn.md](turn.md)）。机器自己不为已结束的任务往房间发「改动没能推回」：它没有哪一轮的改动丢了，换机时是哪条任务、为什么留在原来那台上，由平台那一条提示说。
 
@@ -120,7 +120,11 @@ covers:
 
 备份不是每次都往对象存储打——`_backup_task_snapshot` 先看 `rev-list --count <snapshot> ^<base>`，是 0 说明每个对象都已经在托管平台上，就地返回；再问一次后端这条任务最新那份备份（`GET …/snapshots/latest`），它的 head 和文件树跟现在一样，也不再发——快照提交每次现做，不问这一句，没动过的已结束任务每次 sync 都会重新打包上传一遍，换机时的推送就等着它们。问不通、还没有备份、本机已经没有那份快照，都照常上传。叠在另一条任务分支上的任务，底座分支合并后会被删掉（这里 fetch `--prune` 也跟着删），这时改成扣掉 `--remotes=origin`：托管平台任何一条分支上见过的提交都不进备份。真要备份的，进 `refs/cheese/snapshots/<task_id>`、打成 bundle、随 `PUT /projects/{id}/git/tasks/{id}/snapshots/{sha}` 交给后端（`room_task/snapshots.py` 的 `save`），落进**私有** bucket（`task-snapshots/<project>/<task>/<sha>/<digest>.bundle`），单次上限 512 MiB（超了回「请将大文件移入附件存储」；未跟踪文件已经被[预算](#backup-contents)挡住，能超的只剩提交过、托管平台上还没有的内容和跟踪文件的改动），服务端按 sha256 复核 digest、并校验它真是个 git bundle。同一份内容再交一次不会再存一遍；它要是已经不是最新那份（文件改动过又改了回去），就新记一行指向原来那个对象，让它重新成为最新——否则恢复出来的是那次已经撤掉的改动，下一轮 sync 也会因为「最新」对不上而每次都重传。bundle 每次现打，上传完不论成败都删：底座会前进，留下一份被拒的原样再发，只会每轮都被拒。
 
-同步失败**会在房间里说一句**（`_report_sync_failure`）：一轮结束时改动还在机器上，和一轮成功长得一模一样——这正是「一次被拒的推送被读成了一个完成的回合」的由来，直到机器被回收、改动跟着没了。成功不发消息，那会是训练人跳过它的噪音。
+各方看到什么：
+
+- **推送失败**：房间里说一句「最新的改动还没进入验收，会自动重试。」（`_report_sync_failure`）——验收卡和 diff 还停在上一次推上去的版本，这件事不说，一轮推送失败和一轮成功长得一模一样。同一条在一个房间里只说一次：说过的记在这条检出的 `cheese-sync-failure-told`，内容变了、中间成功同步过一次、或过了 24 小时才再说；房间没收到的不算说过。成功不发消息。跑 `cheese sync`（提交钩子跑的就是它）的 agent 在 stderr 读到推送失败和原因，命令退出码 1，它可以自己重试或修好。
+- **快照失败**：房间里什么都不说——在哪台机器、快照成没成，是 agent 和平台的事。`cheese-sync.log` 记一行 `snapshot failed step=<snapshot|backup> …`，并经 `/backend-errors` 报给平台（`TaskBackupFailed`），后端按失败的步骤发运维告警（`backend_log.TASK_BACKUP_FAILED`）。
+- 日志里每次失败都写 `failed step=<task|restore|configure|branch|push> …`，可以按步骤数。
 
 ### 每轮的检查点 {#checkpoint}
 
@@ -136,7 +140,7 @@ covers:
 4. 其余情况——目录里已经有改动、分支在快照之后又前进了（快照里有没提交的改动时）、两边分叉——一律不套用，免得覆盖：快照原样检出到 `~/.cheese/recovered/<task>-<快照前 12 位>`，和 `cheese recover` 是同一个目录。
 5. 恢复了什么、没恢复什么打到 stderr，跑 `cheese worktree` 的 agent 在工具结果里读到：哪条任务、快照的时间、几个文件、几个提交；依赖和缓存、生成目录、任务目录以外的文件（包括 `/tmp`）、正在运行的进程不在快照里，不会回来；备份时就略过的未跟踪文件照快照提交的说明列出来。
 
-做完才删掉 `cheese-restore-pending`。没做完（平台一时连不上）就留着，下一次 `cheese worktree` 或 `cheese sync` 再试；**留着它的时候这个目录不备份**：一个还没恢复的新目录备份上去，会成为最新的快照，把要恢复的那份顶掉。已结束的任务直接跳过备份，平台上那份快照就是它的备份。
+做完才删掉 `cheese-restore-pending`。没做完（平台一时连不上）就留着，下一次 `cheese worktree` 或 `cheese sync` 再试；**留着它的时候这个目录不做快照**（推送照常）：一个还没恢复的新目录做了快照，会成为最新的快照，把要恢复的那份顶掉。已结束的任务直接跳过备份，平台上那份快照就是它的备份。
 
 `cheese recover <task_id>` 把最近一次备份恢复到 `~/.cheese/recovered/<task>-<snapshot 前 12 位>`，**不动原工作目录和评审分支**；bundle 的 sha256 对不上就一个文件都不恢复。备份缺的历史（bundle 头里的前置提交）按提交 id 从托管平台取，不经底座分支：叠放任务的底座合并后就被删了，而一台从没检出过这条任务的机器除了提交 id 没有别的可取。合并过的 PR 在托管平台上留着它的头，这些提交还在。
 
@@ -148,7 +152,7 @@ covers:
 - **被忽略的文件一律不带**（`.gitignore`、`.git/info/exclude`、全局 excludes）。
 - **其余未跟踪的文件**，先去掉落在只有工具才写的目录里的（`_GENERATED_DIRS`：`node_modules`、`__pycache__`、`.venv`/`venv`、各种工具缓存），它们重装就回来，而且一个 `node_modules` 的文件数比任务里其他东西加起来都多；剩下的合计超过 `_UNTRACKED_BACKUP_BUDGET`（64 MiB）就从最大的开始略过，直到放得下。`dist/`、`build/`、`target/` 不按名字去掉：这些名字也有人用来放手写的文件，它们是大文件时靠这道预算挡住。
 
-略过了什么要说出来：写进那次快照提交的说明里跟着备份走，`cheese recover` 恢复完照着列一遍；单条任务的 `cheese sync`（提交钩子跑的就是它）打到 stderr，提交的那个 agent 能看到；因为太大被略过的文件，每个在房间里说一次（这台检出说过哪些记在 `cheese-backup-left-out`），生成目录不说。`sync --all` 成功时什么都不打：平台把它的输出全当失败读（`session_work._failed_tasks`）。
+略过了什么要说出来：写进那次快照提交的说明里跟着备份走，`cheese recover` 恢复完照着列一遍；单条任务的 `cheese sync`（提交钩子跑的就是它）打到 stderr，提交的那个 agent 能看到；房间里不说。`sync --all` 成功时什么都不打。
 
 ## push-fix {#push-fix}
 

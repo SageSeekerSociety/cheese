@@ -4026,50 +4026,35 @@ class _BranchQueued(RuntimeError):
 # through.
 _SYNC_FAILURE_TOLD = "cheese-sync-failure-told"
 # Said once while it lasts, not at every sync: a sync runs at every turn's end
-# and every commit, so a failure that persists (the platform's storage out of
-# reach) told one room on dev the same thing 277 times, which teaches people
-# to skip it. Said again when what is said changes, after a sync that went
-# through, or this long after the last time, for whoever comes back to a room
-# that has scrolled past it while the work is still only on the machine.
+# and every commit, and an agent retries a push that failed, so a failure that
+# persists told one room on dev the same thing 273 times in five hours, which
+# teaches people to skip it. Said again when what is said changes, after a
+# sync that went through, or this long after the last time, for whoever comes
+# back to a room that has scrolled past it while review is still behind.
 _SYNC_FAILURE_RETELL_S = 24 * 3600
 
 
 def _report_sync_failure(
-    admin: Path,
-    task_id: str,
-    branch: str | None,
-    queued_pr: int | None = None,
-    *,
-    delivered: bool = False,
+    admin: Path, branch: str | None, queued_pr: int | None
 ) -> None:
-    """Tell the room that a task's work did not reach its branch, or, when it
-    did (`delivered`), that what is not committed was not backed up.
+    """Tell the room that what review shows is not the task's latest work.
 
-    Only the failure: a turn that ends with its work still on the machine looks
-    identical to one that succeeded — that is what let a rejected push read as a
-    completed turn until the machine was deleted and the work went with it. On
-    success the work is already visible in the branch, and a message per turn
-    saying so would be noise that trains people to skip it.
+    Only that, in the room's words: which machine the work is on, and whether
+    the platform's snapshot of it went through, are the agent's and the
+    platform's to handle (the agent reads the reason on stderr, operators
+    through `_report_backup_failure`). Only the failure: a turn whose push did
+    not land looks identical to one that did, and a message per turn saying it
+    did would be noise that trains people to skip it.
     """
     if not (API and TOPIC and TOKEN):
         return  # A human using the CLI directly already receives its exit status.
-    where = branch or f"任务 {task_id}"
-    content = (
-        f"⚠️ 这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
-        "看不到它。请重试本轮；若机器被回收，改动会丢失。"
-    )
-    if delivered:
-        content = (
-            f"⚠️ 已提交的改动都在 {where} 上了，但没提交的改动（包括未跟踪的文件）"
-            "没能备份到平台——它们还只在那台机器上，下次同步会再试；若机器在那之前"
-            "被回收，这部分会丢失。"
-        )
-    elif queued_pr:
+    content = "最新的改动还没进入验收，会自动重试。"
+    if queued_pr:
         # Retrying cannot help: the branch stays locked until the queue is done.
         content = (
-            f"⚠️ {where} 上采纳之后的新提交进不了 PR #{queued_pr}——它已在合并"
-            "队列里，排队的分支不能再改。提交留在那台机器上并已备份；PR 合并后"
-            "在新任务里交付它们，或由验收人退回这张卡、PR 撤出队列后再推。"
+            f"⚠️ {branch} 上采纳之后的新提交进不了 PR #{queued_pr}——它已在合并"
+            "队列里，排队的分支不能再改。PR 合并后在新任务里交付它们，或由验收人"
+            "退回这张卡、PR 撤出队列后再推。"
         )
     told_file = admin / _SYNC_FAILURE_TOLD
     try:
@@ -4083,12 +4068,7 @@ def _report_sync_failure(
     except (OSError, ValueError, KeyError, TypeError):
         pass  # Never told, or unreadable: tell.
     if not _tell_room(content):
-        print(
-            f"[cheese] 同步失败的通知未送达，任务 {task_id} 的 "
-            "cheese-sync.log 保留了结果",
-            file=sys.stderr,
-        )
-        return
+        return  # Not recorded as told, so the next failing sync tries again.
     try:
         told_file.write_text(
             json.dumps(
@@ -4101,6 +4081,40 @@ def _report_sync_failure(
         )
     except OSError:
         pass  # Told again next time; the sync's own error is what gets raised.
+
+
+def _report_backup_failure(task_id: str, step: str, exc: BaseException) -> None:
+    """Tell the platform's operators that a task's snapshot did not go through.
+
+    Through the push channel for the platform's own failures (`/backend-errors`,
+    which keeps a record for the admin page and alerts on this kind): a room is
+    never told, since a snapshot is how the platform moves a room or rebuilds
+    one of its machines, not something the room uses. Best effort: the sync's
+    log keeps the same line either way. Hashes are blanked so one failure
+    repeated is one fingerprint there, not one per commit.
+    """
+    if not (API and TOKEN):
+        return
+    said = re.sub(r"\b[0-9a-f]{12,64}\b", "*", f"{type(exc).__name__}: {exc}")
+    body = {
+        "errors": [
+            {
+                "message": f"task {task_id} snapshot failed at {step}: {said}"[:1000],
+                "exc_type": "TaskBackupFailed",
+                "where": f"cheese sync:{step}",
+            }
+        ]
+    }
+    request = urllib.request.Request(
+        f"{API}/backend-errors", data=json.dumps(body).encode(), method="POST"
+    )
+    request.add_header("Content-Type", "application/json")
+    request.add_header("X-Cheese-Token", TOKEN)
+    try:
+        with urllib.request.urlopen(request, timeout=20):
+            pass
+    except Exception:  # noqa: BLE001 — the sync's own outcome is what matters
+        pass
 
 
 def _tell_room(content: str) -> bool:
@@ -4236,32 +4250,26 @@ def _print_left_out(task_id: str, left_out: list[str]) -> None:
         )
 
 
-def _tell_room_left_out(
-    admin: Path, data: dict, dropped: list[tuple[str, int]]
-) -> None:
-    """Tell the room of untracked files the backup left behind for their size.
+def _snapshots_here() -> bool:
+    """Whether this machine takes task snapshots for the platform.
 
-    Each file once, and never a generated directory: that comes back with an
-    install, while a large file nobody committed may be hours of work, and it
-    goes with the machine.
+    A snapshot is what moving a room off a machine, or rebuilding one of the
+    platform's own, restores from. A person's own machine is neither moved nor
+    rebuilt by the platform, and its files stay where they are. Anything but
+    a machine the platform says is a person's takes them, so an executor
+    installed before it was told keeps snapshotting.
     """
-    told_file = admin / "cheese-backup-left-out"
-    told = set(told_file.read_text().splitlines()) if told_file.exists() else set()
-    new = [path for path, _ in dropped if path not in told]
-    if not (new and API and TOPIC and TOKEN):
-        return
-    budget = _UNTRACKED_BACKUP_BUDGET // 1024 // 1024
-    if _tell_room(
-        f"⚠️ {data['branch']} 的备份没有带上这些没提交的大文件（每次备份里未跟踪"
-        f"的文件合计最多 {budget} MiB，超出时从最大的开始略过）：\n- "
-        + "\n- ".join(new)
-        + "\n它们只在这台机器上，机器回收后就没有了。要留下的请提交，或移进附件存储。"
-    ):
-        told_file.write_text("".join(f"{path}\n" for path in sorted(told | set(new))))
+    return os.environ.get("CHEESE_MACHINE_SUPPLY") != "self_hosted"
 
 
 def _sync_task(task_id: str) -> list[str]:
-    """Back up and deliver one task; return what its backup left out."""
+    """Deliver one task to its branch, and snapshot it for the platform;
+    return what the snapshot left out.
+
+    The two are independent: the push is the agent's, and a snapshot that
+    fails (or is not taken) never stops it or fails the command. The log line
+    of each failure names the step it failed at.
+    """
     task_id = str(uuid.UUID(task_id))
     worktree = _task_root() / task_id
     if not (worktree / ".git").exists():
@@ -4271,39 +4279,37 @@ def _sync_task(task_id: str) -> list[str]:
     with log.open("a") as record:
         # A post-commit hook and the room's Stop hook can arrive together.
         _lock(record)
-        record.write(f"{datetime.now(UTC).isoformat()} start task={task_id}\n")
-        record.flush()
+
+        def note(line: str) -> None:
+            record.write(f"{datetime.now(UTC).isoformat()} {line}\n")
+            record.flush()
+
+        note(f"start task={task_id}")
         branch = None
         closed = False
-        not_backed_up = None
-        delivered = False
+        step = "task"
         try:
             project = _need("CHEESE_PROJECT", PROJECT)
             data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
             closed = data["closed"]
+            restored = True
             if (admin / _RESTORE_PENDING).exists():
                 if closed:
                     # Nothing was restored here, so nothing here is newer than
                     # the platform's snapshot, which stays the task's backup.
-                    record.write(
-                        f"{datetime.now(UTC).isoformat()} not backed up: the "
-                        "snapshot was never restored here\n"
-                    )
+                    note("not backed up: the snapshot was never restored here")
                     return []
+                step = "restore"
                 cache = Path.home() / ".cheese" / "repositories"
                 with (cache / f"{project}.lock").open("a") as lock:
                     _lock(lock)
                     restored = _restore_snapshot(worktree, data)
-                if not restored:
-                    raise RuntimeError(
-                        "the platform's snapshot of this task is not restored "
-                        "here yet, so nothing is backed up over it"
-                    )
             if not closed:
                 # Only a delivery talks to the forge. A closed task is only
                 # backed up, to the platform, so it skips the forge probe that
                 # otherwise costs every one of a room's closed tasks a round
                 # trip while a switch waits.
+                step = "configure"
                 _git_task(worktree, "config", "--replace-all", "credential.helper", "")
                 _git_task(
                     worktree,
@@ -4316,54 +4322,37 @@ def _sync_task(task_id: str) -> list[str]:
                 _git_task(worktree, "remote", "set-url", "origin", data["remote"])
                 _configure_git_transport(worktree, data)
             head = _git_task(worktree, "rev-parse", "HEAD")
-            # Keep unfinished work off the PR. An alternate index preserves the
-            # worker's staging choices while backing up its files at turn end.
-            snapshot_env = {"GIT_INDEX_FILE": str(admin / "cheese-snapshot-index")}
-            generated, dropped = _snapshot_index(worktree, snapshot_env)
-            tree = _git_task(worktree, "write-tree", extra_env=snapshot_env)
-            message = f"Work in progress for task {task_id}\n"
-            if left_out := _left_out_lines(generated, dropped):
-                # The list travels with the backup, for `cheese recover`.
-                message += f"\n{_LEFT_OUT_HEADER}\n" + "".join(
-                    f"{line}\n" for line in left_out
+            left_out: list[str] = []
+            snapshot = None
+            if not restored:
+                # Taken now, it would replace the platform's snapshot with a
+                # checkout that has not been given that snapshot's work.
+                note(
+                    "snapshot skipped step=restore: the platform's snapshot is "
+                    "not restored here yet"
                 )
-            snapshot = (
-                head
-                if tree == _git_task(worktree, "rev-parse", "HEAD^{tree}")
-                else _git_task(
-                    worktree,
-                    "commit-tree",
-                    tree,
-                    "-p",
-                    head,
-                    input_text=message,
-                )
-            )
-            _tell_room_left_out(admin, data, dropped)
-            try:
-                _once_more_if_transient(
-                    lambda: _backup_task_snapshot(worktree, data, head, snapshot)
-                )
-            except Exception as exc:
-                if closed:
-                    raise  # Only backed up, never delivered: nothing else to try.
-                # The push does not wait on the platform's storage: committed
-                # work left on the machine with the backup is work review and
-                # every other machine cannot see either.
-                not_backed_up = exc
-                record.write(
-                    f"{datetime.now(UTC).isoformat()} backup failed "
-                    f"{type(exc).__name__}: {exc}; delivering anyway\n"
-                )
-                record.flush()
+            elif _snapshots_here():
+                try:
+                    step = "snapshot"
+                    snapshot, left_out = _snapshot_commit(
+                        worktree, admin, task_id, head
+                    )
+                    step = "backup"
+                    _once_more_if_transient(
+                        lambda: _backup_task_snapshot(worktree, data, head, snapshot)
+                    )
+                except Exception as exc:
+                    if closed:
+                        raise  # Only backed up, never delivered: nothing else to do.
+                    note(f"snapshot failed step={step} {type(exc).__name__}: {exc}")
+                    _report_backup_failure(task_id, step, exc)
+                    snapshot = None
             if closed:
                 # Kept, never delivered: what the checkout holds is in the
                 # backup, on whichever branch an agent went on to use it for.
-                record.write(
-                    f"{datetime.now(UTC).isoformat()} archived snapshot={snapshot}; "
-                    "delivery is closed\n"
-                )
+                note(f"archived snapshot={snapshot}; delivery is closed")
                 return left_out
+            step = "branch"
             branch = data["branch"]
             found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
@@ -4372,6 +4361,7 @@ def _sync_task(task_id: str) -> list[str]:
                 found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
                 raise RuntimeError(f"Expected task branch {branch}, found {found}")
+            step = "push"
             try:
                 _once_more_if_transient(
                     lambda: _deliver_task_branch(
@@ -4386,66 +4376,62 @@ def _sync_task(task_id: str) -> list[str]:
                 # point: its report is the reason to look, and the sync that
                 # would carry it forward is the one being abandoned here.
                 _flush_pre_push_reports()
-            if not_backed_up is not None and snapshot != head:
-                # Files that are not committed stay only here until a backup
-                # takes them. Without any, the branch now holds all the
-                # backup would have, and the next sync has nothing to retry.
-                delivered = True
-                raise _NotBackedUp(
-                    f"{type(not_backed_up).__name__}: {not_backed_up}", left_out
-                ) from not_backed_up
-            record.write(
-                f"{datetime.now(UTC).isoformat()} success head={head} "
-                f"snapshot={snapshot}\n"
-            )
+            note(f"success head={head} snapshot={snapshot}")
             (admin / _SYNC_FAILURE_TOLD).unlink(missing_ok=True)
             return left_out
         except BaseException as exc:
-            record.write(
-                f"{datetime.now(UTC).isoformat()} failed {type(exc).__name__}: {exc}\n"
-            )
+            note(f"failed step={step} {type(exc).__name__}: {exc}")
             if closed and isinstance(exc, Exception):
                 # No room message from here: a closed task has no turn whose
                 # work went missing, and when a room leaves this machine the
                 # platform tells the room which task stayed behind and why.
+                _report_backup_failure(task_id, step, exc)
                 raise _ClosedTaskNotBackedUp(str(exc)) from exc
-            # The queue's message says the commits are backed up, true only
-            # when they were.
-            queued = (
-                exc.pr
-                if isinstance(exc, _BranchQueued) and not_backed_up is None
-                else None
+            _report_sync_failure(
+                admin, branch, exc.pr if isinstance(exc, _BranchQueued) else None
             )
-            _report_sync_failure(admin, task_id, branch, queued, delivered=delivered)
             raise
 
 
-class _NotBackedUp(RuntimeError):
-    """An open task's commits reached its branch; its uncommitted files did
-    not reach the platform's backup.
-
-    Told apart from a failed push because whatever reads the branch (the
-    acceptance card, `push-fix`) has what it needs, while `sync --all` still
-    counts the task as failed: those files go with the machine.
-    """
-
-    def __init__(self, reason: str, left_out: list[str]):
-        super().__init__(reason)
-        self.left_out = left_out
+def _snapshot_commit(
+    worktree: Path, admin: Path, task_id: str, head: str
+) -> tuple[str, list[str]]:
+    """The commit a snapshot of `worktree` uploads, on top of `head`, and what
+    it leaves out. Built in an alternate index, so the worker's staging choices
+    stay as they are and unfinished work stays off the PR."""
+    snapshot_env = {"GIT_INDEX_FILE": str(admin / "cheese-snapshot-index")}
+    generated, dropped = _snapshot_index(worktree, snapshot_env)
+    tree = _git_task(worktree, "write-tree", extra_env=snapshot_env)
+    message = f"Work in progress for task {task_id}\n"
+    if left_out := _left_out_lines(generated, dropped):
+        # The list travels with the backup, for `cheese recover`.
+        message += f"\n{_LEFT_OUT_HEADER}\n" + "".join(
+            f"{line}\n" for line in left_out
+        )
+    if tree == _git_task(worktree, "rev-parse", "HEAD^{tree}"):
+        return head, left_out
+    return (
+        _git_task(worktree, "commit-tree", tree, "-p", head, input_text=message),
+        left_out,
+    )
 
 
 def _sync_delivered(task_id: str) -> None:
-    """`cheese sync --task` and `push-fix`: one task's sync, which has done
-    its job once the commits are on the branch."""
+    """`cheese sync --task`, the post-commit hook's `cheese sync`, and the sync
+    before `push-fix`: one task, with a failed push said to the agent that
+    ran it, in place of a traceback."""
     try:
         left_out = _sync_task(task_id)
-    except _NotBackedUp as exc:
+    except _ClosedTaskNotBackedUp as exc:
+        print(f"[cheese] 已结束的任务 {task_id} 没能备份：{exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    except Exception as exc:
         print(
-            f"[cheese] 任务 {task_id} 的提交已推上去，但没提交的改动没能备份到平台"
-            f"（{exc}），下次同步会再试。",
+            f"[cheese] 任务 {task_id} 的提交没能推上去：{exc}\n"
+            "验收卡和 diff 还是上一次推上去的版本。处理好原因后执行 cheese sync 重试。",
             file=sys.stderr,
         )
-        left_out = exc.left_out
+        raise SystemExit(1) from exc
     _print_left_out(task_id, left_out)
 
 

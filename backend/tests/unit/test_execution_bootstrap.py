@@ -35,6 +35,30 @@ def test_prepared_executor_can_start_offline_forge_transport(tmp_path, monkeypat
             assert transport["NO_PROXY"] == ""
 
 
+@pytest.mark.parametrize(
+    ("platform_machine", "supply"), [(True, "cloud"), (False, "self_hosted")]
+)
+def test_the_cheese_cli_is_told_whether_the_platform_owns_its_machine(
+    tmp_path, monkeypatch, platform_machine, supply
+):
+    """`cheese sync` snapshots tasks only where the platform may move or
+    rebuild the machine, so a session on a person's own machine is told so."""
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+
+    env = {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"}
+    payload = payload_for(
+        uuid.uuid4(),
+        uuid.uuid4(),
+        env,
+        sandbox=False,
+        platform_machine=platform_machine,
+    )
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    with bootstrap.prepared(payload, tmp_path) as (_home, _config, _state, prepared):
+        assert prepared["CHEESE_MACHINE_SUPPLY"] == supply
+
+
 def test_executor_prepares_room_without_model_credentials(tmp_path):
     pin = Path.home() / ".local/share/claude/versions/2.1.299"
     binary = os.environ.get("CHEESE_TEST_CLAUDE") or (
