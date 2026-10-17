@@ -1181,6 +1181,25 @@ ELSE_SIBLING = '''#!/usr/bin/env python3
 print("PASS: 旁置测试跑通了")
 '''
 
+#: The same hand-off, but the negative branch is an `elif`. The statement that
+#: follows it belongs to the outer block, not to the branch's own block.
+PY_NESTED_ELSE_DELEGATION = PY_ELSE_DELEGATION.replace(
+    '''    if "--self-test" not in argv:
+        return scan(argv)
+    return check()''',
+    '''    if len(argv) > 99:
+        return 3
+    elif "--self-test" not in argv:
+        return scan(argv)
+    return check()''',
+)
+
+#: The flag is counted, not tested for membership. Zero means it is absent, so
+#: this branch is the scan; reading it as the self-test side flags the guard.
+PY_COUNT_ZERO_SCAN = PY_NEGATIVE_BRANCH_SCAN.replace(
+    'if "--self-test" not in argv:', 'if argv.count("--self-test") == 0:'
+)
+
 #: The scan path shells out to `helper.py`; the self-test re-runs this very
 #: file, so mutating it reaches the process that judges. Only the self-test
 #: path decides whether a spawn makes the mutation unreachable.
@@ -1449,6 +1468,23 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(code, 2, output)
         self.assertEqual(guard["status"], "unverified", guard)
         self.assertIn("测试文件", guard["detail"])
+
+    def test_an_elif_branch_still_leaves_the_rest_of_the_block_on_the_path(self) -> None:
+        """`elif` is an `if` inside an `orelse`; what follows it is on the path too."""
+        code, guard, output = self._only(
+            {"nested.py": PY_NESTED_ELSE_DELEGATION}, {"test_else.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_counted_zero_is_the_scan_not_the_self_test(self) -> None:
+        """`count() == 0` holds when the flag is absent, exactly like `not in`."""
+        code, guard, output = self._only(
+            {"counted.py": PY_COUNT_ZERO_SCAN}, {"helper.py": HELPER_SCRIPT}
+        )
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
 
     def test_a_verdict_after_a_control_word_is_still_the_verdict(self) -> None:
         """`then exit 1` is a command in command position, not another word of the test."""

@@ -381,10 +381,45 @@ def _branch_runs_self_test(test: ast.AST) -> bool:
         return not _branch_runs_self_test(test.operand)
     for node in ast.walk(test):
         if isinstance(node, ast.Compare) and _mentions_string(node, "--self-test"):
-            if any(isinstance(op, (ast.NotIn, ast.NotEq)) for op in node.ops):
-                return False
-            return True
+            return _comparison_holds_with_flag(node)
     return True
+
+
+def _comparison_holds_with_flag(node: ast.Compare) -> bool:
+    """True when this comparison holds exactly while `--self-test` is passed.
+
+    `"--self-test" in argv` and `argv[1:] == ["--self-test"]` hold with the
+    flag; `not in` and `!=` hold without it. A comparison on how many times
+    the flag appears — `argv.count("--self-test") == 0` — inverts instead:
+    zero means the flag is absent, so that branch is the scan.
+    """
+    counted = any(
+        isinstance(item, ast.Call)
+        and (
+            isinstance(item.func, ast.Name)
+            and item.func.id in ("len", "sum")
+            or isinstance(item.func, ast.Attribute)
+            and item.func.attr == "count"
+        )
+        for item in [node.left, *node.comparators]
+    )
+    for op in node.ops:
+        if counted and isinstance(op, (ast.Eq, ast.NotEq)):
+            return isinstance(op, ast.NotEq)
+        return not isinstance(op, (ast.NotIn, ast.NotEq))
+    return True
+
+
+def _statement_blocks(tree: ast.Module) -> dict[int, list[ast.stmt]]:
+    """Map each statement to the block of statements it sits in."""
+    blocks: dict[int, list[ast.stmt]] = {}
+    for node in ast.walk(tree):
+        for slot in ("body", "orelse", "finalbody"):
+            block = getattr(node, slot, None)
+            if isinstance(block, list) and block and isinstance(block[0], ast.stmt):
+                for statement in block:
+                    blocks[id(statement)] = block
+    return blocks
 
 
 def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
@@ -400,7 +435,9 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
 
     A guard that dispatches the other way — `if "--self-test" not in argv: return
     scan()` then `return check()` — keeps its self-test in the statements after
-    the branch, so those are on the path as well.
+    the branch, so those are on the path as well. The branch may be an `elif`
+    or sit inside a `try`, so the walk climbs through its enclosing statements
+    until it reaches the function, collecting what follows at each level.
     """
     named: dict[str, list[ast.AST]] = {}
     for node in ast.walk(tree):
@@ -420,14 +457,26 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
         for name in _SELF_TEST_FUNCTIONS
         for node in named.get(name, [])
     ]
+    blocks = _statement_blocks(tree)
     sides: list[list[ast.stmt]] = []
     for branch, for_self_test in branches:
         sides.append(branch.body if for_self_test else branch.orelse)
         if not for_self_test:
-            holder = parents.get(branch)
-            if isinstance(holder, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
-                block = holder.body
-                sides.append(block[block.index(branch) + 1 :])
+            # Whatever follows the branch also runs for the self-test. The
+            # branch may sit in an `elif`, a `try` or a `with`, so walk out
+            # through its enclosing statements, stopping at the function.
+            node: ast.AST = branch
+            while True:
+                block = blocks.get(id(node))
+                if block is None:
+                    break
+                sides.append(block[block.index(node) + 1 :])
+                holder = parents.get(node)
+                if isinstance(
+                    holder, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module, ast.Lambda)
+                ) or holder is None:
+                    break
+                node = holder
     for side in sides:
         for statement in side:
             for node in ast.walk(statement):
@@ -1255,7 +1304,9 @@ def self_test() -> int:
         "variable-command-guard.py": "unverified",
         "wrapper-guard.py": "unverified",
         "negative-branch-guard.py": "ok",
+        "count-zero-guard.py": "ok",
         "else-handoff-guard.py": "unverified",
+        "nested-handoff-guard.py": "unverified",
     }
     failures = []
     for name, want in expected.items():
@@ -1274,7 +1325,8 @@ def self_test() -> int:
         "经末尾 if 转交的状态；谓词里的 return 1、echo 的参数 exit 1 和打印记录里的 exit 1 都不算结论；"
         "heredoc 里的 fi 不结束自测块、引号里的 <<EOF 不算 heredoc；块外的 self_fail 不动；"
         "参数里的 .py 不算委派、存进变量的命令也会还原、只有自测路径上的外派才判委派、"
-        "自测分支调到的普通函数也会跟下去；控制词后面的判定算判定、return 之后的死代码不算；"
+        "自测分支调到的普通函数也会跟下去；计数为零的分支是扫描侧、elif 之后照样跟下去；"
+        "控制词后面的判定算判定、return 之后的死代码不算；"
         "只查干净夹具的假绿被检出（Python 与 shell 各一）、空转假绿被检出、缺自测与没变绿各自报出、"
         "委派给旁置测试文件的判不了）"
     )
@@ -1893,6 +1945,89 @@ def main(argv):
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 ''',
+    "nested-handoff-guard.py": '''#!/usr/bin/env python3
+"""The negative branch is an `elif`, so the hand-off is outside its block.
+
+The statements after the branch are still what runs for the self-test; only
+the branch's own block is not the function body.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(argv):
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_nested.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) > 99:
+        return 3
+    elif "--self-test" not in argv:
+        return scan(argv)
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "count-zero-guard.py": '''#!/usr/bin/env python3
+"""The scan is chosen by counting the flag, not by membership.
+
+`argv.count("--self-test") == 0` is the scan side just as `not in` is; reading
+it the other way puts the scan's helper on the self-test path.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(argv):
+    subprocess.run([sys.executable, str(Path(__file__).with_name("helper.py"))], check=False)
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+def main(argv):
+    if argv.count("--self-test") == 0:
+        return scan(argv)
+    return self_test()
+
+
+def self_test():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 1:
+            print("SELF-TEST FAIL: 没有以 1 报出 .bad", file=sys.stderr)
+            return 1
+    print("PASS: .bad 被报出")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
     "shell-unquoted-hint-guard.sh": '''#!/usr/bin/env bash
 # `echo … exit 1` prints words; the self-test only looks at that text.
 set -u
@@ -2389,6 +2524,10 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+''',
+    "test_nested.py": '''#!/usr/bin/env python3
+"""The test file `nested-handoff-guard.py --self-test` hands off to."""
+print("PASS: 旁置测试跑通了")
 ''',
     "test_else.py": '''#!/usr/bin/env python3
 """The test file `else-handoff-guard.py --self-test` hands off to."""
