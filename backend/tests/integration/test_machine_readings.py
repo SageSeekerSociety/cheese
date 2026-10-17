@@ -24,12 +24,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import insert, select, update
+from sqlalchemy.exc import IntegrityError
 
 from app.core import alerting
 from app.core.config import settings
-from app.domain.machine import disk_guard
-from app.domain.machine.models import HostReading, SandboxHome
+from app.domain.machine import disk_guard, readings
+from app.domain.machine.models import HostReading, SandboxHome, SandboxUsage
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_cloud_host_pool import pool  # noqa: F401 — fixture
 from tests.integration.test_sandbox_disk_guard import ROOM, files, guard
@@ -243,6 +244,42 @@ def test_a_host_short_of_memory_on_two_readings_running_is_reported_once(
     readings_go_back(cloud, timedelta(seconds=60))
     guard(cloud)
     assert len(posted(cloud, alerts)) == 1
+
+
+def test_a_short_host_is_reported_when_its_sandbox_usage_lost_a_race(
+    cloud,  # noqa: F811
+    alerts,
+    monkeypatch,
+):
+    """Keeping a sandbox's usage can fail when the sandbox goes between the
+    check that it exists and the write; the host's own reading and its alert
+    still go out."""
+    working_on(cloud, cloud.seats[0], "host-1")
+    hostname = host_of(cloud, cloud.seats[0]).hostname
+    kernel_says(cloud, {"host-1": memory(15.5)}, {})
+    guard(cloud)
+    readings_go_back(cloud, timedelta(seconds=60))
+    real = readings._write
+    lost = []
+
+    async def first_write_loses(session, row, usage, now):
+        if not lost:
+            lost.append(row)
+            # A sandbox row gone between the check and the insert.
+            try:
+                session.add(row)
+                await session.execute(insert(SandboxUsage).values(home_id=uuid.uuid4()))
+            except IntegrityError:
+                await session.rollback()
+                return False
+        return await real(session, row, usage, now)
+
+    monkeypatch.setattr(readings, "_write", first_write_loses)
+    guard(cloud)
+
+    assert lost
+    (alert,) = posted(cloud, alerts)
+    assert hostname in alert
 
 
 def test_a_spike_past_the_line_for_one_reading_is_not_reported(

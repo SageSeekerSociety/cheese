@@ -146,13 +146,25 @@ async def record(
                 memory_peak_bytes=group.get("memory_peak"),
                 memory_read_at=now,
             )
+    # What the alert needs, read now: a rollback below expires every row the
+    # session has loaded, and reading one after it fails.
+    who = (host.id, host.hostname)
+    # Two readings running: the one before must be the check before, not one
+    # from before the host went away.
+    before = (
+        past(previous)
+        if previous is not None
+        and now - previous.read_at
+        <= timedelta(seconds=3 * settings.sandbox_disk_check_s)
+        else {}
+    )
     # The read took up to two minutes: a sandbox destroyed meanwhile has no row
     # left for its usage, and its reading is dropped rather than the host's.
     if not await _write(session, row, usage, now) and not await _write(
         session, row, {}, now
     ):
         return
-    _alert(host, row, previous)
+    _alert(*who, row, before)
 
 
 async def _write(
@@ -195,28 +207,21 @@ async def _write(
     return True
 
 
-def _alert(host: CloudHost, row: HostReading, previous: HostReading | None) -> None:
-    if previous is None:
-        return
-    # Two readings running: the one before must be the check before, not one
-    # from before the host went away.
-    if row.read_at - previous.read_at > timedelta(
-        seconds=3 * settings.sandbox_disk_check_s
-    ):
-        return
-    before = past(previous)
+def _alert(
+    host_id: uuid.UUID, hostname: str, row: HostReading, before: dict[str, float]
+) -> None:
     for kind, share in past(row).items():
         if kind not in before:
             continue
         alerting.send(
-            f"宿主机 {host.hostname} 的{SHORT_OF[kind]}快满了",
+            f"宿主机 {hostname} 的{SHORT_OF[kind]}快满了",
             [
                 f"已用：{share:.0%}（告警线 {LINES[kind]:.0%}）",
                 f"现在：{_amount(row, kind)}",
                 f"上面的沙箱：{row.sandboxes if row.sandboxes is not None else '未知'}",
                 "详情：管理后台「机器」页",
             ],
-            key=f"machine-capacity|{host.id}|{kind}",
+            key=f"machine-capacity|{host_id}|{kind}",
             when=row.read_at.timestamp(),
         )
 
