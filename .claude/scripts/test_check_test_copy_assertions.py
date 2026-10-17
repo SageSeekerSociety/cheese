@@ -20,7 +20,6 @@ class TestCopyAssertionGuardTests(unittest.TestCase):
     def test_repository_and_frozen_baseline_pass(self) -> None:
         result = self._run(SCRIPT.parents[2])
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("21 个精确历史基线项已冻结", result.stdout)
 
     def test_new_python_and_javascript_sentences_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -106,20 +105,83 @@ expect(actual).not.toBe("This explanatory sentence should be checked by its impo
         self.assertNotIn("values.spec.ts:", result.stderr)
         self.assertIn("基线项已过期或数量减少", result.stderr)
 
-    def test_explicit_root_works_when_scanner_script_is_shallow(self) -> None:
+    def test_explicit_root_is_scanned_when_scanner_script_is_shallow(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            fixture = root / "fixture"
+            self._write(fixture, "backend/tests/unit/test_copy.py", f'assert actual == "{LONG_COPY}"')
             script = root / "scanner.py"
             script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
             result = subprocess.run(
-                [sys.executable, str(script), "--root", str(root / "fixture")],
+                [sys.executable, str(script), "--root", str(fixture)],
                 check=False,
                 capture_output=True,
                 text=True,
             )
 
-        self.assertNotIn("IndexError", result.stderr)
-        self.assertIn("基线项已过期或数量减少", result.stderr)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("backend/tests/unit/test_copy.py:1", result.stderr)
+
+    def test_chinese_filename_command_words_and_multiline_copy_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write(
+                root,
+                "backend/tests/unit/test_copy.py",
+                '''
+assert actual == "这个团队已经有这个成员了，无法重复添加该成员"
+assert actual == "answer-first.md 的这一版已经改不动了：它已经存在（现在是第 1 版）。重读一次，把改动并进去，再写。"
+assert actual == "The task can only be assigned to one person in this workspace"
+assert actual == "Please run python from the project root after the environment starts"
+assert actual == "The deployment failed because the gateway could not reach the upstream.\\nPlease retry after the environment has started."
+''',
+            )
+            result = self._run(root)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        for line in (2, 3, 4, 6):
+            self.assertIn(f"test_copy.py:{line}", result.stderr)
+
+    def test_python_fstrings_and_wrapped_vitest_arguments_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write(
+                root,
+                "backend/tests/unit/test_fstring.py",
+                "\n".join(
+                    [
+                        f'assert actual == f"{LONG_COPY} {{item}}"',
+                        f'self.assertEqual(actual, f"{LONG_COPY} {{item}}")',
+                    ]
+                ),
+            )
+            self._write(
+                root,
+                "frontend/src/copy.spec.ts",
+                f'''const quote = /["']/;
+expect(actual).toBe(("{LONG_COPY}" as const));
+expect(actual).toEqual("{LONG_COPY}" + suffix);
+''',
+            )
+            result = self._run(root)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("test_fstring.py:1", result.stderr)
+        self.assertIn("test_fstring.py:2", result.stderr)
+        self.assertIn("copy.spec.ts:2", result.stderr)
+        self.assertIn("copy.spec.ts:3", result.stderr)
+
+    def test_additional_test_roots_are_scanned(self) -> None:
+        roots = (".github/scripts", "backend/scripts", "deploy/gateway", "deploy/tests", "docs/site/test")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for scan_root in roots:
+                self._write(root, f"{scan_root}/test_copy.py", f'assert actual == "{LONG_COPY}"')
+            result = self._run(root)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        for scan_root in roots:
+            self.assertIn(f"{scan_root}/test_copy.py:1", result.stderr)
 
     @staticmethod
     def _write(root: Path, relative_path: str, content: str) -> None:

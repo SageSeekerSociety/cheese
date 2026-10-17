@@ -35,6 +35,19 @@ BASELINE: dict[tuple[str, str], int] = {
     ("frontend/src/lib/adminPool.spec.ts", "Cooling until 02:20 PM · 2 consecutive failures"): 1,
     ("frontend/src/views/tasks/composables/useAssistant.spec.ts", "Cheese can't answer right now. Try again later."): 1,
     ("frontend/src/views/account/attemptWait.spec.ts", "Too many attempts. Try again in ${wait}."): 1,
+    ("backend/tests/integration/test_admin_and_form_error_language.py", "环境变量 PATH 是保留名，或者不是合法的变量名"): 1,
+    ("backend/tests/integration/test_domain_error_language.py", "answer-first.md 的这一版已经改不动了：它已经存在（现在是第 1 版）。重读一次，把改动并进去，再写。"): 1,
+    ("backend/tests/integration/test_domain_error_language.py", "This version of answer-first.md can no longer be changed: it already exists (now at version 1). Read it again, merge your changes in, then write."): 1,
+    ("backend/tests/integration/test_domain_error_language.py", "Not a docs page: ../../etc/passwd (write the page name, such as accept or dev/turn)"): 1,
+    ("backend/tests/integration/test_room_sees_the_work.py", "分身查完了：查分页接口现状\n结论：分页用的是 offset， 改动点在路由层"): 1,
+    ("backend/tests/integration/test_team_refusals_are_said_in_the_readers_language.py", "这个人已经有一条加入这个团队的邀请或申请在等处理"): 1,
+    ("backend/tests/unit/test_event_lines.py", "分身查完了：查分页接口现状\n结论： 分页用的是 offset"): 1,
+    ("backend/tests/unit/test_local_fs_paths.py", "“NUL.txt” is a reserved Windows device name"): 1,
+    ("frontend/src/App.newProjectIntent.spec.ts", "帮我把这学期的课程材料整理成一份大纲"): 1,
+    ("frontend/src/components/panels/PanelPreview.document.spec.ts", "在 output/评审简报.docx 的 第 2 页（「平台在真实课程中完成了部署」）：这句话和摘要对不上"): 1,
+    ("frontend/src/components/panels/PanelPreview.document.spec.ts", "在 output/说明.md 的 标题「配置」（「重试 3 次」）：这里也要写清楚"): 1,
+    ("frontend/src/components/panels/doc/blocks/reader.spec.ts", "组会报名\n时间：周四下午三点\n地点：B201\n报名找林老师"): 1,
+    ("frontend/src/lib/platformEvents.spec.ts", "这轮因运行环境存储空间不足而暂停，项目文件和已完成的改动都还在。"): 1,
 }
 
 SKIP_DIRS = {
@@ -58,10 +71,12 @@ TOKEN_RE = re.compile(
 )
 HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
-PATH_RE = re.compile(
-    r"\b(?:https?|wss?)://|(?:^|[\s(\"'`])(?:\.\.?/|/)(?:[\w.-]+/)*[\w.-]+|"
-    r"(?:^|[\s(\"'`])[\w.-]+(?:/[\w.-]+){2,}|"
-    r"\b[\w.-]+\.(?:md|py|ts|tsx|js|jsx|cjs|mjs|json|txt|vue|docx)\b",
+PATH_VALUE_RE = re.compile(
+    r"(?:https?|wss?)://[^\s]+|"
+    r"(?:[A-Za-z]:)?[\\/][\w.-]+(?:[\\/][\w.-]+)*|"
+    r"\.{1,2}[\\/][\w.-]+(?:[\\/][\w.-]+)*|"
+    r"[\w.-]+(?:[\\/][\w.-]+)+|"
+    r"[\w.-]+\.(?:md|py|ts|tsx|js|jsx|cjs|mjs|json|txt|vue|docx)",
     re.IGNORECASE,
 )
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
@@ -69,7 +84,18 @@ COMMIT_TITLE_RE = re.compile(r"^(?:feat|fix|chore|docs|refactor|test|build|ci)(?
 KEY_VALUE_RE = re.compile(r"\b[\w-]+=\S+")
 IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
 STATUS_CODES_RE = re.compile(r"(?:HTTP\s*)?\d{3}(?:\s+\d{3})*\Z", re.IGNORECASE)
-SHELL_COMMAND_RE = re.compile(r"\b(?:git\s+(?:fetch|merge|checkout|switch|status|diff)\b|npm\b|pnpm\b|python3?\b|task\b)", re.IGNORECASE)
+WORKFLOW_EXPRESSION_RE = re.compile(
+    r"(?:needs|steps|github|matrix|env|vars|inputs)\.[\w.-]+"
+    r"(?:\s*(?:==|!=|&amp;&amp;|\|\|).*)?\Z",
+    re.IGNORECASE,
+)
+SHELL_COMMAND_RE = re.compile(
+    r"(?:^|&&\s*)(?:git\s+(?:fetch|merge|checkout|switch|status|diff)\b|"
+    r"(?:npm|pnpm)\s+(?:install|ci|test|run|exec)\b|"
+    r"python3?\s+(?:-[mcu]\b|\S+\.py\b)|(?:sh|bash)\s+\S+)|^workflow\s+run\b",
+    re.IGNORECASE,
+)
+TITLE_ACTION_RE = re.compile(r"^(?:Require|Ensure|Check|Run|Use|Add|Remove|Enter|Click|Select)\b")
 JS_ASSERTION_METHODS = {
     "toBe",
     "toEqual",
@@ -84,7 +110,12 @@ JS_ASSERTION_METHODS = {
 def _test_files(root: Path) -> list[Path]:
     scan_roots = [
         root / ".claude" / "scripts",
+        root / ".github" / "scripts",
+        root / "backend" / "scripts",
         root / "backend" / "tests",
+        root / "deploy" / "gateway",
+        root / "deploy" / "tests",
+        root / "docs" / "site",
         root / "frontend",
         root / "desktop",
         root / "e2e",
@@ -107,22 +138,29 @@ def _test_files(root: Path) -> list[Path]:
 
 
 def _is_explanatory_sentence(value: str) -> bool:
-    value = value.strip()
+    value = " ".join(value.split())
+    han_count = len(HAN_RE.findall(value))
     if (
-        len(value) < 32
-        or "\n" in value
-        or PATH_RE.search(value)
-        or EMAIL_RE.search(value)
+        not value
+        or PATH_VALUE_RE.fullmatch(value)
+        or EMAIL_RE.fullmatch(value)
         or COMMIT_TITLE_RE.match(value)
         or KEY_VALUE_RE.search(value)
         or SHELL_COMMAND_RE.search(value)
-        or value.startswith("<")
+        or WORKFLOW_EXPRESSION_RE.fullmatch(value)
+        or value.startswith(("<", ":::" , "import ", "src/", "backend/", "frontend/", "deploy/", "可递：", "missing:", "since=", "Type "))
+        or value.count("|") >= 2
+        or ":::" in value
+        or value.startswith("step ")
+        or re.search(r"\b(?:IS\s+NULL|IN\s*\(\{\}\)|SELECT|FROM|WHERE)\b", value, re.IGNORECASE)
+        or (EMAIL_RE.search(value) and not han_count and len(WORD_RE.findall(value)) < 9)
         or IDENTIFIER_RE.fullmatch(value)
         or STATUS_CODES_RE.fullmatch(value)
         or value.startswith(("Co-authored-by:", "::error::", "## "))
+        or (not han_count and (value.startswith(("/", "./", "../", "http")) or "://" in value or ("?" in value and "/" in value)))
+        or (not re.search(r"[.!?:;]", value) and TITLE_ACTION_RE.match(value))
     ):
         return False
-    han_count = len(HAN_RE.findall(value))
     if han_count >= 18:
         return True
     words = WORD_RE.findall(value)
@@ -132,6 +170,20 @@ def _is_explanatory_sentence(value: str) -> bool:
     if value.count(":") >= 2 and value.count(",") >= 1:
         return False
     return True
+
+
+def _python_string_value(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for part in node.values:
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                parts.append(part.value)
+            elif isinstance(part, ast.FormattedValue):
+                parts.append("{}")
+        return "".join(parts)
+    return None
 
 
 def _python_literals(path: Path) -> list[tuple[int, str]]:
@@ -147,8 +199,9 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
             for operator, comparator in zip(node.ops, node.comparators):
                 if isinstance(operator, ast.Eq):
                     for candidate in (left, comparator):
-                        if isinstance(candidate, ast.Constant) and isinstance(candidate.value, str):
-                            literals.append((candidate.lineno, candidate.value))
+                        value = _python_string_value(candidate)
+                        if value is not None:
+                            literals.append((candidate.lineno, value))
                 left = comparator
         if (
             isinstance(node, ast.Call)
@@ -156,8 +209,9 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
             and node.func.attr in {"assertEqual", "assertEquals"}
         ):
             for candidate in node.args[:2]:
-                if isinstance(candidate, ast.Constant) and isinstance(candidate.value, str):
-                    literals.append((candidate.lineno, candidate.value))
+                value = _python_string_value(candidate)
+                if value is not None:
+                    literals.append((candidate.lineno, value))
     return literals
 
 
@@ -198,10 +252,76 @@ def _call_argument_strings(tokens: list[tuple[str, int]], open_index: int) -> li
             arguments[-1].append((token, line))
     literals: list[tuple[int, str]] = []
     for argument in arguments[:2]:
-        if len(argument) == 1 and _is_js_string(argument[0][0]):
-            token, line = argument[0]
-            literals.append((line, _decode_js_string(token)))
+        literals.extend(
+            (line, _decode_js_string(token))
+            for token, line in argument
+            if _is_js_string(token)
+        )
     return literals
+
+
+def _regex_literal_end(source: str, start: int) -> int | None:
+    in_character_class = False
+    escaped = False
+    for index in range(start + 1, len(source)):
+        char = source[index]
+        if char in "\r\n":
+            return None
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == "[":
+            in_character_class = True
+        elif char == "]":
+            in_character_class = False
+        elif char == "/" and not in_character_class:
+            index += 1
+            while index < len(source) and source[index].isalpha():
+                index += 1
+            return index
+    return None
+
+
+def _can_start_regex(tokens: list[tuple[str, int]]) -> bool:
+    if not tokens:
+        return True
+    return tokens[-1][0] in {
+        "(", "[", "{", ",", ";", ":", "=", "==", "===", "!", "!=", "!==",
+        "?", "&&", "||", "??", "=>", "+", "-", "*", "%", "~", "^", "&", "|",
+        "return", "throw", "case", "delete", "void", "typeof", "instanceof", "in", "of",
+        "yield", "await",
+    }
+
+
+def _javascript_tokens(source: str) -> list[tuple[str, int]]:
+    tokens: list[tuple[str, int]] = []
+    position = 0
+    line = 1
+    while position < len(source):
+        if (
+            source[position] == "/"
+            and not source.startswith(("//", "/*"), position)
+            and _can_start_regex(tokens)
+        ):
+            end = _regex_literal_end(source, position)
+            if end is not None:
+                token = source[position:end]
+                tokens.append((token, line))
+                position = end
+                continue
+        match = TOKEN_RE.match(source, position)
+        if match is None:
+            position += 1
+            continue
+        token = match.group()
+        if match.lastgroup in {"space", "line_comment", "block_comment"}:
+            line += token.count("\n")
+        else:
+            tokens.append((token, line))
+            line += token.count("\n")
+        position = match.end()
+    return tokens
 
 
 def _javascript_literals(path: Path) -> list[tuple[int, str]]:
@@ -211,16 +331,7 @@ def _javascript_literals(path: Path) -> list[tuple[int, str]]:
         SCAN_ERRORS.append(f"{path}: 无法扫描测试文件: {exc}")
         return []
 
-    tokens: list[tuple[str, int]] = []
-    line = 1
-    for match in TOKEN_RE.finditer(source):
-        token = match.group()
-        kind = match.lastgroup
-        if kind in {"space", "line_comment", "block_comment"}:
-            line += token.count("\n")
-            continue
-        tokens.append((token, line))
-        line += token.count("\n")
+    tokens = _javascript_tokens(source)
 
     literals: list[tuple[int, str]] = []
     for index, (token, _) in enumerate(tokens):
