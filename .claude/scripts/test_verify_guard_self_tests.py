@@ -1459,6 +1459,199 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 '''
 
+#: The same exit, swallowed by a handler that falls through: `check` after the
+#: `try` still runs for `--self-test`.
+PY_SWALLOWED_EXIT = PY_SYSTEM_EXIT_HANDOFF.replace(
+    "    except SystemExit:\n        raise", "    except SystemExit:\n        pass"
+)
+
+#: The same exit, written as `raise SystemExit(0)`, carried out by the handler.
+PY_RAISED_EXIT = PY_SYSTEM_EXIT_HANDOFF.replace(
+    "        sys.exit(0)", "        raise SystemExit(0)"
+)
+
+#: The self-test branch sits under a condition that reads the environment, so
+#: the `return 0` in it is not provably the end of the path.
+PY_UNREACHED_SELF_TEST_BRANCH = '''#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    root = os.environ.get("GUARD_SCAN_ROOT")
+    if root:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return 0
+        return scan(Path(root))
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The self-test branch sits in a `with` body, which provably runs, so its
+#: `return 0` leaves the `check` below the `with` dead.
+PY_WITH_BRANCH = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    with open(__file__, encoding="utf-8") as stream:
+        stream.read(1)
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return 0
+        return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The self-test branch sits in a `match` case that falls out of the `match`,
+#: so the `check` after it still runs.
+PY_MATCH_CASE_HANDOFF = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    match argv[1:]:
+        case [first]:
+            print(f"scanning {first}")
+            if "--self-test" not in argv:
+                return 1 if violations_in(first) else 0
+            print("PASS: 什么都没测")
+        case _:
+            print("no root")
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The zero is module-level but annotated: `ZERO: int = 0`.
+PY_ANNOTATED_ZERO = PY_NAMED_COUNT.replace("ZERO = 0", "ZERO: int = 0")
+
+#: The self-test branch sits in a `finally`, which always runs, so its
+#: `return 0` leaves the `check` below the `try` dead.
+PY_FINALLY_BRANCH = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    try:
+        pass
+    finally:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return 0
+        return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The self-test branch sits under `len(argv) > 1`, which settles true for the
+#: self-test's own command line.
+PY_LENGTH_GUARDED_BRANCH = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) > 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return 0
+        return scan(Path(argv[1]))
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
 #: The scan path shells out to `helper.py`; the self-test re-runs this very
 #: file, so mutating it reaches the process that judges. Only the self-test
 #: path decides whether a spawn makes the mutation unreachable.
@@ -1802,6 +1995,77 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         """`sys.exit(0)` ends the process, so the `check` after the `try` never runs."""
         code, guard, output = self._only(
             {"sysexithandoff.py": PY_SYSTEM_EXIT_HANDOFF}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_swallowed_system_exit_leaves_the_hand_off_on_the_path(self) -> None:
+        """`except SystemExit: pass` resumes at `check` after the `try`."""
+        code, guard, output = self._only(
+            {"swallowedexit.py": PY_SWALLOWED_EXIT}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_raised_system_exit_carried_out_by_the_handler_is_final(self) -> None:
+        """`raise SystemExit(0)` re-raised by the handler never reaches `check`."""
+        code, guard, output = self._only(
+            {"raisedexit.py": PY_RAISED_EXIT}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_branch_under_an_unsettled_condition_does_not_end_the_path(self) -> None:
+        """The outer block reads the environment, so its `return 0` may not run."""
+        code, guard, output = self._only(
+            {"unreached.py": PY_UNREACHED_SELF_TEST_BRANCH},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_branch_in_a_with_body_ends_the_path(self) -> None:
+        """A `with` body provably runs, so its `return 0` kills the hand-off."""
+        code, guard, output = self._only(
+            {"withbranch.py": PY_WITH_BRANCH}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_branch_in_a_match_case_reaches_the_hand_off_below_the_match(self) -> None:
+        """Falling out of the case lands on `check` after the `match`."""
+        code, guard, output = self._only(
+            {"matchhandoff.py": PY_MATCH_CASE_HANDOFF},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_an_annotated_module_zero_is_read_as_the_scan(self) -> None:
+        """`ZERO: int = 0` is the same operand as `ZERO = 0`."""
+        code, guard, output = self._only(
+            {"annotatedzero.py": PY_ANNOTATED_ZERO}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_branch_in_a_finally_ends_the_path(self) -> None:
+        """A `finally` body always runs, so its `return 0` kills the hand-off."""
+        code, guard, output = self._only(
+            {"finallybranch.py": PY_FINALLY_BRANCH}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_branch_under_a_settled_length_ends_the_path(self) -> None:
+        """`len(argv) > 1` holds for `["guard.py", "--self-test"]`."""
+        code, guard, output = self._only(
+            {"lengthbranch.py": PY_LENGTH_GUARDED_BRANCH},
+            {"test_counted.py": ELSE_SIBLING},
         )
         self.assertEqual(code, 1, output)
         self.assertEqual(guard["status"], "self-test-does-not-bite", guard)

@@ -89,6 +89,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins
 import json
 import re
 import subprocess
@@ -435,20 +436,26 @@ def _int_value(node: ast.AST, constants: dict[str, int]) -> int | None:
 
 
 def _int_constants(tree: ast.Module) -> dict[str, int]:
-    """Module-level names assigned an integer literal exactly once."""
+    """Module-level names assigned an integer literal exactly once.
+
+    Only statements directly in the module body count: a same-named local in
+    some other function is not the constant the branch reads, and resolving it
+    would flip the branch the wrong way.
+    """
     seen: dict[str, int] = {}
     assigned_twice: set[str] = set()
-    for node in ast.walk(tree):
+    for node in tree.body:
         if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    value = _int_value(node.value, {})
-                    if value is None:
-                        assigned_twice.add(target.id)
-                        continue
-                    if target.id in seen:
-                        assigned_twice.add(target.id)
-                    seen[target.id] = value
+            targets = [target for target in node.targets if isinstance(target, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target]
+        else:
+            continue
+        value = _int_value(node.value, {}) if node.value is not None else None
+        for target in targets:
+            if target.id in seen:
+                assigned_twice.add(target.id)
+            seen[target.id] = value if value is not None else seen.get(target.id)
     return {name: value for name, value in seen.items() if name not in assigned_twice}
 
 
@@ -558,31 +565,107 @@ def _branch_is_proven_reached(branch: ast.AST, parents: dict[ast.AST, ast.AST]) 
             return False
 
 
-def _abandons_the_run(statement: ast.stmt) -> bool:
+def _exception_name(node: ast.AST) -> str | None:
+    """The name an `except` clause says, whether spelled `X` or `mod.X`."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _handler_catches_system_exit(handler: ast.ExceptHandler) -> bool:
+    """True when this handler's clause may catch a `SystemExit`.
+
+    A bare `except:` catches everything. `SystemExit` and `BaseException` catch
+    it; any other builtin exception does not. A name this module cannot resolve
+    might alias `SystemExit`, so it counts: guessing "catches" only makes the
+    verdict more conservative, never a finding.
+    """
+    if handler.type is None:
+        return True
+    clauses = (
+        handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    )
+    for clause in clauses:
+        name = _exception_name(clause)
+        if name is None:
+            return True
+        builtin = getattr(builtins, name, None)
+        if isinstance(builtin, type) and issubclass(builtin, BaseException):
+            if issubclass(SystemExit, builtin):
+                return True
+            continue
+        return True
+    return False
+
+
+def _handler_reraises(handler: ast.ExceptHandler) -> bool:
+    """True when the handler leaves through a `raise` or `return` of its own.
+
+    Such a handler does not swallow the `SystemExit`: control does not resume
+    at the statement after the `try`.
+    """
+    last = handler.body[-1] if handler.body else None
+    return isinstance(last, (ast.Return, ast.Raise))
+
+
+def _system_exit_is_swallowed(
+    statement: ast.stmt, parents: dict[ast.AST, ast.AST]
+) -> bool:
+    """True when an enclosing `try` catches the `SystemExit` and keeps going.
+
+    `raise SystemExit` / `sys.exit()` are not final on their own for the same
+    reason a bare `raise` is not: a `try` whose handler catches `SystemExit`
+    and falls through resumes execution after it.
+    """
+    node: ast.AST = statement
+    while True:
+        holder = parents.get(node)
+        if holder is None or isinstance(
+            holder, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.Module)
+        ):
+            return False
+        if isinstance(holder, (ast.Try, ast.TryStar)) and node in holder.body:
+            for handler in holder.handlers:
+                if _handler_catches_system_exit(handler) and not _handler_reraises(
+                    handler
+                ):
+                    return True
+        node = holder
+
+
+def _abandons_the_run(statement: ast.stmt, parents: dict[ast.AST, ast.AST]) -> bool:
     """True when control cannot continue past this statement.
 
-    A `return`, an `exit`/`sys.exit` call or `raise SystemExit` ends the path.
-    A bare `raise` does not: an enclosing `except` may catch it, and execution
-    resumes after the `try`, so the walk keeps climbing over it.
+    A `return` ends the path outright. `exit`/`sys.exit` and `raise
+    SystemExit` end it too, unless an enclosing `except` catches the
+    `SystemExit` and does not re-raise — then execution resumes after the
+    `try`. A bare `raise` never counts: whatever it raises, an enclosing
+    handler may catch it.
     """
     if isinstance(statement, ast.Return):
         return True
     if isinstance(statement, ast.Raise):
         exc = statement.exc
-        return (
+        ends = (
             isinstance(exc, ast.Name)
             and exc.id == "SystemExit"
             or isinstance(exc, ast.Call)
             and isinstance(exc.func, ast.Name)
             and exc.func.id == "SystemExit"
         )
-    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+    elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
         func = statement.value.func
         if isinstance(func, ast.Name):
-            return func.id in ("exit", "quit", "_exit")
-        if isinstance(func, ast.Attribute):
-            return func.attr == "exit"
-    return False
+            ends = func.id in ("exit", "quit", "_exit")
+        elif isinstance(func, ast.Attribute):
+            ends = func.attr == "exit"
+        else:
+            ends = False
+    else:
+        ends = False
+    return ends and not _system_exit_is_swallowed(statement, parents)
 
 
 def _statement_blocks(tree: ast.Module) -> dict[int, list[ast.stmt]]:
@@ -653,13 +736,16 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
         # holds with the flag, otherwise what follows the branch.
         side = branch.body if for_self_test else branch.orelse
         sides.append(side)
-        if side and _abandons_the_run(side[-1]):
+        # Only a side that provably runs can take the rest of the function off
+        # the path. Inside a loop that may run zero times, or under a test this
+        # invocation does not settle, the `return` in it is not the end.
+        trusted = _branch_is_proven_reached(branch, parents)
+        if trusted and side and _abandons_the_run(side[-1], parents):
             continue
         # Whichever side was taken, execution falls through to what follows the
         # branch. The branch may sit in an `elif`, a `try`, a `with`, an
         # `except` or a `match` case, so walk out through its enclosing
         # statements, stopping at the function.
-        trusted = _branch_is_proven_reached(branch, parents)
         node: ast.AST = branch
         while True:
             block = blocks.get(id(node))
@@ -667,7 +753,7 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
                 break
             tail = block[block.index(node) + 1 :]
             sides.append(tail)
-            if trusted and tail and _abandons_the_run(tail[-1]):
+            if trusted and tail and _abandons_the_run(tail[-1], parents):
                 # The self-test leaves inside a block that provably runs, so
                 # nothing further out can be on its path; collecting it would
                 # only invent a spawn.
@@ -1518,6 +1604,14 @@ def self_test() -> int:
         "loop-body-branch-guard.py": "unverified",
         "caught-raise-guard.py": "unverified",
         "system-exit-handoff-guard.py": "self-test-does-not-bite",
+        "unreached-self-test-branch-guard.py": "unverified",
+        "swallowed-system-exit-guard.py": "unverified",
+        "raised-exit-guard.py": "self-test-does-not-bite",
+        "with-branch-guard.py": "self-test-does-not-bite",
+        "match-case-handoff-guard.py": "unverified",
+        "annotated-zero-guard.py": "unverified",
+        "finally-branch-guard.py": "self-test-does-not-bite",
+        "length-guarded-branch-guard.py": "self-test-does-not-bite",
     }
     failures = []
     for name, want in expected.items():
@@ -1538,7 +1632,9 @@ def self_test() -> int:
         "参数里的 .py 不算委派、存进变量的命令也会还原、只有自测路径上的外派才判委派、"
         "自测分支调到的普通函数也会跟下去；计数为零的分支是扫描侧、elif 之后照样跟下去；"
         "控制词后面的判定算判定、return 之后的死代码不算；分支落在循环体里不算离开、"
-        "被捕获的 raise 不算离开、sys.exit 才算；"
+        "被捕获的 raise 不算离开、sys.exit 才算；分支落在 else、match case 里照样跟下去，"
+        "落在 with、finally 和已定的条件里才算离开；被 except SystemExit 吞掉的退出不算离开、"
+        "处理器再抛出才算；带注解的模块常量也读得出；"
         "只查干净夹具的假绿被检出（Python 与 shell 各一）、空转假绿被检出、缺自测与没变绿各自报出、"
         "委派给旁置测试文件的判不了）"
     )
@@ -2444,6 +2540,307 @@ def main(argv):
         sys.exit(0)
     except SystemExit:
         raise
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "unreached-self-test-branch-guard.py": '''#!/usr/bin/env python3
+"""The self-test branch sits under a condition this invocation cannot settle.
+
+`GUARD_SCAN_ROOT` is read from the environment, so the outer block may not run
+at all. The `return 0` inside it is not the end of the self-test path, and the
+hand-off after the outer block is still reachable.
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    root = os.environ.get("GUARD_SCAN_ROOT")
+    if root:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return 0
+        return scan(Path(root))
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "swallowed-system-exit-guard.py": '''#!/usr/bin/env python3
+"""`sys.exit` in the self-test side is caught, so the hand-off below still runs.
+
+`except SystemExit: pass` swallows the exit and execution resumes at `check`
+after the `try`. Reading `sys.exit` as final would drop that hand-off.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    try:
+        if "--self-test" not in argv:
+            return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+        print("PASS: 什么都没测")
+        sys.exit(0)
+    except SystemExit:
+        pass
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "raised-exit-guard.py": '''#!/usr/bin/env python3
+"""The self-test side raises `SystemExit`, and the handler re-raises it.
+
+The re-raise carries the exit out of the `try`, so the `check` after it never
+runs for `--self-test` and this guard's green is false.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    try:
+        if "--self-test" not in argv:
+            return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+        print("PASS: 什么都没测")
+        raise SystemExit(0)
+    except SystemExit:
+        raise
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "with-branch-guard.py": '''#!/usr/bin/env python3
+"""The self-test branch sits in a `with` body, so its `return` is final.
+
+A `with` body provably runs, so the `return 0` inside it takes the `check`
+below the `with` off the self-test path; this guard's green never tested it.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    with open(__file__, encoding="utf-8") as stream:
+        stream.read(1)
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return 0
+        return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "match-case-handoff-guard.py": '''#!/usr/bin/env python3
+"""The self-test branch sits in a `match` case that falls through to a hand-off.
+
+The case prints and leaves the `match`, then `check` runs. Stopping the climb
+at the case instead of climbing out through the `match` drops that hand-off.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    match argv[1:]:
+        case [first]:
+            print(f"scanning {first}")
+            if "--self-test" not in argv:
+                return 1 if violations_in(first) else 0
+            print("PASS: 什么都没测")
+        case _:
+            print("no root")
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "finally-branch-guard.py": '''#!/usr/bin/env python3
+"""The self-test branch sits in a `finally` body, which always runs.
+
+Its `return 0` leaves through the `finally`, so the `check` after the `try` is
+dead for `--self-test` and this guard's green never tested it.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    try:
+        pass
+    finally:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return 0
+        return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "length-guarded-branch-guard.py": '''#!/usr/bin/env python3
+"""The self-test branch sits under `len(argv) > 1`, which holds for the self-test.
+
+`["guard.py", "--self-test"]` is two long, so the outer block provably runs and
+the `return 0` inside it takes the `check` below off the self-test path.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) > 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+            return 0
+        return scan(Path(argv[1]))
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "annotated-zero-guard.py": '''#!/usr/bin/env python3
+"""The zero is a module constant with a type annotation: `ZERO: int = 0`.
+
+`count("--self-test") == ZERO` holds when the flag is absent and the branch is
+the scan side; the hand-off follows it. Failing to read the annotated name
+sends the scan branch to the self-test side and drops `check`.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+ZERO: int = 0
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if argv.count("--self-test") == ZERO:
+        return 1 if violations_in(argv[1] if len(argv) > 1 else ".") else 0
     return check()
 
 
