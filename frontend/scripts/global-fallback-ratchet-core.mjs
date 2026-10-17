@@ -277,8 +277,9 @@ export function collectDefinitions(modules) {
 /**
  * Depth-first walk over an AST, which carries `parent` links back up.
  *
- * A node `past` says true for is yielded and not descended into: the one
- * caller that prunes is `internalDeclarations`, over a namespace body.
+ * A node `past` says true for is yielded and not descended into: the namespace
+ * body in `internalDeclarations`, and the function and class bodies in
+ * `moduleLevelDeclarations`.
  */
 function* walk(node, past = () => false) {
   if (!node || typeof node !== 'object') return
@@ -354,24 +355,50 @@ function propertyName(key) {
   return undefined
 }
 
+/** The node types whose bodies are their own scope. */
+const OWN_SCOPE = new Set([
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'ArrowFunctionExpression',
+  'ClassDeclaration',
+  'ClassExpression',
+])
+
 /**
- * The initializer of a name declared directly in `statements`.
+ * The variable declarations that sit in the scope `statements` opens.
  *
- * Only declarations at that level count. `export default options` can only name
- * a top-level binding, and a `const options` inside some function must not be
- * mistaken for it — that would bind a name the template cannot reach and hide
- * the very call this rule is for.
+ * At module level that includes one an `export` wraps — `export const options =
+ * …` is still a module-level binding — and one inside a top-level block, which
+ * `var` hoists out. It stops at a function or class body: a `const options`
+ * inside some function must not be mistaken for the binding `export default
+ * options` names, or a name the template cannot reach would count as bound and
+ * hide the very call this rule is for.
  */
-function initializerOf(name, statements) {
-  for (const node of Array.isArray(statements) ? statements : statements?.body ?? []) {
-    if (node.type !== 'VariableDeclaration') continue
-    for (const declarator of node.declarations) {
-      if (declarator.id?.type === 'Identifier' && declarator.id.name === name && declarator.init) {
-        return declarator.init
-      }
+function declarationsInScope(statements) {
+  const declarations = []
+  for (const node of walk(statements, (visited) => OWN_SCOPE.has(visited.type))) {
+    if (node.type === 'VariableDeclaration') declarations.push(node)
+  }
+  return declarations
+}
+
+/**
+ * The declarator for a name in the scope `statements` opens, initialised or
+ * not — the difference matters where a local shadows an outer name before it
+ * has a value.
+ */
+function declaredAs(name, statements) {
+  for (const declaration of declarationsInScope(statements)) {
+    for (const declarator of declaration.declarations) {
+      if (declarator.id?.type === 'Identifier' && declarator.id.name === name) return declarator
     }
   }
   return undefined
+}
+
+/** The initializer of a name declared in the scope `statements` opens. */
+function initializerOf(name, statements) {
+  return declaredAs(name, statements)?.init
 }
 
 /**
@@ -455,10 +482,14 @@ function returnedNames(node, body) {
       : [fn.body]
   return returned.flatMap((expression) => {
     // `setup() { const vm = { 'open': … }; return vm }` — the local is named in
-    // this function, not at module level.
+    // this function, not at module level, and only a name the function does not
+    // declare can be the module's. A `let vm; vm = useProbe(); return vm`
+    // shadows the module's `vm` even before it has a value, so it must not read
+    // what the module's holds.
     let value = unassert(expression)
     for (let hops = 0; hops < 4 && value?.type === 'Identifier'; hops += 1) {
-      value = unassert(initializerOf(value.name, scope) ?? initializerOf(value.name, body))
+      const local = declaredAs(value.name, scope)
+      value = unassert(local ? local.init : initializerOf(value.name, body))
     }
     return quotedKeys(value)
   })

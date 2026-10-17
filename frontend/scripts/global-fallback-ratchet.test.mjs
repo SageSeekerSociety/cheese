@@ -483,6 +483,11 @@ describe('findGlobalFallbacks', () => {
       ].join('\n')
     for (const script of [
       "const propsDef = ['open']\nexport default { props: propsDef }",
+      // A declaration an `export` wraps is still a module-level binding, and
+      // `var` written in a top-level block is hoisted out of it.
+      "export const propsDef = ['open']\nexport default { props: propsDef }",
+      "export const options = { props: ['open'] }\nexport default options",
+      "if (true) { var opts = { props: ['open'] } }\nexport default opts",
       "const Base = defineComponent({ props: ['open'] })\nexport default { extends: Base }",
       "const Base = defineComponent({ props: ['open'] })\nexport default { mixins: [Base] }",
       "const options = { props: ['open'] }\nexport default defineComponent(options)",
@@ -490,6 +495,10 @@ describe('findGlobalFallbacks', () => {
       "export default { data: () => ({ 'open': 1 }) }",
       "export default { 'methods': { 'open'() {} } }",
       "export default { setup() { const vm = { 'open': () => {} }; return vm } }",
+      // Two hops of alias, and a name the function does not declare at all,
+      // which is then the module's.
+      "export default { setup() { const a = { 'open': () => {} }; const b = a; return b } }",
+      "const vm = { 'open': () => {} }\nexport default { setup() { return vm } }",
     ]) {
       assert.deepEqual(found(component(script)), [], `reported options that reach the template:\n${script}`)
     }
@@ -529,6 +538,63 @@ describe('findGlobalFallbacks', () => {
       found(code).map((hit) => [hit.name, hit.where]),
       [['open', TEMPLATE]]
     )
+  })
+
+  // A local shadows the module's name from the moment it is declared, even
+  // before it has a value. A `setup` that returns such a local hands the
+  // template whatever that local ends up holding, not what a module-level
+  // variable of the same name happens to hold.
+  it('does not read a module variable a setup local shadows', () => {
+    const code = [
+      '<script lang="ts">',
+      "const vm = { 'open': () => {} }",
+      'export default {',
+      '  setup() {',
+      '    let vm',
+      '    vm = useSomething()',
+      '    return vm',
+      '  },',
+      '}',
+      'void useSomething',
+      '</script>',
+      '<template>',
+      '  <button @click="open()">x</button>',
+      '</template>',
+      '',
+    ].join('\n')
+    assert.deepEqual(
+      found(code).map((hit) => [hit.name, hit.where]),
+      [['open', TEMPLATE]]
+    )
+  })
+
+  // Following a name into what it is initialised with, and a mixin into the
+  // object it names, both walk a graph that a file can close on itself. The
+  // walk stops at the point it has already visited: it cannot say what an
+  // unresolvable cycle binds, so it says nothing binds — and it returns.
+  it('stops at a cycle rather than following it forever', () => {
+    const component = (script) =>
+      [
+        '<script lang="ts">',
+        script,
+        'void defineComponent',
+        '</script>',
+        '<template>',
+        '  <button @click="open()">x</button>',
+        '</template>',
+        '',
+      ].join('\n')
+    for (const script of [
+      'const a = b\nconst b = a\nexport default { props: a }',
+      'const A = { mixins: [B] }\nconst B = { mixins: [A] }\nexport default { mixins: [A] }',
+      'const A = defineComponent({ mixins: [A] })\nexport default A',
+    ]) {
+      assert.deepEqual(
+        found(component(script)).map((hit) => [hit.name, hit.where]),
+        [['open', TEMPLATE]],
+        `did not settle on the cycle:\n${script}`
+      )
+    }
   })
 
   // A component registered under `components:` declares its own props, which
