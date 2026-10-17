@@ -222,7 +222,7 @@ async def session_host_snapshot() -> dict[str, int | None]:
             result = await device_hub.exec(
                 host, ["cat", "/proc/meminfo"], timeout=SESSION_HOST_READ_TIMEOUT_S
             )
-    except Exception:  # noqa: BLE001 — an unreadable host is not a broken board
+    except Exception:  # an unreadable host is not a broken board
         logger.warning("session host memory unreadable", exc_info=True)
     else:
         if result.get("exit") == 0:
