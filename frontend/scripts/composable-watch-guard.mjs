@@ -82,10 +82,13 @@ function memberPath(node, ctx = {}) {
       (callee.text === 'toValue' || callee.text === 'unref' || callee.text === 'computed') &&
       node.arguments.length === 1
     ) {
-      // `computed(() => props.x)` watches the same thing `computed` does.
+      // `computed(() => props.x)` watches the same thing the inner expression does.
       const argument = unwrap(node.arguments[0])
       const value = ts.isArrowFunction(argument) || ts.isFunctionExpression(argument) ? unwrap(argument.body) : argument
-      return memberPath(value, ctx)
+      const inner = memberPath(value, ctx)
+      // The call already unwrapped one level, so a `.value` after it names a field.
+      if (inner) inner.unwrapped = true
+      return inner
     }
     return null
   }
@@ -148,54 +151,65 @@ function propertyName(node) {
 //   scopeProps       scope property -> source keys the changed call sites pass for it
 //   scopeWholeProps  a call site passes the props object itself
 //   scopeValue       the value itself when the composable's first parameter is it,
-//                    not a scope object (`fn(() => props.sid)`)
+//                    not a scope object (`fn(() => props.sid)`), mapped to whether
+//                    the call site handed over a ref
 //   bindings         destructured scope names -> source keys the call sites pass
 //   aliases          local names bound to a member chain inside the scope
-// A parameter that is the watched value itself unwraps when the call site handed it a
-// ref (`fn(topicId)`). When every call site hands a prop expression instead
-// (`fn(() => props.x)`, `fn(props.x)`), the parameter holds the prop's value, so
-// `.value` on it names a field rather than unwrapping a ref.
-function isRefParameter(ctx) {
-  if (!ctx.scopeValue?.size) return false
-  return [...ctx.scopeValue].every((key) => key.startsWith('$local.'))
+// Each call site is read the way it hands the parameter over: a ref (`fn(topicId)`,
+// `fn(computed(() => props.x))`) makes `.value` on the parameter the unwrap, a plain
+// prop expression (`fn(() => props.x)`) makes it a field. Call sites that disagree
+// each keep their own reading, so one caller cannot decide for another.
+//
+// One `.value` is the unwrap and nothing past it is: `x.value` is x's value, and its
+// `.value` names a field. An expression that already unwrapped — `toValue(x)`, or a
+// parameter a call site handed a ref — is at the value already, so every `.value`
+// written there names a field. A `$local.` key names a local's value the same way the
+// component writes it.
+function refSegments(segments, asRef, unwrapped) {
+  if (!asRef || unwrapped || segments[0] !== 'value') return segments
+  return segments.slice(1)
+}
+
+function mapSegments(keys, segments, unwrapped) {
+  const out = new Set()
+  for (const key of keys) {
+    const parts = refSegments(segments, key.startsWith('$local.'), unwrapped)
+    out.add(parts.length ? `${key}.${parts.join('.')}` : key)
+  }
+  return out
 }
 
 function memberKeys(node, ctx) {
   const member = memberPath(node, ctx)
   if (!member) return null
-  const { root } = member
-  // `.value` unwraps a ref only where the root is one: a local name, or a parameter
-  // that is the value itself and was handed a ref (`fn(topicId)`, watched as
-  // `sid.value`). A prop path, a scope path, and a destructured binding all name a
-  // place in the parent's props, so they keep their segments as written; both sides of
-  // the split must spell the same path for `props.config` and `props.config.value` to
-  // stay apart.
-  const keepsValue =
-    root === 'props' || Boolean(ctx.bindings?.has(root)) || (root === ctx.scopeParam && !isRefParameter(ctx))
-  const segments = keepsValue ? [...member.path] : member.path.filter((segment) => segment !== 'value')
-  if (root === 'props') return new Set([segments.length ? segments.join('.') : 'props'])
+  const { root, unwrapped } = member
+  // Both sides of the split must spell the same path for `props.config` and
+  // `props.config.value` to stay apart: a prop path keeps its segments as written.
+  const path = [...member.path]
+  if (root === 'props') return new Set([path.length ? path.join('.') : 'props'])
   if (ctx.scopeParam && root === ctx.scopeParam) {
-    if (ctx.scopeValue?.size) {
-      if (!segments.length) return new Set(ctx.scopeValue)
-      return new Set([...ctx.scopeValue].map((key) => `${key}.${segments.join('.')}`))
+    const out = new Set()
+    if (path.length) {
+      const [head, ...rest] = path
+      const mapped = ctx.scopeProps?.get(head)
+      if (mapped) for (const key of mapSegments(mapped, rest, unwrapped)) out.add(key)
+      // The props object itself was handed over: the segments are prop names.
+      if (ctx.scopeWholeProps) out.add(path.join('.'))
+    } else if (ctx.scopeWholeProps) {
+      out.add('props')
     }
-    if (!segments.length) {
-      if (ctx.scopeWholeProps) return new Set(['props'])
-      return new Set(['$scope'])
+    for (const [key, asRef] of ctx.scopeValue ?? []) {
+      const parts = refSegments(path, asRef, unwrapped)
+      out.add(parts.length ? `${key}.${parts.join('.')}` : key)
     }
-    const [head, ...rest] = segments
-    const mapped = ctx.scopeProps?.get(head)
-    if (mapped) return new Set([...mapped].map((key) => (rest.length ? `${key}.${rest.join('.')}` : key)))
-    if (ctx.scopeWholeProps) return new Set([segments.join('.')])
-    return new Set([`$scope.${segments.join('.')}`])
+    if (out.size) return out
+    return new Set([path.length ? `$scope.${path.join('.')}` : '$scope'])
   }
-  if (ctx.bindings?.has(root)) {
-    const mapped = ctx.bindings.get(root)
-    return new Set([...mapped].map((key) => (segments.length ? `${key}.${segments.join('.')}` : key)))
-  }
+  if (ctx.bindings?.has(root)) return mapSegments(ctx.bindings.get(root), path, unwrapped)
   // Local names get their own namespace: a ref called `topicId` must not stand in
   // for a lost `props.topicId` watch.
-  return new Set([segments.length ? `$local.${root}.${segments.join('.')}` : `$local.${root}`])
+  const parts = refSegments(path, true, unwrapped)
+  return new Set([parts.length ? `$local.${root}.${parts.join('.')}` : `$local.${root}`])
 }
 
 function canonicalFunction(node, ctx) {
@@ -473,9 +487,20 @@ function scopeContext(found, callSites) {
   return ctx
 }
 
+// Vue's ref factories return a ref whatever the expression they wrap reads, so a call
+// site that hands one over hands over a ref.
+const REF_FACTORIES = new Set(['computed', 'ref', 'shallowRef', 'toRef', 'customRef'])
+
+function isRefArgument(node) {
+  node = unwrap(node)
+  if (!ts.isCallExpression(node)) return false
+  const callee = unwrap(node.expression)
+  return ts.isIdentifier(callee) && REF_FACTORIES.has(callee.text)
+}
+
 function callSiteMappings(vueFiles, fnName, readHead) {
   const scopeProps = new Map()
-  const scopeValue = new Set()
+  const scopeValue = new Map()
   let scopeWholeProps = false
   const add = (key, keys) => {
     if (!scopeProps.has(key)) scopeProps.set(key, new Set())
@@ -518,8 +543,12 @@ function callSiteMappings(vueFiles, fnName, readHead) {
             scopeWholeProps = true
           } else {
             // The parameter is the value itself: `fn(() => props.sid)`, watched as
-            // `toValue(sid)` on the composable side.
-            for (const key of canonical(argument)) scopeValue.add(key)
+            // `toValue(sid)` on the composable side. A call site that hands over a ref
+            // rather than the value keeps its own reading per key.
+            const asRef = isRefArgument(argument)
+            for (const key of canonical(argument)) {
+              scopeValue.set(key, Boolean(scopeValue.get(key)) || asRef || key.startsWith('$local.'))
+            }
           }
         }
         ts.forEachChild(node, visit)

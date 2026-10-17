@@ -98,6 +98,15 @@ function assertReportsLost(result) {
   assert.match(result.output, /waive: --allow 'frontend\/src\/components\/Panel\.vue:topicId'/)
 }
 
+function runGuard(repo, base, ...args) {
+  const result = spawnSync(process.execPath, [guard, '--repo', repo, '--base', base, ...args], {
+    env,
+    encoding: 'utf8',
+    cwd: os.tmpdir(),
+  })
+  return { status: result.status, output: result.stdout + result.stderr }
+}
+
 const EQUIVALENT_ANCHOR = 'const isEquivalent = (available, lost) => available.has(lost)'
 const ALLOW_ANCHOR =
   'const isWaived = (allows, file, key) => allows.includes(`${file}:${key}`) || allows.includes(`${file}:*`)'
@@ -665,6 +674,158 @@ export function usePanel(config: () => { value: string }) {
   const dropped = split(t, { script, head, composableSource: composable('toValue(config)') }).run()
   assert.equal(dropped.status, 1, dropped.output)
   assert.match(dropped.output, /config\.value/)
+})
+
+test('a computed handed as the value is a ref, not the value itself', (t) => {
+  // `computed(() => props.config)` hands the composable a ref whose value is
+  // `props.config`, so `config.value` is that object. A base watch on the field
+  // `props.config.value` has no equivalent there.
+  const watchingRef = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config, () => { loading.value = false })`
+  const watchingField = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { computed } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel(computed(() => props.config))`
+  const composableSource = `import { ref, watch } from 'vue'
+
+export function usePanel(config: { value: { value: string } }) {
+  const loading = ref(false)
+  watch(() => config.value, () => { loading.value = false })
+  return { loading }
+}`
+  const carried = split(t, { script: watchingRef, head, composableSource }).run()
+  assert.equal(carried.status, 0, carried.output)
+
+  const dropped = split(t, { script: watchingField, head, composableSource }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /config\.value/)
+})
+
+test('a ref parameter unwrapped by toValue names fields after it', (t) => {
+  // `toValue(config)` is already the value the call site handed over, so the `.value`
+  // written after it is a field of that value, not another unwrap.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { computed } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel(computed(() => props.config))`
+  const composable = (watched) => `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(config: { value: { value: string } }) {
+  const loading = ref(false)
+  watch(() => ${watched}, () => { loading.value = false })
+  return { loading }
+}`
+  const carried = split(t, { script, head, composableSource: composable('toValue(config).value') }).run()
+  assert.equal(carried.status, 0, carried.output)
+
+  const dropped = split(t, { script, head, composableSource: composable('toValue(config)') }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /config\.value/)
+})
+
+test('reads each call site the way it hands the parameter over', (t) => {
+  // One component passes a ref, the other a prop expression. `.value` on the
+  // parameter unwraps at the first call site and names a field at the second; the
+  // second caller must not decide the reading for the first.
+  const panelScript = `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`
+  const panelHead = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel(topicId)`
+  const otherHead = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ other: { value: string } }>()
+const { loading } = usePanel(() => props.other)`
+  const composableSource = `import { ref, watch } from 'vue'
+
+export function usePanel(sid: { value: string }) {
+  const loading = ref(false)
+  watch(() => sid.value, () => { loading.value = false })
+  return { loading }
+}`
+  const run = fixture(t, panelScript)
+  run.write('frontend/src/components/Other.vue', sfc(otherHead))
+  run.write(component, sfc(panelHead))
+  run.write(composable, composableSource)
+  const result = runGuard(run.repo, run.base)
+  assert.equal(result.status, 0, result.output)
+})
+
+test('a local ref destructured into the composable keeps its unwrap', (t) => {
+  const script = `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel({ topicId })`
+  const composed = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, watch, type Ref } from 'vue'
+
+export function usePanel({ topicId }: { topicId: Ref<string> }) {
+  const loading = ref(false)
+  watch(() => topicId.value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(composed.status, 0, composed.output)
+})
+
+test('a scope object passed through a variable does not hide the literal call site', (t) => {
+  // A new component hands the scope over as a variable, which the guard cannot see
+  // into; the changed component still passes a literal, and that is the scope.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ topicId: string }>()
+const loading = ref(false)
+watch(() => props.topicId, () => { loading.value = false })`
+  const head = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ topicId: string }>()
+const { loading } = usePanel({ topicId: () => props.topicId })`
+  const otherHead = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ other: string }>()
+const panelScope = { topicId: () => props.other }
+const { loading } = usePanel(panelScope)`
+  const composableSource = `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.topicId), () => { loading.value = false })
+  return { loading }
+}`
+  const run = fixture(t, script)
+  run.write('frontend/src/components/Other.vue', sfc(otherHead))
+  run.write(component, sfc(head))
+  run.write(composable, composableSource)
+  const result = runGuard(run.repo, run.base)
+  assert.equal(result.status, 0, result.output)
 })
 
 test('follows a prop destructured into a local before watching it', (t) => {
