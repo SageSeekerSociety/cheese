@@ -112,6 +112,19 @@ class CodeDigestTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(result.stdout.startswith("code-digest "))
 
+    def test_real_module_named_mp_main_is_in_the_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "svc").mkdir()
+            (root / "svc" / "__init__.py").write_text("")
+            (root / "svc" / "app.py").write_text("import __mp_main__\n")
+            (root / "__mp_main__.py").write_text("VALUE = 1\n")
+
+            first = digest(root, "svc.app")
+            (root / "__mp_main__.py").write_text("VALUE = 2\n")
+
+            self.assertNotEqual(digest(root, "svc.app"), first)
+
     def test_missing_module_source_fails_without_printing_a_digest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

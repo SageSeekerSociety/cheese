@@ -23,6 +23,7 @@ import sys
 
 for name in sys.argv[1:]:
     importlib.import_module(name)
+modules = dict(sys.modules)
 for name in (
     "uvloop",
     "httptools",
@@ -37,11 +38,15 @@ for name in (
         importlib.import_module(name)
     except ImportError:
         pass
+for name, module in sys.modules.items():
+    modules.setdefault(name, module)
 
 digest = hashlib.sha256(sys.version.encode())
-for name, module in sorted(sys.modules.items()):
+for name, module in sorted(modules.items()):
     path = getattr(module, "__file__", None)
-    if not path or name in {"__main__", "__mp_main__"}:
+    if not path or name == "__main__":
+        continue
+    if name == "__mp_main__" and module is sys.modules.get("__main__"):
         continue
     try:
         with open(path, "rb") as handle:
