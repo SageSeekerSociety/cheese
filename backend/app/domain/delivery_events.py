@@ -112,6 +112,13 @@ class DeliveryEvent:
     occurred_at: datetime
 
 
+#: Payload key of an instruction that only the newest of its kind is worth
+#: reading: what it says is the current state of one thing (a PR's checks, its
+#: conflict), so an earlier one with the same value that has not reached the
+#: session yet is replaced, not stacked (`delivery.agent.record_task_instruction`).
+REPLACES: Final = "replaces"
+
+
 def dedup_key(event_id: uuid.UUID, handle: str) -> str:
     """这条事件发给这个人的那一次投递的身份。跟事件走，不跟发送尝试走。"""
     return f"{event_id}:{handle}"

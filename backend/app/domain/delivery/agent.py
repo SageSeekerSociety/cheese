@@ -21,7 +21,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.services import project_of, room_of
 from app.domain.delivery.ledger import dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
-from app.domain.delivery_events import DeliveryEvent
+from app.domain.delivery_events import REPLACES, DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
@@ -43,6 +43,7 @@ RETRY_CAP_SECONDS = 300
 # it retry every five minutes for ever.
 GIVE_UP_AFTER = timedelta(minutes=30)
 GAVE_UP = "Not started within 30 minutes of being given"
+REPLACED = "Replaced by a newer instruction about the same thing before it was sent"
 
 
 def retry_after(attempts: int) -> float:
@@ -150,12 +151,37 @@ async def record_task_instruction(
     agent = await AgentInstanceService(session).for_task(
         project, room, task.agent_handle
     )
+    seat = agent_instance_handle(agent.instance_id)
+    replaces = (event.payload or {}).get(REPLACES)
+    if replaces:
+        # The earlier one says a state this one has moved past (a PR's checks
+        # failed, then failed differently), and the session never got it:
+        # reading both is one more turn for nothing, and on dev the same PR's CI
+        # failure stacked up to 23 times behind a busy seat. Only an input the
+        # session was never reached for, and no attempt holds right now: one
+        # that may have been sent is never touched (module docstring). It
+        # fails rather than taking the new text, so its row still names the
+        # event it was recorded for.
+        stamp = now()
+        await session.execute(
+            update(Delivery)
+            .where(
+                Delivery.conversation_id == task.id,
+                Delivery.recipient_handle == seat,
+                Delivery.agent_instance_id.is_not(None),
+                Delivery.sent_at.is_(None),
+                Delivery.state.in_(_NEVER_SENT),
+                or_(Delivery.lease_until.is_(None), Delivery.lease_until <= stamp),
+                Delivery.payload[REPLACES].astext == str(replaces),
+            )
+            .values(state="failed", last_error=REPLACED, lease_until=None)
+        )
     await session.execute(
         insert(Delivery)
         .values(
             id=uuid.uuid4(),
             event_id=event.id,
-            recipient_handle=agent_instance_handle(agent.instance_id),
+            recipient_handle=seat,
             receiver_id=None,
             agent_instance_id=agent.instance_id,
             conversation_id=task.id,

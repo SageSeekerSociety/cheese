@@ -48,7 +48,7 @@ from app.core.background import spawn
 from app.core.sentences import say
 from app.domain.addressing import Event
 from app.domain.deliverables import artifacts
-from app.domain.delivery_events import DeliveryEvent, SettleCard
+from app.domain.delivery_events import REPLACES, DeliveryEvent, SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_READY,
     EVENT_ARTIFACT_DECLARED,
@@ -407,8 +407,13 @@ async def _record_task_nudge(
     meta,
     announce: Announce,
     record_instruction: RecordInstruction | None,
+    replaces: str | None = None,
 ):
-    """Commit the task event and parent delivery with the source state."""
+    """Commit the task event and parent delivery with the source state.
+
+    ``replaces`` names what the instruction is the current state of; an earlier
+    one with the same name the agent has not been handed yet is dropped for it
+    (`delivery_events.REPLACES`)."""
     block = await announce(
         session,
         place_id=topic.id,
@@ -430,6 +435,7 @@ async def _record_task_nudge(
                 payload={
                     "projectId": str(topic.project_id),
                     "topicId": str(topic.id),
+                    **({REPLACES: replaces} if replaces else {}),
                 },
                 occurred_at=block.created_at,
             ),
