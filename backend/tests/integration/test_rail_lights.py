@@ -494,6 +494,41 @@ def test_a_room_breathes_while_a_task_under_it_rides_a_delivery(client):
     assert task["awaits_me"] is True
 
 
+def test_a_closed_task_does_not_breathe_its_room(client):
+    """活已经关了，它名下的卡停在哪都不该让房间亮绿灯。
+
+    这就是测试频道那一幕：两件 10-12 就关掉的活留着没结算的卡，合并态镜像说
+    dirty，侧栏于是把整间房当成「名下有活在交付链路上」，一直闪绿 —— 而实际
+    没有任何东西在跑。判据只认**还没关的**活名下的卡。
+    """
+    project = _project(client)
+    room = _room(client, project, "关掉的活")
+    _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "closed",
+                "title": "十月十二就关掉的活",
+                "owner_handle": "alice",
+                "status": TaskStatus.closed,
+                "closed_at": datetime.now(UTC) - timedelta(days=5),
+                "card": {
+                    "status": AcceptStatus.pending,
+                    "pr_number": 3528,
+                    "merge_state": {"state": "dirty", "who": "agent"},
+                },
+            }
+        ],
+    )
+
+    row = _room_row(client, project, room, "alice")
+    # 房间自己那条线闲着；它名下那张卡属于一件关掉的活，不算「在往前走」。
+    assert row["presentation"]["column"] == "building"
+    assert row["moving"] is False
+
+
 def test_a_running_turn_breathes_and_the_room_says_nothing_about_its_clock(client):
     """有一轮在跑就是呼吸绿；多久没输出这一栏，说不出就是 null。
 
