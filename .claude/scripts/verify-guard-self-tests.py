@@ -974,15 +974,21 @@ def self_test() -> int:
         "named-return-guard.py": "ok",
         "fixture-arg-guard.py": "ok",
         "shell-biting-guard.sh": "ok",
+        "shell-heredoc-fi-guard.sh": "ok",
         "fake-green-guard.py": "self-test-does-not-bite",
         "shell-fake-green-guard.sh": "self-test-does-not-bite",
         "clean-only-self-test-guard.py": "self-test-does-not-bite",
         "shell-clean-only-self-test-guard.sh": "self-test-does-not-bite",
         "call-exit-guard.py": "self-test-does-not-bite",
+        "predicate-return-guard.py": "self-test-does-not-bite",
+        "predicate-return-guard.sh": "self-test-does-not-bite",
+        "shell-record-text-guard.sh": "self-test-does-not-bite",
+        "shell-heredoc-record-guard.sh": "self-test-does-not-bite",
         "no-self-test-guard.py": "missing-self-test",
         "not-green-guard.py": "self-test-not-green",
         "delegating-guard.py": "unverified",
         "sibling-guard.py": "unverified",
+        "variable-command-guard.py": "unverified",
     }
     failures = []
     for name, want in expected.items():
@@ -1006,7 +1012,10 @@ def self_test() -> int:
 
 
 #: Guards for the self-test: one of each verdict, and one of each shape the
-#: failure signal takes (a conditional return, a tuple return, a named code).
+#: failure signal takes (a conditional return, a tuple return, a named code),
+#: plus the shapes that must NOT be silenced (a helper's yes/no return, an
+#: `exit 1` printed inside a record or a heredoc, a `fi` at column 0 inside
+#: a heredoc) and a hand-off whose command is built into a variable.
 SYNTHETIC_GUARDS = {
     "biting-guard.py": '''#!/usr/bin/env python3
 """A guard whose --self-test proves it fires on a deliberate violation."""
@@ -1294,6 +1303,205 @@ fi
 
 scan "${1:-.}"
 ''',
+    "predicate-return-guard.py": '''#!/usr/bin/env python3
+"""A helper answers yes/no with return codes; only main's return is the verdict."""
+import sys
+import tempfile
+from pathlib import Path
+
+GOOD = "ok"
+
+
+def is_good(line):
+    return 1 if line.strip() == GOOD else 0
+
+
+def violations_in(root):
+    bad = []
+    for path in sorted(Path(root).rglob("*.txt")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not is_good(line):
+                bad.append(f"{path.name}: {line}")
+    return bad
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    bad = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
+    for item in bad:
+        print(f"{item}: 修法：每行都写成 {GOOD}", file=sys.stderr)
+    return 1 if bad else 0
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "a.txt").write_text("ok\\n", encoding="utf-8")
+        if violations_in(root) != []:
+            print("SELF-TEST FAIL: 干净夹具被报成违规", file=sys.stderr)
+            return 1
+    print("PASS: 干净夹具")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "predicate-return-guard.sh": '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+has_bad() {
+  find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q . && return 0
+  return 1
+}
+
+scan() {
+  if has_bad "$1"; then
+    echo "找到 .bad 文件；修法：删掉它" >&2
+    exit 1
+  fi
+  echo "clean"
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  out="$(scan "$tmp" 2>&1)"
+  [ "$out" = "clean" ] || { echo "SELF-TEST FAIL: 干净扫描输出 $out" >&2; exit 1; }
+  echo "PASS: 干净扫描"
+  exit 0
+fi
+
+scan "${1:-.}"
+''',
+    "shell-record-text-guard.sh": '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+count_bad() { find "$1" -name '*.bad' -type f 2>/dev/null | wc -l | tr -d ' '; }
+
+record() {
+  local n; n="$(count_bad "$1")"
+  printf '{"bad": %s, "hint": "删掉它们；exit 1 表示违规"}\\n' "$n"
+}
+
+scan() {
+  local n; n="$(count_bad "$1")"
+  record "$1"
+  if [ "$n" -gt 0 ]; then
+    echo "$n 个违规；修法：删掉它们" >&2
+    return 1
+  fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  scan "$tmp" || { echo "SELF-TEST FAIL: 干净夹具被拒" >&2; exit 1; }
+  rec="$(record "$tmp")"
+  want='{"bad": 0, "hint": "删掉它们；exit 1 表示违规"}'
+  [ "$rec" = "$want" ] || { echo "SELF-TEST FAIL: 记录是 $rec" >&2; exit 1; }
+  echo "PASS: 干净扫描与记录"
+  exit 0
+fi
+
+scan "${1:-.}"
+''',
+    "shell-heredoc-record-guard.sh": '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+count_bad() { find "$1" -name '*.bad' -type f 2>/dev/null | wc -l | tr -d ' '; }
+
+record() {
+  local n; n="$(count_bad "$1")"
+  cat <<EOF
+{"bad": $n}
+{"hint": "违规会让钩子 exit 1"}
+EOF
+}
+
+scan() {
+  local n; n="$(count_bad "$1")"
+  record "$1"
+  if [ "$n" -gt 0 ]; then echo "$n 个违规；修法：删掉" >&2; return 1; fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  scan "$tmp" || { echo "SELF-TEST FAIL: 干净夹具被拒" >&2; exit 1; }
+  rec="$(record "$tmp")"
+  want='{"bad": 0}
+{"hint": "违规会让钩子 exit 1"}'
+  [ "$rec" = "$want" ] || { echo "SELF-TEST FAIL: 记录是 $rec" >&2; exit 1; }
+  echo "PASS: 干净扫描与记录"
+  exit 0
+fi
+
+scan "${1:-.}"
+''',
+    "shell-heredoc-fi-guard.sh": '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+has_bad() { find "$1" -name '*.bad' -print -quit 2>/dev/null | grep -q .; }
+
+scan() {
+  if has_bad "$1"; then
+    echo "找到 .bad 文件；修法：删掉它" >&2
+    return 1
+  fi
+  return 0
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  cat > "$tmp/sample.sh" <<'EOF'
+if [ -n "$x" ]; then
+  echo ok
+fi
+EOF
+  scan "$tmp" >/dev/null 2>&1
+  [ $? -ne 0 ] || { echo "SELF-TEST FAIL: .bad 文件必须被报出" >&2; exit 1; }
+  echo "PASS: .bad 文件被报出"
+  exit 0
+fi
+
+scan "${1:-.}"
+''',
+    "variable-command-guard.py": '''#!/usr/bin/env python3
+"""The hand-off command is built into a variable before it is run."""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    return 0
+
+
+def self_test():
+    command = [sys.executable, str(Path(__file__).with_name("test_handoff.py"))]
+    code = subprocess.call(command)
+    if code != 0:
+        print("SELF-TEST FAIL: 旁置测试失败", file=sys.stderr)
+        return 1
+    print("PASS: 旁置测试跑通了")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
     "fake-green-guard.py": '''#!/usr/bin/env python3
 """A guard whose --self-test prints PASS and checks nothing."""
 import sys
@@ -1544,6 +1752,19 @@ if __name__ == "__main__":
 
 #: Files the synthetic guards need beside them, but that are not hooks.
 SYNTHETIC_SIBLINGS = {
+    "test_handoff.py": '''#!/usr/bin/env python3
+"""The test file `variable-command-guard.py --self-test` hands off to."""
+import unittest
+
+
+class HandoffTest(unittest.TestCase):
+    def test_ok(self):
+        self.assertTrue(True)
+
+
+if __name__ == "__main__":
+    unittest.main()
+''',
     "test_delegating_guard.py": '''#!/usr/bin/env python3
 """The test file `delegating-guard.py --self-test` hands off to."""
 import sys
