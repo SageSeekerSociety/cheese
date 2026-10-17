@@ -11,7 +11,8 @@ import unittest
 from pathlib import Path
 
 
-SCRIPT = Path(__file__).with_name("check-review-artifacts.py")
+ROOT = Path(__file__).resolve().parents[3]
+SCRIPT = ROOT / ".claude" / "scripts" / "check-review-artifacts.py"
 ORPHAN = 1
 CANNOT_JUDGE = 2
 

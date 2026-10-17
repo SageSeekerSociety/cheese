@@ -61,7 +61,7 @@ jobs:
           python3 .claude/scripts/check-migration-safety.py --self-test
           python3 .claude/scripts/check-file-sizes.py --self-test
           python3 .claude/scripts/check-doc-references.py --self-test
-          python3 .claude/scripts/test_check_review_artifacts.py
+          python3 backend/tests/unit/test_check_review_artifacts.py
           python3 .claude/scripts/check-manual-anchors.py --self-test
           python3 .claude/scripts/scene-ratchet.py --self-test
           python3 .claude/scripts/frontend_grade.py --self-test
