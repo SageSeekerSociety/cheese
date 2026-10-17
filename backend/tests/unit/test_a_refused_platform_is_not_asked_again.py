@@ -196,7 +196,8 @@ def test_one_route_failing_does_not_hold_off_the_others(tmp_path, monkeypatch):
     for _ in range(3):
         with pytest.raises(executor_transport.PlatformHTTPError):
             RemoteClient(dict(config)).platform_request({"path": "/projects/p/files"})
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as held:
         RemoteClient(dict(config)).platform_request({"path": "/projects/p/files"})
+    assert str(held.value) == PLATFORM_FAILING.format(seconds=30)
     RemoteClient(dict(config)).platform_request({"path": "/topics/room"})
     assert platform.asked == 4

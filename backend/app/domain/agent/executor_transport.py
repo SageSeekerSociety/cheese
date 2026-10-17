@@ -110,7 +110,7 @@ _DEAD_CREDENTIAL = (
 # （`acquire`）。
 PLATFORM_FAILING = (
     "平台的这个接口接连出错，这个会话 {seconds} 秒内不再向它发请求：现在重试结果一样，"
-    "{seconds} 秒后再试，别的工具照常可用。"
+    "{seconds} 秒后再试。"
 )
 BREAKER_AFTER = 3
 BREAKER_WINDOW_S = (30, 300)
