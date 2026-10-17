@@ -420,6 +420,182 @@ def test_a_missing_database_sample_is_not_judged_green(tmp_path, monkeypatch):
     assert "not judged: database" in verdict["conclusion"]
 
 
+def test_the_connection_peak_is_the_highest_sample_not_the_last_one(
+    tmp_path, monkeypatch
+):
+    from scripts import observe_ci_resources as observer
+
+    monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
+    output = _write_observation(
+        tmp_path,
+        mem_used_bytes=observer.GIB,
+        vmstat_rows=[_vmstat_row(runnable=1, steal=0, free_kib=6 * 1024 * 1024)],
+        postgres_samples=[
+            {
+                "settings": {
+                    "max_connections": "100",
+                    "superuser_reserved_connections": "3",
+                }
+            },
+            {"waits": [{"backend_type": "client backend", "count": 98}]},
+            {"waits": [{"backend_type": "client backend", "count": 10}]},
+        ],
+    )
+    summary = observer.summarize(output)
+    verdict = observer.evaluate(summary)
+    assert summary["client_backends_peak"] == 98
+    assert verdict["crossed"] == ["database"]
+
+
+def test_no_sample_at_all_is_never_reported_as_green(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    output = _write_observation(tmp_path)
+    summary = observer.summarize(output)
+    verdict = observer.evaluate(summary)
+    assert verdict["unknown"] == ["memory", "cpu", "database"]
+    assert verdict["conclusion"] == "not judged: no sample for any threshold"
+    assert "no threshold crossed" not in verdict["conclusion"]
+
+
+def test_an_old_start_event_still_expects_a_database_sample(tmp_path, monkeypatch):
+    """A start event without the key predates --no-postgres: Postgres ran."""
+    from scripts import observe_ci_resources as observer
+
+    output = _write_observation(tmp_path, mem_used_bytes=observer.GIB)
+    assert observer.summarize(output)["postgres_watched"] is True
+
+
+def test_buffered_and_cached_pages_are_not_free_memory(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    _cgroup(tmp_path, monkeypatch)
+    output = _write_observation(
+        tmp_path,
+        mem_total_kb=8 * 1024 * 1024,
+        vmstat_rows=[
+            _vmstat_row(
+                runnable=1,
+                steal=0,
+                free_kib=4 * 1024 * 1024,
+                buff_kib=1024 * 1024,
+                cache_kib=1024 * 1024,
+            )
+        ],
+    )
+    assert observer.summarize(output)["memory_peak_bytes"] == 2 * observer.GIB
+
+
+def test_reaching_the_threshold_exactly_is_not_crossing_it(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
+    threshold = int(3 * observer.GIB * (1 - observer.MEMORY_HEADROOM_RATIO))
+    output = _write_observation(
+        tmp_path,
+        mem_used_bytes=threshold,
+        vmstat_rows=[_vmstat_row(runnable=1, steal=0, free_kib=6 * 1024 * 1024)],
+        postgres_samples=[
+            {
+                "settings": {
+                    "max_connections": "100",
+                    "superuser_reserved_connections": "3",
+                }
+            },
+            {"waits": [{"backend_type": "client backend", "count": 97}]},
+        ],
+    )
+    verdict = observer.evaluate(observer.summarize(output))
+    assert verdict["crossed"] == []
+
+
+def test_a_half_written_sample_line_is_skipped(tmp_path):
+    from scripts import observe_ci_resources as observer
+
+    path = tmp_path / "memory.log"
+    path.write_text(
+        json.dumps({"mem_used_bytes": 1024}) + "\n" + '{"mem_used_bytes": 20'
+    )
+    assert observer.read_jsonl(path) == [{"mem_used_bytes": 1024}]
+
+
+def test_an_empty_memory_sample_is_not_treated_as_a_measurement(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
+    output = _write_observation(
+        tmp_path,
+        mem_used_bytes=[None, None],
+        vmstat_rows=[_vmstat_row(runnable=1, steal=0, free_kib=6 * 1024 * 1024)],
+    )
+    assert observer.summarize(output)["memory_peak_bytes"] is None
+
+
+def test_the_steal_limit_is_five_percent(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    monkeypatch.setenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", str(3 * observer.GIB))
+
+    def crossed(steal):
+        case = tmp_path / f"steal-{steal}"
+        case.mkdir()
+        output = _write_observation(
+            case,
+            mem_used_bytes=observer.GIB,
+            cpu_count=2,
+            vmstat_rows=[
+                _vmstat_row(runnable=2, steal=0, free_kib=6 * 1024 * 1024),
+                _vmstat_row(runnable=2, steal=steal, free_kib=6 * 1024 * 1024),
+            ],
+        )
+        return "cpu" in observer.evaluate(observer.summarize(output))["crossed"]
+
+    assert crossed(5) is False
+    assert crossed(6) is True
+
+
+def test_the_last_resort_cap_is_the_sandbox_number(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    monkeypatch.delenv("CHEESE_CI_SANDBOX_MEMORY_BYTES", raising=False)
+    _cgroup(tmp_path, monkeypatch)
+    # The documented sandbox default, pinned so a looser one cannot creep in.
+    assert observer.memory_limit_bytes(None) == 3 * observer.GIB
+    assert observer.memory_limit_bytes(8 * observer.GIB) == 8 * observer.GIB
+
+
+def test_a_failing_summary_does_not_replace_the_commands_result(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    def explode(_output):
+        raise RuntimeError("summary broke")
+
+    monkeypatch.setattr(observer, "summarize", explode)
+    output = tmp_path / "resources"
+    code = observer.observe(
+        output, [sys.executable, "-c", "raise SystemExit(7)"], postgres=False
+    )
+    assert code == 7
+    events = [
+        json.loads(line)
+        for line in (output / "lifecycle.jsonl").read_text().splitlines()
+    ]
+    assert any(event["event"] == "summary_failed" for event in events)
+
+
+def test_the_processor_count_never_falls_below_one(monkeypatch, tmp_path):
+    from scripts import observe_ci_resources as observer
+
+    cpuinfo = tmp_path / "cpuinfo"
+    stat = tmp_path / "stat"
+    cpuinfo.write_text("")
+    stat.write_text("")
+    monkeypatch.setattr(observer, "PROC_CPUINFO", cpuinfo)
+    monkeypatch.setattr(observer, "PROC_STAT", stat)
+    monkeypatch.setattr(observer.os, "cpu_count", lambda: None)
+    assert observer.processor_count() == 1
+
+
 def test_the_over_limit_assertion_goes_red_when_evaluation_ignores_the_cap(
     tmp_path, monkeypatch
 ):
@@ -525,6 +701,11 @@ def test_steal_time_alone_names_cpu_contention(tmp_path, monkeypatch):
     assert summary["steal_peak_percent"] == 9.0
     assert verdict["crossed"] == ["cpu"]
     assert "cpu: over" in "\n".join(observer.report_lines(summary, verdict))
+    # The record says which signal crossed, so the queue numbers beside it
+    # do not read as a verdict on their own.
+    cpu = next(check for check in verdict["checks"] if check["metric"] == "cpu")
+    assert cpu["over_by"] == "steal"
+    assert cpu["steal_percent"] == 9.0
 
 
 def test_a_single_vmstat_report_cannot_measure_steal(tmp_path, monkeypatch):
@@ -632,12 +813,66 @@ def test_an_unlimited_cgroup_is_not_a_cap(tmp_path, monkeypatch):
 
 
 def test_the_v1_unlimited_sentinel_is_not_a_cap(tmp_path, monkeypatch):
+    """The sentinel sits on the process's own v1 path, so it is read and dropped."""
     from scripts import observe_ci_resources as observer
 
-    root = _cgroup(tmp_path, monkeypatch)
-    (root / "memory").mkdir()
-    (root / "memory" / "memory.limit_in_bytes").write_text(str(2**63 - 4096))
+    root = tmp_path / "cgroup"
+    own = root / "memory" / "docker" / "abc"
+    own.mkdir(parents=True)
+    (own / "memory.limit_in_bytes").write_text(str(2**63 - 4096))
+    proc_self = tmp_path / "proc-self-cgroup"
+    proc_self.write_text("5:memory:/docker/abc\n")
+    monkeypatch.setattr(observer, "CGROUP_ROOT", root)
+    monkeypatch.setattr(observer, "PROC_SELF_CGROUP", proc_self)
+
     assert observer.memory_limit_bytes(8 * observer.GIB) == 8 * observer.GIB
+
+
+def test_reclaimable_file_pages_are_not_counted_as_use(tmp_path, monkeypatch):
+    """The kernel drops page cache before it kills, so it is not pressure."""
+    from scripts import observe_ci_resources as observer
+
+    root = tmp_path / "cgroup"
+    own = root / "cheese-sandboxes" / "box"
+    own.mkdir(parents=True)
+    (own / "memory.current").write_text(str(3 * observer.GIB))
+    (own / "memory.stat").write_text(
+        "anon 150000000\n"
+        "file 2076180480\n"
+        "inactive_file 1900000000\n"
+        "active_file 176180480\n"
+    )
+    proc_self = tmp_path / "proc-self-cgroup"
+    proc_self.write_text("0::/cheese-sandboxes/box\n")
+    monkeypatch.setattr(observer, "CGROUP_ROOT", root)
+    monkeypatch.setattr(observer, "PROC_SELF_CGROUP", proc_self)
+
+    assert observer.cgroup_memory_usage() == 3 * observer.GIB - 1900000000
+
+
+def test_usage_without_a_memory_stat_is_the_current_usage(tmp_path, monkeypatch):
+    from scripts import observe_ci_resources as observer
+
+    _cgroup(tmp_path, monkeypatch, current=1024)
+    assert observer.cgroup_memory_usage() == 1024
+
+
+def test_a_v1_mount_names_the_reclaimable_pages_total_inactive_file(
+    tmp_path, monkeypatch
+):
+    from scripts import observe_ci_resources as observer
+
+    root = tmp_path / "cgroup"
+    own = root / "memory" / "docker" / "abc"
+    own.mkdir(parents=True)
+    (own / "memory.usage_in_bytes").write_text(str(2 * observer.GIB))
+    (own / "memory.stat").write_text("total_cache 1\ntotal_inactive_file 1610612736\n")
+    proc_self = tmp_path / "proc-self-cgroup"
+    proc_self.write_text("5:memory:/docker/abc\n")
+    monkeypatch.setattr(observer, "CGROUP_ROOT", root)
+    monkeypatch.setattr(observer, "PROC_SELF_CGROUP", proc_self)
+
+    assert observer.cgroup_memory_usage() == 2 * observer.GIB - 1610612736
 
 
 def test_a_v1_memory_controller_is_read_from_its_own_mount(tmp_path, monkeypatch):

@@ -369,12 +369,32 @@ def _cgroup_int(directory, names):
     return None
 
 
+def _memory_stat_int(directory, names):
+    for line in read_text(directory / "memory.stat").splitlines():
+        name, _, value = line.partition(" ")
+        if name in names and value.strip().isdigit():
+            return int(value)
+    return None
+
+
 def cgroup_memory_usage():
-    """Bytes this cgroup uses, when the box exposes one (v2, then v1)."""
+    """Bytes this cgroup holds that the kernel cannot drop, or None.
+
+    `memory.current` also counts page cache, and the kernel reclaims that
+    before it kills anything at the cap: a run that writes files reaches the
+    cap with almost no real pressure. Leaving the reclaimable file pages out
+    is what makes the number comparable with the cap.
+    """
     for directory in cgroup_dirs():
         value = _cgroup_int(directory, ("memory.current", "memory.usage_in_bytes"))
-        if value is not None:
+        if value is None:
+            continue
+        reclaimable = _memory_stat_int(
+            directory, ("inactive_file", "total_inactive_file")
+        )
+        if reclaimable is None:
             return value
+        return max(0, value - reclaimable)
     return None
 
 
@@ -491,13 +511,15 @@ def _next_steps(crossed, unknown, postgres_watched=True):
 def evaluate(summary):
     """Judge the summary against the sandbox, CPU and connection thresholds."""
     memory_threshold = int(summary["memory_limit_bytes"] * (1 - MEMORY_HEADROOM_RATIO))
-    cpu_over = (
+    runnable_over = (
         summary["runnable_peak"] is not None
         and summary["runnable_peak"] > summary["cpu_count"]
-    ) or (
+    )
+    steal_over = (
         summary["steal_peak_percent"] is not None
         and summary["steal_peak_percent"] > CPU_STEAL_LIMIT_PERCENT
     )
+    cpu_over = runnable_over or steal_over
     if cpu_over:
         cpu_state = "over"
     elif summary["runnable_peak"] is None and summary["steal_peak_percent"] is None:
@@ -514,8 +536,15 @@ def evaluate(summary):
         {
             "metric": "cpu",
             "state": cpu_state,
+            # The record names which signal crossed: the numbers beside it
+            # describe the queue only, and steal alone can set the state.
+            "over_by": "runnable"
+            if runnable_over
+            else ("steal" if steal_over else None),
             "observed": summary["runnable_peak"],
             "threshold": summary["cpu_count"],
+            "steal_percent": summary["steal_peak_percent"],
+            "steal_limit_percent": CPU_STEAL_LIMIT_PERCENT,
         },
         {
             "metric": "database",
