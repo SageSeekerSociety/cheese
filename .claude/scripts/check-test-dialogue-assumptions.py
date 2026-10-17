@@ -68,6 +68,7 @@ import ast
 import json
 import sys
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 
 #: The three shapes and the sentence that repairs each. Kept apart because each
@@ -144,9 +145,11 @@ def _FROZEN(
     return ((path, kind, source),) * times
 
 #: One entry per finding, grouped by file; the file sits in `_INTEGRATION` or
-#: `_UNIT` and the rest is its name. The expression is its normalized source, so
-#: a reindent or a rename of a local does not make an entry read as stale, and
-#: two spellings of one expression are one entry.
+#: `_UNIT` and the rest is its name. The expression is `ast.unparse` with runs of
+#: whitespace collapsed, so reindenting a statement does not make an entry read
+#: as stale. Renaming a local variable does: its name is part of the source.
+#: That is deliberate — the entry is meant to be deleted only by fixing the
+#: test it names, and a rename is an edit somebody should look at.
 BASELINE: tuple[tuple[str, str, str], ...] = (
     # A thread's conversation: each of these says the thread holds exactly the
     # blocks the test posted into it.
@@ -246,25 +249,58 @@ def _reads_topic_conversation(node: ast.Call) -> bool:
     return False
 
 
+def _query_root(node: ast.Call) -> ast.Call | None:
+    """The `select(...)` a call chain was built from, if it was built from one.
+
+    `select(Block).where(…)` is one call wrapped in another; `len(…)` and
+    `"\\n".join(…)` are calls that merely have a query somewhere inside them.
+    Judging the outermost call would make those readers of the conversation
+    too, so the chain is followed down to its root instead.
+    """
+    current: ast.AST = node
+    while isinstance(current, ast.Call):
+        func = current.func
+        if isinstance(func, ast.Name):
+            return current if func.id == "select" else None
+        if not isinstance(func, ast.Attribute):
+            return None
+        current = func.value
+    return None
+
+
 def _reads_blocks_of_one_conversation(node: ast.Call) -> bool:
     """A `Block` query pinned to one conversation: the DB side of the same read.
 
     Pinned by any of the columns that name a conversation, spelled
-    `Block.topic_id == topic` or with the column on the left — the tests use
-    both. Only the part of the query after the `Block` it starts from is read,
-    so `select(Block)` alone stays "every block in the database".
+    `Block.topic_id == topic`, `Block.topic_id.in_([topic])` or with the column
+    on the left — the tests use all three. Only a chain rooted at `select(Block)`
+    qualifies, and only the part of it after `Block` is read, so `select(Block)`
+    alone stays "every block in the database".
+
+    A column of `Block` counts too: `select(Block.id).where(…)` is the same
+    conversation read down to its ids, which is how a test snapshots the blocks
+    before an action and compares them with the blocks after it.
     """
+    root = _query_root(node)
+    if root is None or not root.args:
+        return False
+    first = root.args[0]
+    if isinstance(first, ast.Name):
+        selected = first.id
+    elif isinstance(first, ast.Attribute) and isinstance(first.value, ast.Name):
+        selected = first.value.id
+    else:
+        selected = None
+    if selected != "Block":
+        return False
     source = ast.unparse(node)
     marker = "select(Block"
-    start = source.find(marker)
-    if start < 0:
-        return False
-    # `select(BlockKind)` is a query of the column, not of the blocks.
-    after = source[start + len(marker): start + len(marker) + 1]
-    if after.isalnum() or after == "_":
-        return False
-    tail = source[start + len(marker):]
-    return any(f"{column} ==" in tail for column in CONVERSATION_COLUMNS)
+    tail = source[source.find(marker) + len(marker):]
+    return any(
+        marker in tail
+        for column in CONVERSATION_COLUMNS
+        for marker in (f"{column} ==", f"{column}.in_(")
+    )
 
 
 def _callee(node: ast.Call) -> str | None:
@@ -299,55 +335,128 @@ def _call_narrows(node: ast.Call) -> bool:
     return False
 
 
-def _narrows_inside(func: ast.AST) -> bool:
-    """A helper that filters the rows it hands back down to a kind/author/meta.
+def _url_narrows(node: ast.Call) -> bool:
+    """Narrowing written into the path itself: `/history?kind=message`.
 
-    Filtering down to the event slice does not count: those are the lines a
-    change to what the platform says adds or removes.
+    `_reads_topic_conversation` takes the query string off to find the endpoint,
+    so a narrowed read spelled this way has said which blocks it means just as
+    clearly as `params={"kind": "message"}` has.
     """
-    for node in ast.walk(func):
-        if not isinstance(node, (ast.Compare, ast.Call)):
+    for arg in (*node.args, *(kw.value for kw in node.keywords)):
+        text = _path_text(arg)
+        if not text or "?" not in text:
             continue
-        text = ast.unparse(node)
-        if any(key in text for key in ROW_KEYS) and not _narrows_to_events(text):
+        query = text.split("?", 1)[1].split("#", 1)[0]
+        keys = {piece.split("=", 1)[0] for piece in query.split("&") if piece}
+        if keys & NARROWING and not _narrows_to_events(query):
             return True
     return False
 
 
-def _readers(tree: ast.Module) -> set[str]:
-    """Module-level helpers that HAND BACK one conversation's blocks, unnarrowed.
+def _query_narrows(node: ast.Call) -> bool:
+    """A `select(Block)` chain whose `.where(…)` says which blocks it means.
 
-    What the helper returns decides, not what it happens to read on the way
-    past: `_reads` returns `.status_code`, `_meta` returns one block's `meta`
-    and `_block_reactions` returns `reactions`; all three read
-    `/topics/<id>/blocks`, and none of them hands back the timeline.
-
-    Following helper calls to a fixpoint, so a wrapper around a reader is one
-    too, and a reader that takes the blocks from another helper is found.
+    Only the filter arguments are read, not the select list: `.where(…)` on
+    `select(Block.id)` narrows nothing, and `.id` in the select list used to
+    read as a filter and retire the whole query.
     """
-    definitions = [
+    texts: list[str] = []
+    current: ast.AST = node
+    while isinstance(current, ast.Call):
+        func = current.func
+        if not isinstance(func, ast.Attribute):
+            break
+        if func.attr in ("where", "filter_by", "filter"):
+            texts.extend(ast.unparse(argument) for argument in current.args)
+            texts.extend(ast.unparse(keyword.value) for keyword in current.keywords)
+        current = func.value
+    text = " ".join(texts)
+    return bool(text) and any(key in text for key in ROW_KEYS) and not _narrows_to_events(text)
+
+
+def _own_returns(func: ast.AST) -> list[ast.Return]:
+    """The `return`s in a function's own body, not in a function defined in it."""
+    return [
         node
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and not node.name.startswith("test_")
-        and not _narrows_inside(node)
+        for node in _own_nodes(func)
+        if isinstance(node, ast.Return) and node.value is not None
     ]
-    readers: set[str] = set()
-    changed = True
-    while changed:
-        changed = False
-        for node in definitions:
-            if node.name in readers:
+
+
+def _nested_functions(scope: ast.AST) -> dict[str, ast.AST]:
+    """The functions defined in this scope's own body, by the name they bind."""
+    body = getattr(scope, "body", None)
+    if not isinstance(body, list):
+        return {}
+    return {
+        node.name: node
+        for node in body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+class _Readers:
+    """Which functions HAND BACK one conversation's blocks, unnarrowed.
+
+    What a helper returns decides, not what it happens to read on the way past:
+    `_reads` returns `.status_code`, `_meta` returns one block's `meta` and
+    `_block_reactions` returns `reactions`; all three read `/topics/<id>/blocks`,
+    and none of them hands back the timeline.
+
+    Resolution is by SCOPE, not by bare name. Two helpers in one file may each
+    define their own `async def read()`; the one that returns the blocks says
+    nothing about the one that returns run records. A call is matched to the
+    definition its scope binds, so `asyncio.run(read())` is judged against the
+    `read` written beside it.
+    """
+
+    def __init__(self) -> None:
+        self._seen: dict[int, bool] = {}
+
+    def names(self, scope: dict[str, ast.AST]) -> frozenset[str]:
+        """The names in this scope that are bound to a reader."""
+        return frozenset(
+            name
+            for name, node in scope.items()
+            if not name.startswith("test_") and self.is_reader(node, scope)
+        )
+
+    def is_reader(self, func: ast.AST, scope: dict[str, ast.AST]) -> bool:
+        key = id(func)
+        if key in self._seen:
+            return self._seen[key]
+        # A definition that reaches itself through a call is not a reader;
+        # leaving False in place also stops the recursion.
+        self._seen[key] = False
+        local = {**scope, **_nested_functions(func)}
+        readers = self.names(local)
+        held = _held_names(func, readers)
+        self._seen[key] = any(
+            self._returns(ret, held, readers, local) for ret in _own_returns(func)
+        )
+        return self._seen[key]
+
+    def _returns(
+        self,
+        ret: ast.Return,
+        held: set[str],
+        readers: frozenset[str],
+        local: dict[str, ast.AST],
+    ) -> bool:
+        value = ret.value
+        if value is None:
+            return False
+        if _derives_from_conversation(value, held, readers):
+            return True
+        # `asyncio.run(read())`: the value comes from a reader defined inside
+        # this very function, so the definition beside it is what decides.
+        for node in ast.walk(value):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
                 continue
-            held = _held_names(node, readers)
-            if any(
-                _derives_from_conversation(ret.value, held, readers)
-                for ret in ast.walk(node)
-                if isinstance(ret, ast.Return) and ret.value is not None
-            ):
-                readers.add(node.name)
-                changed = True
-    return readers
+            inner = local.get(node.func.id)
+            if inner is not None and self.is_reader(inner, local):
+                return True
+        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -357,7 +466,8 @@ def _readers(tree: ast.Module) -> set[str]:
 #: Calls that hand a payload on unchanged. Only calls, never bare attributes:
 #: `response.status_code` is a field of the response, not blocks, and following
 #: it turns every `assert response.status_code == 200` into a false positive.
-WRAPPER_CALLS = frozenset({"json", "scalars", "all", "items", "list"})
+#: `set(rows)` and `sorted(rows)` hand the blocks on just as `list(rows)` does.
+WRAPPER_CALLS = frozenset({"json", "scalars", "all", "items", "list", "set", "tuple", "sorted"})
 
 #: Where the response envelope keeps the blocks. A subscript with any other
 #: string key reads a field beside them (`page["has_more"]`), which is not the
@@ -368,8 +478,14 @@ ENVELOPE_KEYS = frozenset({"data", "items"})
 def _position(key: ast.AST) -> bool:
     """A subscript that took one block out, rather than a field or a window.
 
-    `blocks[0]`, `blocks[-1]`, `blocks[i]` are positions. `blocks[:2]` is the
-    window the caller asked for, and `page["data"]` is the envelope.
+    `blocks[0]` and `blocks[-1]` are positions. `blocks[:2]` is the window the
+    caller asked for, and `page["data"]` is the envelope.
+
+    A variable subscript is not guessed at either way: `blocks[i]` indexes a
+    block, `page[field]` names a field beside them, and the two are the same
+    expression to the parser. It is read as the collection, so
+    `assert page[field] == []` is still caught as a whole conversation
+    compared with emptiness, and `blocks[i]` alone is left alone.
     """
     if isinstance(key, ast.Slice):
         return False
@@ -377,7 +493,7 @@ def _position(key: ast.AST) -> bool:
         return isinstance(key.value, int) and not isinstance(key.value, bool)
     if isinstance(key, ast.UnaryOp) and isinstance(key.op, ast.USub):
         return _position(key.operand)
-    return isinstance(key, ast.Name)
+    return False
 
 
 def _derives_from_conversation(node: ast.AST, held: set[str], readers: set[str]) -> bool:
@@ -391,15 +507,27 @@ def _derives_from_conversation(node: ast.AST, held: set[str], readers: set[str])
     if isinstance(node, ast.Await):
         return _derives_from_conversation(node.value, held, readers)
     if isinstance(node, ast.Call):
+        narrowed = _call_narrows(node) or _url_narrows(node)
         if _callee(node) in readers:
-            return not _call_narrows(node)
-        if _reads_topic_conversation(node) or _reads_blocks_of_one_conversation(node):
-            return not _call_narrows(node)
+            return not narrowed
+        if _reads_topic_conversation(node):
+            return not narrowed
+        if _reads_blocks_of_one_conversation(node):
+            # The query's own `.where(…)` narrows it too, not only its keywords.
+            return not narrowed and not _query_narrows(node)
         if isinstance(node.func, ast.Attribute) and node.func.attr in SESSION_CALLS:
             # `session.scalars(q)` hands back the rows the query selects.
             return any(
                 _derives_from_conversation(arg, held, readers) for arg in node.args
             )
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in WRAPPER_CALLS
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            # The builtin `list(rows)`; the method spellings are below.
+            return _derives_from_conversation(node.args[0], held, readers)
         if (
             isinstance(node.func, ast.Attribute)
             and node.func.attr in WRAPPER_CALLS
@@ -426,12 +554,13 @@ def _derives_from_conversation(node: ast.AST, held: set[str], readers: set[str])
         ) or _derives_from_conversation(node.right, held, readers)
     if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
         # `[b for b in blocks if b.meta["tool"] == "Task"]` is the narrowing
-        # written as a filter instead of a query parameter.
+        # written as a filter instead of a query parameter. Any filter counts,
+        # not only one over a row key: `[line for line in said if "任务已重新
+        # 打开" in line]` has picked the message the test posted, and no
+        # platform line joins it. What does NOT count is filtering down to the
+        # event slice, which is where announcements land.
         filters = [ast.unparse(condition) for gen in node.generators for condition in gen.ifs]
-        if any(
-            any(key in text for key in ROW_KEYS) and not _narrows_to_events(text)
-            for text in filters
-        ):
+        if filters and not all(_narrows_to_events(text) for text in filters):
             return False
         return any(_derives_from_conversation(gen.iter, held, readers) for gen in node.generators)
     return False
@@ -448,18 +577,26 @@ def _held_names(func: ast.AST, readers: set[str]) -> set[str]:
     held: set[str] = set()
     for node in _own_nodes(func):
         targets: list[ast.AST] = []
-        if isinstance(node, ast.Assign) and _derives_from_conversation(node.value, held, readers):
+        if isinstance(node, ast.Assign):
             targets = list(node.targets)
-        elif (
-            isinstance(node, ast.AnnAssign)
-            and node.value is not None
-            and _derives_from_conversation(node.value, held, readers)
-        ):
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
             targets = [node.target]
-        elif isinstance(node, (ast.For, ast.AsyncFor)) and _derives_from_conversation(node.iter, held, readers):
-            targets = [node.target]
-        for target in targets:
-            held.update(name.id for name in ast.walk(target) if isinstance(name, ast.Name))
+            value = node.value
+        else:
+            # A `for block in blocks` binds ONE block; it is not the timeline.
+            continue
+        if _derives_from_conversation(value, held, readers):
+            for target in targets:
+                held.update(name.id for name in ast.walk(target) if isinstance(name, ast.Name))
+        else:
+            # Rebound to something that is not the conversation any more —
+            # `blocks = [b for b in blocks if b["kind"] == "message"]` says
+            # which blocks it means, so the later reads are the test's own.
+            for target in targets:
+                held.difference_update(
+                    name.id for name in ast.walk(target) if isinstance(name, ast.Name)
+                )
     return held
 
 
@@ -497,6 +634,10 @@ def _findings_in_func(func: ast.AST, readers: set[str], held: set[str]) -> list[
         if isinstance(node, ast.Subscript) and _derives_from_conversation(node.value, held, readers):
             if _position(node.slice):
                 found.append((node.lineno, "index", _source(node)))
+        if isinstance(node, ast.Assert) and _asserts_nothing_is_there(node.test, held, readers):
+            # `assert not _blocks(…)` is `== []` spelled as truthiness, and it
+            # breaks the same way the day an announcement joins the timeline.
+            found.append((node.lineno, "whole", _source(node.test)))
         if not isinstance(node, ast.Compare):
             continue
         if _is_whole_comparison(node, held, readers):
@@ -506,12 +647,26 @@ def _findings_in_func(func: ast.AST, readers: set[str], held: set[str]) -> list[
     return found
 
 
+def _asserts_nothing_is_there(test: ast.AST, held: set[str], readers: set[str]) -> bool:
+    """`assert not <conversation read>`: the empty-timeline assumption, as truthiness.
+
+    Only the negated form. `assert blocks` says "something is there", which a
+    new platform line cannot falsify.
+    """
+    return (
+        isinstance(test, ast.UnaryOp)
+        and isinstance(test.op, ast.Not)
+        and _derives_from_conversation(test.operand, held, readers)
+    )
+
+
 def _is_pinned_number(node: ast.AST) -> bool:
     """A count written into the test: an integer literal, `True`/`False` included.
 
-    `assert page["has_more"] == False` pins a boolean, and `False == 0` in
-    Python, so reading it as a length is reading the thing the test actually
-    wrote. `isinstance(False, int)` is True, and the two are one branch.
+    `assert len(blocks) == True` pins a count just as `== 1` does, and
+    `isinstance(True, int)` is True, so the two are one branch. A boolean field
+    such as `page["has_more"] == False` never reaches here: that key is not the
+    conversation, so the other side of the comparison is not counted at all.
     """
     return isinstance(node, ast.Constant) and isinstance(node.value, (int, bool))
 
@@ -574,14 +729,40 @@ def findings(root: Path) -> tuple[Counter[tuple[str, str, str]], list[str]]:
         except (OSError, SyntaxError, UnicodeError, ValueError) as exc:
             unreadable.append(f"{path}: {exc}")
             continue
-        readers = _readers(tree)
+        engine = _Readers()
         relative = path.relative_to(root).as_posix()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                held = _held_names(node, readers)
-                for _, kind, source in _findings_in_func(node, readers, held):
-                    rejected[(relative, kind, source)] += 1
+        for node, held, readers in _scopes(tree, _nested_functions(tree), engine):
+            for _, kind, source in _findings_in_func(node, readers, held):
+                rejected[(relative, kind, source)] += 1
     return rejected, unreadable
+
+
+def _scopes(
+    tree: ast.Module, module_scope: dict[str, ast.AST], engine: _Readers
+) -> Iterator[tuple[ast.AST, set[str], frozenset[str]]]:
+    """Every scope in the file, with the names it can see and the readers it knows.
+
+    A function defined inside another one reads the outer bindings through the
+    closure, so `blocks = _history(…)[\"data\"]` in the test is still the
+    conversation inside `def check():`. Inheriting the outer set is what makes
+    that visible; `lambda` bodies are scopes too, so `wait_until(lambda: …)`
+    is judged rather than skipped.
+    """
+
+    def walk(node: ast.AST, inherited: set[str], scope: dict[str, ast.AST]):
+        held = inherited
+        readers = engine.names(scope)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = {**scope, **_nested_functions(node)}
+            readers = engine.names(scope)
+            held = inherited | _held_names(node, readers)
+            yield node, held, readers
+        elif isinstance(node, (ast.Module, ast.Lambda)):
+            yield node, held, readers
+        for child in ast.iter_child_nodes(node):
+            yield from walk(child, held, scope)
+
+    yield from walk(tree, set(), module_scope)
 
 
 # --------------------------------------------------------------------------- #

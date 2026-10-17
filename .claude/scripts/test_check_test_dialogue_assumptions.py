@@ -36,6 +36,10 @@ def _events(client, conversation_id):
 #: What a repaired test looks like, one line per way of saying which blocks it
 #: means. None of these may be reported.
 REPAIRED = '''
+from sqlalchemy import select
+from backend.models import Block
+
+
 def test_narrowed_reads_say_which_blocks_they_mean(client, topic, ids):
     assert _history(client, topic, kind="message")["data"][0]["id"] == ids[0]
     assert [b["id"] for b in _history(client, topic, author="alice")["data"]] == ids
@@ -50,6 +54,23 @@ def test_the_action_adds_nothing(client, topic):
     said = [b["id"] for b in _events(client, topic)]
     client.post(f"/topics/{topic}/messages")
     assert [b["id"] for b in _events(client, topic)] == said
+
+
+def test_the_action_adds_no_blocks(session, topic):
+    # The before/after comparison, taken over the database instead of the API.
+    # `select(Block.id)` is a read of the same conversation, and both sides are
+    # reads of it, so this is the repair, not a pinned count.
+    before = set(session.scalars(select(Block.id).where(Block.conversation_id == topic)))
+    session.add(Block(conversation_id=topic, kind="message"))
+    after = {b.id for b in session.scalars(select(Block).where(Block.conversation_id == topic))}
+    assert after == before
+
+
+def test_a_db_read_narrowed_in_the_where_clause(client, session, topic):
+    rows = session.scalars(
+        select(Block).where(Block.conversation_id == topic, Block.kind == "message")
+    ).all()
+    assert len(rows) == 2
 '''
 
 
@@ -102,6 +123,64 @@ def test_holds_exactly_what_i_sent(client, topic, ids):
             """
 def test_the_conversation_says_nothing(client, topic):
     assert _events(client, topic) == []
+""",
+            kind="whole",
+            repair="拿整段对话跟一个固定的东西比",
+        )
+
+    def test_a_helper_that_posts_a_content_field_is_still_a_reader(self) -> None:
+        # A request body mentioning `content` is not a filter. Reading it as one
+        # would retire the whole helper and silently stop looking at its tests.
+        self._assert_rejected(
+            """
+def _say_and_read(client, topic, text):
+    client.post(f"/topics/{topic}/messages", json={"content": text})
+    return client.get(f"/topics/{topic}/history").json()["data"]
+
+
+def test_says(client, topic):
+    rows = _say_and_read(client, topic, "hi")
+    assert rows[0]["content"] == "hi"
+""",
+            kind="index",
+            repair="按位置取块",
+        )
+
+    def test_an_empty_conversation_asserted_by_truthiness_is_rejected(self) -> None:
+        self._assert_rejected(
+            """
+def test_nothing_was_said(client, topic):
+    assert not _history(client, topic)["data"]
+""",
+            kind="whole",
+            repair="拿整段对话跟一个固定的东西比",
+        )
+
+    def test_a_conversation_pinned_with_in_is_still_one_conversation(self) -> None:
+        self._assert_rejected(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_takes_the_first_block(session, topic):
+    rows = session.scalars(select(Block).where(Block.topic_id.in_([topic]))).all()
+    assert rows[0]["id"]
+""",
+            kind="index",
+            repair="按位置取块",
+        )
+
+    def test_a_variable_subscript_of_the_envelope_is_the_collection(self) -> None:
+        # `page[field]` cannot be told from `blocks[i]` by shape. Reading it as
+        # the collection keeps the empty-comparison finding; reading it as a
+        # position would report an index that is not there.
+        self._assert_rejected(
+            """
+def test_the_page_is_empty(client, topic, field):
+    page = _history(client, topic)
+    rows = page[field]
+    assert rows == []
 """,
             kind="whole",
             repair="拿整段对话跟一个固定的东西比",
