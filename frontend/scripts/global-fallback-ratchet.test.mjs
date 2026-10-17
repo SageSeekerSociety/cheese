@@ -1081,6 +1081,60 @@ describe('findGlobalFallbacks', () => {
     assert.ok(deep.elapsed < 30_000, `walked a legal 17 KB component in ${deep.elapsed} ms`)
   })
 
+  // The case above keeps the short answer the depth bound returns; this one
+  // keeps the full answer a route that stays inside the bound returns, and
+  // that answer is the same one from every depth. Keying it by depth too makes
+  // a graph that spreads the same sub-graph at every level of a chain re-read
+  // it once per level: measured at 4.4 s against 0.7 s here, and 0.4 s with
+  // the full answer kept once.
+  it('answers a shared sub-graph once however many depths reach it', () => {
+    const WIDTH = 16
+    const LEVELS = 16
+    const LINKS = 400
+    // The two graphs differ only in whether each link of the chain spreads the
+    // shared sub-graph, so reading that sub-graph again is the only extra work
+    // the second one can cost.
+    const graph = (spreads) => {
+      const lines = ["const s0_0 = { props: ['open'] }"]
+      for (let i = 1; i < WIDTH; i += 1) lines.push(`const s0_${i} = s0_0`)
+      for (let level = 1; level <= LEVELS; level += 1) {
+        const spread = Array.from({ length: WIDTH }, (_, j) => `s${level - 1}_${j}`)
+          .map((source) => `...${source}`)
+          .join(', ')
+        for (let i = 0; i < WIDTH; i += 1) lines.push(`const s${level}_${i} = { ${spread} }`)
+      }
+      lines.push(`const w0 = { ...s${LEVELS}_0 }`)
+      for (let i = 1; i <= LINKS; i += 1) {
+        lines.push(
+          spreads ? `const w${i} = { ...w${i - 1}, ...s${LEVELS}_0 }` : `const w${i} = { ...w${i - 1}, k${i}: ${i} }`
+        )
+      }
+      return [
+        '<script lang="ts">',
+        ...lines,
+        `export default w${LINKS}`,
+        '</script>',
+        '<template><button @click="open()">x</button></template>',
+        '',
+      ].join('\n')
+    }
+    const timed = (code) => {
+      const started = Date.now()
+      const answered = found(code)
+      return { answered, elapsed: Date.now() - started }
+    }
+
+    const control = timed(graph(false))
+    const shared = timed(graph(true))
+
+    assert.deepEqual(control.answered, [], 'did not read the chain itself')
+    assert.deepEqual(shared.answered, [], 'read the shared sub-graph once per depth')
+    assert.ok(
+      shared.elapsed < control.elapsed * 3 + 500,
+      `read the shared sub-graph in ${shared.elapsed} ms against ${control.elapsed} ms without it`
+    )
+  })
+
   // The value a name holds follows execution, and execution is not the order
   // the text sits in and not a pattern match on the syntax either. Each of
   // these four answered wrong before the fix named beside it, so each stands

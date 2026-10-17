@@ -350,14 +350,14 @@ function unassert(node) {
  * answer is bounded by the names the file spells and not by the routes
  * through it.
  *
- * The walk answers a node once and reuses the answer everywhere the node is
- * reached at the same depth. Depth is part of the answer only at the recursion
- * bound: a node met past it is read only as far as the bound reached, and the
- * same node met nearer the top must still be read to the end. Keeping one
- * answer per (node, depth) is what lets both of them be kept — without the
- * depth, the short answer is either wrong for the shallow route or has to be
- * thrown away, and throwing it away makes every node above a deep branch
- * answer again on every route through it.
+ * The walk answers a node once. An answer that read the node to the end holds
+ * however deep the node is met, so it is kept once per node and reused
+ * everywhere. The answer the depth bound returns is the exception: it read
+ * only as far as the bound reached, so it is true of the depth it was read at
+ * and of no other. It is kept under that depth, which is what lets a deep
+ * branch be read once without letting its short answer stand in for the full
+ * one a shallower route still has to get — and without making every node
+ * above the branch answer again on every route through it.
  *
  * The one thing an answer cannot express is a cycle: `const a = { ...b }` with
  * `const b = { ...a }` has no finite set of entries, and what the walk reports
@@ -371,20 +371,38 @@ function objectEntries(node, resolve, depth = 0) {
   return [...expandEntries(node, resolve, depth, new Set(), new Map()).entries.values()]
 }
 
-const NO_ENTRIES = { entries: new Map(), done: true }
+const NO_ENTRIES = { entries: new Map(), done: true, cut: false }
+/**
+ * What the depth bound answers with: the names past it were not read, so the
+ * answer is true of the depth it was read at and of no other.
+ */
+const BOUND_ENTRIES = { entries: new Map(), done: true, cut: true }
 /** An expansion that met a node already on its path: true of this path only. */
-const CUT_ENTRIES = { entries: new Map(), done: false }
+const CUT_ENTRIES = { entries: new Map(), done: false, cut: false }
+
+/** The answer that read a node to the end, if there is one. */
+function completeEntries(memo, node) {
+  return memo.get(node)?.complete
+}
 
 /** The answer kept for a node as it was read from one depth. */
 function keptEntries(memo, node, depth) {
-  return memo.get(node)?.get(depth)
+  return memo.get(node)?.byDepth?.get(depth)
 }
 
-/** Keeps an answer for a node along with the depth it is only true from. */
+/** Keeps an answer that holds however deep the node was met. */
+function keepComplete(memo, node, entries) {
+  const kept = memo.get(node)
+  if (kept) kept.complete = entries
+  else memo.set(node, { complete: entries })
+}
+
+/** Keeps an answer that is only true from the depth it was read at. */
 function keepEntries(memo, node, depth, entries) {
-  let byDepth = memo.get(node)
-  if (!byDepth) memo.set(node, (byDepth = new Map()))
-  byDepth.set(depth, entries)
+  let kept = memo.get(node)
+  if (!kept) memo.set(node, (kept = {}))
+  if (!kept.byDepth) kept.byDepth = new Map()
+  kept.byDepth.set(depth, entries)
 }
 
 /**
@@ -414,7 +432,7 @@ function expandEntries(node, resolve, depth, seen, memo) {
   // The answer stops where the bound did, which is still an answer for a route
   // that arrives this deep: it is kept under the depth it was read at, so a
   // route that meets the same node nearer the top still reads it to the end.
-  if (depth > MAX_SPREAD_DEPTH) return NO_ENTRIES
+  if (depth > MAX_SPREAD_DEPTH) return BOUND_ENTRIES
   const value = unassert(node)
   if (!value) return NO_ENTRIES
   if (value.type === 'Identifier') {
@@ -448,34 +466,45 @@ function expandEntries(node, resolve, depth, seen, memo) {
   // that met the same node from the top.
   if (isObjectAssign(value)) {
     if (seen.has(value)) return CUT_ENTRIES
+    const complete = completeEntries(memo, value)
+    if (complete) return { entries: complete, done: true, cut: false }
     const cached = keptEntries(memo, value, depth)
-    if (cached) return { entries: cached, done: true }
+    if (cached) return { entries: cached, done: true, cut: true }
     seen.add(value)
     const entries = new Map()
     let done = true
+    let cut = false
     for (const argument of value.arguments ?? []) {
       const part = expandEntries(argument, resolve, depth + 1, seen, memo)
       for (const entry of part.entries.values()) putEntry(entries, entry)
       done = done && part.done
+      cut = cut || part.cut
     }
     seen.delete(value)
-    if (done) keepEntries(memo, value, depth, entries)
-    return { entries, done }
+    if (done) {
+      if (cut) keepEntries(memo, value, depth, entries)
+      else keepComplete(memo, value, entries)
+    }
+    return { entries, done, cut }
   }
   if (value.type !== 'ObjectExpression') return NO_ENTRIES
   // A search that is inside this node already: this route is the cycle.
   if (seen.has(value)) return CUT_ENTRIES
-  // A search that finished this node from this depth and kept the answer.
+  // A search that finished this node and kept the answer.
+  const complete = completeEntries(memo, value)
+  if (complete) return { entries: complete, done: true, cut: false }
   const cached = keptEntries(memo, value, depth)
-  if (cached) return { entries: cached, done: true }
+  if (cached) return { entries: cached, done: true, cut: true }
   seen.add(value)
   const entries = new Map()
   let done = true
+  let cut = false
   for (const property of value.properties ?? []) {
     if (property.type === 'SpreadElement') {
       const part = expandEntries(resolveValue(property.argument, resolve), resolve, depth + 1, seen, memo)
       for (const entry of part.entries.values()) putEntry(entries, entry)
       done = done && part.done
+      cut = cut || part.cut
       continue
     }
     if (property.type !== 'Property') continue
@@ -488,8 +517,11 @@ function expandEntries(node, resolve, depth, seen, memo) {
     })
   }
   seen.delete(value)
-  if (done) keepEntries(memo, value, depth, entries)
-  return { entries, done }
+  if (done) {
+    if (cut) keepEntries(memo, value, depth, entries)
+    else keepComplete(memo, value, entries)
+  }
+  return { entries, done, cut }
 }
 
 /** The names an object literal spells in quotes: `{ 'open': … }`, `{ ['open']: … }`. */
