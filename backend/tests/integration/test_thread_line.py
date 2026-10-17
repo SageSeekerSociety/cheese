@@ -7,13 +7,20 @@ main line is told without opening it.
 - a message whose 支线 has nothing in it yet and nobody answering has no line;
 - a 支线 where the AI teammate's turn failed before anyone replied still has a
   line, saying the reply failed: the reason is in the 支线, and without the line
-  nobody could find it.
+  nobody could find it;
+- a page of 支线 reads the messages they hang under once, however many there
+  are: who took part comes from the same rows as what the message said.
 """
 
+import re
 import uuid
+
+import pytest
+from sqlalchemy import event
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
+from app.domain.thread import reads as thread_reads
 from app.domain.thread.models import Thread
 from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 from tests.integration.conftest import (
@@ -264,3 +271,62 @@ def test_a_listed_thread_says_whether_its_message_was_cut(client):
     assert roots[short["id"]]["kind"] == "message"
     assert roots[short["id"]]["author_type"] == "participant"
     assert roots[long["id"]]["truncated"] is True
+
+
+#: The read of messages by their ids: `_among` binds the ids as one array.
+_ROOTS_BY_ID = re.compile(r"FROM blocks\s+WHERE blocks\.id = ANY", re.IGNORECASE)
+
+
+def _roots_read_while(client, read):
+    """How many times the messages are read by id while ``read`` runs."""
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        statements.append(statement)
+
+    engine = client.test_app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        read()
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    return sum(1 for s in statements if _ROOTS_BY_ID.search(s))
+
+
+def _channel_with_threads(client, n):
+    tid = _channel(client)
+    for i in range(n):
+        root = post_message(client, tid, "alice", {"content": f"问题 {i}"})
+        thread = _thread(client, root["id"], "bob")
+        post_message(client, thread, "bob", {"content": "我这边也是"})
+    return tid
+
+
+def _list_threads(client, tid):
+    r = client.get(f"/topics/{tid}/threads", headers=session_auth_headers("alice"))
+    assert r.status_code == 200, r.text
+    listed = r.json()["data"]
+    return listed["data"] if isinstance(listed, dict) else listed
+
+
+@pytest.mark.parametrize("n", [3, 12])
+def test_a_page_of_threads_reads_their_messages_once(client, n):
+    tid = _channel_with_threads(client, n)
+    rows: list[dict] = []
+    reads = _roots_read_while(client, lambda: rows.extend(_list_threads(client, tid)))
+    assert len(rows) == n
+    assert all(r["participants"] == ["alice", "bob"] for r in rows)
+    assert reads == 1, f"{n} 条支线读了 {reads} 遍根消息"
+
+
+def test_the_people_in_a_thread_still_read_its_message_alone(client):
+    tid = _channel(client)
+    root = post_message(client, tid, "alice", {"content": "微信里打不开预览"})
+    thread = _thread(client, root["id"], "bob")
+    post_message(client, thread, "bob", {"content": "我这边也是"})
+
+    async def _people() -> list[str]:
+        async with client.test_factory() as s:
+            return await thread_reads.people_in(s, uuid.UUID(thread))
+
+    assert client.portal.call(_people) == ["alice", "bob"]
