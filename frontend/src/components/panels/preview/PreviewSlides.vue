@@ -6,6 +6,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useSlidesPdf } from '@/composables/useSlidesPdf'
 
 import { contextAround } from './markdownQuote'
+import { useSelectionHighlight } from './selectionHighlight'
 import SlideThumbRail from './SlideThumbRail.vue'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -53,8 +54,8 @@ const ready = computed(() => !loading.value && !failure.value && count.value > 0
  *  但两条都建在 `ready` 上——这一页得先画出来，才有选区可谈、才知道选的是哪一版。
  *  所以转换在后台重跑（`loading` 还没落地）的那一下，两条都是假，选中一段退回那句
  *  不带版本的拼话。这不是「反正屏上那张就是读者看着的那张」：真发出去之前父级还会
- *  把身份整个再核一遍（`PanelPreviewView.canUsePageContext`），这里松一档只会选出
- *  一场白选。 */
+ *  把身份整个再核一遍（`usePreviewLocator` 走 `usePreviewPagePin` 的 `canUse`），这里
+ *  松一档只会选出一场白选。 */
 const canQuote = computed(() => ready.value && !!props.context && !problem.value && !props.rendererMissing)
 const canAskPage = computed(() => canQuote.value && !busy.value)
 const showRail = computed(() => ready.value && !presenting.value && (railOverride.value ?? !narrow.value))
@@ -109,6 +110,15 @@ function keyboard(event: KeyboardEvent) {
     go(page)
   }
 }
+// 和 PreviewPages 同一件事：浏览器给每一段文字各画一层底色，文字层里相邻两段是搭着
+// 的，叠出来的那块比别处深。这一份的底色本来是实色，叠着看不出来，但换成自己画之后
+// 两份才是同一套写法，见 `selectionHighlight.ts`。
+useSelectionHighlight({
+  sheets: () => (sheet.value ? [sheet.value] : []),
+  layerClass: 'slide-text-layer',
+  paintClass: 'slide-hl',
+})
+
 function quote() {
   const selection = window.getSelection()
   if (!selection?.rangeCount || !sheet.value) return
@@ -408,14 +418,29 @@ onBeforeUnmount(() => {
 .slides__sheet :deep(canvas) {
   display: block;
 }
+/* 这一份和 PreviewPages 里 `.pv-text` 那一段是同一套写法：改一处时两处一起改。
+ *
+ * pdf.js 6 只把几何写成变量，字号和 transform 得由样式从这里乘出来。少了这一段，
+ * 字还是透明的、位置也对，坏在看不见的地方——每个 span 按继承来的字号排版，盒子
+ * 大小和纸上那些字对不上，选中落在隔壁，高亮盖不住。 */
 .slides__sheet :deep(.slide-text-layer) {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
   position: absolute;
+  text-align: initial;
   inset: 0;
-  overflow: hidden;
+  /* `clip` 不是 `hidden`：hidden 是一个能滚的框，一路拖下去选的时候浏览器会把它自己
+     滚走，高亮跟着离开纸面，再被页框裁掉。 */
+  overflow: clip;
   line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
   text-size-adjust: none;
   forced-color-adjust: none;
   transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
 }
 .slides__sheet :deep(.slide-text-layer span),
 .slides__sheet :deep(.slide-text-layer br) {
@@ -424,15 +449,11 @@ onBeforeUnmount(() => {
   color: transparent;
   cursor: text;
   transform-origin: 0 0;
-}
-/* PDF.js 6 TextLayer publishes geometry variables; CSS owns their application. */
-.slides__sheet :deep(.slide-text-layer) {
-  --min-font-size: 1;
-  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
-  --min-font-size-inv: calc(1 / var(--min-font-size));
+  user-select: text;
 }
 .slides__sheet :deep(.slide-text-layer > :not(.markedContent)),
 .slides__sheet :deep(.slide-text-layer .markedContent span:not(.markedContent)) {
+  z-index: 1;
   --font-height: 0;
   --scale-x: 1;
   --rotate: 0deg;
@@ -442,8 +463,22 @@ onBeforeUnmount(() => {
 .slides__sheet :deep(.slide-text-layer .markedContent) {
   display: contents;
 }
+/* 选中只剩底色，底色不在这里画——和 PreviewPages 里那一段同一套写法，改一处时两处
+   一起改。这一条把浏览器那一层关掉，自己画的那一层在下面。`color` 还是要点明：正文
+   本来是透明的，不写的话浏览器会按「被选中的文字」给它上色，选中的那几个字上又叠出
+   一层同形状的字。 */
 .slides__sheet :deep(.slide-text-layer ::selection) {
-  background: var(--accent-wash);
+  background: transparent;
+  color: transparent;
+}
+/* 自己画的那一层，由 `selectionHighlight.ts` 算位置和大小。 */
+.slides__sheet :deep(.slide-hl) {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.slides__sheet :deep(.slide-hl path) {
+  fill: var(--accent-wash);
 }
 .slides__sheet :deep(.slide-paint-error) {
   padding: 32px 16px;

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // 评论栏这一列：够宽时贴在正文右边，窄时盖在正文上面；宽度能拖。里面是 DocComments。
 import type { SendDocComment } from '../../../composables/useDocCommentDraft'
+import type { useMentionOutside } from '../../../composables/useMentionOutside'
+import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
 
@@ -9,6 +11,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } fro
 import DocComments from './DocComments.vue'
 
 import { t } from '@/i18n'
+import { storageGet, storageSet } from '@/lib/browserStorage'
 import { vRovingTabs } from '@/lib/rovingTabs'
 
 // 「未解决 / 已解决」两格页签切换的就是下面那张批注列表。
@@ -25,6 +28,8 @@ const props = defineProps<{
   placeOf: (id: string) => ThreadPlace
   agentName: string
   mentionNames: Record<string, string>
+  mentionPeople?: MentionPoolEntry[]
+  outside?: ReturnType<typeof useMentionOutside>
   nameOf: (handle: string) => string
   /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
   avatarOf?: (handle: string) => string
@@ -50,12 +55,9 @@ const busy = ref(false)
 const paneWidth = ref(0)
 const preferred = ref(340)
 const floating = ref(false)
-try {
-  const saved = Number(localStorage.getItem(WIDTH_KEY))
-  if (Number.isFinite(saved) && saved > 0) preferred.value = saved
-} catch {
-  /* Width storage is optional. */
-}
+// 宽度存不下就退回默认：这一列能拖，记住宽度只是顺手。
+const saved = Number(storageGet(WIDTH_KEY))
+if (Number.isFinite(saved) && saved > 0) preferred.value = saved
 const canDock = computed(() => paneWidth.value >= 688)
 const docked = computed(() => canDock.value && !floating.value)
 const compact = computed(() => paneWidth.value <= 480)
@@ -69,11 +71,7 @@ const width = computed(() =>
 )
 function commit(value: number) {
   preferred.value = clamp(value)
-  try {
-    localStorage.setItem(WIDTH_KEY, String(preferred.value))
-  } catch {
-    /* Keep it in memory. */
-  }
+  storageSet(WIDTH_KEY, String(preferred.value))
 }
 
 let observer: ResizeObserver | null = null
@@ -352,6 +350,8 @@ defineExpose({ open, locate, toggle, close, opened, busy })
             :place-of="placeOf"
             :agent-name="agentName"
             :mention-names="mentionNames"
+            :mention-people="mentionPeople"
+            :outside="outside"
             :name-of="nameOf"
             :avatar-of="avatarOf"
             :writable="writable"

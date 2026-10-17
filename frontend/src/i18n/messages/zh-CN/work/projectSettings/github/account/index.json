@@ -1,0 +1,6 @@
+{
+  "already_linked": "这个 GitHub 账号已绑定在另一个账号上。换一个 GitHub 账号，或由对方先断开",
+  "github_unreachable": "服务器暂时无法连接 GitHub，与你的操作无关。稍后回到本页再点「连接 GitHub 账号」",
+  "invalid_state": "授权链接已失效或已使用。回到本页重新点「连接 GitHub 账号」，不要复用旧链接",
+  "oauth_failed": "GitHub 未接受这次授权，授权码可能已过期或已使用。回到本页重新点「连接 GitHub 账号」"
+}

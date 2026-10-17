@@ -97,8 +97,8 @@ export function useDocAgent(options: DocAgentOptions) {
     if (now) paint({ target: { ...now, mode: 'select', label: '' } })
   }
 
-  /** 选中的那一段开出输入框；对整篇时不带范围。 */
-  function open(range?: CommentSpot) {
+  /** 选中的那一段开出输入框；对整篇时不带范围。带着 `request` 时开框就把它说出去。 */
+  function open(range?: CommentSpot, request?: string) {
     if (!options.ask()) return
     close()
     const e = editor()
@@ -119,6 +119,7 @@ export function useDocAgent(options: DocAgentOptions) {
       context.value = { editable: options.editable(), list: false, chinese: true }
     }
     phase.value = 'asking'
+    if (request) say(request)
   }
 
   function close() {
@@ -244,6 +245,14 @@ export function useDocAgent(options: DocAgentOptions) {
     void send({ preset: preset.id }, preset.kind, label)
   }
 
+  /** 为还空着的项目总览起草第一版：`note` 是提问人的补充（可以是空的）。 */
+  function draft(note: string) {
+    if (options.scope !== 'document') return
+    open()
+    if (phase.value !== 'asking') return
+    void send({ preset: 'draft', text: note.trim() || undefined }, 'edit', t('work.room.docAgent.draftLabel'))
+  }
+
   /** 自己写的一句：改还是答由它判断。 */
   function say(text: string) {
     const body = text.trim()
@@ -318,6 +327,7 @@ export function useDocAgent(options: DocAgentOptions) {
     close,
     run,
     say,
+    draft,
     stop,
     stopped,
     undo,

@@ -44,6 +44,10 @@ from app.domain.common import Timestamps, UuidPk
 # foreign key resolves in a process that never imports `app.models`.
 from app.domain.conversation.models import Conversation  # noqa: F401
 
+# 这一档的词汇住在第 1 层：第 2 层的 `topic` 也判这一列，判的是它自己声明的那张
+# 裸表（`topic/repositories/statements.py`），够不到这里。
+from app.domain.event_author import AuthorType
+
 
 class BlockKind(enum.StrEnum):
     message = "message"
@@ -59,22 +63,6 @@ class BlockKind(enum.StrEnum):
     # 是一段历史而不是一个当前状态，所以带时间窗：并排摆着的几份周报，是那个
     # 窗口把它们分开的。
     weekly = "weekly"
-
-
-class AuthorType(enum.StrEnum):
-    """谁写下了这条事件：一个参与者，还是平台自己。
-
-    人和 agent 是同一种参与者（结论 1），所以这一列不回答「是人还是 AI」——
-    那个问题由署名（``Block.author``，一个 handle）回答，而且只有它回答得了：
-    一个房间里坐着好几个人和好几个 agent，一个档位说不出是哪一个。
-
-    读这一列的唯一落点是 ``app.domain.block.authorship``。
-    """
-
-    participant = "participant"
-
-    # 平台自己产的事件：部署提醒、闸门结论、自动重发。
-    platform = "platform"
 
 
 # `meta` key carried by every new message/attachment that arrives as an input.

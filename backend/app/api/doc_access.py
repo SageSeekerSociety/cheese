@@ -2,10 +2,17 @@
 
 A task's living document is read by whoever may enter the task's channel, and
 written by the people working the task and the task's own session: what others
-have to say about a task they say in the channel. A document of the project's
-own — the project's goals among them — is the project's members', and 芝士's
-wherever in the project it works. Every document route asks here, so they never
-disagree.
+have to say about a task they say in the channel. A document 芝士 wrote in a
+channel or a private chat is that conversation's until someone saves it to the
+library: whoever may enter the conversation reads and writes it (#3828). A
+document of the project's own — the project's goals and every saved one among
+them — is the project's members', and 芝士's wherever in the project it works.
+Every document route asks here, so they never disagree.
+
+`asked_of` is the one derivation the comment routes and the agent routes share:
+from the caller's reach, the question an agent asks about this document. It
+belongs with `Reached`, and the two modules that ask are route modules, which do
+not import each other (C4 `routes-independent`).
 """
 
 import uuid
@@ -14,16 +21,19 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
+from app.auth.project_roles import require
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
+from app.domain.agent.document.question import Asked
 from app.domain.identity.actor import Actor
+from app.domain.identity.services import IdentityService
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
 from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
+from app.domain.project_permissions import Permission
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.place import Place
+from app.domain.room_task.place import Place, place_or_404, require_doc_writable
 from app.domain.room_task.services import TaskService
-from app.domain.topic.services import TopicService
 
 
 @dataclass(frozen=True)
@@ -31,7 +41,8 @@ class Reached:
     doc: Document
     actor: Actor
     #: The room the document is the living document of — or the room of the task
-    #: it is the living document of; None for a project's own.
+    #: it is the living document of, or the conversation that keeps it; None for
+    #: a project's own.
     place: Place | None
     #: The task whose living document this is.
     task: Task | None = None
@@ -55,7 +66,7 @@ async def reach(
         raise NotFoundError(say("docNotFound"))
     task = await TaskService(db).of_document(doc.id)
     if task is not None:
-        place = await TopicService(db).place_or_404(task.id)
+        place = await place_or_404(db, task.id)
         actor = await resolver.resolve(
             topic_id=place.conversation_id, project_id=place.project_id
         )
@@ -63,6 +74,16 @@ async def reach(
             actor, project_id=place.project_id, topic_id=place.room_id, enforce=enforce
         )
         return Reached(doc, actor, place, task, resolver.credential_conversation())
+    if doc.room_id is not None and doc.kept_at is None:
+        place = await place_or_404(db, doc.room_id)
+        # Not resolved against the room's own conversation: 芝士 working in one
+        # of the room's tasks or 支线 holds that conversation's credential, and
+        # the room is what decides who reads the document.
+        actor = await resolver.resolve(project_id=place.project_id)
+        await resolver.authorize_topic(
+            actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+        )
+        return Reached(doc, actor, place, None, resolver.credential_conversation())
     actor = await resolver.resolve(project_id=doc.project_id)
     await authorize_in_project(resolver, actor, doc.project_id)
     return Reached(doc, actor, None)
@@ -80,14 +101,39 @@ async def authorize_in_project(
     if actor.via == "cheese" and resolver.credential_conversation() is not None:
         await resolver.refuse_unseated_agent(actor, project_id=project_id)
         return
-    await resolver.authorize_project(actor, project_id=project_id)
+    # The least a write to a document needs; ``require_writable`` asks for what
+    # the write itself needs.
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.comment
+    )
 
 
-async def require_writable(db: AsyncSession, reached: Reached) -> None:
+async def require_role(
+    db: AsyncSession, actor: Actor, project_id: uuid.UUID, permission: Permission
+) -> None:
+    """A person only does what their role lets them; an AI teammate writes as it
+    was asked to, and its own gates are elsewhere. Nobody signed in reaches here
+    only on the global sandbox token, which the project and room doors already
+    let through as the trusted single-host credential: it has no seat to ask."""
+    if not actor.authenticated:
+        return
+    if actor.via != "cheese" and not await IdentityService(db).is_agent(actor.handle):
+        await require(db, project_id, actor.handle, permission)
+
+
+async def require_writable(
+    db: AsyncSession,
+    reached: Reached,
+    permission: Permission = Permission.edit_content,
+) -> None:
     """An archived room's document, and every document of an archived project,
-    takes no more writes."""
+    takes no more writes; and a person writes only what their role lets them
+    (#3830): changing a document is ``edit_content``, commenting on it or
+    suggesting a change is ``comment``. An AI teammate writes as it was asked
+    to."""
+    await require_role(db, reached.actor, reached.doc.project_id, permission)
     if reached.place is not None:
-        TopicService(db).require_doc_writable(reached.place)
+        require_doc_writable(reached.place)
     if reached.task is not None:
         if reached.task.status != TaskStatus.open:
             raise ValidationError(say("taskClosedNoTurn"))
@@ -105,3 +151,14 @@ async def frozen(db: AsyncSession, reached: Reached) -> bool:
     except (ValidationError, ProjectArchivedError, ForbiddenError):
         return True
     return False
+
+
+def asked_of(reached: Reached) -> Asked:
+    """The question an agent-ask on this document is about: the document, the
+    project it belongs to, and the task whose living document it is, if any."""
+    doc = reached.doc
+    return Asked(
+        project_id=doc.project_id,
+        document_id=doc.id,
+        task_id=reached.task.id if reached.task is not None else None,
+    )

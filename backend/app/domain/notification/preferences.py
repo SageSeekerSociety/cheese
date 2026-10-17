@@ -105,7 +105,11 @@ CATEGORY_TYPES: Final[dict[PreferenceCategory, frozenset[NotificationType]]] = {
     ),
     PreferenceCategory.DEVICE_IN_USE: frozenset({NotificationType.DEVICE_IN_USE}),
     PreferenceCategory.INVITATION: frozenset(
-        {NotificationType.PROJECT_INVITE, NotificationType.TEAM_INVITATION}
+        {
+            NotificationType.PROJECT_INVITE,
+            NotificationType.PROJECT_TRANSFER,
+            NotificationType.TEAM_INVITATION,
+        }
     ),
     PreferenceCategory.ANNOUNCEMENT: frozenset({NotificationType.SPACE_ANNOUNCEMENT}),
     PreferenceCategory.BILLING: frozenset(),

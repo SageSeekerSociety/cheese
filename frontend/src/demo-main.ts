@@ -15,12 +15,9 @@ import type { Component } from 'vue'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 
-import i18n from '@/i18n'
+import i18n, { localeReady } from '@/i18n'
 import vuetify from '@/plugins/vuetify'
 import { applyResolvedTheme } from '@/theme'
-import DemoCatalog from '@/views/demo/DemoCatalog.vue'
-import { demoRouter } from '@/views/demo/demoRouter'
-import DemoView from '@/views/demo/DemoView.vue'
 
 // 这一条入口上现在有两页，地址说了算：组件预览站（/demo/catalog…）和动态演示
 // （/demo/<名字>）。两页都是「地址当 props 传进去」；查询串两页都收：动态演示按它
@@ -40,12 +37,27 @@ if (asked === 'dark' || asked === 'light') {
   vuetify.theme.change(asked)
 }
 
-createApp(catalog || root ? (DemoCatalog as Component) : DemoView, {
-  path: root ? '/demo/catalog/ask-takeover' : location.pathname,
-  search: location.search,
+// 这一页和真界面共用一份 i18n：浏览器记的是英文时，那份语言包不在入口里，要单独
+// 取（见 src/i18n/index.ts 的 `catalogs`）。当场挂载就会先用 zh-CN 兜底画一屏中文、
+// 取回来再翻成英文——所以和 main.ts 一样等它落地。取不到也照常挂载，i18n 那边退回
+// 入口自带的 zh-CN：这一页是文档里的演示，宁可中文也不能空着。
+//
+// 这几页自己也得等：其中有些字是模块加载时就取好的（`views/demo/catalogViewAccountFixtures.ts`
+// 那一类把 `t(...)` 的结果直接存进了 `export const`），静态引进来就赶在语言包前面
+// 了——那时取到的是 zh-CN 的兜底，画面挂上去也不会再变。所以按需引进来，等这一步。
+void localeReady.then(async () => {
+  const [{ default: DemoCatalog }, { default: DemoView }, { demoRouter }] = await Promise.all([
+    import('@/views/demo/DemoCatalog.vue'),
+    import('@/views/demo/DemoView.vue'),
+    import('@/views/demo/demoRouter'),
+  ])
+  createApp(catalog || root ? (DemoCatalog as Component) : DemoView, {
+    path: root ? '/demo/catalog/ask-takeover' : location.pathname,
+    search: location.search,
+  })
+    .use(vuetify)
+    .use(i18n)
+    .use(createPinia())
+    .use(demoRouter())
+    .mount('#app')
 })
-  .use(vuetify)
-  .use(i18n)
-  .use(createPinia())
-  .use(demoRouter())
-  .mount('#app')

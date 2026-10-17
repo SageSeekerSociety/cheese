@@ -22,11 +22,15 @@ interface ImagePreviewProps {
   docLoading: boolean
   docError: string
 }
-interface ImageRegionTarget {
+export interface ImageRegionTarget {
   selection: RasterSelection
   identity: Readonly<DocumentIdentity>
   snapshot: DocumentSnapshot
 }
+
+/** 这一套露出来的样子：图片那一档拿它当 prop 收，不必从
+ *  `ReturnType<typeof usePreviewImageRegion>` 里现推。 */
+export type ImageRegionHandle = ReturnType<typeof usePreviewImageRegion>
 
 /** One displayed blob and one atomic byte snapshot; metadata alone cannot authorize a region. */
 export function usePreviewImageRegion(props: ImagePreviewProps, onRetire: () => void) {

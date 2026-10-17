@@ -1,0 +1,16 @@
+{
+  "accountConnected": "已连接 GitHub 账号",
+  "authUrlFailed": "获取授权链接失败",
+  "connectRepoFailed": "连接 GitHub 仓库失败",
+  "disconnectFailed": "断开 GitHub 账号失败",
+  "followDefault": "跟随系统默认（{state}）",
+  "installPending": "安装请求已提交，待组织管理员批准",
+  "loadFailed": "加载设置失败",
+  "noInstallUrl": "连接失败：未获取到安装链接",
+  "notSignedIn": "未登录",
+  "off": "关闭",
+  "on": "开启",
+  "repoConnected": "已连接仓库 {repo}",
+  "saveFailed": "保存失败，稍后重试",
+  "upstreamSaveFailed": "保存仓库地址失败"
+}

@@ -15,9 +15,13 @@ import { apiLogin } from './helpers';
 // 拖拽这条链路整体接通了（DOM 的 data-project-id、rail 的落点状态、保存下来的顺
 // 序），而那是单测看不见的。
 
+// 顺序按 `data-project-id` 读，不按 `aria-label`：格子的可访问名里带着“待我处理的件数”
+// （「知是 2.0 融合演示（3）」），而那笔数在首帧之后才回来。读到一半标签从「知是 2.0
+// 融合演示」变成「知是 2.0 融合演示（3）」，拿旧标签拼出来的选择器就再也不会命中——
+// 这条用例会一直等到超时。`data-project-id` 不随数据变，也正是这条用例要守的东西。
 const order = (page: Page) =>
   page.evaluate(() =>
-    Array.from(document.querySelectorAll('.app-rail-item--tile')).map((tile) => tile.getAttribute('aria-label'))
+    Array.from(document.querySelectorAll('.app-rail-item--tile')).map((tile) => tile.getAttribute('data-project-id'))
   );
 
 test('把最后一个项目拖到第一格上半边，它成为新的第一个', async ({ page }) => {
@@ -30,7 +34,7 @@ test('把最后一个项目拖到第一格上半边，它成为新的第一个',
 
   const source = (await tiles.nth(before.length - 1).boundingBox())!;
   const head = (await tiles.first().boundingBox())!;
-  const line = page.locator(`.app-rail-item--drop-before[aria-label="${before[0]}"]`);
+  const line = page.locator(`.app-rail-item--drop-before[data-project-id="${before[0]}"]`);
 
   await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
   await page.mouse.down();
@@ -59,7 +63,7 @@ test('把第一个项目拖到最后一格下半边，它成为新的最后一�
 
   const source = (await tiles.first().boundingBox())!;
   const tail = (await tiles.nth(before.length - 1).boundingBox())!;
-  const line = page.locator(`.app-rail-item--drop-after[aria-label="${before[before.length - 1]}"]`);
+  const line = page.locator(`.app-rail-item--drop-after[data-project-id="${before[before.length - 1]}"]`);
 
   await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
   await page.mouse.down();

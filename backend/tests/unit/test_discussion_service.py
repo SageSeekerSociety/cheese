@@ -84,7 +84,14 @@ def _make_discussion_service(
     reaction_service: DiscussionReactionService | AsyncMock | None = None,
     users: AsyncMock | None = None,
     session: AsyncMock | None = None,
+    deliver: AsyncMock | None = None,
 ) -> tuple[DiscussionService, AsyncMock, AsyncMock, AsyncMock]:
+    """The service, with the delivery ledger handed in.
+
+    The mentions a discussion lands go to the ledger, which lives above
+    `discussion`; the composition root passes the real write, so a test passes
+    its own mock. Callers that assert on it pass one in and keep the reference.
+    """
     repo = repo or AsyncMock()
     reaction_service = reaction_service or AsyncMock()
     users = users or AsyncMock()
@@ -95,6 +102,7 @@ def _make_discussion_service(
             repo=repo,
             reaction_service=reaction_service,
             session=session,
+            deliver=deliver or AsyncMock(),
         )
     return svc, repo, reaction_service, users
 
@@ -385,9 +393,9 @@ class TestCreateDiscussion:
             yield
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_creates_and_returns_dto(self, mock_deliver):
-        svc, repo, rxn_svc, users = _make_discussion_service()
+    async def test_creates_and_returns_dto(self):
+        mock_deliver = AsyncMock()
+        svc, repo, rxn_svc, users = _make_discussion_service(deliver=mock_deliver)
         entity = _make_entity(id=42, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
@@ -410,9 +418,9 @@ class TestCreateDiscussion:
         mock_deliver.assert_not_awaited()
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_publishes_notification_for_mentions(self, mock_deliver):
-        svc, repo, rxn_svc, users = _make_discussion_service()
+    async def test_publishes_notification_for_mentions(self):
+        mock_deliver = AsyncMock()
+        svc, repo, rxn_svc, users = _make_discussion_service(deliver=mock_deliver)
         entity = _make_entity(
             id=42,
             sender_id=5,
@@ -479,8 +487,7 @@ class TestCreateDiscussion:
             )
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_filters_non_positive_mention_ids(self, mock_deliver):
+    async def test_filters_non_positive_mention_ids(self):
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(
             id=1, sender_id=5, mentioned_user_ids=[10], content="hello"
@@ -506,8 +513,7 @@ class TestCreateDiscussion:
         assert create_kwargs["mentioned_user_ids"] == [10]
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_deduplicates_mention_ids(self, mock_deliver):
+    async def test_deduplicates_mention_ids(self):
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(
             id=1, sender_id=5, mentioned_user_ids=[10], content="hello"
@@ -533,8 +539,7 @@ class TestCreateDiscussion:
         assert create_kwargs["mentioned_user_ids"] == [10]
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_model_type_uppercased(self, mock_deliver):
+    async def test_model_type_uppercased(self):
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity
@@ -554,8 +559,7 @@ class TestCreateDiscussion:
         assert create_kwargs["model_type"] == "PROJECT"
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_content_is_stripped(self, mock_deliver):
+    async def test_content_is_stripped(self):
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity

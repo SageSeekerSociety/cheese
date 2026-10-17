@@ -33,9 +33,8 @@ from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.staleness import announce_stale
-from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
+from app.domain.block.schemas import AuthorType, BlockKind, BlockOut
 from app.domain.feedback import proposals as proposal_rules
 from app.domain.feedback.schemas import (
     FeedbackCreate,
@@ -45,7 +44,7 @@ from app.domain.feedback.schemas import (
     FeedbackProposalResult,
 )
 from app.domain.feedback.services import FeedbackService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["feedback"])
@@ -74,7 +73,7 @@ async def _actor_in_topic(
     authorize. Copying the order matters: authorize-then-resolve would authorize
     a caller who has not been resolved against this topic yet.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

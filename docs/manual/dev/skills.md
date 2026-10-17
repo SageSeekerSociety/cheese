@@ -4,7 +4,7 @@ kind: 参考
 summary: 平台技能库、项目自定义技能、沙盒技能和分身定义各是什么、怎么装进会话。
 covers:
   - backend/app/domain/agent/skills.py
-  - backend/app/domain/agent/skill_library/
+  - backend/app/domain/skill_library/
   - backend/app/domain/project_skill/
   - backend/sandbox/skills/
   - backend/app/api/routes/project_skills.py
@@ -19,7 +19,7 @@ covers:
 
 ## 库：平台自己的几份说明 {#library}
 
-`backend/app/domain/agent/skill_library/` 下的 markdown，各有各的用处：
+`backend/app/domain/skill_library/` 下的 markdown，各有各的用处（它自己在第 1 层：只读标准库，被 `repository`、`project_skill` 和 `agent` 向下读）：
 
 | 文件 | 用在哪 |
 | --- | --- |
@@ -37,7 +37,7 @@ covers:
 
 仓库自己的 `AGENTS.md` 是另一回事，它讲这个仓库本身的结构与约定，跟着仓库走。两者的分工与注入场合见[提示词注入与上下文管理](/dev/context)的「不同场景」一节。
 
-`skills.py` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "wolfram")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md` 和 `doc_blocks.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
+`skill_library` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md` 和 `doc_blocks.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
 
 `RESERVED_SKILL_NAMES` 是项目自己的技能不许占的名字：平台发的那些，加上 `cheese-docs`。平台不再发的技能，每台机器按自己记下的清单（`.cheese-platform-skills`）删掉。
 
@@ -75,8 +75,11 @@ covers:
 
 项目技能另外还有一条路：`session_skill_files(project_id)` = `native_skill_files()` + `project_skill_files(project_id)`，按 `{"skills/<名字>/<路径>": 正文}` 交给会话。两条路读的是同一批文件，所以容器里改好的技能和设备上的那一份不会分叉——一台机器上对、另一台上是旧的，是没人会发现的那种坏法，因为两边都跑得起来。
 
-## 分身定义：`cheese sync-agents` {#agents}
+## 分身定义：项目的模型目录 {#agents}
 
-`backend/sandbox/cheese` 里的 `_sync_agents` 挂在 SessionStart / UserPromptSubmit 钩子上，把项目的模型目录写成本会话的 Claude Code 分身定义 `agents/model-<id>.md`：`name` 是清洗过的模型 id，`model` 是真 id，`description` 是主 agent 在 Agent 工具清单里读到的那一行，正文只有一句「由 cheese sync-agents 按项目模型目录生成，别手改」。
+Claude Code 的 Agent 工具只认 Claude 的几个别名作模型参数，所以要把一个分身派到 `kimi-k3` 这样的网关模型上，靠的是分身类型：每个模型一份定义 `agents/model-<名字>.md`，`name` 是清洗过的模型 id，`model` 是真 id，`description` 是主 agent 在 Agent 工具的类型清单里读到的那一行（告诉它 `subagent_type` 填这个名字）。只列项目自己那个池里的模型。
 
-它只是发现层——真正的闸在准入，指定了目录外的模型会被拒——所以任何失败都不许打断会话：`_sync_agents` 恒退出 0。清理只动自己的东西：只删 `model-*.md` 里带那行记号的，上一版按队友生成的 `mate-*.md` 是陈迹，无条件清。分身按模型起、不按队友起，也没有平台语义。
+定义由后端生成（`gateway_usage.model_agents`），随会话环境 `CHEESE_MODEL_AGENTS` 交给启动脚本，在 claude 启动之前写进本席位的配置目录，旧的 `model-*.md` 先全部清掉。必须在启动前写：Claude Code 只在启动时读一次分身定义，会话跑起来以后再写进目录的文件它看不到。定义也算进会话的配置哈希（`CHEESE_AGENT_CONFIG`），所以网关新加的模型、项目换了池，都会让会话在下一个任务边界重开，重开后就能派。
+
+这只是发现层，真正的闸在准入（`/llm/admission`）：指定了目录外的模型会被拒，并列出可选。成员自己的 Claude Code 不写这批定义。
+

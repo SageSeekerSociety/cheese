@@ -54,7 +54,56 @@ if [ "$SELF_TEST" = 1 ]; then
     > "$tmp/.github/workflows/w.yml"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a local composite action must pass"
 
-  echo "PASS: check-action-pins self-test (pinned, mutable tag, short sha, local action)"
+  # An exit code alone does not say the author can act on a failure, so the
+  # cases below read the message too: what the guard prints is what sends the
+  # reader to the right file, or to every file in the tree.
+  CODE=0
+  OUT=""
+  verdict() { OUT="$(bash "$me" "$1" 2>&1)" && CODE=0 || CODE=$?; }
+  says() {
+    case "$OUT" in
+      *"$1"*) ;;
+      *) self_fail "$2 (exit $CODE, got: $OUT)" ;;
+    esac
+  }
+
+  # The shape this guard exists to prevent: a scan that matched nothing because
+  # there was nothing to scan reads exactly like a tree that is clean.
+  # Under $tmp rather than a second mktemp: the trap takes this one back on the
+  # failure path too, and every case keeps reporting a path inside the fixture.
+  mkdir "$tmp/none"
+  verdict "$tmp/none"
+  [ "$CODE" -ne 0 ] || self_fail "a tree with no .github/workflows must fail, not read as clean"
+  says "does not exist" "the failure must say the directory was missing"
+  says "$tmp/none/.github/workflows" "the failure must name the directory it could not find"
+
+  # A file holding both, in the two shapes this repo writes a step: the pinned
+  # action as a list item, the unpinned one under a key of its own. Both are in
+  # use — when this case was written, 145 of the 223 `uses:` lines under
+  # .github/workflows carried the dash and 78 did not — so the second shape
+  # hangs on the `-?` in the scan staying optional. Losing it leaves those
+  # lines unread rather than reported, which is the silent half of what this
+  # guard is for.
+  printf 'jobs:\n  a:\n    steps:\n      - uses: actions/checkout@%s # v4\n      - name: Bad\n        uses: a/b@v1\n' \
+    "$sha" > "$tmp/.github/workflows/w.yml"
+  verdict "$tmp"
+  [ "$CODE" -ne 0 ] || self_fail "an unpinned action beside a pinned one must fail"
+  says "a/b@v1" "the report must name the action that is not pinned"
+  says "w.yml:6" "the report must point at the line to fix"
+  case "$OUT" in
+    *"checkout@$sha"*) self_fail "a pinned action must not be reported (got: $OUT)" ;;
+  esac
+
+  # The report has to reach the reader: the annotation turns the failure into a
+  # line on the pull request, and the other two say where to get the sha and
+  # what to write. Matched on the annotation marker, the endpoint and the
+  # pinned form — not on the sentences around them, which the guard may reword.
+  says "::error::" "the failure must carry the annotation CI reads"
+  says "repos/<owner>/<repo>/git/ref/tags/" "the failure must say how to resolve the tag"
+  says "uses: <owner>/<repo>@<40-char-sha>" "the failure must show the pinned form to write instead"
+
+  echo "PASS: check-action-pins self-test (pinned, mutable tag, short sha, local action,"
+  echo "      missing workflows dir, only the offender named, actionable report)"
   exit 0
 fi
 

@@ -22,19 +22,19 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.domain.delivery.models import Delivery
+from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import NeedsYou
 from app.domain.room_task.services import TaskService
 from app.domain.task_quiet.sweep import remind_quiet_tasks
 from app.domain.topic.models import Topic, TopicStatus
 from tests.ask_fixtures import active_ask, wait_turn_idle
-from tests.conftest import seed_user, wait_work_idle
+from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
     open_task,
     post_project,
     session_auth_headers,
-    teammate_task,
 )
 
 
@@ -54,7 +54,12 @@ def _channel(client, project: str, handle: str = "alice", title: str = "前端")
     return r.json()["data"]["id"]
 
 
-def _task(client, channel: str, *, owner: str = "alice", started: bool) -> uuid.UUID:
+def _task(
+    client, channel: str, *, owner: str = "alice", returned: bool = False
+) -> uuid.UUID:
+    """A task in ``channel``. ``returned``: its delivery came back from review
+    and nobody has taken it up again — the owner's to act on."""
+
     async def seed() -> uuid.UUID:
         async with client.test_factory() as session:
             room = await session.get(Topic, uuid.UUID(channel))
@@ -65,10 +70,15 @@ def _task(client, channel: str, *, owner: str = "alice", started: bool) -> uuid.
                 owner_handle=owner,
                 created_by=owner,
             )
-            if started:
-                task.started_at = datetime.now(UTC)
-                task.started_by = owner
-                task.started_doc_version = 0
+            if returned:
+                session.add(
+                    AcceptCard(
+                        topic_id=room.id,
+                        task_id=task.id,
+                        reviewer_handle="carol",
+                        status=AcceptStatus.rejected,
+                    )
+                )
             await session.commit()
             return task.id
 
@@ -99,10 +109,10 @@ def _project_tasks(client, project: str, handle: str) -> dict[str, dict]:
     return {row["id"]: row for row in r.json()["data"]["data"]}
 
 
-def test_an_owner_is_waited_on_to_start_a_task_whose_draft_is_ready(client):
+def test_an_owner_is_waited_on_for_a_task_whose_delivery_came_back(client):
     project = _project(client)
     channel = _channel(client, project)
-    task = _task(client, channel, started=False)
+    task = _task(client, channel, returned=True)
 
     (item,) = _mine(client, "alice")
     assert item["taskId"] == str(task)
@@ -114,7 +124,7 @@ def test_an_owner_is_waited_on_to_start_a_task_whose_draft_is_ready(client):
 def test_an_owner_is_not_waited_on_for_a_task_that_is_merely_open(client):
     project = _project(client)
     channel = _channel(client, project)
-    _task(client, channel, started=True)
+    _task(client, channel)
 
     assert _mine(client, "alice") == []
 
@@ -122,7 +132,7 @@ def test_an_owner_is_not_waited_on_for_a_task_that_is_merely_open(client):
 def test_nothing_in_an_archived_channel_waits_on_anyone(client):
     project = _project(client)
     channel = _channel(client, project)
-    _task(client, channel, started=False)
+    _task(client, channel, returned=True)
 
     async def archive() -> None:
         async with client.test_factory() as session:
@@ -176,7 +186,7 @@ def test_a_decision_asked_on_a_card_comes_back_to_the_card(client):
     """
     project = _project(client)
     channel = _channel(client, project)
-    card = _task(client, channel, started=True)
+    card = _task(client, channel)
 
     r = client.post(
         f"/projects/{project}/alerts",
@@ -222,7 +232,7 @@ def test_an_alert_about_a_closed_task_still_names_the_task(client):
     这里钉的是「另取」没漏：关了的活仍能被认回来。"""
     project = _project(client)
     channel = _channel(client, project)
-    card = _task(client, channel, started=True)
+    card = _task(client, channel)
     r = client.post(
         f"/topics/{card}/close",
         json={"conclusion": "做完了"},
@@ -297,8 +307,8 @@ def test_a_task_waits_on_its_owner_alone_in_the_project_list(client):
     project = _project(client)
     join_project_team(client, project, "bob")
     channel = _channel(client, project)
-    waiting = _task(client, channel, started=False)
-    going = _task(client, channel, started=True)
+    waiting = _task(client, channel, returned=True)
+    going = _task(client, channel)
 
     as_alice = _project_tasks(client, project, "alice")
     as_bob = _project_tasks(client, project, "bob")
@@ -353,9 +363,9 @@ def test_a_question_in_a_tasks_platform_turn_waits_on_the_tasks_people(
 def test_a_task_quiet_for_two_weeks_is_stalled_and_a_newer_one_is_not(client):
     project = _project(client)
     channel = _channel(client, project)
-    old = _task(client, channel, started=True)
+    old = _task(client, channel)
     _age(client, old, days=15)
-    recent = _task(client, channel, started=True)
+    recent = _task(client, channel)
     _age(client, recent, days=4)
 
     rows = _project_tasks(client, project, "alice")
@@ -384,12 +394,12 @@ def test_the_owner_of_a_task_quiet_for_three_days_is_reminded_once(client):
     seed_user(client, "alice")  # 通知落到一个真的用户名下
     project = _project(client)
     channel = _channel(client, project)
-    quiet = _task(client, channel, started=True)
+    quiet = _task(client, channel)
     _age(client, quiet, days=4)
     # 两周以上的已经收进「已停滞」了，不再提醒；刚动过的还不到时候。
-    stalled = _task(client, channel, started=True)
+    stalled = _task(client, channel)
     _age(client, stalled, days=20)
-    _task(client, channel, started=True)
+    _task(client, channel)
 
     client.portal.call(remind_quiet_tasks, client.test_factory)
     client.portal.call(remind_quiet_tasks, client.test_factory)
@@ -462,40 +472,7 @@ def _shown(client, task: str) -> dict:
     return r.json()["data"]["presentation"]
 
 
-def test_starting_a_task_with_its_questions_unanswered_starts_it(
-    client, stub_hooks, monkeypatch
-):
-    """芝士的题还没答，负责人点了「开始」：任务就是开始了。
-
-    页头、频道的任务卡、项目的任务列表写的都是进行中那一列，不是「待回答」；题也不再
-    挂在负责人的待办上。这一下只能落在停着的活上（芝士自己想的），人建的活建出来
-    即已开始，没有题挂着的时候。
-    """
-    project = _project(client)
-    channel = _channel(client, project)
-    task = teammate_task(client, channel, owner="alice")["id"]
-    _ask(client, stub_hooks, monkeypatch, task)
-    # 问完等初稿那一段跑完：还在跑的时候这一格是「运行中」，不是「待开始」。
-    wait_work_idle()
-    assert _shown(client, task)["phrase"] == NeedsYou.awaiting_answer
-
-    r = client.post(
-        f"/topics/{task}/start",
-        json={"reviewer_handle": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["presentation"]["column"] == "building"
-    wait_turn_idle(client, task)
-
-    assert _shown(client, task)["column"] == "building"
-    row = _project_tasks(client, project, "alice")[task]
-    assert row["presentation"]["column"] == "building"
-    assert row["awaits_me"] is False
-    assert all(item.get("taskId") != task for item in _mine(client, "alice"))
-
-
-def test_a_question_asked_after_the_start_still_waits_for_its_answer(
+def test_a_question_asked_in_a_task_waits_for_its_answer(
     client, stub_hooks, monkeypatch
 ):
     project = _project(client)

@@ -54,14 +54,14 @@ function pane(content: number) {
 
 afterEach(() => vi.unstubAllGlobals())
 
-async function mounted(content: number) {
+async function mounted(content: number, topicId: () => string | undefined = () => undefined) {
   vi.stubGlobal('ResizeObserver', FakeResizeObserver)
   const box = pane(content)
   let scroll!: ReturnType<typeof useChatScroll>
   render(
     defineComponent({
       setup() {
-        scroll = useChatScroll()
+        scroll = useChatScroll({ topicId })
         return () => h('div')
       },
     })
@@ -124,5 +124,45 @@ describe('藏在别的页签后面', () => {
     fire()
 
     expect(box.el.scrollTop).toBe(box.el.scrollHeight - box.el.clientHeight)
+  })
+})
+
+// 藏着的时候整段换了内容（断线回来接不上，换成最新一页）：他读的那段已经不在了，
+// 记着的偏移指的是新内容里随便哪个高度。要的是最新那条，露出来、下次进来都该在那儿。
+describe('藏着的时候被带到最新那条', () => {
+  it('露出来停在底部，不回到藏起来之前那个偏移', async () => {
+    const { box, scroll } = await mounted(2000, () => 't-swapped')
+    box.el.scrollTop = 700
+    scroll.rememberScroll('t-swapped')
+
+    box.hide()
+    fire()
+    scroll.scrollToBottom()
+    await nextTick()
+    box.grow(-500) // 换上来的那一页比原来那段短
+    box.show()
+    fire()
+
+    expect(box.el.scrollTop).toBe(box.el.scrollHeight - box.el.clientHeight)
+    expect(scroll.restoresToBottom('t-swapped')).toBe(true)
+  })
+})
+
+// 叫「落到最新」和它真的落下去（下一拍）之间切了话题：记成「停在底部」的该是叫的时候
+// 那个话题，不是刚切过来、还停在自己位置上的那个。
+describe('落到最新的同一拍里切了话题', () => {
+  it('切过来的那个话题记下的位置不被盖掉', async () => {
+    let current = 'reading'
+    const { box, scroll } = await mounted(2000, () => current)
+    box.el.scrollTop = 700
+    scroll.rememberScroll('reading')
+
+    current = 'sent-in'
+    scroll.scrollToBottom()
+    current = 'reading'
+    await nextTick()
+
+    expect(scroll.restoresToBottom('reading')).toBe(false)
+    expect(scroll.restoresToBottom('sent-in')).toBe(true)
   })
 })

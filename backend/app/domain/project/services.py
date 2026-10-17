@@ -10,21 +10,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.documents import seed
-from app.domain.living_doc.services import DocumentJournal, Documents
+from app.domain.delivery_events import SettleCard
+from app.domain.project.member_settings import MEMBER_SETTINGS, SettingChange
 from app.domain.project.models import AiMode, Project, ProjectGitInstallation
+from app.domain.project.ports import (
+    Claim,
+    ComputeCredits,
+    DefaultTeammate,
+    SeatMentors,
+    SeedOverview,
+    TaskBrief,
+    TaskTerms,
+)
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
 )
-from app.domain.task.models import Task, TaskMembership
-from app.domain.task.teaching import protocol_for_task
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicKind
+from app.domain.topic.ports import (
+    ArchivedCards,
+    CloseRoomTasks,
+    PlatformLine,
+    SessionStore,
+)
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.ledger import Ledger
 from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
@@ -34,7 +45,7 @@ def _intent_brief(intent: str) -> str:
     """把用户写的那句话拼成新项目目标的开头；没写就返回空串，调用方不写任何东西。
 
     纯模板，不调模型——``seed_overview`` 的约定是「平台把已有的文字搬个地方」，
-    所以它署 system 而不是芝士（见 ``ProjectService.seed_overview`` 的注释）。这也
+    所以它署 system 而不是芝士（见 ``app.domain.living_doc.overview``）。这也
     是赛题报名那条路径的形状：简报是拼出来的，房间里的第一句人话仍由人来说。
     """
     text = intent.strip()
@@ -67,13 +78,126 @@ async def refuse_writes_if_archived(
 
 
 class ProjectService:
-    def __init__(self, session: AsyncSession):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        settle_card: SettleCard | None = None,
+        default_teammate: DefaultTeammate | None = None,
+        compute_credits: ComputeCredits | None = None,
+        overview: SeedOverview | None = None,
+        task_terms: TaskTerms | None = None,
+        cards: ArchivedCards | None = None,
+        sessions: SessionStore | None = None,
+        close_tasks: CloseRoomTasks | None = None,
+        events: PlatformLine | None = None,
+        seat_mentors: SeatMentors | None = None,
+    ):
+        """``settle_card``：归档项目要把房间里等验收人的那几句话一起收掉，
+        而结一张卡是 `review` 和 `delivery` 做的事，本包够不着
+        （`app.domain.review.ports.SettleCard`）。不给也能构造 —— 只有归档这条
+        路要它，而那条路会把 ``None`` 交给 `topic.archive_with_project` 再交给
+        `review.archive`，由那里当场说清是哪个门漏了。
+
+        ``default_teammate``：项目的芝士由本包在 ``create`` 里播种
+        （`app.domain.project.ports.DefaultTeammate`），而播种是第 5 层
+        `agent_instance` 的事。同样不给也能构造，理由一样：只有 ``create`` 和
+        ``_accept_task_protocol`` 这两条路要它，走到那里没递进来就当场炸掉。
+
+        ``compute_credits``：审过一道赛题报名，项目要继承机构协议里的算力，而那是
+        第 3 层 `usage` 的账本（`app.domain.project.ports.ComputeCredits`）。也只有
+        ``create`` 和 ``_accept_task_protocol`` 这两条路要它，同样走到那里没递进来
+        就当场炸掉。
+
+        ``cards``、``sessions``、``close_tasks`` 和 ``events``：归档项目会顺手做
+        四件本包够不着的事 —— 把房间里还没结的验收卡收掉（第 4 层 `review`），把
+        房间里的活结束掉（第 4 层 `room_task`），把取消归档的房间记着的会话令牌忘掉
+        （第 3 层 `agent_session`），以及把「这个房间归档了」那句话落进总览
+        （第 4 层 `block`）。四样都只在 ``archive`` / ``unarchive`` 这两条路上用，
+        所以也不给也能构造，走到那里没递进来就当场炸掉。
+
+        ``overview``：新项目要说的话（用户写的意图、或者这道赛题的要求）是**一份文档**
+        的第一版，而文档在第 4 层 `living_doc` 里
+        （`app.domain.project.ports.SeedOverview`）。``create`` 和 ``for_participation``
+        这两条路要它，同样不给也能构造，走到那里没递进来就当场炸掉。
+
+        ``task_terms``：报名这条路要读赛题那几行（赛题、谁报的名、审过之后落什么
+        条款），那几行也在第 4 层（`app.domain.project.ports.TaskTerms`）。只有
+        ``for_participation``、``activate_participation`` 和 ``create`` 带着赛题 id
+        的那条路要它，同样不给也能构造。
+
+        ``seat_mentors``：报名开出新项目时，赛题点名的导师要坐进去，而角色是上一层
+        `membership` 的事（`app.domain.project.ports.SeatMentors`）。没递进来就不坐。"""
         self._session = session
         self._repo = ProjectRepository(session)
         self._installations = ProjectGitInstallationRepository(session)
         self._topics = TopicRepository(session)
-        self._ledger = Ledger(session)
         self._members = TopicMemberService(session)
+        self._settle_card = settle_card
+        self._default_teammate = default_teammate
+        self._compute_credits = compute_credits
+        self._overview = overview
+        self._task_terms = task_terms
+        self._cards = cards
+        self._sessions = sessions
+        self._close_tasks = close_tasks
+        self._events = events
+        self._seat_mentors = seat_mentors
+
+    async def _seed_default_teammate(
+        self,
+        project: Project,
+        *,
+        display_name: str | None = None,
+        type_name: str | None = None,
+    ) -> None:
+        """这个项目的那一位芝士：没有就播一个，人设按调用方说的落上去。
+
+        口子没递进来是接线漏了一处，当场炸掉 —— 静默留下一个没有芝士的项目更糟
+        （不变量 I9b：项目出生就有芝士）。"""
+        if self._default_teammate is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("default_teammate was not handed in")
+        await self._default_teammate(
+            self._session, project, display_name=display_name, type_name=type_name
+        )
+
+    async def _has_earmark(self, project: Project, task_id: int) -> bool:
+        """这个项目领过这道赛题的资源包没有。
+
+        口子没递进来是接线漏了一处，当场炸掉 —— 静默不发资源包，赛题那边看不出
+        分别，只有参与者会发现自己少了一份算力。"""
+        if self._compute_credits is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("compute_credits was not handed in")
+        return await self._compute_credits.has_earmark(project.id, task_id)
+
+    async def _grant_earmark(
+        self, project: Project, task_id: int, *, credits_total: float
+    ) -> None:
+        """把这道赛题的算力发到这个项目上，理由同 ``_has_earmark``。"""
+        if self._compute_credits is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("compute_credits was not handed in")
+        await self._compute_credits.grant_earmark(
+            project_id=project.id,
+            source_task_id=task_id,
+            credits_total=credits_total,
+        )
+
+    async def _seed_overview(self, project: Project, content: str) -> None:
+        """把平台已有的文字写成这个项目目标的第一版，理由同 ``_has_earmark``。"""
+        if self._overview is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("overview was not handed in")
+        await self._overview(self._session, project.id, content)
+
+    def _terms(self) -> TaskTerms:
+        """报名这条路上要问 `task` 的那几次，理由同 ``_has_earmark``。"""
+        if self._task_terms is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("task_terms was not handed in")
+        return self._task_terms
 
     async def create(
         self,
@@ -130,13 +254,13 @@ class ProjectService:
         # 项目的芝士和它在总览里的席位，与项目同一个事务里出生（结论 4、不变量
         # I9b）：一个项目不会有「还没有 agent」的那一刻，所以「谁答这一句」全仓
         # 只有一条席位可读。根房间先建出来，这一句才播得下席位。
-        agents = AgentInstanceService(self._session)
-        instance = await agents.materialize_default(project, display_name=agent_name)
-        if agent_type:
-            # 类型（人设）落在 agent 上，不落在项目上：一个项目可以坐好几个 agent，
-            # 只有 agent 自己知道这套人设是从哪个记忆池里说话的。
-            await agents.set_type(instance, agent_type)
-            await self._session.flush()
+        #
+        # 类型（人设）落在 agent 上，不落在项目上：一个项目可以坐好几个 agent，只有
+        # agent 自己知道这套人设是从哪个记忆池里说话的。这里传下去的人设总能落上
+        # —— 播种刚生出来的实例本来就没有人设。
+        await self._seed_default_teammate(
+            project, display_name=agent_name, type_name=agent_type
+        )
         # Apply task terms when eligible; a pending application gets a workspace
         # now and receives its competition resources when approved. After the
         # 芝士 above, because the terms may give it a type — and a type goes on
@@ -152,7 +276,7 @@ class ProjectService:
         # goals, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)
         if brief:
-            await self.seed_overview(project, brief)
+            await self._seed_overview(project, brief)
         return project
 
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
@@ -168,18 +292,21 @@ class ProjectService:
         return team.id
 
     async def for_participation(
-        self, *, task: Task, membership: TaskMembership, owner_handle: str
+        self, *, task: TaskBrief, claim: Claim, owner_handle: str
     ) -> Project:
-        """Open the team's registration workspace, reusing it on reapplication."""
+        """Open the team's registration workspace, reusing it on reapplication.
+
+        ``task`` and ``claim`` are the two rows this needs as values
+        (`app.domain.project.ports.TaskBrief` / `Claim`): 赛题 and 报名 live one
+        layer up and are handed in by whoever has them.
+        """
 
         # Serialize registration workspace creation for this task. Two teammates
         # submitting together must not leave two projects for one application.
-        await self._session.execute(
-            select(Task.id).where(Task.id == task.id).with_for_update()
-        )
+        await self._repo.lock_external_task(task.id)
         team_id = (
-            membership.member_id
-            if membership.is_team
+            claim.member_id
+            if claim.is_team
             else await self._resolve_personal_team_id(owner_handle)
         )
         projects = await self._repo.list_for_external_task(task.id)
@@ -192,6 +319,11 @@ class ProjectService:
             team_id=team_id,
             external_task_id=task.id,
         )
+        # The claimer agreed to the task's mentors before claiming; they join
+        # the project it opened, once — a project reused on reapplication keeps
+        # whoever its people kept.
+        if task.mentors and self._seat_mentors is not None:
+            await self._seat_mentors(self._session, project.id, task.mentors)
 
         # The original requirements may be rich-text JSON. Keep their canonical
         # page reachable instead of copying serialized editor data into Markdown.
@@ -203,47 +335,8 @@ class ProjectService:
             f"## 赛题要求\n\n{task.intro}\n\n"
             f"[查看完整赛题要求](/spaces/{task.space_id}/tasks/{task.id})"
         )
-        await self.seed_overview(project, brief)
+        await self._seed_overview(project, brief)
         return project
-
-    async def overview_document(self, project: Project):
-        """The project's goals document, made empty (version 0) the first time anyone
-        needs it: whoever opens, writes or comments on it needs its id first."""
-
-        documents = Documents(self._session)
-        if project.overview_document_id is not None:
-            doc = await documents.get(project.overview_document_id)
-            if doc is not None:
-                return doc
-        # Two first readers at once must not make two goals documents. NO KEY
-        # UPDATE, not FOR UPDATE: this runs inside a turn's assembly, and a
-        # full row lock on the project stops every write whose foreign key
-        # names the project (each block takes KEY SHARE on it) until the turn
-        # commits — which deadlocked an archive that held its room's row and
-        # was writing its note. Two creators still wait for each other.
-        await self._session.execute(
-            select(Project.id)
-            .where(Project.id == project.id)
-            .with_for_update(key_share=True)
-        )
-        await self._session.refresh(project, ["overview_document_id"])
-        if project.overview_document_id is not None:
-            doc = await documents.get(project.overview_document_id)
-            if doc is not None:
-                return doc
-        doc = await documents.create(project_id=project.id)
-        project.overview_document_id = doc.id
-        await self._session.flush()
-        return doc
-
-    async def seed_overview(self, project: Project, content: str) -> None:
-        """Write a new project's goals from text it already had: what its
-        creator said they wanted, or its 赛题. Author is `system`: the platform
-        moved existing words, nobody wrote them here."""
-
-        doc = await self.overview_document(project)
-        await DocumentJournal(self._session).lock(doc.id)
-        await seed(self._session, doc, content)
 
     async def is_overview(self, document_id: uuid.UUID) -> bool:
         """Whether a document is some project's goals document."""
@@ -321,29 +414,75 @@ class ProjectService:
         """改 settings 里那几个键，其余照数据库当下的样子留着。
 
         写 settings 的正路，改一个键的调用点都走它——见
-        :meth:`ProjectRepository.merge_settings`。
+        :meth:`ProjectRepository.merge_settings`。成员能改的那几项不走这里，走
+        :meth:`change_member_settings`：每一次改动都要在综合里说出来。
         """
+        if MEMBER_SETTINGS & {*patch, *remove}:
+            # i18n-exempt: a call site that skipped the announcement; a developer's bug
+            raise ValueError(
+                "a member setting is changed through app.api.member_settings, "
+                "which says the change in the project's room"
+            )
         return await self._repo.merge_settings(project, patch, remove=remove)
+
+    async def change_member_settings(
+        self,
+        project: Project,
+        patch: Mapping[str, object],
+        *,
+        remove: Iterable[str] = (),
+    ) -> list[SettingChange]:
+        """Write settings any member may change (``member_settings``), and
+        return each one this write changed, as it was and as it is now.
+
+        ``before`` is read under the same row lock the write takes, so two
+        members changing one setting at once each see what the other left.
+        """
+        await self._repo.lock_settings(project)
+        before = dict(project.settings or {})
+        after = await self._repo.merge_settings(project, patch, remove=remove)
+        return [
+            SettingChange(key, before.get(key), after.get(key))
+            for key in sorted(MEMBER_SETTINGS & {*patch, *remove})
+            if before.get(key) != after.get(key)
+        ]
 
     async def archive(self, project_id: uuid.UUID, *, by: str) -> Project:
         """Archive the project (idempotent): it leaves its members' lists,
         writes to it are refused, and its rooms are archived with it — which is
-        what stops its sessions, machines, PR polling and routines. Its pending
-        invitations are withdrawn: an invitation to a project nobody can enter
-        would sit in the invitee's inbox with no answer that means anything.
-        Nothing is deleted."""
+        what stops its sessions, machines, PR polling and routines. Nothing is
+        deleted.
+
+        The project's pending invitations are withdrawn by whoever archives it,
+        right after this returns: settling the invitee's notification lands on
+        the delivery ledger, one layer above this package. The door does it
+        (``api/routes/projects.archive_project``); ``archive`` cannot, and
+        neither can ``membership``, without reaching upward.
+        """
         project = await self.get_or_404(project_id)
         if project.archived_at is not None:
             return project
-        # deferred-import: breaks the cycle membership.services -> project.services
-        from app.domain.membership.services import InvitationService
-
         # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
+        if self._cards is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("cards was not handed in")
+        if self._close_tasks is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("close_tasks was not handed in")
+        if self._events is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("events was not handed in")
         project.archived_at = datetime.now(UTC)
-        await TopicService(self._session).archive_with_project(project_id, by=by)
-        await InvitationService(self._session).revoke_all_pending(project_id)
+        await TopicService(self._session).archive_with_project(
+            project_id,
+            by=by,
+            settle_card=self._settle_card,
+            cards=self._cards,
+            close_tasks=self._close_tasks,
+            events=self._events,
+        )
         await self._session.flush()
         return project
 
@@ -356,7 +495,15 @@ class ProjectService:
         # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
-        await TopicService(self._session).unarchive_with_project(project_id, by=by)
+        if self._sessions is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("sessions was not handed in")
+        if self._events is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("events was not handed in")
+        await TopicService(self._session).unarchive_with_project(
+            project_id, by=by, sessions=self._sessions, events=self._events
+        )
         project.archived_at = None
         await self._session.flush()
         return project
@@ -378,9 +525,12 @@ class ProjectService:
         """
         return await self._repo.list_for_space(space_id)
 
-    async def list_for_team(self, team_id: int) -> list[Project]:
-        """A team's 项目 page, newest first."""
-        return await self._repo.list_by_team(team_id)
+    async def list_for_team(
+        self, team_id: int, *, viewer: str | None = None
+    ) -> list[Project]:
+        """A team's 项目 page, newest first; a ``viewer`` does not see the ones
+        they left."""
+        return await self._repo.list_by_team(team_id, viewer=viewer)
 
     async def list_visible_to(
         self, *, handle: str | None, user_id: int | None
@@ -397,10 +547,12 @@ class ProjectService:
         """这条赛题开出来的每个项目（``/projects/by-task``）。"""
         return await self._repo.list_for_external_task(task_id)
 
-    async def get_by_team(self, team_id: int) -> Project | None:
+    async def get_by_team(
+        self, team_id: int, *, viewer: str | None = None
+    ) -> Project | None:
         """这个知是团队的那个 AI 工作台项目（P4 原生绑定），最新的一条；没有是
         None（``/projects/by-team`` 用它显示/隐藏「AI 工作台」入口）。"""
-        return await self._repo.get_by_team(team_id)
+        return await self._repo.get_by_team(team_id, viewer=viewer)
 
     async def installation_for_project(
         self, project_id: uuid.UUID
@@ -425,30 +577,17 @@ class ProjectService:
         nothing, leaves the project exactly as it was. Creating a project must
         not fail because an institution left its resource pack empty.
         """
-        # deferred-import: Task is bound at the top of this module already
-        from app.domain.task.models import Task
-
-        task = await self._session.get(Task, task_id)
+        terms_port = self._terms()
+        task = await terms_port.brief(task_id)
         if task is None:
             return
-        # deferred-import: TaskMembership is bound at the top of this module already
-        from app.domain.task.models import TaskMembership
-
         member_id = project.team_id
-        if task.submitter_type == 0:
+        if not task.is_team_submission:
             member_id = await self._session.scalar(
                 select(User.id).where(User.username == project.owner_handle)
             )
-        membership = await self._session.scalar(
-            select(TaskMembership)
-            .where(
-                TaskMembership.task_id == task_id,
-                TaskMembership.member_id == member_id,
-                TaskMembership.is_team == (task.submitter_type == 1),
-                TaskMembership.deleted_at.is_(None),
-            )
-            .order_by(TaskMembership.created_at.desc())
-            .limit(1)
+        claim = await terms_port.claim(
+            task_id=task_id, member_id=member_id, is_team=task.is_team_submission
         )
         # An application can prepare its workspace before approval, but cannot
         # claim the competition's resource pack while it is pending/rejected.
@@ -456,44 +595,34 @@ class ProjectService:
         # 这句话以前只写了「pending/rejected 不给」，条件也跟着写成
         # `membership is not None and ...`，于是漏掉了它前半句最该挡住的那种人：
         # **压根没报名**（`membership is None`）反而一路往下，每个新项目都白拿一份
-        # 资源包。过审（`ApproveType.APPROVED == 0`）是**唯一**发放条件，所以判据读作
-        # 「存在一条已通过的报名」——没有报名与没过审在这里是同一件事：不是这个赛题的
-        # 参与者，就不领它的资源包。审批之后那次发放走 `activate_participation`，所以
-        # 「先建工作区、过审时再拿资源」这条正路一点没变。
-        if membership is None or membership.approved != 0:
+        # 资源包。过审（``ApproveType.APPROVED == 0``，口子那边折成 ``approved``）
+        # 是**唯一**发放条件，所以判据读作「存在一条已通过的报名」——没有报名与没过审
+        # 在这里是同一件事：不是这个赛题的参与者，就不领它的资源包。审批之后那次发放
+        # 走 `activate_participation`，所以「先建工作区、过审时再拿资源」这条正路一点
+        # 没变。
+        if claim is None or not claim.approved:
             return
-        protocol = await protocol_for_task(self._session, task)
+        terms = await terms_port.terms(task_id)
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
-        agents = AgentInstanceService(self._session)
-        instance = await agents.materialize_default(project)
-        if protocol.default_role and instance.type_name is None:
-            await agents.set_type(instance, protocol.default_role)
-            await self._session.flush()
-        grants = await self._ledger.earmarks(project.id)
-        if protocol.compute_credits > 0 and not any(
-            grant.source_task_id == task_id for grant in grants
-        ):
-            await self._ledger.grant_earmark(
-                project_id=project.id,
-                source_task_id=task_id,
-                credits_total=protocol.compute_credits,
+        await self._seed_default_teammate(project, type_name=terms.default_role)
+        if terms.compute_credits > 0 and not await self._has_earmark(project, task_id):
+            await self._grant_earmark(
+                project, task_id, credits_total=terms.compute_credits
             )
 
-    async def activate_participation(
-        self, *, task: Task, membership: TaskMembership
-    ) -> None:
+    async def activate_participation(self, *, task: TaskBrief, claim: Claim) -> None:
         """Release the task's resources to its workspace after approval."""
-        if membership.approved != 0:
+        if not claim.approved:
             return
 
         owner = None
-        if not membership.is_team:
-            owner = await self._session.get(User, membership.member_id)
+        if not claim.is_team:
+            owner = await self._session.get(User, claim.member_id)
         for project in await self._repo.list_for_external_task(task.id):
             belongs = (
-                project.team_id == membership.member_id
-                if membership.is_team
+                project.team_id == claim.member_id
+                if claim.is_team
                 else owner is not None and project.owner_handle == owner.username
             )
             if belongs:

@@ -1,4 +1,4 @@
-"""撤权立刻生效，出题者有自己的门 —— 同一个判断，三处可观测的后果。
+"""撤权立刻生效，出题者不凭出题读项目 —— 同一个判断，三处可观测的后果。
 
 ``app.auth.project_access.may_read_project`` 是「谁能读这个项目的对话与摘要」的
 唯一答案；``test_project_reads_need_membership.py`` 测的是它的门（非成员进不来）。
@@ -8,10 +8,10 @@
    拒 —— 项目、房间列表（工作台页面加载的两支请求）、AI 聚合（``/contributions``
    这类摘要）与名册一起。这条同时是「摘要没有缓存」的实测：如果读路径上留着撤权
    前算好的那一份，这里拿到的就是一次旧的 200。
-2. **出题者不是越权。** 赛题报名项目归报名者所有（``for_participation`` 把报名者
-   写成 ``owner_handle``），出题者不在任何名册上。他能读这道赛题的项目，理由是
-   ``Project.external_task_id`` → ``Task.creator_id``：「这道题是我出的」——不是
-   「我是管理员」。所以同题的其他参与者读不到（那是把别人的项目给竞争对手看）。
+2. **出题不打开答题的项目。** 赛题报名项目归报名者所有（``for_participation``
+   把报名者写成 ``owner_handle``），出题者不在名册上，就读不到它；要读，得是题目
+   点名、报名者同意了的导师（#3830，``test_a_board_teacher.py`` 测那条路）。同题
+   的其他参与者更读不到（那是把别人的项目给竞争对手看）。
 3. **同一判断覆盖到别的门。** 项目文件与实时终端过去各有一份自己的「成员或所有者」
    拷贝，其中两份漏了「项目所属小队」。撤权后它们必须和别的门同时关，队友也必须
    和名册上的人一样进得来。
@@ -248,49 +248,31 @@ def test_a_removed_teammate_loses_the_team_claim_too(client):
     assert client.get(f"/projects/{pid}", headers=who).status_code == 403
 
 
-# --- 2. 出题者有自己的门，且只有那道门 ---------------------------------------
+# --- 2. 出题不打开答题的项目 -------------------------------------------------
 
 
-def test_the_asker_reads_the_project_their_task_produced(client):
-    """#945 要的就是这条：出题者读得到本题关联的项目。
-
-    项目是成员开的、成员拥有的 —— 出题者不在名册上，也不在小队里。他进来的凭据
-    是「这道题是我出的」。
-    """
+def test_the_asker_does_not_read_the_project_their_task_produced(client):
+    """项目是报名者开的、报名者拥有的；出题者不在名册上，也不是导师。「这道题是
+    我出的」不是进别人项目的凭据。"""
     task_id = _task_by(client, "teacher")
     pid = _project_from_task(client, task_id, student="student")
     teacher = _bearer(seed_user(client, "teacher"))
 
-    assert client.get(f"/projects/{pid}", headers=teacher).status_code == 200
+    assert client.get(f"/projects/{pid}", headers=teacher).status_code == 403
     assert (
         client.get("/topics", params={"project_id": pid}, headers=teacher).status_code
-        == 200
+        == 403
     )
     assert (
-        client.get(f"/projects/{pid}/contributions", headers=teacher).status_code == 200
+        client.get(f"/projects/{pid}/contributions", headers=teacher).status_code == 403
     )
-
-
-def test_an_asker_is_not_a_key_to_every_project(client):
-    """出题者 ≠ 全站管理员，也 ≠ 出过题的任何人。
-
-    同一道题的项目他读得到；别人出的题的项目，他和陌生人一样被拒。
-    """
-    mine = _task_by(client, "teacher")
-    theirs = _task_by(client, "other-teacher")
-    mine_pid = _project_from_task(client, mine, student="student")
-    theirs_pid = _project_from_task(client, theirs, student="student2")
-    teacher = _bearer(seed_user(client, "teacher"))
-
-    assert client.get(f"/projects/{mine_pid}", headers=teacher).status_code == 200
-    assert client.get(f"/projects/{theirs_pid}", headers=teacher).status_code == 403
 
 
 def test_being_a_participant_of_the_task_is_not_a_claim_on_the_project(client):
     """报名这道题的人，不是这道题**其他**项目的读者。
 
     把 ``can_view_task`` 整个搬过来当项目判断就会犯这个错：同题的两个队伍互相看得
-    见对方的房间。所以项目级的凭据只认出题者一个人。
+    见对方的房间。
     """
     from datetime import UTC, datetime
 

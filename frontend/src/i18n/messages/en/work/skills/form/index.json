@@ -1,0 +1,11 @@
+{
+  "addFile": "Add file",
+  "bodyTemplate": "## Inputs\n\n\n\n## Steps and rules\n\n\n\n## Output\n\n",
+  "content": "Content",
+  "description": "Purpose",
+  "name": "Invocation name",
+  "path": "Path",
+  "removeFile": "Remove",
+  "title": "Name",
+  "titlePlaceholder": "e.g. Weekly project report"
+}

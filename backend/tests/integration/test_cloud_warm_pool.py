@@ -16,6 +16,7 @@ from app.domain.agent.device_provider import DeviceChannel
 from app.domain.device.models import DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply
 from app.domain.identity.services import IdentityService
+from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import WarmMachine
 from app.domain.machine.warm import WarmPoolService
 from tests.microcloud import FakeMicroCloud
@@ -350,5 +351,96 @@ def test_a_deletion_still_under_way_keeps_its_place(warm_case, monkeypatch):
             states = (await session.scalars(select(WarmMachine.state))).all()
             assert states.count("deleting") == 1
             assert "preparing" not in states
+
+    client.portal.call(lambda: run())
+
+
+def test_a_failed_cleanup_is_deleted_again_once_its_failure_may_have_passed(
+    warm_case, monkeypatch
+):
+    """On 2026-10-06 MicroCloud could not reach Proxmox for seven hours; the two
+    warm machines whose deletion failed then kept running for a week."""
+    client, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 2)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await _taken_by_the_pool(session)
+            _provider_still_has(cloud, 901, 902)
+            stale = _failed_cleanup(
+                901, error="provider kept the machine after deletion"
+            )
+            stale.updated_at = datetime.now(UTC) - timedelta(hours=2)
+            session.add_all([stale, _failed_cleanup(902)])
+            await session.commit()
+
+            await WarmPoolService(session, cloud).sweep()
+            # Only the one that failed long enough ago is asked again.
+            assert cloud.deleted == [901]
+
+            await WarmPoolService(session, cloud).sweep()
+            rows = {
+                row.machine_id: row.state
+                for row in (await session.scalars(select(WarmMachine))).all()
+                if row.machine_id in (901, 902)
+            }
+            assert rows == {901: "deleted", 902: "cleanup_failed"}
+
+    client.portal.call(lambda: run())
+
+
+def test_a_refused_retry_keeps_the_record_and_waits_before_asking_again(
+    warm_case, monkeypatch
+):
+    client, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 2)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+    _provider_still_has(cloud, 901)
+    asked: list[int] = []
+
+    async def refuse(machine_id):
+        asked.append(machine_id)
+        raise MicroCloudError("Guest 144 belongs to another machine", status=409)
+
+    monkeypatch.setattr(cloud, "delete_machine", refuse)
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await _taken_by_the_pool(session)
+            stale = _failed_cleanup(901)
+            stale.updated_at = datetime.now(UTC) - timedelta(hours=2)
+            session.add(stale)
+            await session.commit()
+
+            await WarmPoolService(session, cloud).sweep()
+            await WarmPoolService(session, cloud).sweep()
+            row = await session.scalar(
+                select(WarmMachine).where(WarmMachine.machine_id == 901)
+            )
+            assert row.state == "cleanup_failed"
+            assert asked == [901]
+
+    client.portal.call(lambda: run())
+
+
+def test_a_full_pool_still_asks_again_for_a_failed_cleanup(warm_case, monkeypatch):
+    """A pool with all its machines ready adds none, and must still not leave a
+    machine whose deletion failed running for good."""
+    client, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+
+    async def run():
+        async with client.test_request_factory() as session:
+            # The case's one ready machine fills the pool.
+            _provider_still_has(cloud, 901)
+            stale = _failed_cleanup(901)
+            stale.updated_at = datetime.now(UTC) - timedelta(hours=2)
+            session.add(stale)
+            await session.commit()
+
+            await WarmPoolService(session, cloud).sweep()
+            assert cloud.deleted == [901]
 
     client.portal.call(lambda: run())

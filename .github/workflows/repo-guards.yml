@@ -53,6 +53,12 @@ jobs:
       # Each guard proves itself before it is trusted to judge the tree: a guard
       # that silently stopped matching would otherwise look identical to a clean
       # repo, which is the failure mode these guards exist to prevent.
+      #
+      # check-guard-wired.py is last because it judges the list above it: every
+      # guard under .claude/scripts/ has to be named by something that runs, and
+      # this step is one of the somethings. Its own --self-test carries the
+      # repository-wide assertion as well, so a guard that lands unwired fails
+      # here rather than being found by hand a batch later.
       - name: Guards self-test
         run: |
           bash .claude/scripts/check-repo-rules.sh --self-test
@@ -65,6 +71,33 @@ jobs:
           python3 .claude/scripts/scene-ratchet.py --self-test
           python3 .claude/scripts/frontend_grade.py --self-test
           python3 .claude/scripts/catalog-ratchet.py --self-test
+          python3 .claude/scripts/check-guard-wired.py --self-test
+
+      # Two tree guards the pre-commit list does not carry. A hook in
+      # .pre-commit-config.yaml would be the usual home — that is how this job
+      # and a developer's commit read one list — but .pre-commit-config.yaml
+      # belongs to another change in flight, so these run here directly.
+      #
+      # check-i18n-lists.py holds the prose that says which i18n namespaces are
+      # directories to the locale trees on disk. It reads nothing a product
+      # suite opens, so a step here is the only thing that runs it.
+      #
+      # check-guard-wired.py is repeated from the self-test list above on
+      # purpose: there it proves the guard fires, here it judges the tree next
+      # to its peers, and a later edit that drops either line still leaves the
+      # question asked.
+      #
+      # check-seam-tests.py is deliberately NOT here, and neither is its
+      # self-test in the collection below: the guard is red on the tree at
+      # origin/main — two split tests use the shape its hint would have them
+      # rewrite away, and one of them walks into a ClassDef on purpose — so a
+      # step here would fail on every commit until those tests are rewritten.
+      # check-guard-wired.py names it in ON_DEMAND with that reason, and that
+      # entry goes red the moment this line comes back.
+      - name: i18n lists and every guard is wired
+        run: |
+          python3 .claude/scripts/check-i18n-lists.py
+          python3 .claude/scripts/check-guard-wired.py
 
       # Not a guard of this tree: prove-regression.py is what AGENTS.md tells an
       # author to run on a fix's own test, and nothing in CI runs it against the
@@ -76,41 +109,140 @@ jobs:
 
       # The mining tools judge platform history, not the tree, so they are not
       # guards — but a regression in them prints a wrong report, and nothing
-      # else runs their self-tests. Both are offline: no token, no network.
+      # else runs their self-tests. All are offline: no token, no network.
       # `retro --self-test` is what reaches trace_retro.py's self-test.
       - name: Trace tooling self-test
         run: |
           python3 .claude/scripts/trace-sweep.py --self-test
           python3 .claude/scripts/trace-sweep.py retro --self-test
+          python3 .claude/scripts/orchestrator_actions.py --self-test
+          python3 .claude/scripts/orchestrator_metrics.py --self-test
+          python3 .claude/scripts/orchestrator_sweep.py --self-test
+          python3 .claude/scripts/orchestrator_remount.py --self-test
+          python3 .claude/scripts/wake_orchestrator.py --self-test
+          python3 .claude/scripts/test_pr_review.py
+          python3 .claude/scripts/orchestrator_autoaccept.py --self-test
+          python3 .claude/scripts/change_outcomes.py --self-test
+          python3 -m unittest discover -s .claude/scripts -p 'test_ci_rounds.py'
+
+      # The rest of the review tooling. test_pr_review.py above drives pr-review.sh
+      # end to end; these three are run by it and by prepare, and are not guards of
+      # the tree. tiers.py decides a change's review tier, ready.py decides whether a
+      # card may be delivered, and render.py refuses a result that names another
+      # commit, carries an unverified finding with nothing to confirm it, or has a
+      # field the schema does not know — so a regression in any of them lets a review
+      # that never happened through while every visible check stays green, the one
+      # failure mode nobody notices by reading the diff. All three are offline.
+      - name: PR review tooling self-test
+        run: |
+          python3 .claude/pr-review/tiers.py --self-test
+          python3 .claude/pr-review/ready.py --self-test
+          python3 .claude/pr-review/render.py --self-test
 
       # The docker-free test services: how start treats a port already held by
       # a server of ours from older pins, or by someone else (stand-in binaries).
       - name: dev-db.sh tests
         run: bash .claude/scripts/test-dev-db.sh
 
-      # Every helper test beside the scripts in .github/scripts, minus the two
-      # owned by Required CI itself (test_required_ci.py runs in the scope job,
-      # test_ci_fast.py in the cifast job of required-ci.yml — that one drives
-      # real pre-commit and is too slow for this lane). The exclusion is by
-      # name, so a helper test added tomorrow is collected here automatically;
-      # it must not need a list edit somewhere to start running.
+      # Every helper test beside the scripts, in BOTH script trees: the helpers
+      # in .github/scripts and the ones in .claude/scripts. The second tree is
+      # why this step exists in this shape — a self-test written next to a guard
+      # had no lane at all until #4028's diagnosis found three guards whose
+      # self-tests had never run (#4005, #4010, #4019), one of them red on main.
+      #
+      # Each tree goes on sys.path before its modules are executed, because
+      # exec_module does not do what `python3 <path>` does: a helper that
+      # imports a neighbour by bare name resolves it beside the script when run
+      # as a file and nowhere when it is not. No module collected today does
+      # that — the two that do, test_ci_fast.py and test_ci_rounds.py, are both
+      # excluded below — so this is a net for the next helper rather than a
+      # line this run depends on.
+      #
+      # Exclusions, all by name, and each one has to stay justified:
+      #   * the two owned by Required CI itself — test_required_ci.py runs in
+      #     the scope job, test_ci_fast.py in the cifast job of required-ci.yml
+      #     (that one drives real pre-commit and is too slow for this lane);
+      #   * the three a step above already runs — .claude/scripts/test_pr_review.py
+      #     and test_ci_rounds.py in Trace tooling self-test, test_check_guard_wired.py
+      #     in Guards self-test;
+      #   * the self-test of every guard check-guard-wired.py excuses, read from
+      #     that guard rather than written out here: a guard with no lane to run
+      #     in has no lane for its self-test either, and test_check_seam_tests.py
+      #     asserts the repository is clean, so collecting it would report the
+      #     exemption as a failure of this step. One list, both sides;
+      #   * the two that need an install this job does not have, both of them
+      #     found red by the first full run of this step. test_scene_debt_ratchet.py
+      #     shells out to a node scan and needs frontend/node_modules; its lane
+      #     is frontend.yml's Scene debt rule self-tests, which runs
+      #     scene-debt-ratchet.py --self-test after the install.
+      #     test_reanchor_migration_head.py drives reanchor-migration-head.py,
+      #     which imports alembic, so it needs backend/.venv; no lane runs it
+      #     today, and this step cannot be that lane without the install. The
+      #     gap is recorded here so it is not mistaken for covered.
+      # The glob is by name, so a helper test added tomorrow is collected here
+      # automatically; it must not need a list edit somewhere to start running.
+      # The one exception is a helper that needs an install this job lacks: it
+      # goes in NEEDS_AN_INSTALL, the comment above names the lane that runs it
+      # instead, and when nothing does, it says that too.
+      #
+      # It stops at `test_*.py` because the three hyphen-named files next to the
+      # guards are not one kind of file, and widening it would collect all three:
+      # test-changed.py is a developer entry point with no tests in it at all;
+      # test-check-split-frontend.py is check-split-frontend.py's --self-test and
+      # carries the same frontend/node_modules and few-minutes cost that keeps
+      # its guard in ON_DEMAND; test-verify-module-split.py is offline, green and
+      # 27 seconds but only reached by verify-module-split.py --self-test, a tool
+      # no step runs. The first will follow check-split-frontend.py into
+      # frontend.yml; the second is its own decision, a lane for a non-guard
+      # tooling, and is recorded here so the next diagnosis does not redo it.
       - name: CI helper tests
         run: |
           python3 - <<'PYEOF'
           import importlib.util
           import pathlib
+          import sys
           import unittest
 
           OWNED_BY_REQUIRED_CI = {"test_required_ci", "test_ci_fast"}
+          RUN_BY_A_STEP_ABOVE = {
+              "test_pr_review",
+              "test_ci_rounds",
+              "test_check_guard_wired",
+          }
+          #: The self-test of every guard check-guard-wired.py excuses. Read from
+          #: the guard so one list decides both halves: an excused guard has no
+          #: lane for itself, so its self-test has none either.
+          guard_spec = importlib.util.spec_from_file_location(
+              "check_guard_wired", pathlib.Path(".claude/scripts/check-guard-wired.py")
+          )
+          guard_wired = importlib.util.module_from_spec(guard_spec)
+          guard_spec.loader.exec_module(guard_wired)
+          NO_LANE = {guard_wired.self_test_stem(name) for name in guard_wired.ON_DEMAND}
+          #: Helpers that need an install this job does not have: one scans with
+          #: node, one drives a script that imports alembic. Named rather than
+          #: detected — a guess at what a module needs would hide the test that
+          #: stopped importing for the wrong reason, which is the failure mode
+          #: this step exists to catch. The reason each one is here, and the lane
+          #: it runs in instead, is in the comment above the step.
+          NEEDS_AN_INSTALL = {
+              "test_scene_debt_ratchet",
+              "test_reanchor_migration_head",
+          }
+          SKIP = (
+              OWNED_BY_REQUIRED_CI | RUN_BY_A_STEP_ABOVE | NO_LANE | NEEDS_AN_INSTALL
+          )
           loader = unittest.TestLoader()
           suite = unittest.TestSuite()
-          for path in sorted(pathlib.Path(".github/scripts").glob("test_*.py")):
-              if path.stem in OWNED_BY_REQUIRED_CI:
-                  continue
-              spec = importlib.util.spec_from_file_location(path.stem, path)
-              module = importlib.util.module_from_spec(spec)
-              spec.loader.exec_module(module)
-              suite.addTests(loader.loadTestsFromModule(module))
+          trees = (pathlib.Path(".github/scripts"), pathlib.Path(".claude/scripts"))
+          for tree in trees:
+              sys.path.insert(0, str(tree.resolve()))
+              for path in sorted(tree.glob("test_*.py")):
+                  if path.stem in SKIP:
+                      continue
+                  spec = importlib.util.spec_from_file_location(path.stem, path)
+                  module = importlib.util.module_from_spec(spec)
+                  spec.loader.exec_module(module)
+                  suite.addTests(loader.loadTestsFromModule(module))
           result = unittest.TextTestRunner().run(suite)
           raise SystemExit(0 if result.wasSuccessful() else 1)
           PYEOF
@@ -185,6 +317,11 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           node-version: 22
+          # No cache here, deliberately. docs/site is three packages and the
+          # install is about two seconds on a hosted runner (2s in runs
+          # 38926053508 and 38927604231); and these guards never run on main,
+          # so a cache saved here would be visible to this ref alone — the
+          # converse of the `Restore only` note on setup-uv above.
 
       - name: Build the docs site
         if: ${{ !cancelled() && steps.docs_node.outcome == 'success' && steps.docs_tags.outcome == 'success' }}
@@ -194,5 +331,25 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run build
-          # The docs host's copy, at the root (docs/site/src/where.mjs).
-          DOCS_BASE= OUT="$OUT-host" npm run build
+          # The docs host's copy, at the root (docs/site/src/where.mjs): the
+          # same sources through the same build, with BASE empty. The same
+          # generators and the same per-page checks run either way; what BASE
+          # changes is where a link points, and this is the stricter of the two
+          # link checks — build.mjs anchors its href regex on BASE, so an
+          # absolute path with more than one segment, written by hand into
+          # docs content, is checked against the host's pages here and by the
+          # first build not at all. It is also the only run that reaches the
+          # `if (!BASE)` block, which is sitemap.xml and robots.txt — only a
+          # host's own root can serve those; manual.zip is built either way.
+          # So a PR that leaves docs/site alone gives up the earlier signal,
+          # not the check: the merge queue is a merge_group event and runs both
+          # builds whatever the PR changed, as does any pull_request that
+          # touches docs/site. `git diff --quiet` exits non-zero when it cannot
+          # answer (no origin/main, say), which runs the build rather than skip
+          # it.
+          if [ "${{ github.event_name }}" != "pull_request" ] \
+             || ! git -C "$GITHUB_WORKSPACE" diff --quiet origin/main...HEAD -- docs/site; then
+            DOCS_BASE= OUT="$OUT-host" npm run build
+          else
+            echo "docs/site is untouched by this PR; the docs-host build waits for the merge queue"
+          fi

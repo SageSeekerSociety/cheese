@@ -10,8 +10,9 @@ These tests pin the peer-keyed map that fixes it.
 import asyncio
 import uuid
 
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from tests.integration.conftest import (
     join_project_team,
     post_project,
@@ -74,6 +75,7 @@ def _private_unread(client, project_id: str, handle: str) -> dict:
 def test_one_person_cannot_read_anothers_dm_badges(client):
     """Who you are DMing is private — naming someone else must not read it."""
     project_id = _project(client)
+    _on_the_roster(client, project_id, "mentor-1", "mentor-2")
     dm = _dm(client, project_id, "mentor-1", "mentor-2")
     _seed_message(client, project_id, dm, "mentor-2")
 

@@ -1,0 +1,15 @@
+/* 一格里「现在还没有东西可看」的那一块：正中一个图标加一句话。
+   文档那一档（转换中 / 这个部署没装转换服务 / 这一份转不了）和图片那一档（那一张的
+   字节还没拿到）用的是同一块，所以它单独放一份，两边都引。 */
+.doc__state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  color: var(--muted);
+}
+.doc__state--text {
+  text-align: center;
+}

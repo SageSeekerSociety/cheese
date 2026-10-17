@@ -54,6 +54,11 @@ vi.mock('@/api/teams', () => ({
     listMyInvitations: vi.fn(async () => ({
       invitations: [{ id: 2, status: 'PENDING', createdAt: 0, team: { name: 'Crew', avatarId: 1 } }],
     })),
+    // 成员页上那张「团队地址与加入」卡：数据在页面里取，这一页也把它画出来。
+    getJoinLink: vi.fn(async () => ({ token: 'first', approval: true })),
+    resetJoinLink: vi.fn(async () => ({ token: 'second', approval: true })),
+    updateJoinLink: vi.fn(async () => ({ token: 'first', approval: false })),
+    update: vi.fn(),
   },
 }))
 

@@ -183,7 +183,7 @@ const files = computed(() => [
 .scene-sample {
   font-size: 12px;
   line-height: var(--lh-12);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .scene-title {
@@ -247,7 +247,10 @@ const files = computed(() => [
   height: 24px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--inverse-ink);
+  /* 与 .topic-avatar 同一条理由：底色是 avatarColor() 算的定值，字色也得是定值。
+     --inverse-ink 深色下是 #f3f4f6，几个深色相上只剩 4.44:1。 */
+  /* stylelint-disable-next-line color-no-hex -- 压在头像底色上的墨色，底色不随主题变。 */
+  color: #fff;
   border-radius: var(--radius-pill);
   flex-shrink: 0;
   align-items: center;

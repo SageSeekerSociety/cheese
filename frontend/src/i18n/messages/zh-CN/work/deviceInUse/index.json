@@ -1,0 +1,4 @@
+{
+  "attached": "仅供 {projects} 使用",
+  "line": "正在用：{project} · {room} · {agent}"
+}

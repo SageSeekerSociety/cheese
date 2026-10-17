@@ -12,6 +12,9 @@ from app.domain.project.models import (
     ProjectInvitation,
     ProjectMember,
     ProjectMemberExclusion,
+    ProjectRole,
+    ProjectRoleGrant,
+    ProjectTransfer,
 )
 
 
@@ -118,12 +121,14 @@ class InvitationRepository:
         project_id: uuid.UUID,
         invitee_handle: str,
         inviter_handle: str,
+        role: str = "member",
     ) -> ProjectInvitation:
         invitation = ProjectInvitation(
             project_id=project_id,
             invitee_handle=invitee_handle,
             inviter_handle=inviter_handle,
             status=InvitationStatus.pending,
+            role=role,
         )
         self._session.add(invitation)
         await self._session.flush()
@@ -175,3 +180,130 @@ class InvitationRepository:
         await self._session.flush()
         await self._session.refresh(invitation)
         return invitation
+
+
+class RoleRepository:
+    """The roles a project records, and what each role may do there (#3830)."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def role_of(self, *, project_id: uuid.UUID, user_handle: str) -> str | None:
+        return await self._session.scalar(
+            select(ProjectRole.role).where(
+                ProjectRole.project_id == project_id,
+                ProjectRole.user_handle == user_handle,
+            )
+        )
+
+    async def roles(self, project_id: uuid.UUID) -> dict[str, str]:
+        rows = await self._session.execute(
+            select(ProjectRole.user_handle, ProjectRole.role).where(
+                ProjectRole.project_id == project_id
+            )
+        )
+        return {handle: role for handle, role in rows.all()}
+
+    async def set_role(
+        self, *, project_id: uuid.UUID, user_handle: str, role: str
+    ) -> None:
+        await self._session.execute(
+            pg_insert(ProjectRole)
+            .values(project_id=project_id, user_handle=user_handle, role=role)
+            .on_conflict_do_update(
+                constraint="uq_project_role",
+                set_={"role": role, "updated_at": datetime.now(UTC)},
+            )
+        )
+        await self._session.flush()
+
+    async def clear_role(self, *, project_id: uuid.UUID, user_handle: str) -> None:
+        await self._session.execute(
+            delete(ProjectRole).where(
+                ProjectRole.project_id == project_id,
+                ProjectRole.user_handle == user_handle,
+            )
+        )
+        await self._session.flush()
+
+    async def grants(self, project_id: uuid.UUID) -> dict[str, list[str]]:
+        """The roles this project changed, each with what it may do now."""
+        rows = await self._session.execute(
+            select(ProjectRoleGrant.role, ProjectRoleGrant.permissions).where(
+                ProjectRoleGrant.project_id == project_id
+            )
+        )
+        return {role: list(permissions or []) for role, permissions in rows.all()}
+
+    async def set_grants(
+        self, *, project_id: uuid.UUID, role: str, permissions: list[str]
+    ) -> None:
+        await self._session.execute(
+            pg_insert(ProjectRoleGrant)
+            .values(project_id=project_id, role=role, permissions=permissions)
+            .on_conflict_do_update(
+                constraint="uq_project_role_grant",
+                set_={"permissions": permissions, "updated_at": datetime.now(UTC)},
+            )
+        )
+        await self._session.flush()
+
+    async def clear_grants(
+        self, project_id: uuid.UUID, *, role: str | None = None
+    ) -> None:
+        """Back to the defaults: one role's, or every role's."""
+        stmt = delete(ProjectRoleGrant).where(ProjectRoleGrant.project_id == project_id)
+        if role is not None:
+            stmt = stmt.where(ProjectRoleGrant.role == role)
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+
+class TransferRepository:
+    """Offers to hand a project to someone, pending until they answer."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def add(
+        self, *, project_id: uuid.UUID, from_handle: str, to_handle: str
+    ) -> ProjectTransfer:
+        offer = ProjectTransfer(
+            project_id=project_id, from_handle=from_handle, to_handle=to_handle
+        )
+        self._session.add(offer)
+        await self._session.flush()
+        await self._session.refresh(offer)
+        return offer
+
+    async def get(self, transfer_id: uuid.UUID) -> ProjectTransfer | None:
+        return await self._session.get(ProjectTransfer, transfer_id)
+
+    async def pending_for_project(
+        self, project_id: uuid.UUID
+    ) -> ProjectTransfer | None:
+        return await self._session.scalar(
+            select(ProjectTransfer).where(
+                ProjectTransfer.project_id == project_id,
+                ProjectTransfer.status == InvitationStatus.pending,
+            )
+        )
+
+    async def pending_for_person(self, handle: str) -> list[ProjectTransfer]:
+        rows = await self._session.scalars(
+            select(ProjectTransfer)
+            .where(
+                ProjectTransfer.to_handle == handle,
+                ProjectTransfer.status == InvitationStatus.pending,
+            )
+            .order_by(ProjectTransfer.created_at.desc())
+        )
+        return list(rows.all())
+
+    async def settle(
+        self, offer: ProjectTransfer, status: InvitationStatus
+    ) -> ProjectTransfer:
+        offer.status = status
+        offer.responded_at = datetime.now(UTC)
+        await self._session.flush()
+        return offer

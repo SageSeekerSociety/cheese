@@ -18,6 +18,7 @@ An environment is one of two things:
   there without isolation, so only that computer's owner may choose it.
 """
 
+import uuid
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
@@ -29,6 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
+from app.domain.agent.models import AgentTurn
+from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
 from app.domain.user.models import User as UserRow
 
@@ -39,6 +42,19 @@ STANDARD = "standard"
 VM = "vm"
 #: One person's own enrolled computers: ``devices_of:<user id>``.
 DEVICES_OF = "devices_of:"
+
+
+async def room_is_busy(session: AsyncSession, room_id: uuid.UUID) -> bool:
+    """An open turn anywhere in the room keeps its environment in use."""
+    active = await session.scalar(
+        select(AgentTurn.id)
+        .where(
+            of_room(AgentTurn.conversation_id, room_id),
+            AgentTurn.stopped_at.is_(None),
+        )
+        .limit(1)
+    )
+    return active is not None
 
 
 class Sandbox(BaseModel):

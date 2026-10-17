@@ -18,6 +18,28 @@
 // The exception lives on the line it excuses, so it is read in the diff that
 // adds it and deleted with the line. A list kept in another file would outlive
 // the lines it names and let a new string slip in under an old entry.
+//
+// A SECOND FINDING, ONE STEP DOWN: Chinese inside an ordinary `<!-- -->` in a
+// template. No reader ever sees it — the production build strips comments — but
+// vitest and `vite dev` keep it in the DOM, and the specs that assert a rendered
+// component carries no Chinese (spaces.i18n.spec.ts and friends) read that DOM.
+// So a Chinese comment fails a test about a component it has nothing to do with:
+// that is how this was found, twice (2026-10-03 and 2026-10-12). It is counted
+// as its own kind and held by a ratchet rather than refused outright, because
+// the tree already carries 1422 of them across 230 files; they are frozen in
+// `i18n-comments-baseline.json`, which only goes down. `<!-- i18n-data: … -->`
+// stays exempt, and has to: the reason after it is usually Chinese prose, so
+// counting it would fail the very lines the first rule asks for.
+
+// The ratchet arithmetic — a file may not go up, a file that went down should
+// have its baseline tightened, an entry for a file that no longer has any is not
+// a failure — is the same question the vue-tsc, stylelint, a11y and storage
+// ratchets ask of their own counts. It lives in one place (tsc-ratchet-core.mjs)
+// rather than in another copy that can drift; a second definition of
+// "regression" is a second answer to what a baseline means.
+import { compare, tightenedBaseline } from './tsc-ratchet-core.mjs'
+
+export { compare, tightenedBaseline }
 
 /**
  * The same character class `catalog.spec.ts` uses for "this English value still
@@ -377,10 +399,99 @@ function chineseLines(relPath, text) {
   return found
 }
 
-/** An exempting comment: the marker right after the comment opener, then the reason. */
-const ANNOTATIONS = {
-  code: [/\/\/\s*i18n-data:(.*)$/, /\/\*\s*i18n-data:(.*?)(?:\*\/|$)/],
-  markup: [/<!--\s*i18n-data:(.*?)(?:-->|$)/],
+/**
+ * An annotation is the marker right after a comment opener: `<!-- i18n-data: …`
+ * in a template, `//`/`/* i18n-data: …` in code.
+ *
+ * The same question is asked of two strings — one line of a file
+ * (`annotationOn`) and a whole `<!-- … -->` comment (`commentLines`, through
+ * `ANNOTATION_COMMENT`) — and the two have to agree, or a comment the counter
+ * exempts becomes a line the checker refuses. Neither lets the marker sit on a
+ * later line than the opener; a reason that continues on the next line counts,
+ * one that only begins there does not.
+ */
+const MARKUP_ANNOTATION = /^<!--[ \t]*i18n-data:(.*?)(?:-->|$)/
+const ANNOTATION_COMMENT = /^<!--[ \t]*i18n-data:/
+/** The marker after a `//` or `/*` opener on a code line, then the reason. */
+const CODE_ANNOTATIONS = [/\/\/\s*i18n-data:(.*)$/, /\/\*\s*i18n-data:(.*?)(?:\*\/|$)/]
+
+/**
+ * The lines of a `.vue` template that sit inside an ordinary HTML comment
+ * carrying Chinese, keyed by line like `chineseLines`. An `<!-- i18n-data: … -->`
+ * comment is not one of these (see the header), and neither is anything outside
+ * `<template>`: an SFC's other blocks are not part of the rendered markup, and a
+ * comment in the file around them is not either. A comment spanning several
+ * lines contributes the lines inside it that carry Han — the same rule a string
+ * literal gets in `addSpan`.
+ */
+function commentLines(relPath, text) {
+  const src = String(text)
+  /** @type {Map<number, 'comment'>} */
+  const found = new Map()
+  if (!String(relPath).replaceAll('\\', '/').endsWith('.vue')) return found
+  const lineOf = lineIndexer(src)
+  for (const template of topLevelBlocks(src, 'template')) {
+    const comments = /<!--[\s\S]*?-->/g
+    for (let m = comments.exec(template.body); m; m = comments.exec(template.body)) {
+      const comment = m[0]
+      if (!CJK.test(comment) || ANNOTATION_COMMENT.test(comment)) continue
+      const first = lineOf(template.start + m.index)
+      comment.split('\n').forEach((line, index) => {
+        if (CJK.test(line)) found.set(first + index, 'comment')
+      })
+    }
+  }
+  return found
+}
+
+/**
+ * The lines of a `.vue` file that sit inside a `<template>` block, where the
+ * only comment syntax is `<!-- -->`.
+ *
+ * `chineseLines` says the same thing for lines carrying Chinese outside a
+ * comment, but a line whose Han all sits inside one has no `kind` — and those
+ * are the lines where the wrong syntax would be read: `//` is text in a
+ * template, so a Chinese comment that mentions `// i18n-data:` in its prose
+ * would be taken for an annotation on that line.
+ * @param {string} relPath
+ * @param {string} text
+ * @returns {Set<number>} 1-based line numbers
+ */
+function markupLines(relPath, text) {
+  /** @type {Set<number>} */
+  const lines = new Set()
+  const src = String(text)
+  if (!String(relPath).replaceAll('\\', '/').endsWith('.vue')) return lines
+  const lineOf = lineIndexer(src)
+  for (const template of topLevelBlocks(src, 'template')) {
+    const first = lineOf(template.start)
+    template.body.split('\n').forEach((_, index) => lines.add(first + index))
+  }
+  return lines
+}
+
+/**
+ * The reason a template line's annotation gives, or `null`.
+ *
+ * `<!--` inside an HTML comment is text, not another comment, so the line is
+ * walked from one comment's end to the next instead of searched for the marker:
+ * a Chinese comment that merely quotes `<!-- i18n-data:` in its prose is prose,
+ * and exempts nothing. The comment may close on a later line and its reason may
+ * continue there; only the opener and the marker share a line.
+ * @param {string} line
+ * @returns {string | null}
+ */
+function markupAnnotationOn(line) {
+  for (let at = line.indexOf('<!--'); at !== -1; ) {
+    const m = MARKUP_ANNOTATION.exec(line.slice(at))
+    if (m) return m[1].trim()
+    const close = line.indexOf('-->', at)
+    // No close left on this line: the rest of it sits inside this comment, so
+    // there is no second opener to ask.
+    if (close === -1) return null
+    at = line.indexOf('<!--', close + 3)
+  }
+  return null
 }
 
 /**
@@ -393,7 +504,12 @@ const ANNOTATIONS = {
  */
 export function annotationOn(line, kinds) {
   for (const kind of kinds) {
-    for (const pattern of ANNOTATIONS[kind]) {
+    if (kind === 'markup') {
+      const reason = markupAnnotationOn(line)
+      if (reason !== null) return { reason }
+      continue
+    }
+    for (const pattern of CODE_ANNOTATIONS) {
       const m = pattern.exec(line)
       if (m) return { reason: m[1].trim() }
     }
@@ -407,31 +523,87 @@ const hasReason = (reason) => /[\p{L}\p{N}]/u.test(reason)
 /**
  * Everything wrong with one file, line by line:
  *   `copy`       — Chinese with no annotation: it belongs in the catalog
+ *   `comment`    — Chinese inside an ordinary HTML comment of a template: not
+ *                  copy, but it reaches the DOM the no-Chinese specs read (held
+ *                  by a ratchet, not refused outright — see the file header)
  *   `no-reason`  — an annotation that does not say why
  *   `stale`      — an annotation on a line with no Chinese to excuse (the string
  *                  it covered moved or was translated); left in place it would
  *                  read as an exemption for whatever lands on that line next
  * plus the lines that are correctly annotated, so the run can say how many.
+ *
+ * One line gets one finding, in this order: an annotation with no reason wins,
+ * then unannotated copy, then a stale annotation, then a Chinese comment. The
+ * comment comes before the annotated branch on purpose — see the branches below.
  * @param {string} relPath
  * @param {string} text
- * @returns {{ problems: Array<{line: number, problem: 'copy' | 'no-reason' | 'stale', text: string}>, annotated: number[] }}
+ * @returns {{ problems: Array<{line: number, problem: 'copy' | 'comment' | 'no-reason' | 'stale', text: string}>, annotated: number[] }}
  */
 export function checkSource(relPath, text) {
-  const found = chineseLines(relPath, text)
+  const copy = chineseLines(relPath, text)
+  const comments = commentLines(relPath, text)
+  const markup = markupLines(relPath, text)
   const lines = String(text).split('\n')
   const problems = []
   const annotated = []
   lines.forEach((raw, index) => {
     const line = index + 1
-    const kind = found.get(line)
-    const note = annotationOn(raw, kind ? [kind] : ['code', 'markup'])
+    const kind = copy.get(line)
+    const commented = comments.has(line)
+    // The block decides the syntax, never the copy: a line whose Chinese all
+    // sits inside a comment carries no `kind`, and it is exactly there that
+    // reading a template line as code would take a `// i18n-data:` quoted in
+    // the comment for an annotation.
+    const note = annotationOn(raw, [markup.has(line) ? 'markup' : 'code'])
     const shown = raw.trim().slice(0, 110)
     if (note && !hasReason(note.reason)) problems.push({ line, problem: 'no-reason', text: shown })
+    else if (!note && kind) problems.push({ line, problem: 'copy', text: shown })
+    // An annotation with nothing to excuse comes before the comment, not after:
+    // a comment is prose and never the Chinese an annotation covers, so an
+    // annotation beside one is stale — refusing it is stricter than counting the
+    // comment and letting the annotation stand, which would leave it to exempt
+    // whatever copy lands on that line next.
     else if (note && !kind) problems.push({ line, problem: 'stale', text: shown })
-    else if (kind && !note) problems.push({ line, problem: 'copy', text: shown })
+    // A comment is prose, not data, so an annotation beside it excuses nothing:
+    // this branch ahead of the annotated one is what stops `<!-- i18n-data: … -->`
+    // from covering an unrelated Chinese comment on the same line. A line still
+    // on its first fix — unannotated copy that also carries a comment — reports
+    // the copy, and the comment is counted by the run after that is translated
+    // (no line in the tree carries both today).
+    else if (commented) problems.push({ line, problem: 'comment', text: shown })
     else if (note) annotated.push(line)
   })
   return { problems, annotated }
+}
+
+/**
+ * A scan's findings split by what they decide: `hard` fails the gate outright,
+ * `comments` are the lines counted against the ratchet baseline. Both keep the
+ * per-file grouping `scanTree` produced, because both reports are per file.
+ * @param {Record<string, ReturnType<typeof checkSource>['problems']>} problems
+ */
+export function splitFindings(problems) {
+  /** @type {Record<string, ReturnType<typeof checkSource>['problems']>} */
+  const hard = {}
+  /** @type {Record<string, ReturnType<typeof checkSource>['problems']>} */
+  const comments = {}
+  for (const [file, findings] of Object.entries(problems)) {
+    const copy = findings.filter((finding) => finding.problem !== 'comment')
+    if (copy.length) hard[file] = copy
+    const commented = findings.filter((finding) => finding.problem === 'comment')
+    if (commented.length) comments[file] = commented
+  }
+  return { hard, comments }
+}
+
+/**
+ * The per-file counts the ratchet compares — `splitFindings(...).comments`, in
+ * the shape `i18n-comments-baseline.json` and `compare` both take.
+ * @param {Record<string, ReturnType<typeof checkSource>['problems']>} comments
+ * @returns {Record<string, number>}
+ */
+export function commentCounts(comments) {
+  return Object.fromEntries(Object.entries(comments).map(([file, findings]) => [file, findings.length]))
 }
 
 /**
@@ -506,7 +678,9 @@ function topLevelBlocks(src, tag) {
 
 /**
  * The whole tree's result: problems per file (files with none are left out) and
- * how many lines carry a valid annotation.
+ * how many lines carry a valid annotation. `ok` means "nothing at all was
+ * found", so within the baseline it is still false on this tree — the verdict is
+ * `splitFindings` plus the ratchet, and no caller should exit on `ok` alone.
  * @param {Array<{path: string, text: string}>} files
  */
 export function scanTree(files) {
@@ -526,19 +700,63 @@ export function scanTree(files) {
 
 const LABELS = {
   copy: 'Chinese outside the catalog',
+  comment: 'Chinese in an HTML comment',
   'no-reason': 'i18n-data annotation without a reason',
   stale: 'i18n-data annotation on a line with no Chinese',
 }
 
 /**
- * What the gate prints. A failure lists every offending line and, for each kind
- * of problem present, exactly what to do about it.
+ * The ratchet's human half: what went up, where, and what to do about it.
+ * `comments` is `splitFindings(...).comments`; its lines are printed for the
+ * files that regressed, old and new alike — the count is per file.
+ * @param {ReturnType<typeof compare>} comparison
+ * @param {Record<string, Array<{line: number, problem: string, text: string}>>} [comments]
+ */
+export function formatCommentReport(comparison, comments = {}) {
+  const lines = []
+  if (comparison.regressions.length) {
+    lines.push('New Chinese in an HTML comment (this is what the ratchet blocks):')
+    for (const { file, base, now } of comparison.regressions) lines.push(`  ${file}: ${base} -> ${now}`)
+    const regressed = new Set(comparison.regressions.map((r) => r.file))
+    const shown = Object.entries(comments)
+      .filter(([file]) => regressed.has(file))
+      .flatMap(([file, findings]) => findings.map((f) => `  ${file}:${f.line}: [${LABELS[f.problem]}] ${f.text}`))
+    if (shown.length) {
+      lines.push('')
+      lines.push('In those files (old and new alike — the count is per file):')
+      lines.push(...shown)
+    }
+    lines.push('')
+    lines.push('The production build strips comments, but vitest and `vite dev` keep them in')
+    lines.push('the DOM, and the specs that assert a rendered component carries no Chinese')
+    lines.push('read that DOM — so this fails a test about a component it has nothing to do')
+    lines.push("with. Move the explanation into the <script> or <style> block (a prop's doc")
+    lines.push('comment is a good home), or write it in English. The frozen counts in')
+    lines.push('i18n-comments-baseline.json only go down: `pnpm run lint:i18n:update` after')
+    lines.push('removing some. Rule: docs/i18n.md §5.')
+  }
+  if (comparison.improvements.length) {
+    lines.push(
+      comparison.regressions.length ? 'Also improved:' : 'Chinese HTML comments went down — tighten the baseline:'
+    )
+    for (const { file, base, now } of comparison.improvements) lines.push(`  ${file}: ${base} -> ${now}`)
+    lines.push('')
+    lines.push('Run: pnpm run lint:i18n:update  (then commit i18n-comments-baseline.json)')
+  }
+  lines.push(`Chinese HTML comments: ${comparison.currentTotal} line(s), baseline allows ${comparison.baselineTotal}`)
+  return lines.join('\n')
+}
+
+/**
+ * What the gate prints for the half it refuses outright — `splitFindings(...)`
+ * `.hard` — plus, for each kind of problem present, exactly what to do about it.
+ * The commented-Chinese half is `formatCommentReport`'s.
  * @param {ReturnType<typeof scanTree>} result
  */
 export function formatReport(result) {
   const lines = []
   if (result.ok) {
-    lines.push(`No hardcoded Chinese in src/. ${result.annotated} line(s) carry an i18n-data annotation.`)
+    lines.push(`No Chinese copy in src/. ${result.annotated} line(s) carry an i18n-data annotation.`)
     return lines.join('\n')
   }
   const kinds = new Set()
@@ -554,7 +772,10 @@ export function formatReport(result) {
   lines.push('')
   if (kinds.has('copy')) {
     lines.push('Chinese a user can read goes through the catalog:')
-    lines.push('  1. add the key to src/i18n/messages/zh-CN/<namespace>.json and en/<namespace>.json')
+    lines.push('  1. add the key to src/i18n/messages/zh-CN/ and en/ — the file the key path names')
+    lines.push(
+      '     (work.room.doc.x → work/room/doc/index.json; apiError, roomNotice → the module shard; docs/i18n.md §2)'
+    )
     lines.push("  2. call it: t('namespace.component.role') in script, {{ t('…') }} or :label=\"t('…')\" in a template")
     lines.push('  Key naming: docs/i18n.md §3. English for platform terms: docs/i18n-glossary.md.')
     lines.push('Chinese that is data, not copy (compared, parsed or stored; never shown as interface text),')
@@ -572,7 +793,9 @@ export function formatReport(result) {
   if (kinds.has('stale')) {
     lines.push('An i18n-data annotation on a line with no counted Chinese excuses nothing: delete it.')
   }
-  lines.push('Comments, console/logger arguments and *.spec.ts / __tests__ files are not scanned (docs/i18n.md §5).')
+  lines.push('Chinese in `//` and `/* */` comments, console/logger arguments and *.spec.ts / __tests__')
+  lines.push("files is not scanned. A template's HTML comments are counted on their own, against")
+  lines.push('i18n-comments-baseline.json (docs/i18n.md §5).')
   lines.push(`${total} problem(s).`)
   return lines.join('\n')
 }

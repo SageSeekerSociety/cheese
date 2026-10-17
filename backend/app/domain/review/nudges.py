@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Final, Protocol
 
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_CI_FAILED,
     EVENT_CI_PASSED,
     EVENT_MERGE_REFUSED,

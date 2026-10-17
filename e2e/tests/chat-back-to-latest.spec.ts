@@ -77,8 +77,20 @@ for (const viewport of [
     const newest = page.locator('[data-mid="m59"]');
     await expect(newest).toBeVisible({ timeout: 30_000 });
 
-    // Read from the top, the way someone scrolls back through a long task.
-    await scroll.evaluate((el) => (el.scrollTop = 0));
+    // Read from the top, the way someone scrolls back through a long task: with
+    // the wheel. A scrollTop write with no input while rows are still being
+    // laid out is what useChatScroll takes for the browser, not the reader. One
+    // turn of the wheel does not reach the top in WebKit, so keep turning it.
+    await scroll.hover();
+    await expect
+      .poll(
+        async () => {
+          await page.mouse.wheel(0, -100_000);
+          return scroll.evaluate((el) => el.scrollTop);
+        },
+        { timeout: 5_000 },
+      )
+      .toBe(0);
     const pill = page.getByRole("button", { name: "回到最新" });
     await expect(pill).toBeVisible();
     await pill.click();
@@ -94,6 +106,63 @@ for (const viewport of [
       .toBeLessThan(2);
     await expect(newest).toBeInViewport();
     await expect(pill).toBeHidden();
+  });
+}
+
+// Parked at the bottom, the pane stays there when the layout under it changes and
+// changes back within one browser task, with nobody touching anything. WebKit (the
+// desktop app) clamps scrollTop to the briefly shorter content, or briefly taller
+// pane, and leaves it there once the real sizes come back; the resize observer sees
+// no net change. Rows are redrawn in place whenever the room's topic titles
+// refresh; the composer zone stands in for anything in the column under the pane.
+for (const change of ["timeline rows redrawn", "composer zone flickers"] as const) {
+  test(`a pane parked at the bottom stays there when ${change}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.route("**/__chat-back-to-latest__", (route) =>
+      route.fulfill({ contentType: "text/html", body: fixture }),
+    );
+    await page.goto("/__chat-back-to-latest__", { waitUntil: "commit" });
+    const scroll = page.getByTestId("chat-scroll");
+    await expect(page.locator('[data-mid="m59"]')).toBeInViewport({ timeout: 30_000 });
+    const gap = () =>
+      scroll.evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
+    await expect.poll(gap).toBeLessThan(2);
+
+    await page.evaluate(async (change) => {
+      const frame = () => new Promise((r) => requestAnimationFrame(r));
+      const pane = document.querySelector<HTMLElement>('[data-testid="chat-scroll"]')!;
+      // Parked for a while: no DOM change in the column for longer than the window
+      // in which useChatScroll still credits a move to the first render.
+      await new Promise<void>((done) => {
+        let quiet = setTimeout(done, 700);
+        new MutationObserver(() => {
+          clearTimeout(quiet);
+          quiet = setTimeout(done, 700);
+        }).observe(pane.parentElement!, { childList: true, subtree: true, characterData: true });
+      });
+      if (change === "timeline rows redrawn") {
+        const rows = [...pane.querySelectorAll("[data-feed-item]")].slice(-3);
+        const marker = document.createComment("");
+        rows.at(-1)!.after(marker);
+        for (const row of rows) row.remove();
+        void pane.scrollHeight; // a layout read mid-update
+        for (const row of rows) marker.before(row);
+        marker.remove();
+      } else {
+        const zone = document.querySelector(".composer-zone")!;
+        const block = document.createElement("div");
+        block.style.height = "196px";
+        zone.prepend(block);
+        for (let i = 0; i < 4; i++) await frame();
+        block.remove();
+        void pane.scrollHeight;
+        zone.prepend(block);
+      }
+      for (let i = 0; i < 8; i++) await frame();
+    }, change);
+
+    expect(await gap()).toBeLessThan(2);
+    await expect(page.getByRole("button", { name: "回到最新" })).toBeHidden();
   });
 }
 

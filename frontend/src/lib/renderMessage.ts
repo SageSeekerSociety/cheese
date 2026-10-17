@@ -4,31 +4,21 @@
 // teammate, `<#topicId>` for a topic/its doc, `<&path>` for a file. Both 芝士
 // and the composer emit them; each renders as a clickable chip (lib/refChip.ts).
 // 芝士's Markdown is drawn by the reader (components/common/MarkdownView.vue);
-// what is here is the rest: a person's own words, and the text put back into
-// the box when they edit a message.
+// what is here is the rest: a person's own words.
 import type { Block } from '../cx_types'
 import type { RefNames } from './refChip'
 
 import { isAgentBlock } from './authorship'
 import { refChip, refTokens } from './refChip'
 
-// 改一条自己发过的消息时，输入框里放的字：点过名的人写回「@名字」，和当初在输入框
-// 里打的一样，保存时后端再把名字认回 token。话题和文件引用原样留着 —— 写成标题或
-// 文件名的话，保存时就认不回原来那一个了。
-const MENTION_TOKEN = /<@([\w-]+)>/g
-
-export function editableText(text: string, maps: RefNames): string {
-  return text.replace(MENTION_TOKEN, (_m, handle) => `@${maps.mentionNames[handle] || handle}`)
-}
-
 // A person's words: as typed, with each reference token drawn as its chip.
 // The newlines survive as literal \n; the host element must render with
 // `white-space: pre-wrap` or the browser collapses them.
-export function renderPlain(text: string, maps: RefNames): string {
+export function renderPlain(text: string, maps: RefNames, opts: { focusable?: boolean } = {}): string {
   const box = document.createElement('span')
   let at = 0
   for (const ref of refTokens(text)) {
-    box.append(text.slice(at, ref.index), refChip(ref.kind, ref.id, maps))
+    box.append(text.slice(at, ref.index), refChip(ref.kind, ref.id, maps, opts))
     at = ref.index + ref.length
   }
   box.append(text.slice(at))

@@ -81,8 +81,8 @@ it('a connected server says whose account it acts as, and any member can disconn
     problem: null,
   })
   // 授权人是一颗 @chip：和对话里 @ 到他长得一样，点了去他的成员页。
-  await waitFor(() => expect(view.container.textContent).toMatch(/由\s*@alice\s*授权/))
-  expect(view.container.querySelector('.mcp-row__state .mention')?.getAttribute('data-handle')).toBe('alice')
+  await waitFor(() => expect(view.container.textContent).toMatch(/由\s*alice\s*授权/))
+  expect(view.container.querySelector('.mcp-row__state [data-handle]')?.getAttribute('data-handle')).toBe('alice')
   await fireEvent.click(view.getByRole('button', { name: '断开' }))
   expect(view.emitted('disconnect')).toEqual([
     [{ ...tracker, status: 'connected', authorized_by: 'alice', authorized_at: expect.any(String) }],

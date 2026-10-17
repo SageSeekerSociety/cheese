@@ -18,6 +18,11 @@ defineProps<{ page: 'home' | 'solutions' | 'download' }>()
 // 一旦连着后端，拿它包着用的三个公共页也跟着连上，目录站里就挂不起来。没人注入时按
 // 「没登录」画——公共页本来就是给没登录的人看的。
 const { signedIn } = inject(PUBLIC_VISITOR, ANONYMOUS_VISITOR)
+
+// okcheese.cn is served from the mainland, so its home page shows the ICP
+// filing number, linked to the MIIT register.
+const ICP_FILING = '京ICP备2026068086号' // i18n-data: a registry identifier, written the same in every language
+
 // `/` sends a signed-in visitor to their work, so the way back to the
 // introduction for them is `/about`, which always shows it.
 const homeHref = computed(() => (signedIn.value ? '/about' : '/'))
@@ -132,6 +137,7 @@ onBeforeUnmount(() => {
         <router-link to="/legal/terms">{{ t('publicSite.terms') }}</router-link>
         <router-link to="/legal/privacy">{{ t('publicSite.privacy') }}</router-link>
         <span>{{ t('publicSite.copyright') }}</span>
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener" lang="zh-CN">{{ ICP_FILING }}</a>
       </nav>
     </footer>
   </main>
@@ -148,5 +154,38 @@ body:has(.landing),
 #app:has(.landing) {
   height: auto;
   overflow: visible;
+}
+
+/* The ink on the amber solid buttons, on every door page.
+   Vuetify derives it from `primary` and it comes out white — 2.65:1 on #f57f17,
+   below even the 3:1 glyph floor, so the arrow beside the label fails too. The
+   amber is the brand and does not move; the label does. Setting the variable the
+   button already reads (`bg-primary` puts
+   `color: rgb(var(--v-theme-on-primary)) !important` on it) colours the label
+   and its icons in one declaration, without fighting that utility.
+
+   On the button rather than on `.landing`: the button carries
+   `v-theme--light` / `v-theme--dark` itself, and that class re-declares this
+   variable per theme (white in light, Vuetify's own black in dark), so a value
+   inherited from above loses to it on the element that reads it. Declaring it on
+   the element itself is what wins.
+
+   Unscoped, like the rules above, and not in landing.css: the amber buttons are
+   not all rendered by the component whose copy of that file is scoped to them —
+   Download.vue's own and the hero's product mock are somebody else's template —
+   and `:deep()` is not available in a standalone .css file. `.landing` as the
+   ancestor keeps this on the door pages.
+
+   One pinned value, identical in both themes, the way the rail's brand mark pins
+   its own (components/common/Navigation/RailItem.vue): the amber is bright under
+   either theme, so the ink on it has to stay dark under both. `var(--ink)` cannot
+   be used — in dark theme it is #f3f4f6, 1.76:1 on #ffa733, worse than the white
+   it replaces. #191a1c is 6.58:1 on the light amber and 8.98:1 on the dark one.
+
+   The app's own solid buttons are the same shape and keep Vuetify's white:
+   moving them changes the whole product's look and is a separate decision
+   (docs/design-system.md §2.6 对比度). */
+.landing .v-btn.bg-primary {
+  --v-theme-on-primary: 25, 26, 28;
 }
 </style>

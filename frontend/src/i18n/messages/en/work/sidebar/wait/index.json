@@ -1,0 +1,5 @@
+{
+  "days": "1 day | {count} days",
+  "hours": "1 hour | {count} hours",
+  "minutes": "1 minute | {count} minutes"
+}

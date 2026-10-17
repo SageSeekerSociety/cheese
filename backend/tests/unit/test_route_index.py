@@ -2,10 +2,9 @@
 pilot): the counter-example set — real shadows are provable, parameterized
 later routes are witnesses, frozen pairs cite exact registrations, and
 protocols never cross. Real-app inventory assertions run under the fixed
-profile in the existing API-addressing contract suite.
+profile in the existing API-addressing contract suite. The index is never
+committed, so nothing here reads or writes one.
 """
-
-import json
 
 from fastapi import APIRouter, FastAPI
 
@@ -14,8 +13,8 @@ from scripts.route_index import (
     _full,
     collect,
     first_match_findings,
+    print_sections,
 )
-from scripts.route_index_profile import profile_header
 
 
 def _app_with(*routes) -> FastAPI:
@@ -118,77 +117,34 @@ def test_records_keep_their_methods_for_the_http_intersection():
     assert record.segments == ("users", "{userId}")
 
 
-def _write_index(tmp_path, records, auth="") -> str:
-    path = tmp_path / "index.json"
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps({"settings_profile": profile_header()}) + "\n")
-        for record in records:
-            fh.write(
-                json.dumps(
-                    {
-                        "index": record.index,
-                        "protocol": record.protocol,
-                        "path": record.path,
-                        "methods": sorted(record.methods),
-                        "endpoint": record.endpoint,
-                        "auth": auth,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-    keys = {
-        (r.protocol, method, r.path)
-        for r in records
-        for method in (sorted(r.methods) if r.protocol == "http" else ["WS"])
-    }
-    (tmp_path / "sidecar.yaml").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "auth_entries": {"fixture": "Synthetic fixture authorization"},
-                "owners": {"fixture": "Synthetic fixture owner"},
-                "routes": [
-                    {
-                        "protocol": p,
-                        "method": m,
-                        "path": value,
-                        "auth": "fixture",
-                        "owner": "fixture",
-                    }
-                    for p, m, value in sorted(keys)
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    return str(path)
+def test_each_section_of_a_merged_run_carries_its_own_status(capsys):
+    """The marker is the contract: the caller reads a section's status off it.
 
-
-def test_the_sync_check_catches_drift_both_ways(tmp_path):
-    from scripts.route_index import _sync
-
-    app = _app_with((["GET"], "/users/{user_id}", "get_user"))
-    records = collect(app)
-    good = _write_index(tmp_path, records)
-    assert _sync(good, records, tmp_path / "sidecar.yaml") == 0, (
-        "an exact index is in sync"
+    One child answers all three questions, so a caller that wants one of them
+    must be able to see that answer go red without the other two turning red
+    with it. Written out literally — the separator is what the addressing
+    contract suite parses, so a change to it belongs in this test.
+    """
+    code = print_sections(
+        [
+            ("emit", 0, '{"settings_profile": {"name": "p"}}'),
+            ("check", 1, "first-match guard: 2 provable shadow(s)"),
+            ("check-annotations", 0, "route annotations complete (1 addresses)"),
+        ]
     )
 
-    drifted = _write_index(tmp_path, records[1:])
-    assert _sync(drifted, records) == 1, "a missing row fails"
-    renamed = _write_index(
-        tmp_path,
-        records[1:]
-        + [
-            RouteRecord(
-                index=records[0].index,
-                protocol=records[0].protocol,
-                path=records[0].path,
-                methods=records[0].methods,
-                endpoint="elsewhere.other",
-                name=records[0].name,
-            )
-        ],
+    assert code == 1, "a provable shadow still has to leave the run non-zero"
+    assert capsys.readouterr().out == (
+        "## route-index section emit status 0\n"
+        '{"settings_profile": {"name": "p"}}\n'
+        "## route-index section check status 1\n"
+        "first-match guard: 2 provable shadow(s)\n"
+        "## route-index section check-annotations status 0\n"
+        "route annotations complete (1 addresses)\n"
     )
-    assert _sync(renamed, records) == 1, "a re-pointed row fails"
+
+    assert print_sections([("emit", 0, "{}"), ("check", 0, "")]) == 0
+    assert capsys.readouterr().out == (
+        "## route-index section emit status 0\n{}\n"
+        "## route-index section check status 0\n"
+    ), "a section with no output prints its marker and nothing else"

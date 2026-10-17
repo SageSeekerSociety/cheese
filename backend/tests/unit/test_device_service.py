@@ -162,7 +162,8 @@ async def test_human_management_never_lists_or_mutates_a_cloud_endpoint():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, MagicMock
 
-    from app.api.routes.connector import BindTeamRequest, register_device_for_team
+    from app.api.routes.connector.connections import register_device_for_team
+    from app.api.routes.connector.schemas import BindTeamRequest
 
     service, _ = _service()
     owner, team_id = uuid.uuid4(), 7

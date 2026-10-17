@@ -32,7 +32,7 @@
 | 域名组 | **domain group** | `views/spaces/detail/ManageDomainGroups.vue`、`spaces.domainGroups.*`。域 = **domain**，不用 field / realm |
 | 模板 | **template** | `views/spaces/detail/ManageTemplates.vue`、`views/spaces/detail/SelectTemplate.vue`、`views/spaces/detail/TemplateForm.vue`。**不用 boilerplate / preset** |
 | 公告 | **announcement** | `views/spaces/detail/Announcements.vue`。**不用 notice**：notice 更像「系统提示」，且和通知混淆 |
-| 邀请 | **invitation**（名词）/ **invite**（动词） | 后端 `/invitations/{invitation_id}`、`en/account.json` 既有 `invitationCode = "Invitation code"`。邀请码固定为 **invitation code** |
+| 邀请 | **invitation**（名词）/ **invite**（动词） | 后端 `/invitations/{invitation_id}`、`en/account/index.json` 既有 `invitationCode = "Invitation code"`。邀请码固定为 **invitation code** |
 | 回复 | **reply** | 代码里 `reply` 出现 148 次（`reply_to`、`replyTarget`、`repliesCount`）。**和「回答」不是一个词**，见下条 |
 | 回答 | **answer** | `views/question/`、`network/api/answers/`。**不用 response / reply**：reply 是「回复某条发言」 |
 | 提问 | **question** | `network/api/questions/` |
@@ -58,6 +58,8 @@
 | 交付 | **deliver**（动词）/ **delivery**（名词/定语） | 依据：落地页第 4 步标签为 `Deliver`，`deliveryNotes = "Delivery notes"` |
 | 成果 | **result** | 依据：落地页示例按钮为 `Show sample result`。动词和定语用 deliver 一族：**成果交付 = Deliver**（阶段名）、**成果说明 = Delivery notes**。别把「成果」译成 outcome / achievement |
 | 采纳 | **accept** | 与验收卡（acceptance card）的 accept 同源，保持一致 |
+| 已关闭 | **Closed** | 任务的生命周期结束了，不论交付有没有被采纳、关闭时写没写结论：看板的 `done` 列（`work.board.column.done`）、卡面短语 `completed` 和 `closed`、支线的关闭状态（`work.topicState.done`）、任务列表的「已关闭」一组都用它。**不用 已完成 / Done / Completed**：关掉不等于做成，没交付就关掉的任务也在这一组里 |
+| 交付已采纳 | **Delivery accepted** | 说的是交付有没有被采纳，和任务开着还是关了是两件事（分步交付采纳后任务可以继续）。任务列表把「已关闭」和「交付已采纳」分开写；最后一步采纳后关掉的任务卡面写「已采纳 = Accepted」 |
 | 取消 | **cancel** |  |
 | 确认 | **confirm** |  |
 | 置顶 | **pin** |  |

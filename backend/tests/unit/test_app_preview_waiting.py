@@ -11,7 +11,7 @@ import uuid
 import httpx
 from fastapi import FastAPI, Request
 
-from app.api.routes import app_preview
+from app.api import preview_relay
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import PreviewHub
 
@@ -30,7 +30,7 @@ def _legacy_app(topic: uuid.UUID) -> FastAPI:
 
     @application.get("/{path:path}")
     async def viewer(request: Request):
-        return await app_preview.relay_http(topic, "seat", request)
+        return await preview_relay.relay_http(topic, "seat", request)
 
     return application
 
@@ -41,7 +41,7 @@ async def test_a_navigation_to_an_unreachable_app_gets_the_waiting_page(monkeypa
     application = _legacy_app(topic)
     application.state.preview_hub = hub
     # Same object as the module singleton: the legacy hub path, no instance id.
-    monkeypatch.setattr(app_preview, "preview_hub", hub)
+    monkeypatch.setattr(preview_relay, "preview_hub", hub)
 
     response = await _get(
         application,
@@ -61,7 +61,7 @@ async def test_an_asset_to_the_same_app_gets_a_transient_error(monkeypatch):
     hub = PreviewHub()
     application = _legacy_app(topic)
     application.state.preview_hub = hub
-    monkeypatch.setattr(app_preview, "preview_hub", hub)
+    monkeypatch.setattr(preview_relay, "preview_hub", hub)
 
     response = await _get(application, "/main.js", {"Sec-Fetch-Dest": "script"})
     assert response.status_code == 503
@@ -108,7 +108,7 @@ def _instance_gone_app() -> FastAPI:
 
     @application.get("/{path:path}")
     async def viewer(request: Request):
-        return await app_preview.relay_http(topic, "seat", request, instance="a" * 64)
+        return await preview_relay.relay_http(topic, "seat", request, instance="a" * 64)
 
     return application
 

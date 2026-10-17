@@ -18,6 +18,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 const ME = 'me'
@@ -109,6 +110,8 @@ async function open() {
   await settle()
   return rendered
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('芝士摆出来的东西', () => {
   it('是一块可以打开的东西，不是一段正文', async () => {

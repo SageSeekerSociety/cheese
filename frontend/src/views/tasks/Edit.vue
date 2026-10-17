@@ -24,6 +24,7 @@ import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
+import { mentorOptions } from '@/lib/taskMentors'
 import { isTeachingBlank } from '@/lib/teaching'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
@@ -60,6 +61,14 @@ const uploads = useAttachmentUploads({
     await TaskBoardApi.removeAttachment(taskId, id)
   },
 })
+
+// 能当导师的人：出题人和空间管理员（#3830）。
+const mentorChoices = computed(() =>
+  mentorOptions(
+    taskData.value?.space?.admins,
+    taskData.value?.creator ? { handle: taskData.value.creator.username, name: taskData.value.creator.nickname } : null
+  )
+)
 
 const teaching = ref<SpaceTeaching>({})
 const teachingOwn = ref(false)
@@ -173,6 +182,7 @@ onMounted(async () => {
       :categories="editCategories"
       :domain-groups="domainGroups"
       :teaching-custom="teachingOwn"
+      :mentor-options="mentorChoices"
       @invalid="formInvalid = $event"
       @submit="onSubmit"
     >

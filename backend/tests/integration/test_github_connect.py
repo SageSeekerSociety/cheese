@@ -36,7 +36,7 @@ def _github_world(
 ):
     """Point the connect route's GitHub + workspace seams at fakes."""
     from app.api.routes import github_install
-    from app.domain.review.github_pr import parse_github_repo
+    from app.domain.project.github_app import parse_github_repo
 
     calls: dict[str, int] = {"list": 0, "repos": 0}
 

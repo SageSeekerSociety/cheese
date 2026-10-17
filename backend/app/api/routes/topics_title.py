@@ -17,7 +17,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics_tasks import _task_out
+from app.api.room_task_rows import task_out
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -27,10 +27,11 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.staleness import announce_stale
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from app.domain.topic.schemas import TopicOut
-from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -46,17 +47,16 @@ async def set_title(
     """给这个地方起/改标题: a person renaming a channel or a task, or a task's
     own session naming it (`cheese_title`, only where the platform cannot).
 
-    A channel is renamed by anyone who can be in it: which channel is called what
-    is the room's own business, not its creator's alone. Being able to reach the
-    room at all is settled above (`authorize_topic`), which is the same answer a
-    reader of the channel gets — and an outsider to a private channel is still
-    told it does not exist.
+    A channel is renamed by whoever manages it: its own admin, or someone whose
+    role manages every channel (#3830). Being able to reach the room at all is
+    settled above (`authorize_topic`) — an outsider to a private channel is
+    still told it does not exist.
 
     A task's id names the task: a person taking part in it renames it, and that
     title is final; its own session's title the platform may still change
     (`room_task/naming.py`).
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -88,16 +88,15 @@ async def set_title(
         # The task as its page holds it, board line included: the page writes
         # this answer over what it has, and a task without its line drew no
         # header until the next reload.
-        out = await _task_out(db, chat, task)
+        out = await task_out(db, chat, task)
         await db.commit()
         return ok(out)
-    # Renaming a channel takes no more than being able to be in it — the rest of
-    # its settings (说明、可见范围) still belong to whoever manages it
-    # (`topics_channel`). What is left to ask here is that the asker is a
-    # verified person and not, say, an unauthenticated caller on a deployment
-    # with the access check turned off.
+    # A channel's name is one of its settings, like its 说明 and who sees it
+    # (`topics_channel`): whoever manages the channel changes it.
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInForRoom"))
+    if not await TopicMemberService(db).manages(place.room, actor.handle):
+        raise ForbiddenError(say("channelManagerOnly"))
     place.room.title = title[:80]
     await db.flush()
     out = TopicOut.model_validate(place.room).model_dump(mode="json")

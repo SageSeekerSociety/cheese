@@ -12,7 +12,7 @@ import { nodeMarkdown, parseMarkdown } from '../src/lib/docSchema'
 
 import { checkMarkdownWrite } from './writeCheck'
 
-const LIBRARY = resolve(__dirname, '../../backend/app/domain/agent/skill_library')
+const LIBRARY = resolve(__dirname, '../../backend/app/domain/skill_library')
 const GUIDE = ['doc_writing.md', 'doc_blocks.md', 'doc_form.md']
   .map((name) => readFileSync(resolve(LIBRARY, name), 'utf8'))
   .join('\n')

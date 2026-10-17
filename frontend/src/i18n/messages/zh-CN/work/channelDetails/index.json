@@ -1,0 +1,8 @@
+{
+  "archive": "归档频道",
+  "archiveHint": "归档后不能发送消息，历史消息仍可查看和搜索。有进行中的任务时不能归档",
+  "created": "创建时间",
+  "members": "成员",
+  "membersOpen": "查看成员",
+  "open": "「{name}」的详情"
+}

@@ -140,6 +140,36 @@ async def test_closed_task_keeps_failure_notice_without_invalid_repair_command()
 
 
 @pytest.mark.anyio
+async def test_leaving_the_merge_queue_only_wakes_a_task_that_is_still_open():
+    """出队这条的老账新账分开：任务还开着才说那份能照做的指令。
+
+    `_note_left_merge_queue` 走的是 `_note_merge_stop_and_wake`，那里按任务
+    开着没有挑一句 `action`。关了的活照做不了，写的是「请由新任务承接」，
+    房间那行文字照旧看得见。
+    """
+    service, card, topic = _service_and_card()
+    closed = SimpleNamespace(status="closed")
+    with patch(
+        "app.domain.review.services.TaskService.get", new=AsyncMock(return_value=closed)
+    ):
+        await service._note_left_merge_queue(card=card, topic=topic)
+    call = service._record_task_nudge.call_args.kwargs
+    assert "新任务" in call["content"]
+    assert "cheese worktree" not in call["content"]
+
+    # 还开着的活照旧点名，话也照旧是那份能照做的。
+    service, card, topic = _service_and_card()
+    opened = SimpleNamespace(status="open")
+    with patch(
+        "app.domain.review.services.TaskService.get", new=AsyncMock(return_value=opened)
+    ):
+        await service._note_left_merge_queue(card=card, topic=topic)
+    call = service._record_task_nudge.call_args.kwargs
+    assert "cheese worktree" in call["content"]
+    assert call["content"].endswith("需要人重新采纳。")
+
+
+@pytest.mark.anyio
 async def test_merge_refusal_does_not_claim_checks_are_green():
     service, card, topic = _service_and_card()
     runner = MagicMock()

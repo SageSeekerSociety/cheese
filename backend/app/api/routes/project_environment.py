@@ -2,40 +2,49 @@
 
 import uuid
 from dataclasses import asdict
+from functools import partial
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_chat_service
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
 from app.auth.core import AuthUserInfo
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import notice_keys, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import environment_status
+from app.domain.agent.environment import room_is_busy
 from app.domain.agent.environment_failures import open_failures, waiting_on
-from app.domain.agent.models import AgentTurn
-from app.domain.agent.platform_notices import (
+from app.domain.agent.runtime import addressed_to_agent
+from app.domain.agent_instance.adapters import project_team
+from app.domain.machine.services import HostPool, host_failed
+from app.domain.machine.session_reports import leases_on_peoples_devices
+from app.domain.membership.roster import roster
+from app.domain.membership.services import MemberService
+from app.domain.notice_meta import (
     EVENT_ENVIRONMENT_REPAIRED,
     SEVERITY_INFO,
     WHO_CHEESE,
     notice,
 )
-from app.domain.agent.runtime import addressed_to_agent
-from app.domain.conversation.services import of_room
-from app.domain.machine.services import HostPool, host_failed
-from app.domain.machine.session_reports import leases_on_peoples_devices
-from app.domain.membership.roster import roster
-from app.domain.membership.services import MemberService
-from app.domain.project.environment import EnvironmentConfig, project_environment
-from app.domain.project.models import Project
+from app.domain.project.environment import (
+    EnvironmentConfig,
+    EnvironmentProject,
+    EnvironmentRoom,
+    load_environment_project,
+    load_environment_room,
+    project_environment,
+    rooms_with_environment,
+    save_project_environment,
+    set_room_environment,
+)
 from app.domain.project.services import refuse_writes_if_archived
-from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.project_permissions import Permission
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
 
@@ -51,15 +60,15 @@ async def access(
     auth_user: AuthUserInfo,
     *,
     write: bool = False,
-) -> tuple[Project, bool]:
-    project = await db.get(Project, project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
+) -> tuple[EnvironmentProject, bool]:
+    project = await load_environment_project(db, project_id)
     user = await UserRepository(db).get_by_id(auth_user.user_id)
     handle = user.username if user else ""
-    steward = bool(user) and await MemberService(db).manages(project_id, handle)
+    steward = bool(user) and await MemberService(db).manages(
+        project_id, handle, Permission.edit_settings
+    )
     member = bool(user) and any(
-        m.handle == handle for m in await roster(db, project_id)
+        m.handle == handle for m in await roster(db, project_id, team=project_team)
     )
     if not steward and (write or not member):
         raise ForbiddenError(say("environmentAccessForbidden"))
@@ -77,27 +86,20 @@ async def room(
     *,
     lock: bool = False,
     viewer: AuthUserInfo | None = None,
-) -> Topic:
-    """A channel of the project. Asked for a person (``viewer``), a private
-    channel they are not in is not found, as it is everywhere else."""
-    statement = select(Topic).where(
-        Topic.id == topic_id,
-        Topic.project_id == project_id,
-        Topic.is_private.is_(False),
-    )
-    if lock:
-        # The session keeps objects across commit, so a locked re-read must
-        # load the row again rather than hand back the unlocked read's copy.
-        statement = statement.with_for_update().execution_options(
-            populate_existing=True
+) -> EnvironmentRoom:
+    """A channel of the project; a private channel stays hidden from outsiders."""
+    visible = (
+        partial(
+            TopicMemberService(db).seen,
+            handle=await _handle(db, viewer),
+            team=project_team,
         )
-    topic = await db.scalar(statement)
-    if topic is None or (
-        viewer is not None
-        and not await TopicMemberService(db).seen([topic], await _handle(db, viewer))
-    ):
-        raise NotFoundError("Room not found")
-    return topic
+        if viewer is not None
+        else None
+    )
+    return await load_environment_room(
+        db, project_id, topic_id, lock=lock, visible=visible
+    )
 
 
 async def _handle(db: AsyncSession, auth_user: AuthUserInfo) -> str:
@@ -105,38 +107,25 @@ async def _handle(db: AsyncSession, auth_user: AuthUserInfo) -> str:
     return user.username if user else ""
 
 
-async def require_idle(db: AsyncSession, topic: Topic) -> None:
+async def require_idle(db: AsyncSession, topic: EnvironmentRoom) -> None:
     if topic.archived_at is not None:
         raise ValidationError(say("unarchiveBeforeEnvironmentChange"))
-    active = await db.scalar(
-        select(AgentTurn.id)
-        .where(
-            of_room(AgentTurn.conversation_id, topic.id),
-            AgentTurn.stopped_at.is_(None),
-        )
-        .limit(1)
-    )
-    if active is not None:
+    if await room_is_busy(db, topic.id):
         raise ValidationError(say("roomBusyEnvironmentChange"))
 
 
 @router.get("")
 async def get_environment(project_id: uuid.UUID, db: DbSession, user: AuthUser) -> dict:
     project, can_edit = await access(db, project_id, user)
-    topics = (
-        await db.scalars(
-            select(Topic)
-            .where(
-                Topic.project_id == project_id,
-                Topic.is_private.is_(False),
-                Topic.kind != TopicKind.root,
-                Topic.status != TopicStatus.archived,
-            )
-            .order_by(Topic.created_at)
-        )
-    ).all()
-    # A private channel is listed to its people only.
-    topics = await TopicMemberService(db).seen(list(topics), await _handle(db, user))
+    topics = await rooms_with_environment(
+        db,
+        project_id,
+        visible=partial(
+            TopicMemberService(db).seen,
+            handle=await _handle(db, user),
+            team=project_team,
+        ),
+    )
     failures = await open_failures(db, [t.id for t in topics])
     return ok(
         {
@@ -162,14 +151,8 @@ async def save_environment(
     project_id: uuid.UUID, body: EnvironmentConfig, db: DbSession, user: AuthUser
 ) -> dict:
     await access(db, project_id, user, write=True)
-    project = await db.scalar(
-        select(Project).where(Project.id == project_id).with_for_update(key_share=True)
-    )
     config = body.snapshot()
-    if project is None:
-        raise NotFoundError("Project not found")
-    project.settings = {**(project.settings or {}), "environment": config}
-    await db.flush()
+    await save_project_environment(db, project_id, config)
     return ok(config)
 
 
@@ -204,19 +187,12 @@ async def get_room_environment(
         state = await environment_status(
             device_hub, lease["device_id"], project_id, uuid.UUID(lease["resource_id"])
         )
-    busy = await db.scalar(
-        select(AgentTurn.id)
-        .where(
-            of_room(AgentTurn.conversation_id, topic_id),
-            AgentTurn.stopped_at.is_(None),
-        )
-        .limit(1)
-    )
+    busy = await room_is_busy(db, topic_id)
     return ok(
         {
             **state,
             "pinned_revision": (topic.environment or {}).get("revision"),
-            **({"busy": True} if busy is not None else {}),
+            **({"busy": True} if busy else {}),
         }
     )
 
@@ -269,14 +245,16 @@ async def apply_environment(
     project, _ = await access(db, project_id, user, write=True)
     async with chat.edit_environment(topic_id):
         topic = await room(db, project_id, topic_id, viewer=user)
-        if topic.kind == TopicKind.root:
+        if topic.is_overview:
             raise ValidationError(say("overviewUsesBaseEnvironment"))
         failed = (await open_failures(db, [topic_id])).get(topic_id)
         await reset_idle_room(db, topic_id, project_id)
         topic = await room(db, project_id, topic_id, lock=True)
         await require_idle(db, topic)
-        if body.latest or topic.environment is None:
-            topic.environment = project_environment(project.settings)
+        environment = topic.environment
+        if body.latest or environment is None:
+            environment = project_environment(project.settings)
+            await set_room_environment(db, topic_id, environment)
         # Retried: back to where people were told it failed, so the teammate
         # takes up what it could not do (`environment_failures`).
         waiting = await waiting_on(db, topic_id, failed["attempt"]) if failed else []
@@ -302,7 +280,7 @@ async def apply_environment(
     return ok(
         {
             "state": "pending",
-            "revision": topic.environment["revision"],
+            "revision": environment["revision"],
             "resumed": len(waiting),
         }
     )
@@ -315,8 +293,8 @@ async def diagnose_environment(
     """「让芝士看看」: why this channel's latest failure happened and what to
     change, read from its log and the scripts it ran. Nothing is changed:
     the answer is a proposal a person takes or leaves."""
-    # deferred-import: tests patch diagnose on app.domain.project.environment_diagnosis
-    from app.domain.project.environment_diagnosis import diagnose
+    # deferred-import: tests patch diagnose on app.domain.environment_diagnosis
+    from app.domain.environment_diagnosis import diagnose
 
     project, _ = await access(db, project_id, user, write=True)
     topic = await room(db, project_id, topic_id, viewer=user)
@@ -324,7 +302,9 @@ async def diagnose_environment(
     if failure is None:
         raise ValidationError(say("envNoFailure"))
     ran = topic.environment or project_environment(project.settings)
-    answer = await diagnose(db, config=ran, failure=failure)
+    answer = await diagnose(
+        db, project_id=project.id, topic_id=topic_id, config=ran, failure=failure
+    )
     await db.commit()
     if answer is None:
         raise ValidationError(say("envDiagnoseFailed"))

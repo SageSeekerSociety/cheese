@@ -16,9 +16,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 // These assertions read the Chinese copy.
 beforeEach(() => {
@@ -34,6 +35,8 @@ function rule(selector: string): string {
   // 注释里也会出现 `overflow-y: auto` 这种词，先摘掉再断言，免得注释把测试骗绿。
   return body.replace(/\/\*[\s\S]*?\*\//g, '')
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('@ 候选菜单压扁时滚得动', () => {
   it('有一个高度上限，并且自己滚', () => {

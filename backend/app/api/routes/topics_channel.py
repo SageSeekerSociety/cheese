@@ -18,8 +18,9 @@ from app.api.response import ok
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.staleness import announce_stale
+from app.domain.agent_instance.adapters import project_team
+from app.domain.room_task.place import place_or_404
 from app.domain.topic.schemas import TopicOut
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 async def _person(db, resolver, topic_id: uuid.UUID):
     """The channel and the signed-in person acting on it. A task or a 支线 is
     not a channel."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     if place.conversation_id != place.room_id:
         raise NotFoundError("Topic not found")
     actor = await resolver.resolve(topic_id=topic_id, project_id=place.project_id)
@@ -46,7 +47,7 @@ async def join_channel(
 ) -> dict:
     """Join a public channel of a project I am in."""
     _, actor = await _person(db, resolver, topic_id)
-    await TopicMemberService(db).join(topic_id, actor.handle)
+    await TopicMemberService(db).join(topic_id, actor.handle, team=project_team)
     await db.commit()
     await announce_stale(topic_id, "topics", id=topic_id)
     return ok({"topic_id": str(topic_id), "joined": True})

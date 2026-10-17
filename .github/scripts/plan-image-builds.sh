@@ -172,8 +172,8 @@ else
     # The backend image carries the sentence catalogs it renders push and
     # desktop notices from (backend/Dockerfile, the `i18n` context).
     case "$changed_path" in
-      frontend/src/i18n/messages/*/roomNotice.json \
-        | frontend/src/i18n/messages/*/apiError.json \
+      frontend/src/i18n/messages/*/roomNotice/* \
+        | frontend/src/i18n/messages/*/apiError/* \
         | frontend/src/i18n/messages/*/global.json)
         backend=true
         ;;
@@ -195,6 +195,10 @@ else
       backend/sandbox/Dockerfile.private \
         | backend/sandbox/cheese \
         | backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/runtime_core.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/runtime_commands.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/runtime_context.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/runtime_calls.py \
         | backend/app/domain/agent/harness/claude_code/remote_execution/mcp_process.py \
         | backend/app/domain/agent/harness/claude_code/remote_execution/private.py \
         | backend/app/domain/agent/harness/claude_code/remote_execution/private_egress.py \

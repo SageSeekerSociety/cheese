@@ -71,6 +71,13 @@ CALLS = {
         "/projects/fixture-project/documents",
     ),
     "cheese_doc_list": ({}, "GET", "/projects/fixture-project/documents"),
+    # 小程序跟着文档走：新建落在这份文档下，改和读按它的短号。
+    "cheese_app_save": (
+        {"code": "<div>试算</div>", "title": "试算"},
+        "POST",
+        "/documents/fixture-id/apps",
+    ),
+    "cheese_app_get": ({"app": "q7m2kx4t"}, "GET", "/apps/q7m2kx4t"),
     "cheese_canvas_get": ({"canvas": "c-1"}, "GET", "/canvases/c-1/text"),
     "cheese_canvas_edit": (
         {"canvas": "c-1", "changes": [{"op": "add", "content": "目标"}]},

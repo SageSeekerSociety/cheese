@@ -1,0 +1,20 @@
+{
+  "backupLede": "输入一个 8 位备用码",
+  "backupRequired": "填写 8 位字母或数字组成的备用码",
+  "backupSubmit": "验证备用码",
+  "backupUsedBody": "每个备用码只能使用一次。建议现在生成一组新的备用码。",
+  "backupUsedTitle": "已使用备用码",
+  "later": "稍后",
+  "lockout": "连续输错 5 次将锁定 15 分钟",
+  "regenerate": "生成新备用码",
+  "sessionExpired": "验证已失效，重新登录",
+  "title": "两步验证",
+  "totpLede": "输入身份验证器应用中的 6 位验证码",
+  "totpRequired": "填写 6 位数字验证码",
+  "totpSubmit": "验证",
+  "trustDevice": "在这台设备上 30 天内不再询问",
+  "useBackup": "改用备用码",
+  "useTotp": "改用验证器验证码",
+  "wrongCode": "验证码不正确，稍后重试",
+  "wrongCodeRemaining": "验证码不正确，还可以尝试 {count} 次"
+}

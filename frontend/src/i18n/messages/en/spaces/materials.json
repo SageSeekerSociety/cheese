@@ -1,0 +1,40 @@
+{
+  "cancel": "Cancel",
+  "confirmRemove": "Confirm remove",
+  "download": "Download",
+  "downloads": "{n} downloads",
+  "empty": "No files yet",
+  "hint": {
+    "admins": "Only this board's admins can see and download it.",
+    "members": "Everyone on this board can see and download it."
+  },
+  "intro": "Everyone in this space can see these. Anything marked “admins only” is hidden from members and from their AI teammates.",
+  "pickFile": "Choose a file",
+  "remove": "Remove",
+  "toast": {
+    "downloadFailed": "Download failed",
+    "loadFailed": "Could not load the library",
+    "removeFailed": "Could not remove it",
+    "removed": "Removed — it is gone from the members' list",
+    "uploadFailed": "Upload failed",
+    "uploaded": "Uploaded",
+    "visibilityFailed": "Could not change who can see it",
+    "visibilityUpdated": "Updated"
+  },
+  "type": {
+    "audio": "Audio",
+    "file": "File",
+    "image": "Image",
+    "video": "Video"
+  },
+  "unused": "Not referenced",
+  "upload": "Upload",
+  "uploadTitle": "Upload a file",
+  "uploadedOn": "Uploaded {date}",
+  "usedBy": "Referenced in 1 place | Referenced in {n} places",
+  "visibility": "Who can see it",
+  "visibilityValue": {
+    "admins": "Admins only",
+    "members": "All members"
+  }
+}

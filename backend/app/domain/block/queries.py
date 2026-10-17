@@ -22,14 +22,39 @@ HTTP 路由不属于任何领域，它每直接摸一次别人的 repository，�
 
 import uuid
 from collections.abc import Iterable
+from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.indexed_rows import SHOWN_ROWS
+from app.domain.block.asked import Awaited
+from app.domain.block.indexed_rows import QUEUED_MESSAGE_ROWS, SHOWN_ROWS
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+
+#: A message held back on purpose until its seat is free (`agent.pending_messages
+#: .defer_message`): waiting however old it is.
+DEFERRED_INPUT = "deferred_native_input"
+
+
+def queued_messages(since, topic_id=None):
+    """Messages that named an agent and have not had their turn: recent, or
+    held back on purpose (`DEFERRED_INPUT`). Filtered by the literal predicate of
+    `ix_blocks_queued_messages`, so a scan on a clock reads that index and not
+    the whole table (`indexed_rows`). The pending-message scan starts turns
+    from these (`agent.pending_messages`), and a task being written up does not
+    close while one of its own is among them (`room_task.closing`)."""
+    query = select(Block).where(
+        QUEUED_MESSAGE_ROWS,
+        or_(
+            Block.created_at >= since,
+            Block.meta[DEFERRED_INPUT].as_boolean().is_(True),
+        ),
+    )
+    if topic_id is not None:
+        query = query.where(Block.conversation_id == topic_id)
+    return query.order_by(Block.created_at, Block.id)
 
 
 async def message_reply_target(
@@ -57,6 +82,19 @@ async def turn_history(
 ) -> list[Block]:
     """Read the canonical turn-history ordering in the caller's transaction."""
     return await BlockRepository(session).turn_history(conversation_id)
+
+
+async def turn_starts(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> list[tuple[datetime, uuid.UUID]]:
+    """Read when each of this conversation's turns began, oldest first.
+
+    The usage books need this: the metering proxy's log carries no work id, so
+    a metered call is billed to whichever turn was under way at its timestamp
+    (`usage.subscription_ingest`). Called through the read boundary because
+    that reader sits a layer below this one.
+    """
+    return await BlockRepository(session).turn_starts(conversation_id)
 
 
 async def earlier_message_count(
@@ -133,7 +171,7 @@ async def weeklies_for_project(
 
 async def awaiting_an_answer(
     db: AsyncSession, conversation_ids: Iterable[uuid.UUID]
-) -> dict[uuid.UUID, str | None]:
+) -> dict[uuid.UUID, Awaited]:
     """这些对话里，哪几段停在一个未回答的提问上，各自在等谁 —— 一次查完。
 
     看板「待回答」那一格问的就是它：这是唯一一种会中断「运行中」的状态，所以它

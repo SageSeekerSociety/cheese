@@ -11,7 +11,8 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { fmtCredits, fmtDate, fmtDateTime, fmtMonth, meterTone, teamTitle } from '@/lib/adminCredits'
 
-// 一个团队的额度：挂哪个方案、手上每一笔额度用了多少、管理员对它做过什么。
+// 一个团队的额度：挂哪个方案、开没开通需开通才能用的模型、手上每一笔额度用了多少、
+// 管理员对它做过什么。
 const props = withDefaults(
   defineProps<{
     modelValue: boolean
@@ -22,16 +23,29 @@ const props = withDefaults(
     planSaving?: boolean
     /** 改方案被拒的原话（例如方案只给个人）；`null` = 没出错。 */
     planError?: string | null
+    overseasSaving?: boolean
+    /** 开通或收回被拒的原话；`null` = 没出错。 */
+    overseasError?: string | null
     history: CreditAudit[] | null
     historyError?: string | null
   }>(),
-  { loading: false, error: null, planSaving: false, planError: null, historyError: null }
+  {
+    loading: false,
+    error: null,
+    planSaving: false,
+    planError: null,
+    overseasSaving: false,
+    overseasError: null,
+    historyError: null,
+  }
 )
 
 const emit = defineEmits<{
   'update:modelValue': [open: boolean]
   'change-plan': [planKey: string]
   'dismiss-plan-error': []
+  'set-overseas': [approved: boolean]
+  'dismiss-overseas-error': []
   grant: []
   retry: []
 }>()
@@ -102,6 +116,9 @@ function historyLine(entry: CreditAudit): string {
         : t('credits.panel.noExpiry')
     return t('credits.panel.logGrant', { credits: fmtCredits(credits, locale.value), expiry })
   }
+  if (entry.action === 'team.overseas') {
+    return entry.after?.approved ? t('credits.panel.logOverseasOn') : t('credits.panel.logOverseasOff')
+  }
   return entry.action
 }
 </script>
@@ -161,6 +178,27 @@ function historyLine(entry: CreditAudit): string {
               :text="planError"
               :dismiss-aria="t('credits.panel.close')"
               @dismiss="emit('dismiss-plan-error')"
+            />
+            <!-- Remounted when a save starts and ends, so after a refused save it
+                 reads the server's answer again, not the click it was given. -->
+            <v-switch
+              :key="String(overseasSaving)"
+              :model-value="team.overseas_approved"
+              :label="t('credits.panel.overseas')"
+              :disabled="overseasSaving"
+              :loading="overseasSaving ? 'primary' : false"
+              color="primary"
+              density="compact"
+              inset
+              hide-details
+              @update:model-value="emit('set-overseas', !!$event)"
+            />
+            <AdminFlash
+              v-if="overseasError"
+              tone="error"
+              :text="overseasError"
+              :dismiss-aria="t('credits.panel.close')"
+              @dismiss="emit('dismiss-overseas-error')"
             />
           </div>
 

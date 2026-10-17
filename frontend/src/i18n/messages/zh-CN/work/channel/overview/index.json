@@ -1,0 +1,22 @@
+{
+  "allTasks": "全部任务",
+  "cancel": "取消",
+  "collapse": "收起",
+  "description": "频道说明",
+  "edit": "编辑",
+  "editProject": "编辑项目目标",
+  "expand": "展开全文",
+  "latest": "{name}：{text}",
+  "moreRunning": "其余 {count} 个，在全部任务里看",
+  "noDescription": "暂无频道说明",
+  "noProject": "暂无项目目标。写清楚这个项目要做成什么、什么时候做成、这阶段不做什么。",
+  "noRunning": "暂无进行中的任务",
+  "owner": "{name} 负责 · {when}",
+  "project": "项目目标",
+  "projectNote": "{name}在每段对话里都会读这一份",
+  "quietRunning": "最近 7 天都没有动静，{count} 个在全部任务里看",
+  "recentDone": "最近关闭",
+  "running": "进行中的任务 · {count}",
+  "save": "保存",
+  "writeProject": "写项目目标"
+}

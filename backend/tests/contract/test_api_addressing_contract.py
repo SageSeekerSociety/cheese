@@ -27,6 +27,7 @@ hand-written example URLs. Three layers:
    registered first).
 """
 
+import json
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -35,7 +36,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from scripts.route_index import parse_snapshot
 from scripts.route_index_profile import run_profiled
 
 # nginx's `location /api/ { proxy_pass …:8081/; }`, as far as a caller is concerned:
@@ -188,18 +188,66 @@ def test_every_family_answers_at_its_published_url(
 # the layer). The pinned collision set went with it, having reached zero.
 
 
-@pytest.fixture(scope="module")
-def profiled_route_rows() -> list[dict]:
-    """The real effective inventory, in the same child used for snapshots.
+# `--all` answers all three questions about one collected inventory, and the
+# marker line that opens each answer carries the status code that command would
+# have exited with on its own. Written out here rather than imported from the
+# script, so a change to the child's output shape fails this file instead of
+# being followed silently.
+_SECTION_MARKER = re.compile(
+    r"^## route-index section (?P<name>[\w-]+) status (?P<status>\d+)$", re.MULTILINE
+)
 
-    The ordinary parent app remains available to the HTTP probes above;
-    constructing the fixed Settings and importing conditional routers happens
-    only inside run_profiled's fresh child process.
+
+def _sections(text: str) -> dict[str, tuple[int, str]]:
+    """Split one merged run's stdout into `name -> (status, body)`."""
+    marks = list(_SECTION_MARKER.finditer(text))
+    found: dict[str, tuple[int, str]] = {}
+    for position, mark in enumerate(marks):
+        end = marks[position + 1].start() if position + 1 < len(marks) else len(text)
+        found[mark["name"]] = (int(mark["status"]), text[mark.end() : end].strip("\n"))
+    return found
+
+
+@pytest.fixture(scope="module")
+def profiled_sections() -> dict[str, tuple[int, str]]:
+    """Every judgement of the live inventory, from ONE child process.
+
+    The child cannot collect anything before it has imported the application,
+    and importing it is what a run costs. Three separate runs paid that three
+    times; this is the file's only one. The ordinary parent app remains
+    available to the HTTP probes above — constructing the fixed Settings and
+    importing the conditional routers still happens only inside run_profiled's
+    fresh child.
+
+    Deliberately not gated on the child's exit code: a section that is red has
+    to fail its own test and leave the other two alone, so the sections are
+    handed out as they came and each test reads the one it is about.
     """
-    result = run_profiled(["--emit"])
-    assert result.returncode == 0, result.stdout + result.stderr
-    _, rows = parse_snapshot(result.stdout)
-    return rows
+    result = run_profiled(["--all"])
+    sections = _sections(result.stdout)
+    assert set(sections) == {"emit", "check", "check-annotations"}, (
+        f"the merged run did not answer every question:\n{result.stdout}\n"
+        f"{result.stderr}"
+    )
+    return sections
+
+
+@pytest.fixture(scope="module")
+def profiled_route_rows(
+    profiled_sections: dict[str, tuple[int, str]],
+) -> list[dict]:
+    """The real effective inventory as emitted by that same child."""
+    status, body = profiled_sections["emit"]
+    assert status == 0, body
+    return _emitted_rows(body)
+
+
+def _emitted_rows(text: str) -> list[dict]:
+    """The emitted index: a profile header, then one effective leaf per line."""
+    lines = [line for line in text.splitlines() if line.strip()]
+    header = json.loads(lines[0])
+    assert "settings_profile" in header, header
+    return [json.loads(line) for line in lines[1:]]
 
 
 def _module_routers(rows: list[dict]) -> dict[str, list[tuple[str, frozenset[str]]]]:
@@ -225,8 +273,8 @@ def test_the_profiled_app_expands_exactly_the_effective_routes(profiled_route_ro
     assert [row["index"] for row in rows] == list(range(len(rows))), (
         "global leaf registration order is preserved"
     )
-    assert sum(row["protocol"] == "ws" for row in rows) == 7, (
-        "the seven WebSocket routes are collected despite having no methods"
+    assert sum(row["protocol"] == "ws" for row in rows) == 8, (
+        "the eight WebSocket routes are collected despite having no methods"
     )
     assert (
         "/topics/{topic_id}/accept-card",
@@ -238,16 +286,30 @@ def test_the_profiled_app_expands_exactly_the_effective_routes(profiled_route_ro
     ) in {(row["path"], row["endpoint"]) for row in rows}
 
 
-def test_the_profiled_first_match_guard_uses_exact_frozen_registrations():
+def test_the_profiled_first_match_guard_uses_exact_frozen_registrations(
+    profiled_sections: dict[str, tuple[int, str]],
+) -> None:
     # Match the child's effective regex/matcher, never recompile emitted rows.
-    result = run_profiled(["--check"])
-    assert result.returncode == 0, result.stdout + result.stderr
+    # The section's own status, not the process's: the merged run also carries
+    # two questions that are answered on their own tests.
+    status, body = profiled_sections["check"]
+    assert status == 0, body
 
 
-def test_the_committed_index_uses_the_same_profile_and_ordered_inventory():
-    snapshot = Path(__file__).resolve().parents[2] / "scripts" / "route_index.json"
-    result = run_profiled(["--sync", str(snapshot)])
-    assert result.returncode == 0, result.stdout + result.stderr
+def test_every_live_route_has_its_handwritten_annotation(
+    profiled_sections: dict[str, tuple[int, str]],
+) -> None:
+    """The routing inventory is complete in the one half a machine cannot derive.
+
+    `tests/contract/route_index.yaml` gives each live address its authorization
+    entry and its owner; that is handwritten and per-route, so it is the half
+    that can silently fall behind. This replaces asserting that a committed copy
+    of the index matched the app: with the index generated where it is judged and
+    never stored, the drift that matters is a route with no note, and the check
+    runs against the routes the app actually mounts.
+    """
+    status, body = profiled_sections["check-annotations"]
+    assert status == 0, body
 
 
 # Every module whose routes live under the 2.0 prefix. A module listed here that

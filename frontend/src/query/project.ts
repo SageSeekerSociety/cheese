@@ -3,6 +3,7 @@
 // 每一份的读法只写在这里。别处变了由项目推送叫它们重读（`query/projectFeed`），写操作
 // 和推送通过下面这几个函数改缓存，不各存副本。
 import type { TopicNotifySetting, TopicUnread } from '@/api'
+import type { ProjectSituation } from '@/api/projectProgress'
 import type { ListPayload, Project, ProjectAgent, ProjectMemberRow, Topic } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 
@@ -20,8 +21,8 @@ import {
   listTopics,
 } from '@/api'
 import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
-import { listProjectProgress } from '@/api/projectProgress'
-import { rememberNumbered, rememberProjects } from '@/lib/addresses'
+import { getProjectSituation, listProjectProgress } from '@/api/projectProgress'
+import { projectRefusal, rememberNumbered, rememberProjects } from '@/lib/addresses'
 import { cachedWindow, prefetchNewestBlocks } from '@/query/blocks'
 import { patchQuery, queryClient, settled } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -119,6 +120,24 @@ export function notifyLevelsQuery(projectId: string) {
   })
 }
 
+/**
+ * 工作台外壳（`ProjectShell`）的频道清单，趁项目页的代码还在下载时先发出去。
+ *
+ * 它只看地址上的项目 id，和页面代码没有关系；等页面那一串 chunk 下完、框架挂上来
+ * 才发的话，冷开一个项目页时它要等到 1 秒后才出发（实测 1040 ms，正是框架挂上那
+ * 一刻），侧栏和页面上的房间行又都在等它。和房间的消息同理（`router/index.ts` 里那
+ * 条守卫）。
+ *
+ * 只取清单：未读、私聊未读、通知档位三样只画角标，不挡内容，留给框架自己按它的节奏读。
+ * 只写缓存，不报错、不动界面上的任何状态：取不到时框架挂上来照常自己读一次，重试和
+ * 报错都在它那儿。这个项目本来就进不去的人（`projectRefusal`）不发——和框架那一层
+ * `reachable` 同一个判据，不替它白打一个必被拒的请求。
+ */
+export function prefetchProjectTopics(projectId: string): void {
+  if (!projectId || projectRefusal(projectId)) return
+  void queryClient.prefetchQuery(topicsQuery(projectId)).catch(() => {})
+}
+
 /** 项目总览是哪一份文档、现在写着什么。读不到就按「还没写」：那一块的入口（写一份）仍然在。 */
 export function overviewQuery(projectId: string) {
   return queryOptions({
@@ -141,6 +160,17 @@ export function progressQuery(projectId: string) {
     queryFn: async (): Promise<ProgressItem[]> => (await listProjectProgress(projectId)).data,
   })
 }
+
+/** 项目总览最上面的「现状」。后台在重写时隔一会儿再读一次：写完本来会推一帧过来
+ *  （`projectFeed` 的 `situation`），这一条是推送没到时的兜底。 */
+export function situationQuery(projectId: string) {
+  return queryOptions({
+    queryKey: keys.projectSituation(projectId),
+    queryFn: (): Promise<ProjectSituation> => getProjectSituation(projectId),
+    refetchInterval: (query) => (query.state.data?.writing ? SITUATION_POLL_MS : false),
+  })
+}
+const SITUATION_POLL_MS = 20_000
 
 /** 一个房间这一行：清单里还没有它（深链接进来、刚变得可见的私有频道）时单独取。 */
 export function roomRowQuery(roomId: string) {

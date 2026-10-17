@@ -1,0 +1,6 @@
+{
+  "channelJoinToPin": "加入频道后才能置顶",
+  "pinChannelsOnly": "只有频道里能置顶",
+  "pinMainLineOnly": "只能置顶这个频道主线里的消息或文件",
+  "pinMessagesAndFiles": "只能置顶消息或文件"
+}

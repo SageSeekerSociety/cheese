@@ -1,0 +1,17 @@
+{
+  "add": "加入",
+  "addPlaceholder": "添加成员…",
+  "agentBadge": "AI 队友",
+  "allIn": "项目成员和队友都已在频道中",
+  "count": "{count} 位",
+  "creator": "管理者",
+  "empty": "暂无成员",
+  "failed": "操作失败",
+  "listSeparator": "、",
+  "loadFailed": "加载成员失败",
+  "managerHint": "在项目设置的频道表里更换",
+  "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
+  "readOnly": "只有频道里的人能添加成员",
+  "remove": "移出频道",
+  "title": "频道成员"
+}

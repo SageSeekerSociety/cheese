@@ -104,13 +104,16 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/agent_control.py", "ValidationError"): 1,
     ("app/api/routes/alerts.py", "ValidationError"): 2,
     ("app/api/routes/backend_log.py", "UnauthorizedError"): 1,
-    ("app/api/routes/connector.py", "UnauthorizedError"): 3,
+    # 同一个文件拆成了包，两处 UnauthorizedError 各归各的新文件（第三处在
+    # connections.py 里）。债务没变，只是发起方换了名字。
+    ("app/api/routes/connector/connections.py", "UnauthorizedError"): 1,
+    ("app/api/routes/connector/devices.py", "UnauthorizedError"): 2,
     ("app/api/routes/dashboard.py", "ValidationError"): 1,
     ("app/api/routes/docs_site.py", "ValidationError"): 3,
     ("app/api/routes/document_agent.py", "ValidationError"): 3,
     ("app/api/routes/document_comments.py", "ValidationError"): 1,
     ("app/api/routes/forge_token.py", "GatewayUnavailableError"): 5,
-    ("app/api/routes/git_http.py", "ValidationError"): 3,
+    ("app/api/routes/git_http.py", "ValidationError"): 2,
     ("app/api/routes/github_install.py", "GatewayUnavailableError"): 1,
     ("app/api/routes/integrations.py", "ValidationError"): 2,
     ("app/api/routes/library.py", "ValidationError"): 3,
@@ -125,7 +128,7 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/project_environment.py", "ValidationError"): 6,
     ("app/api/routes/project_sites.py", "AppError"): 1,
     ("app/api/routes/project_skills.py", "ValidationError"): 6,
-    ("app/api/routes/projects.py", "ValidationError"): 9,
+    ("app/api/routes/projects.py", "ValidationError"): 6,
     ("app/api/routes/projects_artifacts.py", "ValidationError"): 1,
     ("app/api/routes/projects_run_config.py", "ValidationError"): 4,
     ("app/api/routes/remote_mcp.py", "AppError"): 3,
@@ -133,10 +136,9 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/room_files.py", "ValidationError"): 4,
     ("app/api/routes/sandbox.py", "UnauthorizedError"): 1,
     ("app/api/routes/topics.py", "ValidationError"): 8,
-    ("app/api/routes/topics_attachments.py", "ValidationError"): 10,
+    ("app/api/routes/topics_attachments.py", "ValidationError"): 9,
     ("app/api/routes/topics_deliveries.py", "ValidationError"): 1,
     ("app/api/routes/topics_documents.py", "ValidationError"): 12,
-    ("app/api/routes/topics_file_sources.py", "ValidationError"): 1,
     ("app/api/routes/topics_messages.py", "ValidationError"): 5,
     ("app/api/routes/topics_shown.py", "ValidationError"): 5,
     ("app/api/routes/topics_title.py", "ValidationError"): 1,
@@ -146,8 +148,15 @@ _BASELINE: dict[tuple[str, str], int] = {
     # `_parse_moment` moved here from `routes/topics.py` with its body unchanged:
     # the same single use, one file further out. topics.py's own line drops with it.
     ("app/api/topics_deps.py", "ValidationError"): 1,
+    # The whole file moved from `routes/` to `app/api/`, body unchanged: the
+    # same single use, one directory further out.
+    ("app/api/topics_file_sources.py", "ValidationError"): 1,
     ("app/domain/agent/announce.py", "ValidationError"): 1,
-    ("app/domain/agent/chat.py", "ValidationError"): 3,
+    # 2026-10: `chat.py` 按职责拆成门面加四块 mixin，它三处 `ValidationError`
+    # 里的两处跟着抛它们的函数走去 chat_lifecycle，chat.py 只剩 `_refuse_turn`
+    # 那一处。总数不变，只是换了发起方。
+    ("app/domain/agent/chat.py", "ValidationError"): 1,
+    ("app/domain/agent/chat_lifecycle.py", "ValidationError"): 2,
     ("app/domain/agent/document/box.py", "ValidationError"): 1,
     ("app/domain/agent/document/question.py", "ValidationError"): 3,
     ("app/domain/agent/document/thread.py", "ValidationError"): 1,
@@ -161,6 +170,8 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/agent_instance/services.py", "ValidationError"): 11,
     ("app/domain/block/editing.py", "ValidationError"): 1,
     ("app/domain/block/questions.py", "ValidationError"): 7,
+    ("app/domain/deliverables/artifacts.py", "ValidationError"): 11,
+    ("app/domain/deliverables/export.py", "GatewayUnavailableError"): 9,
     ("app/domain/delivery/agent.py", "ValidationError"): 4,
     ("app/domain/delivery/note.py", "ValidationError"): 4,
     ("app/domain/delivery/receipts.py", "ValidationError"): 12,
@@ -169,7 +180,11 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/integration/mail.py", "ValidationError"): 2,
     ("app/domain/integration/service.py", "ValidationError"): 18,
     ("app/domain/library/service.py", "ValidationError"): 9,
-    ("app/domain/machine/services.py", "ValidationError"): 4,
+    # `machine/services.py` 拆出了这一处引用（2026-10-16）：池子的后台巡检整段
+    # 搬去 `reaper.py`，`_fail` 里那个 `except` 跟着它走。总数没变，只是发起方
+    # 换了文件。
+    ("app/domain/machine/reaper.py", "ValidationError"): 1,
+    ("app/domain/machine/services.py", "ValidationError"): 3,
     ("app/domain/machine/supply.py", "ValidationError"): 2,
     ("app/domain/machine/warm.py", "ValidationError"): 2,
     ("app/domain/membership/services.py", "ValidationError"): 8,
@@ -178,9 +193,7 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/pin/services.py", "ValidationError"): 2,
     ("app/domain/policy/gate.py", "ValidationError"): 1,
     ("app/domain/preview/office.py", "ValidationError"): 3,
-    ("app/domain/project/artifacts.py", "ValidationError"): 11,
-    ("app/domain/project/export.py", "GatewayUnavailableError"): 9,
-    ("app/domain/project/forge.py", "GatewayUnavailableError"): 22,
+    ("app/domain/project/forge.py", "GatewayUnavailableError"): 19,
     ("app/domain/project/room_files.py", "ValidationError"): 4,
     ("app/domain/project/services.py", "ValidationError"): 1,
     ("app/domain/project_skill/importer.py", "ValidationError"): 15,
@@ -189,7 +202,7 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/remote_mcp/http.py", "ValidationError"): 1,
     ("app/domain/remote_mcp/oauth.py", "ValidationError"): 1,
     ("app/domain/remote_mcp/service.py", "ValidationError"): 8,
-    ("app/domain/repository/forge_files.py", "GatewayUnavailableError"): 7,
+    ("app/domain/repository/forge_files.py", "GatewayUnavailableError"): 6,
     ("app/domain/repository/forge_files.py", "ValidationError"): 5,
     ("app/domain/repository/service.py", "ValidationError"): 6,
     ("app/domain/review/forge.py", "ValidationError"): 5,
@@ -198,20 +211,36 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/review/services/cards.py", "ValidationError"): 9,
     ("app/domain/review/services/decisions.py", "ValidationError"): 21,
     ("app/domain/review/services/merge_queue.py", "ValidationError"): 10,
-    ("app/domain/review/services/polling.py", "ValidationError"): 3,
+    # `review/services/polling.py` 拆成了包，3 处按代码落在哪分红：`_seen_head`
+    # 与 `_refresh_github_unseen_head` 各一句 `raise` 在 `polling/seen_head.py`，
+    # `_refresh_stale_pr_snapshot` 的 `except` 在 `polling/snapshot.py`。总数没变，
+    # 只是发起方换了文件。
+    ("app/domain/review/services/polling/seen_head.py", "ValidationError"): 2,
+    ("app/domain/review/services/polling/snapshot.py", "ValidationError"): 1,
     ("app/domain/review/services/reviewers.py", "ValidationError"): 4,
+    # `topic/services.py` 拆出了这两处发起方（2026-10-16，`topic -> room_task`
+    # 那一笔）：任务的动词搬去 `dispatch.py`，地点的那几句搬去 `place.py`。
+    # 总数没变，只是发起方换了文件。
     ("app/domain/room_task/binding.py", "ValidationError"): 2,
+    ("app/domain/room_task/dispatch.py", "ValidationError"): 4,
+    ("app/domain/room_task/place.py", "ValidationError"): 1,
     ("app/domain/room_task/presentation.py", "ValidationError"): 1,
     ("app/domain/room_task/snapshots.py", "ValidationError"): 4,
     ("app/domain/routine/schedule.py", "ValidationError"): 8,
-    ("app/domain/routine/service.py", "ValidationError"): 17,
+    # `routine/service.py` 拆成了包，17 处按代码落在哪分红：规则自己那一行
+    # （草稿、确认、启停、改配置、删）在 `service/rules.py`，一次执行怎么结束
+    # （report）在 `service/settlement.py`。总数没变，只是发起方换了文件。
+    ("app/domain/routine/service/rules.py", "ValidationError"): 14,
+    ("app/domain/routine/service/settlement.py", "ValidationError"): 3,
     ("app/domain/site/hosting.py", "AppError"): 2,
     ("app/domain/site/hosting.py", "ValidationError"): 3,
     ("app/domain/site/services.py", "ValidationError"): 12,
     ("app/domain/textfile.py", "ValidationError"): 1,
     ("app/domain/thread/services.py", "ValidationError"): 2,
-    ("app/domain/topic/services.py", "ValidationError"): 15,
-    ("app/domain/topic_membership/services.py", "ValidationError"): 10,
+    ("app/domain/topic/services.py", "ValidationError"): 10,
+    # 2026-10-16：`topic_membership/services.py` 变成一个包，门面在 `__init__.py`。
+    # 带 `raise` 的那一半一行没搬，10 处还是 10 处，只是换了路径。
+    ("app/domain/topic_membership/services/__init__.py", "ValidationError"): 10,
     ("tests/integration/test_accept_pr.py", "ValidationError"): 2,
     ("tests/integration/test_accept_pr_publish.py", "GatewayUnavailableError"): 1,
     ("tests/integration/test_chat_realtime.py", "ValidationError"): 1,

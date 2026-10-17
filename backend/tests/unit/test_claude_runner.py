@@ -29,8 +29,14 @@ import pytest
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.claude_code.runner import Runner, end, sessions_on
+from app.domain.agent.harness.driven import runner as driven
 from app.domain.agent.harness.driven.journal import PAGE
-from app.domain.agent.harness.driven.runner import socket_path
+from app.domain.agent.harness.driven.runner import (
+    IDLE_EXIT_S,
+    reply_owed,
+    reply_owed_path,
+    socket_path,
+)
 from tests.pinned_claude import claude_binary
 
 SCRIPTS = Path(__file__).resolve().parents[3] / "scripts/remote_execution"
@@ -643,6 +649,79 @@ async def test_an_idle_session_is_let_go_while_a_backend_keeps_reading_it(
         assert await asyncio.wait_for(runner.process.wait(), 60) == 0
     finally:
         reading.cancel()
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_turn_aborted_before_its_prompt_was_checked_still_lets_the_session_go(
+    tmp_path, monkeypatch
+):
+    """The build can abort a turn before its prompt is checked: the input is
+    never echoed back, and the build says it was cancelled. Nothing is on its
+    way in after that, so the session goes once it has sat idle, and the
+    person's message no longer holds back the session's tools."""
+    clock = [1000.0]
+
+    class Clock:
+        @staticmethod
+        def monotonic():
+            return clock[0]
+
+    monkeypatch.setattr(driven, "time", Clock)
+    monkeypatch.setattr(driven, "IDLE_CHECK_S", 0.01)
+    runner = Runner(tmp_path / "state")
+    runner.session_id = "session-aborted"
+    released = asyncio.Event()
+
+    async def release():
+        released.set()
+
+    async def written(message):
+        pass
+
+    monkeypatch.setattr(runner, "release", release)
+    monkeypatch.setattr(runner, "_write", written)
+    await runner.listen(2**16)
+    try:
+        identifier = str(uuid.uuid4())
+        await runner.dispatch(
+            "send",
+            {
+                "input_id": identifier,
+                "work_id": identifier,
+                "text": "hello",
+                "owes_reply": True,
+            },
+        )
+        for record in (
+            {
+                "type": "command_lifecycle",
+                "command_uuid": identifier,
+                "state": "started",
+            },
+            {
+                "type": "result",
+                "subtype": "error_during_execution",
+                "is_error": True,
+                "terminal_reason": "aborted_streaming",
+                "errors": [
+                    "prompt_check: the turn was stopped before its prompt was checked"
+                ],
+            },
+            {
+                "type": "command_lifecycle",
+                "command_uuid": identifier,
+                "state": "cancelled",
+            },
+        ):
+            runner.observe(
+                {**record, "session_id": runner.session_id, "uuid": str(uuid.uuid4())}
+            )
+        await runner.dispatch("events", {"after": 0})
+        clock[0] += IDLE_EXIT_S + 1
+        await asyncio.wait_for(released.wait(), 5)
+        assert reply_owed(reply_owed_path(runner.state)) is None
+    finally:
         await runner.close()
 
 

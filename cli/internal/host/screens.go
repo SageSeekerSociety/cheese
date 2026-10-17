@@ -1,6 +1,9 @@
 package host
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 var errNoScreens = errors.New("this machine hosts no screens")
 
@@ -13,6 +16,9 @@ type screens interface {
 	SaveIdentity(name, owner, data string) error
 	Identities(owner string) (map[string]string, error)
 	Spawn(name string, argv, env []string, cols, rows int) (screen, error)
+	// Exited names the screens owner launched whose program ended at least
+	// `after` ago and that are still kept for someone to read.
+	Exited(owner string, after time.Duration) ([]string, error)
 }
 
 // screen is one hosted program.

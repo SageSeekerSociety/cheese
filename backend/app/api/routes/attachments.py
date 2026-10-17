@@ -29,6 +29,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 from fastapi.responses import Response
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -120,11 +121,10 @@ async def upload_attachment(
     # client's next request, which must find the row. ``get_db`` commits in its
     # teardown, which FastAPI runs after the response has gone out.
     await db.commit()
-    return {
-        "code": 201,
-        "message": "Attachment uploaded successfully",
-        "data": {"id": attachment.id, "url": attachment.url, "type": attachment.type},
-    }
+    return ok(
+        {"id": attachment.id, "url": attachment.url, "type": attachment.type},
+        "Attachment uploaded successfully",
+    )
 
 
 @router.get(
@@ -147,11 +147,7 @@ async def get_attachment_limits(
     Same door as the upload: ``require_auth_user``, nothing else. A signed-in
     person learns the shape of an upload they are about to make; nobody else.
     """
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"maxFileBytes": settings.attachment_max_bytes},
-    }
+    return ok({"maxFileBytes": settings.attachment_max_bytes})
 
 
 @router.get(
@@ -171,11 +167,7 @@ async def get_attachment_detail(
         service=service,
         task_attachments=task_attachments,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"attachment": attachment.to_dict()},
-    }
+    return ok({"attachment": attachment.to_dict()})
 
 
 @router.get(

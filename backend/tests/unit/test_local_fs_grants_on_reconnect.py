@@ -22,7 +22,7 @@ import httpx
 import pytest
 
 from app import device_connection_app
-from app.api.routes import connector
+from app.api.routes.connector import devices
 from app.core import background
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
@@ -56,7 +56,7 @@ async def _no_login_check(*_args) -> None:
 @pytest.fixture
 def hub(monkeypatch, db_factory):
     monkeypatch.setattr(owner_login, "refresh_on_connect", _no_login_check)
-    monkeypatch.setattr(connector, "_check_sandbox", _no_login_check)
+    monkeypatch.setattr(devices, "_check_sandbox", _no_login_check)
     monkeypatch.setattr(device_hub, "_devices", {})
     monkeypatch.setattr(device_hub, "_screens", {})
     monkeypatch.setattr(device_hub, "_by_screen_token", {})
@@ -79,8 +79,8 @@ async def rolling_backend(monkeypatch, hub):
     )
     # What `main.lifespan` does on a backend configured with an owner, whose
     # `device_hub` is then this remote hub everywhere it is imported.
-    monkeypatch.setattr(connector, "device_hub", remote)
-    remote.set_online_callback(connector.recover_business_state)
+    monkeypatch.setattr(devices, "device_hub", remote)
+    remote.set_online_callback(devices.recover_business_state)
     await remote.start()
     yield remote
     await remote.close()
@@ -244,7 +244,7 @@ async def test_a_set_the_machine_refused_on_connect_is_sent_again_next_time(
 async def _connect_in_process() -> wire.RecordingDevice:
     # What the device socket does when this process holds the machines itself.
     machine = await _connect()
-    await connector.recover_business_state(MACHINE)
+    await devices.recover_business_state(MACHINE)
     return machine
 
 

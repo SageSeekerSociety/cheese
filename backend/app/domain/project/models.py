@@ -28,6 +28,7 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -255,6 +256,101 @@ class ProjectInvitation(UuidPk, Timestamps, Base):
     inviter_handle: Mapped[str] = mapped_column(String(64))
     status: Mapped[InvitationStatus] = mapped_column(
         Enum(InvitationStatus, native_enum=False, length=16),
+        default=InvitationStatus.pending,
+    )
+    responded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: The role the invitee takes once they accept: ``member`` or ``mentor``.
+    role: Mapped[str] = mapped_column(String(16), default="member")
+
+
+class ProjectRole(UuidPk, Timestamps, Base):
+    """Someone's role in a project, when it is not the one they would hold anyway.
+
+    Without a row a person's role follows from how they are in the project: the
+    team's owner and admins are admins, everyone else is a member
+    (``app.auth.project_roles``). A row says otherwise — a member made admin, a
+    person invited as mentor. The owner is never a row: that is
+    ``projects.owner_handle``.
+    """
+
+    __tablename__ = "project_roles"
+    __table_args__ = (
+        UniqueConstraint("project_id", "user_handle", name="uq_project_role"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_project_roles_project_id_projects",
+        ),
+        index=True,
+    )
+    user_handle: Mapped[str] = mapped_column(String(64), index=True)
+    role: Mapped[str] = mapped_column(String(16))
+
+
+class ProjectRoleGrant(UuidPk, Timestamps, Base):
+    """What one role may do in one project, when the project changed it.
+
+    No row means the role's defaults (``project.permissions.DEFAULT_GRANTS``);
+    restoring the defaults deletes the row.
+    """
+
+    __tablename__ = "project_role_grants"
+    __table_args__ = (
+        UniqueConstraint("project_id", "role", name="uq_project_role_grant"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_project_role_grants_project_id_projects",
+        ),
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String(16))
+    permissions: Mapped[list[str]] = mapped_column(JSONB, default=list)
+
+
+class ProjectTransfer(UuidPk, Timestamps, Base):
+    """The owner offering the project to someone in it, until they answer.
+
+    The project changes hands only when the recipient accepts; answered offers
+    stay as the record of who handed it to whom.
+    """
+
+    __tablename__ = "project_transfers"
+    __table_args__ = (
+        Index(
+            "uq_project_transfer_pending",
+            "project_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_project_transfers_project_id_projects",
+        ),
+        index=True,
+    )
+    from_handle: Mapped[str] = mapped_column(String(64))
+    to_handle: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[InvitationStatus] = mapped_column(
+        Enum(
+            InvitationStatus,
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+            name="ck_project_transfers_status",
+        ),
         default=InvitationStatus.pending,
     )
     responded_at: Mapped[datetime | None] = mapped_column(

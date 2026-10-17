@@ -1,8 +1,9 @@
-"""A team invitation in the invitee's feed can be answered from the feed.
+"""A team invitation waits in the invitee's 等你处理 until it is answered.
 
-Its card says which invitation it is and whether that invitation is still
-waiting, so 待办 can offer accept and decline on it and stop offering them once
-it has been answered.
+The row says which invitation it is, who sent it and into which team, so 待办
+can offer accept and decline on it; once answered it is no longer there. The
+notification that announced it is not in the feed as well: that would list the
+same thing twice, and leave a line saying "waiting for you" after it was done.
 """
 
 import pytest
@@ -22,10 +23,11 @@ def invitation(user_client: UserCreator, api_client: TestClient) -> dict:
         user = user_client.create_user()
         user.token = user_client.login(api_client, user.username, user.password)
         people[role] = user
+    name = f"Invite Feed Team ({unique_int(10000000, 99999999)})"
     team = api_client.post(
         "/teams",
         json={
-            "name": f"Invite Feed Team ({unique_int(10000000, 99999999)})",
+            "name": name,
             "intro": "",
             "description": "A team to invite someone into. " * 4,
             "avatarId": 1,
@@ -43,33 +45,40 @@ def invitation(user_client: UserCreator, api_client: TestClient) -> dict:
     return {
         **people,
         "team_id": team_id,
+        "team_name": name,
         "invitation_id": sent.json()["data"]["invitation"]["id"],
     }
 
 
-def invitation_card(api_client: TestClient, user) -> dict:
-    resp = api_client.get(
-        "/notifications", params={"type": "TEAM_INVITATION"}, headers=auth(user)
-    )
+def waiting(api_client: TestClient, user) -> list[dict]:
+    resp = api_client.get("/awaiting-me", headers=auth(user))
     assert resp.status_code == 200, resp.text
-    (card,) = resp.json()["data"]["notifications"]
-    return card
+    return resp.json()["data"]["data"]
 
 
-def test_the_card_names_the_invitation_it_answers(api_client, invitation):
-    card = invitation_card(api_client, invitation["invitee"])
-
-    application = card["entities"]["application"]
-    assert application is not None
-    assert application["id"] == str(invitation["invitation_id"])
-    assert application["status"] == "PENDING"
+def feed(api_client: TestClient, user) -> list[dict]:
+    resp = api_client.get("/notifications", headers=auth(user))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["notifications"]
 
 
-def test_answering_the_named_invitation_joins_the_team(api_client, invitation):
-    card = invitation_card(api_client, invitation["invitee"])
+def test_a_pending_invitation_waits_on_the_invitee(api_client, invitation):
+    [row] = waiting(api_client, invitation["invitee"])
+
+    assert row["kind"] == "team_invite"
+    assert row["id"] == str(invitation["invitation_id"])
+    assert row["placeId"] == str(invitation["team_id"])
+    assert row["place"]["name"] == invitation["team_name"]
+    assert row["person"]["handle"] == invitation["owner"].username
+    assert row["role"] == "MEMBER"
+    assert [n["type"] for n in feed(api_client, invitation["invitee"])] == []
+
+
+def test_accepting_it_joins_the_team_and_it_stops_waiting(api_client, invitation):
+    [row] = waiting(api_client, invitation["invitee"])
 
     accepted = api_client.post(
-        f"/users/me/team-invitations/{card['entities']['application']['id']}/accept",
+        f"/users/me/team-invitations/{row['id']}/accept",
         headers=auth(invitation["invitee"]),
     )
 
@@ -80,15 +89,18 @@ def test_answering_the_named_invitation_joins_the_team(api_client, invitation):
     assert invitation["invitee"].user_id in {
         m["user"]["id"] for m in members.json()["data"]["members"]
     }
+    assert waiting(api_client, invitation["invitee"]) == []
 
 
-def test_an_answered_invitation_no_longer_reads_as_waiting(api_client, invitation):
+def test_a_declined_invitation_stops_waiting(api_client, invitation):
     declined = api_client.post(
         f"/users/me/team-invitations/{invitation['invitation_id']}/decline",
         headers=auth(invitation["invitee"]),
     )
     assert declined.status_code in (200, 204), declined.text
 
-    card = invitation_card(api_client, invitation["invitee"])
+    assert waiting(api_client, invitation["invitee"]) == []
 
-    assert card["entities"]["application"]["status"] == "DECLINED"
+
+def test_the_inviter_is_not_waited_on(api_client, invitation):
+    assert waiting(api_client, invitation["owner"]) == []

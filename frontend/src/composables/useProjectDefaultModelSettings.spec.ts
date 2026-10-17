@@ -24,7 +24,6 @@ function state(overrides: Partial<ProjectDefaultModel> = {}): ProjectDefaultMode
     model: null,
     subagent_model: null,
     deployment_default: 'sonnet',
-    can_manage: true,
     choices: [
       { id: 'sonnet', label: 'Claude Sonnet 5', description: '', default: false, allowed: true, requires_plan: null },
       {
@@ -77,14 +76,6 @@ describe('useProjectDefaultModelSettings', () => {
     expect(model.state.value?.model).toBe('deepseek-flash')
     expect(model.saved.value).toBe(true)
     expect(model.saveError.value).toBe('')
-  })
-
-  it('does not save for someone who cannot manage the project', async () => {
-    getProjectDefaultModel.mockResolvedValue(state({ can_manage: false }))
-    const { model } = host()
-    await tick()
-    await model.save('deepseek-flash', null)
-    expect(setProjectDefaultModel).not.toHaveBeenCalled()
   })
 
   it('reports the reason when a save fails', async () => {

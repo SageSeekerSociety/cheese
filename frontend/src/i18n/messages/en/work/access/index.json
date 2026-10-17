@@ -1,0 +1,13 @@
+{
+  "archivedBody": "Everything is still here. It can be used again once the project owner unarchives it",
+  "archivedOwnerBody": "Everything is still here. Unarchiving restores the project and the channels archived with it",
+  "archivedTitle": "Project archived",
+  "backToProjects": "Back to my projects",
+  "forbiddenBody": "Only project members can see what is here. If you need access, ask someone on the project to add you",
+  "forbiddenTitle": "You're not a member of this project",
+  "missingBody": "This project doesn't exist, or you're not a member of it. If you need access, ask someone on the project to add you",
+  "missingTitle": "Can't open this project",
+  "signIn": "Sign in",
+  "signedOutBody": "Once you sign in, you'll see what's here if you're a member of this project",
+  "signedOutTitle": "Sign in to view this project"
+}

@@ -1,0 +1,14 @@
+{
+  "actionFailed": "Something went wrong",
+  "commentSendFailed": "Couldn’t send the comment",
+  "commentsLoadFailed": "Couldn’t load comments",
+  "dashboardLoadFailed": "Couldn’t load the data",
+  "deleteFailed": "Couldn’t delete",
+  "listLoadFailed": "Couldn’t load feedback",
+  "loadMoreFailed": "Couldn’t load more",
+  "mineLoadFailed": "Couldn’t load My feedback",
+  "openFailed": "Couldn’t open this feedback",
+  "queueLoadFailed": "Couldn’t load the queue",
+  "repliesLoadFailed": "Couldn’t load replies",
+  "submitFailed": "Couldn’t submit"
+}

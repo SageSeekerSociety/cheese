@@ -56,9 +56,9 @@ export function useChannelPins(opts: {
     const id = opts.channelId()
     if (id) void act(() => unpinBlock(id, block.id), t('work.room.pin.failed'))
   }
-  /** 芝士摆出来的一份东西存进资料库。 */
+  /** 一份东西保存到资料库：芝士摆出来的，或这段对话里发来的附件（#3828）。 */
   function keep(roomId: string, block: Block) {
-    void act(() => saveRoomOutputToLibrary(roomId, block.content), t('work.room.file.keepFailed'))
+    void act(() => saveRoomOutputToLibrary(roomId, block.content), t('work.room.files.keepFailed'))
   }
 
   return { pinnedIds, reload, pin, unpin, keep }

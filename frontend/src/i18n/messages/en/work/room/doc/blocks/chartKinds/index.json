@@ -1,0 +1,9 @@
+{
+  "area": "Area",
+  "bar": "Bar",
+  "horizontal": "Horizontal bar",
+  "line": "Line",
+  "pie": "Pie",
+  "scatter": "Scatter",
+  "stacked": "Stacked bar"
+}

@@ -3,16 +3,18 @@ import { useRoute } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
 import { getUnreadNotificationCount } from '@/api/notifications'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
+import { onInboxChange } from '@/lib/inboxLive'
 import AccountService from '@/services/account'
 
 // 未读通知数：全站一份。首页那一格用它画小点，待办页的「动态」读完、标已读之后
 // 把新数写回来——两处读的是同一个值，所以标完已读，小点当场消失。
 //
-// 没有推送通道告诉它「多了一条」或者「你在别处读掉了」。少了下面那两个重新读的
-// 时机，这个数就只是登录那一刻的一份快照，而小点会替它说错话：亮着点进去一条也
-// 没有（那份未读在别的窗口/设备上读掉了），或者来了新的却一直不亮。于是照待处理
-// 件数那一份的做法，在人**做了点什么**的时候再读一次：回到待办页、窗口重新拿到
-// 焦点。回到待办页那一下不受节流——人正要对着那份列表看，小点必须当场对上。
+// 「多了一条」由服务端当场说（`lib/inboxLive.ts`），一来就读。「你在别处读掉了」
+// 没人说，少了下面那两个重新读的时机，小点会替它说错话：亮着点进去一条也没有（那
+// 份未读在别的窗口/设备上读掉了）。于是照待处理件数那一份的做法，在人**做了点什么**
+// 的时候再读一次：回到待办页、窗口重新拿到焦点。回到待办页那一下不受节流——人正要
+// 对着那份列表看，小点必须当场对上。连接断开期间漏掉的新通知也由这两下补上。
 const count = ref(0)
 let watching = false
 
@@ -49,22 +51,43 @@ export function useUnreadNotifications() {
   const route = useRoute()
   if (!watching) {
     watching = true
+    // 小点是装饰：登录之后的第一遍排到首帧之后（`lib/afterFirstPaint.ts`），不跟页面
+    // 自己要的数据抢。`asked` 挡住的是首帧那个门开了之后重复排的那几遍；退出登录时
+    // 清掉，下次登录再问一遍。
+    let asked = false
     watch(
-      () => AccountService._loggedIn.value,
-      (loggedIn) => {
-        if (loggedIn) void refresh()
-        else count.value = 0
+      [() => AccountService._loggedIn.value, firstPaintDone],
+      ([loggedIn, painted]) => {
+        if (!loggedIn) {
+          count.value = 0
+          asked = false
+          return
+        }
+        if (!painted || asked) return
+        asked = true
+        void refresh()
       },
       { immediate: true }
     )
-    // 走进待办页：人接下来看的就是那份未读列表，先把这个数对上一遍。
+    // 走进待办页：人接下来看的就是那份未读列表，先把这个数对上一遍。首帧之前那次不算
+    // 「走进」——冷开就落在待办页上时，这一次跳转是挂载之后才落地的，`from` 是起始的
+    // `/`；放它过去就会在首帧之前问一遍，门开了再问一遍。门开那一次读的已经是落地后
+    // 的状态，不会漏。
     watch(
       () => route.path,
       (path, from) => {
+        if (!firstPaintDone.value) return
         if (path === '/inbox' && from !== '/inbox') void refresh()
       }
     )
-    useEventListener(window, 'focus', () => void refreshIfStale())
+    // 首帧之前不问：开机那一两秒里窗口重新拿到焦点（切走再切回来、点进后台开着的标签页）
+    // 会走这里，而 `lastAt` 还是 0、节流挡不住它——放它过去就是首帧前读一遍、门开了再读
+    // 一遍。门开那一次读的就是当下的数。
+    useEventListener(window, 'focus', () => {
+      if (!firstPaintDone.value) return
+      void refreshIfStale()
+    })
+    onInboxChange(() => void refresh())
   }
   return { count: computed(() => count.value), refresh, set }
 }

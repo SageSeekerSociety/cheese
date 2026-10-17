@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import BadRequestError, NotFoundError
-from app.domain.space.services import SpaceLabels
 from app.domain.user.models import User, UserRealNameAccessLog, UserRealNameIdentity
+from app.domain.user.ports import BoardLabels
 from app.domain.user.repositories import (
     UserProfileRepository,
     UserRealNameRepository,
@@ -44,7 +44,7 @@ class UserRealNameService:
         user_repo: UserRepository,
         profile_repo: UserProfileRepository,
         realname_repo: UserRealNameRepository,
-        space_labels: SpaceLabels,
+        space_labels: BoardLabels,
     ) -> None:
         self._session = session
         self._user_repo = user_repo
