@@ -6,13 +6,16 @@ time is shortened through the variable `serve` reads for that.
 """
 
 import base64
+import contextlib
 import fcntl
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 RUNTIME = (
@@ -23,11 +26,16 @@ spec = importlib.util.spec_from_file_location("idle_exit_runtime", RUNTIME)
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
-IDLE_S = 2
+# Kept short: every test here waits it out at least once, under the pure
+# layer's per-test ceiling.
+IDLE_S = 1
 
 
 def _start(state, workspace, *, env=None, private=False):
-    config = {"workspace": str(workspace), "env": env or {}}
+    # A home of the test's own: the machine's could hold a live preview.
+    home = state.parent / "home"
+    (home / ".cheese").mkdir(parents=True, exist_ok=True)
+    config = {"workspace": str(workspace), "env": {"HOME": str(home), **(env or {})}}
     if private:
         config["private"] = True
     result = subprocess.run(
@@ -121,6 +129,22 @@ def _finish(state, command_id, timeout=30):
         assert time.monotonic() < deadline, output
 
 
+def _end(pid):
+    """A detached test process a failed run would otherwise leave behind."""
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGKILL)
+
+
+def _events(state, item, status):
+    """When the executor logged `item` reaching `status`, from its event log."""
+    found = []
+    for line in (state / "events.jsonl").read_text().splitlines():
+        event = json.loads(line)
+        if event["item"] == item and event["status"] == status:
+            found.append(datetime.fromisoformat(event["time"]))
+    return found
+
+
 def _detach(state, workspace, name):
     """Start what an agent starts and walks away from — a dev server put in
     the background with `nohup … &` — and answer its pid."""
@@ -143,6 +167,7 @@ def test_an_idle_executor_ends_what_its_commands_left_and_comes_back_when_asked(
     workspace.mkdir()
     state = tmp_path / "state"
     first = _start(state, workspace)
+    left = None
     try:
         left = _detach(state, workspace, "left")
 
@@ -156,22 +181,28 @@ def test_an_idle_executor_ends_what_its_commands_left_and_comes_back_when_asked(
         assert runtime.request(state, "ping")["pid"] == second
     finally:
         _stop(state)
+        if left is not None:
+            _end(left)
 
 
-def test_a_command_still_running_keeps_the_executor_and_the_command_up(tmp_path):
+def test_a_running_command_keeps_the_executor_up_until_idle_after_it_ends(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     state = tmp_path / "state"
     _start(state, workspace)
     try:
-        _shell(state, workspace, "background", "sleep 6; touch finished")
+        _shell(state, workspace, "background", "sleep 2.5; touch finished")
 
         time.sleep(IDLE_S * 2)
         assert not _stopped(state)
         assert not (workspace / "finished").exists()
 
-        assert _await_stopped(state, 6 + IDLE_S + 15)
+        assert _await_stopped(state, 2.5 + IDLE_S + 15)
         assert (workspace / "finished").exists(), "the running command was ended"
+        # Idle is counted from when the command ended, not from the last request.
+        (exited,) = _events(state, "background", "exited")
+        (stopped,) = _events(state, "service", "idle")
+        assert (stopped - exited).total_seconds() >= IDLE_S
     finally:
         _stop(state)
 
@@ -187,10 +218,11 @@ def test_a_declared_preview_keeps_the_executor_and_its_server_up(tmp_path):
     helper = subprocess.Popen(["sleep", "300"])
     (home / ".cheese/cheese-preview.pid").write_text(f"{helper.pid}\n")
     _start(state, workspace, env={"HOME": str(home)})
+    server = None
     try:
         server = _detach(state, workspace, "server")
 
-        time.sleep(IDLE_S * 2 + 1)
+        time.sleep(IDLE_S * 2.5)
         assert not _stopped(state)
         assert _alive(server)
 
@@ -202,6 +234,8 @@ def test_a_declared_preview_keeps_the_executor_and_its_server_up(tmp_path):
         helper.kill()
         helper.wait()
         _stop(state)
+        if server is not None:
+            _end(server)
 
 
 def test_a_private_chats_executor_is_not_stopped_for_sitting_idle(tmp_path):
@@ -210,7 +244,7 @@ def test_a_private_chats_executor_is_not_stopped_for_sitting_idle(tmp_path):
     state = tmp_path / "state"
     pid = _start(state, workspace, private=True)
     try:
-        time.sleep(IDLE_S * 2 + 1)
+        time.sleep(IDLE_S * 2.5)
         assert runtime.request(state, "ping")["pid"] == pid
     finally:
         _stop(state)

@@ -523,24 +523,34 @@ def serve(state):
         # running container's executor with `request`, never `start`, so one
         # that stopped itself would leave the chat without one until the
         # container is released, which is what bounds it (`private.release`).
+        idle_s = float(
+            os.environ.get("CHEESE_EXECUTOR_IDLE_EXIT_S", EXECUTOR_IDLE_EXIT_S)
+        )
         if not executor.config.get("private"):
-            idle_s = float(
-                os.environ.get("CHEESE_EXECUTOR_IDLE_EXIT_S", EXECUTOR_IDLE_EXIT_S)
-            )
 
             def leave_when_idle():
                 while not executor.idle_stop(idle_s):
                     time.sleep(min(EXECUTOR_IDLE_CHECK_S, idle_s / 4))
+                    # Every look, so a group that emptied is forgotten before
+                    # its number can be handed to a process of somebody else's.
+                    executor.prune_groups()
                 stop(None, None)
 
             threading.Thread(target=leave_when_idle, daemon=True).start()
         try:
             server.serve_forever(poll_interval=0.1)
         finally:
-            executor.close()
+            # The socket goes first: from here a caller finds no executor, which
+            # it knows how to answer (an install starts one), rather than one
+            # that answers and refuses while what follows takes its time.
             path.unlink(missing_ok=True)
             if sys.platform != "win32":
                 Path(address).unlink(missing_ok=True)
+            if executor.stopping:
+                ended = executor.end_left_behind()
+                with contextlib.suppress(OSError):
+                    executor.log("service", "idle", idle_s=idle_s, ended_groups=ended)
+            executor.close()
     # server_close joins request handlers before their receipt database closes.
     executor.db.close()
 

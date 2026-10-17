@@ -370,9 +370,9 @@ def idle_stop(self, idle_s):
     Idle is nothing of its own going on: no request in flight and none for
     `idle_s` (a `ping` is a question about it, not work for it), no command
     still running — a Bash sent to the background included — and no preview
-    the room declared (`_preview_declared`). Then it stops taking requests,
-    ends what its commands left behind (`end_left_behind`), and answers True
-    for `serve` to shut down."""
+    the room declared (`_preview_declared`). Then it stops taking requests
+    and answers True; `serve` shuts down and, once its socket is gone, ends
+    what the commands left behind (`end_left_behind`)."""
     if _preview_declared(self):
         self.active_at = time.monotonic()
         return False
@@ -386,8 +386,6 @@ def idle_stop(self, idle_s):
         # From here on nothing is admitted (`dispatch`), so no command can
         # start between this decision and the shutdown.
         self.stopping = True
-    ended = self.end_left_behind()
-    self.log("service", "idle", idle_s=idle_s, ended_groups=ended)
     return True
 
 

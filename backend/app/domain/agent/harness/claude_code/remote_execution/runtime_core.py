@@ -96,9 +96,12 @@ NATIVE_TOOLS = {
 # out and then reattaches.
 COMMAND_ABANDONED_S = 600.0
 # How long an executor with no request and nothing of its own running waits
-# before it ends what its commands left behind and stops (`idle_stop`); the next
-# tool call's hands start it again (`session_work._start_executor` pings, finds
-# nobody, installs). 30 minutes is three times the 600 s after which the
+# before it ends what its commands left behind and stops (`idle_stop`). Taking
+# the session's hands starts it again — at a session's launch
+# (`central_provider._starts_on_machine`) or at its next tool call
+# (`session_work._start_executor` pings, finds nobody, installs); a call that
+# takes no hands, such as a turn's Stop checkpoint, finds none until one has.
+# 30 minutes is three times the 600 s after which the
 # platform destroys an idle sandbox it records (`cloud_sandbox_idle_stop_s`) and
 # a runner lets an idle session go (`driven.runner.IDLE_EXIT_S`): where those
 # apply they act first, and this is the backstop for a home nothing records. It
