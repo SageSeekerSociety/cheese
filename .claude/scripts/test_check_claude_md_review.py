@@ -17,9 +17,61 @@ spec = importlib.util.spec_from_file_location("review_gate", SCRIPT)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = ROOT / ".github" / "workflows" / "claude-md-review.yml"
+
 
 def review(login="reviewer", state="APPROVED", kind="User"):
     return {"user": {"login": login, "type": kind}, "state": state}
+
+
+def _entry(lines, key, indent):
+    """The inline value of `key:` at `indent` columns, and its block body."""
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if len(line) - len(line.lstrip()) != indent:
+            continue
+        if not stripped.startswith(f"{key}:"):
+            continue
+        inline = stripped[len(key) + 1 :].strip()
+        body = []
+        for following in lines[index + 1 :]:
+            text = following.strip()
+            if not text or text.startswith("#"):
+                continue
+            if len(following) - len(following.lstrip()) <= indent:
+                break
+            body.append(following)
+        return inline, body
+    return "", []
+
+
+def _scalars(text):
+    """The string values of a flow sequence, or of a single scalar."""
+    if text.startswith("[") and text.endswith("]"):
+        return [
+            item.strip().strip("'\"")
+            for item in text[1:-1].split(",")
+            if item.strip()
+        ]
+    return [text.strip("'\"")] if text else []
+
+
+def pull_request_paths(workflow=WORKFLOW):
+    """The `paths:` filter that makes this workflow run on a pull request."""
+    lines = workflow.read_text(encoding="utf-8").splitlines()
+    _, trigger = _entry(lines, "on", 0)
+    _, pull_request = _entry(trigger, "pull_request", 2)
+    inline, block = _entry(pull_request, "paths", 4)
+    if inline:
+        return _scalars(inline)
+    return [
+        line.strip()[2:].strip().strip("'\"")
+        for line in block
+        if line.strip().startswith("- ")
+    ]
 
 
 class ReviewGateTests(unittest.TestCase):
@@ -56,6 +108,37 @@ class ReviewGateTests(unittest.TestCase):
     def test_unrelated_and_nested_files_do_not_require_signoff(self):
         result, _ = self.judge(["README.md", "frontend/AGENTS.md", "docs/CLAUDE.md"])
         self.assertEqual(result, 0)
+
+    def test_gate_script_and_self_test_changes_need_no_signoff(self):
+        # These files must run the gate, not be guarded by it: requiring a
+        # sign-off to fix the gate would leave it unfixable in exactly the
+        # situation where it is wrong.
+        result, output = self.judge(
+            [
+                ".claude/scripts/check-claude-md-review.py",
+                ".claude/scripts/test_check_claude_md_review.py",
+            ]
+        )
+        self.assertEqual(result, 0)
+        self.assertNotIn("::error::", output)
+
+    def test_gate_script_pr_passes_through_the_cli(self):
+        files = [
+            {"filename": ".claude/scripts/check-claude-md-review.py"},
+            {"filename": ".claude/scripts/test_check_claude_md_review.py"},
+        ]
+
+        def api(path):
+            self.assertEqual(path, "pulls/42/files?per_page=100&page=1")
+            return files
+
+        with (
+            patch.object(gate, "_api", side_effect=api),
+            patch.object(gate.subprocess, "run") as run,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(gate.main(["--pr", "42"]), 0)
+            run.assert_not_called()
 
     def test_each_root_instruction_file_requires_signoff(self):
         for name in ("AGENTS.md", "CLAUDE.md"):
@@ -202,6 +285,37 @@ class ReviewGateTests(unittest.TestCase):
                 )
                 self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
                 self.assertNotIn("Traceback", proc.stderr)
+
+
+class WorkflowTriggerTests(unittest.TestCase):
+    """A change to the gate must run the gate's own proof.
+
+    The workflow runs `--self-test` before it judges a PR, but only for the
+    paths it triggers on. A gate whose own script or tests can change without
+    that self-test running is a gate that can stop judging correctly in
+    silence — the failure mode this whole workflow exists to prevent.
+    """
+
+    REQUIRED = (
+        "AGENTS.md",
+        ".claude/scripts/check-claude-md-review.py",
+        ".claude/scripts/test_check_claude_md_review.py",
+    )
+
+    def test_workflow_triggers_on_the_gate_and_its_self_test(self):
+        paths = pull_request_paths()
+        for path in self.REQUIRED:
+            with self.subTest(path=path):
+                self.assertIn(path, paths, f"{path} must run the gate")
+
+    def test_every_guarded_file_that_exists_triggers_the_workflow(self):
+        # CLAUDE.md is guarded where it exists; a root file the repo does not
+        # have cannot be edited, so it needs no trigger.
+        paths = pull_request_paths()
+        for name in gate.GUARDED:
+            with self.subTest(name=name):
+                if (ROOT / name).exists():
+                    self.assertIn(name, paths)
 
 
 if __name__ == "__main__":
