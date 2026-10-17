@@ -224,6 +224,17 @@ if [ "$sub" = save ]; then
   else
     reentry="cheese worktree <任务 id>（完整 id 见任务卡；也可以在任务目录里用 CHEESE_TOPIC 再跑一次）"
   fi
+  task_id=$(printf '%s' "$task_id" | tr 'A-F' 'a-f')
+
+  # 平台明确不套用的快照还在独立目录里时，这里先停：`cheese sync` 只在重试
+  # 标记还在时才先恢复，否则会把当前（没有那份改动的）检出做成新快照，平台
+  # 那份就不再是最近一版（_sync_task 与 _apply_snapshot）。
+  if uuid_like "$task_id"; then
+    aside=$(snapshot_set_aside "$task_id")
+    if [ -n "$aside" ]; then
+      die 3 "平台有一份快照没套进这个目录，它原样放在 $aside。现在同步会把当前状态做成新快照，把平台那份顶掉；先把它取回来、删掉那个目录，再 save。"
+    fi
+  fi
 
   printf '%s: 同步 %s\n' "$PROG" "$branch"
   sync_out=$(cheese sync 2>&1) || {
@@ -231,6 +242,15 @@ if [ "$sub" = save ]; then
     die 1 "cheese sync 失败（上面是它说的）。这一步没落到远端"
   }
   if [ -n "$sync_out" ]; then printf '%s\n' "$sync_out"; fi
+
+  # 同步过程中平台才决定不套用（重试标记在这一步被处理掉）：快照已经放到独立
+  # 目录，而这次备份已经把当前状态做成了新的一版。不能报「存好了」。
+  if uuid_like "$task_id"; then
+    aside=$(snapshot_set_aside "$task_id")
+    if [ -n "$aside" ]; then
+      die 3 "同步时平台把一份快照原样放到了 $aside，没套进这个目录。这里的内容已经做成新备份，但那份快照里的改动不在其中：先去 $aside 把东西取回来，别当成已经存好。"
+    fi
+  fi
 
   # 多步任务每交一步换一条分支（task/<id>、task/<id>-2……），`cheese sync` 会把
   # 目录跟过去，推的是新那条。照着同步前的名字核对，推成功了也会说成失败。

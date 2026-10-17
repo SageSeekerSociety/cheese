@@ -90,6 +90,11 @@ case ${1:-} in
     # 平台每备份一次就做一个新的快照提交，所以这个 ref 是往前顶的（真实现是本
     # 地用 update-ref + 传 bundle，这里用 --force 推同一个 ref 代替）。
     git push -q --force "$FAKE_REMOTE" "$snap:$(snapshot_ref)"
+    if [ "${FAKE_SYNC_SET_ASIDE:-}" = 1 ]; then
+      # 重试标记还在时 sync 会再试一次恢复；平台仍然拒绝套用，把快照放到独立
+      # 目录，然后照样把当前检出备份成新的一版（_restore_snapshot 返回真）。
+      mkdir -p "$HOME/.cheese/recovered/${CHEESE_TOPIC}-0123456789ab"
+    fi
     ;;
   worktree)
     id=${2:?}
@@ -412,6 +417,50 @@ def test_save_checks_the_branch_the_sync_moved_to(machine: Machine) -> None:
     assert machine.remote_tip(f"refs/heads/{BRANCH}-2") == machine.head()
 
 
+def test_save_refuses_while_the_set_aside_backup_is_still_there(
+    machine: Machine,
+) -> None:
+    """故意违规：恢复没接回来，接着跑默认的 save 会把平台那份顶掉。
+
+    `cheese sync` 只在重试标记还在时才先恢复；标记已被平台删掉、快照只剩在
+    `~/.cheese/recovered/` 里时，sync 会把当前（没有那份改动的）检出做成新的
+    最近一版。这时报「存好了」，等于把唯一一份没备份的活挤掉。
+    """
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+    machine.wipe()
+    refused(
+        machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1"),
+        3,
+        ".cheese/recovered",
+    )
+    tip = machine.remote_tip(f"refs/heads/{BRANCH}")
+
+    result = machine.run("save")
+
+    refused(result, 3, ".cheese/recovered", "顶掉")
+    assert machine.remote_tip(f"refs/heads/{BRANCH}") == tip
+    assert "换机后接回来" not in result.stdout
+
+
+def test_save_reports_a_snapshot_set_aside_during_the_sync(
+    machine: Machine,
+) -> None:
+    """故意违规：同步自己把快照放到独立目录时，不能只说「存好了」。
+
+    这一版的备份已经传上去了（提交确实到了远端），但那份快照里的改动不在
+    其中；人得先把它取回来。
+    """
+    machine.commit("step.py", "print(1)\n")
+
+    result = machine.run("save", FAKE_SYNC_SET_ASIDE="1")
+
+    refused(result, 3, "同步时平台", ".cheese/recovered")
+    assert "换机后接回来" not in result.stdout
+    # 提交确实推上去了：拒绝的理由是恢复，不是推送。
+    assert machine.remote_tip(f"refs/heads/{BRANCH}") == machine.head()
+
+
 def test_save_refuses_a_sync_that_leaves_the_task_branch(machine: Machine) -> None:
     """故意违规：同步把目录带到别处，推上去的就不是任务分支了。"""
     machine.commit("step.py", "print(1)\n")
@@ -666,6 +715,8 @@ def test_restore_refuses_when_the_remote_cannot_be_reached(
 
     refused(result, 3, "取不到远端")
     assert "与远端一致" not in result.stdout
+    # 提示里让用户把上面的输出报上来；那行得带着该跑的命令。
+    assert "远端现在是什么：git ls-remote origin refs/heads/" in result.stderr
 
 
 def test_restore_accepts_commits_the_snapshot_put_back_on_the_branch(
