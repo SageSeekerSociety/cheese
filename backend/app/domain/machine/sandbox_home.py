@@ -42,6 +42,7 @@ TOP_DEPTH = 4
 #: by test_footprint_root.py). Its files are readable by every user.
 CGROUP_ROOT = Path("/sys/fs/cgroup")
 SANDBOX_CGROUPS = CGROUP_ROOT / "cheese-sandboxes"
+MEMINFO = Path("/proc/meminfo")
 
 
 def destroy(cleanup, project, resource) -> dict:
@@ -158,8 +159,8 @@ def machine() -> dict:
     have taken, from its cgroup root, a counter the platform turns into a
     share between two readings; its one-minute load."""
     found = {}
-    total = _number(Path("/proc/meminfo"), "MemTotal:")
-    available = _number(Path("/proc/meminfo"), "MemAvailable:")
+    total = _number(MEMINFO, "MemTotal:")
+    available = _number(MEMINFO, "MemAvailable:")
     if total and available is not None:
         found["memory"] = total * 1024
         found["memory_available"] = available * 1024

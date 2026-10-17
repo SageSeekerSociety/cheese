@@ -169,6 +169,38 @@ def test_the_page_shows_what_each_host_and_its_sandboxes_use(cloud):  # noqa: F8
     )
 
 
+def test_a_sandbox_destroyed_while_its_host_is_read_does_not_stop_the_guard(
+    cloud,  # noqa: F811
+):
+    """The read takes up to two minutes; a sandbox destroyed meanwhile has no
+    row left for its usage. Its host's reading is still kept, and the guard
+    goes on to the next machine."""
+    first, second, _ = cloud.seats
+    working_on(cloud, first, "host-1")
+    working_on(cloud, second, "host-2")
+    gone = home_of(cloud, first)
+    hosts = {"host-1": host_of(cloud, first).id, "host-2": host_of(cloud, second).id}
+    kernel_says(
+        cloud,
+        {"host-1": memory(2), "host-2": memory(3)},
+        {"host-1": [{"resource": gone.resource_id, "memory": GIB}]},
+    )
+
+    async def destroyed_mid_read(device_id, action):
+        if device_id == "host-1" and action == "disk":
+            async with cloud.client.test_request_factory() as db:
+                await db.delete(await db.get(SandboxHome, gone.id))
+                await db.commit()
+
+    cloud.hosts.before = destroyed_mid_read
+
+    assert guard(cloud)["read"] == 2
+
+    rows = {h["id"]: h for h in page(cloud)["hosts"]}
+    assert rows[str(hosts["host-1"])]["usage"]["memory_used_bytes"] == 2 * GIB
+    assert rows[str(hosts["host-2"])]["usage"]["memory_used_bytes"] == 3 * GIB
+
+
 def test_a_host_whose_sandboxes_are_gone_is_still_read(cloud):  # noqa: F811
     seat = cloud.seats[0]
     working_on(cloud, seat, "host-1")
@@ -218,12 +250,14 @@ def test_a_spike_past_the_line_for_one_reading_is_not_reported(
     alerts,
 ):
     working_on(cloud, cloud.seats[0], "host-1")
-    machines = {"host-1": memory(15.5)}
+    machines = {"host-1": memory(4)}
     kernel_says(cloud, machines, {})
     guard(cloud)
-    readings_go_back(cloud, timedelta(seconds=60))
-    machines["host-1"] = memory(4)
-    guard(cloud)
+    # Past the line for one reading, after one below it, then below again.
+    for used in (15.5, 4):
+        readings_go_back(cloud, timedelta(seconds=60))
+        machines["host-1"] = memory(used)
+        guard(cloud)
 
     assert posted(cloud, alerts) == []
 

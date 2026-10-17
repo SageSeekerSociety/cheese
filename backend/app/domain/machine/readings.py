@@ -32,7 +32,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import alerting
 from app.core.config import settings
-from app.domain.machine.models import CloudHost, HostReading, SandboxUsage
+from app.domain.machine.models import (
+    CloudHost,
+    HostReading,
+    SandboxHome,
+    SandboxUsage,
+)
 
 logger = logging.getLogger("cheese.machine.readings")
 
@@ -124,48 +129,70 @@ async def record(
         load1=machine.get("load1"),
         sandboxes=len(groups) if groups is not None else None,
     )
-    session.add(row)
     homes = {(str(home.project_id), home.resource_id): home.id for home in live}
     by_resource = {home.resource_id: home.id for home in live}
+    usage: dict[uuid.UUID, dict] = {}
     for home in reading.get("homes") or []:
         home_id = homes.get((home["project"], home["resource"]))
         if home_id is not None:
-            await _usage(
-                session,
-                home_id,
-                disk_bytes=home["bytes"],
-                disk_inodes=home["inodes"],
-                disk_read_at=now,
+            usage.setdefault(home_id, {}).update(
+                disk_bytes=home["bytes"], disk_inodes=home["inodes"], disk_read_at=now
             )
     for group in groups or []:
         home_id = by_resource.get(group["resource"])
         if home_id is not None:
-            await _usage(
-                session,
-                home_id,
+            usage.setdefault(home_id, {}).update(
                 memory_bytes=group["memory"],
                 memory_peak_bytes=group.get("memory_peak"),
                 memory_read_at=now,
             )
-    await session.execute(delete(HostReading).where(HostReading.read_at < now - KEEP))
-    try:
-        await session.commit()
-    except IntegrityError:
-        # A sandbox destroyed, or its host given up, since it was read: what
-        # this reading said of it no longer has a row to belong to.
-        await session.rollback()
-        logger.info("a reading of %s outlived what it read", host.id)
+    # The read took up to two minutes: a sandbox destroyed meanwhile has no row
+    # left for its usage, and its reading is dropped rather than the host's.
+    if not await _write(session, row, usage, now) and not await _write(
+        session, row, {}, now
+    ):
         return
     _alert(host, row, previous)
 
 
-async def _usage(session: AsyncSession, home_id: uuid.UUID, **values) -> None:
-    statement = insert(SandboxUsage).values(home_id=home_id, **values)
-    await session.execute(
-        statement.on_conflict_do_update(
-            index_elements=[SandboxUsage.home_id], set_=values
+async def _write(
+    session: AsyncSession,
+    row: HostReading,
+    usage: dict[uuid.UUID, dict],
+    now: datetime,
+) -> bool:
+    """Write a host's reading and its sandboxes' usage in one transaction.
+    False, with nothing written, when a row it belongs to went meanwhile."""
+    try:
+        session.add(row)
+        present = (
+            set(
+                await session.scalars(
+                    select(SandboxHome.id).where(SandboxHome.id.in_(usage))
+                )
+            )
+            if usage
+            else set()
         )
-    )
+        for home_id in present:
+            values = usage[home_id]
+            await session.execute(
+                insert(SandboxUsage)
+                .values(home_id=home_id, **values)
+                .on_conflict_do_update(
+                    index_elements=[SandboxUsage.home_id], set_=values
+                )
+            )
+        await session.execute(
+            delete(HostReading).where(HostReading.read_at < now - KEEP)
+        )
+        await session.commit()
+    except IntegrityError:
+        # The rollback leaves ``row`` unsaved, for the caller to try again.
+        await session.rollback()
+        logger.info("a reading of host %s outlived what it read", row.host_id)
+        return False
+    return True
 
 
 def _alert(host: CloudHost, row: HostReading, previous: HostReading | None) -> None:

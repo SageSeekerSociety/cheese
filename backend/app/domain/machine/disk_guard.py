@@ -44,6 +44,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -228,8 +229,6 @@ class DiskGuard:
         await self._mark(device_id, full, filesystem)
         host = await self._repo.by_device(device_id)
         await self._session.commit()
-        if host is not None and not host.whole_machine:
-            await readings.record(self._session, host, reading, live, datetime.now(UTC))
         running = {
             (str(row.project_id), row.resource_id): row
             for row in live
@@ -270,6 +269,18 @@ class DiskGuard:
                 device_id, home["project"], home["resource"]
             ):
                 removed += 1
+        if host is not None and not host.whole_machine:
+            # Last, so keeping the reading for the machines page can never stand
+            # between a full disk and the eviction that frees it.
+            try:
+                await readings.record(
+                    self._session, host, reading, live, datetime.now(UTC)
+                )
+            except SQLAlchemyError:
+                await self._session.rollback()
+                logger.warning(
+                    "keeping the reading of %s failed", device_id, exc_info=True
+                )
         return {"read": 1, "walked": int(walk), "evicted": evicted, "removed": removed}
 
     async def _read(self, device_id: str, live: list, *, walk: bool) -> dict:
