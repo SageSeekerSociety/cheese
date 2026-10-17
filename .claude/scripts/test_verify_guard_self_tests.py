@@ -2299,9 +2299,10 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
 '''
 
-#: A helper takes a parameter named `argv` of its own, which shadows the
-#: module-level name exactly as `main`'s does; the entry call still settles
-#: `main`'s parameter, and the self-test really does nothing.
+#: A helper takes a parameter named `argv` of its own. That name holds what
+#: the callers pass, not what the entry call handed `main`, so no read of it
+#: may be settled from the entry point — even though the self-test here does
+#: nothing, the tool cannot say so and leaves the guard `unverified`.
 PY_HELPER_OWN_ARGV = '''#!/usr/bin/env python3
 import subprocess
 import sys
@@ -2336,7 +2337,8 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 '''
 
-#: The same shadow in a lambda, which is a scope too.
+#: The same shadow in a lambda; a lambda is a scope too, and its parameter is
+#: no more the entry value than a helper's.
 PY_LAMBDA_OWN_ARGV = '''#!/usr/bin/env python3
 import subprocess
 import sys
@@ -2404,6 +2406,245 @@ def main(argv):
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
+'''
+
+#: The gate itself sits behind a helper's own `argv` parameter, and the call
+#: passes a list of its own. Settling that gate from the entry call would drop
+#: the block that hands off to a sibling test and report a false
+#: `self-test-does-not-bite` for a guard whose self-test does fork.
+PY_HELPER_GATE_DELEGATES = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import argv
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def helper(argv):
+    if len(argv) > 1:
+        if "--self-test" in argv:
+            return check()
+    return 0
+
+
+def main(argv):
+    run_it = helper
+    if "--self-test" in argv:
+        run_it(["--self-test", "x"])
+        print("PASS: 什么都没测")
+        return 0
+    return 1 if violations_in(argv[1]) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
+#: Same shape without a module-level `argv` to fall back on: the entry call is
+#: the only settled value, so a gate read from the helper's own parameter could
+#: only be mistaken for it by ignoring whose parameter it is. `len(argv) == 2`
+#: is true of the hand-off list and false of the trimmed entry, so settling the
+#: helper's read would prune the hand-off and report a false finding.
+PY_HELPER_GATE_UNSETTLED_ENTRY = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def helper(argv):
+    if len(argv) == 2:
+        if "--self-test" in argv:
+            print("PASS: 测过了")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+def main(argv):
+    return helper(sys.argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
+#: A closure inside `main` that takes no `argv` of its own reads main's
+#: parameter, so the entry call still settles it.
+PY_NESTED_CLOSURE_ARGV = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    def show():
+        return argv
+
+    show()
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: A comprehension's own target is a scope of its own: `for argv in ...` here
+#: does not rebind main's parameter.
+PY_COMPREHENSION_TARGET = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    [argv for argv in range(3)]
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: `argv` as a keyword-only parameter is still the parameter the entry call
+#: fills, and `main(argv=sys.argv)` fills it with the whole command line.
+PY_KEYWORD_ONLY_ARGV = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(*, argv):
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(argv=sys.argv))
+'''
+
+#: `main(*argv)` never holds the command line: `main(sys.argv)` puts it inside a
+#: one-element tuple. Settling a gate from that name is judging a value it
+#: never receives, and here it prunes the hand-off branch that really runs
+#: during a self-test — a false `self-test-does-not-bite` for a guard whose
+#: self-test does fork.
+PY_MAIN_VARARG = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(*argv):
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 测过了")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: `sys.argv[1:1]` is empty, not the trimmed command line: only a slice with
+#: no upper bound and no step is the `[1:]` idiom.
+PY_SLICE_EMPTY = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) == 0:
+        if "--self-test" in argv:
+            print("PASS: 测过了")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:1]))
 '''
 
 #: The entry call passes the command line as a keyword argument; it is the same
@@ -3328,23 +3569,86 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(code, 2, output)
         self.assertEqual(guard["status"], "unverified", guard)
 
-    def test_a_helper_parameter_shadows_the_module_level_name(self) -> None:
-        """A helper's own `argv` parameter is as good a shadow as `main`'s."""
+    def test_a_helper_parameter_is_not_the_entry_value(self) -> None:
+        """A helper's own `argv` holds what its callers pass, not the entry argv."""
         code, guard, output = self._only(
             {"helper.py": PY_HELPER_OWN_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_a_lambda_parameter_is_not_the_entry_value(self) -> None:
+        """A lambda's parameter is no more the entry value than a helper's."""
+        code, guard, output = self._only(
+            {"lambda.py": PY_LAMBDA_OWN_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_a_gate_behind_a_helper_parameter_is_not_settled(self) -> None:
+        """Settling it would prune the hand-off and report a false finding."""
+        code, guard, output = self._only(
+            {"gate.py": PY_HELPER_GATE_DELEGATES},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_a_gate_on_a_helpers_argument_is_not_the_trimmed_entry(self) -> None:
+        """Without a module-level `argv`, the helper's value is all there is to confuse."""
+        code, guard, output = self._only(
+            {"gate.py": PY_HELPER_GATE_UNSETTLED_ENTRY},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_a_closure_without_its_own_parameter_reads_mains(self) -> None:
+        """A nested function that does not declare `argv` sees main's parameter."""
+        code, guard, output = self._only(
+            {"closure.py": PY_NESTED_CLOSURE_ARGV},
             {"test_counted.py": ELSE_SIBLING},
         )
         self.assertEqual(code, 1, output)
         self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
 
-    def test_a_lambda_parameter_shadows_the_module_level_name(self) -> None:
-        """A lambda is a scope too, so its `argv` parameter shadows as well."""
+    def test_a_comprehension_target_does_not_rebind_the_parameter(self) -> None:
+        """`for argv in ...` inside a comprehension is that comprehension's own."""
         code, guard, output = self._only(
-            {"lambda.py": PY_LAMBDA_OWN_ARGV},
+            {"target.py": PY_COMPREHENSION_TARGET},
             {"test_counted.py": ELSE_SIBLING},
         )
         self.assertEqual(code, 1, output)
         self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_keyword_only_parameter_is_the_one_the_entry_fills(self) -> None:
+        """`def main(*, argv)` is the same parameter as the positional one."""
+        code, guard, output = self._only(
+            {"kwonly.py": PY_KEYWORD_ONLY_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_variadic_parameter_does_not_hold_the_entry_value(self) -> None:
+        """`main(*argv)` collects the arguments; it is not the argument."""
+        code, guard, output = self._only(
+            {"star.py": PY_MAIN_VARARG},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_a_slice_with_an_upper_bound_is_not_the_trimmed_form(self) -> None:
+        """`sys.argv[1:1]` is empty, so nothing may be settled from it."""
+        code, guard, output = self._only(
+            {"slice.py": PY_SLICE_EMPTY},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
 
     def test_a_helper_without_the_parameter_still_reads_the_module_name(self) -> None:
         """One unshadowed read anywhere leaves the entry call unable to settle it."""

@@ -586,14 +586,16 @@ def _argv_from_argument(node: ast.expr) -> str | None:
 
 
 def _a_main_parameter_shadows_argv(tree: ast.Module, nodes: list[ast.AST]) -> bool:
-    """True when every bare `argv` read resolves to a parameter named `argv`.
+    """True when every bare `argv` read holds the value `main` was handed.
 
     A module that binds `argv` at top level makes the name mean the process
-    command line. `main(argv)` shadows that for its own body, so the entry
-    call settles what it holds there; a helper with an `argv` parameter of its
-    own is shadowed just the same. The module binding is harmless only when no
-    read reaches it — a read that does is not settled by the entry call, and
-    then nothing may be concluded from what the call passes.
+    command line. `main(argv)` shadows that, and so do the closures it defines
+    that take no `argv` of their own: the entry call settles all of those. A
+    helper with an `argv` parameter of its own is *not* covered — that name
+    holds whatever the callers pass, which the entry call says nothing about,
+    and a gate read from it would be judged from a value it never receives.
+    Only when every read is one the entry call settles may the module binding
+    be ignored.
     """
     mains = [
         node
@@ -602,52 +604,82 @@ def _a_main_parameter_shadows_argv(tree: ast.Module, nodes: list[ast.AST]) -> bo
     ]
     if not mains:
         return False
+    for function in mains:
+        if not _takes_entry_argv(function.args):
+            return False
     reads = {
         id(node)
         for node in nodes
         if isinstance(node, ast.Name) and node.id == "argv" and isinstance(node.ctx, ast.Load)
     }
-    return reads <= _shadowed_argv_reads(tree)
+    return reads <= _argv_reads_main_hands_over(mains)
 
 
 def _declares_argv(arguments: ast.arguments) -> bool:
-    """True when one of the parameters is itself named `argv`."""
-    parameters = (
+    """True when one of the parameters is itself named `argv`.
+
+    `*argv` and `**argv` count here: those do bind the name in the body, so a
+    gate read from them is not a read of whatever the enclosing scope calls
+    `argv`.
+    """
+    return any(parameter.arg == "argv" for parameter in _argv_parameters(arguments))
+
+
+def _takes_entry_argv(arguments: ast.arguments) -> bool:
+    """True when `argv` is a parameter the entry call itself fills.
+
+    `*argv` and `**argv` are left out. `main(sys.argv)` hands a `def
+    main(*argv)` a one-element tuple holding the command line, not the command
+    line; a gate read from it would be judged from a value it never receives,
+    which can prune a hand-off branch and invent a finding.
+    """
+    parameters = (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)
+    return any(parameter.arg == "argv" for parameter in parameters)
+
+
+def _argv_parameters(arguments: ast.arguments) -> tuple[ast.arg, ...]:
+    """Every parameter named in the signature, variadic ones included."""
+    return (
         *arguments.posonlyargs,
         *arguments.args,
         *arguments.kwonlyargs,
         *([arguments.vararg] if arguments.vararg else []),
         *([arguments.kwarg] if arguments.kwarg else []),
     )
-    return any(parameter.arg == "argv" for parameter in parameters)
 
 
-def _shadowed_argv_reads(tree: ast.Module) -> set[int]:
-    """Ids of the bare `argv` reads a parameter shadows.
+def _argv_reads_main_hands_over(mains: list[ast.AST]) -> set[int]:
+    """Ids of the bare `argv` reads that hold what the entry call passed.
 
-    A parameter covers the function body only: decorators, annotations and
-    default values are evaluated where the function is defined, so they are
-    walked with the scope that encloses it.
+    Seeded at each `main`, the walk carries "this name is main's parameter"
+    into nested bodies. A nested function or lambda that declares an `argv`
+    parameter of its own drops it for its body: there the name is whatever
+    the callers pass. Decorators, annotations and default values are
+    evaluated where the function is defined, not in its body, so they keep
+    the state of the scope that encloses it.
     """
-    shadowed: set[int] = set()
+    seeded = {id(function) for function in mains}
+    handed: set[int] = set()
 
-    def visit(node: ast.AST, covered: bool) -> None:
+    def visit(node: ast.AST, has_main_argv: bool) -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             arguments = node.args
-            inner = covered or _declares_argv(arguments)
-            for statement in getattr(node, "decorator_list", ()):
-                visit(statement, covered)
+            rebinds = _declares_argv(arguments)
+            entry = id(node) in seeded and _takes_entry_argv(arguments)
+            inner = entry or (not rebinds and has_main_argv)
+            for decorator in getattr(node, "decorator_list", ()):
+                visit(decorator, has_main_argv)
             for default in (
                 *arguments.defaults,
                 *(item for item in arguments.kw_defaults if item is not None),
             ):
-                visit(default, covered)
+                visit(default, has_main_argv)
             for parameter in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs):
                 if parameter.annotation is not None:
-                    visit(parameter.annotation, covered)
+                    visit(parameter.annotation, has_main_argv)
             returns = getattr(node, "returns", None)
             if returns is not None:
-                visit(returns, covered)
+                visit(returns, has_main_argv)
             if isinstance(node, ast.Lambda):
                 visit(node.body, inner)
             else:
@@ -655,17 +687,30 @@ def _shadowed_argv_reads(tree: ast.Module) -> set[int]:
                     visit(statement, inner)
             return
         if (
-            covered
+            has_main_argv
             and isinstance(node, ast.Name)
             and node.id == "argv"
             and isinstance(node.ctx, ast.Load)
         ):
-            shadowed.add(id(node))
+            handed.add(id(node))
         for child in ast.iter_child_nodes(node):
-            visit(child, covered)
+            visit(child, has_main_argv)
 
-    visit(tree, False)
-    return shadowed
+    for function in mains:
+        visit(function, False)
+    return handed
+
+
+def _handed_argv_reads(tree: ast.Module) -> set[int]:
+    """The bare `argv` reads in `tree` that hold what the entry call passed."""
+    mains = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "main"
+        and _takes_entry_argv(node.args)
+    ]
+    return _argv_reads_main_hands_over(mains)
 
 
 def _self_test_argv(tree: ast.Module) -> list[str] | None:
@@ -678,9 +723,10 @@ def _self_test_argv(tree: ast.Module) -> list[str] | None:
     all, and a `main` that reassigns `argv` replaces whatever it was given.
     A module that binds `argv` itself — `from sys import argv`, `argv =
     sys.argv` — reads that name from the process command line unless every
-    read of it sits in a function or lambda that takes a parameter of its own
-    named `argv`: that parameter shadows the module-level name for the body,
-    so the entry call still says what the gate sees. Everything else above
+    read of it is one `main` hands over: in `main`'s own body, or in a
+    closure it defines that declares no `argv` of its own. A helper with a
+    parameter of that name holds whatever its callers pass, so a read there
+    is not the entry value and keeps the hand off. Everything else above
     comes back `None`, and the name
     `argv` then stays unsettled —
     an unsettled gate keeps the block on the path instead of inventing a
@@ -717,6 +763,12 @@ def _self_test_argv(tree: ast.Module) -> list[str] | None:
 
 _UNKNOWN = object()
 
+#: Ids, in the tree now being judged, of the bare `argv` reads that hold what
+#: the entry call handed `main`. `_self_test_scope` sets it before any
+#: judgement. Any other read of the name belongs to some other binding — a
+#: helper's own parameter, the module — so it is not the entry value.
+_HANDED_ARGV_READS: set[int] = set()
+
 
 def _settled(node: ast.AST, argv: list[str] | None = _SELF_TEST_ARGV):
     """The value of a small expression under the `--self-test` invocation.
@@ -724,14 +776,17 @@ def _settled(node: ast.AST, argv: list[str] | None = _SELF_TEST_ARGV):
     Only what that invocation fixes is known: the command line and the flag.
     `argv` is that command line as the guard's own entry call trims it, and
     `None` means the call could not be pinned down, so the name stays unknown;
-    `sys.argv` is the process command line and settles either way. Anything else — a file read, a platform
-    check, a helper call — is `_UNKNOWN`, and a block guarded by it cannot be
-    shown to run.
+    `sys.argv` is the process command line and settles either way. A bare
+    `argv` settles only where it is `main`'s own parameter. Anything else — a
+    file read, a platform check, a helper call — is `_UNKNOWN`, and a block
+    guarded by it cannot be shown to run.
     """
     if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, ast.Name) and node.id == "argv":
-        return _UNKNOWN if argv is None else argv
+        if argv is None or id(node) not in _HANDED_ARGV_READS:
+            return _UNKNOWN
+        return argv
     if (
         isinstance(node, ast.Attribute)
         and node.attr == "argv"
@@ -1087,6 +1142,8 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             named.setdefault(node.name, []).append(node)
     argv = _self_test_argv(tree)
+    global _HANDED_ARGV_READS
+    _HANDED_ARGV_READS = _handed_argv_reads(tree)
     parents: dict[ast.AST, ast.AST] = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
