@@ -13,9 +13,13 @@
 # script never reads it to decide existence.
 #
 # The second question is about that cache: a branch can exist while the
-# `origin/main` this worktree diffs and merges against is behind the remote's.
+# `origin/main` this worktree diffs and merges against is not the remote's.
 # The script names that and prints the one command that fixes it; `--fetch`
-# runs that command and re-reads the result.
+# runs that command and re-reads the result. The command carries an explicit
+# refspec: a bare `git fetch origin main` updates FETCH_HEAD and, in a
+# checkout whose refspec does not map main — or across a tag that happens to
+# be named main — exits 0 without moving `refs/remotes/origin/main`, which
+# would leave the report stale forever.
 #
 # Usage: check-remote-branch.sh [--remote NAME] [--fetch] <branch>
 #        check-remote-branch.sh --self-test
@@ -39,12 +43,14 @@
 #   VERDICT           one sentence saying what was found
 #
 # Exit 0 branch exists and `origin/main` is current (or was refreshed).
-# Exit 1 the branch does not exist on the remote.
+# Exit 1 the branch does not exist on the remote. This wins over exit 3: a
+#        caller that reads only the code must never see "the branch exists"
+#        for one that does not.
 # Exit 2 cannot judge: no such remote, or `ls-remote` failed (network, auth).
 #        This is deliberately not exit 1 — an unreadable remote is not an
 #        absent branch, and the fix is different.
 # Exit 3 the branch exists but the base is not current — `origin/main` is
-#        behind the remote, or the remote has no main to compare against.
+#        not the remote's, or the remote has no main to compare against.
 #        NEXT says what to run.
 set -euo pipefail
 
@@ -69,7 +75,13 @@ while [ "$#" -gt 0 ]; do
       REMOTE="$2"; shift 2 ;;
     --remote=*) REMOTE="${1#--remote=}"; shift ;;
     -h|--help) usage; exit 0 ;;
-    --) shift; [ "$#" -gt 0 ] && { BRANCH="$1"; shift; }; break ;;
+    --)
+      shift
+      if [ "$#" -gt 0 ]; then
+        [ -z "$BRANCH" ] || { echo "FAIL: one branch at a time (got '$BRANCH' and '$1')" >&2; exit 2; }
+        BRANCH="$1"; shift
+      fi
+      break ;;
     -*) echo "FAIL: unknown option: $1" >&2; usage >&2; exit 2 ;;
     *)
       [ -z "$BRANCH" ] || { echo "FAIL: one branch at a time (got '$BRANCH' and '$1')" >&2; exit 2; }
@@ -125,14 +137,14 @@ if [ "$SELF_TEST" = 1 ]; then
   verdict "$tmp/clone" feature/only-on-remote
   [ "$CODE" -eq 0 ] || self_fail "a branch only on the remote must read as existing (exit $CODE)"
   says "EXISTS: yes" "the report must say the branch exists"
-  says "REMOTE_SHA: " "the report must carry the remote commit"
+  says "REMOTE_SHA: $(git -C "$tmp/seed" rev-parse refs/heads/feature/only-on-remote)" "the report must carry the remote commit"
   says "ORIGIN_MAIN: fresh" "a fresh clone's origin/main must read as fresh"
 
   # The other direction: a name nobody pushed is absent, not unknown.
   verdict "$tmp/clone" feature/never-pushed
   [ "$CODE" -eq 1 ] || self_fail "a branch absent from the remote must exit 1 (exit $CODE)"
   says "EXISTS: no" "the report must say the branch is absent"
-  says "NEXT: " "the report must name what to do next"
+  says "NEXT: git push -u origin HEAD:feature/never-pushed" "the report must name the push that creates it"
 
   # A remote that cannot be read is not an absent branch.
   verdict "$tmp/clone" --remote no-such-remote main
@@ -152,16 +164,86 @@ if [ "$SELF_TEST" = 1 ]; then
   verdict "$tmp/clone" feature/only-on-remote
   [ "$CODE" -eq 3 ] || self_fail "a stale origin/main must exit 3 (exit $CODE)"
   says "ORIGIN_MAIN: stale" "the report must say origin/main is stale"
-  says "NEXT: git fetch origin main" "the report must name the command that fixes it"
+  says "NEXT: git fetch origin +refs/heads/main:refs/remotes/origin/main" "the report must name the command that fixes it"
 
-  # --fetch runs it, and the second reading is the one that counts.
+  # --fetch runs it, and the second reading is the one that counts. The cache
+  # itself has to move: a report that says "fresh" over an unchanged ref is
+  # the failure this case exists for.
   verdict "$tmp/clone" --fetch feature/only-on-remote
   [ "$CODE" -eq 0 ] || self_fail "--fetch must clear the stale base (exit $CODE, got: $OUT)"
   says "ORIGIN_MAIN: fresh" "after --fetch, origin/main must read as fresh"
   says "NEXT: none" "with nothing left to fix, NEXT must be none"
+  [ "$(git -C "$tmp/clone" rev-parse refs/remotes/origin/main)" = "$(git -C "$tmp/seed" rev-parse refs/heads/main)" ] \
+    || self_fail "--fetch must move refs/remotes/origin/main to the remote's commit"
+
+  # A tag named main must not capture the fetch: `git fetch origin main`
+  # resolves the bare name to the tag and exits 0 without moving the cache.
+  git init -q --bare "$tmp/tagremote.git"
+  git init -q -b main "$tmp/tagseed"
+  git -C "$tmp/tagseed" "${ident[@]}" commit -q --allow-empty -m one
+  git -C "$tmp/tagseed" tag main
+  git -C "$tmp/tagseed" remote add origin "$tmp/tagremote.git"
+  git -C "$tmp/tagseed" push -q origin refs/heads/main:refs/heads/main refs/tags/main:refs/tags/main
+  git clone -q --single-branch --branch main "$tmp/tagremote.git" "$tmp/tagclone"
+  git -C "$tmp/tagseed" "${ident[@]}" commit -q --allow-empty -m two
+  git -C "$tmp/tagseed" push -q origin refs/heads/main:refs/heads/main
+  verdict "$tmp/tagclone" --fetch main
+  [ "$CODE" -eq 0 ] || self_fail "a tag named main must not keep the base stale (exit $CODE, got: $OUT)"
+  [ "$(git -C "$tmp/tagclone" rev-parse refs/remotes/origin/main)" = "$(git -C "$tmp/tagseed" rev-parse refs/heads/main)" ] \
+    || self_fail "--fetch must move the cache even with a tag named main"
+
+  # A checkout cloned from another branch does not track main at all, so a
+  # bare-name fetch would exit 0 and leave the cache missing forever.
+  git init -q --bare "$tmp/narrow.git"
+  git init -q -b main "$tmp/narrowseed"
+  git -C "$tmp/narrowseed" "${ident[@]}" commit -q --allow-empty -m one
+  git -C "$tmp/narrowseed" branch topic
+  git -C "$tmp/narrowseed" remote add origin "$tmp/narrow.git"
+  git -C "$tmp/narrowseed" push -q origin main topic
+  git clone -q --single-branch --branch topic "$tmp/narrow.git" "$tmp/narrowclone"
+  if git -C "$tmp/narrowclone" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
+    self_fail "the narrow fixture unexpectedly tracks main"
+  fi
+  verdict "$tmp/narrowclone" --fetch topic
+  [ "$CODE" -eq 0 ] || self_fail "a single-branch clone of another branch must converge (exit $CODE, got: $OUT)"
+  [ "$(git -C "$tmp/narrowclone" rev-parse refs/remotes/origin/main)" = "$(git -C "$tmp/narrowseed" rev-parse refs/heads/main)" ] \
+    || self_fail "--fetch must create the main cache in a checkout that did not track it"
+
+  # A remote with no main cannot be called fresh.
+  git init -q --bare "$tmp/nomain.git"
+  git init -q -b trunk "$tmp/nomainseed"
+  git -C "$tmp/nomainseed" "${ident[@]}" commit -q --allow-empty -m one
+  git -C "$tmp/nomainseed" branch feature/trunk
+  git -C "$tmp/nomainseed" remote add origin "$tmp/nomain.git"
+  git -C "$tmp/nomainseed" push -q origin trunk feature/trunk
+  git clone -q --single-branch --branch trunk "$tmp/nomain.git" "$tmp/nomainclone"
+  verdict "$tmp/nomainclone" feature/trunk
+  [ "$CODE" -eq 3 ] || self_fail "a remote without main must exit 3, not 0 (exit $CODE, got: $OUT)"
+  says "ORIGIN_MAIN: absent" "a remote without main must read as absent"
+  says "NEXT: git ls-remote --symref origin HEAD" "the report must name the default-branch probe"
+
+  # A cache that was never written is as stale as a disagreeing one.
+  git -C "$tmp/clone" update-ref -d refs/remotes/origin/main
+  verdict "$tmp/clone" feature/only-on-remote
+  [ "$CODE" -eq 3 ] || self_fail "a missing origin/main must exit 3 (exit $CODE, got: $OUT)"
+  says "ORIGIN_MAIN: stale" "a missing origin/main must read as stale"
+  says "LOCAL_ORIGIN_MAIN: -" "a missing origin/main must read as -"
+
+  # A failed fetch must not turn an absent branch into exit 3: the exit code
+  # says "the branch exists", and a caller that reads only it would be misled.
+  git -C "$tmp/seed" "${ident[@]}" commit -q --allow-empty -m three
+  git -C "$tmp/seed" push -q origin main
+  mkdir -p "$tmp/clone/.git/refs/remotes/origin"
+  : > "$tmp/clone/.git/refs/remotes/origin/main.lock"
+  verdict "$tmp/clone" --fetch feature/never-pushed
+  rm -f "$tmp/clone/.git/refs/remotes/origin/main.lock"
+  [ "$CODE" -eq 1 ] || self_fail "an absent branch must exit 1 even when the fetch fails (exit $CODE, got: $OUT)"
+  says "EXISTS: no" "the failed fetch must not change the branch answer"
 
   echo "PASS: check-remote-branch self-test (remote-only branch, absent branch,"
-  echo "      unreadable remote, name forms, stale base, --fetch, fresh base)"
+  echo "      unreadable remote, name forms, stale base, --fetch that moves the"
+  echo "      cache, a tag named main, a checkout that did not track main, a"
+  echo "      remote without main, a missing cache, a failed fetch)"
   exit 0
 fi
 
@@ -192,6 +274,12 @@ fi
 # so a wildcard in a branch name cannot widen the match.
 ref="refs/heads/$BRANCH"
 main_ref="refs/heads/main"
+# The fetch is spelled with its refspec. `git fetch origin main` resolves the
+# bare name (a tag named main wins) and, in a checkout whose refspec does not
+# map main, writes only FETCH_HEAD — both exit 0 without moving the cache, so
+# NEXT would name a command that cannot change the verdict.
+main_fetch="+refs/heads/main:refs/remotes/$REMOTE/main"
+fetch_cmd="git fetch $REMOTE $main_fetch"
 tmp_err="$(mktemp)"
 trap 'rm -f "$tmp_err"' EXIT
 
@@ -223,37 +311,45 @@ elif [ -n "$local_main" ] && [ "$local_main" = "$remote_main" ]; then
   origin_main=fresh
 fi
 
-next="none"
-if [ "$origin_main" = stale ]; then
-  next="git fetch $REMOTE main"
-elif [ "$origin_main" = absent ]; then
-  next="git ls-remote --symref $REMOTE HEAD   # which branch is the default?"
-fi
-
-if [ "$FETCH" = 1 ] && [ "$origin_main" = stale ] && [ -n "$remote_main" ]; then
-  if ! git fetch --quiet "$REMOTE" main 2>"$tmp_err"; then
-    printf 'BRANCH: %s\nREMOTE: %s\nEXISTS: %s\nREMOTE_SHA: %s\nORIGIN_MAIN: stale\nLOCAL_ORIGIN_MAIN: %s\nREMOTE_MAIN: %s\nNEXT: git fetch %s main\nVERDICT: the branch answer stands, but the fetch failed (%s)\n' \
-      "$BRANCH" "$REMOTE" "$exists" "${branch_sha:--}" "${local_main:--}" "$remote_main" "$REMOTE" \
-      "$(one_line "$tmp_err")"
+fetch_ran=0
+if [ "$FETCH" = 1 ] && [ "$origin_main" = stale ]; then
+  if ! git fetch --quiet "$REMOTE" "$main_fetch" 2>"$tmp_err"; then
+    printf 'BRANCH: %s\nREMOTE: %s\nEXISTS: %s\nREMOTE_SHA: %s\nORIGIN_MAIN: stale\nLOCAL_ORIGIN_MAIN: %s\nREMOTE_MAIN: %s\nNEXT: %s\nVERDICT: the branch answer stands, but the fetch failed (%s)\n' \
+      "$BRANCH" "$REMOTE" "$exists" "${branch_sha:--}" "${local_main:--}" "$remote_main" \
+      "$fetch_cmd" "$(one_line "$tmp_err")"
+    # The branch question is the primary answer, so its code wins: a caller
+    # must never read exit 3 ("the branch exists") for an absent branch.
+    if [ "$exists" = no ]; then exit 1; fi
     exit 3
   fi
+  fetch_ran=1
   local_main="$(git rev-parse --verify --quiet "refs/remotes/$REMOTE/main" || true)"
   if [ -n "$local_main" ] && [ "$local_main" = "$remote_main" ]; then
     origin_main=fresh
-    next=none
   fi
+fi
+
+next="none"
+if [ "$exists" = no ]; then
+  next="git push -u $REMOTE HEAD:$BRANCH   # to create it"
+elif [ "$origin_main" = stale ]; then
+  next="$fetch_cmd"
+elif [ "$origin_main" = absent ]; then
+  next="git ls-remote --symref $REMOTE HEAD   # which branch is the default?"
 fi
 
 verdict=""
 if [ "$exists" = no ]; then
   verdict="the branch does not exist on $REMOTE"
-  [ "$next" = none ] && next="git push -u $REMOTE HEAD:$BRANCH   # to create it"
+  [ "$origin_main" = fresh ] || verdict="$verdict; $REMOTE/main is not the current base here either"
 elif [ "$origin_main" = fresh ]; then
   verdict="the branch exists on $REMOTE and origin/main is current"
 elif [ "$origin_main" = absent ]; then
   verdict="the branch exists on $REMOTE, but $REMOTE has no main to compare against"
+elif [ "$fetch_ran" = 1 ]; then
+  verdict="the branch exists on $REMOTE, but the fetch succeeded and refs/remotes/$REMOTE/main still did not move"
 else
-  verdict="the branch exists on $REMOTE, but this checkout's origin/main is behind the remote"
+  verdict="the branch exists on $REMOTE, but this checkout's origin/main is not the remote's"
 fi
 
 printf 'BRANCH: %s\nREMOTE: %s\nEXISTS: %s\nREMOTE_SHA: %s\nORIGIN_MAIN: %s\nLOCAL_ORIGIN_MAIN: %s\nREMOTE_MAIN: %s\nNEXT: %s\nVERDICT: %s\n' \
