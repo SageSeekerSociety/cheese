@@ -36,6 +36,9 @@ BOX_LABEL_PREFIX = "cheese-ci-box-"
 #: page an unreadable runner API used to produce every half hour.
 POOL_DOWN = "CI 机器掉了：{problems}"
 COULD_NOT_JUDGE = "读不到 CI 机器列表（{reason}），这一项没有结论，不是机器掉了"
+COULD_NOT_INTERPRET = (
+    "CI 机器列表读到了，但这一项没有得出结论（{reason}），不是机器掉了"
+)
 
 
 def fetch_runners(repo: str, token: str) -> list[dict]:
@@ -125,7 +128,6 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         runners = fetch_runners(args.repo, args.token)
-        healthy, problems = assess(runners)
     except urllib.error.HTTPError as error:
         reason = f"HTTP {error.code}"
     except urllib.error.URLError as error:
@@ -143,6 +145,15 @@ def main(argv: list[str] | None = None) -> int:
         # instead of guessing; the run log has the traceback.
         reason = f"{type(error).__name__}: {error}"
     else:
+        try:
+            healthy, problems = assess(runners)
+        except Exception as error:
+            # The list arrived; what failed is reading it. Say that, rather
+            # than claiming the list could not be fetched.
+            reason = f"{type(error).__name__}: {error}"
+            print(f"::warning::could not interpret the runner list: {reason}")
+            write_alert(COULD_NOT_INTERPRET.format(reason=reason))
+            return 2
         for line in healthy:
             print(f"ok   {line}")
         for line in problems:

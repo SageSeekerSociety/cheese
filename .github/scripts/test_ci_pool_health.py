@@ -168,6 +168,14 @@ class PoolHealth(unittest.TestCase):
             code = pool.main([])
         return code, _outputs(output)
 
+    def test_a_healthy_pool_exits_zero_and_sends_no_alert(self) -> None:
+        """The third of the three dispatch answers, through main(): a healthy
+        pool must not page anyone. It guards the dispatch rather than the bug
+        this change fixes, which is why it is green before the change too."""
+        code, outputs = self._run_main(runners=[runner("r1", "1")])
+        self.assertEqual(code, 0)
+        self.assertNotIn("alert", outputs)
+
     def test_a_missing_machine_says_a_machine_is_down(self) -> None:
         """The one failure that really is a machine lost has to say so, and
         name it, so the reader is not left to open the run log."""
@@ -177,6 +185,19 @@ class PoolHealth(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("CI 机器掉了", outputs["alert"])
         self.assertIn("cheese-ci-box-2", outputs["alert"])
+
+    def test_an_uninterpretable_runner_list_does_not_claim_it_was_unreadable(
+        self,
+    ) -> None:
+        """The list arrived; reading it failed. The alert has to say which, or
+        the reader goes looking at an API that actually answered."""
+        code, outputs = self._run_main(
+            runners=[{"name": "r1", "status": "online", "labels": [{"id": 1}]}]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("读到了", outputs["alert"])
+        self.assertNotIn("读不到", outputs["alert"])
+        self.assertNotIn("CI 机器掉了", outputs["alert"])
 
     def test_a_forbidden_runner_list_says_it_could_not_judge(self) -> None:
         """The API refusing to answer is the check failing to see the pool. It
