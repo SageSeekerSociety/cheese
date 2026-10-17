@@ -3,8 +3,8 @@
 Two tiers, one judge. A DRAFT pull request runs only the fast tier — the
 bounded local evidence `ci-fast.py --tier quick` produces — because a draft is
 work in progress, not a delivery to review. Every other run is the full tier:
-each suite the merge diff selects (with ``e2e`` and ``remote`` deferred from
-``pull_request`` to ``merge_group``). The tier is decided HERE, from the event, so
+each suite the merge diff selects (with backend ``integration``, ``e2e`` and
+``remote`` deferred from ``pull_request`` to ``merge_group``). The tier is decided HERE, from the event, so
 the check a draft produces can never be the one branch protection requires:
 
 - a draft pull_request run is named ``CI required (draft quick)`` (the
@@ -12,8 +12,8 @@ the check a draft produces can never be the one branch protection requires:
   succeed — every full suite must be SKIPPED, so a draft's green can never be
   read as the full gate's green;
 - a merge_group entry, or any pull_request that is not a draft, is named ``CI
-  required`` and requires the selected suites (on ``pull_request``, ``e2e`` and
-  ``remote`` are deferred to ``merge_group``).
+  required`` and requires the selected suites (on ``pull_request``, backend
+  ``integration``, ``e2e`` and ``remote`` are deferred to ``merge_group``).
 
 Fail closed: an event this module cannot read as a non-draft pull_request or a
 merge queue entry is the FULL tier (the real gate), never the fast one.
@@ -33,8 +33,19 @@ PATHS = json.loads(Path(__file__).with_name("required-ci-paths.json").read_text(
 TIERS = ("full", "quick")
 
 #: Suites deferred to the merge queue: on ``pull_request`` events ``scope``
-#: always outputs ``false`` for them and ``check`` expects ``skipped``.
+#: always outputs ``false`` for them and ``check`` expects ``skipped`` (while
+#: ``branch_heavy=false`` tells ``test.yml`` to skip backend ``integration``).
 QUEUE_ONLY_SUITES = ("e2e", "remote")
+
+
+def branch_heavy_for(event_name):
+    """Whether heavy suites (backend integration, e2e, remote) run on this event.
+
+    On ``pull_request`` runs only the cheap suites run and heavy suites are
+    deferred to ``merge_group``. Any other or unreadable event returns ``True``
+    (fail closed).
+    """
+    return event_name != "pull_request"
 
 
 def tier_for(event_name, event):
@@ -102,7 +113,7 @@ def select(paths, event_name=None):
         or any(fnmatch.fnmatchcase(path, pattern) for path in paths for pattern in patterns)
         for suite, patterns in PATHS.items()
     }
-    if event_name == "pull_request":
+    if event_name is not None and not branch_heavy_for(event_name):
         for suite in QUEUE_ONLY_SUITES:
             selected[suite] = False
     return selected
@@ -136,6 +147,17 @@ def failures(needs, expected_tier, event_name=""):
         return [f"scope tier missing or invalid: {tier!r}"]
     if tier != expected_tier:
         return [f"scope tier {tier!r} does not match the event's {expected_tier!r}"]
+    branch_heavy = outputs.get("branch_heavy")
+    if branch_heavy is not None:
+        if branch_heavy not in ("true", "false"):
+            return [f"scope branch_heavy invalid: {branch_heavy!r}"]
+        if event_name:
+            expected_heavy = str(branch_heavy_for(event_name)).lower()
+            if branch_heavy != expected_heavy:
+                return [
+                    f"scope branch_heavy {branch_heavy!r} does not match "
+                    f"the event's {expected_heavy!r}"
+                ]
     errors = []
     for suite in PATHS:
         selected = outputs.get(suite)
@@ -147,7 +169,7 @@ def failures(needs, expected_tier, event_name=""):
         should_run = (
             tier == "full"
             and selected == "true"
-            and not (event_name == "pull_request" and suite in QUEUE_ONLY_SUITES)
+            and (branch_heavy_for(event_name) or suite not in QUEUE_ONLY_SUITES)
         )
         expected = "success" if should_run else "skipped"
         actual = needs.get(suite, {}).get("result", "missing")
@@ -224,11 +246,12 @@ def main():
         selected = select(changed, event_name)
         outputs = {suite: str(sel).lower() for suite, sel in selected.items()}
         outputs["tier"] = tier
+        outputs["branch_heavy"] = str(branch_heavy_for(event_name)).lower()
         print(f"Event base: {sys.argv[2]}")
         print(f"Effective base: {event_base}")
         print(f"Base reason: {reason}")
-        if event_name == "pull_request":
-            print("Queue-only suites: e2e/remote 留给合并队列")
+        if not branch_heavy_for(event_name):
+            print("Queue-only suites: backend integration, e2e/remote 留给合并队列")
         suites = ", ".join(suite for suite, is_selected in selected.items() if is_selected)
         print(f"Selected suites: {suites or 'none'}")
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:

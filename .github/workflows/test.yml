@@ -22,6 +22,12 @@ on:
       ref:
         type: string
         default: ""
+      # Whether to run the 5-shard integration layer. Pull requests pass false
+      # from required-ci.yml and leave integration to merge_group; merge_group
+      # and deploy-prod keep the true default.
+      integration:
+        type: boolean
+        default: true
 # Least privilege: none of these jobs write anything back to GitHub, so the
 # token they run with should not be able to.
 permissions:
@@ -156,11 +162,17 @@ jobs:
       - name: Independently collect every required backend case
         id: collect
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: >-
-          uv run python -m pytest tests/ --collect-only -q
-          --ignore=tests/forgejo -k 'not kotlin'
-          -p scripts.ci_shard
-          --ci-selection-output="$RUNNER_TEMP/backend-expected"
+        env:
+          EXPECT_INTEGRATION: ${{ inputs.integration && github.event_name != 'pull_request' }}
+        run: |
+          mark_args=()
+          if [ "$EXPECT_INTEGRATION" != true ]; then
+            mark_args=(-m "not integration")
+          fi
+          uv run python -m pytest tests/ --collect-only -q \
+            --ignore=tests/forgejo -k 'not kotlin' "${mark_args[@]}" \
+            -p scripts.ci_shard \
+            --ci-selection-output="$RUNNER_TEMP/backend-expected"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() && steps.collect.outcome == 'success' }}
@@ -223,14 +235,6 @@ jobs:
           - {layer: pure, shard: '0/2', floor: 4000, timeout: 10}
           - {layer: pure, shard: '1/2', floor: 4000, timeout: 10}
           - {layer: contract, shard: '0/1', floor: 200, timeout: 5}
-          # Five integration shards: at four, an integration shard was usually the
-          # merge queue's slowest job. Go back to four if the queue's wait for a
-          # runner grows by more than the fifth shard saves.
-          - {layer: integration, shard: '0/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '1/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '2/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '3/5', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '4/5', floor: 2400, timeout: 15}
     # Floors apply to the complete layer before sharding, not each runner.
     env:
       REDIS_URL: redis://localhost:6389/0
@@ -575,9 +579,252 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Heavy DB-backed integration shards: deferred to merge_group (and deploy-prod)
+  # when inputs.integration is false or the event is pull_request.
+  integration:
+    if: ${{ inputs.integration && github.event_name != 'pull_request' }}
+    runs-on: ${{ inputs.runner }}
+    name: ${{ matrix.layer }} (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {layer: integration, shard: '0/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '1/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '2/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '3/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '4/5', floor: 2400, timeout: 15}
+    env:
+      REDIS_URL: redis://localhost:6389/0
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      OPENAI_API_KEY: test-key
+      ANTHROPIC_AUTH_TOKEN: test-token
+    services:
+      postgres:
+        image: mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cheese_test
+        ports:
+          - 5442:5432
+        options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=4g
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 1s
+          --health-timeout 5s --health-retries 60
+      valkey:
+        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
+        ports:
+          - 6389:6379
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 1s
+          --health-timeout 5s --health-retries 60
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Scope this run to its runner slot
+        run: |
+          slot="${CHEESE_CI_SLOT:-0}"
+          echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
+          echo "CHEESE_CI_REDIS_BASE_DB=$((slot * 16))" >> "$GITHUB_ENV"
+          echo "CHEESE_CI_TEST_WORKERS=${CHEESE_CI_TEST_WORKERS:-auto}" >> "$GITHUB_ENV"
+          root="postgresql+asyncpg://postgres:postgres@localhost:5442"
+          echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
+
+      - name: Ensure required test tools
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
+          echo "CHEESE_TEST_SANDBOX_HOST=1" >> "$GITHUB_ENV"
+          "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh
+
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          save-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Give this run an empty database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh postgresql-client
+          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+            "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
+          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
+
+      - name: Run database migrations
+        run: uv run alembic upgrade head
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: harness-bins
+        with:
+          path: ~/.cache/cheese-harness-bins
+          key: harness-bins-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**', 'backend/app/domain/agent/harness/pi/launch.py') }}
+      - name: Install pinned harness binaries
+        if: steps.harness-bins.outputs.cache-hit != 'true'
+        run: |
+          bins="$HOME/.cache/cheese-harness-bins"
+          mkdir -p "$bins"
+          packages="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX
+          pins = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(f"@anthropic-ai/claude-code@{pins[CLAUDE_CODE]} @openai/codex@{pins[CODEX]}")
+          PY
+          )"
+          read -r -a pinned_packages <<< "$packages"
+          npm install --prefix "$bins/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
+          case "$(uname -m)" in
+            x86_64) pi_platform=linux-x64 ;;
+            aarch64 | arm64) pi_platform=linux-arm64 ;;
+          esac
+          archive="$(uv run python - "$RUNNER_TEMP/pi-dist" "$pi_platform" <<'PY'
+          import asyncio, sys
+          from pathlib import Path
+          from app.domain.agent.harness import PI
+          from app.domain.agent.capability.matrix import written
+          from app.domain.machine import pi_dist
+          version = written()[PI].pinned_version
+          print(asyncio.run(pi_dist.ensure_cached(Path(sys.argv[1]), version, sys.argv[2])))
+          PY
+          )"
+          mkdir -p "$bins/pi"
+          tar -xzf "$archive" -C "$bins/pi"
+      - name: Point the tests at the pinned harness binaries
+        run: |
+          bins="$HOME/.cache/cheese-harness-bins"
+          tools="$bins/harness-tools/node_modules/.bin"
+          echo "$tools" >> "$GITHUB_PATH"
+          echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_CODEX=$tools/codex" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_PI=$bins/pi/pi/pi" >> "$GITHUB_ENV"
+          pins="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+          every = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(every[CLAUDE_CODE], every[CODEX], every[PI])
+          PY
+          )"
+          read -r claude_pin codex_pin pi_pin <<< "$pins"
+          for want in "claude $claude_pin" "codex $codex_pin" "pi $pi_pin"; do
+            read -r which expected <<< "$want"
+            case "$which" in
+              claude) built="$("$tools/claude" --version)" ;;
+              codex) built="$("$tools/codex" --version)" ;;
+              pi) built="$("$bins/pi/pi/pi" --version)" ;;
+            esac
+            case "$built" in
+              *"$expected"*) ;;
+              *) echo "$which is $built, not the pinned $expected" >&2; exit 1 ;;
+            esac
+          done
+
+      - name: Verify integration PostgreSQL storage
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker inspect --format '{{json .HostConfig.Tmpfs}}' "$POSTGRES_CONTAINER"
+          pid=$(docker inspect --format '{{.State.Pid}}' "$POSTGRES_CONTAINER")
+          data="/proc/$pid/root/var/lib/postgresql/data"
+          test "$(sudo -n stat -f -c %T "$data")" = tmpfs
+          read -r block_size blocks < <(sudo -n stat -f -c '%S %b' "$data")
+          test "$((block_size * blocks))" = 4294967296
+          echo "CHEESE_CI_POSTGRES_PID=$pid" >> "$GITHUB_ENV"
+
+      - name: Run the selected layer partition
+        timeout-minutes: ${{ matrix.timeout }}
+        env:
+          TEST_LAYER: ${{ matrix.layer }}
+          TEST_SHARD: ${{ matrix.shard }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/backend-results"
+          set -o pipefail
+          uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" \
+            -- uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
+            --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
+            -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
+            --ci-selection-output="$RUNNER_TEMP/backend-results" \
+            -p scripts.ci_evidence --ci-evidence-dir="$RUNNER_TEMP/backend-results" \
+            --reruns 1 --reruns-delay 1 \
+            --dist loadfile --no-loadscope-reorder --tb=short --durations=30 \
+            --junitxml="$RUNNER_TEMP/backend-results/results.xml" 2>&1 \
+            | tee "$RUNNER_TEMP/backend-results/pytest.log"
+
+      - name: Annotate the shard's failing cases
+        if: ${{ failure() }}
+        run: >-
+          uv run python -m scripts.report_failed_cases
+          "$RUNNER_TEMP/backend-results/results.xml"
+          --log "$RUNNER_TEMP/backend-results/pytest.log"
+
+      - name: Name what a lost worker was running
+        if: ${{ !cancelled() }}
+        run: |
+          shopt -s nullglob
+          for log in "$RUNNER_TEMP"/backend-results/hang-*.log; do
+            last="$(grep -E '^[0-9:]+ (start|end) ' "$log" | tail -1)"
+            if grep -q 'Timeout (' "$log" || [[ "$last" == *" start "* ]]; then
+              echo "::group::$(basename "$log"): $last"
+              tail -c 20000 "$log"
+              echo "::endgroup::"
+            fi
+          done
+
+      - name: Show disk use
+        if: ${{ failure() }}
+        run: |
+          df -h / "$RUNNER_TEMP" /tmp || true
+          sudo -n du -sh "$RUNNER_TEMP"/* /tmp/pytest-of-* 2>/dev/null | sort -h | tail -15 || true
+
+      - name: Verify the partition ran without skips
+        if: ${{ !cancelled() }}
+        env:
+          LAYER_FLOOR: ${{ matrix.floor }}
+        run: >-
+          uv run python -m scripts.assert_suite_ran
+          "$RUNNER_TEMP/backend-results/results.xml"
+          --at-least "$LAYER_FLOOR"
+          --selection-dir "$RUNNER_TEMP/backend-results"
+          --reruns "$RUNNER_TEMP/backend-results/reruns.jsonl"
+
+      - name: Preserve test results and selection
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-${{ matrix.layer }}-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend-results/
+          if-no-files-found: error
+          retention-days: 14
+
   test-complete:
     name: Backend coverage complete
-    needs: [static, test]
+    needs: [static, test, integration]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -592,7 +839,14 @@ jobs:
       - name: Compare executed partitions with independent collection
         env:
           TEST_RESULT: ${{ needs.test.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          EXPECT_INTEGRATION: ${{ inputs.integration && github.event_name != 'pull_request' }}
           PLAN_ARTIFACT: backend-expected
         run: |
           python3 -m scripts.assert_shards_complete "$RUNNER_TEMP/backend-artifacts" --plan "$PLAN_ARTIFACT"
           test "$TEST_RESULT" = success
+          if [ "$EXPECT_INTEGRATION" = true ]; then
+            test "$INTEGRATION_RESULT" = success
+          else
+            test "$INTEGRATION_RESULT" = skipped
+          fi

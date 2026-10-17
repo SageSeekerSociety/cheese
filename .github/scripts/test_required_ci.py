@@ -450,6 +450,7 @@ class RequiredCITest(unittest.TestCase):
 
     def test_check_accepts_skipped_e2e_and_remote_on_pull_request_only(self):
         pr_needs = self.needs()
+        pr_needs["scope"]["outputs"]["branch_heavy"] = "false"
         for suite in ("e2e", "remote"):
             pr_needs["scope"]["outputs"][suite] = "false"
             pr_needs[suite]["result"] = "skipped"
@@ -458,9 +459,15 @@ class RequiredCITest(unittest.TestCase):
         for suite in ("e2e", "remote"):
             raw_skipped[suite]["result"] = "skipped"
         self.assertEqual(gate.failures(raw_skipped, "full", "pull_request"), [])
+        mismatch = self.needs()
+        mismatch["scope"]["outputs"]["branch_heavy"] = "true"
+        for suite in ("e2e", "remote"):
+            mismatch[suite]["result"] = "skipped"
+        self.assertTrue(gate.failures(mismatch, "full", "pull_request"))
         for suite in ("e2e", "remote"):
             with self.subTest(suite=suite):
                 mg_needs = self.needs()
+                mg_needs["scope"]["outputs"]["branch_heavy"] = "true"
                 mg_needs[suite]["result"] = "skipped"
                 self.assertTrue(gate.failures(mg_needs, "full", "merge_group"))
 
@@ -1027,6 +1034,64 @@ class WorkflowTextTest(unittest.TestCase):
         self.assertFalse(condition_holds(draft["if"], "pull_request", True, True))
         self.assertFalse(condition_holds(full["if"], "merge_group", None, True))
 
+    def test_backend_integration_is_deferred_to_merge_group(self):
+        jobs = jobs_of(self.text)
+        self.assertIn("branch_heavy", jobs["scope"]["text"])
+        self.assertIn(
+            "integration: ${{ needs.scope.outputs.branch_heavy == 'true' }}",
+            jobs["backend"]["text"],
+        )
+        test_yml = (WORKFLOW.parent / "test.yml").read_text()
+        test_jobs = jobs_of(test_yml)
+        self.assertIn("integration", test_jobs)
+        self.assertEqual(
+            test_jobs["integration"]["if"],
+            "${{ inputs.integration && github.event_name != 'pull_request' }}",
+        )
+        collect_body = run_body_containing(test_yml, "backend-expected")
+        compare_body = run_body_containing(test_yml, "assert_shards_complete")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            uv_log = tmp / "uv_args"
+            _stub(bindir, "uv", 'printf "%s\\n" "$*" >> "$UV_LOG"\n')
+            _stub(bindir, "python3", "exit 0\n")
+            env = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "RUNNER_TEMP": str(tmp),
+                "UV_LOG": str(uv_log),
+                "PLAN_ARTIFACT": "backend-expected",
+                "TEST_RESULT": "success",
+            }
+            subprocess.run(
+                ["bash", "-e", "-c", collect_body],
+                env={**env, "EXPECT_INTEGRATION": "false"},
+                cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            self.assertIn("-m not integration", uv_log.read_text())
+            uv_log.write_text("")
+            subprocess.run(
+                ["bash", "-e", "-c", collect_body],
+                env={**env, "EXPECT_INTEGRATION": "true"},
+                cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            self.assertNotIn("not integration", uv_log.read_text())
+
+            pr_ok = subprocess.run(
+                ["bash", "-e", "-c", compare_body],
+                env={**env, "EXPECT_INTEGRATION": "false", "INTEGRATION_RESULT": "skipped"},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertEqual(pr_ok.returncode, 0, pr_ok.stderr)
+            mg_fail = subprocess.run(
+                ["bash", "-e", "-c", compare_body],
+                env={**env, "EXPECT_INTEGRATION": "true", "INTEGRATION_RESULT": "skipped"},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertNotEqual(mg_fail.returncode, 0)
+
 
 class MainCliTest(unittest.TestCase):
     """The ``scope``/``check`` wiring that the runner actually invokes."""
@@ -1077,9 +1142,10 @@ class MainCliTest(unittest.TestCase):
             )
             written = dict(line.split("=", 1) for line in out.read_text().splitlines())
             # The changed backend file selects backend and guards on pull_request,
-            # while e2e and remote are left to merge_group; a draft event makes
-            # it the quick tier.
+            # while backend integration, e2e and remote are left to merge_group;
+            # a draft event makes it the quick tier.
             self.assertEqual(written["tier"], "quick")
+            self.assertEqual(written["branch_heavy"], "false")
             self.assertEqual(written["backend"], "true")
             self.assertEqual(written["e2e"], "false")
             self.assertEqual(written["remote"], "false")
@@ -1127,6 +1193,7 @@ class MainCliTest(unittest.TestCase):
             )
             pr_written = dict(line.split("=", 1) for line in pr_out.read_text().splitlines())
             self.assertEqual(pr_written["tier"], "full")
+            self.assertEqual(pr_written["branch_heavy"], "false")
             self.assertEqual(pr_written["backend"], "true")
             self.assertEqual(pr_written["e2e"], "false")
             self.assertEqual(pr_written["remote"], "false")
@@ -1159,6 +1226,7 @@ class MainCliTest(unittest.TestCase):
                 env=mg_env, cwd=tmp, check=True, capture_output=True, text=True,
             )
             mg_written = dict(line.split("=", 1) for line in mg_out.read_text().splitlines())
+            self.assertEqual(mg_written["branch_heavy"], "true")
             self.assertEqual(mg_written["e2e"], "true")
             self.assertEqual(mg_written["remote"], "true")
             self.assertNotIn("e2e/remote 留给合并队列", mg_scope.stdout)
