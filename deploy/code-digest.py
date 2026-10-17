@@ -41,7 +41,7 @@ for name in (
 digest = hashlib.sha256(sys.version.encode())
 for name, module in sorted(sys.modules.items()):
     path = getattr(module, "__file__", None)
-    if not path or name == "__main__":
+    if not path or name in {"__main__", "__mp_main__"}:
         continue
     try:
         with open(path, "rb") as handle:
