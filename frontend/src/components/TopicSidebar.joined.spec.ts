@@ -150,9 +150,12 @@ describe('侧栏只列我加入了的频道', () => {
     expect(row.querySelector('.unread-badge')).toBeNull()
   })
 
-  it('@我的那几条在行上是数字', () => {
+  it('@我的未读消息仍加粗名称，不在行上重复数字', () => {
     const { container } = mount({ unreadMap: { mine: { count: 2, new: true, messages: 9 } } })
-    expect(rowFor(container, 'mine').textContent).toContain('2')
+    const row = rowFor(container, 'mine')
+    expect(row.querySelector('.title-unread')).not.toBeNull()
+    expect(row.querySelector('.unread-badge')).toBeNull()
+    expect(row.textContent?.trim()).toBe('mine')
   })
 })
 

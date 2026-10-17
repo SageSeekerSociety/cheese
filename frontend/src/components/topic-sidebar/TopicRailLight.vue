@@ -11,7 +11,7 @@ import type { RowLight } from '@/lib/roomLight'
 
 import { lightTitle } from '@/lib/roomLight'
 
-defineProps<{ light: RowLight }>()
+defineProps<{ light: RowLight; label?: string }>()
 </script>
 
 <template>
@@ -19,8 +19,8 @@ defineProps<{ light: RowLight }>()
     class="row-light"
     :class="[`row-light--${light.kind}`, { 'row-light--breathe': light.breathe }]"
     role="img"
-    :aria-label="lightTitle(light)"
-    :title="lightTitle(light)"
+    :aria-label="label || lightTitle(light)"
+    :title="label || lightTitle(light)"
   />
 </template>
 

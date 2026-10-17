@@ -281,14 +281,14 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     })
     const row = rowFor(container, 'a')
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
-    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.red'))
+    expect(row.querySelector('.row-light--red')).not.toBeNull()
+    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.hiddenStalled'))
 
     await fireEvent.click(toggleFor(container, 'a'))
 
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
     expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.yellow'))
-    expect(rowFor(container, 'a2').querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(
-      t('work.sidebar.light.red')
-    )
+    expect(rowFor(container, 'a2').querySelector('.row-light--red')).not.toBeNull()
+    expect(rowFor(container, 'a2').querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('报错')
   })
 })

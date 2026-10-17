@@ -3,6 +3,7 @@
 // 子话题和任务是两种折叠，保留各自的箭头，均放在名称前。
 import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
+import type { RailMemberMark } from '@/lib/memberActivity'
 import type { RowLight } from '@/lib/roomLight'
 import type { VisibleRow } from '@/lib/topicTree'
 
@@ -30,6 +31,8 @@ const props = defineProps<{
   menuOpen: boolean
   /** 父级带钟算出来的：这一行里有没有成员卡住了（自己的，不含收起来的后代）。 */
   stalled: boolean
+  /** 卡住成员的原因，仅供唯一状态灯的文字说明。 */
+  marks?: RailMemberMark[]
   /** 这一行此刻画哪盏灯（父级带钟算的）；不亮是 null。 */
   light?: RowLight | null
   /** 折叠开关 hover 时说的那句话（里面有什么，父级知道）。 */
@@ -70,6 +73,17 @@ const rowLight = computed<RowLight | null>(() =>
     props.tasksCollapsed ? props.taskLight : null,
   ])
 )
+
+const rowLightLabel = computed(() => {
+  if (props.stalled)
+    return (
+      props.marks
+        ?.filter((mark) => mark.state === 'stalled')
+        .map((mark) => mark.title)
+        .join('\n') || undefined
+    )
+  return props.row.hiddenStalled ? t('work.sidebar.hiddenStalled') : undefined
+})
 
 // Status: only show when notable (archived / draft); active is implicit. Shown as a
 // small neutral dot + text, never a colored chip.
@@ -200,7 +214,7 @@ function onMenuToggle(open: boolean) {
       </template>
     </v-list-item-title>
     <template #append>
-      <TopicRailLight v-if="rowLight" :light="rowLight" />
+      <TopicRailLight v-if="rowLight" :light="rowLight" :label="rowLightLabel" />
       <!-- The menu has its own layout slot, including on touch screens. -->
       <div class="row-actions" @click.stop>
         <AdaptiveMenu

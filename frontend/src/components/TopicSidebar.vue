@@ -148,6 +148,7 @@ const {
   stalledOf,
   lightOf,
   taskLight,
+  memberMarks,
   toggleTitle,
   topicById,
 } = useTopicRail(props, { scrollToIndex: (key, index) => railLists.get(key)?.scrollToIndex(index) })
@@ -668,6 +669,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :renaming="renamingTopicId === item.topic.id"
                         :menu-open="actionsMenuFor === item.topic.id"
                         :stalled="stalledOf(item.topic.id)"
+                        :marks="memberMarks(item.topic)"
                         :light="lightOf(item.topic.id)"
                         :fresh="freshOf(item.topic.id)"
                         :toggle-title="toggleTitle(item)"

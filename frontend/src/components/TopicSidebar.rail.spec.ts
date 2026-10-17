@@ -359,7 +359,10 @@ describe('行左边那一个槽', () => {
     expect(row.querySelector('[data-state]')).toBeNull()
     // 原来成员头像承载的卡住提示保留，但并入这一行唯一灯，不再另画头像。
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
-    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.red'))
+    const signal = row.querySelector('.row-light--red') as HTMLElement
+    expect(signal).not.toBeNull()
+    expect(signal.getAttribute('aria-label')).toContain(reason === 'mention' ? '分钟' : '报错')
+    expect(signal.title).toBe(signal.getAttribute('aria-label'))
   })
 
   it('未读只给名称加粗，不再显示未读数字，也不把未读当作选中', () => {
