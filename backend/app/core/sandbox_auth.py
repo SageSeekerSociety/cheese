@@ -25,7 +25,6 @@ other three open:
 """
 
 import base64
-import hashlib
 import hmac
 import json
 import secrets
@@ -35,6 +34,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from app.core.config import settings
+from app.core.hmac_token import sign_body
 
 # Signing secret. Stable across restarts by construction — pinned via
 # SANDBOX_TOKEN, else derived from jwt_secret; see
@@ -42,15 +42,10 @@ from app.core.config import settings
 # outage rather than a hardening measure. Never sent to a container as-is when
 # scoped tokens are used; it only signs them.
 SANDBOX_TOKEN: str = settings.sandbox_signing_secret
-_SECRET = SANDBOX_TOKEN.encode()
+_SECRET = SANDBOX_TOKEN
 
 # Default scoped-token lifetime — a turn is minutes; this is a safe ceiling.
 _SCOPED_TTL_S = 3600
-
-
-def _sign(body: str) -> str:
-    digest = hmac.new(_SECRET, body.encode(), hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
 
 
 def mint_scoped_token(
@@ -117,7 +112,7 @@ def mint_scoped_token(
         payload["d"] = document_id
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    return f"{body}.{_sign(body)}"
+    return f"{body}.{sign_body(_SECRET, body)}"
 
 
 def bind_resource_token(
@@ -161,7 +156,7 @@ def bind_resource_token(
         # Old owners must reject this capability, even at their legacy URL.
         # The signed prefix cannot be stripped to obtain an older credential.
         body = "cxss_" + body
-    return f"{body}.{_sign(body)}"
+    return f"{body}.{sign_body(_SECRET, body)}"
 
 
 def token_agent_handle(token: str) -> str | None:
@@ -201,7 +196,7 @@ def scoped_token_claims(token: str) -> dict | None:
         body, sig = token.split(".", 1)
     except ValueError:
         return None
-    if not hmac.compare_digest(sig, _sign(body)):
+    if not hmac.compare_digest(sig, sign_body(_SECRET, body)):
         return None
     if body.startswith("cxss_"):
         body = body.removeprefix("cxss_")
@@ -280,7 +275,7 @@ def mint_project_agent_credential(
     }
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = _sign(f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")
+    signature = sign_body(_SECRET, f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")
     return f"{AGENT_CREDENTIAL_PREFIX}{body}.{signature}"
 
 
@@ -294,7 +289,9 @@ def project_agent_claims(token: str) -> ProjectAgentClaims | None:
         body, signature = token[len(AGENT_CREDENTIAL_PREFIX) :].split(".", 1)
     except ValueError:
         return None
-    if not hmac.compare_digest(signature, _sign(f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")):
+    if not hmac.compare_digest(
+        signature, sign_body(_SECRET, f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")
+    ):
         return None
     try:
         padded = body + "=" * (-len(body) % 4)
@@ -352,7 +349,7 @@ def mint_personal_credential(
     payload = {"u": user_id, "c": conversation_id, "iat": now, "exp": now + ttl_s}
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = _sign(f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
+    signature = sign_body(_SECRET, f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
     return f"{PERSONAL_CREDENTIAL_PREFIX}{body}.{signature}"
 
 
@@ -366,7 +363,7 @@ def personal_claims(token: str) -> PersonalClaims | None:
         body, signature = token[len(PERSONAL_CREDENTIAL_PREFIX) :].split(".", 1)
     except ValueError:
         return None
-    expected = _sign(f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
+    expected = sign_body(_SECRET, f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
     if not hmac.compare_digest(signature, expected):
         return None
     try:
@@ -452,7 +449,7 @@ def mint_delegated_credential(
     }
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = _sign(f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
+    signature = sign_body(_SECRET, f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
     return f"{DELEGATED_CREDENTIAL_PREFIX}{body}.{signature}"
 
 
@@ -469,7 +466,7 @@ def delegated_claims(token: str) -> DelegatedClaims | None:
         body, signature = token[len(DELEGATED_CREDENTIAL_PREFIX) :].split(".", 1)
     except ValueError:
         return None
-    expected = _sign(f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
+    expected = sign_body(_SECRET, f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
     if not hmac.compare_digest(signature, expected):
         return None
     try:

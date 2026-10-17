@@ -102,5 +102,11 @@
   "repoTakenHidden": "仓库 {repo} 已经连接在另一个你看不到的项目上，一个仓库只能连接一个项目。请换一个仓库，或者请那个项目的成员邀请你加入。",
   "repoTakenVisible": "仓库 {repo} 已经连接在项目「{project}」上，一个仓库只能连接一个项目。请到那个项目里工作，或者换一个仓库。",
   "roomNotInProject": "这个频道不属于这个项目",
-  "sourceRequired": "source 不能为空"
+  "sourceRequired": "source 不能为空",
+  "mcpServerNameInvalid": "名称只能用小写字母、数字和连字符",
+  "mcpHeaderNameInvalid": "请求头名称只能用字母、数字和连字符",
+  "mcpServerNotAdded": "这个服务器不是在项目设置中添加的",
+  "mcpServerNameTaken": "项目里已经有名为 {name} 的服务器",
+  "mcpApprovalNotFound": "这条运行请求已不存在",
+  "mcpApprovalOwnerOnly": "只有这台设备的主人能决定"
 }

@@ -132,9 +132,13 @@ export function mcpServer(over: Partial<McpServer> = {}): McpServer {
     name: 'tracker',
     transport: 'http',
     host: 'mcp.example.test',
+    command: null,
+    run: null,
     auth: 'oauth',
     status: 'disconnected',
     declared_by: null,
+    added: null,
+    shadowed: false,
     authorized_by: null,
     authorized_at: null,
     variables: [],
@@ -142,7 +146,21 @@ export function mcpServer(over: Partial<McpServer> = {}): McpServer {
   }
 }
 
-/** MCP 那一条读回来的清单。默认两台：一台待授权、一台缺密钥。 */
+/** 一台本地命令类服务器：项目机器上运行的一条命令，默认未启动。 */
+export function mcpLocal(over: Partial<McpServer> = {}): McpServer {
+  return mcpServer({
+    name: 'notes',
+    transport: 'stdio',
+    host: '',
+    command: 'uvx notes-mcp',
+    auth: 'headers',
+    status: 'ready',
+    run: { state: 'idle', log: [], owner: null },
+    ...over,
+  })
+}
+
+/** MCP 那一条读回来的清单。默认三台：一台待授权、一台缺密钥，和一条本地命令。 */
 export function mcpList(over: Partial<McpServerList> = {}): McpServerList {
   return {
     servers: [
@@ -154,6 +172,7 @@ export function mcpList(over: Partial<McpServerList> = {}): McpServerList {
         status: 'missing_values',
         variables: [{ name: 'SEARCH_KEY', set: false, updated_by: null, updated_at: null }],
       }),
+      mcpLocal(),
     ],
     problem: null,
     ...over,

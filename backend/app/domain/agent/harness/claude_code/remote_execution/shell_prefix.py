@@ -157,8 +157,7 @@ def shell(target_path, command):
     if (
         len(words) >= 4
         and words[:2] == [sys.executable, helper]
-        and words[2]
-        in ("bridge", "guard", "context", "checkpoint", "transport", "reply")
+        and words[2] in ("guard", "context", "checkpoint", "transport", "reply")
         and words[3] == str(target_path)
     ):
         run_in_place(words)

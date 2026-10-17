@@ -74,8 +74,13 @@ def _first_sentence(lines: list[str]) -> str:
     return ""
 
 
-def parse_page(path: Path) -> tuple[str, list[dict[str, str]], list[str]]:
-    """Return (page slug, its anchors, the internal links it makes)."""
+def parse_page(path: Path) -> tuple[str, list[dict[str, str]], list[str], str]:
+    """Return (page slug, its anchors, the internal links it makes, its text).
+
+    The text rides along because `build()` needs it too — for the line numbers
+    in its diagnostics — and reading the page a second time there was one wasted
+    read per page. It is this function that reads a page, in one place.
+    """
     body = path.read_text(encoding="utf-8")
     page_slug = path.stem
     lines = body.splitlines()
@@ -107,7 +112,7 @@ def parse_page(path: Path) -> tuple[str, list[dict[str, str]], list[str]]:
         ("__assets__" if m.group(1) else "__links__") + m.group(2)
         for m in INTERNAL_LINK.finditer(body)
     ]
-    return page_slug, anchors, problems + refs
+    return page_slug, anchors, problems + refs, body
 
 
 def build(manual_dir: Path) -> tuple[dict[str, object], list[str]]:
@@ -121,8 +126,7 @@ def build(manual_dir: Path) -> tuple[dict[str, object], list[str]]:
     if not pages:
         return {}, [f"{manual_dir} 下没有任何手册页面 — 什么都没检查，这本身就是失败"]
     for path in pages:
-        _, page_anchors, raw = parse_page(path)
-        body = path.read_text(encoding="utf-8")
+        _, page_anchors, raw, body = parse_page(path)
         # Locations enrich diagnostics only; the anchor payload and verdict stay
         # exactly as parse_page() produced them.
         for number, source in enumerate(body.splitlines(), 1):
