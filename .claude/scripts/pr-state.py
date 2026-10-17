@@ -16,8 +16,10 @@
     python3 .claude/scripts/pr-state.py dev --sha <合并 SHA> --json-input <file>
     python3 .claude/scripts/pr-state.py deploy-failure --json-input <file>
 
-部署子命令不联网。dev 的 JSON 是 {"logs": "原始 job 日志", "conclusion": "success"}，
-只认 DEPLOY OK 中完整 SHA，不拿 run 绿当上线。deploy-failure 的 JSON 是
+部署子命令不联网。dev 的 JSON 是 {"logs": "原始 job 日志", "version_sha": "可选完整运行 SHA"}。
+完整 DEPLOY OK 标记直接确认；真实七位镜像标签必须同时有目标 dev 的 /api/version
+返回的 data.sha 与完整目标 SHA 一致，单独短前缀、候选 metadata 和绿 run 都不算上线。
+deploy-failure 的 JSON 是
 {"run": {"conclusion": "failure", "jobs": [...]}, "changed_files": ["frontend/src/App.vue"]}。
 run.jobs 使用 Actions jobs API 的 name/conclusion/steps；run.build 可提供候选 SHA
 最新构建的 status/conclusion；run.failure_files 可提供已经核实、覆盖全部失败的源输入
@@ -90,7 +92,7 @@ DEPLOY_RELATED = "DEPLOY_RELATED"
 DEPLOY_CONFIRMATION = re.compile(
     r"^(?:\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+)?"
     r"(?:\[deploy-docker \d{2}:\d{2}:\d{2}\]\s+)?"
-    r"DEPLOY OK: sha=([0-9a-f]{40})(?: healthy)?\s*$",
+    r"DEPLOY OK: sha=([0-9a-f]{40}|[0-9a-f]{7})(?: healthy)?\s*$",
     re.MULTILINE,
 )
 
@@ -138,16 +140,22 @@ def classify(pr: dict) -> Verdict:
 
 
 def classify_dev(merged_sha: str, deployment: dict) -> Verdict:
-    """只认目标完整 SHA 的部署确认行；run/check 绿、跳过和别的 SHA 都不是证据。
+    """完整 SHA 标记直接确认；真实七位镜像标签还需独立的完整运行版本证据。
 
-    logs 来自 actions/jobs/<id>/logs。结论只表示日志确认过该 SHA，当前版本另查 /api/version。
+    logs 来自目标 dev 的 actions/jobs/<id>/logs；version_sha 可选，必须是同一 dev
+    实例实际 /api/version 返回的 data.sha，不是候选 metadata、run.head_sha、data.short
+    或 data.build。离线调用者负责取证；绿 run 和单独短前缀都不能替代这份证据。
+    确认只描述证据中的观测，不承诺当前仍运行该版本。
     """
     logs = deployment.get("logs", "")
     if (isinstance(merged_sha, str) and re.fullmatch(r"[0-9a-f]{40}", merged_sha)
-            and isinstance(logs, str)
-            and merged_sha in DEPLOY_CONFIRMATION.findall(logs)):
-        return Verdict(DEV_CONFIRMED, f"DEV_CONFIRMED — dev 已确认部署 SHA={merged_sha}（日志证据，非当前版本）")
-    return Verdict(DEV_UNCONFIRMED, "DEV_UNCONFIRMED — 还没到 dev（未找到目标完整 SHA 的 DEPLOY OK 确认），别重跑旧部署")
+            and isinstance(logs, str)):
+        tags = DEPLOY_CONFIRMATION.findall(logs)
+        if merged_sha in tags:
+            return Verdict(DEV_CONFIRMED, f"DEV_CONFIRMED — dev 已确认部署 SHA={merged_sha}（日志证据，非当前版本）")
+        if merged_sha[:7] in tags and deployment.get("version_sha") == merged_sha:
+            return Verdict(DEV_CONFIRMED, f"DEV_CONFIRMED — dev 已确认部署 SHA={merged_sha}（短标签日志与完整运行版本观测一致）")
+    return Verdict(DEV_UNCONFIRMED, "DEV_UNCONFIRMED — 还没到 dev（未找到目标 SHA 的完整部署证据），别重跑旧部署")
 
 
 def _paths(value: object) -> set[str] | None:
@@ -244,7 +252,8 @@ def fetch(pr_number: int) -> dict:
 
 def deployment_command(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=f"pr-state.py {argv[0]}", description=(
-        "离线部署判定：dev 读取 {logs, status?, conclusion?}；deploy-failure 读取 {run, changed_files}"
+        "离线部署判定：dev 读取 {logs, version_sha?}（version_sha 取目标 dev /api/version 的 data.sha）；"
+        "deploy-failure 读取 {run, changed_files}"
     ))
     parser.add_argument("--json-input", required=True, metavar="FILE", help="部署证据 JSON 文件")
     if argv[0] == "dev":

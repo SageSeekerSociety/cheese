@@ -234,6 +234,14 @@ class DeploymentContracts(unittest.TestCase):
         for evidence in (
             {"status": "completed", "conclusion": "success", "logs": ""},
             {"conclusion": "skipped", "logs": ""},
+            {"version_sha": MERGE_SHA, "conclusion": "success", "logs": ""},
+            {"logs": f"DEPLOY OK: sha={MERGE_SHA[:7]} healthy"},
+            {"version_sha": MERGE_SHA[:7] + "b" * 33,
+             "logs": f"DEPLOY OK: sha={MERGE_SHA[:7]} healthy"},
+            {"version_sha": MERGE_SHA, "logs": f"DEPLOY OK: sha={OTHER_SHA[:7]} healthy"},
+            {"version_sha": MERGE_SHA[:7], "logs": f"DEPLOY OK: sha={MERGE_SHA[:7]} healthy"},
+            {"candidate_sha": MERGE_SHA, "head_sha": MERGE_SHA,
+             "logs": f"DEPLOY OK: sha={MERGE_SHA[:7]} healthy"},
             {"conclusion": "failure", "logs": ""},
             {"logs": f"DEPLOY OK: sha={OTHER_SHA} healthy"},
             {"logs": f"DEPLOY OK: sha={MERGE_SHA[:8]} healthy"},
@@ -256,6 +264,25 @@ class DeploymentContracts(unittest.TestCase):
                 })
                 self.assertEqual(verdict.code, pr_state.DEV_CONFIRMED)
                 self.assertIn(MERGE_SHA, verdict.line)
+
+    def test_real_image_tag_log_needs_an_independent_full_version_sha(self):
+        evidence = {
+            "logs": f"2026-10-16T12:34:56.1234567Z [deploy-docker 12:34:56] "
+                    f"DEPLOY OK: sha={MERGE_SHA[:7]} healthy\n",
+            "version_sha": MERGE_SHA,
+        }
+        verdict = pr_state.classify_dev(MERGE_SHA, evidence)
+        self.assertEqual(verdict.code, pr_state.DEV_CONFIRMED)
+        self.assertIn(MERGE_SHA, verdict.line)
+
+    def test_a_short_tag_alone_means_deployed_mutation_is_caught(self):
+        def short_tag_is_enough(sha, evidence):
+            if f"DEPLOY OK: sha={sha[:7]} healthy" in evidence.get("logs", ""):
+                return pr_state.Verdict(pr_state.DEV_CONFIRMED, "已上线")
+            return pr_state.classify_dev(sha, evidence)
+
+        with self.assertRaises(AssertionError):
+            self.assert_unconfirmed_sha_stays_off_dev(short_tag_is_enough)
 
     def test_invalid_or_missing_sha_never_confirms(self):
         for sha in ("", "a" * 8, "not-a-sha"):
@@ -383,6 +410,14 @@ class DeploymentCommands(unittest.TestCase):
 
     def test_dev_command_accepts_the_deploy_log(self):
         result = self.run_command("dev", {"logs": f"DEPLOY OK: sha={MERGE_SHA} healthy"}, "--sha", MERGE_SHA)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("DEV_CONFIRMED", result.stdout)
+
+    def test_dev_command_accepts_real_short_tag_only_with_full_running_version(self):
+        result = self.run_command("dev", {
+            "logs": f"[deploy-docker 12:34:56] DEPLOY OK: sha={MERGE_SHA[:7]} healthy",
+            "version_sha": MERGE_SHA,
+        }, "--sha", MERGE_SHA)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("DEV_CONFIRMED", result.stdout)
 
