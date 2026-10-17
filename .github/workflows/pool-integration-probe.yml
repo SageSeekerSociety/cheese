@@ -40,15 +40,17 @@ jobs:
   shard:
     name: integration shard (replica ${{ matrix.replica }})
     # Replica 1 is the single-slot baseline. Replica 2 runs only in pair mode:
-    # on a dispatch whose `pair` is true, or on the temporary pair branch.
-    if: >-
-      ${{ matrix.replica == 1
-          || (github.event_name == 'workflow_dispatch' && inputs.pair)
-          || (github.event_name == 'push' && github.ref_name == 'probe/integration-pair') }}
+    # on a dispatch whose `pair` is true, or on the temporary pair branch. The
+    # choice is made here rather than in a job-level `if` because the matrix is
+    # not an available context there.
     strategy:
       fail-fast: false
       matrix:
-        replica: [1, 2]
+        replica: >-
+          ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.pair)
+                        || (github.event_name == 'push' && github.ref_name == 'probe/integration-pair'))
+                       && '[1, 2]' || '[1]') }}
+
     runs-on: [self-hosted, cheese-ci, cheese-ci-box-1]
     timeout-minutes: 75
     env:
