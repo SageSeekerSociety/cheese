@@ -52,6 +52,14 @@ into a green no-op.
 
 Usage: check-review-artifacts.py             check the tree
        check-review-artifacts.py --root DIR  check another tree (tests)
+       check-review-artifacts.py --self-test prove this guard still fires
+
+The self-test is inline rather than beside the guard because
+`verify-guard-self-tests.py` judges a guard by silencing a copy of it and
+re-running `--self-test`: a sibling test file starts another process against
+the real file, so the mutation never reaches the judgement and the run can only
+be reported as unverified. This one calls `check()` in its own process, so a
+guard whose failures were silenced takes the self-test down with it.
 """
 
 from __future__ import annotations
@@ -60,6 +68,7 @@ import argparse
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from string import ascii_letters, digits, punctuation
 from urllib.parse import unquote
@@ -648,6 +657,32 @@ def check(root: Path) -> int:
     return 0
 
 
+def self_test() -> int:
+    """A cited artifact passes; adding an unreferenced one turns the guard red.
+
+    Both halves are asserted in this process, so silencing the guard's own
+    failure exits (`return 1` / `return 2` in `check`) makes the second
+    assertion fail instead of leaving a PASS behind.
+    """
+    with tempfile.TemporaryDirectory(prefix="review-artifacts-") as raw:
+        root = Path(raw)
+        artifacts = root / REVIEWS_DIR / ARTIFACTS_DIRNAME
+        artifacts.mkdir(parents=True)
+        (artifacts / "kept.pdf").write_bytes(b"%PDF-1.4")
+        (root / REVIEWS_DIR / "note.md").write_text(
+            "# 评审\n\n[产物](artifacts/kept.pdf)\n", encoding="utf-8"
+        )
+        if check(root) != 0:
+            print("SELF-TEST FAIL: 被引用的产物也被拦下了", file=sys.stderr)
+            return 1
+        (artifacts / "orphan.pdf").write_bytes(b"%PDF-1.4")
+        if check(root) != 1:
+            print("SELF-TEST FAIL: 零引用产物没有被拦下", file=sys.stderr)
+            return 1
+    print("PASS: review-artifacts self-test（被引用的产物放行，零引用产物被拦下）")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -656,7 +691,10 @@ def main() -> int:
         default=Path(__file__).resolve().parents[2],
         help="仓库根目录，默认是本脚本所在仓库",
     )
+    parser.add_argument("--self-test", action="store_true", help="证明这个守卫还会报错")
     args = parser.parse_args()
+    if args.self_test:
+        return self_test()
     return check(args.root.resolve())
 
 
