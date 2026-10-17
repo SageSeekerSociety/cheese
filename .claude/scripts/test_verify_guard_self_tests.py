@@ -2299,6 +2299,113 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
 '''
 
+#: A helper takes a parameter named `argv` of its own, which shadows the
+#: module-level name exactly as `main`'s does; the entry call still settles
+#: `main`'s parameter, and the self-test really does nothing.
+PY_HELPER_OWN_ARGV = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def normalize(argv):
+    return argv[1:]
+
+
+def main(argv):
+    normalize(argv)
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The same shadow in a lambda, which is a scope too.
+PY_LAMBDA_OWN_ARGV = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import argv
+
+trim = lambda argv: argv[1:]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    trim(argv)
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: A helper without a parameter of its own reads the module binding, which the
+#: entry call says nothing about; the name stays unsettled even though `main`
+#: shadows it in its own body.
+PY_HELPER_READS_GLOBAL = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def report():
+    return len(argv)
+
+
+def main(argv):
+    report()
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
 #: The entry call passes the command line as a keyword argument; it is the same
 #: full argv as `main(sys.argv)`, so the gate on it is false during a self-test.
 PY_KEYWORD_ENTRY = '''#!/usr/bin/env python3
@@ -3216,6 +3323,33 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         """Reading the name itself as false would settle a gate that is unknown."""
         code, guard, output = self._only(
             {"truthy.py": PY_TRUTHY_UNSETTLED_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_a_helper_parameter_shadows_the_module_level_name(self) -> None:
+        """A helper's own `argv` parameter is as good a shadow as `main`'s."""
+        code, guard, output = self._only(
+            {"helper.py": PY_HELPER_OWN_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_lambda_parameter_shadows_the_module_level_name(self) -> None:
+        """A lambda is a scope too, so its `argv` parameter shadows as well."""
+        code, guard, output = self._only(
+            {"lambda.py": PY_LAMBDA_OWN_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_helper_without_the_parameter_still_reads_the_module_name(self) -> None:
+        """One unshadowed read anywhere leaves the entry call unable to settle it."""
+        code, guard, output = self._only(
+            {"reader.py": PY_HELPER_READS_GLOBAL},
             {"test_counted.py": ELSE_SIBLING},
         )
         self.assertEqual(code, 2, output)
