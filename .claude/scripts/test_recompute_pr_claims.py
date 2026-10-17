@@ -36,7 +36,7 @@ class ClaimsTests(unittest.TestCase):
         self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null",
                         GIT_TERMINAL_PROMPT="0")
 
-    def check(self, body, *, numstat=FOUR_FILES, junit=None, extra=()):
+    def check(self, body, *, numstat=FOUR_FILES, junit=None, extra=(), cwd=None):
         self.body.write_text(body, encoding="utf-8")
         command = [sys.executable, "-I", "-B", str(SCRIPT), "--text", str(self.body)]
         if numstat is not None:
@@ -45,11 +45,23 @@ class ClaimsTests(unittest.TestCase):
         if junit is not None:
             self.report.write_text(junit, encoding="utf-8")
             command += ["--junit", str(self.report)]
-        return subprocess.run([*command, *extra], cwd=self.root, env=self.env,
+        return subprocess.run([*command, *extra], cwd=cwd or self.root, env=self.env,
                               capture_output=True, text=True, timeout=30)
 
     def assert_status(self, result, expected):
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        if expected == 2:
+            output = result.stdout + result.stderr
+            self.assertTrue("UNVERIFIED" in output or "usage:" in output, output)
+
+    def test_help_explains_supported_claims_and_limits(self):
+        result = subprocess.run([sys.executable, "-I", "-B", str(SCRIPT), "--help"],
+                                cwd=self.root, capture_output=True, text=True, timeout=30)
+        self.assert_status(result, 0)
+        for example in ("改了 3 个文件", "3 files changed", "新增 12 行", "删除 5 行",
+                        "测试总数：8", "tests: 8", "--numstat", "--junit",
+                        "whole diff/run", "not every number"):
+            self.assertIn(example, result.stdout)
 
     def test_wrong_file_count_is_red(self):
         result = self.check("改了 3 个文件")
@@ -198,16 +210,20 @@ class ClaimsTests(unittest.TestCase):
         result = self.check("files: 4", numstat=None,
                             extra=("--repo", str(repo), "--base", "missing-ref"))
         self.assert_status(result, 2)
+        git("restore", "old.py")
+        git("checkout", "feature")
+        result = self.check("files: 4; 新增 3 行; 删除 0 行", numstat=None, cwd=repo,
+                            extra=("--base", "base-advanced"))
+        self.assert_status(result, 0)
 
     def test_self_test_rejects_a_checker_that_copies_prose_counts(self):
         mutant = self.root / "copy-prose.py"
         mutant.write_text(
-            "import runpy, sys\nfrom pathlib import Path\n"
-            f"ns = runpy.run_path({str(REAL_SCRIPT)!r})\n"
+            "import re, sys\nfrom pathlib import Path\n"
             "body = Path(sys.argv[sys.argv.index('--text') + 1]).read_text()\n"
-            "copied = {metric: count for _, metric, count, _ in ns['extract_claims'](body)}\n"
-            "ns['main'].__globals__['parse_numstat'] = lambda data: copied\n"
-            "sys.exit(ns['main']())\n", encoding="utf-8")
+            "copied = int(re.search(r'改了 (\\d+) 个文件', body)[1])\n"
+            "print(f'OK files: claimed={copied} measured={copied}')\n"
+            "sys.exit(0)\n", encoding="utf-8")
         result = subprocess.run(
             [sys.executable, "-I", "-B", str(Path(__file__).resolve()),
              "ClaimsTests.test_wrong_file_count_is_red"],
