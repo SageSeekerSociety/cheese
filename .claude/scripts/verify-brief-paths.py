@@ -9,7 +9,8 @@ Usage:
 
 The brief may be a text file, '-' for stdin, or omitted to read stdin when no
 explicit brief paths are given. Paths marked "新建" / "new" are expected not to
-exist in HEAD or origin/main. In-flight actual and declared paths may be supplied
+exist in HEAD or origin/main; repeat the marker for each new path in a list.
+In-flight actual and declared paths may be supplied
 repeatedly, or as newline-delimited files with --in-flight-actual-list /
 --in-flight-declared-list.
 """
@@ -27,7 +28,7 @@ PATH_TOKEN = re.compile(
     r"(?<![A-Za-z0-9_./-])(?:\.\.?[/\\]|/)?[A-Za-z0-9_.@+-][A-Za-z0-9_./@+\-㐀-鿿]*"
 )
 NEW_MARKER = re.compile(
-    r"(?<![A-Za-z0-9_./-])(?:新建|新增)(?=[ \t:：`]|[A-Za-z0-9_.-])"
+    r"(?<![A-Za-z0-9_./-])(?:新建|新增)(?=[ \t:：`]|[A-Za-z0-9_.-]|[㐀-鿿])"
     r"|(?<![A-Za-z0-9_./-])new(?:[ \t]+file)?(?=[ \t:：`])",
     re.IGNORECASE,
 )
@@ -42,11 +43,15 @@ FILE_SUFFIXES = frozenset(
         ".csv",
         ".cs",
         ".docx",
+        ".gif",
         ".go",
         ".h",
         ".html",
+        ".ico",
         ".ipynb",
         ".java",
+        ".jpeg",
+        ".jpg",
         ".js",
         ".json",
         ".jsx",
@@ -59,6 +64,7 @@ FILE_SUFFIXES = frozenset(
         ".patch",
         ".pdf",
         ".php",
+        ".png",
         ".py",
         ".pyi",
         ".rb",
@@ -75,6 +81,7 @@ FILE_SUFFIXES = frozenset(
         ".tsv",
         ".txt",
         ".vue",
+        ".webp",
         ".xml",
         ".yaml",
         ".yml",
@@ -98,7 +105,7 @@ ROOT_FILENAME_NAMES = frozenset(
 )
 ROOT_PATH_REFERENCE = re.compile(
     r"(?:(?i:update|modify|edit|touch|create|remove)\s+|(?:修改|更新|编辑|创建|删除|新增|新建)\s*)"
-    r"(?P<path>[A-Z][A-Za-z0-9_-]+)\b"
+    r"(?P<path>[A-Z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*)\b"
 )
 ROOT_UNICODE_PATH_REFERENCE = re.compile(
     r"(?:(?i:update|modify|edit|touch|create|remove)\s+|(?:修改|更新|编辑|创建|删除|新增|新建)\s*)"
@@ -144,21 +151,27 @@ def _trim_trailing_prose(token: str) -> str:
             for char in token[end:]
         ):
             return token[:end]
+    if "/" in token:
+        matches = list(re.finditer(r"\.[A-Za-z0-9]{1,10}(?=[㐀-鿿])", token))
+        if matches:
+            return token[:matches[-1].end()]
     return token
 
 
 def _marker_gap_is_valid(gap: str) -> bool:
     gap = gap.strip(" \t`'\"()[]{}:：")
-    if not gap or re.fullmatch(r"\d+\s*(?:个|份|项)?(?:\s*(?:文件|路径|接口|模块|files?|paths?))?", gap, re.I):
+    if not gap or re.fullmatch(
+        r"(?:\d+|[零〇一二三四五六七八九十百千万两]+)\s*(?:个|份|项)?"
+        r"(?:\s*(?:文件|路径|接口|模块|files?|paths?))?",
+        gap,
+        re.I,
+    ):
         return True
     words = re.findall(r"[A-Za-z]+|[㐀-鿿]+", gap)
     return bool(words) and all(word.lower() in NEW_DESCRIPTORS for word in words) and not re.search(
         r"[^A-Za-z㐀-鿿\s]", gap
     )
 
-
-def _is_list_separator(gap: str) -> bool:
-    return gap.strip(" \t`'\"").lower() in {",", "，", "、", "and", "和", ", and", "，和"}
 
 
 def _unicode_path_candidates(line: str, known_paths: set[str]):
@@ -215,7 +228,17 @@ def extract_brief_paths(
                 continue
             if token.endswith(("/", "\\")):
                 continue
-            if _is_path_token(token, known_paths):
+            marker_applies = any(
+                marker.end() < match.start()
+                and line[marker.end():match.start()].strip(" \t`'\"()[]{}:：")
+                and _marker_gap_is_valid(line[marker.end():match.start()])
+                for marker in markers
+            )
+            marker_applies = marker_applies and (
+                token.lower() not in NEW_DESCRIPTORS
+                and not re.fullmatch(r"\d+", token)
+            )
+            if _is_path_token(token, known_paths) or marker_applies:
                 candidates[(match.start(), end, token)] = None
         for start, end, path in unicode_paths:
             candidates[(start, end, path)] = None
@@ -227,19 +250,12 @@ def extract_brief_paths(
             token = match.group("path")
             candidates[(match.start("path"), match.end("path"), token)] = None
         ordered = sorted(candidates)
-        marked_paths: dict[tuple[int, int, str], bool] = {}
-        for start, end, token in ordered:
+        for start, _, token in ordered:
             is_new = any(
                 marker.end() <= start
                 and _marker_gap_is_valid(line[marker.end():start])
                 for marker in markers
             )
-            if not is_new:
-                is_new = any(
-                    was_new and prior_end <= start and _is_list_separator(line[prior_end:start])
-                    for (_, prior_end, _), was_new in marked_paths.items()
-                )
-            marked_paths[(start, end, token)] = is_new
             path = normalize_path(token)
             if path is None:
                 unsafe.append(token)
