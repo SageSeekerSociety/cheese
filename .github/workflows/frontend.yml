@@ -248,7 +248,7 @@ jobs:
         run: python3 ../.claude/scripts/scene-debt-ratchet.py --self-test
 
       # Design system: no hardcoded colours, because a literal cannot follow
-      # the dark theme. Only NEW violations fail (stylelint-baseline.json).
+      # the dark theme. Any colour violation fails; there is no allowance.
       # Spec: docs/design-system.md.
       #
       # Note this gates the three colour rules in DESIGN_RULES
@@ -257,7 +257,7 @@ jobs:
       #
       # Same read-only discipline as every other step here: this script never
       # passes --fix. Measured on this tree: ~22s.
-      - name: Design tokens (stylelint ratchet)
+      - name: Design tokens (stylelint)
         run: pnpm run lint:style
 
       # Bilingual UI: no Chinese typed straight into a template or a string

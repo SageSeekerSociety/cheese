@@ -101,10 +101,10 @@ def test_a_failed_collection_is_not_a_zero():
 
 def test_a_check_that_reported_no_count_is_not_a_zero():
     rows = [
-        _row("a" * 40, [_check("files", actual=None)], day=1),
-        _row("b" * 40, [_check("files", actual=None)], day=2),
+        _row("a" * 40, [_check("be-contracts", actual=None)], day=1),
+        _row("b" * 40, [_check("be-contracts", actual=None)], day=2),
     ]
-    check = _check_of(_board(rows), "files")
+    check = _check_of(_board(rows), "be-contracts")
 
     assert [point["actual"] for point in check["points"]] == [None, None]
     assert check["direction"] == "unknown"
@@ -215,18 +215,18 @@ def test_a_failed_collection_is_a_hole_at_the_row_level():
 
 def test_better_up_reads_the_other_way():
     rows = [
-        _row("a" * 40, [_check("scenes", actual=100, better="up")], day=1),
-        _row("b" * 40, [_check("scenes", actual=120, better="up")], day=2),
+        _row("a" * 40, [_check("scene-ratchet", actual=100, better="up")], day=1),
+        _row("b" * 40, [_check("scene-ratchet", actual=120, better="up")], day=2),
     ]
-    assert _check_of(_board(rows), "scenes")["direction"] == "improving"
+    assert _check_of(_board(rows), "scene-ratchet")["direction"] == "improving"
 
 
 def test_a_check_without_a_declared_direction_gets_no_direction():
     rows = [
-        _row("a" * 40, [_check("scenes", actual=100, better=None)], day=1),
-        _row("b" * 40, [_check("scenes", actual=10, better=None)], day=2),
+        _row("a" * 40, [_check("scene-ratchet", actual=100, better=None)], day=1),
+        _row("b" * 40, [_check("scene-ratchet", actual=10, better=None)], day=2),
     ]
-    assert _check_of(_board(rows), "scenes")["direction"] == "unknown"
+    assert _check_of(_board(rows), "scene-ratchet")["direction"] == "unknown"
 
 
 def test_new_exemptions_are_marked_only_where_the_rules_held_still():
@@ -283,6 +283,23 @@ def test_areas_keep_the_check_registry_order():
     board = _board(rows)
 
     assert [area["area"] for area in board["areas"]] == ["场景", "边界", "规模"]
+
+
+def test_retired_checks_in_stored_snapshots_do_not_appear_on_the_board():
+    rows = [
+        _row(
+            "a" * 40,
+            [_check("harness-boundary"), _check("be-contracts")],
+            day=1,
+        ),
+        _row("b" * 40, [_check("be-contracts")], day=2),
+    ]
+
+    board = _board(rows)
+
+    assert [check["id"] for area in board["areas"] for check in area["checks"]] == [
+        "be-contracts"
+    ]
 
 
 def test_zero_diff_violations_does_not_mean_the_tree_is_within_limits():

@@ -41,13 +41,11 @@ git diff --name-only origin/main...HEAD -- 'frontend/**'   # 一次改动
 
 ```bash
 cd frontend
-pnpm run lint:style                        # 写死颜色，棘轮只拦新增
+pnpm run lint:style                        # 写死颜色，一处就红
 cd .. && bash .claude/scripts/check-repo-rules.sh   # Vuetify 固定调色板名（stylelint 看不见模板）
 ```
 
-两个都绿只说明**没有新增**。存量冻在基线里，所以"绿"不等于这个文件干净——你正在读的这个
-文件很可能就在基线里，别照着它抄。基线在 `frontend/stylelint-baseline.json`，想知道手上这个
-文件有没有额度就去查它。调色板名那道是硬规则，没有基线。
+两个都绿只说明写死颜色和固定调色板名检查通过；继续看下面没有闸门的部分。
 
 ## 2. 动效（规范 §9，没有闸门）
 

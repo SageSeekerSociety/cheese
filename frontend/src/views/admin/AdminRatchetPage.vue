@@ -9,7 +9,7 @@
  * 留在这一层，两边都各归各位。
  *
  * 这一页是**只读的**：它不定义任何一条判定，只把采集脚本每道检查自己吐出来的数
- * 画出来。规则在各自的检查器里（`.claude/scripts/ratchet-snapshot.py` 是那份清单），
+ * 画出来。规则在各自的检查器里（`backend/app/domain/ratchet/registry.py` 是那份清单），
  * 采集在 `.github/workflows/arch-metrics.yml` 里跑，后端把每次采集的工件存下来
  * （`POST /admin/ratchet/refresh` 是唯一会去 GitHub 的动作），这里读存档。所以这一页
  * 上不可能出现一个「检查器没量过」的数。
