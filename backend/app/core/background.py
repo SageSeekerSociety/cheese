@@ -41,6 +41,8 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from app.core import forge_quota
+
 logger = logging.getLogger("cheesex.background")
 
 # Strong references to everything in flight. Entries remove themselves on
@@ -354,15 +356,8 @@ class PeriodicJobs:
     No domain context or process-global registration state lives here.
     """
 
-    def __init__(
-        self,
-        *,
-        interval_policy: Callable[[float], float | None] | None = None,
-        pause_wait: Callable[[], float] | None = None,
-    ) -> None:
+    def __init__(self) -> None:
         self._jobs: dict[str, PeriodicRunner] = {}
-        self._interval_policy = interval_policy
-        self._pause_wait = pause_wait
 
     def register(
         self,
@@ -371,6 +366,7 @@ class PeriodicJobs:
         job: Callable[[], Awaitable[Any]],
         *,
         owner_only: bool = True,
+        forge_bound: bool = False,
     ) -> None:
         if name in self._jobs:
             # i18n-exempt: startup wiring error for developers, not a user refusal
@@ -380,8 +376,10 @@ class PeriodicJobs:
             interval_seconds,
             job,
             owner_only=owner_only,
-            interval_policy=self._interval_policy,
-            pause_wait=self._pause_wait,
+            interval_policy=(
+                forge_quota.background_interval_seconds if forge_bound else None
+            ),
+            pause_wait=forge_quota.background_resume_after if forge_bound else None,
         )
 
     def ordered(self, names: Sequence[str]) -> list[PeriodicRunner]:

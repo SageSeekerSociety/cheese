@@ -33,10 +33,6 @@ from app.domain.docs_site import periodic as docs_periodic
 from app.domain.machine import periodic as machine_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
-from app.domain.project.forge import (
-    background_interval_seconds,
-    background_resume_after,
-)
 from app.domain.ratchet import periodic as ratchet_periodic
 from app.domain.review import periodic as review_periodic
 from app.domain.routine import periodic as routine_periodic
@@ -52,10 +48,10 @@ PERIODIC_JOB_NAMES = (
     "forge credential cache cleanup",
     "forge orphan account sweep",
     "quiet task reminder",
-    "pr poll",
-    "task pr poll",
-    "landing watch",
-    "draft pr sweep",
+    "pr poll",  # forge_bound: PR status reads
+    "task pr poll",  # forge_bound: task branch/PR reads
+    "landing watch",  # forge_bound: merge, checks and deployment reads
+    "draft pr sweep",  # forge_bound: branch/compare reads and PR creation
     "orphan sweep",
     "closed task stop",
     "queued message sweep",
@@ -81,8 +77,8 @@ PERIODIC_JOB_NAMES = (
     "routines",
     "task deadline sweep",
     "memory dream",
-    "ratchet ingest",
-    "ci activity sweep",
+    "ratchet ingest",  # forge_bound: GitHub Actions artifact reads
+    "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
     "wake watch",
 )
 
@@ -135,10 +131,7 @@ def periodic_jobs(
     get_runner: Callable[[], AgentWorkRunner],
 ) -> list[PeriodicRunner]:
     """Build one checked, ordered set without importing domains from core."""
-    jobs = PeriodicJobs(
-        interval_policy=background_interval_seconds,
-        pause_wait=background_resume_after,
-    )
+    jobs = PeriodicJobs()
     gate_nudges = gate_nudge_factory(
         chat=chat, sessions=chat.session_factory, get_runner=get_runner
     )

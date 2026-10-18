@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.background import PeriodicRunner
+from app.core.background import PeriodicJobs, PeriodicRunner
 from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio
@@ -74,6 +74,56 @@ async def test_a_restart_does_not_run_a_job_before_it_is_due():
 
 async def test_a_job_without_a_recorded_run_waits_one_interval():
     assert not await _runs_within(0.2, 3600, None, _Runs())
+
+
+@pytest.fixture
+def depleted_forge_quota(monkeypatch):
+    import time
+
+    from app.core import forge_quota
+
+    monkeypatch.setattr(forge_quota, "_readings", {})
+    monkeypatch.setattr(forge_quota, "_refused_until", {})
+    forge_quota.record(152342238, 500, 5000, time.time() + 600)
+
+
+async def test_an_unmarked_job_keeps_running_at_ten_percent_quota(depleted_forge_quota):
+    ran = asyncio.Event()
+
+    async def job():
+        ran.set()
+
+    registry = PeriodicJobs()
+    registry.register("local work", 60, job)
+    runner = registry.ordered(["local work"])[0]
+    assert runner._next_interval_seconds() == 60
+
+    runner.start(_Runs(), datetime.now(UTC) - timedelta(hours=1))
+    try:
+        await asyncio.wait_for(ran.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+
+async def test_an_explicit_forge_job_pauses_at_ten_percent_quota(depleted_forge_quota):
+    ran = asyncio.Event()
+
+    async def job():
+        ran.set()
+
+    registry = PeriodicJobs()
+    registry.register("forge work", 60, job, forge_bound=True)
+    runner = registry.ordered(["forge work"])[0]
+    assert runner._next_interval_seconds() is None
+
+    runs = _Runs()
+    runner.start(runs, datetime.now(UTC) - timedelta(hours=1))
+    try:
+        await asyncio.sleep(0)
+        assert not ran.is_set()
+        assert runs.claims == []
+    finally:
+        await runner.stop()
 
 
 async def test_interval_policy_slows_ticks_without_extending_the_lease():
@@ -453,22 +503,35 @@ def test_forge_accounts_left_by_failed_creations_are_swept():
 @pytest.mark.parametrize(
     ("remaining", "floor"), [(4000, 0), (2500, 180), (1100, 300), (999, None)]
 )
-def test_every_periodic_job_uses_the_shared_quota_interval_policy(
+def test_only_the_github_jobs_use_the_quota_interval_policy(
     monkeypatch, remaining, floor
 ):
     import time
 
     from app.core import forge_quota
+    from app.core.config import settings
 
+    github_jobs = {
+        "pr poll",
+        "task pr poll",
+        "landing watch",
+        "draft pr sweep",
+        "ratchet ingest",
+        "ci activity sweep",
+    }
+    # Enable configured clocks so disabled test settings cannot hide a missing opt-in.
+    for field in type(settings).model_fields:
+        if field.endswith("_interval_s"):
+            monkeypatch.setattr(settings, field, 60)
     monkeypatch.setattr(forge_quota, "_readings", {})
     monkeypatch.setattr(forge_quota, "_refused_until", {})
     forge_quota.record(152342238, remaining, 5000, time.time() + 600)
 
     jobs = _jobs()
-    assert jobs
+    assert github_jobs <= {job.name for job in jobs}
     for job in jobs:
-        if job.interval_seconds <= 0:
-            assert job._next_interval_seconds() == 0, job.name
+        if job.name not in github_jobs or job.interval_seconds <= 0:
+            assert job._next_interval_seconds() == job.interval_seconds, job.name
             continue
         expected = None if floor is None else max(job.interval_seconds, floor)
         assert job._next_interval_seconds() == expected, job.name

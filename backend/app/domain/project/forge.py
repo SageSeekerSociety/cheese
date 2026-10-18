@@ -237,16 +237,6 @@ async def quota_serves_background(quota: GitHubAppTokens | None) -> bool:
     return quota is None or await installation_serves_background(quota)
 
 
-def background_interval_seconds(base_interval_s: float) -> float | None:
-    """The periodic interval for the currently known shared quota level."""
-    return forge_quota.background_interval_seconds(base_interval_s)
-
-
-def background_resume_after() -> float:
-    """How long periodic jobs wait before rechecking a stopped quota."""
-    return forge_quota.background_resume_after()
-
-
 def installation_known_closed(tokens: GitHubAppTokens) -> bool:
     """What this process already knows without asking GitHub: closed while its
     last word on the installation was a refusal that has not expired, or while
