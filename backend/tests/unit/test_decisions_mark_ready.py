@@ -10,6 +10,7 @@
 按 raw `False` 判冲突，会把每一个草稿都拒在 ready 门外。
 """
 
+import time
 import uuid
 from dataclasses import replace
 from types import SimpleNamespace
@@ -272,12 +273,16 @@ async def test_ready_reports_a_refused_rebase_instead_of_flipping_anyway():
 async def test_ready_waits_for_a_background_update_to_land():
     """GitHub 的 202 是「受理」，head 还没动。翻 ready 前必须等到新 head，
     否则全量 CI 起在旧 head 上、再在新 head 上重跑一遍 —— 又白跑一轮。"""
+    started = time.monotonic()
     answer, _publisher, _forge, events = await _ready(statuses=[_status()], lag=True)
+    waited = time.monotonic() - started
 
     assert answer["ready"] is True
     # 初始读 + 换基后两次读（第一次仍是旧 head，第二次才动）
     assert events.count("pr_status") == 3
     assert events.index("update_branch") < events.index("mark_ready_for_review")
+    # 第二次读之前真的等了：把那两个 sleep 删掉，这条就红。
+    assert waited >= 0.9
 
 
 @pytest.mark.anyio
