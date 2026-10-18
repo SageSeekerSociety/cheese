@@ -31,7 +31,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import or_, select
 
@@ -92,6 +92,10 @@ AT_ONCE = 8
 #: is attributed to nobody in particular rather than to whoever got looked at:
 #: a forge call per commit, and a wrong blame costs more than a wide one.
 BATCH_COMMITS = 20
+
+#: How long a landing without a merge commit holds back the verdicts of its
+#: project's red batches.
+UNREAD_FOR = timedelta(minutes=10)
 
 #: What a prompt lists before it says how much it left out.
 PROMPT_COMMITS = 10
@@ -344,7 +348,7 @@ async def _look(
                 and batch is not None
                 and batch.blamed not in (None, sha)
             ):
-                hears = await _line_will_hear(session, batch.blamed)
+                hears = await _line_will_hear(session, batch.blamed, task.project_id)
                 if hears is None:
                     # The blamed line may be one whose first look has not
                     # written its merge commit: decide on the next tick.
@@ -390,11 +394,13 @@ async def _look(
     return 1
 
 
-async def _line_will_hear(session, blamed: str) -> bool | None:
+async def _line_will_hear(session, blamed: str, project_id) -> bool | None:
     """Whether a landing still waiting on the checks of ``blamed`` exists, so
     that its own look will tell its task. None while a landing has no merge
     commit written yet (its first look writes it): the blamed line may be that
-    one, so the answer waits for the next tick."""
+    one, so the answer waits for the next tick — but only for a landing of this
+    project that is younger than `UNREAD_FOR`, so one whose merge commit never
+    resolves cannot hold every red batch in the project."""
     now = datetime.now(UTC)
     live = TaskLanding.watch_until > now
     if await session.scalar(
@@ -413,6 +419,10 @@ async def _line_will_hear(session, blamed: str) -> bool | None:
             live,
             TaskLanding.merge_sha.is_(None),
             TaskLanding.checks == ChecksOutcome.watching,
+            TaskLanding.landed_at > now - UNREAD_FOR,
+            TaskLanding.task_id.in_(
+                select(Task.id).where(Task.project_id == project_id)
+            ),
         )
         .limit(1)
     )

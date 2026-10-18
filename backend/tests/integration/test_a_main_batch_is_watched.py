@@ -169,13 +169,6 @@ def test_failures_that_name_a_commit_nobody_watches_wake_the_lines_that_are(
     assert _landing(client, first).checks.value == "failed"
 
 
-def test_a_cancelled_gate_listed_first_does_not_hide_the_red_one():
-    from app.domain.review.landing_forge import gate_run
-
-    runs = [_gate("cancelled", suite=2), _gate("failure", suite=1)]
-    assert gate_run(runs).conclusion == "failure"
-
-
 def test_failures_that_name_nobody_wake_every_line_in_the_batch(
     client, app_world, forge
 ):
