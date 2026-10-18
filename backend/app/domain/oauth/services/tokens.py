@@ -117,10 +117,9 @@ async def get_github_user_token_with_reason(
     svc: pkg.OAuthService, user_id: int, *, provider_id: str = "github_app"
 ) -> tuple[str | None, str | None]:
     """Same contract as ``get_github_user_token``, plus a
-    ``TOKEN_UNAVAILABLE_*`` reason whenever the token comes back None —
-    for callers (两阶段采纳's accept()) that need to explain a degrade to
-    a human instead of just falling back silently. ``reason`` is always
-    None when ``token`` is not.
+    ``TOKEN_UNAVAILABLE_*`` reason whenever the token comes back None, for
+    a caller that needs to explain a degrade to a human instead of just
+    falling back silently. ``reason`` is always None when ``token`` is not.
     """
     conn = await svc._repo.get_by_user_and_provider(user_id, provider_id)
     if conn is None or not conn.access_token:
@@ -154,7 +153,7 @@ async def _refresh_and_persist_token(
 ) -> str | None:
     """Refresh an expiring GitHub token and commit the result in its OWN
     transaction, on fresh sessions — deliberately NOT reusing whatever
-    session/transaction the caller (e.g. AcceptService.accept()) happens
+    session/transaction the caller (e.g. the repository-connect route) happens
     to be mid-way through, so a later rollback there cannot lose a token
     GitHub has already rotated (决策 0556ac50).
 
