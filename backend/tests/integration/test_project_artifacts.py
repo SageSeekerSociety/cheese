@@ -16,7 +16,7 @@ import uuid
 import pytest
 from sqlalchemy import event
 
-from app.core.errors import ValidationError
+from app.core.errors import UnprocessableEntityError
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.deliverables import artifacts
 from app.domain.project.models import ProjectArtifact
@@ -302,6 +302,24 @@ def test_a_rejected_delivery_leaves_nothing_on_the_list(client):
     assert _manifest(client, pid) == []
 
 
+def test_reusing_the_id_of_a_rejected_delivery_is_refused(client):
+    """那一行还在（同一个名字再声明时落回它），但它已经不在清单上了。
+
+    `artifact` 只认清单上的 id，所以「别处遗留的一行」不能从这里被沿用回来。
+    """
+    pid = _project(client)
+    rid = _room(client, pid)
+    declared = _file_card(client, rid, new_artifact="结题报告").json()["data"]
+    _decide(client, declared["id"], "reject")
+
+    r = _file_card(
+        client, _room(client, pid, "第二轮"), artifact=declared["artifact"]["id"]
+    )
+
+    assert r.status_code == 422
+    assert _manifest(client, pid) == []
+
+
 def test_the_same_name_declared_again_lands_on_the_same_item(client):
     """驳回之后重来一次，是同一项的第一版，不是另一项。"""
     pid = _project(client)
@@ -385,7 +403,7 @@ def test_an_item_delivered_in_a_hidden_room_is_not_reused_elsewhere(client):
     secret = _room(client, pid, "私下")
     declared = _file_card(client, secret, new_artifact="结题报告").json()["data"]
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(UnprocessableEntityError):
         _reuse_directly(
             client, pid, declared["artifact"]["id"], hidden=[uuid.UUID(secret)]
         )
