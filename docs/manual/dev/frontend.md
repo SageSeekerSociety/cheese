@@ -50,7 +50,7 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 `main.ts` 在挂载前后各做两件容易漏的事：
 
 - `watchForStaleBuild()` / `clearStaleBuildGuard()`：一个标签页跨过一次发版之后，懒加载的 chunk 在新构建里已经不存在，点一下就是一个 rejected import 而不是一页。启动时先接住这个失败，挂载成功就是「刷一下确实修好了」的证据，于是把一次性开关放开给下一次发版。
-- `installErrorReporter(app)`：浏览器侧的报错上报进当前话题的「现场」，这样读不到用户控制台的 agent 也能拿到它。
+- `installErrorReporter(app)`：浏览器侧的报错上报进当前频道的「现场」，这样读不到用户控制台的 agent 也能拿到它。
 
 ## 组件预览站 {#catalog}
 
@@ -93,7 +93,7 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 | `beforeEach(carryLoginRedirect)` + `requireEmail(router, …)` | 未登录跳登录、未验证邮箱先补邮箱 |
 | `beforeEach`（动态标题） | 有 `meta.getDynamicTitle` 的路由把标题算出来交给 `stores/title.ts` |
 | `afterEach` | 触发标题更新；`recordEntry(to, from, …)` 记下来路，顶栏那颗 ← 靠它回得去。名字**必须在这一刻**抓下来跟着路由一起存 —— 按 ← 的时候那一页早就卸载了 |
-| `beforeEach`（话题预取） | 进 `workspace-topic` 且已登录时，立刻起消息请求并预热 pdf.js。**不在这里起头**的话，消息要等话题页那串 chunk 下完、ChatPanel 挂上之后才开始请求，冷打开一个话题时那条最大的消息晚半秒以上 |
+| `beforeEach`（频道预取） | 进 `workspace-topic` 且已登录时，立刻起消息请求并预热 pdf.js。**不在这里起头**的话，消息要等频道页那串 chunk 下完、ChatPanel 挂上之后才开始请求，冷打开一个频道时那条最大的消息晚半秒以上 |
 
 懒加载页面在导航时下载，所以 `router.onError(reloadForNewBuild)` 兜住「发版撞上这次点击」。
 
@@ -115,9 +115,9 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 
 ## 房间：一列对话，一块工作面板 {#room}
 
-房间是 `views/workspace/` 那一棵：`ProjectShell.vue` 是项目壳（左栏 `ProjectSidebar`），话题在 `TopicView.vue` —— 一个话题头，然后 `TopicChatColumn.vue`（左）和 `WorkPanel.vue`（右）分栏。手机上两栏放不下，对话变成工作面板那条 tab 栏的第一格。
+房间是 `views/workspace/` 那一棵：`ProjectShell.vue` 是项目壳（左栏 `ProjectSidebar`），频道在 `TopicView.vue` —— 一个频道头，然后 `TopicChatColumn.vue`（左）和 `WorkPanel.vue`（右）分栏。手机上两栏放不下，对话变成工作面板那条 tab 栏的第一格。
 
-`ProjectShell` 按 topicId 给 `TopicView` 打 key，所以**每个话题一个全新实例**，下面（或任何子组件里）不会有上一个话题的状态被带过来。
+`ProjectShell` 按 topicId 给 `TopicView` 打 key，所以**每个频道一个全新实例**，下面（或任何子组件里）不会有上一个频道的状态被带过来。
 
 工作面板开在哪个页签写进 URL（`?tab=`），所以「你来看一眼这个 diff」是一条能发出去的链接。地址是页面的事，不是面板的：面板只报告自己动了，页面负责写回 query。
 
@@ -138,7 +138,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 平台事件的契约是**后端只发码、文案在前端**：`kind=event` 的 block 带 `meta`（`event_type`、`severity`、`who`、`detail`、`detail_label`…），正文只有一行 ≤40 字的人话。`meta.in_room` 单独一格管「露不露面」，缺省是露面 —— 它过去和「谁写的」挤在 `author_type` 一个字段里（system 出现、ai 不出现），于是「确实由芝士产生、又该让人看见的事件」无法表达。对消息同样生效：一条通篇没有中文的 AI 消息照常落库、照常在历史里，只是聊天区不显示。
 
-多个队友并行跑时，工作面板的「现场」页签标签上带名字和跳动的点，见[同一话题里的几个 AI 队友](/dev/turn#seats-ui)。
+多个队友并行跑时，工作面板的「现场」页签标签上带名字和跳动的点，见[同一频道里的几个 AI 队友](/dev/turn#seats-ui)。
 
 ## 工作面板与页签 {#workpanel}
 
@@ -172,7 +172,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 `network/` 这个目录已经不存在了，别再往回引：ESLint 里有一条 `no-restricted-imports` 专门拦 `@/network`（`eslint.config.mjs`，报文里指到 `@/api`），棘轮的 `legacy-network` 那本账也从 140 条收到 0，只能减不能加。
 
-`stores/` 是 pinia：`workspace.ts`（项目与话题）、`feedback.ts`（反馈，含缓存、分页、陈旧判断）、`space.ts`、`discussionStore.ts`、`navigation.ts`、`signup.ts`、`title.ts`。房间 chrome、聊天和工作面板挂载时会各自请求同一份名册/任务摘要，所以 `api.ts` 里有一个 `pendingRoomReads` 表**只共享在飞行中的读**：写请求（任何非 GET）一进来就整表清空，下一次读一定打到服务器。
+`stores/` 是 pinia：`workspace.ts`（项目与频道）、`feedback.ts`（反馈，含缓存、分页、陈旧判断）、`space.ts`、`discussionStore.ts`、`navigation.ts`、`signup.ts`、`title.ts`。房间 chrome、聊天和工作面板挂载时会各自请求同一份名册/任务摘要，所以 `api.ts` 里有一个 `pendingRoomReads` 表**只共享在飞行中的读**：写请求（任何非 GET）一进来就整表清空，下一次读一定打到服务器。
 
 ## 请求的信封、重试、401 与预算 {#api}
 

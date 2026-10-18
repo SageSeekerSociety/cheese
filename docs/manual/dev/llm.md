@@ -30,7 +30,7 @@ steps:
     desc: 网关路换上项目的虚拟 key，按 key 记账。上游 key 不出平台主机。
     link: /dev/llm#routes
   - label: 额度用完：拒绝并说一声
-    desc: 返回 allow false、reason_kind budget，话题里出现一条平台提示，这一轮不执行。
+    desc: 返回 allow false、reason_kind budget，频道里出现一条平台提示，这一轮不执行。
     link: /dev/llm#admission
   - label: 绑定的模型解析不出来
     desc: 返回 allow false、reason_kind binding，不会悄悄换到另一条路。
@@ -103,7 +103,7 @@ rules:
     tone: bad
   - label: 额度用完
     when: 'left <= 0'
-    text: 返回 allow: false、reason_kind: budget，并在话题里发一条平台提示「可用的 tokens 额度已用完，这轮没有执行」。
+    text: 返回 allow: false、reason_kind: budget，并在频道里发一条平台提示「可用的 tokens 额度已用完，这轮没有执行」。
     tone: bad
   - label: 放行
     text: 返回 allow: true、reason_kind: budget，supply.pool 是{route}，模型名由计量代理写进请求体。
@@ -127,7 +127,7 @@ out:
 }
 ```
 
-- **能不能跑**：问账本（`Ledger.admit`）：额度用完或方案的时间窗口满了就拒绝，拒绝的话说明何时恢复，并在话题里发一条平台提示。
+- **能不能跑**：问账本（`Ledger.admit`）：额度用完或方案的时间窗口满了就拒绝，拒绝的话说明何时恢复，并在频道里发一条平台提示。
 - **走哪条路**：`supply.pool`，由这个 AI 队友或项目绑定的模型决定，每个请求现查，所以改绑模型不用重启会话。
 - **用哪个模型名**：`supply.model`，由计量代理写进请求体。
 

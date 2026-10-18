@@ -105,12 +105,12 @@ uv run --with playwright python scripts/shots.py
 | 界面 | 对标产品 | 关键特征 |
 |---|---|---|
 | 整体/组件 | **Vuetify Material**（同现有 cheese-backend-py 前端） | 琥珀橙 #F57F17 主色 |
-| 话题 | **GitHub PR** | #id + Open/Merged 徽章 + "合并到 main" + 末尾合并框 |
+| 频道 | **GitHub PR** | #id + Open/Merged 徽章 + "合并到 main" + 末尾合并框 |
 | 对话 | **飞书群聊** | 左对齐消息行、同人连发分组、@高亮；谁做的事落在正文轴上，房间里发生的事居中 |
 | 文档 | **飞书文档** | 居中文档页、大标题、块悬停手柄 |
-| 工作台 | **Cursor/Replit** | 话题树｜对话｜文档 + 右侧工具抽屉 |
+| 工作台 | **Cursor/Replit** | 频道树｜对话｜文档 + 右侧工具抽屉 |
 | 总览/看板 | **Linear** | 冷静中性、状态用圆点、等宽数字 |
-| 个人主页 | **LinkedIn/GitHub profile** | 头像+活动图+参与项目+参与的话题=简历 |
+| 个人主页 | **LinkedIn/GitHub profile** | 头像+活动图+参与项目+参与的频道=简历 |
 | 私聊 | **飞书私聊** | 左栏会话入口 → 主区域普通 1:1 聊天 |
 
 ### Token（`frontend/src/style.css :root` + `plugins/vuetify.ts` 镜像）
@@ -121,7 +121,7 @@ uv run --with playwright python scripts/shots.py
 - 字体：Inter + 苹方（正文）、JetBrains Mono（meta/时间/数字/id）。
 
 ### 枚举 → 中文
-所有后端枚举（通知 kind、话题 status/kind、角色、AI 模式）经 `frontend/src/labels.ts` 映射成中文再显示，绝不裸奔。
+所有后端枚举（通知 kind、频道 status/kind、角色、AI 模式）经 `frontend/src/labels.ts` 映射成中文再显示，绝不裸奔。
 
 ---
 
