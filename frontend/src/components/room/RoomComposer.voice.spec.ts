@@ -150,6 +150,31 @@ describe('语音输入', () => {
     expect(draft.value).toBe('好的')
   })
 
+  it('按住说话：别的手指抬起不算松手；取消之后，那次松手不会结束下一段录音', async () => {
+    hearVoice.mockResolvedValue({ text: '好的', raw: '好的' })
+    const { box } = mount('')
+
+    const mic = screen.getByRole('button', { name: '语音输入' })
+    await fireEvent.pointerDown(mic, { button: 0, pointerId: 1 })
+    await new Promise((r) => setTimeout(r, 300))
+    await flush()
+    speak(1)
+    window.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 2 }))
+    await flush()
+    expect(hearVoice).not.toHaveBeenCalled()
+
+    // 按着不放、用 Esc 取消，再开一段新的：原来那根手指抬起，不该把新的这段结束。
+    expect(pressInComposer(box(), 'Escape')).toBe(true)
+    await flush()
+    pressInComposer(box(), 'v', { altKey: true, code: 'KeyV' })
+    await flush()
+    speak(1)
+    window.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 1 }))
+    await flush()
+    expect(hearVoice).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '说完了（Enter）' })).toBeTruthy()
+  })
+
   it('「还原原话」换成一字不差的转写，再点换回来', async () => {
     hearVoice.mockResolvedValue({ text: '周四之前改好。', raw: '嗯周三不对周四之前改好' })
     const { draft } = mount('前面')

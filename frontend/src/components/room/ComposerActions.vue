@@ -61,8 +61,8 @@ const emit = defineEmits<{
   (e: 'toggle-summon'): void
   (e: 'remind'): void
   (e: 'send'): void
-  /** 麦克风：`tap` 点一下开始，`hold` 按住开始，`release` 按住之后松手。 */
-  (e: 'voice', how: 'tap' | 'hold' | 'release'): void
+  /** 麦克风：`tap` 点一下开始，`hold` 按住开始（带按着的那个指针），`release` 按住之后松手。 */
+  (e: 'voice', how: 'tap' | 'hold' | 'release', pointerId?: number): void
   (e: 'voice-swap'): void
 }>()
 
@@ -94,9 +94,10 @@ function micDown(e: PointerEvent) {
   if (e.button !== 0) return
   held = false
   ;(e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId)
+  const pointer = e.pointerId
   holdTimer = window.setTimeout(() => {
     held = true
-    emit('voice', 'hold')
+    emit('voice', 'hold', pointer)
   }, HOLD_MS)
 }
 function micUp(e: PointerEvent) {

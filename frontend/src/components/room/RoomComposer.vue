@@ -19,7 +19,7 @@ import type { ChatAttachment, Topic } from '../../cx_types'
 import type { LinkableDocument } from '../../lib/docMentionMenu'
 import type { RefNames } from '../../lib/refChip'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
@@ -510,20 +510,32 @@ watch(draft, () => {
 
 // 按住说话：一开始录，动作行就换成录音条，按着的那颗麦克风连同它抓着的指针一起被卸掉，
 // 它自己再也听不到松手。所以松手在 window 上等，和按钮在不在无关。
-function onVoice(how: 'tap' | 'hold' | 'release') {
+// 只认按着麦克风的那根手指：另一根手指在别处点一下、滚一下，不算松手。录音一结束（说完、
+// 取消、出错）就不再等，免得这一次的松手去结束下一段录音。
+let stopHold: (() => void) | null = null
+function onVoice(how: 'tap' | 'hold' | 'release', pointerId?: number) {
   if (how === 'release') return void voice.finish()
   if (voice.state.value === 'recording' && how === 'tap') return void voice.finish()
   if (how === 'hold') {
-    const release = () => {
-      window.removeEventListener('pointerup', release)
-      window.removeEventListener('pointercancel', release)
+    const release = (e: PointerEvent) => {
+      if (pointerId !== undefined && e.pointerId !== pointerId) return
+      stopHold?.()
       void voice.finish()
     }
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
+    stopHold = () => {
+      window.removeEventListener('pointerup', release)
+      window.removeEventListener('pointercancel', release)
+      stopHold = null
+    }
   }
   void voice.start()
 }
+watch(voice.state, (now) => {
+  if (now !== 'recording') stopHold?.()
+})
+onBeforeUnmount(() => stopHold?.())
 
 /** 录音时的键：Enter 说完、Esc 不要了；Alt+V 开始，录着时再按一次说完。认领了返回 true。 */
 function onVoiceKey(e: KeyboardEvent): boolean {
