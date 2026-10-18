@@ -50,6 +50,17 @@ async def is_space_admin(
     return relation is not None
 
 
+async def space_admin_ids(session: AsyncSession, *, space_id: int | None) -> set[int]:
+    """这块板全部所有者与管理员的用户 id，一次查询；判据与 ``is_space_admin`` 相同。
+
+    一次要问好几个人时用它，免得按人各查一次。``space_id is None`` 是空集。
+    """
+    if space_id is None:
+        return set()
+    relations = await SpaceAdminRelationRepository(session).list_admins(space_id)
+    return {relation.user_id for relation in relations}
+
+
 async def may_teach_task(session: AsyncSession, *, task: Task, user_id: int) -> bool:
     """能不能动这道题的管理面：出题者本人，**或**它所在板的所有者/管理员。
 
