@@ -149,10 +149,10 @@ describe('Tab 逐行走得进话题行', () => {
   })
 })
 
-describe('行尾那颗 ⋯ 只在选中行上进 Tab 序列', () => {
+describe('行尾没有 ⋯ 之后，Tab 也不为它留停靠点', () => {
   beforeEach(() => localStorage.clear())
 
-  it('选中的行连 ⋯ 一起停，没选中的行只停行本身', () => {
+  it('每一行只有行自己是一个停靠点，行里不再有按钮', () => {
     const { container } = mount({
       topics: [
         topic('root', null),
@@ -162,11 +162,9 @@ describe('行尾那颗 ⋯ 只在选中行上进 Tab 序列', () => {
       ],
       selectedTopicId: 'mine',
     })
-    const actionsOf = (id: string) =>
-      container.querySelector(`.topic-row[data-room-id="${id}"] .row-actions__btn`) as HTMLElement
+    expect(container.querySelector('.row-actions__btn')).toBeNull()
+    const rows = Array.from(container.querySelectorAll('.rail-scroll .topic-row')) as HTMLElement[]
     const stops = tabStops(container)
-    expect(stops).toContain(actionsOf('mine'))
-    expect(stops).not.toContain(actionsOf('second'))
-    expect(stops).not.toContain(actionsOf('third'))
+    expect(rows.filter((row) => !stops.includes(row))).toEqual([])
   })
 })

@@ -13,7 +13,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -193,13 +193,13 @@ describe('选中的话题在窗口外', () => {
 })
 
 describe('锚点落在行上的那几种状态', () => {
-  it('⋯ 菜单开着的那一行也留在 DOM 里 —— 那颗 ⋯ 就是菜单的 activator', async () => {
-    // 菜单展开期间那颗 ⋯ 必须留在屏幕上：它是 activator，跟着窗口一起消失菜单就塌了。
+  it('右键菜单开着的那一行也留在 DOM 里 —— 菜单挂在这一行上', async () => {
+    // 菜单展开期间这一行必须留在屏幕上：它是菜单的根，跟着窗口一起消失菜单就塌了。
     const { container } = mount()
     await waitFor(() => expect(virtua.seen).toHaveLength(1), WAIT)
-    const btn = container.querySelector('[data-room-id="t5"] .row-actions__btn') as HTMLElement | null
-    expect(btn).not.toBeNull()
-    await fireEvent.click(btn as HTMLElement)
+    const row = container.querySelector('[data-room-id="t5"]') as HTMLElement | null
+    expect(row).not.toBeNull()
+    row!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
     await waitFor(() => expect(virtua.seen[0].props.keepMounted as readonly number[]).toContain(5), WAIT)
   })
 })

@@ -44,11 +44,11 @@ const props = defineProps<{
   row: VisibleRow<Topic>
   /** 这一行是不是当前打开的那个房间。 */
   selected: boolean
-  /** 整页形态（手机）：没有 hover 浮出来的 ⋯，那里长按一行打开同一组操作。 */
+  /** 整页形态（手机）：手机上没有右键，长按一行打开同一组操作。 */
   page: boolean
   /** 这一行正在就地改名。 */
   renaming: boolean
-  /** 这一行的 ⋯ 菜单开着——开着的时候那颗按钮必须留屏幕上，它是菜单的根。 */
+  /** 这一行的操作菜单开着：虚拟列表靠它把这一行留在屏幕上，菜单才有着落。 */
   menuOpen: boolean
   /** 父级带钟算出来的：这一行里有没有成员卡住了（自己的，不含收起来的后代）。 */
   stalled: boolean
@@ -58,7 +58,7 @@ const props = defineProps<{
   marks?: RailMemberMark[]
   /** 折叠开关 hover 时说的那句话（里面有什么，父级知道）。 */
   toggleTitle: string
-  /** 这一行的 ⋯ 里有哪几项（要 router 才算得出链接，所以由父级给）。 */
+  /** 这一行的操作里有哪几项（要 router 才算得出链接，所以由父级给）。 */
   actions: (topic: Topic) => MenuCommand[]
   /** 我静音了这个频道：名字变灰、只有 @我才有数字，行尾留一个静音标记说明为什么。 */
   muted?: boolean
@@ -117,13 +117,18 @@ watch(
   { immediate: true }
 )
 
-// 右键一行，弹出的就是 ⋯ 那一份操作，只是弹在鼠标那一点上。正在改名时右键留给
-// 输入框（复制、粘贴）。点 ⋯ 打开时照旧挂在 ⋯ 下面。
+// 右键一行，菜单弹在鼠标那一点上——行尾不再有一颗 ⋯ 当入口（2026-10-18 定的：
+// 三个点全去掉，操作都从右键出来；手机上由父级的长按代劳）。正在改名时右键留给
+// 输入框（复制、粘贴）。
 const menuPoint = ref<[number, number] | null>(null)
 function openMenuAt(e: MouseEvent) {
   if (props.page || props.renaming) return
   e.preventDefault()
-  menuPoint.value = [e.clientX, e.clientY]
+  // 键盘（Shift+F10 / 菜单键）发来的 contextmenu 没有鼠标坐标，落在 (0,0)：这时把
+  // 菜单开在这一行的左下角，而不是屏幕左上角。
+  const keyboard = e.clientX === 0 && e.clientY === 0
+  const rect = (e.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+  menuPoint.value = keyboard && rect ? [rect.left + 12, rect.top + rect.height] : [e.clientX, e.clientY]
   emit('update:menu-open', true)
 }
 function onMenuToggle(open: boolean) {
@@ -134,7 +139,8 @@ function onMenuToggle(open: boolean) {
 
 <template>
   <!-- 行自己是一个 Tab 停靠点：Vuetify 给列表里的可点行标 tabindex="-2"，
-       Tab 就走不到行上、只落在行尾那颗 ⋯ 上（2026-10-03 lz123y 报的）。 -->
+       Tab 就走不到行上（2026-10-03 lz123y 报的）。停在行上按 Shift+F10 出操作菜单，
+       和右键同一份——行尾没有 ⋯ 之后这是键盘唯一的那条路。 -->
   <v-list-item
     tabindex="0"
     :data-room-id="row.topic.id"
@@ -143,12 +149,8 @@ function onMenuToggle(open: boolean) {
     rounded="lg"
     class="topic-row"
     :class="{
-      'topic-row--hover-actions': !page,
-      'topic-row--tasks': !!taskCount,
-      'topic-row--tasks-collapsed': !!taskCount && tasksCollapsed === true,
       'is-active': selected,
       'is-sub': row.depth > 0,
-      'is-menu-open': menuOpen,
     }"
     :style="{
       paddingInlineStart: 8 + row.depth * 20 + 'px',
@@ -263,32 +265,18 @@ function onMenuToggle(open: boolean) {
         :page="page"
         @toggle="emit('toggle-tasks', row.topic.id)"
       />
-      <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度。
-           整页形态（手机）没有它：那里长按一行打开同一组操作。 -->
-      <div v-if="!page" class="row-actions" @click.stop>
-        <AdaptiveMenu
-          :model-value="menuOpen"
-          :actions="actions(row.topic).map(menuActionOf)"
-          :title="topicTitle(row.topic)"
-          :point="menuPoint"
-          @update:model-value="onMenuToggle"
-        >
-          <template #activator="{ props: menuProps }">
-            <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
-            <v-btn
-              v-bind="menuProps"
-              :tabindex="selected ? 0 : -1"
-              icon="mdi-dots-horizontal"
-              size="small"
-              variant="text"
-              color="on-surface-variant"
-              density="comfortable"
-              :title="t('work.sidebar.moreActions')"
-              class="row-actions__btn"
-            />
-          </template>
-        </AdaptiveMenu>
-      </div>
+      <!-- 操作只有右键：菜单弹在鼠标那一点上。行尾不再有一颗 ⋯ 当入口——整页形态
+           （手机）没有右键，那里由父级的长按打开同一组操作。 -->
+      <AdaptiveMenu
+        v-if="!page"
+        :model-value="menuOpen"
+        :actions="actions(row.topic).map(menuActionOf)"
+        :title="topicTitle(row.topic)"
+        :point="menuPoint"
+        @update:model-value="onMenuToggle"
+      >
+        <template #activator />
+      </AdaptiveMenu>
     </template>
   </v-list-item>
 </template>
@@ -473,88 +461,12 @@ function onMenuToggle(open: boolean) {
   background: var(--line-2);
 }
 
-.row-actions {
-  position: absolute;
-  right: 5px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  opacity: 0;
-  pointer-events: none;
-  /* 有意为之的浮动工具条（Linear 手法）：白底+细边+微影，
-     在任何行底色上都成立——不再试图和行底色融为一体。 */
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-1);
-  transition: opacity var(--dur-quick) var(--ease-standard);
-  color: var(--muted);
-}
-/* 工具条里的那颗 ⋯ 要有自己的悬停反馈——否则不像能按的东西。这颗按钮就是整条白底的
-   内芯：内边距收掉、让它撑满，白底上就没有一圈「看着是它、点着不算」的边，悬停的灰
-   也铺满整块。留 3px 内边距时点到那圈上什么都不发生，灰只在中间铺一小块方片
-   （2026-10-13 lz123y 报的）。外面那 1px 描边不吃点击。
-   舒适可点，但必须小于行高（~36px）：29px 按钮 + 16px 图标，稳稳落在行内。 */
-.row-actions :deep(.v-btn) {
-  width: 31px;
-  height: 29px;
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-}
-.row-actions :deep(.v-btn .v-icon) {
-  font-size: 16px;
-}
-.row-actions :deep(.v-btn:hover) {
-  background: var(--fill);
-  color: var(--text);
-}
-/* 触摸屏没有 hover，键盘焦点又要先 Tab 到它——这两条规则加起来，⋯ 菜单在桌面宽度
-   的触屏上（平板横屏、带触摸屏的笔记本）根本摸不到。所以在没有 hover 能力的设备上
-   它常驻。整页形态（手机）不画这颗 ⋯，那里长按一行打开同一组操作。 */
+/* 没有 hover 能力的设备（平板、带触摸屏的笔记本）：未读数常驻。那里没有 ⋯ 可盖，
+   但触屏上点过一行之后 :hover 会一直粘着，数字不能因此消失。 */
 @media (hover: none) {
-  .row-actions {
-    opacity: 1;
-    pointer-events: auto;
-  }
   .topic-row .unread-badge {
     opacity: 1;
   }
-}
-/* 菜单展开时那颗 ⋯ 必须留着：它是菜单的 activator，跟 hover 一起消失的话
-   鼠标一离开行、菜单就没了根。
-   键盘焦点这里用 :focus-visible（行自己）加 :has(:focus-visible)（行里的 ⋯），不用
-   :focus-within：鼠标点一下行也会让它拿到焦点，:focus-within 从那以后一直命中，⋯ 就
-   挂在行尾不走了（同一个先例见 style.css 的 .fb-row:has(.fbrow__link:focus-visible)）。
-   行本身可聚焦，而 :has() 只看后代，所以 Tab 停在行上那一条要单写。 */
-.topic-row:hover .row-actions,
-.topic-row:focus-visible .row-actions,
-.topic-row:has(:focus-visible) .row-actions,
-.topic-row.is-menu-open .row-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-/* While the actions are out, the count steps aside (they share the tail). 只在有那颗
-   ⋯ 的行上：手机上点过一行之后 :hover 会一直粘着，未读数不能因此消失。 */
-.topic-row--hover-actions:hover .unread-badge,
-.topic-row--hover-actions:focus-visible .unread-badge,
-.topic-row--hover-actions:has(:focus-visible) .unread-badge,
-.topic-row.is-menu-open .unread-badge {
-  opacity: 0;
-}
-/* 有折叠加手的行，那颗 ⋯ 往左让出一个把手的宽度：不让的话它正好压住把手，而把手是
-   那一块唯一的入口，压住就成了「看着有、点不着」。（把手自己有多宽见
-   TopicRailTaskFold.vue。） */
-.topic-row--tasks .row-actions {
-  right: 45px;
-}
-/* 收起来的那一档要再让一截：把手这时还多顶着一盏灯和一颗条数，展开态只有一个箭头
-   （16px），收起态实测 51px。45px 那条留的量只够展开态——收起时 ⋯ 正好压在那颗条数
-   上（2026-10-13 真渲染量到的：压住 21px），而条数正是收起这一档要留给人看的唯一东西。
-   所以按宽的那一档让：行右沿到把手 16px + 收起态把手 51px + 14px 空隙 = 81，展开态
-   那颗 ⋯ 离把手也正是 13～14px，两档的空隙看起来一样。这些数跟着字号走，字号变了要重量。 */
-.topic-row--tasks-collapsed .row-actions {
-  right: 81px;
 }
 /* 整页形态：手指点的地方至少 44px 高；改名的输入框 16px，iOS 聚焦时才不会整页放大。 */
 .topic-rail--page .topic-row {
