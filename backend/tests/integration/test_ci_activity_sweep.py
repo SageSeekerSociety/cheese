@@ -687,6 +687,7 @@ class _NativeGitHub:
                 },
             )
         page = int(request.url.params.get("page", "1"))
+        per_page = int(request.url.params.get("per_page", "100"))
         if request.url.path.endswith("/jobs"):
             run_id = int(request.url.path.split("/")[-2])
             if run_id in self.gone:
@@ -694,7 +695,7 @@ class _NativeGitHub:
             items = self.jobs.get(run_id, [])
             payload = {
                 "total_count": len(items),
-                "jobs": items[(page - 1) * 100 : page * 100],
+                "jobs": items[(page - 1) * per_page : page * per_page],
             }
         else:
             a, b = request.url.params["created"].split("..")
@@ -714,7 +715,7 @@ class _NativeGitHub:
             )
             payload = {
                 "total_count": len(items),
-                "workflow_runs": items[:1000][(page - 1) * 100 : page * 100],
+                "workflow_runs": items[:1000][(page - 1) * per_page : page * per_page],
             }
         body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         etag = '"' + hashlib.sha256(body).hexdigest() + '"'

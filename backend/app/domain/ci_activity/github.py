@@ -25,7 +25,16 @@ from app.core.forge_http import forge_client
 
 #: What GitHub serves of one filtered listing or search, at most.
 RESULT_CAP = 1000
+#: Jobs pages are read with one streamed request per page, so the page count,
+#: not the body size, is what matters here.
 _PAGE = 100
+#: The runs listing is cached as one entry per page by ``forge_etags``, which
+#: keeps an answer only under ``MAX_BODY_BYTES`` (256 KiB). A real run object is
+#: ~15 KiB, so a 100-run page (the API's own maximum) is ~1.5 MiB and is never
+#: kept — every sweep re-downloads it and the free 304 is never earned. Ten
+#: runs a page stays around 150 KiB, small enough to cache while still covering
+#: a busy five-minute window in a handful of pages.
+RUNS_PAGE = 10
 #: GitHub creation-time filters have second precision. A still-busier second
 #: is explicitly reported as truncated, never claimed as complete coverage.
 _NARROWEST = timedelta(seconds=1)
@@ -208,7 +217,7 @@ class GitHubCi:
                 client,
                 url,
                 token,
-                {"created": created, "per_page": _PAGE, "page": page},
+                {"created": created, "per_page": RUNS_PAGE, "page": page},
             )
             out.requests += 1
             total = int(body.get("total_count") or 0)
@@ -226,9 +235,9 @@ class GitHubCi:
             if total > RESULT_CAP:
                 out.truncated = True
                 return
-            if len(runs) < _PAGE or page * _PAGE >= total:
+            if len(runs) < RUNS_PAGE or page * RUNS_PAGE >= total:
                 return
-            if page * _PAGE >= RESULT_CAP:
+            if page * RUNS_PAGE >= RESULT_CAP:
                 out.truncated = True
                 return
             page += 1

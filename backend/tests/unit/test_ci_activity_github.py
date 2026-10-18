@@ -10,7 +10,12 @@ import httpx
 import pytest
 
 from app.core import forge_etags, forge_quota
-from app.domain.ci_activity.github import CiGitHubError, CiQuotaRefused, GitHubCi
+from app.domain.ci_activity.github import (
+    RUNS_PAGE,
+    CiGitHubError,
+    CiQuotaRefused,
+    GitHubCi,
+)
 
 SINCE = datetime(2026, 10, 17, 0, 0, tzinfo=UTC)
 UNTIL = SINCE + timedelta(hours=8)
@@ -33,8 +38,9 @@ def _runs_handler(runs):
     def handle(request):
         a, b = _created(request)
         page = int(request.url.params["page"])
+        per_page = int(request.url.params["per_page"])
         matched = [r for r in runs if a <= r["created_at"] <= b]
-        served = matched[:1000][(page - 1) * 100 : page * 100]
+        served = matched[:1000][(page - 1) * per_page : page * per_page]
         return httpx.Response(
             200,
             json={
@@ -77,7 +83,8 @@ async def test_exactly_one_thousand_runs_are_not_falsely_truncated():
         owner="o", repo="r", token="t", since=SINCE, until=UNTIL
     )
     assert len(listed.items) == 1000
-    assert listed.requests == 10
+    # One page per RUNS_PAGE runs; the 1000-result cap is reached on the last.
+    assert listed.requests == 1000 // RUNS_PAGE
     assert not listed.truncated
 
 
@@ -92,6 +99,70 @@ async def test_fractional_bounds_do_not_drop_the_last_whole_second():
         until=SINCE + timedelta(seconds=1, microseconds=500000),
     )
     assert [r["id"] for r in listed.items] == [1]
+
+
+def _realistic_page(pages):
+    """One 200 (with ETag) or 304 per page, on a run body of the real size.
+
+    A real run object JSON-encodes to ~15 KiB; a 32-run five-minute window is
+    therefore ~485 KiB, which the 256 KiB etag cache cannot keep whole.
+    """
+    served: list[int] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params["page"])
+        per_page = int(request.url.params["per_page"])
+        # A distinct, real-sized run per page, so each page's ETag is its own
+        # and a warm read is the only thing that answers 304.
+        run = {"id": page, "created_at": SINCE.isoformat(), "padding": "x" * 15000}
+        body = json.dumps(
+            {"total_count": 320, "workflow_runs": [run] * per_page},
+            separators=(",", ":"),
+        ).encode()
+        etag = '"' + str(len(body)) + "-" + str(page) + '"'
+        if request.headers.get("if-none-match") == etag and etag in pages:
+            served.append(304)
+            return httpx.Response(304, headers={"etag": etag})
+        served.append(200)
+        pages.add(etag)
+        return httpx.Response(
+            200,
+            content=body,
+            headers={"etag": etag, "content-type": "application/json"},
+        )
+
+    return handle, served
+
+
+async def test_a_real_sized_run_window_is_cached_by_smaller_pages():
+    installation = 771234
+    forge_quota.own("ghs_real_page", installation, time.time() + 3600)
+    pages: set[str] = set()
+    handle, served = _realistic_page(pages)
+    reader = GitHubCi(
+        api_base="https://api.invalid", transport=httpx.MockTransport(handle)
+    )
+
+    async def read():
+        return await reader.list_runs(
+            owner="o",
+            repo="r",
+            token="ghs_real_page",
+            since=SINCE,
+            until=SINCE + timedelta(minutes=5),
+        )
+
+    await read()
+    warm_start = len(served)
+    await read()
+
+    # Every page fits the 256 KiB cache, so the warm read is answered by the
+    # conditional request: raw 304s, no non-304, the caller still sees runs.
+    cold = served[:warm_start]
+    warm = served[warm_start:]
+    assert all(status == 200 for status in cold)
+    assert all(status == 304 for status in warm)
+    assert warm, "the warm read must revalidate"
 
 
 async def test_an_unsplittable_second_is_explicitly_incomplete():
