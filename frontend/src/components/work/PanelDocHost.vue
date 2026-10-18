@@ -14,6 +14,7 @@
 // 文档页的项目目标、任务概览里的实况文档、「综合」概览里的项目目标。
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { ProjectMemberRow, Topic } from '../../cx_types'
+import type { DocAuthor } from '../../lib/docAuthors'
 import type { DocReviewRequest } from '../../lib/docReview'
 
 import { ref } from 'vue'
@@ -40,6 +41,8 @@ const props = withDefaults(
     members?: ProjectMemberRow[]
     /** 画在一整页里（项目文档页的项目目标），见 PanelDoc。 */
     bare?: boolean
+    /** 文档的作者，见 PanelDocView。 */
+    authors?: DocAuthor[]
     /** 顶栏画到页面上的哪个位置，见 PanelDoc。 */
     barTo?: string
     /** 跟着外面那一列一起滚，见 PanelDocView。 */
@@ -53,6 +56,7 @@ const props = withDefaults(
     agentHandle: null,
     members: () => [],
     bare: false,
+    authors: () => [],
     barTo: undefined,
     flow: false,
   }
@@ -99,6 +103,7 @@ defineExpose({
     :agent-name="props.agentName"
     :agent-handle="props.agentHandle"
     :bare="props.bare"
+    :authors="props.authors"
     :bar-to="props.barTo"
     :flow="props.flow"
     @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"

@@ -30,6 +30,13 @@ test('新建文档直接打开，起了名、写了字，回到资料库就在�
 
   const body = page.locator('.doc-prose');
   await expect(body).toBeVisible({ timeout: 30_000 });
+  // 文档的顶栏（大纲、查找、评论、⋯）在页头右边那一格里，那一格得撑得开它：
+  // 宽度为 0 时按钮被裁掉，整排看不见。
+  const slot = await page.locator('#library-doc-bar').boundingBox();
+  const find = await page.getByRole('button', { name: '在文档中查找' }).boundingBox();
+  expect(slot!.width).toBeGreaterThan(0);
+  expect(find!.x).toBeGreaterThanOrEqual(slot!.x);
+  expect(find!.x + find!.width).toBeLessThanOrEqual(slot!.x + slot!.width + 1);
   await body.click();
   await page.keyboard.type('三家都有年付折扣。');
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/library-doc-page.png` });
