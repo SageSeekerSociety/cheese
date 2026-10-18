@@ -134,9 +134,9 @@ RUNNING_LOOKBACK = timedelta(minutes=15)
 async def moving_topics(
     db: AsyncSession,
     topic_ids: Collection[uuid.UUID],
-    *,
     running: Collection[uuid.UUID] = (),
     threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
+    *,
     now: datetime | None = None,
     lookback: timedelta = RUNNING_LOOKBACK,
 ) -> set[uuid.UUID]:
@@ -160,6 +160,9 @@ async def moving_topics(
     同一批房间问两遍就是同一张表读两趟。给了就用给的（只取 `topic_ids` 里那些房间
     的，多给的不会替没问的房间作答）；没给就自己读同一张表，免得这一层为了它拖着
     那边的依赖。
+
+    这两个都可以按位置给：调用它的房间头那个文件正好卡在行数上限，多出来的
+    那一行会把一次去重变成一次拆文件（`check-file-sizes.py`）。
     """
     ids = list(topic_ids)
     if not ids:

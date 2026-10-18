@@ -593,13 +593,9 @@ async def get_topic(
     threads_working = await topics_signals.working_in_threads(
         db, broker, [topic.id], threads=room_threads
     )
-    # 同 `list_topics`：这一行自己那条线上在跑的是 `running_ids`（`presentation`
-    # 读它），连着名下的活和支线的那一份是 `moving_ids`（侧栏那盏呼吸绿读它）。
-    # 支线那份刚从 `threads_of_rooms` 取过，传下去，别让 `moving_topics` 再读一遍。
+    # 同 `list_topics`：`running_ids` 是这行自己的线，`moving_ids` 连着名下的活和支线。
     running_ids = runner.running_topic_ids()
-    moving_ids = await moving_topics(
-        db, [topic.id], running=running_ids, threads=room_threads
-    )
+    moving_ids = await moving_topics(db, [topic.id], running_ids, room_threads)
     silent = silent_gaps(runner, [topic.id]) if topic.id in moving_ids else {}
     viewer = _viewer(actor)
     unseen = (

@@ -361,7 +361,7 @@ def _room_header(client, tid):
 
 
 @pytest.mark.parametrize("n", [3, 12])
-def test_a_rooms_header_reads_its_threads_three_times_however_many_there_are(client, n):
+def test_a_rooms_header_reads_its_threads_no_more_than_three_times(client, n):
     """A room's header asks three separate questions about its 支线 — the page's
     own list, 回复了我, 还在当支线用 — and the list it read is handed to
     `moving_topics`, which used to ask the table a fourth time for the same
@@ -370,14 +370,16 @@ def test_a_rooms_header_reads_its_threads_three_times_however_many_there_are(cli
 
     This is one route's whole budget, not a statement about `moving_topics`:
     a new question of the header that reads the room's 支线 itself is meant to
-    be shared with the rest, and this count is where that gets noticed."""
+    be shared with the rest, and this ceiling is where that gets noticed. A
+    ceiling rather than the exact three, so merging two of the remaining
+    questions into one query reads as the improvement it is."""
     tid = _channel_with_threads(client, n)
 
     reads = _count_matching(
         client, lambda: _room_header(client, tid), _THREADS_OF_A_ROOM
     )
 
-    assert reads == 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"
+    assert reads <= 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"
 
 
 def _a_thread_in(client, tid):

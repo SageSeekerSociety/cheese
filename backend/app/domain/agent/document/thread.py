@@ -244,12 +244,7 @@ class Replies:
         self._chat = chat
         self._factory = factory
 
-    async def stopped(self, consumption: Consumption) -> bool:
-        redis = get_redis_client()
-        return (
-            redis is not None
-            and await question.stopped(redis, uuid.UUID(consumption.key))()
-        )
+    stopped = staticmethod(question.is_stopped)
 
     async def took(
         self, consumption: Consumption, item: Waiting | Words | Tool
