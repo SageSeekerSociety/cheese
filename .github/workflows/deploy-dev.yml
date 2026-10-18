@@ -47,15 +47,28 @@ on:
         description: Release this commit, whose images were just rebuilt, like an automatic deploy (check images, Required CI and the running version)
         type: string
         default: ""
+      recovery:
+        # The drift convergence sets this when it must move the box back to the
+        # newest commit that still has the two slots (#2770): that commit is
+        # older than what the box runs, so the automatic "no going backwards"
+        # guard would skip it and the box would stay on the -b slots forever.
+        # It is a deliberate, named recovery, not a way for a bot dispatch to
+        # release an arbitrary commit: Required CI is still checked, and only
+        # the backwards guard is skipped.
+        description: "Move the box back to the commit in `ref` (drift convergence only)"
+        type: string
+        default: ""
       ref:
         # The rollback entry: dispatch the workflow on main and name the commit
         # to release here. A bare commit SHA is not a legal `--ref` for
         # `gh workflow run` (No ref found), so naming the commit in the ref
         # input is the only way to release one without first creating a ref for
-        # it. Like any other manual dispatch it is an explicit release or
-        # rollback: it takes the skip=false path below, so the
-        # "keep automatic deployments from going backwards" guard does not
-        # block it. Leave empty for the dispatch ref's own HEAD.
+        # it. With a person's actor it is an explicit release or rollback: it
+        # takes the skip=false path below, so the "keep automatic deployments
+        # from going backwards" guard does not block it. Leaving it empty is
+        # not a manual release any more — it takes the gate, and the
+        # convergence uses it with the `recovery` flag when it has to move the
+        # box back to a commit that still has the slots.
         description: "Release the commit this names (tag, branch or SHA) instead of the dispatch ref; a manual release or rollback"
         type: string
         default: ""
@@ -112,11 +125,36 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
           REBUILT: ${{ inputs.rebuilt }}
+          REF_INPUT: ${{ inputs.ref }}
+          RECOVERY: ${{ inputs.recovery }}
+          ACTOR: ${{ github.actor }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ -z "${REBUILT:-}" ]; then
+          # A manual release is a person naming a commit to release: the
+          # workflow_dispatch `ref` input. On 2026-10-18 the drift convergence
+          # dispatched this workflow as github-actions[bot] with no inputs at
+          # all, that was read as "an operator said so", and a commit whose
+          # main batch had not run reached dev — so the actor is part of the
+          # test, and a bare dispatch is not a manual release either. A
+          # `rebuilt` dispatch keeps taking the guard: desktop.yml's rebuild
+          # says the images are fresh, not that Required CI may be skipped.
+          # A `recovery` dispatch falls through to the gate as well; only the
+          # release step lets it past the backwards guard.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] \
+             && [ "${ACTOR:-}" != "github-actions[bot]" ] \
+             && [ -n "${REF_INPUT:-}" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
+            # The slot recovery releases a commit older than main's tip by
+            # design; "a newer commit on main will release this" is true but
+            # useless here (that newer commit is exactly what cannot release
+            # while the -b slots serve), and it would let the job-level
+            # `superseded == ''` skip the whole deploy. CI was still checked.
+            if [ "${RECOVERY:-}" = "true" ] && [ -f "$GITHUB_OUTPUT" ]; then
+              grep -v '^superseded=' "$GITHUB_OUTPUT" > "$GITHUB_OUTPUT.tmp" || true
+              mv "$GITHUB_OUTPUT.tmp" "$GITHUB_OUTPUT"
+              echo "superseded=" >> "$GITHUB_OUTPUT"
+            fi
           fi
       # Required CI on main runs after the commit lands, so for a few minutes
       # the honest answer is "not yet" rather than a refusal: this workflow is
@@ -238,12 +276,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
           REBUILT: ${{ inputs.rebuilt }}
+          REF_INPUT: ${{ inputs.ref }}
+          RECOVERY: ${{ inputs.recovery }}
+          ACTOR: ${{ github.actor }}
         run: |
-          # A manual dispatch is an explicit release or rollback, including a
-          # commit that predates the automatic guard itself. desktop.yml's,
-          # which names a rebuilt commit, takes the guard like any automatic
-          # release.
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ -z "${REBUILT:-}" ]; then
+          # A manual release is a person naming a commit in `ref`; a commit
+          # before the automatic guard itself is released the same way.
+          # Everything else — a bare dispatch, a `rebuilt` dispatch, or any
+          # other dispatch from the drift convergence (github-actions[bot]) —
+          # takes the guard like any automatic release.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] \
+             && [ "${ACTOR:-}" != "github-actions[bot]" ] \
+             && [ -n "${REF_INPUT:-}" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The slot recovery is deliberate and names its commit; Required CI
+          # was already checked by the eligibility job. Only the backwards
+          # guard (which would skip an older commit) is passed over here.
+          if [ "${RECOVERY:-}" = "true" ]; then
+            # Re-check CI here rather than trusting the eligibility job: this
+            # one waited in the deploy-dev concurrency group, and a rerun in
+            # between must still stop the release. Only the backwards guard is
+            # passed over — a recovery names an older commit on purpose.
+            python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

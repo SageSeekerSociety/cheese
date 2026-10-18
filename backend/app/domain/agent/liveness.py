@@ -22,6 +22,7 @@ from typing import Protocol
 from sqlalchemy import Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall
 from app.domain.agent.models import AgentTurn
 from app.domain.room_task.models import Task
 
@@ -171,27 +172,30 @@ async def moving_topics(
     mine = set(ids)
     # 这些话题名下的对话 -> 它所在的房间。支线也算：一条支线里跑的轮次同样是在管
     # 这间房（`topics._working_in_threads` 认的是同一件事）。
-    inner: dict[uuid.UUID, uuid.UUID] = {}
-    for task_id, room_id in (
-        await db.execute(select(Task.id, Task.room_id).where(Task.room_id.in_(ids)))
-    ).all():
-        inner[task_id] = room_id
     if threads is None:
-        threads = {
-            thread_id: room_id
-            for thread_id, room_id in (
-                await db.execute(
-                    select(_threads.c.id, _threads.c.room_id).where(
-                        _threads.c.room_id.in_(ids)
+        found_threads, cached_threads = recall(db, ("threads_in_rooms", tuple(ids)))
+        threads = (
+            dict(cached_threads[0])
+            if found_threads
+            else {
+                thread_id: room_id
+                for thread_id, room_id in (
+                    await db.execute(
+                        select(_threads.c.id, _threads.c.room_id).where(
+                            _threads.c.room_id.in_(ids)
+                        )
                     )
-                )
-            ).all()
-        }
-    inner.update(
-        (thread_id, room_id)
-        for thread_id, room_id in threads.items()
-        if room_id in mine
-    )
+                ).all()
+            }
+        )
+    inner: dict[uuid.UUID, uuid.UUID] = {
+        thread_id: room_id for thread_id, room_id in threads.items() if room_id in mine
+    }
+    found_underway, underway_rows = recall(db, ("underway_for_rooms", tuple(ids)))
+    if found_underway:
+        for task, _ in underway_rows:
+            if task.room_id in mine:
+                inner[task.id] = task.room_id
 
     # 刚起来、还开着、而且真送出去了的那些轮次。不是拿房间去 IN：这一份读的是很小
     # 的一张部分索引（`ix_agent_turns_open`），回来之后再在内存里挑出属于这些话题的。
@@ -202,8 +206,16 @@ async def moving_topics(
             AgentTurn.started_at >= now - lookback,
         )
     )
+    active = set(running) | {c for c in arrived if c is not None}
+    unknown = [c for c in active if c not in mine and c not in inner]
+    if unknown or not found_underway:
+        stmt = select(Task.id, Task.room_id).where(Task.room_id.in_(ids))
+        if found_underway:
+            stmt = stmt.where(Task.id.in_(unknown))
+        for task_id, room_id in (await db.execute(stmt)).all():
+            inner[task_id] = room_id
     moving: set[uuid.UUID] = set()
-    for conversation in set(running) | {c for c in arrived if c is not None}:
+    for conversation in active:
         if conversation in mine:
             moving.add(conversation)
         elif conversation in inner:

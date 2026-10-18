@@ -147,17 +147,6 @@ onBeforeUnmount(() => {
 
 <style scoped src="./landing.css"></style>
 <style>
-/* The workspace locks document scrolling; the public pages scroll as documents. */
-html:has(.landing) {
-  overflow-y: auto !important;
-}
-
-body:has(.landing),
-#app:has(.landing) {
-  height: auto;
-  overflow: visible;
-}
-
 /* The ink on the amber solid buttons, on every door page.
    Vuetify derives it from `primary` and it comes out white — 2.65:1 on #f57f17,
    below even the 3:1 glyph floor, so the arrow beside the label fails too. The
