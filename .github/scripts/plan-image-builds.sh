@@ -159,12 +159,16 @@ else
 
     # The docs site ships inside the frontend image, built in CI from these
     # sources (build.yml). Its CLI and settings references are generated from
-    # these two files, so they are docs sources too. (The CI reference, from
-    # the workflows, catches up with the next frontend build rather than make
-    # every workflow edit rebuild an image.)
+    # these files, so they are docs sources too: the CLI, and `Settings` —
+    # config.py plus the modules it inherits settings from, each of which the
+    # settings page lists. (The CI reference, from the workflows, catches up
+    # with the next frontend build rather than make every workflow edit rebuild
+    # an image.)
     case "$changed_path" in
       docs/manual/* | docs/site/* | backend/sandbox/cheese \
-        | backend/app/core/config.py)
+        | backend/app/core/config.py \
+        | backend/app/core/sandbox_config.py \
+        | backend/app/core/machine_config.py)
         frontend=true
         ;;
     esac
