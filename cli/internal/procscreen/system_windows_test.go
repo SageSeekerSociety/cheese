@@ -46,15 +46,16 @@ func TestAScreenRunsWithItsEnvironmentAndEndsWhenClosed(t *testing.T) {
 		t.Fatal("the screen's program is not running")
 	}
 
+	// Close returns once the program and what it started are gone, so nothing
+	// holds the log any more: it is removed, and the test's directory with it.
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	deadline = time.Now().Add(10 * time.Second)
-	for again.sys.running(rec.PID, rec.Started) {
-		if time.Now().After(deadline) {
-			t.Fatal("closing the screen left its program running")
-		}
-		time.Sleep(100 * time.Millisecond)
+	if again.sys.running(rec.PID, rec.Started) {
+		t.Fatal("closing the screen returned with its program still running")
+	}
+	if _, err := os.Stat(m.Log("s1")); !os.IsNotExist(err) {
+		t.Fatalf("the closed screen's log is still there: %v", err)
 	}
 	if again.HasSession("s1") {
 		t.Fatal("a closed screen is still there")
