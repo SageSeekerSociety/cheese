@@ -92,6 +92,25 @@ class FailFastTests(unittest.TestCase):
         watch(github)
         self.assertIn("guards / guards", github.posted[0][1]["output"]["title"])
 
+    def test_a_main_push_batch_says_so_instead_of_naming_the_queue(self):
+        # Same watcher, two events. On a push there is no entry to remove, so
+        # the summary must not send a reader looking for one.
+        failed = [[done("backend / pure (0/2)", "failure", 9)]]
+        for event, expected, absent in (
+            ("push", "main push batch", "merge queue entry"),
+            ("merge_group", "merge queue entry", "main push batch"),
+        ):
+            with self.subTest(event=event):
+                github = FakeGitHub(failed)
+                fail_fast.watch(
+                    github, {**ENV, "GITHUB_EVENT_NAME": event},
+                    sleep=lambda _: None,
+                    clock=lambda: 0,
+                )
+                summary = github.posted[0][1]["output"]["summary"]
+                self.assertIn(expected, summary)
+                self.assertNotIn(absent, summary)
+
     def test_a_green_run_posts_nothing_and_stops_when_the_aggregator_starts(self):
         github = FakeGitHub([
             [done("scope", "success", 1), job("backend / pure (0/2)")],
