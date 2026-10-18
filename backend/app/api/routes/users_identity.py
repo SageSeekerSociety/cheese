@@ -46,6 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.deps import get_user_realname_service
 from app.api.response import ok
 from app.api.users_deps import SudoTicketRequest, _spend_sudo_ticket
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose
@@ -146,6 +147,7 @@ async def get_user_identity(
 @router.put(
     "/{userId}/identity",
     summary="Update User Real Name Identity Info",
+    dependencies=[ROUTE_DECIDES],
 )
 async def put_user_identity(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
@@ -174,6 +176,7 @@ async def put_user_identity(
 @router.patch(
     "/{userId}/identity",
     summary="Update User Real Name Identity Info (partial)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_user_identity(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
@@ -227,6 +230,7 @@ async def patch_user_identity(
 @router.delete(
     "/{userId}/identity",
     summary="Delete User Real Name Identity Info",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_user_identity(
     user_id: Annotated[int, Path(ge=1, alias="userId")],

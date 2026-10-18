@@ -43,6 +43,11 @@ def project_own(project_id: uuid.UUID) -> ColumnElement[bool]:
     )
 
 
+#: The projects table, read here only for the team a project belongs to: the
+#: project package sits above this one and imports it.
+PROJECTS = table("projects", column("id"), column("team_id"))
+
+
 class DocumentRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -86,6 +91,16 @@ class DocumentRepository:
         )
         return list(rows)
 
+    async def of_team(self, team_id: int) -> list[Document]:
+        """The team's own documents — none of its projects' — the latest
+        changed first. A person's own documents are their personal team's."""
+        rows = await self._session.scalars(
+            select(Document)
+            .where(Document.team_id == team_id, Document.project_id.is_(None))
+            .order_by(Document.updated_at.desc(), Document.id)
+        )
+        return list(rows)
+
     async def of_room(self, room_id: uuid.UUID) -> list[Document]:
         """The documents 芝士 wrote in this channel or private chat, saved to
         the library or not, the newest first."""
@@ -99,16 +114,26 @@ class DocumentRepository:
     async def create(
         self,
         *,
-        project_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        team_id: int | None = None,
         title: str | None = None,
         author: str = "system",
         number: int | None = None,
         room_id: uuid.UUID | None = None,
     ) -> Document:
         """A new document, empty (version 0): the project's own, one a task
-        points at (which goes by the task's title), or one written in the
-        conversation ``room_id`` and kept there."""
+        points at (which goes by the task's title), one written in the
+        conversation ``room_id`` and kept there, or — with no project — one of
+        the team ``team_id``'s own. A project's document is its team's too."""
+        if project_id is not None:
+            team_id = await self._session.scalar(
+                select(PROJECTS.c.team_id).where(PROJECTS.c.id == project_id)
+            )
+        if team_id is None:
+            # i18n-exempt: an invariant, never shown to a person
+            raise ValueError("A document belongs to a team")
         doc = Document(
+            team_id=team_id,
             project_id=project_id,
             title=title,
             author=author,

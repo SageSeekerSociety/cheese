@@ -86,7 +86,7 @@ class TopicMemberService:
 
     async def _ensure_topic(self, topic_id: uuid.UUID) -> None:
         if await self._topics.get(topic_id) is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
 
     async def manages(self, topic: Topic, actor: str) -> bool:
         """Does ``actor`` manage this channel: its creator, or someone who
@@ -111,7 +111,7 @@ class TopicMemberService:
             and await self._repo.get(topic_id=topic_id, member_handle=actor) is None
         ):
             # Someone outside a private channel is not told it exists.
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if not await self.manages(topic, actor):
             raise ForbiddenError(say("channelManagerOnly"))
         return topic
@@ -263,7 +263,7 @@ class TopicMemberService:
         """A channel people join and leave; a private room is not one."""
         topic = await self._topics.get(topic_id)
         if topic is None or not _public(topic):
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         return topic
 
     async def may_speak(self, room: Topic, handle: str, *, team: ProjectTeam) -> bool:
@@ -439,14 +439,14 @@ class TopicMemberService:
         Someone outside a private channel is told it does not exist."""
         topic = await self._topics.get(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if await self.may_bring_in(topic, actor):
             return topic
         if (
             topic.members_only
             and await self._repo.get(topic_id=topic_id, member_handle=actor) is None
         ):
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         raise ForbiddenError(say("channelManagerOnly"))
 
     async def outside(
@@ -470,12 +470,12 @@ class TopicMemberService:
     async def require_administrator(self, topic_id: uuid.UUID, actor: str) -> Topic:
         topic = await self._topics.get(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if not _public(topic):
             # A private room of two is its own people's business: someone not
             # in it is not told it exists.
             if await self._repo.get(topic_id=topic_id, member_handle=actor) is None:
-                raise NotFoundError("Topic not found")
+                raise NotFoundError(say("topicNotFound"))
             return await self.require_manager(topic_id, actor)
         if await self.administers(topic, actor):
             return topic
@@ -484,7 +484,7 @@ class TopicMemberService:
             and await self._repo.get(topic_id=topic_id, member_handle=actor) is None
         ):
             # Someone outside a private channel is not told it exists.
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         raise ForbiddenError(say("channelManagerOnly"))
 
     async def hand_over(
@@ -521,13 +521,13 @@ class TopicMemberService:
         they were seated now, so the caller says so in the channel."""
         topic = await self._channel(topic_id)
         if not topic.members_only:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if topic.status == TopicStatus.archived:
             raise ValidationError(say("channelArchivedNoJoin"))
         if not await may(
             self._session, topic.project_id, actor, Permission.manage_channels
         ):
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if await self._repo.get(topic_id=topic_id, member_handle=actor) is not None:
             return False
         await self._repo.add(

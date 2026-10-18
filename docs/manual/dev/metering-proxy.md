@@ -117,7 +117,7 @@ covers:
 - 什么时候写：每次冷却状态变化（`_save`）、每个被计量的回合（`billing_addon._record_usage`）、以及 addon 起来时各一次——都搭现有的那两条路，没有新定时器。只挂在计费那一路会漏掉冷却开始的那一刻：把账号打成 429 的那次调用本身不产生用量行。
 - 写是原子的（同目录临时文件 + `os.replace`，0600），失败只记一条 warning：这一份是给人看的状态，写不下去不该影响转运。
 - 状态三个值：`available` 没有冷却记录、`cooling` 带解冻时刻 `until`（Unix 秒，**绝对**时刻）、`disabled` 是额度用尽且没有重置时刻、要人工重置。有哪几张账号由 `accounts()` 定：主凭据，加上 `accounts/*/credential` 每个子目录一张。
-- 后端读它的是 `backend/app/domain/platform_stats/claude_pool.py`，接在 `/admin/stats/usage` 的 `claude_accounts` 上，画法见[看板](/dev/boards#platform-stats)。读不到、读不懂时返回一个原因**代号**而不是报错（开发环境不跑订阅版代理是常态）；超过一小时没写入仍返回那些行，另标 `stale`——行上的时刻是绝对的，池子静止时文件本来就不该变。
+- 后端读它的是 `backend/app/domain/usage/claude_pool.py`，接在 `/admin/stats/usage` 的 `claude_accounts` 上，画法见[看板](/dev/boards#platform-stats)。读不到、读不懂时返回一个原因**代号**而不是报错（开发环境不跑订阅版代理是常态）；超过一小时没写入仍返回那些行，另标 `stale`——行上的时刻是绝对的，池子静止时文件本来就不该变。
 
 ## 非模型端点与网关路观测 {#control-answers}
 

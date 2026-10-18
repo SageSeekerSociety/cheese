@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.notification.dto import NotificationDTO
@@ -184,7 +185,7 @@ async def list_notifications(
     return ok({"notifications": notifications, "page": page})
 
 
-@router.patch("/notifications")
+@router.patch("/notifications", dependencies=[ROUTE_DECIDES])
 async def bulk_update_notifications(
     body: BulkUpdateRequest, user: AuthUser, db: DbSession
 ) -> dict:
@@ -194,7 +195,7 @@ async def bulk_update_notifications(
     return ok({"updatedIds": updated_ids})
 
 
-@router.put("/notifications/status")
+@router.put("/notifications/status", dependencies=[ROUTE_DECIDES])
 async def set_collective_status(
     body: ReadStatusRequest, user: AuthUser, db: DbSession
 ) -> dict:
@@ -219,7 +220,7 @@ async def get_notification(notification_id: int, user: AuthUser, db: DbSession) 
     return ok({"notification": await _dump(service, notification)})
 
 
-@router.patch("/notifications/{notification_id}")
+@router.patch("/notifications/{notification_id}", dependencies=[ROUTE_DECIDES])
 async def update_notification_status(
     notification_id: int, body: ReadStatusRequest, user: AuthUser, db: DbSession
 ) -> dict:
@@ -235,7 +236,7 @@ async def update_notification_status(
     return ok({"notification": await _dump(service, notification)})
 
 
-@router.delete("/notifications/{notification_id}")
+@router.delete("/notifications/{notification_id}", dependencies=[ROUTE_DECIDES])
 async def delete_notification(
     notification_id: int, user: AuthUser, db: DbSession
 ) -> Response:

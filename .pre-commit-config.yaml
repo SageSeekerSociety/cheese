@@ -158,15 +158,14 @@ repos:
         always_run: true
 
       # The API surface the frontend's types are generated from. This builds
-      # the document and holds the two one-line files beside it: the digest,
-      # which is how a change is routed into the frontend types suite, and the
-      # untyped ratchet, which only shrinks. CI runs it as a step of the
+      # the document and holds the untyped ratchet beside it, which only
+      # shrinks. CI runs it as a step of the
       # `backend / static` job (test.yml) rather than through pre-commit, since
       # that job has the venv already synced — the pre-push entry point is what
       # reads this id. `stages: [manual]` for the reason the heavy hooks above
       # carry it: 23s on a work machine is too much for a commit gate.
       - id: openapi-document
-        name: OpenAPI document builds, digest and untyped ratchet hold
+        name: OpenAPI document builds and untyped ratchet holds
         entry: bash -c 'cd backend && uv run python -m scripts.export_openapi --check'
         language: system
         pass_filenames: false
@@ -426,3 +425,41 @@ repos:
         language: system
         pass_filenames: false
         files: ^(backend/app/|frontend/src/|\.claude/scripts/check-file-sizes\.py)
+
+      # The guards' own --self-test is checked, not just run: a self-test that
+      # always prints PASS looks identical to one that works whenever the tree
+      # is clean, and the Guards self-test step trusts every guard because its
+      # --self-test proves it still fires. This one silences a copy of each
+      # guard and requires the self-test to go red, which is the property a
+      # self-test has no other way to prove.
+      #
+      # scene-debt-ratchet.py is allowed by name, not waived, for two reasons
+      # that are about the lane: its --self-test hands the judgement to a
+      # sibling test in another process (so silencing cannot reach it), and that
+      # sibling needs frontend/node_modules, which a commit does not install.
+      # The allowance is checked — naming a guard that is verified now, or one
+      # with a finding this lane can see, is itself a failure — and a finding is
+      # never waived. The guard's self-test still runs in frontend.yml's "Scene
+      # debt rule self-tests" step, where the install is.
+      #
+      # Scoped to the guard tree and the file that says which guards there are:
+      # this runs every guard's self-test twice (about two minutes on the work
+      # machine), which is not a price a commit that cannot have changed a
+      # guard should pay. CI runs it against all files, as it does for every
+      # hook here.
+      #
+      # The interpreter is picked from PATH the way `module-split` above picks
+      # its own, and for the same reason: the verifier needs 3.10
+      # (`zip(strict=True)`), and so do two guards it runs the self-tests of
+      # (`check-migration-fork.py`, `check-migration-safety.py` evaluate `X | Y`
+      # at runtime). `uvx pre-commit` puts its tool venv first on the hooks'
+      # PATH, and this hook runs on every commit touching the guard tree, so a
+      # 3.9 traceback would red the commit with a message about `zip()` rather
+      # than about the guard. With no 3.10+ found it is exit 2 — cannot judge —
+      # instead of a red that misnames the cause.
+      - id: guard-self-tests
+        name: every guard's self-test goes red when the guard is silenced
+        entry: 'bash -c ''py=; for c in python3 python3.13 python3.12 python3.11 python3.10; do command -v "$c" >/dev/null 2>&1 && "$c" -c "import sys; raise SystemExit(sys.version_info < (3, 10))" >/dev/null 2>&1 && py=$c && break; done; if [ -z "$py" ]; then printf "cannot judge: no Python 3.10+ on PATH for verify-guard-self-tests.py\n" >&2; exit 2; fi; "$py" .claude/scripts/verify-guard-self-tests.py --allow-unjudgeable scene-debt-ratchet.py'''
+        language: system
+        pass_filenames: false
+        files: ^(\.claude/scripts/|\.pre-commit-config\.yaml$)

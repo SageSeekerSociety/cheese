@@ -15,6 +15,7 @@ from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.db import release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
@@ -149,7 +150,7 @@ def _reviewer_admission(actor: Actor, resolver: ActorResolverDep) -> ReviewerAdm
     return admits
 
 
-@router.post("/topics/{topic_id}/accept-card")
+@router.post("/topics/{topic_id}/accept-card", dependencies=[ROUTE_DECIDES])
 async def create_accept_card(
     topic_id: uuid.UUID,
     resolver: ActorResolverDep,
@@ -202,7 +203,7 @@ async def create_accept_card(
     return ok(await svc.describe(card))
 
 
-@router.post("/topics/{topic_id}/push-fix")
+@router.post("/topics/{topic_id}/push-fix", dependencies=[ROUTE_DECIDES])
 async def push_fix(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -217,7 +218,7 @@ async def push_fix(
     return ok(result)
 
 
-@router.post("/topics/{topic_id}/ready")
+@router.post("/topics/{topic_id}/ready", dependencies=[ROUTE_DECIDES])
 async def mark_ready(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -227,7 +228,7 @@ async def mark_ready(
     return ok(result)
 
 
-@router.post("/topics/{topic_id}/accept-card/describe")
+@router.post("/topics/{topic_id}/accept-card/describe", dependencies=[ROUTE_DECIDES])
 async def describe_card(
     topic_id: uuid.UUID,
     body: AcceptCardDescribe,
@@ -383,7 +384,7 @@ async def _pr_checks_payload(
     }
 
 
-@router.post("/accept-cards/{card_id}/approve")
+@router.post("/accept-cards/{card_id}/approve", dependencies=[ROUTE_DECIDES])
 async def approve_card(
     card_id: uuid.UUID, body: ApprovalCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -396,7 +397,7 @@ async def approve_card(
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/accept")
+@router.post("/accept-cards/{card_id}/accept", dependencies=[ROUTE_DECIDES])
 async def accept_card(
     card_id: uuid.UUID,
     body: AcceptDecision,
@@ -413,7 +414,7 @@ async def accept_card(
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/reassign")
+@router.post("/accept-cards/{card_id}/reassign", dependencies=[ROUTE_DECIDES])
 async def reassign_card(
     card_id: uuid.UUID,
     body: AcceptCardCreate,
@@ -433,7 +434,7 @@ async def reassign_card(
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/reject")
+@router.post("/accept-cards/{card_id}/reject", dependencies=[ROUTE_DECIDES])
 async def reject_card(
     card_id: uuid.UUID,
     body: RejectDecision,
@@ -494,7 +495,7 @@ async def reject_card(
     return ok(described)
 
 
-@router.post("/accept-cards/{card_id}/void")
+@router.post("/accept-cards/{card_id}/void", dependencies=[ROUTE_DECIDES])
 async def void_card(
     card_id: uuid.UUID, body: VoidDecision, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -521,7 +522,7 @@ async def void_card(
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/merge-anyway")
+@router.post("/accept-cards/{card_id}/merge-anyway", dependencies=[ROUTE_DECIDES])
 async def merge_card_anyway(
     card_id: uuid.UUID,
     body: ForceMergeDecision,
@@ -554,7 +555,7 @@ async def merge_card_anyway(
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/auto-merge")
+@router.post("/accept-cards/{card_id}/auto-merge", dependencies=[ROUTE_DECIDES])
 async def set_auto_merge(
     card_id: uuid.UUID,
     body: AutoMergeDecision,
@@ -581,7 +582,7 @@ async def set_auto_merge(
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/revoke")
+@router.post("/accept-cards/{card_id}/revoke", dependencies=[ROUTE_DECIDES])
 async def revoke_card(
     card_id: uuid.UUID, body: AcceptDecision, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

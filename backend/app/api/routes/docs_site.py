@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import get_current_session_id
@@ -61,7 +62,7 @@ def ask_limits() -> AskLimits:
 # ---------- signing in to the docs: through the platform ----------
 
 
-@router.post("/grant")
+@router.post("/grant", dependencies=[ROUTE_DECIDES])
 async def docs_grant(
     response: Response,
     auth: Annotated[AuthUserInfo, Depends(require_auth_user)],
@@ -103,7 +104,7 @@ def _destination(path: str) -> bool:
     )
 
 
-@router.post("/session", include_in_schema=False)
+@router.post("/session", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def open_docs_session(request: Request, db: DbSession) -> Response:
     """On the docs host: spend a grant, set the docs cookie, go back to the page.
 
@@ -230,7 +231,7 @@ def _refuse(status: int, message: str, retry_after: int = 0) -> JSONResponse:
     return JSONResponse(body, status_code=status, headers=headers)
 
 
-@router.post("/ask")
+@router.post("/ask", dependencies=[ROUTE_DECIDES])
 async def ask(
     body: AskRequest,
     db: DbSession,
@@ -428,7 +429,7 @@ async def _agent_scope(
     return await library.reads_dev_docs(db, place.project_id)
 
 
-@router.post("/agent/search", include_in_schema=False)
+@router.post("/agent/search", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def agent_search_docs(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> dict:
@@ -457,7 +458,7 @@ async def agent_search_docs(
     )
 
 
-@router.post("/agent/read", include_in_schema=False)
+@router.post("/agent/read", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def agent_read_docs(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> dict:

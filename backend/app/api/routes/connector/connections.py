@@ -253,7 +253,7 @@ async def remove_account_connection(
     return removed
 
 
-@router.post("/my/devices/{device_id}/claude-code")
+@router.post("/my/devices/{device_id}/claude-code", dependencies=[ROUTE_DECIDES])
 async def check_my_claude_code(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
 ) -> dict[str, Any] | None:
@@ -369,7 +369,7 @@ async def check_my_sandbox(
     return sandbox.status(await service.sandbox_check(device_id))
 
 
-@router.patch("/my/devices/{device_id}")
+@router.patch("/my/devices/{device_id}", dependencies=[ROUTE_DECIDES])
 async def rename_my_device(
     device_id: str,
     body: RenameDeviceRequest,
@@ -383,7 +383,7 @@ async def rename_my_device(
     return await _device_view(db, device, _screens_by_device().get(device_id, []))
 
 
-@router.delete("/my/devices/{device_id}")
+@router.delete("/my/devices/{device_id}", dependencies=[ROUTE_DECIDES])
 async def unbind_my_device(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep
 ) -> dict[str, Any]:
@@ -393,7 +393,7 @@ async def unbind_my_device(
     return {"deleted": True, "device_id": device_id}
 
 
-@router.post("/my/devices/{device_id}/teams")
+@router.post("/my/devices/{device_id}/teams", dependencies=[ROUTE_DECIDES])
 async def register_device_for_team(
     device_id: str,
     body: BindTeamRequest,
@@ -464,7 +464,7 @@ async def team_devices(
     }
 
 
-@router.delete("/my/devices/{device_id}/teams/{team_id}")
+@router.delete("/my/devices/{device_id}/teams/{team_id}", dependencies=[ROUTE_DECIDES])
 async def unregister_device_from_team(
     device_id: str,
     team_id: int,

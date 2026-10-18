@@ -80,7 +80,7 @@ from app.api.topics_deps import (
     _actor_in_place,
     require_person_speaks,
 )
-from app.api.write_access import CHEESE_ONLY_IN_ROOM
+from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
 from app.auth.project_roles import may
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -115,7 +115,9 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 ATTACHMENTS_PER_MESSAGE = 9
 
 
-@router.post("/{topic_id}/messages", operation_id="chat-publish")
+@router.post(
+    "/{topic_id}/messages", operation_id="chat-publish", dependencies=[ROUTE_DECIDES]
+)
 async def send_chat_message(
     topic_id: uuid.UUID,
     body: ChatMessageIn,

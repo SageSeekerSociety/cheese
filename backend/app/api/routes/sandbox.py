@@ -12,6 +12,7 @@ from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core import background
 from app.core.errors import UnauthorizedError
 from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 
 
-@router.post("/storage-sweep")
+@router.post("/storage-sweep", dependencies=[ROUTE_DECIDES])
 async def trigger_storage_sweep(x_cheese_token: str = Header(default="")) -> dict:
     # deferred-import: tests patch this name on app.core.db
     from app.core.db import async_session_factory

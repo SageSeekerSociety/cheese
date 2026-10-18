@@ -5,7 +5,7 @@
  *  为什么单开一个文件：`api.ts` 已经越过 1000 行的尺寸上限，按
  *  `.claude/scripts/check-file-sizes.py` 只许变小 —— 往里加字段的唯一办法就是把它
  *  要加的那个类型搬出来。这里和 `types/compute.ts`、`types/roomOutput.ts` 是同一类
- *  东西。账号池的判据在 `backend/app/domain/platform_stats/claude_pool.py`。 */
+ *  东西。账号池的判据在 `backend/app/domain/usage/claude_pool.py`。 */
 
 /** 用量那一块。`unpriced_tokens` 与 `cost_usd` **一起读才对**：前者是「这些 token
  *  算不出价钱」（模型没有单价，行上的 0 是「没有价」不是「免费」），少了它，几百万
@@ -74,7 +74,7 @@ export interface StatsUsage {
   /** 订阅通路身后那个 Claude 账号池。池子只活在跑计量代理的那台机器上，这里是**代理
    *  写在账本旁边的一份快照** —— 这一块里唯一不来自数据库的东西，也因此「读不到」是
    *  常态（开发环境根本不跑订阅版代理），不是故障。行与 `reason` 的判据在
-   *  `backend/app/domain/platform_stats/claude_pool.py`。 */
+   *  `backend/app/domain/usage/claude_pool.py`。 */
   claude_accounts: StatsClaudePool
   /** 缓存命中率：缓存读 / 输入，只算记了缓存的行（一类行从窗口里第一次记下缓存读
    *  起算，之前那几行的 0 可能只是没记）。没算进去的输入在 `uncounted_input_tokens`。

@@ -19,7 +19,9 @@ from app.api.deps import get_broker
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topic_pin_rows import pin_rows
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.schemas import BlockOut
@@ -33,7 +35,7 @@ async def _channel(db, resolver, topic_id: uuid.UUID, *, acting: bool):
     """The channel and who is asking. A task or a 支线 has no pins."""
     place = await place_or_404(db, topic_id)
     if place.conversation_id != place.room_id:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     actor = await resolver.resolve(topic_id=topic_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=topic_id
@@ -52,7 +54,7 @@ async def list_pins(
     return ok(await pin_rows(db, room.id))
 
 
-@router.put("/{topic_id}/pins/{block_id}")
+@router.put("/{topic_id}/pins/{block_id}", dependencies=[ROUTE_DECIDES])
 async def pin_block(
     topic_id: uuid.UUID,
     block_id: uuid.UUID,
@@ -71,7 +73,7 @@ async def pin_block(
     return ok({"block_id": str(block_id), "pinned": True})
 
 
-@router.delete("/{topic_id}/pins/{block_id}")
+@router.delete("/{topic_id}/pins/{block_id}", dependencies=[ROUTE_DECIDES])
 async def unpin_block(
     topic_id: uuid.UUID,
     block_id: uuid.UUID,
