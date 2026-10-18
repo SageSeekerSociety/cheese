@@ -33,7 +33,6 @@ from app.domain.agent.turn_resume import (
     RESUME_NOTE,
     after_failure,
     hand_due,
-    show_waiting,
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
@@ -208,7 +207,12 @@ async def test_a_rate_limited_turn_resumes_by_itself(
             r for r in waiting if r["meta"].get("event_type") == "turn_resume_wait"
         ]
         assert len(recovery_lines) == 1
-        assert not [r for r in waiting if r["meta"].get("event_type") == "api_retry"]
+        assert [
+            r["meta"].get("event_type")
+            for r in waiting
+            if r["meta"].get("event_type") in ("api_retry", "turn_resume_wait")
+        ] == ["api_retry", "turn_resume_wait"]
+        assert recovery_lines[0]["meta"]["reason"] == "rate_limited"
         assert recovery_lines[0]["meta"]["i18n"]["content"]["params"]["minutes"] >= 1
         [owed] = rows
         # It waits first: a request limited a moment ago is limited now.
@@ -228,19 +232,16 @@ async def test_a_rate_limited_turn_resumes_by_itself(
         assert str(RESUME_NOTE) in screen.handed[-1]
         assert len(screen.sessions) == 1
         await runner.drain(timeout_s=10)
-        async with asyncio.timeout(HANG_S):
-            while True:
-                async with factory() as session:
-                    completed = await for_site(
-                        session, conversation, since=None, until=None
-                    )
-                if not [
-                    r
-                    for r in completed
-                    if r["meta"].get("event_type") in ("turn_resume_wait", "api_retry")
-                ]:
-                    break
-                await asyncio.sleep(0.05)
+        async with factory() as session:
+            completed = await for_site(session, conversation, since=None, until=None)
+        assert [
+            r["meta"].get("event_type")
+            for r in completed
+            if r["meta"].get("event_type")
+            in ("api_retry", "turn_resume_wait", "turn_resume_started")
+        ] == ["api_retry", "turn_resume_wait", "turn_resume_started"]
+        assert await _failure_cards(factory, conversation) == 0
+        assert not [f for f in frames if f.get("type") == "error"]
         # Handed over once: the clock running again sends nothing more.
         assert await hand_due(factory, now=owed.due_at + timedelta(hours=1)) == 0
     finally:
@@ -283,6 +284,11 @@ async def test_exhausted_resume_budget_shows_failure_card(
         assert await _failure_cards(factory, conversation) == 1
         async with factory() as session:
             visible = await for_site(session, conversation, since=None, until=None)
+        assert [
+            r["meta"].get("event_type")
+            for r in visible
+            if r["meta"].get("event_type") == "turn_resume_stopped"
+        ] == ["turn_resume_stopped"]
         assert not [
             r for r in visible if r["meta"].get("event_type") == "turn_resume_wait"
         ]
@@ -292,9 +298,11 @@ async def test_exhausted_resume_budget_shows_failure_card(
 
 
 @pytest.mark.anyio
-async def test_a_handed_resume_does_not_leave_a_wait_after_delivery_fails(
+async def test_a_failed_resume_delivery_keeps_wait_and_appends_failure(
     business_db_factory,
 ):
+    from app.domain.agent.turn_resume import report_failed_deliveries, show_waiting
+
     factory = business_db_factory
     project, conversation, seat, _instance = await _room_with_agent(factory)
     row = await after_failure(
@@ -316,6 +324,8 @@ async def test_a_handed_resume_does_not_leave_a_wait_after_delivery_fails(
         await session.commit()
 
     assert await dispatch_pending(factory, chat=None, runner=None) == 0
+    assert await report_failed_deliveries(factory) == 1
+    assert await report_failed_deliveries(factory) == 0
     async with factory() as session:
         delivery = await session.scalar(
             select(Delivery).where(Delivery.event_id == row.id)
@@ -323,7 +333,12 @@ async def test_a_handed_resume_does_not_leave_a_wait_after_delivery_fails(
         visible = await for_site(session, conversation, since=None, until=None)
     assert delivery is not None
     assert delivery.state == "failed"
-    assert not [r for r in visible if r["meta"].get("event_type") == "turn_resume_wait"]
+    assert [
+        r["meta"].get("event_type")
+        for r in visible
+        if r["meta"].get("event_type") in ("turn_resume_wait", "turn_resume_stopped")
+    ] == ["turn_resume_wait", "turn_resume_stopped"]
+    assert await _failure_cards(factory, conversation) == 1
 
 
 @pytest.mark.anyio
@@ -347,9 +362,12 @@ async def test_a_person_speaking_takes_the_turn_back(business_db_factory, tmp_pa
         assert dropped.dropped_reason == "person_spoke"
         async with factory() as session:
             visible = await for_site(session, conversation, since=None, until=None)
-        assert not [
-            r for r in visible if r["meta"].get("event_type") == "turn_resume_wait"
-        ]
+        assert [
+            r["meta"].get("event_type")
+            for r in visible
+            if r["meta"].get("event_type")
+            in ("turn_resume_wait", "turn_resume_stopped")
+        ] == ["turn_resume_wait", "turn_resume_stopped"]
     finally:
         await runner.drain(timeout_s=10)
         await chat.stop_listening(timeout_s=2)

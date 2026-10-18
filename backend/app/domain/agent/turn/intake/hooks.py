@@ -145,7 +145,16 @@ class HookEvents:
                 result=result,
                 route=route,
             )
-            if row is None or row.dropped_at is not None:
+            if row is None:
+                return False
+            if row.dropped_at is not None:
+                await turn_resume.show_stopped(
+                    self.sessions,
+                    row,
+                    "turnResumeExhausted"
+                    if row.dropped_reason == turn_resume.ATTEMPTS_USED_UP
+                    else "turnResumeNoReset",
+                )
                 return False
             await turn_resume.show_waiting(self.sessions, row)
             return True
@@ -376,12 +385,6 @@ class HookEvents:
                     harness=event.harness,
                 )
             if event.is_error:
-                await turn_resume.clear_waiting(
-                    self.sessions,
-                    conversation_id=topic_id,
-                    seat=event.agent_handle
-                    or (state.acting_agent if state is not None else None),
-                )
                 # Only a failure the service reported: the watchdog's timeout
                 # and a spent balance are not waits (`turn_resume`).
                 resumable = False
@@ -444,8 +447,6 @@ class HookEvents:
                         or (state.acting_agent if state is not None else None),
                         route=state.route if state is not None else None,
                     )
-                    if recovering:
-                        await turn_resume.clear_retry(self.sessions, turn_id)
                 if not recovering:
                     payload = await post_system_event(
                         sessions, room_id, line, turn_id, meta=meta, inner_id=inner_id
@@ -454,14 +455,6 @@ class HookEvents:
                         frame = {"type": "event_block", "block": payload}
                         if inner_id is not None:
                             await self.thread_replied(inner_id)
-            else:
-                await turn_resume.clear_waiting(
-                    self.sessions,
-                    conversation_id=topic_id,
-                    seat=event.agent_handle
-                    or (state.acting_agent if state is not None else None),
-                )
-                await turn_resume.clear_retry(self.sessions, turn_id)
             if not event.is_error and event.text.strip():
                 # Terminal output, the final response included, stays in
                 # activity: a reply reaches the room only through chat_send,

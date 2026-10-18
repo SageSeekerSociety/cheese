@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.domain.agent.realtime.broker import get_broker
-from app.domain.notice_meta import EVENT_API_RETRY, EVENT_TURN_RESUME_WAIT
 from app.domain.run_record.models import RunRecord
 from app.domain.run_record.service import (
     FRAME,
@@ -145,9 +144,4 @@ async def for_site(
         as_payload(r)
         for r in kept
         if (author is None or r.seat == author)
-        and not (
-            (r.meta or {}).get("event_type")
-            in (EVENT_API_RETRY, EVENT_TURN_RESUME_WAIT)
-            and (r.meta or {}).get("state") == "resolved"
-        )
     ]

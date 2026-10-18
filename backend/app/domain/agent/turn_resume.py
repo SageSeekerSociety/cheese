@@ -45,9 +45,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionFactory
 from app.core.obs import scrub_secrets
 from app.core.sentences import say
+from app.domain.agent.announce import announce
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.models import AgentTurn, TurnResume
-from app.domain.agent.run_records import record_now, restate_now
+from app.domain.agent.run_records import publish, record_now
 from app.domain.agent.own_limit import refused_until
 from app.domain.agent.resumable_failures import (
     SUBSCRIPTION_COOLING,
@@ -57,22 +58,27 @@ from app.domain.agent.resumable_failures import (
 from app.domain.agent.service import AgentResult
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind
-from app.domain.conversation.services import room_of, rooms_of
+from app.domain.conversation.services import room_of, room_of_thread, rooms_of
 from app.domain.delivery.agent import instance_for_seat, record_agent
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column
 from app.domain.notice_meta import (
-    EVENT_API_RETRY,
     EVENT_TURN_FAILED,
+    EVENT_TURN_RESUME_STARTED,
+    EVENT_TURN_RESUME_STOPPED,
     EVENT_TURN_RESUME_WAIT,
+    SEVERITY_ERROR,
+    SEVERITY_INFO,
     SEVERITY_WARN,
+    WHO_HUMAN,
     WHO_PLATFORM,
     notice,
 )
 from app.domain.notification.models import NotificationType
+from app.domain.delivery.models import Delivery
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.run_record.models import RunRecord
+from app.domain.run_record.service import as_payload, record
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.usage.claude_pool import read_claude_pool, snapshot_path
 
@@ -98,6 +104,7 @@ PERSON_SPOKE: Final = "person_spoke"
 SEAT_RAN_AGAIN: Final = "seat_ran_again"
 CLOSED: Final = "conversation_closed"
 SEAT_GONE: Final = "seat_gone"
+DELIVERY_FAILED: Final = "delivery_failed"
 
 _SAID_MAX: Final = 4000
 
@@ -243,65 +250,142 @@ async def after_failure(
 
 
 async def show_waiting(sessions: SessionFactory, row: TurnResume) -> None:
-    """Show one quiet line in 现场 while this resume is owed."""
+    """Append the failure and its scheduled recovery to 现场."""
     minutes = max(1, math.ceil((row.due_at - _now()).total_seconds() / 60))
-    line = say("turnResumeWait", minutes=minutes)
+    line = say(_WAIT_KEYS[row.reason], minutes=minutes)
     await record_now(
         sessions,
         conversation_id=row.conversation_id,
         content=line,
         meta={
             **notice(EVENT_TURN_RESUME_WAIT, severity=SEVERITY_WARN, who=WHO_PLATFORM),
-            "state": "waiting",
+            "reason": row.reason,
+            "resume_id": str(row.id),
         },
         turn_id=row.failed_turn_id,
         seat=row.recipient_handle,
     )
 
 
-async def clear_waiting(
-    sessions: SessionFactory,
-    *,
-    conversation_id: uuid.UUID,
-    seat: str | None,
-    failed_turn_id: uuid.UUID | None = None,
-) -> None:
-    """A newer turn has settled the wait; remove its line from 现场."""
-    if seat is None:
-        return
-    query = select(RunRecord.id).where(
-        RunRecord.conversation_id == conversation_id,
-        RunRecord.seat == seat,
-        RunRecord.kind == EVENT_TURN_RESUME_WAIT,
-        RunRecord.meta["state"].as_string() == "waiting",
+_WAIT_KEYS: Final = {
+    "rate_limited": "turnResumeWaitRateLimited",
+    "overloaded": "turnResumeWaitOverloaded",
+    "stream_ended": "turnResumeWaitStreamEnded",
+    "unreachable": "turnResumeWaitUnreachable",
+    "egress_offline": "turnResumeWaitEgressOffline",
+    "subscription_cooling": "turnResumeWaitSubscriptionCooling",
+    "quota_reset": "turnResumeWaitQuotaReset",
+}
+
+
+async def show_stopped(sessions: SessionFactory, row: TurnResume, key: str) -> None:
+    """Append a terminal or canceled recovery outcome without changing history."""
+    await record_now(
+        sessions,
+        conversation_id=row.conversation_id,
+        content=say(key),
+        meta={
+            **notice(
+                EVENT_TURN_RESUME_STOPPED, severity=SEVERITY_WARN, who=WHO_PLATFORM
+            ),
+            "resume_id": str(row.id),
+            "reason": row.dropped_reason,
+        },
+        turn_id=row.failed_turn_id,
+        seat=row.recipient_handle,
     )
-    if failed_turn_id is not None:
-        query = query.where(RunRecord.turn_id == failed_turn_id)
+
+
+async def show_started(sessions: SessionFactory, attempt_id: uuid.UUID) -> None:
+    """Record the resume after its turn interval actually opens."""
     async with sessions() as session:
-        ids = list(await session.scalars(query))
-    for record_id in ids:
-        await restate_now(
-            sessions,
-            record_id,
-            content="",
-            meta={"state": "resolved"},
+        row = await session.scalar(
+            select(TurnResume)
+            .join(Delivery, Delivery.event_id == TurnResume.id)
+            .where(Delivery.attempt_id == attempt_id)
         )
+    if row is None:
+        return
+    await record_now(
+        sessions,
+        conversation_id=row.conversation_id,
+        content=say("turnResumeStarted"),
+        meta={
+            **notice(
+                EVENT_TURN_RESUME_STARTED, severity=SEVERITY_INFO, who=WHO_PLATFORM
+            ),
+            "resume_id": str(row.id),
+        },
+        turn_id=attempt_id,
+        seat=row.recipient_handle,
+    )
 
 
-async def clear_retry(sessions: SessionFactory, turn_id: uuid.UUID) -> None:
-    """Remove a model retry trace after the CLI or platform recovers."""
+async def report_failed_deliveries(sessions: SessionFactory) -> int:
+    """Report resume instructions the delivery ledger can no longer start."""
+    reported: list[tuple[dict, uuid.UUID | None]] = []
     async with sessions() as session:
-        ids = list(
+        rows = list(
             await session.scalars(
-                select(RunRecord.id).where(
-                    RunRecord.turn_id == turn_id,
-                    RunRecord.kind == EVENT_API_RETRY,
-                    RunRecord.meta["state"].as_string().is_distinct_from("resolved"),
+                select(TurnResume)
+                .join(Delivery, Delivery.event_id == TurnResume.id)
+                .where(
+                    Delivery.state == "failed",
+                    TurnResume.handed_at.is_not(None),
+                    TurnResume.dropped_at.is_(None),
                 )
+                .limit(100)
+                .with_for_update(of=TurnResume, skip_locked=True)
             )
         )
-    for record_id in ids:
-        await restate_now(sessions, record_id, content="", meta={"state": "resolved"})
+        for row in rows:
+            room = await room_of(session, row.conversation_id)
+            row.dropped_at = _now()
+            row.dropped_reason = DELIVERY_FAILED
+            kept = await record(
+                session,
+                conversation_id=row.conversation_id,
+                content=say("turnResumeDeliveryFailed"),
+                meta={
+                    **notice(
+                        EVENT_TURN_RESUME_STOPPED,
+                        severity=SEVERITY_WARN,
+                        who=WHO_PLATFORM,
+                    ),
+                    "resume_id": str(row.id),
+                    "reason": DELIVERY_FAILED,
+                },
+                turn_id=row.failed_turn_id,
+                seat=row.recipient_handle,
+            )
+            await announce(
+                session,
+                place_id=room,
+                task_id=row.conversation_id if room != row.conversation_id else None,
+                content=say("turnResumeDeliveryFailed"),
+                turn_id=row.failed_turn_id,
+                meta={
+                    **notice(
+                        EVENT_TURN_FAILED,
+                        severity=SEVERITY_ERROR,
+                        who=WHO_HUMAN,
+                        retryable=True,
+                    ),
+                    "resume_id": str(row.id),
+                    "seat": row.recipient_handle,
+                },
+            )
+            if kept is not None:
+                reported.append(
+                    (
+                        as_payload(kept),
+                        await room_of_thread(session, row.conversation_id),
+                    )
+                )
+        await session.commit()
+    for payload, room in reported:
+        await publish(payload, room=room)
+    return len(rows)
 
 
 def _wait(
@@ -349,7 +433,13 @@ async def _streak(
     )
     if previous is None:
         return 0
-    if previous.dropped_reason in (PERSON_SPOKE, SEAT_RAN_AGAIN, CLOSED, SEAT_GONE):
+    if previous.dropped_reason in (
+        PERSON_SPOKE,
+        SEAT_RAN_AGAIN,
+        CLOSED,
+        SEAT_GONE,
+        DELIVERY_FAILED,  # no resumed turn started; a later manual retry is a new streak
+    ):
         return 0
     since = previous.handed_at or previous.failed_at
     if now - since > STREAK_WINDOW:
@@ -370,7 +460,7 @@ async def hand_due(
     timed-delivery clock dispatches them (`delivery.timer.deliver_due`)."""
     now = now or _now()
     handed = 0
-    settled_waits: list[tuple[uuid.UUID, str, uuid.UUID]] = []
+    stopped: list[tuple[dict, uuid.UUID | None]] = []
     async with sessions() as session:
         rows = list(
             await session.scalars(
@@ -388,9 +478,29 @@ async def hand_due(
             if dropped is not None:
                 row.dropped_at = now
                 row.dropped_reason = dropped
-                settled_waits.append(
-                    (row.conversation_id, row.recipient_handle, row.failed_turn_id)
+                kept = await record(
+                    session,
+                    conversation_id=row.conversation_id,
+                    content=say("turnResumeCanceled"),
+                    meta={
+                        **notice(
+                            EVENT_TURN_RESUME_STOPPED,
+                            severity=SEVERITY_WARN,
+                            who=WHO_PLATFORM,
+                        ),
+                        "resume_id": str(row.id),
+                        "reason": dropped,
+                    },
+                    turn_id=row.failed_turn_id,
+                    seat=row.recipient_handle,
                 )
+                if kept is not None:
+                    stopped.append(
+                        (
+                            as_payload(kept),
+                            await room_of_thread(session, row.conversation_id),
+                        )
+                    )
                 logger.info(
                     "turn resume: %s in %s not resumed: %s",
                     row.recipient_handle,
@@ -418,9 +528,6 @@ async def hand_due(
                 content=str(RESUME_NOTE),
             )
             row.handed_at = now
-            settled_waits.append(
-                (row.conversation_id, row.recipient_handle, row.failed_turn_id)
-            )
             handed += 1
             logger.info(
                 "turn resume: handed %s in %s its resume (%s, attempt %s)",
@@ -430,13 +537,8 @@ async def hand_due(
                 row.attempt,
             )
         await session.commit()
-    for conversation_id, seat, failed_turn_id in settled_waits:
-        await clear_waiting(
-            sessions,
-            conversation_id=conversation_id,
-            seat=seat,
-            failed_turn_id=failed_turn_id,
-        )
+    for payload, room in stopped:
+        await publish(payload, room=room)
     return handed
 
 

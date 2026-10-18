@@ -135,7 +135,7 @@ describe('现场实时接上', () => {
     expect(site.getByTestId('site-act-error').textContent).toContain('command not found')
   })
 
-  it('自动恢复只在现场暂时提示，恢复后这一行消失', async () => {
+  it('自动恢复的等待和开工是两条历史，CLI 重试记录也保留', async () => {
     const retry = step('cli-retry', '2026-09-25T09:59:00Z', '', {
       author_type: 'platform',
       content: 'AI 服务请求失败，正在重试',
@@ -143,24 +143,31 @@ describe('现场实时接上', () => {
     })
     const waiting = step('resume-wait', '2026-09-25T10:00:00Z', '', {
       author_type: 'platform',
-      content: '模型服务暂时不可用，约 2 分钟后自动继续',
+      content: '模型服务暂时不可用（限流），约 2 分钟后自动继续',
       meta: {
         event_type: 'turn_resume_wait',
-        state: 'waiting',
         who: 'platform',
-        i18n: { content: { key: 'turnResumeWait', params: { minutes: 2 } } },
+        i18n: { content: { key: 'turnResumeWaitRateLimited', params: { minutes: 2 } } },
       },
     })
     const site = await openSite([retry, waiting])
     await site.answer()
-    expect(site.container.textContent).toContain('模型服务暂时不可用，约 2 分钟后自动继续')
+    expect(site.container.textContent).toContain('模型服务暂时不可用（限流），约 2 分钟后自动继续')
 
-    site.push({ ...waiting, content: '', meta: { ...waiting.meta, state: 'resolved' } })
-    site.push({ ...retry, content: '', meta: { ...retry.meta, state: 'resolved' } })
+    site.push(
+      step('resume-start', '2026-09-25T10:02:00Z', '', {
+        author_type: 'platform',
+        content: '已自动继续',
+        meta: { event_type: 'turn_resume_started', who: 'platform', i18n: { content: { key: 'turnResumeStarted' } } },
+      })
+    )
     await nextTick()
 
-    expect(site.container.textContent).not.toContain('模型服务暂时不可用，约 2 分钟后自动继续')
-    expect(site.container.querySelectorAll('.site-act')).toHaveLength(0)
+    const lines = Array.from(site.container.querySelectorAll('.site-act')).map((line) => line.textContent ?? '')
+    expect(lines).toHaveLength(3)
+    expect(lines[0]).toContain('AI 服务请求失败，正在重试')
+    expect(lines[1]).toContain('模型服务暂时不可用（限流），约 2 分钟后自动继续')
+    expect(lines[2]).toContain('已自动继续')
   })
 
   it('别的对话的一步，不进这一栏', async () => {
