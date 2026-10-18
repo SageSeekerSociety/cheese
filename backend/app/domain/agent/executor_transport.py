@@ -310,36 +310,14 @@ class MachineOutOfReach(RuntimeError):
 # machine, and so the path it holds the project at, does not exist yet.
 DEFERRED_WORKSPACE = "/unavailable-project"
 
-#: The name a session's working directory also goes by, in its own environment
-#: (`remote_execution.client.prepare`): a fixed name, the same in every session,
-#: whose value is the project that session sees. It is a path this session
-#: spells, so it is respelled where a command's paths are
-#: (`respell_working_directory`): a session started before its machine was
-#: rented names a placeholder that does not exist on the machine the command
-#: runs on.
+#: The name a session's working directory also goes by (`remote_execution.client`
+#: `prepare`): a fixed name, the same in every session, whose value is the
+#: project that session sees. It never enters a command's environment — a build
+#: running natively on the executor has no such variable, and a room's command
+#: must see exactly what that one sees. The shell prefix binds it in the
+#: command's own shell instead, and the value crosses as part of `body`, so the
+#: transport respells it where it respells every other path a body names.
 WORKING_DIRECTORY = "T"
-
-
-def respell_working_directory(environment, seen, workspace):
-    """``environment`` with the short name's value spelled where the machine
-    holds the project.
-
-    The other half of a command's paths (`client.prepare` gives the name its
-    value, `shell_prefix` forwards it). A session started before its machine was
-    rented sees the project at a placeholder, and its commands already run on
-    the machine — so the value has to cross the way `body`, `cwd` and `path` do
-    (`to_machine`), or `cd "$T"` names a directory that is not there. Anything
-    that is not a mapping with that name, and any session already spelling the
-    machine's own path, comes back unchanged.
-    """
-    if not isinstance(environment, dict) or WORKING_DIRECTORY not in environment:
-        return environment
-    return {
-        **environment,
-        WORKING_DIRECTORY: to_machine(
-            environment[WORKING_DIRECTORY], seen, workspace
-        ),
-    }
 
 
 def _retry_connect(attempt: int, deadline: float) -> bool:
@@ -1287,15 +1265,6 @@ class RemoteClient:
                         params[field] = to_machine(
                             params[field], original_workspace, workspace
                         )
-                # Only where the request carried one, the way the three path
-                # fields above are only rewritten where they are strings: a
-                # `tool_hooks` or `files` request through this branch names no
-                # environment, and an `env` invented here would be a field its
-                # executor does not read.
-                if "env" in params:
-                    params["env"] = respell_working_directory(
-                        params["env"], original_workspace, workspace
-                    )
             target_file = self.config.get("target_file")
             if target_file and changed_lease:
                 tree = self.call("context_fs", {"operation": "tree"})

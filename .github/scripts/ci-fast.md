@@ -21,7 +21,7 @@ tier, which is *not* what `task ci:fast` runs — the Taskfile passes
 
 | tier | budget | runs |
 |------|--------|------|
-| `static` | 180–720s, CPU-sized | only the pre-commit static hooks the path map selects (guards always run). No pytest, no types. This is the legacy direct-invocation default. |
+| `static` | 180–720s, CPU-sized | only the pre-commit static hooks the path map selects (guards always run). The backend whole-tree guards (`TREE_GUARDS`, pytest `-m pure`, no database) run as one `tree-guards` check when the backend is in scope; no other pytest, no types. This is the legacy direct-invocation default. |
 | `quick` | 180–720s, CPU-sized | static hooks **plus** the selected backend `pure` tests and frontend narrow-typecheck / related Vitest. This is what `task ci:fast` runs. |
 | `extended` | 900s | the **same selection** as quick, only the whole-tier budget is raised to 900s. It does not expand coverage. |
 

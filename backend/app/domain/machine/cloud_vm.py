@@ -76,14 +76,19 @@ async def release_idle(db, lifecycle) -> int:
                 SandboxHome.active_at < now - idle_for,
             )
             .order_by(SandboxHome.active_at)
-            .limit(PER_SWEEP)
         )
     ).all()
     await db.commit()
     released = 0
+    attempts = 0
     for home in candidates:
+        # Protected homes must not occupy the whole batch on every tick.
+        # Keep the bound on checkpoint attempts after the idle check.
+        if attempts >= PER_SWEEP:
+            break
         if await lifecycle._idle_since(home, now, idle_for) is None:
             continue
+        attempts += 1
         if await _release(db, lifecycle, home, idle_for):
             released += 1
     return released

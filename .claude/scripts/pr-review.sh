@@ -27,6 +27,13 @@
 #       reviewer runs, prepare writes a result.json that says so, and post can
 #       be run straight away.
 #       Also appends PRECOMPUTED.md (.claude/pr-review/precompute.py): ci:fast pass/not_run, symbol refs, trial merges.
+#       Then BUNDLE.md (.claude/pr-review/bundle.py): the source of every function the diff
+#       touched, its call sites in other files, and single-file pyright errors (PYRIGHT
+#       overrides the command), so the finders do not open the files themselves.
+#       A --since round whose increment §4 does not re-review (only a merge of the base
+#       branch, or only tests, docs or copy) and whose last round on this machine had no
+#       blocker/major inherits that conclusion: result.json is written, no reviewer runs,
+#       and post prints the line with 增量自.
 #       The round — REVIEW-RESULT.md, meta and the review tree — is left under
 #       $HOME/.cheese/review-cache (PR_REVIEW_DIR overrides), not /tmp, so a
 #       machine change does not take it away; the old
@@ -49,6 +56,16 @@
 #       says to run an incremental review first. DIR is a prepare directory;
 #       PR picks the newest prepare directory for that PR on this machine.
 #       Prints 可递 or 还不能递 and the reasons. Exit 0 ready, 1 not ready.
+#   .claude/scripts/pr-review.sh stamp DIR BODY|- [--out FILE]
+#       Put the review conclusion on the last line of the card body, so nobody
+#       types the line by hand: the verdict comes from DIR/REVIEW-RESULT.md, the
+#       head is the branch head this card delivers (`git rev-parse HEAD`), and
+#       when the head only merged the base branch (or the increment is one §4
+#       does not re-review) the line says （增量自 <reviewed sha>）. Refuses,
+#       exit 1, when the commits after the review need a review of their own.
+#       BODY is a file (rewritten in place with --out, printed otherwise) or -
+#       for standard input. Runs check-review-card-body.py --stamp, which owns
+#       the line's grammar and the placement check.
 #
 # Exit status: 0 done, 1 failed (the reason is printed), 2 usage.
 set -uo pipefail
@@ -133,7 +150,7 @@ resolve_sha() {
 prepare() {
   local pr=$1 want=${2:-} since_want=${3:-} spec_want=${4:-}
   local sha since="" base tree dir method_rev prev prev_round merge_base tier tier_txt
-  local rules_rev rules_txt rules_line spec_from="" spec_txt="" spec_note tiers_file
+  local rules_rev rules_txt rules_line spec_from="" spec_txt="" spec_note tiers_file inherited=""
   sha=$(resolve_sha "$pr" "$want") || exit 1
   [ -z "$since_want" ] || since=$(resolve_sha "$pr" "$since_want") || exit 1
   base=$(gh api "repos/$REPO/pulls/$pr" -q .base.ref) || exit 1
@@ -348,6 +365,16 @@ PY
       prev=$prev_round/REVIEW-RESULT.md
     fi
     if [ -n "$prev" ]; then cp "$prev" "$dir/previous.md"; else rm -f "$dir/previous.md"; fi
+    # An increment §4 does not re-review inherits the last round's conclusion here, with no
+    # subagent: bundle.py writes result.json the way tier G does, and post renders the line
+    # with 增量自. It runs from this checkout, the way `ready` does: the decision is the
+    # deliverer's own §4 check, and nothing in the PR under review can reach it.
+    if [ -f "$ROOT/$METHOD/bundle.py" ] \
+      && python3 "$ROOT/$METHOD/bundle.py" inherit --repo "$ROOT" --base "$base" --since "$since" \
+           --head "$sha" --previous "$dir/previous.md" --kept "$dir/result.json" \
+           --out "$dir/result.json"; then
+      inherited=yes
+    fi
     cat >> "$dir/REVIEW.md" <<EOF
 
 ## Incremental review
@@ -427,7 +454,25 @@ EOF
 - Result: $dir/result.json
 - Post: \`$HERE/pr-review.sh post $dir\`
 EOF
+  if [ -n "$inherited" ]; then
+    cat >> "$dir/REVIEW.md" <<EOF
+
+## Inherited conclusion
+
+The increment since ${since:0:12} is one §4 does not re-review, and the last round had no
+blocker or major: its conclusion is inherited and result.json is already written. Do not
+start any subagent. Run post now: \`$HERE/pr-review.sh post $dir\`
+EOF
+    echo "$dir/REVIEW.md"
+    return 0
+  fi
   python3 "$HERE/../pr-review/precompute.py" --repo "$ROOT" --tree "$tree" --base "$merge_base" --head "$sha" --pr "$pr" --pr-body "$dir/pr.md" --scripts "$HERE" --out "$dir/PRECOMPUTED.md" >&2 && { printf '\n' ; cat "$dir/PRECOMPUTED.md"; } >> "$dir/REVIEW.md" || echo "pr-review: precompute failed; REVIEW.md carries no PRECOMPUTED section" >&2
+  # Call slices and single-file pyright, so the finders read the bundle instead of the
+  # files. A delta round slices only the increment.
+  python3 "$HERE/../pr-review/bundle.py" facts --repo "$ROOT" --tree "$tree" --base "${since:-$merge_base}" \
+      --head "$sha" ${PYRIGHT:+--pyright "$PYRIGHT"} --out "$dir/BUNDLE.md" >&2 \
+    && { printf '\n'; cat "$dir/BUNDLE.md"; } >> "$dir/REVIEW.md" \
+    || echo "pr-review: bundle failed; REVIEW.md carries no Bundle section" >&2
   echo "$dir/REVIEW.md"
 }
 
@@ -462,7 +507,8 @@ post() {
   # Only the tree goes: REVIEW-RESULT.md and meta stay in $dir for the card, for a later
   # `ready`, and for a delta round that reuses this conclusion.
   git -C "$ROOT" worktree remove --force "$tree" 2>/dev/null || true
-  echo "pr-review: wrote $dir/REVIEW-RESULT.md; paste it into the card body (nothing was posted)" >&2
+  echo "pr-review: wrote $dir/REVIEW-RESULT.md; fill the card body with" >&2
+  echo "pr-review:   $HERE/pr-review.sh stamp $dir <body-file> --out <body-file>" >&2
 }
 
 show() {
@@ -484,6 +530,29 @@ ready() {
   python3 "${READY:-$ROOT/$METHOD/ready.py}" --dir "$dir" --root "$ROOT" --repo "$REPO"
 }
 
+stamp() {
+  local dir=$1 body=$2 out="" pr sha base method_rev tree since tier spec head
+  shift 2
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --out) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -f "$dir/meta" ] || die "$dir has no meta; run prepare first"
+  [ -f "$dir/REVIEW-RESULT.md" ] || die "run post first: $dir/REVIEW-RESULT.md does not exist"
+  # shellcheck disable=SC1091
+  . "$dir/meta"
+  # The card is delivered for this checkout's head; reading it from git keeps the line
+  # honest without a GitHub call (and without the rate limit a poll would spend).
+  head=$(git -C "$ROOT" rev-parse HEAD) || die "cannot read the branch head in $ROOT"
+  local args=(--stamp --review-result "$dir/REVIEW-RESULT.md" --head "$head"
+              --root "$ROOT" --base "$base")
+  [ "$body" = - ] || args+=(--text "$body")
+  [ -z "$out" ] || args+=(--out "$out")
+  python3 "$HERE/check-review-card-body.py" "${args[@]}"
+}
+
 case "${1:-}" in
   prepare)
     [ $# -ge 2 ] && [[ $2 =~ ^[0-9]+$ ]] || usage
@@ -500,5 +569,6 @@ case "${1:-}" in
   post) [ $# -ge 2 ] && [ $# -le 3 ] && { [ $# -eq 2 ] || [ "$3" = --dry-run ]; } || usage; post "$2" "${3:-}" ;;
   show) [ $# -ge 2 ] && [ $# -le 3 ] && { [ $# -eq 2 ] || [ "$3" = --line ]; } || usage; show "$2" "${3:-}" ;;
   ready) [ $# -eq 2 ] || usage; ready "$2" ;;
+  stamp) [ $# -ge 3 ] || usage; stamp "${@:2}" ;;
   *) usage ;;
 esac

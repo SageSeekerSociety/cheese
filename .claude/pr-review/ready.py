@@ -35,6 +35,10 @@ import tiers  # noqa: E402
 DEFAULT_REPO = "SageSeekerSociety/cheese"
 #: The check the acceptance gate reads, same name as orchestrator_autoaccept.CI_CHECK.
 CI_CHECK = "CI required"
+#: What a draft aggregates as. On a draft `CI required` is always skipped (GitHub counts a
+#: skipped required check as met, so the full name must not run there), and reading it
+#: told the seat to wait for a check that only appears once the PR leaves draft.
+DRAFT_CHECK = "CI required (draft quick)"
 RED = ("failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale")
 UNREADABLE = "读不到"
 #: §4's exempt increment: 改文案. The message files only — the strings a person reads. The
@@ -59,12 +63,19 @@ def newest_run(runs):
     return max(runs, key=lambda r: r.get("started_at") or "")
 
 
-def ci_on(repo, sha):
-    """The newest "CI required" check run on `sha`: its conclusion, its status while it is
-    still running, None when it never ran, or UNREADABLE. Mirrors orchestrator_autoaccept
-    so that 可递 here means what the acceptance gate will do with the same commit."""
+def check_for(draft):
+    """The aggregator that speaks for a PR in this state."""
+    return DRAFT_CHECK if draft else CI_CHECK
+
+
+def ci_on(repo, sha, draft):
+    """The newest aggregator check run on `sha` — the draft tier's on a draft, "CI required"
+    otherwise: its conclusion, its status while it is still running, None when it never
+    ran, or UNREADABLE. On a ready PR this mirrors orchestrator_autoaccept, so that 可递
+    here means what the acceptance gate will do with the same commit."""
+    name = check_for(draft)
     out = gh(f"repos/{repo}/commits/{sha}/check-runs", "--paginate",
-             "--jq", f'[.check_runs[] | select(.name == "{CI_CHECK}")] | .[]')
+             "--jq", f'[.check_runs[] | select(.name == "{name}")] | .[]')
     if out is None:
         return UNREADABLE
     try:
@@ -155,17 +166,20 @@ def verdict(f):
                 f"缺一次增量审：prepare <PR> --since {rv['head'][:8]}")
         else:
             notes.append(f"审查是 {rv['head'][:8]} 的，之后{inc['detail']}，不用重审")
-    ci = f.get("ci")
+    ci, draft = f.get("ci"), bool(f.get("draft"))
+    check = check_for(draft)
     if ci == UNREADABLE:
-        missing.append(f"{CI_CHECK} 读不到")
+        missing.append(f"{check} 读不到")
     elif ci in RED:
-        missing.append(f"{CI_CHECK} 在 head 上是 {ci}")
+        missing.append(f"{check} 在 head 上是 {ci}")
     elif ci != "success":
-        missing.append(f"{CI_CHECK} 在 head 上是 {ci or '没跑'}，等它绿")
+        missing.append(f"{check} 在 head 上是 {ci or '没跑'}，等它绿")
+    elif draft:
+        notes.append(f"草稿档已绿；递卡会自动转正，转正后要等完整的 {CI_CHECK}")
     if missing:
         return False, ["还不能递："] + [f"- {m}" for m in missing] + [f"- 说明：{n}" for n in notes]
     tier = f"｜档位 {rv['tier']}" if rv and rv.get("tier") else ""
-    line = (f"可递：head {head[:8]}｜{CI_CHECK} {ci}"
+    line = (f"可递：head {head[:8]}｜{check} {ci}"
             f"｜review {rv['head'][:8]}{'（增量）' if rv.get('since') else ''} "
             f"结论 {rv['verdict']}{tier}")
     return True, [line] + [f"- {n}" for n in notes]
@@ -194,15 +208,22 @@ def meta_of(directory):
     return out
 
 
-def gather(directory, repo, root):
+def gather(directory, repo, root, head=None):
+    """`head` is the sha `POST /topics/<id>/ready` answered with (it already counts a
+    rebase); given, the PR's head is not read from GitHub a second time."""
     meta = meta_of(directory)
     f = {"head": None, "ci": None, "review": review_from(directory), "error": None}
-    got = gh(f"repos/{repo}/pulls/{meta['pr']}", "--jq", ".head.sha")
-    if got is None:
-        f["error"] = "GitHub 读不到这个 PR"
-        return f
-    f["head"] = got.strip()
-    f["ci"] = ci_on(repo, f["head"])
+    if head:
+        # `/ready` answered with it, and `/ready` is what turned the PR ready: no draft.
+        f["head"], f["draft"] = head.strip(), False
+    else:
+        got = gh(f"repos/{repo}/pulls/{meta['pr']}", "--jq", "[.head.sha, .draft] | @tsv")
+        if got is None or "\t" not in got:
+            f["error"] = "GitHub 读不到这个 PR"
+            return f
+        sha, draft = got.strip().split("\t")
+        f["head"], f["draft"] = sha, draft == "true"
+    f["ci"] = ci_on(repo, f["head"], f["draft"])
     if f["review"] and f["head"] != f["review"]["head"]:
         f["increment"] = increment(root, meta.get("base"), f["review"]["head"], f["head"])
     return f
@@ -222,6 +243,7 @@ def main(argv=None):
     p.add_argument("--dir", dest="directory")
     p.add_argument("--root", default=None, help="the repository the commits live in")
     p.add_argument("--repo", default=DEFAULT_REPO)
+    p.add_argument("--head", default=None, help="the head sha /ready answered with")
     p.add_argument("--self-test", action="store_true")
     args = p.parse_args(argv)
     if args.self_test:
@@ -234,7 +256,7 @@ def main(argv=None):
         print(f"ready: {directory} 没有 meta；先跑 prepare", file=sys.stderr)
         return 2
     root = resolve_root(args.root, directory)
-    ready, lines = verdict(gather(directory, args.repo, root))
+    ready, lines = verdict(gather(directory, args.repo, root, args.head))
     print("\n".join(lines))
     return 0 if ready else 1
 

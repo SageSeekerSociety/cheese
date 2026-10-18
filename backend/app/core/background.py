@@ -179,6 +179,31 @@ class PeriodicRunner:
         self._job = job
         self._owner_only = owner_only
         self._task: asyncio.Task[None] | None = None
+        self._last_started_at: datetime | None = None
+        self._last_succeeded_at: datetime | None = None
+        self._running_since: datetime | None = None
+        self._last_error: str | None = None
+
+    def health(self) -> dict[str, Any]:
+        if self._interval <= 0:
+            status = "disabled"
+        elif self._task is None:
+            status = "not_started"
+        elif self._task.done():
+            status = "stopped"
+        elif self._running_since is not None:
+            status = "running"
+        elif self._last_error is not None:
+            status = "failed"
+        else:
+            status = "waiting"
+        return {
+            "status": status,
+            "last_started_at": self._last_started_at,
+            "last_succeeded_at": self._last_succeeded_at,
+            "running_since": self._running_since,
+            "last_error": self._last_error,
+        }
 
     def _next_interval_seconds(self) -> float | None:
         try:
@@ -304,6 +329,7 @@ class PeriodicRunner:
                     due_at = cycle_started + interval
                 continue
             try:
+                self._last_started_at = self._running_since = datetime.now(UTC)
                 try:
                     # Tag only the job's own forge requests. The context is
                     # reset by the context manager on every exit path, so a
@@ -321,21 +347,68 @@ class PeriodicRunner:
                     # prevent, one level up from a job that was never scheduled.
                     if _cancellation_requested():
                         raise
+                    self._last_error = "cancelled inside the job"
                     logger.exception(
                         "%s was cancelled from inside; continuing", self._name
                     )
-                except Exception:  # one bad cycle must not end the loop
+                except Exception as exc:  # one bad cycle must not end the loop
+                    self._last_error = type(exc).__name__
                     logger.exception("%s failed", self._name)
                 else:
+                    self._last_succeeded_at = datetime.now(UTC)
+                    self._last_error = None
                     if _worth_reporting(result):
                         logger.info("%s: %s", self._name, result)
             finally:
+                self._running_since = None
                 cycle_started = loop.time()
                 interval = self._next_interval_seconds()
                 if interval is None:
                     wait = self._pause_wait_seconds()
                 else:
                     due_at = cycle_started + interval
+
+
+def periodic_health(
+    jobs: Sequence[PeriodicRunner], *, owns_work: bool
+) -> dict[str, Any]:
+    readings = {
+        job.name: job.health() for job in jobs if owns_work or not job.owner_only
+    }
+    unhealthy = {
+        name: reading["status"]
+        for name, reading in readings.items()
+        if reading["status"] in {"not_started", "stopped", "failed"}
+    }
+    return {
+        "status": "down" if unhealthy else "up",
+        "owns_work": owns_work,
+        "unhealthy": unhealthy,
+        "jobs": readings,
+    }
+
+
+async def watch_periodic_jobs(
+    read: Callable[[], dict[str, Any]], *, interval_s: float = 10, grace_s: float = 60
+) -> None:
+    """Notice clocks that never started or stopped, independently of those clocks."""
+    unseen: dict[str, float] = {}
+    reported: set[str] = set()
+    loop = asyncio.get_running_loop()
+    while True:
+        await asyncio.sleep(interval_s)
+        unhealthy = read()["unhealthy"]
+        unseen = {name: at for name, at in unseen.items() if name in unhealthy}
+        reported.intersection_update(unhealthy)
+        for name, status in unhealthy.items():
+            since = unseen.setdefault(name, loop.time())
+            # Startup discovery gets a minute; it must not hide a clock for
+            # the lifetime of the process. HTTP readiness remains independent.
+            if loop.time() - since >= grace_s and name not in reported:
+                logger.error(
+                    "periodic job %s has stayed %s for %ss", name, status, grace_s
+                )
+                reported.add(name)
 
 
 def _cancellation_requested() -> bool:

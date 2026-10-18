@@ -195,10 +195,17 @@ def _own_turns(session_id, *, correlate=None) -> ColumnElement[bool]:
 
 
 class SandboxLifecycle:
-    def __init__(self, session: AsyncSession, hub=None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        hub=None,
+        *,
+        recovering: Callable[[uuid.UUID], bool] | None = None,
+    ) -> None:
         self._session = session
         self._repo = CloudHostRepository(session)
         self._hub = hub or device_hub
+        self._recovering = recovering
 
     async def sweep(self) -> dict[str, int]:
 
@@ -346,7 +353,7 @@ class SandboxLifecycle:
         left open past ``STALE_TURN`` — a corpse must not hold a machine for
         good either. Asked of a whole cloud VM's session before its VM is
         checkpointed or released (``cloud_vm``)."""
-        return (
+        active = (
             await self._session.scalar(
                 select(AgentTurn.id)
                 .where(
@@ -357,6 +364,17 @@ class SandboxLifecycle:
                 .limit(1)
             )
         ) is not None
+        return active or (
+            self._recovering is not None and self._recovering(conversation_id)
+        )
+
+    async def _session_recovering(self, session_id: uuid.UUID | None) -> bool:
+        if session_id is None or self._recovering is None:
+            return False
+        conversation = await self._session.scalar(
+            select(AgentSession.conversation_id).where(AgentSession.id == session_id)
+        )
+        return conversation is not None and self._recovering(conversation)
 
     async def _idle_since(
         self, home, now: datetime, idle_for: timedelta
@@ -366,6 +384,11 @@ class SandboxLifecycle:
 
         if home.session_id is None:
             return home.active_at
+        if self._recovering is not None:
+            recovering = await self._session_recovering(home.session_id)
+            await self._session.commit()
+            if recovering:
+                return None
         turns = (
             await self._session.execute(
                 select(
@@ -496,6 +519,9 @@ class SandboxLifecycle:
             return False
         if home.stopped_at is not None and now - home.stopped_at < STOP_HOLD:
             # Another sweep is removing it.
+            await self._session.commit()
+            return False
+        if idle is not None and await self._session_recovering(home.session_id):
             await self._session.commit()
             return False
         unpaid = home.stopped_at is None and idle is None and tell is None

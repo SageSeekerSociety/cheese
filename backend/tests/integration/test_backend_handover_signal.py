@@ -14,6 +14,7 @@ import asyncio
 import os
 import signal
 import uuid
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -27,6 +28,96 @@ from app.core.ws_handover import EndBusinessSocketsAtHandover
 from app.domain import backend_log
 from app.domain.run_record.models import RunRecord
 from app.main import app
+
+
+@pytest.mark.anyio
+async def test_a_pending_replay_does_not_prevent_machine_maintenance(monkeypatch):
+    from app import main
+    from app.api.deps import get_chat_service
+    from app.core.background import PeriodicRunner
+
+    maintained = asyncio.Event()
+    replay = None
+    chat = get_chat_service()
+
+    async def recover():
+        nonlocal replay
+        conversation = uuid.uuid4()
+        replay = asyncio.create_task(asyncio.Event().wait())
+        chat.live.replays[conversation] = replay
+        replay.add_done_callback(chat._replayed)
+        return 1
+
+    async def maintain():
+        maintained.set()
+
+    monkeypatch.setattr(chat, "recover_sessions", recover)
+    monkeypatch.setattr(
+        main,
+        "sweep_abandoned_gates",
+        AsyncMock(return_value={"condemned": [], "errors": []}),
+    )
+    monkeypatch.setattr(
+        main,
+        "periodic_jobs",
+        lambda **kwargs: [PeriodicRunner("cloud host pool sweep", 0.01, maintain)],
+    )
+    async with app.router.lifespan_context(app):
+        await asyncio.wait_for(maintained.wait(), 5)
+        assert replay is not None and not replay.done()
+
+
+@pytest.mark.anyio
+async def test_takeover_coalesces_orphans_before_its_periodic_scan_without_holding_machines(
+    monkeypatch,
+):
+    from app import main
+    from app.api.deps import get_work_runner
+    from app.core.background import PeriodicRunner
+
+    maintained = asyncio.Event()
+    startup_entered = asyncio.Event()
+    release_startup = asyncio.Event()
+    periodic_ran = asyncio.Event()
+    scans = []
+
+    async def initial_orphans(chat):
+        startup_entered.set()
+        await release_startup.wait()
+        scans.append("startup")
+        return 0
+
+    async def periodic_orphans():
+        scans.append("periodic")
+        periodic_ran.set()
+
+    async def maintain():
+        maintained.set()
+
+    monkeypatch.setattr(get_work_runner(), "resume_orphans", initial_orphans)
+    monkeypatch.setattr(
+        main,
+        "sweep_abandoned_gates",
+        AsyncMock(return_value={"condemned": [], "errors": []}),
+    )
+    monkeypatch.setattr(
+        main,
+        "periodic_jobs",
+        lambda **kwargs: [
+            PeriodicRunner("orphan sweep", 0.01, periodic_orphans),
+            PeriodicRunner("cloud host pool sweep", 0.01, maintain),
+        ],
+    )
+    async with app.router.lifespan_context(app):
+        try:
+            await asyncio.wait_for(startup_entered.wait(), 5)
+            await asyncio.wait_for(maintained.wait(), 5)
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(periodic_ran.wait(), 0.05)
+        finally:
+            release_startup.set()
+        await asyncio.wait_for(periodic_ran.wait(), 5)
+        assert scans[:2] == ["startup", "periodic"]
 
 
 async def _owner_lock_holders() -> int:
