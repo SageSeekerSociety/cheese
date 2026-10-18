@@ -369,6 +369,31 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
         self.assertEqual(check.returncode, 1, check.stdout + check.stderr)
         self.assertIn("不是当前 head", check.stderr)
 
+    def test_fix_declares_the_increment_when_the_head_may_carry_it(self) -> None:
+        """The other half of the gate: an exempt increment is declared, not hidden."""
+        repo, reviewed, head = self._repo_with_an_exempt_increment()
+        self.body_file.write_text("## 改动原因\n修复问题。\n", encoding="utf-8")
+        result = self.run_script(
+            "--fix",
+            "--review-result",
+            str(self.review_result(reviewed[:8])),
+            "--head",
+            head,
+            "--root",
+            str(repo),
+            "--base",
+            "main",
+            "--text",
+            str(self.body_file),
+            "--out",
+            str(self.body_file),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(
+            f"独立 review：head {head[:8]}（增量自 {reviewed[:8]}）",
+            self.body_file.read_text(encoding="utf-8"),
+        )
+
     def test_fix_refuses_a_head_the_review_did_not_cover(self) -> None:
         self.body_file.write_text("## 改动原因\n修复问题。\n", encoding="utf-8")
         result = self.run_script(
