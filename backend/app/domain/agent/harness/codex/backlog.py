@@ -63,10 +63,5 @@ class CodexBacklog(JournalBacklog[Journal]):
             age_s=age(row, now),
         )
 
-    def assemble(self, entry: HarnessEvent):
-        if not isinstance(entry.record, dict):
-            return []
-        return self.assembler.accept(entry.record)
-
     def unfinished(self) -> set[str]:
         return set(self.assembler.pending)
