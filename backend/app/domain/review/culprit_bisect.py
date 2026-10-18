@@ -29,12 +29,17 @@ class BisectResult:
 
 
 async def bisect(
-    commits: list[str], probe: Callable[[str], Awaitable[Verdict]]
+    commits: list[str],
+    probe: Callable[[str], Awaitable[Verdict]],
+    base: str | None = None,
 ) -> BisectResult:
     """``commits`` is oldest first and its newest commit is known to fail.
 
-    The commit before the oldest one is assumed to pass (it is the last green
-    batch's end), so the search finds the first failing commit in the list."""
+    ``base`` is the commit before the oldest one: the last green batch's end.
+    The search finds the first failing commit in the list. When it lands on the
+    oldest commit, every probe failed, which is also what a probe environment
+    that cannot run the tests looks like; only a passing ``base`` tells the
+    two apart, so without one that answer is withheld."""
     if len(commits) < MIN_COMMITS:
         return BisectResult(None, (), "too few commits to bisect")
     lo, hi = 0, len(commits) - 1  # the first failing commit is in [lo, hi]
@@ -52,4 +57,10 @@ async def bisect(
             lo = mid + 1
         else:
             return BisectResult(None, tuple(probed), "a probe could not judge")
+    if lo == 0:
+        if base is None or len(probed) >= MAX_PROBES:
+            return BisectResult(None, tuple(probed), "no passing base to check against")
+        probed.append(base)
+        if await probe(base) != "pass":
+            return BisectResult(None, tuple(probed), "the base does not pass")
     return BisectResult(commits[lo], tuple(probed))
