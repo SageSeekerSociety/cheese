@@ -105,6 +105,74 @@ def test_dump_notification_rows_json_1000_rows_yields_every_500(
     assert _as_bytes(actual) == _as_bytes(expected)
 
 
+def test_dump_notification_rows_json_1200_rows_keeps_the_partial_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full chunks followed by a short tail; dropping the tail must not pass."""
+    from app.domain.notification import adapters
+
+    rows = _make_rows(1_200)
+    expected = _expected(rows)
+
+    real_sleep = asyncio.sleep
+    yields = 0
+    dumped_at_each_yield: list[int] = []
+    dumped_so_far = 0
+    real_dump = adapters._NOTIFICATION_LIST_ADAPTER.dump_python
+
+    def tracking_dump(batch, *args, **kwargs):
+        nonlocal dumped_so_far
+        res = real_dump(batch, *args, **kwargs)
+        dumped_so_far += len(res)
+        return res
+
+    async def counting_sleep(delay: float):
+        nonlocal yields
+        if delay == 0:
+            yields += 1
+            dumped_at_each_yield.append(dumped_so_far)
+        return await real_sleep(delay)
+
+    monkeypatch.setattr(adapters.asyncio, "sleep", counting_sleep)
+    monkeypatch.setattr(
+        adapters._NOTIFICATION_LIST_ADAPTER, "dump_python", tracking_dump
+    )
+
+    actual = asyncio.run(adapters.dump_notification_rows_json(rows, chunk=500))
+
+    assert len(actual) == len(rows)
+    assert yields == 2
+    assert dumped_at_each_yield == [500, 1_000]
+    assert actual == expected
+
+
+def test_dump_notification_rows_json_honours_a_non_default_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The chunk argument, not a hardcoded 500, decides where the helper yields."""
+    from app.domain.notification import adapters
+
+    rows = _make_rows(20)
+    expected = _expected(rows)
+
+    real_sleep = asyncio.sleep
+    yields = 0
+
+    async def counting_sleep(delay: float):
+        nonlocal yields
+        if delay == 0:
+            yields += 1
+        return await real_sleep(delay)
+
+    monkeypatch.setattr(adapters.asyncio, "sleep", counting_sleep)
+
+    actual = asyncio.run(adapters.dump_notification_rows_json(rows, chunk=7))
+
+    # 20 rows / 7 per chunk = 3 chunks -> 2 inter-chunk yields.
+    assert yields == 2
+    assert actual == expected
+
+
 def test_dump_notification_rows_json_empty() -> None:
     from app.domain.notification.adapters import dump_notification_rows_json
 

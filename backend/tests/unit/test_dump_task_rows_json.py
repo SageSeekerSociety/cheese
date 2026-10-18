@@ -111,6 +111,75 @@ def test_dump_task_rows_json_1000_rows_yields_every_500(
     assert _as_bytes(actual) == _as_bytes(expected)
 
 
+def test_dump_task_rows_json_1200_rows_keeps_the_partial_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full chunks followed by a short tail are the shape a room list has:
+    dropping the tail must not pass."""
+    from app.domain.room_task import adapters
+
+    tasks = _make_tasks(1_200)
+    expected = _expected(tasks)
+
+    real_sleep = asyncio.sleep
+    yields = 0
+    validated_at_each_yield: list[int] = []
+    validated_so_far = 0
+    real_validate = adapters._TASK_LIST_ADAPTER.validate_python
+
+    def tracking_validate(batch, *args, **kwargs):
+        nonlocal validated_so_far
+        res = real_validate(batch, *args, **kwargs)
+        validated_so_far += len(res)
+        return res
+
+    async def counting_sleep(delay: float):
+        nonlocal yields
+        if delay == 0:
+            yields += 1
+            validated_at_each_yield.append(validated_so_far)
+        return await real_sleep(delay)
+
+    monkeypatch.setattr(adapters.asyncio, "sleep", counting_sleep)
+    monkeypatch.setattr(
+        adapters._TASK_LIST_ADAPTER, "validate_python", tracking_validate
+    )
+
+    actual = asyncio.run(adapters.dump_task_rows_json(tasks, chunk=500))
+
+    assert len(actual) == len(tasks)
+    assert yields == 2
+    assert validated_at_each_yield == [500, 1_000]
+    assert actual == expected
+
+
+def test_dump_task_rows_json_honours_a_non_default_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The chunk argument, not a hardcoded 500, decides where the helper yields."""
+    from app.domain.room_task import adapters
+
+    tasks = _make_tasks(20)
+    expected = _expected(tasks)
+
+    real_sleep = asyncio.sleep
+    yields = 0
+
+    async def counting_sleep(delay: float):
+        nonlocal yields
+        if delay == 0:
+            yields += 1
+        return await real_sleep(delay)
+
+    monkeypatch.setattr(adapters.asyncio, "sleep", counting_sleep)
+
+    actual = asyncio.run(adapters.dump_task_rows_json(tasks, chunk=7))
+
+    # 20 rows / 7 per chunk = 3 chunks -> 2 inter-chunk yields.
+    assert yields == 2
+    assert actual == expected
+
+
 def test_dump_task_rows_json_empty() -> None:
     from app.domain.room_task.adapters import dump_task_rows_json
 
