@@ -183,6 +183,14 @@ class Precompute(unittest.TestCase):
         head = commit(self.repo, {"a.py": "def helper():\n    return 1\n"}, "chg")
         self.assertIn("名字太常见", "\n".join(mod.section_symbols(self.repo, base, head)))
 
+    def test_orphan_with_name_repeated_on_definition_line(self):
+        base = commit(self.repo, {"a.py": 'UserId = NewType("UserId", int)\n', "b.py": "x: UserId\n",
+                                  "c.py": "def helper():  # helper\n    pass\n"}, "b")
+        head = commit(self.repo, {"b.py": "x = 1\n", "c.py": "def helper():\n    pass\n"}, "chg")
+        out = "\n".join(load().section_symbols(self.repo, base, head))
+        self.assertIn("⚠ `UserId`（a.py）", out)
+        self.assertNotIn("⚠ `helper`", out)
+
     # ---- ci:fast report
     def test_ci_report_split(self):
         commit(self.repo, {"a.py": "x = 1\n"}, "b")

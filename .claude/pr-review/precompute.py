@@ -216,7 +216,9 @@ def section_symbols(repo, base, head):
     cands += [(None, n) for n in removed_identifiers(repo, base, head)][:MAX_REMOVED]
     names = list(dict.fromkeys(n for _, n in cands))
     now_counts = count_refs(repo, head, names)
-    single = {n for n in names if now_counts.get(n, 0) <= 1}
+    # -o counts matches, not lines: a definition line that repeats its name counts twice, so the
+    # pre-filter is loose (<= 2) and the line counts below are the exact test.
+    single = {n for n in names if now_counts.get(n, 0) <= 2}
     before_counts = count_refs(repo, base, [n for n in names if n in single])
     done = set()
     for path, n in cands:
@@ -226,7 +228,9 @@ def section_symbols(repo, base, head):
         now = refs(repo, head, n)
         if len(now) != 1 or (path is None and not DEFINITION.search(now[0].split(":", 2)[-1])):
             continue
-        orphans.append((path or now[0].split(":", 1)[0], n, len(refs(repo, base, n)), now[0][:120]))
+        before = refs(repo, base, n)
+        if len(before) > 1:
+            orphans.append((path or now[0].split(":", 1)[0], n, len(before), now[0][:120]))
     out.append("")
     out.append("### 孤立符号（本次改动后只剩定义本身一处引用，改动前不止一处）")
     out += ([f"- ⚠ `{n}`（{p}）：改动前 {b} 处，现在只剩 `{where}`" for p, n, b, where in orphans]
