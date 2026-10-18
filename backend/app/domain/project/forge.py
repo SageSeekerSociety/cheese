@@ -277,10 +277,19 @@ async def installation_serves_background(tokens: GitHubAppTokens) -> bool:
 
 @dataclass(frozen=True)
 class RepoReadToken:
-    """A read token for one repository's own CI, or why there is none."""
+    """A read token for one repository's own CI, or why there is none.
+
+    ``installation_id`` is the installation the caller would be spending, when
+    the binding resolved to one — the id the token was, is, or would be minted
+    for, filled from the objects already in hand rather than a second lookup.
+    It is internal metadata for attribution, not a compatibility flag: it is
+    None when nothing bound this repo, never the id of some earlier binding.
+    Callers that do not care (the ratchet) leave it unread.
+    """
 
     token: str | None
     reason: str
+    installation_id: int | None = None
 
 
 async def github_read_token_for_repo(
@@ -312,18 +321,32 @@ async def github_read_token_for_repo(
         )
     tokens = await github_app_tokens_for_project(installation.project_id, session)
     if tokens is None:
-        return RepoReadToken(None, f"{repo} 所属的项目没有可用的 GitHub App 凭据")
+        return RepoReadToken(
+            None,
+            f"{repo} 所属的项目没有可用的 GitHub App 凭据",
+            installation_id=installation.installation_id,
+        )
     if background and not await installation_serves_background(tokens):
         return RepoReadToken(
-            None, f"{repo} 的 GitHub 配额只剩留给人用的那一份，后台这一轮不读"
+            None,
+            f"{repo} 的 GitHub 配额只剩留给人用的那一份，后台这一轮不读",
+            installation_id=tokens.installation_id,
         )
     try:
         token, _expires = await tokens.installation_token()
     except httpx.HTTPError as exc:
-        return RepoReadToken(None, f"连不上 GitHub，没能为 {repo} 取到凭据：{exc}")
+        return RepoReadToken(
+            None,
+            f"连不上 GitHub，没能为 {repo} 取到凭据：{exc}",
+            installation_id=tokens.installation_id,
+        )
     except GitHubAppError as exc:
-        return RepoReadToken(None, f"GitHub 拒绝为 {repo} 签发凭据：{exc}")
-    return RepoReadToken(token, "")
+        return RepoReadToken(
+            None,
+            f"GitHub 拒绝为 {repo} 签发凭据：{exc}",
+            installation_id=tokens.installation_id,
+        )
+    return RepoReadToken(token, "", installation_id=tokens.installation_id)
 
 
 async def ensure_author_email(

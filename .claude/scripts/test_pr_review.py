@@ -38,10 +38,12 @@ PR_BIG = "13"
 GH = r"""#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$*" in
-  *.head.sha*) case "$*" in *pulls/8*) echo "$PR8_HEAD" ;; *pulls/9*) echo "$PR9_HEAD" ;;
-    *pulls/10*) echo "$PR10_HEAD" ;; *pulls/11*) echo "$PR11_HEAD" ;;
-    *pulls/12*) echo "$PR12_HEAD" ;; *pulls/13*) echo "$PR13_HEAD" ;;
-    *) echo "$PR_HEAD" ;; esac ;;
+  *.head.sha*) case "$*" in *pulls/8*) h=$PR8_HEAD ;; *pulls/9*) h=$PR9_HEAD ;;
+    *pulls/10*) h=$PR10_HEAD ;; *pulls/11*) h=$PR11_HEAD ;;
+    *pulls/12*) h=$PR12_HEAD ;; *pulls/13*) h=$PR13_HEAD ;;
+    *) h=$PR_HEAD ;; esac
+    # ready.py reads `[.head.sha, .draft] | @tsv`: these PRs are all ready, not drafts.
+    case "$*" in *.draft*) printf '%s\tfalse\n' "$h" ;; *) echo "$h" ;; esac ;;
   *.base.ref*) echo main ;;
   *--paginate*/commits*)
     case "$*" in *pulls/8*) printf '%s\n' $PR8_COMMITS ;;
