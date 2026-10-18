@@ -27,9 +27,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import DocMoveDialog from '../components/library/DocMoveDialog.vue'
+import DocShareDialog from '../components/library/DocShareDialog.vue'
 import LibraryDocumentHits from '../components/library/LibraryDocumentHits.vue'
 import LibraryDocumentPage from '../components/library/LibraryDocumentPage.vue'
 import { useDocumentMove } from '../composables/useDocumentMove'
+import { useDocumentShare } from '../composables/useDocumentShare'
 import { useLibraryDocuments } from '../composables/useLibraryDocuments'
 import { useLibraryNaming } from '../composables/useLibraryNaming'
 import { useLibraryPages } from '../composables/useLibraryPages'
@@ -243,6 +245,8 @@ const mover = useDocumentMove((to) => {
   void router.push(to)
 })
 
+const sharer = useDocumentShare()
+
 // ---- 顶栏上的操作 --------------------------------------------------------------
 
 useCommands(() => {
@@ -328,6 +332,7 @@ function read(file: LibraryFile) {
     @titled="titled"
     @delete="confirmingDoc = openDocument"
     @move="mover.open(selectedDocId)"
+    @share="sharer.open(selectedDocId)"
     @open-topic="(id: string, block?: string) => router.push(refRoute(projectId, id, block))"
   />
   <AppPage v-else :title="selected && !mdAndUp ? selected.path : t('navigation.project.library')" width="full">
@@ -542,6 +547,18 @@ function read(file: LibraryFile) {
     :saving="mover.state.saving"
     :error="mover.state.error"
     @move="mover.move"
+  />
+  <DocShareDialog
+    v-model="sharer.state.open"
+    :title="sharer.state.title"
+    :loading="sharer.state.loading"
+    :may-share="sharer.state.mayShare"
+    :url="sharer.url.value"
+    :busy="sharer.state.busy"
+    :error="sharer.state.error"
+    @share="sharer.share"
+    @unshare="sharer.unshare"
+    @copy="sharer.copy"
   />
 </template>
 

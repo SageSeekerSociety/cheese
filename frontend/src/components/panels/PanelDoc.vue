@@ -87,6 +87,7 @@ const emit = defineEmits<{
   (e: 'delete'): void
   /** 「移动到…」：挪到自己名下、团队或团队的一个项目（#3774）。 */
   (e: 'move'): void
+  (e: 'share'): void
 }>()
 
 const viewRef = ref<InstanceType<typeof PanelDocView> | null>(null)
@@ -251,6 +252,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     @rename="rename"
     @delete="emit('delete')"
     @move="emit('move')"
+    @share="emit('share')"
   >
     <template #lead><slot name="lead" /></template>
   </PanelDocView>

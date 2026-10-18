@@ -64,6 +64,8 @@ const emit = defineEmits<{
   (e: 'move'): void
   /** 切到建议（true）或编辑（false）。 */
   (e: 'set-suggesting', on: boolean): void
+  /** 「分享…」：给这份文档一条只读链接（#3774）。 */
+  (e: 'share'): void
 }>()
 
 // 对整篇：菜单里先是输入框，交出去以后是那张卡。菜单关上就收起这一次（正在做的不收）。
@@ -266,6 +268,7 @@ function pickHeading(pos: number) {
           </template>
           <template v-if="deletable">
             <v-divider class="my-1" />
+            <v-list-item role="menuitem" :title="t('work.room.doc.share')" @click="emit('share')" />
             <v-list-item role="menuitem" :title="t('work.room.doc.move')" @click="emit('move')" />
             <v-list-item
               role="menuitem"

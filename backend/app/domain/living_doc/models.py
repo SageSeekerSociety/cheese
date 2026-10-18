@@ -296,3 +296,27 @@ class DocumentLink(Base):
         primary_key=True,
         index=True,
     )
+
+
+class DocumentShare(Base):
+    """A document's read-only link for people outside it (#3774): whoever holds
+    the token reads its current version, without signing in. One per document;
+    taking it back deletes the row, and sharing again makes a new token."""
+
+    __tablename__ = "document_shares"
+    __table_args__ = (UniqueConstraint("token", name="uq_document_shares_token"),)
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "documents.id",
+            ondelete="CASCADE",
+            name="fk_document_shares_document_id_documents",
+        ),
+        primary_key=True,
+    )
+    token: Mapped[str] = mapped_column(String(64))
+    #: Who made the link.
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

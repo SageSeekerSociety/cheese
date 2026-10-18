@@ -25,8 +25,8 @@
 
 人类发送、assistant 发布和编辑的真实 intake 共享这些判据。
 `SentText` 与 `text_as_sent` 由 `turn/intake/rewrite.py` 持有，`block/editing.py`
-直接使用；它只问 `turn/intake/rooms.py` 的 `_is_dm`，仍然只有那里读一次房间的
-私聊布尔。`person_mentions` 接收该答案，不复制判据
+直接使用；它只问 `turn/intake/rooms.py` 的 `_is_dm`，仍然只有那里问一次房间
+是不是私聊。`person_mentions` 接收该答案，不复制判据
 （`test_is_private_read_points.py`）。
 """
 
@@ -147,7 +147,7 @@ async def person_mentions(
     project roster answers to.
 
     ``dm`` 是调用方对 ``topic`` 问过 `_is_dm` 之后递进来的答案。名字刻意不
-    叫 ``is_private``：那个布尔的读点按文件登记、是一道棘轮
+    叫 ``is_private``：那个布尔只在 `topic/models.py` 里读
     （`test_is_private_read_points.py`，连形参与关键字实参都数），这里既不该
     读它，也不该让它的名字在第二个模块里出现。
 
