@@ -80,6 +80,17 @@ class WhereTest(unittest.TestCase):
         self.assertEqual(found["backend/app/viapkg.py"]["tags"], {"imports"})
         self.assertEqual(found["backend/app/pkg/impl.py"]["tags"], {"defines"})
 
+    def test_plain_importer_of_a_reexporter_is_not_a_caller_of_the_symbol(self):
+        # app/second.py imports app.viapkg (a plain module, not an __init__) and mentions the name
+        (self.root / "backend/app/second.py").write_text("from app import viapkg\n\ngadget = viapkg\n")
+        found = where.find(self.root, "app.pkg.impl.gadget")
+        self.assertNotIn("backend/app/second.py", found)
+
+    def test_an_undecodable_file_is_skipped_not_fatal(self):
+        (self.root / "backend/app/latin.py").write_bytes(b"# -*- coding: latin-1 -*-\nwidget = '\xe9'\n")
+        found = set(where.find(self.root, "widget"))
+        self.assertIn("backend/app/caller.py", found)
+
     def test_module_importers_include_tests(self):
         found = where.find(self.root, "backend/app/lib.py")
         self.assertEqual(set(found), {"backend/app/caller.py", "backend/app/attr.py", "backend/app/rel.py",
