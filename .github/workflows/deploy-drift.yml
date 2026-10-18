@@ -43,6 +43,20 @@ jobs:
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 5
     steps:
+      # Same shared workspace as deploy-dev: a sparse checkout left by another
+      # workflow on this runner keeps deploy/ off disk even though
+      # actions/checkout reports green (2026-10-18 09:53). Clear it first.
+      - name: Repair a sparse workspace
+        run: |
+          cd "$GITHUB_WORKSPACE" 2>/dev/null || exit 0
+          git rev-parse --git-dir >/dev/null 2>&1 || exit 0
+          git config --local --unset-all core.sparseCheckout || true
+          git config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
+          if ! git sparse-checkout disable; then
+            echo "::warning::could not disable a leftover sparse checkout; deploy scripts may be missing"
+          fi
+          rm -f "$(git rev-parse --git-dir)/info/sparse-checkout"
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Compare main with what is running, converge on drift
