@@ -61,8 +61,6 @@ function forgetPersisted() {
   storageRemove(STORAGE_KEY, 'session')
 }
 
-const emailVerificationEnabled = () => import.meta.env.VITE_DISABLE_EMAIL_VERIFY !== 'true'
-
 export const useSignupStore = defineStore('signup', {
   state: (): SignupState => ({
     username: '',
@@ -93,17 +91,13 @@ export const useSignupStore = defineStore('signup', {
       this.consent = data.consent
 
       // 发送验证邮件
-      if (emailVerificationEnabled()) {
-        await UserAuthApi.sendEmailCode(data.email, this.inviteCode || undefined)
-      }
+      await UserAuthApi.sendEmailCode(data.email, this.inviteCode || undefined)
       this.codeSentAt = Date.now()
       persist(this.$state)
     },
 
     async resendCode() {
-      if (emailVerificationEnabled()) {
-        await UserAuthApi.sendEmailCode(this.email, this.inviteCode || undefined)
-      }
+      await UserAuthApi.sendEmailCode(this.email, this.inviteCode || undefined)
       this.codeSentAt = Date.now()
       persist(this.$state)
     },
