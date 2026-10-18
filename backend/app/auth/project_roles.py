@@ -71,6 +71,8 @@ AGENT_PERMISSIONS: frozenset[Permission] = frozenset(Permission) - {
     Permission.edit_settings,
     Permission.export_project,
     Permission.manage_channels,
+    # Whether a document leaves the project is a person's call.
+    Permission.share_documents,
 }
 
 
