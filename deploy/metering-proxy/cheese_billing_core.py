@@ -377,6 +377,7 @@ GATEWAY = "gateway"
 # changes.
 BUDGET = "budget"
 BINDING = "binding"
+UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -483,18 +484,11 @@ def _post_admission(
 class AdmissionGate:
     """Admission and model supply from the backend's /llm/admission.
 
-    Fail-open by design: an unreachable backend logs and allows — the rolling
-    token cap stays as the deployment-wide backstop, and a brake that can take
-    the platform down is worse than the overspend it prevents.
-
-    A cached routing answer within ``stale_s`` retains its pool, key and model
-    during backend outages. Sending a gateway model to the subscription instead
-    causes a non-retryable 404 model_not_found. Without a cached answer, fail-open
-    routes to the subscription: it has no gateway credential to use.
-
-    Public conversations cache per (project, topic) for ``cache_s``: each card
-    can bind a different model. Task verdicts stay fresh because their execution
-    identity changes at handover and must accompany each usage receipt.
+    Public conversations cache routing for ``cache_s`` and fail open with that
+    route within ``stale_s``. Without a route they use the subscription.
+    Tasks require fresh admission: both their execution identity and gateway
+    account can change at handover. An outage waits for retry rather than
+    spending against the last owner's account.
     """
 
     def __init__(
@@ -558,6 +552,15 @@ class AdmissionGate:
                 **asked,
             )
         except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
+            if hit and hit[1].work_id is not None:
+                return replace(
+                    hit[1],
+                    allow=False,
+                    key=None,
+                    fail_open=True,
+                    reason="cheese: task billing attribution is temporarily unavailable; retry shortly",
+                    reason_kind=UNAVAILABLE,
+                )
             if hit and now - hit[0] < self._stale_s:
                 # Still fail-open: allowed whatever the last answer said about
                 # the budget, but routed where the backend last routed it.
@@ -570,7 +573,7 @@ class AdmissionGate:
             # answers only within the stale horizon to bound the cache (#654).
             cutoff = now - self._stale_s
             self._cache = {k: v for k, v in self._cache.items() if v[0] >= cutoff}
-            # Task routing can survive an outage; an execution ID cannot.
+            # Remember this is a task, without caching its execution identity.
             cached = (
                 replace(verdict, work_id="") if verdict.work_id is not None else verdict
             )

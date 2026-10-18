@@ -77,6 +77,7 @@ from cheese_billing_core import (  # noqa: E402
     MODEL_REWRITE_LIMIT,
     NO_CREDENTIAL,
     NO_LOGIN_PLACEHOLDER,
+    UNAVAILABLE,
     AdmissionGate,
     ChatGPTAccounts,
     ChatGPTUsageLimits,
@@ -1072,16 +1073,10 @@ def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
 
 
 def _refuse_verdict(flow: http.HTTPFlow, verdict) -> None:
-    """Send the backend's refusal back as the KIND of refusal it is.
-
-    Both exits used to read "cheese project budget: …" with a 429, from the days
-    when a spent budget was the only way a turn was ever refused. It is not any
-    more: a card bound to a model this project's catalogue cannot serve is
-    refused at admission too (I27 — answer or refuse, never swap the pool), and
-    dressing that as an exhausted quota sends the user to top up an account that
-    is fine while the card stays broken. A 429 also tells the client to back
-    off and try again, which for a binding is a retry that can only fail.
-    """
+    """Preserve each refusal's meaning and retry policy."""
+    if verdict.reason_kind == UNAVAILABLE:
+        _refuse(flow, 503, "api_error", verdict.reason)
+        return
     if verdict.reason_kind == BINDING:
         _refuse(flow, 400, "invalid_request_error", verdict.reason)
         return
