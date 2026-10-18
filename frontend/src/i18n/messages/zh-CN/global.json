@@ -92,6 +92,8 @@
     "mentionPick": "在 {'@'} 名单里选人",
     "mentionClose": "收起 {'@'} 名单",
     "touchNewline": "触屏上回车是换行",
-    "markAllRead": "全部标为已读"
+    "markAllRead": "全部标为已读",
+    "voice": "语音输入：开始，再按一次说完",
+    "voiceCancel": "录音时不要了"
   }
 }

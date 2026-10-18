@@ -47,6 +47,10 @@ const props = defineProps<{
   canRemind?: boolean
   /** 窄屏：清单、提醒收进一颗 ⋯。 */
   collapseExtras?: boolean
+  /** 有没有麦克风这一颗（这个房间能语音输入）。 */
+  canVoice?: boolean
+  /** 刚说进来一段：能换成哪一种写法（`raw` 原话 / `polished` 整理后的）；没有就是 null。 */
+  voiceSwap?: 'raw' | 'polished' | null
 }>()
 
 const emit = defineEmits<{
@@ -57,6 +61,9 @@ const emit = defineEmits<{
   (e: 'toggle-summon'): void
   (e: 'remind'): void
   (e: 'send'): void
+  /** 麦克风：`tap` 点一下开始，`hold` 按住开始，`release` 按住之后松手。 */
+  (e: 'voice', how: 'tap' | 'hold' | 'release'): void
+  (e: 'voice-swap'): void
 }>()
 
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -75,6 +82,36 @@ function onFilePicked(e: Event) {
   const input = e.target as HTMLInputElement
   if (input.files?.length) emit('files', Array.from(input.files))
   input.value = '' // allow re-picking the same file
+}
+
+// 麦克风：点一下是开始（再点 ✓ 结束），按住超过 250ms 是「按住说话」，松手就结束。
+// 指针一按下就抓住它，手指滑出按钮再松开也算松手。键盘的回车/空格走 click（detail 为 0），
+// 鼠标和手指走 pointer，两条路不会各算一次。
+const HOLD_MS = 250
+let holdTimer = 0
+let held = false
+function micDown(e: PointerEvent) {
+  if (e.button !== 0) return
+  held = false
+  ;(e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId)
+  holdTimer = window.setTimeout(() => {
+    held = true
+    emit('voice', 'hold')
+  }, HOLD_MS)
+}
+function micUp(e: PointerEvent) {
+  if (e.button !== 0) return
+  window.clearTimeout(holdTimer)
+  emit('voice', held ? 'release' : 'tap')
+  held = false
+}
+function micCancel() {
+  window.clearTimeout(holdTimer)
+  if (held) emit('voice', 'release')
+  held = false
+}
+function micKey(e: MouseEvent) {
+  if (e.detail === 0) emit('voice', 'tap')
 }
 
 // 清单、提醒：桌面上是两颗图标，手机上是 ⋯ 里的两行。只剩一样时不收，
@@ -181,6 +218,23 @@ const summonText = computed(() => ({
       :title="t('work.room.composer.sendPhotos')"
       @click="pickImages"
     />
+    <!-- 麦克风：说一段，整理成字落在光标处。它也是「这条消息本身」的内容，所以和附件站在
+         左边；手机上同样留在外面，不收进 ⋯——那儿打字最慢，最用得上它。 -->
+    <BaseButton
+      v-if="canVoice"
+      kind="ghost"
+      class="composer-icon composer-mic"
+      icon="mdi-microphone-outline"
+      size="sm"
+      :title="t('work.room.composer.voice.start')"
+      :aria-label="t('work.room.composer.voice.start')"
+      @pointerdown="micDown"
+      @pointerup="micUp"
+      @pointercancel="micCancel"
+      @lostpointercapture="micCancel"
+      @click="micKey"
+      @contextmenu.prevent
+    />
     <AdaptiveMenu v-if="extrasCollapsed" :actions="menuExtras" location="top start">
       <template #activator="{ props: menu }">
         <BaseButton
@@ -229,6 +283,13 @@ const summonText = computed(() => ({
       :aria-label="t('global.shortcuts.open')"
       @click="openShortcutSheet"
     />
+    <!-- 刚说进来一段：换成原话 / 换回整理后的。几秒后自己走开，正文一动也走开。 -->
+    <Transition name="voice-swap">
+      <button v-if="voiceSwap" type="button" class="voice-swap" @click="emit('voice-swap')">
+        <v-icon size="14">{{ voiceSwap === 'raw' ? 'mdi-undo-variant' : 'mdi-auto-fix' }}</v-icon>
+        {{ voiceSwap === 'raw' ? t('work.room.composer.voice.useRaw') : t('work.room.composer.voice.usePolished') }}
+      </button>
+    </Transition>
     <v-spacer />
     <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个
            「这条消息本身」的动作并列。它是设置不是动作，所以最安静。 -->
@@ -283,6 +344,50 @@ const summonText = computed(() => ({
 .composer-send {
   width: 28px;
   height: 28px;
+}
+/* 按住说话时长按不该弹出系统菜单、选中文字。 */
+.composer-mic {
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+/* 「还原原话」：安静的一颗小药丸，从左边一点点滑进来，走的时候快一档（§9.3）。 */
+.voice-swap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  margin-left: 4px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+.voice-swap:hover {
+  background: var(--fill-2);
+  color: var(--ink);
+}
+.voice-swap-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.voice-swap-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.voice-swap-enter-from,
+.voice-swap-leave-to {
+  opacity: 0;
+  transform: translateX(-4px);
 }
 /* 能发了，灰色的键过渡成琥珀；按下去沉一下，不等松手。 */
 .composer-send {
