@@ -30,6 +30,7 @@ class OAuthConnectionRepository:
         access_token: str | None = None,
         refresh_token: str | None = None,
         token_expires: datetime | None = None,
+        refresh_token_expires: datetime | None = None,
     ) -> UserOAuthConnection:
         now = datetime.now(UTC)
         entity = UserOAuthConnection(
@@ -40,6 +41,7 @@ class OAuthConnectionRepository:
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires=token_expires,
+            refresh_token_expires=refresh_token_expires,
             created_at=now,
             updated_at=now,
         )
@@ -100,6 +102,7 @@ class OAuthConnectionRepository:
         access_token: str,
         refresh_token: str,
         token_expires: datetime | None,
+        refresh_token_expires: datetime | None = None,
     ) -> bool:
         """Write refreshed tokens only while the stored refresh_token is still
         the ciphertext the refresher read, or has been forgotten since
@@ -119,6 +122,7 @@ class OAuthConnectionRepository:
                 access_token=access_token,
                 refresh_token=refresh_token,
                 token_expires=token_expires,
+                refresh_token_expires=refresh_token_expires,
                 updated_at=datetime.now(UTC),
             )
         )
@@ -135,7 +139,11 @@ class OAuthConnectionRepository:
                 UserOAuthConnection.id == connection_id,
                 UserOAuthConnection.refresh_token == seen_refresh_token,
             )
-            .values(refresh_token=None, updated_at=datetime.now(UTC))
+            .values(
+                refresh_token=None,
+                refresh_token_expires=None,
+                updated_at=datetime.now(UTC),
+            )
         )
 
     async def update_tokens(
@@ -145,6 +153,7 @@ class OAuthConnectionRepository:
         refresh_token: str | None,
         token_expires: datetime | None,
         raw_profile: dict | None = None,
+        refresh_token_expires: datetime | None = None,
     ) -> None:
         """``raw_profile=None`` leaves the stored profile alone.
 
@@ -161,6 +170,7 @@ class OAuthConnectionRepository:
             entity.access_token = access_token
             entity.refresh_token = refresh_token
             entity.token_expires = token_expires
+            entity.refresh_token_expires = refresh_token_expires
             if raw_profile is not None:
                 entity.raw_profile = raw_profile
             entity.updated_at = datetime.now(UTC)

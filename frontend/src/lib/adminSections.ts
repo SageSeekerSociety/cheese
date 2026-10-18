@@ -104,14 +104,6 @@ export const ADMIN_SECTIONS: AdminSectionDef[] = [
     group: 'delivery',
   },
   {
-    to: '/admin/ratchet',
-    name: 'AdminRatchet',
-    icon: 'mdi-chart-timeline-variant',
-    labelKey: 'navigation.admin.ratchet',
-    badge: false,
-    group: 'delivery',
-  },
-  {
     to: '/admin/ci-activity',
     name: 'AdminCiActivity',
     icon: 'mdi-timer-sand',

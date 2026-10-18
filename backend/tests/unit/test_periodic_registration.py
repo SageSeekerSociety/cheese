@@ -148,7 +148,6 @@ def _world():
             "task.deadline_scheduler.sweep_expired_deadlines",
             "sessions",
         ),
-        ("ratchet ingest", "ratchet.ingest.ingest_snapshots", "sessions"),
         ("ci activity sweep", "ci_activity.ingest.sweep", "sessions"),
     ],
 )
@@ -435,7 +434,6 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "delivery_overdue_check_interval_s",
         "task_deadline_sweep_interval_s",
         "memory_dream_sweep_interval_s",
-        "ratchet_ingest_interval_s",
         "wake_watch_interval_s",
         "sandbox_disk_check_s",
         "draft_pr_sweep_interval_s",
@@ -453,7 +451,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("pr poll", 101),
         ("task pr poll", 101),
         ("landing watch", 101),
-        ("draft pr sweep", 121),
+        ("draft pr sweep", 120),
         ("orphan sweep", 102),
         ("closed task stop", 103),
         ("queued message sweep", 104),
@@ -464,7 +462,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("cloud sandbox lifecycle", 107),
         ("cloud compute metering", 107),
         ("cloud warm pool", 107),
-        ("sandbox disk guard", 120),
+        ("sandbox disk guard", 119),
         ("subscription usage ingest", 108),
         ("backend error flush", 109),
         ("run record expiry", 110),
@@ -479,9 +477,18 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("routines", 30),
         ("task deadline sweep", 116),
         ("memory dream", 117),
-        ("ratchet ingest", 118),
-        ("ci activity sweep", 122),
-        ("wake watch", 119),
+        ("ci activity sweep", 300),
+        ("wake watch", 118),
     ]
     assert all(job.owner_only for job in world.jobs.values())
     world.get_runner.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("interval", "expected"), [(0, 0), (60, 300), (300, 300), (900, 900)]
+)
+def test_ci_reporting_never_polls_faster_than_five_minutes(
+    monkeypatch, interval, expected
+):
+    monkeypatch.setattr(settings, "ci_activity_sweep_interval_s", interval)
+    assert _world().jobs["ci activity sweep"].interval_seconds == expected
