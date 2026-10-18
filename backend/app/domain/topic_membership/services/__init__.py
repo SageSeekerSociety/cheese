@@ -301,6 +301,11 @@ class TopicMemberService:
     async def owner_of(self, topic_id: uuid.UUID) -> str | None:
         return await housekeeping.owner_of(self, topic_id)
 
+    async def owners_of(
+        self, topic_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, str | None]:
+        return await housekeeping.owners_of(self, topic_ids)
+
     async def topic_ids_for_member(
         self, topic_ids: list[uuid.UUID], member_handle: str
     ) -> set[uuid.UUID]:

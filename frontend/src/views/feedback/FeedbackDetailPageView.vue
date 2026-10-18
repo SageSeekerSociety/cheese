@@ -258,6 +258,9 @@ function postComment() {
         </div>
 
         <main class="fb-main">
+          <p v-if="item.reward" class="fb-section">
+            {{ t('usage.offers.rewarded', { n: item.reward.credits }) }} · {{ t('usage.offers.rewardHint') }}
+          </p>
           <section v-if="item.problem" class="fb-section">
             <div class="t-eyebrow mb-1">{{ t('feedback.detail.problem') }}</div>
             <p class="t-reading fb-text">{{ item.problem }}</p>

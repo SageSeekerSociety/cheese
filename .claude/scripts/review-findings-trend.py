@@ -4,10 +4,10 @@
     python3 .claude/scripts/review-findings-trend.py [--dir DIR]... [--top N] [--json]
 
 Reads every `result.json` under the given prepare directories — by default the
-`pr-review-*.input` ones under `$PR_REVIEW_DIR` (`/tmp` when it is not set),
-which is where `pr-review.sh prepare` leaves them: what one machine has seen
-since it last rebooted — and ranks what came back, by kind and by the area of
-the tree the finding is in. Offline, read-only.
+`pr-review-*.input` ones under `$PR_REVIEW_DIR` (`$HOME/.cheese/review-cache`
+when it is not set, plus `/tmp` for rounds made before that default moved),
+which is where `pr-review.sh prepare` leaves them — and ranks what came back,
+by kind and by the area of the tree the finding is in. Offline, read-only.
 
 The point is the top of the list: a defect class that shows up review after
 review is one a check should catch before a reviewer does. Whether a class is
@@ -36,9 +36,14 @@ from collections import Counter
 from pathlib import Path
 
 #: The directory `prepare` writes under — the same variable it reads, whose own default is
-#: /tmp. Read here too, or a machine that moved it is told its results are gone while they
-#: sit on disk.
-REVIEW_DIR = os.environ.get("PR_REVIEW_DIR") or "/tmp"
+#: the seat's home cache. Read here too, or a machine that moved it is told its results are
+#: gone while they sit on disk.
+REVIEW_DIR = os.environ.get("PR_REVIEW_DIR") or os.path.join(
+    os.path.expanduser("~"), ".cheese", "review-cache")
+#: Rounds made before the default moved are still in /tmp. Both are read unless
+#: PR_REVIEW_DIR names one place, and the /tmp symlinks (which resolve into the cache)
+#: are counted once.
+REVIEW_DIRS = [REVIEW_DIR] if os.environ.get("PR_REVIEW_DIR") else [REVIEW_DIR, "/tmp"]
 DEFAULT_GLOB = os.path.join(REVIEW_DIR, "pr-review-*.input")
 PR_FROM_DIR = re.compile(r"^pr-review-(\d+)-")
 
@@ -151,7 +156,8 @@ def report(rounds, top):
 def render(out):
     if not out["rounds_read"]:
         return ("没有任何审查结果可读。`pr-review.sh prepare` 会把结果放在 "
-                "$PR_REVIEW_DIR（默认 /tmp），换机器或重启过就没了；用 --dir 指到别处。")
+                "$PR_REVIEW_DIR（默认 ~/.cheese/review-cache，另读 /tmp 里旧的那批）；"
+                "用 --dir 指到别处。")
     lines = [f"读了 {out['rounds_read']} 轮审查：{out['rounds_with_nothing']} 轮没有 findings，"
              f"其余共 {out['findings']} 条，归成 {out['clusters']} 类。", ""]
     if out["kinds"]:
@@ -174,6 +180,20 @@ def render(out):
     return "\n".join(lines)
 
 
+def default_dirs():
+    """The rounds a seat has: the cache first, then /tmp. The /tmp compatibility
+    symlinks resolve into the cache, so a round reachable both ways is listed once: reading
+    it twice would count one review as two rounds in every cluster it touched."""
+    seen, dirs = set(), []
+    for root in REVIEW_DIRS:
+        for path in sorted(Path(root).glob("pr-review-*.input")):
+            real = str(path.resolve())
+            if real not in seen:
+                seen.add(real)
+                dirs.append(str(path))
+    return dirs
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", action="append", default=[],
@@ -184,7 +204,7 @@ def main(argv):
     if args.top < 1:
         parser.error("--top 至少是 1")
 
-    dirs = args.dir or [str(p) for p in sorted(Path(REVIEW_DIR).glob("pr-review-*.input"))]
+    dirs = args.dir or default_dirs()
     if not dirs:
         print(f"review-findings-trend: {DEFAULT_GLOB} 下一个目录都没有", file=sys.stderr)
     out = report(rounds_of(dirs), args.top)

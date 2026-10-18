@@ -30,8 +30,8 @@ Nothing is said while either is still running, or when the watch runs out.
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import or_, select
 
@@ -92,6 +92,10 @@ AT_ONCE = 8
 #: is attributed to nobody in particular rather than to whoever got looked at:
 #: a forge call per commit, and a wrong blame costs more than a wide one.
 BATCH_COMMITS = 20
+
+#: How long a landing without a merge commit holds back the verdicts of its
+#: project's red batches.
+UNREAD_FOR = timedelta(minutes=10)
 
 #: What a prompt lists before it says how much it left out.
 PROMPT_COMMITS = 10
@@ -338,17 +342,29 @@ async def _look(
         landing.merge_sha = sha
         if checks is not None and landing.checks == ChecksOutcome.watching:
             outcome = checks.outcome
+            batch = checks.batch
             if (
                 outcome == ChecksOutcome.failed
-                and checks.batch is not None
-                and checks.batch.blamed not in (None, sha)
+                and batch is not None
+                and batch.blamed not in (None, sha)
             ):
-                # The batch is red, but its failed tests point at another
-                # commit in it: that line's own look wakes it, and this one
-                # stays quiet. Waiting to ask the database whose commit it is
-                # would race the other look, which may not have written its
-                # merge commit yet.
-                outcome = ChecksOutcome.preexisting
+                hears = await _line_will_hear(session, batch.blamed, task.project_id)
+                if hears is None:
+                    # The blamed line may be one whose first look has not
+                    # written its merge commit: decide on the next tick.
+                    await session.commit()
+                    return 1
+                if hears:
+                    # The batch is red, but its failed tests point at another
+                    # commit in it: that line's own look wakes it, and this
+                    # one stays quiet.
+                    outcome = ChecksOutcome.preexisting
+                else:
+                    # Nobody is watching the blamed commit (a push made by
+                    # hand, a merge whose watch ran out): staying quiet here
+                    # would leave the red batch with no one told. Every line
+                    # in the batch hears and rules itself out.
+                    batch = replace(batch, blamed=None)
             landing.checks = outcome
             if outcome == ChecksOutcome.failed:
                 await _checks_failed(
@@ -356,7 +372,7 @@ async def _look(
                     task,
                     sha,
                     list(checks.failed),
-                    batch=checks.batch,
+                    batch=batch,
                     announce=announce,
                     record_instruction=record_instruction,
                     task_teammate=task_teammate,
@@ -376,6 +392,41 @@ async def _look(
                 )
         await session.commit()
     return 1
+
+
+async def _line_will_hear(session, blamed: str, project_id) -> bool | None:
+    """Whether a landing still waiting on the checks of ``blamed`` exists, so
+    that its own look will tell its task. None while a landing has no merge
+    commit written yet (its first look writes it): the blamed line may be that
+    one, so the answer waits for the next tick — but only for a landing of this
+    project that is younger than `UNREAD_FOR`, so one whose merge commit never
+    resolves cannot hold every red batch in the project."""
+    now = datetime.now(UTC)
+    live = TaskLanding.watch_until > now
+    if await session.scalar(
+        select(TaskLanding.id)
+        .where(
+            live,
+            TaskLanding.merge_sha == blamed,
+            TaskLanding.checks.in_((ChecksOutcome.watching, ChecksOutcome.failed)),
+        )
+        .limit(1)
+    ):
+        return True
+    unread = await session.scalar(
+        select(TaskLanding.id)
+        .where(
+            live,
+            TaskLanding.merge_sha.is_(None),
+            TaskLanding.checks == ChecksOutcome.watching,
+            TaskLanding.landed_at > now - UNREAD_FOR,
+            TaskLanding.task_id.in_(
+                select(Task.id).where(Task.project_id == project_id)
+            ),
+        )
+        .limit(1)
+    )
+    return None if unread is not None else False
 
 
 def _stop_watching(
@@ -947,7 +998,7 @@ def _batch_checks_failed_prompt(
         lines.append("失败用例所在的文件只有这条线的提交改过，先按这个方向修。")
     else:
         lines.append(
-            "失败用例对不上唯一一个提交，本批每条线都先各自排除："
+            "没有哪条在看的线能单独认领这些失败用例，本批每条线都先各自排除："
             "确认不是你的改动导致的，就在任务里说明理由；是你的就修。"
         )
     return "\n".join(lines) + "\n" + _how_to_fix(task_id, reopened)

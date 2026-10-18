@@ -86,7 +86,6 @@
     "project_slugs.project_id",
     "projects.team_id",
     "push_subscription.user_id",
-    "resource_usage.conversation_id",
     "resource_usage.project_id",
     "resource_usage.team_id",
     "resource_usage.user_id",

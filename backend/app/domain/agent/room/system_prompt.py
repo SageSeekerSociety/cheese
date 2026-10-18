@@ -1,5 +1,6 @@
 """The system prompt a room's session starts with (`room/turn.py`)."""
 
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.prompt import build_system_prompt
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.skills import load_skills
@@ -40,4 +41,7 @@ def session_system_prompt(
         # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
         keeps_memory=keeps_memory(harness),
         name=name,
+        # 短名是 `remote_execution.client` 放进会话环境的，只有 claude-code
+        # 的会话有它；别的骨架读到这一段只会 `cd` 到不存在的目录。
+        working_directory=harness == CLAUDE_CODE,
     )

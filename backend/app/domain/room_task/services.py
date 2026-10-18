@@ -13,6 +13,7 @@ from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block
 from app.domain.identity.handles import names_a_person
+from app.domain.identity.services import IdentityService
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
@@ -23,7 +24,10 @@ from app.domain.room_task.models import (
     TaskTitleSource,
 )
 from app.domain.room_task.repositories import TaskRepository
+from app.domain.team.models import TeamUserRelation
+from app.domain.team.protocol import TeamMemberRole
 from app.domain.topic.models import Topic, TopicReadState, TopicStatus
+from app.domain.user.models import User
 from app.domain.user.services import user_by_handle
 
 
@@ -31,6 +35,34 @@ class TaskService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = TaskRepository(session)
+
+    async def credit_owner(self, task: Task) -> str | None:
+        """A human owner pays for work; an AI's work stays with its requester."""
+        for handle in (task.owner_handle, task.created_by):
+            if (
+                handle
+                and names_a_person(handle)
+                and not await IdentityService(self._session).is_agent(handle)
+            ):
+                return handle
+        project = await self._session.get(Project, task.project_id)
+        if project is None:
+            return None
+        if (
+            project.owner_handle
+            and names_a_person(project.owner_handle)
+            and not await IdentityService(self._session).is_agent(project.owner_handle)
+        ):
+            return project.owner_handle
+        return await self._session.scalar(
+            select(User.username)
+            .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
+            .where(
+                TeamUserRelation.team_id == project.team_id,
+                TeamUserRelation.role == TeamMemberRole.OWNER,
+                TeamUserRelation.deleted_at.is_(None),
+            )
+        )
 
     def rename(
         self,

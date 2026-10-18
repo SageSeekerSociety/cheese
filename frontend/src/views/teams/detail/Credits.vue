@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue'
 
+import { useCreditOffers } from '@/composables/useCreditOffers'
 import { useCreditUsage } from '@/composables/useCreditUsage'
 
 import CreditsView from './CreditsView.vue'
@@ -16,16 +17,32 @@ const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => teamData.value?.id ?? 0)
 
 const { usage, loading, error, load } = useCreditUsage(() => getTeamCreditUsage(teamId.value))
+const offers = useCreditOffers(() => teamId.value)
+const canManage = computed(() => ['OWNER', 'ADMIN'].includes(teamData.value?.role ?? ''))
 
 watch(
   teamId,
   (id) => {
-    if (id) void load()
+    if (id) {
+      void load()
+      void offers.load()
+    }
   },
   { immediate: true }
 )
 </script>
 
 <template>
-  <CreditsView :usage="usage" :loading="loading" :error="error" @retry="load" />
+  <CreditsView
+    :usage="usage"
+    :loading="loading"
+    :error="error"
+    :can-manage="canManage"
+    :requests="offers.requests.value"
+    :offers-busy="offers.busy.value"
+    :offers-error="offers.error.value"
+    @retry="load"
+    @request="offers.request"
+    @retry-offers="offers.load"
+  />
 </template>
