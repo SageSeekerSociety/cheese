@@ -287,7 +287,7 @@ class TestCreateQuestion:
                 topic_ids=[1, 999],
             )
         error = raised.value.to_response_body()["error"]
-        assert error["i18n"]["key"] == "resourceNotFound"
+        assert error["i18n"]["key"] == "tagNotFound"
         assert error["data"] == {"id": 999}
 
     @pytest.mark.anyio

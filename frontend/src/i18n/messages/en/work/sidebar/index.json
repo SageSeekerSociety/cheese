@@ -17,7 +17,7 @@
   "fewerTasks": "Show fewer",
   "fillInTip": "Fewer than three of your own tasks are here; this one is someone else's, added to fill the three",
   "hiddenCount": "No items hidden | 1 item hidden | {count} items hidden",
-  "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
+  "hiddenUnread": "No new messages in collapsed subchannels | Includes 1 new message in collapsed subchannels | Includes {count} new messages in collapsed subchannels",
   "moreActions": "More actions",
   "moreMembers": "+{count}",
   "moreTasks": "Show 1 more | Show {count} more",
