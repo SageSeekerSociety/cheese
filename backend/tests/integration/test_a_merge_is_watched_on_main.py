@@ -23,7 +23,13 @@ import pytest
 from sqlalchemy import select, text
 
 from app.domain.review import landing_forge, landing_watch
-from app.domain.review.landing_forge import Check, Deployment, ForgeUnavailable
+from app.domain.review.landing_forge import (
+    BatchCommits,
+    Check,
+    CommitChange,
+    Deployment,
+    ForgeUnavailable,
+)
 from app.domain.review.landing_models import TaskLanding
 from tests.integration.test_a_task_delivers_in_steps import (
     _accepted_step,
@@ -42,15 +48,30 @@ SECOND = "merge-sha-2"
 
 
 class _Forge:
-    """The repository as the watch reads it: checks per commit, deployments."""
+    """The repository as the watch reads it: checks per commit, deployments,
+    and — when a test fills them in — the batched main gate's reads."""
 
     def __init__(self):
         self.ran: dict[str, list[Check]] = {}
         self.deployed: Deployment | None = None
         self.records_deployments = True
+        #: The newest finished batch gate at or after a commit: sha -> (head, checks).
+        self.covered: dict[str, tuple[str, list[Check]]] = {}
+        #: The commit `main-green` names, when the repository batches.
+        self.green: str | None = None
+        #: (anchor, head) -> the commits of that batch.
+        self.batches: dict[tuple[str, str], BatchCommits] = {}
+        #: sha -> what that commit changed.
+        self.changes: dict[str, CommitChange] = {}
+        #: head -> the test files the red jobs name.
+        self.failing: dict[str, list[str]] = {}
+        #: (commit, descendant) pairs the forge says are in that order.
+        self.ahead: set[tuple[str, str]] = set()
+        #: PR number -> the commit its merge put on main.
+        self.merges: dict[int, str] = {}
 
     async def merge_sha(self, pr_number):
-        return MERGED
+        return self.merges.get(pr_number, MERGED)
 
     async def checks(self, sha):
         return self.ran.get(sha, [])
@@ -62,6 +83,24 @@ class _Forge:
         if not self.records_deployments:
             raise ForgeUnavailable("no deployments")
         return self.deployed
+
+    async def covering_run(self, sha):
+        return self.covered.get(sha)
+
+    async def main_green(self):
+        return self.green
+
+    async def commits_between(self, base, head):
+        return self.batches.get((base, head))
+
+    async def commit_change(self, sha):
+        return self.changes.get(sha)
+
+    async def failed_tests(self, head):
+        return self.failing.get(head, [])
+
+    async def is_ancestor(self, commit, descendant):
+        return commit == descendant or (commit, descendant) in self.ahead
 
 
 def _ran(name: str, conclusion: str | None) -> Check:
