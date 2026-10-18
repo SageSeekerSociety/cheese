@@ -880,35 +880,41 @@ def self_test():
              {"frontend/pnpm-lock.yaml": "lockfileVersion: 4\n", "AGENTS.md": "hi\n"}, "E")
 
         # The B fast path: a change small enough for one reader spends one finder, and its
-        # letter stays B. Each case is one of the three conditions, and the second is the
-        # deliberate violation — seven files must go back to two finders and this case must
-        # go red if they stop doing so.
+        # letter stays B. The cases that expect a tier's own count read it from the tier
+        # instead of naming it: a literal here would be a second copy of the table, and the
+        # guard that widens a stage and moves this file's own expectations along would miss
+        # it — `.claude/scripts/test_check_agent_defs.py` mutates those three spots and
+        # requires the result to stay green, so what is asserted here is "not the fast
+        # path", not "two".
         def fast_case(name, pairs, want, parent=None):
             head = from_(parent or base, pairs)
             letter, _, top = classify(repo, parent or base, head)
             check(name, (letter, top["finders"]), want)
             return head
 
+        not_fast = topology("B")["finders"]
         fast_case("一行实现改动的 B 档走单路快路径", {"small.py": "x = 1\n"}, ("B", 1))
         fast_case("七个文件的 B 档升回两路（故意违规必须红）",
-                  {f"m{i}.py": "x = 1\n" for i in range(7)}, ("B", 2))
+                  {f"m{i}.py": "x = 1\n" for i in range(7)}, ("B", not_fast))
         fast_case("六个文件刚好在快路径上",
                   {f"n{i}.py": "x = 1\n" for i in range(6)}, ("B", 1))
         fast_case("二百五十行的改动刚好在快路径上",
                   {"edge.py": "".join(f"v{i} = 1\n" for i in range(250))}, ("B", 1))
         fast_case("二百五十一行超出快路径",
-                  {"wide.py": "".join(f"v{i} = 1\n" for i in range(251))}, ("B", 2))
+                  {"wide.py": "".join(f"v{i} = 1\n" for i in range(251))}, ("B", not_fast))
         fast_case("碰 Windows 专属文件，不走快路径",
-                  {"cli/internal/procscreen/system_windows.go": "package x\n"}, ("B", 2))
+                  {"cli/internal/procscreen/system_windows.go": "package x\n"}, ("B", not_fast))
         fast_case("碰远程执行，不走快路径",
-                  {"scripts/remote_execution/run.py": "x = 1\n"}, ("B", 2))
+                  {"scripts/remote_execution/run.py": "x = 1\n"}, ("B", not_fast))
         fast_case("碰契约层，不走快路径",
                   {"backend/app/domain/x.py": "x = 1\n",
-                   "backend/tests/contract/test_x.py": "def test_x():\n    pass\n"}, ("B", 2))
+                   "backend/tests/contract/test_x.py": "def test_x():\n    pass\n"},
+                  ("B", not_fast))
         fast_case("碰全仓棘轮基线，不走快路径",
-                  {"frontend/stylelint-baseline.json": "{}\n"}, ("B", 2))
+                  {"frontend/stylelint-baseline.json": "{}\n"}, ("B", not_fast))
         fast_case("A 档没有快路径",
-                  {"backend/app/auth/caller.py": "ok = False\n"}, ("A", 2))
+                  {"backend/app/auth/caller.py": "ok = False\n"},
+                  ("A", topology("A")["finders"]))
         fast_case("只改测试仍是 C 档，一路",
                   {"backend/tests/unit/test_x.py": "x = 1\n"}, ("C", 1))
 
