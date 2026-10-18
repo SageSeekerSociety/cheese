@@ -89,6 +89,7 @@ class AgentStream(httpx.AsyncByteStream):
         self.closed = False
         self.choices = set()
         self.finished = set()
+        self.tool_chunks = {}
 
     def event(self, lines):
         data = "\n".join(line[5:].lstrip(" ") for line in lines if line.startswith("data:"))
@@ -115,26 +116,47 @@ class AgentStream(httpx.AsyncByteStream):
                 if name in self.aliases:
                     function["name"] = self.aliases[name]
         other = [line for line in lines if not line.startswith("data:")]
-        parts = [chunk]
-        choices = chunk.get("choices", [])
-        if len(choices) == 1:
-            choice = choices[0]
+        parts = []
+        for choice in chunk.get("choices", []):
+            index = choice.get("index", 0)
             calls = choice.get("delta", {}).get("tool_calls") or []
-            if len(calls) > 1:
-                # The pinned Messages converter concatenates batched calls.
-                # Separate their events while emitting text and usage once.
-                parts = []
-                for index, call in enumerate(calls):
-                    delta = dict(choice["delta"]) if index == 0 else {}
-                    delta["tool_calls"] = [call]
-                    last = index == len(calls) - 1
-                    part = {**chunk, "choices": [{**choice, "delta": delta,
-                             "finish_reason": choice.get("finish_reason") if last else None}]}
-                    if not last:
-                        part.pop("usage", None)
-                    if index:
-                        part["choices"][0].pop("logprobs", None)
-                    parts.append(part)
+            if not calls and index not in self.tool_chunks:
+                parts.append({**chunk, "choices": [choice]})
+                continue
+            # The pinned Messages converter cannot track interleaved calls.
+            # Collect only tools with the existing library; text still streams.
+            pending = self.tool_chunks.setdefault(index, [])
+            pending.append({**chunk, "choices": [{**choice, "index": 0}]})
+            delta = {key: value for key, value in choice.get("delta", {}).items() if key != "tool_calls"}
+            if choice.get("finish_reason") is None:
+                parts.append({**chunk, "choices": [{**choice, "delta": delta}]})
+                continue
+            from litellm import stream_chunk_builder
+            from litellm.types.utils import ModelResponseStream
+
+            result = stream_chunk_builder([ModelResponseStream(**part) for part in pending])
+            tools = result.choices[0].message.tool_calls if result is not None else None
+            if not tools:
+                raise httpx.RemoteProtocolError("OpenCode free returned incomplete tool calls")
+            if delta:
+                parts.append({**chunk, "choices": [{**choice, "delta": delta, "finish_reason": None}]})
+            for position, call in enumerate(tools):
+                tool = {"index": position, **call.model_dump(exclude_none=True)}
+                function = tool["function"]
+                name = function.get("name")
+                if name in self.missing:
+                    raise httpx.RemoteProtocolError(f"OpenCode free called unavailable tool: {name}")
+                function["name"] = self.aliases.get(name, name)
+                tool_choice = {**choice, "delta": {"tool_calls": [tool]},
+                               "finish_reason": choice["finish_reason"] if position == len(tools) - 1 else None}
+                if delta or position:
+                    tool_choice.pop("logprobs", None)
+                parts.append({**chunk, "choices": [tool_choice]})
+            del self.tool_chunks[index]
+        if not chunk.get("choices"):
+            parts = [chunk]
+        for part in parts[:-1]:
+            part.pop("usage", None)
         return b"".join(("\n".join([*other, "data: " + json.dumps(part)]) + "\n\n").encode() for part in parts)
 
     async def __aiter__(self):

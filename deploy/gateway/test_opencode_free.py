@@ -275,8 +275,42 @@ async def main():
                 arguments[index] = arguments.get(index, "") + event["delta"]["partial_json"]
         assert {json.loads(value)["file_path"] for value in arguments.values()} == {"a.txt", "b.txt", "c.txt"}
         assert all(call["name"] == "Read" for call in calls.values())
-        batch_chunks = None
         print("OpenCode free: batched parallel tool calls retain separate ids and valid arguments")
+
+        interleaved = [
+            {"index": 0, "id": "call_a", "type": "function", "function": {"name": "read", "arguments": '{"file_path":"'}},
+            {"index": 1, "id": "call_b", "type": "function", "function": {"name": "read", "arguments": '{"file_path":"'}},
+            {"index": 0, "function": {"arguments": 'a.txt"}'}},
+            {"index": 1, "function": {"arguments": 'b.txt"}'}},
+        ]
+        batch_chunks = [{"choices": [{"index": 0, "delta": {"content": "Reading files"}}]}]
+        batch_chunks += [{"choices": [{"index": 0, "delta": {"tool_calls": [call]}}]} for call in interleaved]
+        batch_chunks.append({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+                             "usage": {"prompt_tokens": 20, "completion_tokens": 30, "total_tokens": 50}})
+        response = await router.aanthropic_messages(
+            model="free-first", max_tokens=4096, stream=True,
+            messages=[{"role": "user", "content": "Read a.txt and b.txt in parallel"}],
+            tools=[{"name": "Read", "description": "Read a file", "input_schema": TOOLS[1]["function"]["parameters"]}],
+        )
+        raw = "".join([c.decode() if isinstance(c, bytes) else str(c) async for c in response])
+        events = [json.loads(line[5:]) for line in raw.splitlines() if line.startswith("data:")]
+        calls = {event["index"]: event["content_block"]["id"] for event in events
+                 if event["type"] == "content_block_start" and event["content_block"]["type"] == "tool_use"}
+        arguments = {}
+        for event in events:
+            if event["type"] == "content_block_delta" and event["delta"]["type"] == "input_json_delta":
+                index = event["index"]
+                arguments[index] = arguments.get(index, "") + event["delta"]["partial_json"]
+        assert {calls[index]: json.loads(value) for index, value in arguments.items()} == {
+            "call_a": {"file_path": "a.txt"}, "call_b": {"file_path": "b.txt"}}
+        assert raw.index("Reading files") < raw.index('"tool_use"')
+        buffered = await router.acompletion(model="free-first", messages=[{"role": "user", "content": "Read both files"}],
+                                           tools=TOOLS)
+        assert {call.id: json.loads(call.function.arguments) for call in buffered.choices[0].message.tool_calls} == {
+            "call_a": {"file_path": "a.txt"}, "call_b": {"file_path": "b.txt"}}
+        assert buffered.usage.total_tokens == 50
+        batch_chunks = None
+        print("OpenCode free: interleaved arguments preserve each call on streaming and buffered paths")
 
         fallback = True
         requests.clear()
