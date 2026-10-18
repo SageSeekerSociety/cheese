@@ -1,20 +1,19 @@
-// Pure logic for the vue-tsc ratchet. No I/O, no process — so it can be tested
-// directly (see tsc-ratchet-core.test.mjs, run by `node --test` in CI).
+// The vue-tsc output parser, and the per-file count arithmetic the remaining
+// ratchets share. No I/O, no process — so it can be tested directly (see
+// tsc-ratchet-core.test.mjs, run by `node --test` in CI).
 //
-// WHY A RATCHET AND NOT A PLAIN GATE: the frontend had no type check in CI at
-// all, so a bare `vue-tsc --noEmit` starts on the errors the tree already has.
-// Blocking on zero would mean either landing a large unrelated cleanup first or
-// leaving the gate off for weeks. A ratchet blocks the thing that actually
-// matters from day one — a NEW error — while the existing ones stay frozen at
-// their current count and can be paid down file by file.
+// The type check itself is a plain gate: any error vue-tsc reports fails it
+// (scripts/tsc-ratchet.mjs). `compare` and `tightenedBaseline` below are not
+// used by it; they stay here because the a11y, stylelint, i18n-comment and
+// global-fallback checks import them from this file.
 
 const ERROR_LINE = /^(\S[^(]*)\((\d+),(\d+)\): error (TS\d+):/
-const MISSING_NAME_CODES = ['TS2304', 'TS2552']
 
 /**
  * Every diagnostic, including its indented explanation, so a failure prints
- * the full message without a second type-check run. The counting regex is
- * unchanged; continuation lines belong to the preceding diagnostic.
+ * the full message without a second type-check run. Only an anchor line
+ * (`file(line,col): error TSxxxx:` at column 0) starts one; indented
+ * continuation lines belong to the preceding diagnostic.
  * @param {string} text
  * @returns {{file: string, line: number, column: number, code: string, message: string}[]}
  */
@@ -39,25 +38,6 @@ export function parseTscDiagnostics(text) {
     }
   }
   return diagnostics
-}
-
-/**
- * Count `error TSxxxx` diagnostics per file in raw vue-tsc/tsc output.
- * Continuation lines (indented explanation) are ignored — only the anchor line
- * of each diagnostic starts at column 0 with `file(line,col): error TSxxxx:`.
- * @param {string} text
- * @returns {Record<string, number>}
- */
-export function parseTscOutput(text) {
-  /** @type {Record<string, number>} */
-  const counts = {}
-  for (const raw of String(text).split(/\r?\n/)) {
-    const m = raw.match(ERROR_LINE)
-    if (!m) continue
-    const file = m[1].replaceAll('\\', '/').trim()
-    counts[file] = (counts[file] ?? 0) + 1
-  }
-  return counts
 }
 
 /**
@@ -94,49 +74,6 @@ export function compare(baseline, current) {
 }
 
 /**
- * Missing names have their own per-code, per-file budgets. Fixing an assignment
- * error cannot pay for a missing import, even when a split keeps the total flat.
- * Keep `compare` generic: other ratchets use its numeric-map contract too.
- * @param {Record<string, number>} baseline
- * @param {Record<string, number>} current
- * @param {ReturnType<typeof parseTscDiagnostics>} diagnostics
- * @param {Record<string, Record<string, number>>} [missingNames]
- */
-export function compareTsc(baseline, current, diagnostics, missingNames = {}) {
-  const result = compare(baseline, current)
-  const missingNameRegressions = []
-  const missingNameImprovements = []
-  const nextMissingNames = {}
-  for (const code of MISSING_NAME_CODES) {
-    const counts = {}
-    for (const diagnostic of diagnostics) {
-      if (diagnostic.code === code) counts[diagnostic.file] = (counts[diagnostic.file] ?? 0) + 1
-    }
-    // A file absent from the main baseline has no inherited allowance.
-    const frozen = Object.fromEntries(
-      Object.entries(missingNames[code] ?? {}).filter(([file]) => Object.hasOwn(baseline, file))
-    )
-    const delta = compare(frozen, counts)
-    missingNameRegressions.push(...delta.regressions.map((entry) => ({ ...entry, code })))
-    missingNameImprovements.push(...delta.improvements.map((entry) => ({ ...entry, code })))
-    // Only existing allowances may survive an update; never mint a new one.
-    nextMissingNames[code] = Object.fromEntries(
-      Object.keys(frozen)
-        .sort()
-        .map((file) => [file, Math.min(frozen[file], counts[file] ?? 0)])
-        .filter(([, count]) => count > 0)
-    )
-  }
-  return {
-    ...result,
-    missingNameRegressions,
-    missingNameImprovements,
-    nextMissingNames,
-    ok: result.ok && missingNameRegressions.length === 0,
-  }
-}
-
-/**
  * The baseline the repo should now record — never looser than reality, so a
  * `--update` after a genuine regression cannot be used to launder it in.
  * @param {Record<string, number>} baseline
@@ -153,72 +90,22 @@ export function tightenedBaseline(baseline, current) {
 }
 
 /**
- * The human half: what went wrong, where, and what to do about it.
- * `diagnostics` is `parseTscDiagnostics(output)`; its lines are printed for the
- * files that regressed, including a missing-name budget regression at flat totals.
- * @param {ReturnType<typeof compare> | ReturnType<typeof compareTsc>} result
- * @param {Array<{file: string, line: number, column: number, code: string, message: string}>} [diagnostics]
+ * The human half: every error vue-tsc reported, at its file(line,col), with its
+ * full explanation, so the reader fixes it without a second run.
+ * @param {ReturnType<typeof parseTscDiagnostics>} diagnostics
  */
-export function formatReport(result, diagnostics = []) {
-  const lines = []
-  if (result.regressions.length) {
-    lines.push('New type errors (this is what the ratchet blocks):')
-    for (const { file, base, now } of result.regressions) {
-      lines.push(`  ${file}: ${base} -> ${now}`)
-    }
-    const regressed = new Set(result.regressions.map((r) => r.file))
-    const shown = diagnostics.filter((d) => regressed.has(d.file))
-    if (shown.length) {
-      lines.push('')
-      lines.push('The errors vue-tsc reported, at their file(line,col) (old and new')
-      lines.push('alike — the count is per file, so the old ones are listed too):')
-      for (const { file, line, column, code, message } of shown) {
-        lines.push(`  ${file}(${line},${column}): error ${code}: ${message}`)
-      }
-    }
-    lines.push('')
-    lines.push('Fix each one at that file(line,col); its full explanation is above. The')
-    lines.push('ratchet blocks only NEW errors and the baseline never rises: if you')
-    lines.push('genuinely reduced errors elsewhere and this file is unrelated, check')
-    lines.push('whether you edited a file that was already failing.')
-    lines.push('Chapter: docs/manual/dev/frontend.md (质量闸 / gates).')
+export function formatReport(diagnostics) {
+  if (!diagnostics.length) return 'vue-tsc: no type errors'
+  const lines = ['Type errors:']
+  for (const { file, line, column, code, message } of diagnostics) {
+    lines.push(`  ${file}(${line},${column}): error ${code}: ${message}`)
+    const name = (code === 'TS2304' || code === 'TS2552') && message.match(/Cannot find name '([^']+)'/)?.[1]
+    if (name === 'PropType') lines.push("    For a type-only use: import type { PropType } from 'vue'")
   }
-  if (result.missingNameRegressions?.length) {
-    lines.push('')
-    lines.push('missing type/value import after split — missing names have separate budgets:')
-    for (const { file, code, base, now } of result.missingNameRegressions) {
-      lines.push(`  ${file} ${code}: ${base} -> ${now}`)
-      for (const diagnostic of diagnostics.filter((d) => d.file === file && d.code === code)) {
-        const { line, column, message } = diagnostic
-        lines.push(`  ${file}(${line},${column}): error ${code}: ${message}`)
-        const name = message.match(/Cannot find name '([^']+)'/)?.[1]
-        if (name) {
-          const source = name === 'PropType' ? 'vue' : '<declaring module>'
-          lines.push(`    For a type-only use: import type { ${name} } from '${source}'`)
-        }
-      }
-    }
-    lines.push('Use a value import for a runtime value; correct a misspelling instead of importing it.')
-    lines.push('Other errors going down cannot pay for a missing name, including in a new split file.')
-    lines.push('Run: task ci:fast  (from the repo root; checks only the changed files)')
-  }
-  if (result.missingNameImprovements?.length) {
-    lines.push('')
-    lines.push('Missing-name errors went down — tighten their separate baseline:')
-    for (const { file, code, base, now } of result.missingNameImprovements) {
-      lines.push(`  ${file} ${code}: ${base} -> ${now}`)
-    }
-    lines.push('Run: pnpm run typecheck:update  (then commit tsc-baseline.json)')
-  }
-  if (result.improvements.length) {
-    lines.push(result.regressions.length ? '' : 'Type errors went down — tighten the baseline:')
-    if (result.regressions.length) lines.push('Also improved:')
-    for (const { file, base, now } of result.improvements) {
-      lines.push(`  ${file}: ${base} -> ${now}`)
-    }
-    lines.push('')
-    lines.push('Run: pnpm run typecheck:update  (then commit tsc-baseline.json)')
-  }
-  lines.push(`total: ${result.currentTotal} error(s), baseline allows ${result.baselineTotal}`)
+  lines.push('')
+  lines.push('Fix each one at that file(line,col). Any error fails the check; there is no')
+  lines.push('baseline. To check only the files you changed: task ci:fast (from the repo root).')
+  lines.push('Chapter: docs/manual/dev/frontend.md (质量闸 / gates).')
+  lines.push(`total: ${diagnostics.length} error(s)`)
   return lines.join('\n')
 }

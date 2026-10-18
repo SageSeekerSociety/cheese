@@ -1,42 +1,34 @@
-// Tests for the direct-Web-Storage rule and its ratchet. Run by `pnpm run
+// Tests for the direct-Web-Storage rule and its gate. Run by `pnpm run
 // test:ratchet` (node --test scripts/*.test.mjs), locally and in frontend.yml.
 //
 // Three kinds of case, and the third is the one that matters:
 //
-//   1. the counting and the ratchet arithmetic — pure functions, driven with
-//      fixtures, including the shapes that must NOT be counted;
+//   1. the counting — a pure function, driven with fixtures, including the
+//      shapes that must NOT be counted — and the report;
 //   2. what the RULE fires on, driven through eslint's own API against the real
 //      eslint.browser-storage.config.mjs, so a rule that drifted from the config,
 //      or a config that stopped being applied, fails here;
 //   3. a plant — a file that reaches for storage is written into the tree and the
-//      ratchet is required to go red on it, then green once the baseline is
-//      allowed to know about it. A gate nobody has watched fail is not a gate,
-//      and today's tree passes the ratchet with nothing planted in it.
+//      gate is required to go red on it. A gate nobody has watched fail is not a
+//      gate, and today's tree passes it with nothing planted in it.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { rmSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { ESLint } from 'eslint'
 
-import {
-  compare,
-  formatStorageReport,
-  parseStorageEslintJson,
-  STORAGE_RULE_ID,
-} from './browser-storage-ratchet-core.mjs'
+import { formatStorageReport, parseStorageEslintJson, STORAGE_RULE_ID } from './browser-storage-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
 const CONFIG = resolve(ROOT, 'eslint.browser-storage.config.mjs')
 const RATCHET = resolve(HERE, 'browser-storage-ratchet.mjs')
-const BASELINE = resolve(ROOT, 'browser-storage-baseline.json')
 
 // ---------------------------------------------------------------------------
-// 1. Counting, and the arithmetic.
+// 1. Counting, and the report.
 // ---------------------------------------------------------------------------
 
 const eslintJson = (results) => JSON.stringify(results)
@@ -102,34 +94,9 @@ describe('parseStorageEslintJson', () => {
   })
 })
 
-describe('the ratchet arithmetic', () => {
-  it('a file over its baseline is a regression; an absent file starts at 0', () => {
-    const result = compare({ 'src/a.ts': 1 }, { 'src/a.ts': 2, 'src/b.ts': 1 })
-    assert.equal(result.ok, false)
-    assert.deepEqual(
-      result.regressions.map((r) => [r.file, r.base, r.now]),
-      [
-        ['src/a.ts', 1, 2],
-        ['src/b.ts', 0, 1],
-      ]
-    )
-  })
-
-  it('a file under its baseline is not a failure — paying debt down is allowed', () => {
-    const result = compare({ 'src/a.ts': 3 }, { 'src/a.ts': 1 })
-    assert.equal(result.ok, true)
-    assert.deepEqual(result.regressions, [])
-    assert.deepEqual(
-      result.improvements.map((r) => [r.file, r.base, r.now]),
-      [['src/a.ts', 3, 1]]
-    )
-  })
-})
-
 describe('the failure report', () => {
   it('names the line, the rule and the module to import instead', () => {
-    const result = compare({ 'src/views/Home.vue': 1 }, { 'src/views/Home.vue': 2 })
-    const text = formatStorageReport(result, [
+    const text = formatStorageReport([
       {
         file: 'src/views/Home.vue',
         line: 12,
@@ -138,19 +105,11 @@ describe('the failure report', () => {
         message: 'Web Storage must not be reached for directly.',
       },
     ])
-
-    assert.match(text, /src\/views\/Home\.vue: 1 -> 2/)
     assert.match(
       text,
       /src\/views\/Home\.vue:12:3 {2}storage\/no-direct-browser-storage {2}Web Storage must not be reached for directly\./
     )
     assert.match(text, /@\/lib\/browserStorage/)
-  })
-
-  it('stays a set of counts when no diagnostics are passed', () => {
-    const text = formatStorageReport(compare({ 'src/a.ts': 1 }, { 'src/a.ts': 2 }))
-    assert.match(text, /src\/a\.ts: 1 -> 2/)
-    assert.doesNotMatch(text, /:12:3/)
   })
 })
 
@@ -285,104 +244,41 @@ describe('the storage rule', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 3. The plant. A real file, in the real tree, judged by the real ratchet.
+// 3. The plant. A real file, in the real tree, judged by the real gate.
 // ---------------------------------------------------------------------------
 
-describe('the ratchet on a planted reference', () => {
+describe('the gate on a planted reference', () => {
   const PLANT = resolve(ROOT, 'src/__storageProbe.ts')
-  const sandbox = mkdtempSync(join(tmpdir(), 'storage-ratchet-'))
-  const scratchBaseline = join(sandbox, 'baseline.json')
 
-  after(() => {
-    rmSync(PLANT, { force: true })
-    rmSync(sandbox, { recursive: true, force: true })
+  after(() => rmSync(PLANT, { force: true }))
+
+  const runGate = (...args) => spawnSync(process.execPath, [RATCHET, ...args], { cwd: ROOT, encoding: 'utf8' })
+
+  it('passes a file that reaches storage only through a parameter', () => {
+    try {
+      writeFileSync(PLANT, 'export const read = (s: Storage): string | null => s.getItem("k")\n')
+      const clean = runGate('--files', 'src/__storageProbe.ts')
+      assert.equal(clean.status, 0, `${clean.stdout}${clean.stderr}`)
+    } finally {
+      rmSync(PLANT, { force: true })
+    }
   })
 
-  const runRatchet = (...args) => spawnSync(process.execPath, [RATCHET, ...args], { cwd: ROOT, encoding: 'utf8' })
-
-  it('blocks it, will not launder it, and freezes it only on purpose', () => {
+  it('fails on a single reference, in a file it has never seen, and names each one', () => {
     try {
       writeFileSync(
         PLANT,
         `export const read = () => localStorage.getItem('k')\nexport const write = (v: string) => sessionStorage.setItem('k', v)\n`
       )
-
-      // Against an empty baseline the planted file is a new reference.
-      const blocked = runRatchet('--files', 'src/__storageProbe.ts', '--baseline', scratchBaseline)
+      const blocked = runGate('--files', 'src/__storageProbe.ts')
       assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
-      assert.match(blocked.stdout, /__storageProbe\.ts: 0 -> 2/)
-      // And the report carries eslint's own line:col and rule id, not only the
-      // count — the diagnostic a reader needs to fix it without grepping.
+      // eslint's own line:col and rule id, one line per reference.
       assert.match(blocked.stdout, /__storageProbe\.ts:\d+:\d+ {2}storage\/no-direct-browser-storage {2}/)
-      // Both references are reported — one line each — not just the count.
       assert.equal(blocked.stdout.match(/storage\/no-direct-browser-storage/g)?.length, 2)
       // With the way out named.
       assert.match(blocked.stdout, /@\/lib\/browserStorage/)
-
-      // A plain --update must not swallow it: the baseline is written downward
-      // only, and this would raise it.
-      const laundered = runRatchet('--files', 'src/__storageProbe.ts', '--baseline', scratchBaseline, '--update')
-      assert.equal(laundered.status, 1, `${laundered.stdout}${laundered.stderr}`)
-      assert.match(laundered.stderr, /--update only lowers the baseline/)
-      assert.match(laundered.stderr, /__storageProbe\.ts: 0 -> 2/)
-      assert.throws(() => readFileSync(scratchBaseline), /ENOENT/)
-
-      // Accepting new debt is a separate, deliberate act: --freeze-new freezes it,
-      // and the same run then goes green.
-      const update = runRatchet(
-        '--files',
-        'src/__storageProbe.ts',
-        '--baseline',
-        scratchBaseline,
-        '--update',
-        '--freeze-new'
-      )
-      assert.equal(update.status, 0, `${update.stdout}${update.stderr}`)
-      assert.match(update.stdout, /freezing src\/__storageProbe\.ts: 0 -> 2/)
-      assert.equal(JSON.parse(readFileSync(scratchBaseline, 'utf8')).files['src/__storageProbe.ts'], 2)
-
-      const after = runRatchet('--files', 'src/__storageProbe.ts', '--baseline', scratchBaseline)
-      assert.equal(after.status, 0, `${after.stdout}${after.stderr}`)
     } finally {
       rmSync(PLANT, { force: true })
-    }
-  })
-
-  it('--update lowers a count that went down and never raises one', () => {
-    const scratch = join(sandbox, 'baseline-shrink.json')
-    try {
-      writeFileSync(
-        PLANT,
-        `export const read = () => localStorage.getItem('k')\nexport const write = (v: string) => sessionStorage.setItem('k', v)\n`
-      )
-      // Frozen at 5, now 2: the update writes 2, and needs no --freeze-new.
-      writeFileSync(scratch, JSON.stringify({ files: { 'src/__storageProbe.ts': 5, 'src/gone.ts': 3 } }))
-      const lowered = runRatchet('--files', 'src/__storageProbe.ts', '--baseline', scratch, '--update')
-      assert.equal(lowered.status, 0, `${lowered.stdout}${lowered.stderr}`)
-      assert.deepEqual(JSON.parse(readFileSync(scratch, 'utf8')).files, { 'src/__storageProbe.ts': 2 })
-
-      // Frozen at 1, now 2: the update refuses and leaves the file as it was.
-      writeFileSync(scratch, JSON.stringify({ files: { 'src/__storageProbe.ts': 1 } }))
-      const raised = runRatchet('--files', 'src/__storageProbe.ts', '--baseline', scratch, '--update')
-      assert.equal(raised.status, 1, `${raised.stdout}${raised.stderr}`)
-      assert.deepEqual(JSON.parse(readFileSync(scratch, 'utf8')).files, { 'src/__storageProbe.ts': 1 })
-    } finally {
-      rmSync(PLANT, { force: true })
-    }
-  })
-
-  it('the committed baseline still describes the tree it was written against', () => {
-    // Not a full re-run (that is the `lint:storage` step in frontend.yml): this
-    // only asserts the file is readable and every key is a path under src/, so a
-    // baseline written from absolute paths — the shape that silently matches
-    // nothing on another machine — fails here. An empty baseline is not an error
-    // here: zero references is where the migration ends, and a baseline of zero
-    // refuses every new one. What an accidentally emptied baseline would let
-    // through, the `lint:storage` step already refuses.
-    const files = JSON.parse(readFileSync(BASELINE, 'utf8')).files
-    for (const key of Object.keys(files)) {
-      assert.match(key, /^src\//, `baseline key is not a src path: ${key}`)
-      assert.equal(typeof files[key], 'number')
     }
   })
 })

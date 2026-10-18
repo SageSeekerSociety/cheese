@@ -1,4 +1,0 @@
-{
-  "_comment": "Frozen src/components -> API layer / vue-router imports. The ratchet blocks any NEW violation; these are pre-existing and may only go down. Regenerate with `pnpm run lint:boundary:update`. The rule and its messages live in scripts/import-boundary-ratchet-core.mjs.",
-  "files": {}
-}

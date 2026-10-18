@@ -104,7 +104,7 @@ onBeforeUnmount(() => {
   /* Theme-invariant on purpose: this is the ground of an xterm.js terminal,
      which paints its own dark scheme in both themes. A --surface here would
      flash a white slab under a black terminal. */
-  background: #1e1e1e;
+  background: var(--terminal-ground);
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
@@ -122,8 +122,8 @@ onBeforeUnmount(() => {
   font-size: 12px;
   /* Sits ON the invariant terminal ground above, so it is light-on-dark in both
      themes — tokens here would make it dark-on-dark in the light theme. */
-  color: #9aa0a6;
-  background: rgba(0, 0, 0, 0.5);
+  color: var(--terminal-status-ink);
+  background: var(--terminal-status-fill);
   padding: 2px 8px;
   border-radius: var(--radius-lg);
 }

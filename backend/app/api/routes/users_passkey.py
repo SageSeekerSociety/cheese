@@ -60,6 +60,7 @@ from app.api.users_deps import (
     challenge_from_credential,
     issue_session,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose
@@ -76,6 +77,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 @router.post(
     "/{userId}/passkeys/options",
     summary="Generate passkey registration options",
+    dependencies=[ROUTE_DECIDES],
 )
 async def passkey_register_challenge(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
@@ -123,6 +125,7 @@ async def passkey_register_challenge(
 @router.post(
     "/{userId}/passkeys",
     summary="Verify passkey registration",
+    dependencies=[ROUTE_DECIDES],
 )
 async def passkey_register_verify(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
@@ -167,6 +170,7 @@ class PasskeyPromptDismissal(BaseModel):
 @router.post(
     "/{userId}/passkeys/prompt/dismiss",
     summary="Decline the offer to add a passkey",
+    dependencies=[ROUTE_DECIDES],
 )
 async def dismiss_passkey_prompt(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
@@ -185,6 +189,7 @@ async def dismiss_passkey_prompt(
 @router.post(
     "/auth/passkey/options",
     summary="Generate passkey authentication options",
+    dependencies=[ROUTE_DECIDES],
 )
 async def passkey_authenticate_challenge(
     payload: dict = Body(default={}),
@@ -211,6 +216,7 @@ async def passkey_authenticate_challenge(
 @router.post(
     "/auth/passkey/verify",
     summary="Verify passkey authentication",
+    dependencies=[ROUTE_DECIDES],
 )
 async def passkey_authenticate_verify(
     request: Request,
@@ -286,6 +292,7 @@ async def list_passkeys(
 @router.delete(
     "/{userId}/passkeys/{credentialId}",
     summary="Delete a passkey",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_passkey(
     user_id: Annotated[int, Path(ge=0, alias="userId")],

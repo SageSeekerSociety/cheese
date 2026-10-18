@@ -22,6 +22,7 @@ from app.api.task_deps import (
 from app.api.task_serialization import (
     _membership_to_api_model,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import may_teach_task
@@ -153,6 +154,7 @@ async def _participation_response(db, task, membership, auth_user) -> dict:
 @router.post(
     "/{taskId}/participants",
     summary="Apply for Task (create participant)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -251,6 +253,7 @@ async def create_task_participant(
 @router.post(
     "/{taskId}/participations/user",
     summary="Join Task as User (self-join)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def join_task_as_user(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -313,6 +316,7 @@ async def join_task_as_user(
 @router.post(
     "/{taskId}/participations/team",
     summary="Join Task as Team",
+    dependencies=[ROUTE_DECIDES],
 )
 async def join_task_as_team(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -376,6 +380,7 @@ async def join_task_as_team(
 @router.patch(
     "/{taskId}/participants/{participantId}",
     summary="Update TaskMembership",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],

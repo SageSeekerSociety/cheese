@@ -63,6 +63,7 @@ from app.api.deps import get_broker
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.topics_deps import BlockRepository, _actor_in_place
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
@@ -170,7 +171,7 @@ async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
         raise UnprocessableEntityError(say("previewPortSilent"))
 
 
-@router.post("/{topic_id}/shown")
+@router.post("/{topic_id}/shown", dependencies=[ROUTE_DECIDES])
 async def show_in_room(
     topic_id: uuid.UUID,
     body: dict,
@@ -329,7 +330,7 @@ async def list_shown(
     return ok(page(items, len(items)))
 
 
-@router.post("/{topic_id}/shown/save")
+@router.post("/{topic_id}/shown/save", dependencies=[ROUTE_DECIDES])
 async def save_shown_to_library(
     topic_id: uuid.UUID,
     body: dict,

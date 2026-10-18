@@ -239,23 +239,35 @@ async def under_messages(
 
 
 async def _participants(
-    session: AsyncSession, threads: list[Thread]
+    session: AsyncSession,
+    threads: list[Thread],
+    *,
+    roots: dict[uuid.UUID, Block] | None = None,
 ) -> dict[uuid.UUID, list[str]]:
     """Who said something in each 支线, the message it hangs under first. A
     routine's run is a message of its teammate's, said on its owner's behalf:
-    the owner takes part in that 支线 from the start."""
+    the owner takes part in that 支线 from the start.
+
+    ``roots`` is the messages the 支线 hang under when the caller has already
+    read them (`_describe` needs them whole), so the same rows are not read a
+    second time; without it only their authors are read."""
     if not threads:
         return {}
     root_ids = [t.root_block_id for t in threads]
     runs = await routine_runs_of(session, root_ids)
-    roots: dict[uuid.UUID, list[str]] = {}
-    for block in await session.scalars(
-        select(Block).where(Block.id == _among(root_ids))
-    ):
-        owner = runs.get(block.id, {}).get("owner")
-        roots[block.id] = [block.author, *([owner] if owner else [])]
+    if roots is None:
+        found = await session.execute(
+            select(Block.id, Block.author).where(Block.id == _among(root_ids))
+        )
+        authors = {block_id: author for block_id, author in found}
+    else:
+        authors = {block_id: block.author for block_id, block in roots.items()}
+    starters: dict[uuid.UUID, list[str]] = {}
+    for block_id, author in authors.items():
+        owner = runs.get(block_id, {}).get("owner")
+        starters[block_id] = [author, *([owner] if owner else [])]
     said: dict[uuid.UUID, list[str]] = {
-        t.id: list(roots.get(t.root_block_id, [])) for t in threads
+        t.id: list(starters.get(t.root_block_id, [])) for t in threads
     }
     rows = await session.execute(
         select(Block.conversation_id, Block.author, func.min(Block.created_at))
@@ -375,7 +387,7 @@ async def _describe(
         .order_by(_tasks.c.created_at)
     ):
         tasks.setdefault(task.upgraded_from_block_id, []).append(task)
-    said = await _participants(session, threads)
+    said = await _participants(session, threads, roots=roots)
     unread = await _unread(session, threads, viewer) if viewer else set()
     failed = await _failed(session, threads)
     out = []

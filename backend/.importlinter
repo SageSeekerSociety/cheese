@@ -410,6 +410,13 @@ unmatched_ignore_imports_alerting = warn
 # a document's mini-apps are part of the document, it keeps its pictures in the
 # `library` blob store on the same layer, and only routes import it.
 #
+# `review_note_codes` joined at layer 1 (2026-10-17): the note code and the level it
+# renders as are read by `room_task.presentation` (layer 4) to place a card on the
+# board, and `review` reads `room_task` the other way — each importing the other is
+# the C3 cycle this move removes. The vocabulary came down; the writers
+# (`record` / `annotate` / `clear`) stayed in `review/notes.py`, which needs the
+# card's two columns.
+#
 # `project_permissions` joined at layer 1 (2026-10-16): the roles of a project
 # and what each may do (#3830) are asked by `topic`, `topic_membership`,
 # `review` and `membership` alike, and `project` sits beside the first two, so
@@ -571,7 +578,7 @@ layers =
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet : project_material
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : event_about : event_author : project_permissions
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : event_about : event_author : project_permissions
 containers =
     app.domain
 exhaustive = true
