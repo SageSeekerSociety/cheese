@@ -43,6 +43,7 @@ from tests.integration.conftest import project_service, registered
 
 BUDGET = 15
 HANDLE = "ada"
+OTHER = "bob"
 INSTANCE = uuid.uuid4()
 
 
@@ -237,7 +238,7 @@ async def test_the_scan_asks_each_conversation_once_however_many_wait(
     project_id, places, waiting = await _seed(db_factory)
     await _add_held_input(db_factory, project_id, places[0])
 
-    ten, started_ten, _, _ = await _scan_both_ways(db_factory)
+    ten, started_ten = await _scan(db_factory)
     assert ten <= BUDGET, f"{ten} statements for 10 waiting messages"
     # One turn per conversation that can take one; the held seat takes none.
     assert [record["room"] for record in started_ten] == places[1:]
@@ -246,7 +247,7 @@ async def test_the_scan_asks_each_conversation_once_however_many_wait(
     ]
 
     await _more(db_factory, project_id, places, per_conversation=8)
-    fifty, started_fifty, _, _ = await _scan_both_ways(db_factory)
+    fifty, started_fifty = await _scan(db_factory)
     assert fifty <= BUDGET, f"{fifty} statements for 50 waiting messages"
     assert fifty == ten, "backlog size changed the scan's own reads"
     assert [record["room"] for record in started_fifty] == places[1:]
@@ -324,19 +325,35 @@ async def test_batch_reads_answer_like_their_single_reads(db_factory):
         session.add(thread)
         await session.flush()
         in_thread = await queued(thread.id, "支线里")
-        no_thread_yet = await queued(room.id, "还没有支线")
         in_archived = await queued(archived_room.id, "归档频道的主线")
+        # Two identical main-line messages with no 支线: one is answered one at a
+        # time, the other through the batch. Each has to open its own, and
+        # neither may answer in the other's (or in the room).
+        solo = await queued(room.id, "单独答的")
+        through_batch = await queued(room.id, "批量答的")
         await session.commit()
 
-        rows = [root, in_thread, no_thread_yet, in_archived]
-        batch = await answered_in_many(session, rows)
-        single = {block.id: await answered_in(session, block) for block in rows}
+        # The single read runs first, on rows whose answer does not depend on
+        # what the other side opened.
+        single = {
+            block.id: await answered_in(session, block)
+            for block in (in_thread, in_archived, root)
+        }
+        batch = await answered_in_many(session, [in_thread, in_archived, root])
         assert batch == single
         assert batch[in_thread.id] == thread.id
+        assert batch[root.id] == thread.id
         assert batch[in_archived.id] == archived_room.id
-        # The message with no 支线 yet got one, and it is the answer place.
-        assert batch[no_thread_yet.id] != room.id
-        assert await session.get(Thread, batch[no_thread_yet.id]) is not None
+
+        solo_place = await answered_in(session, solo)
+        batch_place = (await answered_in_many(session, [through_batch]))[
+            through_batch.id
+        ]
+        assert solo_place != room.id and batch_place != room.id
+        assert solo_place != batch_place
+        for place, root_block in ((solo_place, solo), (batch_place, through_batch)):
+            opened = await session.get(Thread, place)
+            assert opened is not None and opened.root_block_id == root_block.id
 
         now = datetime.now(UTC)
         finished = uuid.uuid4()
@@ -365,21 +382,35 @@ async def test_batch_reads_answer_like_their_single_reads(db_factory):
                     echoed_at=now,
                     completed_at=now,
                 ),
+                # A hold under a seat nobody is asking about in the pair below:
+                # the read may only answer the pairs it was given.
+                NativeInput(
+                    project_id=project.id,
+                    conversation_id=thread.id,
+                    recipient_handle=OTHER,
+                    harness="claude",
+                    native_session_id="native-other",
+                    input_id=uuid.uuid4(),
+                    work_id=uuid.uuid4(),
+                    registered_at=now,
+                    echoed_at=now,
+                ),
             ]
         )
         await session.commit()
-        pairs = [
-            (thread.id, HANDLE),
-            (room.id, HANDLE),
-            (archived_room.id, HANDLE),
-        ]
-        assert await seats_with_unfinished_input(session, pairs) == {
-            (thread.id, HANDLE)
+        assert await seats_with_unfinished_input(
+            session, [(thread.id, HANDLE), (room.id, OTHER)]
+        ) == {(thread.id, HANDLE)}
+        assert await seats_with_unfinished_input(session, [(thread.id, OTHER)]) == {
+            (thread.id, OTHER)
         }
-        for pair in pairs:
-            assert (
-                pair in await seats_with_unfinished_input(session, [pair])
-            ) == await seat_has_unfinished_input(session, *pair)
+        # The single read is the same judgement for one pair.
+        assert await seat_has_unfinished_input(session, thread.id, HANDLE) is True
+        assert await seat_has_unfinished_input(session, room.id, HANDLE) is False
+        assert await seat_has_unfinished_input(session, thread.id, OTHER) is True
+        assert (
+            await seat_has_unfinished_input(session, archived_room.id, HANDLE) is False
+        )
 
 
 @pytest.mark.anyio
@@ -454,10 +485,14 @@ async def test_a_task_and_a_dm_are_answered_where_they_were_said(db_factory):
         await session.commit()
 
         rows = [in_task, in_dm, attachment, main_line]
-        batch = await answered_in_many(session, rows)
+        # The single read goes first: it is the one that opens the 支线 under
+        # `main_line`, so the batch that follows is compared against a state it
+        # did not create.
         single = {block.id: await answered_in(session, block) for block in rows}
+        batch = await answered_in_many(session, rows)
         assert batch == single
         assert batch[in_task.id] == task_id
         assert batch[in_dm.id] == dm.id
         assert batch[attachment.id] == room.id
-        assert batch[main_line.id] != room.id
+        assert batch[main_line.id] not in (room.id, attachment.id)
+        assert await session.get(Thread, batch[main_line.id]) is not None
