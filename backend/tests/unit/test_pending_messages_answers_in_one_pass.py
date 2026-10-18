@@ -331,6 +331,7 @@ async def test_batch_reads_answer_like_their_single_reads(db_factory):
         # neither may answer in the other's (or in the room).
         solo = await queued(room.id, "单独答的")
         through_batch = await queued(room.id, "批量答的")
+        also_through_batch = await queued(room.id, "批量答的第二条")
         await session.commit()
 
         # The single read runs first, on rows whose answer does not depend on
@@ -346,12 +347,17 @@ async def test_batch_reads_answer_like_their_single_reads(db_factory):
         assert batch[in_archived.id] == archived_room.id
 
         solo_place = await answered_in(session, solo)
-        batch_place = (await answered_in_many(session, [through_batch]))[
-            through_batch.id
-        ]
-        assert solo_place != room.id and batch_place != room.id
-        assert solo_place != batch_place
-        for place, root_block in ((solo_place, solo), (batch_place, through_batch)):
+        # Two at once, so the batch also writes several 支线 in one statement.
+        places = await answered_in_many(session, [through_batch, also_through_batch])
+        batch_place = places[through_batch.id]
+        other_place = places[also_through_batch.id]
+        assert room.id not in (solo_place, batch_place, other_place)
+        assert len({solo_place, batch_place, other_place}) == 3
+        for place, root_block in (
+            (solo_place, solo),
+            (batch_place, through_batch),
+            (other_place, also_through_batch),
+        ):
             opened = await session.get(Thread, place)
             assert opened is not None and opened.root_block_id == root_block.id
 
