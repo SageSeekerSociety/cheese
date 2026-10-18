@@ -15,7 +15,7 @@ the turn is over, or the page keeps 运行中 with nothing left to tell it again
 """
 
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -136,6 +136,7 @@ async def moving_topics(
     topic_ids: Collection[uuid.UUID],
     *,
     running: Collection[uuid.UUID] = (),
+    threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
     now: datetime | None = None,
     lookback: timedelta = RUNNING_LOOKBACK,
 ) -> set[uuid.UUID]:
@@ -153,6 +154,11 @@ async def moving_topics(
     一个进程正在跑的那一轮（多 worker 时侧栏由谁应答说不准），只有「那一行还开着」
     是哪个进程都看得见的事实。库里那一份只认刚起来过的（`RUNNING_LOOKBACK`），因为
     一行停在那儿不动的僵尸轮次（进程被杀，`finally` 没跑成）会永远读作在跑。
+
+    ``threads`` 是调用方已经问过的那一份（`conversation.services.threads_of_rooms`
+    的形状：支线 -> 它所在的房间）：读一个房间的头时它前面已经为别的问题读过一次，
+    同一批房间问两遍就是同一张表读两趟。给了就用给的；没给就自己问（和
+    `threads_of_rooms` 同一条查询，只是这里用裸表，免得这一层拖着那边的依赖）。
     """
     ids = list(topic_ids)
     if not ids:
@@ -165,12 +171,18 @@ async def moving_topics(
         await db.execute(select(Task.id, Task.room_id).where(Task.room_id.in_(ids)))
     ).all():
         inner[task_id] = room_id
-    for thread_id, room_id in (
-        await db.execute(
-            select(_threads.c.id, _threads.c.room_id).where(_threads.c.room_id.in_(ids))
-        )
-    ).all():
-        inner[thread_id] = room_id
+    if threads is None:
+        threads = {
+            thread_id: room_id
+            for thread_id, room_id in (
+                await db.execute(
+                    select(_threads.c.id, _threads.c.room_id).where(
+                        _threads.c.room_id.in_(ids)
+                    )
+                )
+            ).all()
+        }
+    inner.update(threads)
 
     # 刚起来、还开着、而且真送出去了的那些轮次。不是拿房间去 IN：这一份读的是很小
     # 的一张部分索引（`ix_agent_turns_open`），回来之后再在内存里挑出属于这些话题的。

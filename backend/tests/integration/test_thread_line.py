@@ -9,16 +9,23 @@ main line is told without opening it.
   line, saying the reply failed: the reason is in the 支线, and without the line
   nobody could find it;
 - a page of 支线 reads the messages they hang under once, however many there
-  are: who took part comes from the same rows as what the message said.
+  are: who took part comes from the same rows as what the message said;
+- a room's header asks three questions about its 支线 — the page's own list,
+  回复了我, 还在当支线用 — and none of them is asked twice: `moving_topics` is
+  handed the list the page already read.
 """
 
 import re
 import uuid
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
 
+from app.domain.agent.liveness import moving_topics
+from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import threads_of_rooms
 from app.domain.event_author import AuthorType
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.models import Thread
@@ -278,8 +285,8 @@ def test_a_listed_thread_says_whether_its_message_was_cut(client):
 _ROOTS_BY_ID = re.compile(r"FROM blocks\s+WHERE blocks\.id\b", re.IGNORECASE)
 
 
-def _roots_read_while(client, read):
-    """How many times the messages are read by id while ``read`` runs."""
+def _count_matching(client, read, pattern):
+    """How many of the statements ``read`` runs ``pattern`` matches."""
     statements: list[str] = []
 
     def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
@@ -291,7 +298,12 @@ def _roots_read_while(client, read):
         read()
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    return sum(1 for s in statements if _ROOTS_BY_ID.search(s))
+    return sum(1 for s in statements if pattern.search(s))
+
+
+def _roots_read_while(client, read):
+    """How many times the messages are read by id while ``read`` runs."""
+    return _count_matching(client, read, _ROOTS_BY_ID)
 
 
 def _channel_with_threads(client, n):
@@ -331,3 +343,83 @@ def test_the_people_in_a_thread_still_read_its_message_alone(client):
             return await thread_reads.people_in(s, uuid.UUID(thread))
 
     assert client.portal.call(_people) == ["alice", "bob"]
+
+
+#: Any read of a room's 支线 read straight from the table, whichever question it
+#: answers — the page's own list, 回复了我, 还在当支线用 — and however many rows
+#: it takes. A 支线 read by its id is a different question and not counted.
+_THREADS_OF_A_ROOM = re.compile(
+    r"^\s*SELECT threads\.[^;]*?\bFROM threads\s+WHERE threads\.room_id",
+    re.IGNORECASE,
+)
+
+
+def _room_header(client, tid):
+    r = client.get(f"/topics/{tid}", headers=session_auth_headers("alice"))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+@pytest.mark.parametrize("n", [3, 12])
+def test_a_rooms_header_reads_its_threads_three_times_however_many_there_are(client, n):
+    """A room's header asks three separate questions about its 支线 — the page's
+    own list, 回复了我, 还在当支线用 — and the list it read is handed to
+    `moving_topics`, which used to ask the table a fourth time for the same
+    answer. Four was the count before that hand-down; the assertion says the
+    fourth read stays gone, and the same however many 支线 the room has."""
+    tid = _channel_with_threads(client, n)
+
+    reads = _count_matching(
+        client, lambda: _room_header(client, tid), _THREADS_OF_A_ROOM
+    )
+
+    assert reads == 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"
+
+
+def test_moving_names_the_same_rooms_handed_the_pages_read(client):
+    """`threads=` is a short-cut, not a second rule: handed the page's own read
+    of the room's 支线, `moving_topics` names exactly the rooms it names having
+    read them itself — including a room whose 支线 is where the turn runs."""
+    tid = _channel_with_threads(client, 3)
+
+    async def _a_thread() -> uuid.UUID:
+        async with client.test_factory() as s:
+            return await s.scalar(
+                select(Thread.id).where(Thread.room_id == uuid.UUID(tid))
+            )
+
+    thread = client.portal.call(_a_thread)
+    now = datetime.now(UTC)
+
+    async def _plant() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=thread,
+                    continuation_id=uuid.uuid4(),
+                    author="alice",
+                    content="开始吧",
+                    started_at=now,
+                    delivered_at=now,
+                )
+            )
+            await s.commit()
+
+    client.portal.call(_plant)
+
+    async def _both() -> tuple[set[uuid.UUID], set[uuid.UUID]]:
+        async with client.test_factory() as alone_session:
+            alone = await moving_topics(alone_session, [uuid.UUID(tid)], running=set())
+        async with client.test_factory() as handed_session:
+            handed = await moving_topics(
+                handed_session,
+                [uuid.UUID(tid)],
+                running=set(),
+                threads=await threads_of_rooms(handed_session, [uuid.UUID(tid)]),
+            )
+        return alone, handed
+
+    alone, handed = client.portal.call(_both)
+
+    assert alone == handed == {uuid.UUID(tid)}
