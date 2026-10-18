@@ -81,18 +81,21 @@ permissions:
 
 jobs:
   eligibility:
-    # A Required CI run that did not pass releases nothing, and the failure is
-    # read on that run. A cancelled one is a batched push that a newer one
-    # replaced, which is normal; neither may turn into a red deploy run. The
-    # event and branch are checked as well as the name: `branches: [main]` also
-    # admits a pull request whose head branch is called main, and a commit on
-    # someone's fork is not a candidate to release.
+    # A Required CI run that did not pass releases nothing, and a real failure
+    # is read on that run. A cancelled one is looked at too: usually a batched
+    # push a newer one replaced (the script then says "waiting"), but a
+    # cancellation with nothing newer on main leaves a commit nothing will ever
+    # cover, and skipping the job here would leave that silent. The event and
+    # branch are checked as well as the name: `branches: [main]` also admits a
+    # pull request whose head branch is called main, and a commit on someone's
+    # fork is not a candidate to release.
     if: >-
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.name != 'Required CI' ||
       (github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.conclusion == 'success')
+      (github.event.workflow_run.conclusion == 'success' ||
+      github.event.workflow_run.conclusion == 'cancelled'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
