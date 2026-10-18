@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
-from app.domain.repository import identity
 from app.domain.review import (
+    credit,
     merge_state,
     notes,
     pr_text,
@@ -252,8 +252,13 @@ async def _merge_pr_for_accept(
             say("acceptBlocked", state=verdict.state, detail=detail or "规则未满足")
         )
 
-    attribution = await identity.attribution(
-        self._session, topic, card=card, decided_by=decided_by
+    attribution = await credit.attribution(
+        self._session,
+        topic,
+        card=card,
+        decided_by=decided_by,
+        opened_by=status.opened_by,
+        token=creds.read,
     )
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
@@ -386,6 +391,7 @@ async def _merge_armed_card(
     protection: BranchProtection,
     chat_service,
     runner,
+    opened_by: str | None = None,
 ) -> None:
     """绿了自动合 (#718)：the armed card's rules are satisfied — merge it
     with the armer's name on the decision, still guarded by the head sha
@@ -409,8 +415,13 @@ async def _merge_armed_card(
         )
         await self._session.flush()
         return
-    attribution = await identity.attribution(
-        self._session, topic, card=card, decided_by=armer
+    attribution = await credit.attribution(
+        self._session,
+        topic,
+        card=card,
+        decided_by=armer,
+        opened_by=opened_by,
+        token=creds.read,
     )
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email

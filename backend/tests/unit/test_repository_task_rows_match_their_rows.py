@@ -243,20 +243,5 @@ async def test_identity_reads_only_columns_the_copy_declares(
         "cheese-000000000001",
     )
 
-    topic = SimpleNamespace(id=uuid.uuid4(), created_by="someone")
-    assert (
-        await identity.requester_handle(
-            object(),
-            topic,
-            task_id=task_id,  # type: ignore[arg-type]
-        )
-        == "wangchangxin"
-    )
-    assert (
-        await identity.requester_handle(
-            object(),
-            topic,
-            task_id=creator_id,  # type: ignore[arg-type]
-        )
-        == "creator-x"
-    )
+    assert await identity.owner_handle(object(), task_id) == "wangchangxin"
+    assert await identity.owner_handle(object(), creator_id) == "creator-x"
