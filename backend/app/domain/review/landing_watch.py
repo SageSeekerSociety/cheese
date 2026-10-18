@@ -94,10 +94,6 @@ BATCH_COMMITS = 20
 PROMPT_COMMITS = 10
 PROMPT_TESTS = 10
 
-#: The last `main-green` each blamed commit was checked against, so a tick
-#: makes no forge call for a batch whose state has not moved.
-_green_checked: dict[tuple[uuid.UUID, str], str] = {}
-
 
 @dataclass(frozen=True, slots=True)
 class BatchCommit:
@@ -113,6 +109,9 @@ class Batch:
     head: str
     #: How many commits the batch covers, when the forge could say.
     total: int
+    #: False when some of them were not read: `total` is then a lower bound,
+    #: and no failure may be pinned on one commit.
+    complete: bool
     commits: tuple[BatchCommit, ...]
     #: The test files the red jobs named.
     failed_tests: tuple[str, ...]
@@ -418,14 +417,17 @@ async def _judge_checks(
     """What the checks for the merge commit ``sha`` came to, or None while they
     are still being decided."""
     own = await _checks(reads, project_id, sha, memo)
-    if any(run.status == "in_progress" for run in own):
+    # Queued is as unfinished as in progress: the batch's first look often
+    # finds `scope` and `fail-fast` completed while every product job, and the
+    # gate itself, still sit in the queue on the shared pool.
+    if any(run.status != "completed" for run in own):
         return None
     red = [
         run for run in own if run.status == "completed" and run.conclusion in _FAILED
     ]
     gate = _gate(own)
+    anchor = await _green(reads, project_id, memo)
     if gate is not None and gate.conclusion in _FAILED:
-        anchor = await _green(reads, project_id, memo)
         if anchor and await _covered(reads, project_id, sha, anchor, memo):
             # A later batch went green over this commit: that red is settled.
             return Judgement(ChecksOutcome.passed, ())
@@ -441,31 +443,92 @@ async def _judge_checks(
         return await _judge_batch(
             reads, sha, head=sha, head_checks=own, project_id=project_id, memo=memo
         )
-    if red:
-        return await _judge_merge(
-            reads,
-            sha,
-            red,
-            parent=await reads.parent(sha),
-            project_id=project_id,
-            memo=memo,
-        )
-    if any(run.status == "completed" and run.conclusion != "cancelled" for run in own):
-        # A run of its own finished green (or something other than the batch
-        # gate did), and nothing is red.
+    if gate is not None and gate.conclusion == "success":
+        # Its own batch passed; a red left here is another workflow's, and the
+        # old rule judges it.
+        if red:
+            return await _judge_merge(
+                reads,
+                sha,
+                red,
+                parent=await reads.parent(sha),
+                project_id=project_id,
+                memo=memo,
+            )
         return Judgement(ChecksOutcome.passed, ())
-    # No run of its own ever finished: a newer push superseded it, so it landed
-    # inside a batch, and the gate that covers it is the newest one after it.
+    if gate is None:
+        if red:
+            return await _judge_merge(
+                reads,
+                sha,
+                red,
+                parent=await reads.parent(sha),
+                project_id=project_id,
+                memo=memo,
+            )
+        if any(
+            run.status == "completed" and run.conclusion != "cancelled" for run in own
+        ):
+            # A repository with no batch gate runs each merge on its own, and
+            # this one finished green.
+            return Judgement(ChecksOutcome.passed, ())
+    # The gate was cancelled (a newer push superseded this commit's run) or
+    # never existed: the commit landed inside a batch, and the gate that covers
+    # it is the newest one after it — unless a green batch already moved past.
+    if anchor and await _covered(reads, project_id, sha, anchor, memo):
+        if red:
+            return await _judge_merge(
+                reads,
+                sha,
+                red,
+                parent=await reads.parent(sha),
+                project_id=project_id,
+                memo=memo,
+            )
+        return Judgement(ChecksOutcome.passed, ())
     covering = await _once(
-        memo, (project_id, "cover", sha), lambda: reads.covering_run(sha)
+        memo,
+        (project_id, "cover", sha, anchor),
+        lambda: reads.covering_run(sha, anchor=anchor),
     )
     if covering is None:
+        if red:
+            return await _judge_merge(
+                reads,
+                sha,
+                red,
+                parent=await reads.parent(sha),
+                project_id=project_id,
+                memo=memo,
+            )
         return None
     head, head_checks = covering
-    gate = _gate(head_checks)
-    if gate is None or gate.conclusion is None or gate.conclusion == "cancelled":
+    covering_gate = _gate(head_checks)
+    if (
+        covering_gate is None
+        or covering_gate.conclusion is None
+        or covering_gate.conclusion == "cancelled"
+    ):
+        if red:
+            return await _judge_merge(
+                reads,
+                sha,
+                red,
+                parent=await reads.parent(sha),
+                project_id=project_id,
+                memo=memo,
+            )
         return None
-    if gate.conclusion not in _FAILED:
+    if covering_gate.conclusion not in _FAILED:
+        if red:
+            return await _judge_merge(
+                reads,
+                sha,
+                red,
+                parent=await reads.parent(sha),
+                project_id=project_id,
+                memo=memo,
+            )
         return Judgement(ChecksOutcome.passed, ())
     return await _judge_batch(
         reads, sha, head=head, head_checks=head_checks, project_id=project_id, memo=memo
@@ -547,6 +610,7 @@ async def _judge_batch(
         Batch(
             head=head,
             total=commits.total,
+            complete=commits.complete,
             commits=tuple(
                 BatchCommit(change.sha, change.subject) for change in commits.changes
             ),
@@ -602,6 +666,15 @@ def _blame(tests: tuple[str, ...], commits: BatchCommits | None) -> str | None:
     return next(iter(owners)) if owners and len(owners) == 1 else None
 
 
+#: Extensions that name the same kind of code. `test_foo.py` is about
+#: `foo.py` in this monorepo; a `.test.ts` next to a `.py` of the same name is
+#: a coincidence, and matching it would blame the wrong line.
+_FAMILIES = (
+    frozenset({"py", "pyi"}),
+    frozenset({"ts", "tsx", "js", "jsx", "vue"}),
+)
+
+
 def _names(test_path: str, files: tuple[str, ...]) -> bool:
     """Whether a failing test file is one this commit's changes are about."""
     want = test_path.removeprefix("./")
@@ -614,7 +687,18 @@ def _names(test_path: str, files: tuple[str, ...]) -> bool:
         ):
             return True
     stem = _stem(want)
-    return bool(stem) and any(_stem(path) == stem for path in files)
+    if not stem:
+        return False
+    family = _family(want)
+    return any(_family(path) == family and _stem(path) == stem for path in files)
+
+
+def _family(path: str) -> frozenset[str]:
+    extension = path.rsplit(".", 1)[-1].lower()
+    for family in _FAMILIES:
+        if extension in family:
+            return family
+    return frozenset({extension})
 
 
 def _stem(path: str) -> str:
@@ -784,9 +868,14 @@ def _batch_checks_failed_prompt(
     lines = [
         f"任务「{title}」的提交 {sha[:12]} 落在主干这一批里，合并后的全量检查没通过。"
     ]
-    if batch.total:
+    if batch.total and batch.complete:
         lines.append(
             f"本批共 {batch.total} 个提交，检查跑在最后那个提交 {batch.head[:12]} 上。"
+        )
+    elif batch.total:
+        lines.append(
+            f"这一批至少 {batch.total} 个提交（更早的没读全），"
+            f"检查跑在提交 {batch.head[:12]} 上。"
         )
     else:
         lines.append(f"这一批的提交范围读不到，检查跑在提交 {batch.head[:12]} 上。")
@@ -861,9 +950,6 @@ async def _withdraw_passed(
                 )
             )
         )
-    alive = {(project_id, sha) for _, _, sha, project_id in rows}
-    for stale in set(_green_checked) - alive:
-        _green_checked.pop(stale, None)
     by_project: dict[uuid.UUID, list[tuple]] = {}
     for landing_id, task_id, merge_sha, project_id in rows:
         by_project.setdefault(project_id, []).append((landing_id, task_id, merge_sha))
@@ -878,22 +964,42 @@ async def _withdraw_passed(
             continue
         try:
             anchor = await reads.main_green()
+            # The names the green batch itself reports as passed: a red check
+            # the batch does not rerun (an image build, say) is not withdrawn
+            # by the batch going green.
+            passed = (
+                {
+                    run.name
+                    for run in await reads.checks(anchor)
+                    if run.status == "completed" and run.conclusion == "success"
+                }
+                if anchor
+                else set()
+            )
         except Exception:  # a forge read that fails withdraws nothing
             logger.warning(
                 "reading main-green failed for %s", project_id, exc_info=True
             )
-            anchor = None
+            continue
         if not anchor:
             continue
         for landing_id, task_id, merge_sha in blames:
-            if _green_checked.get((project_id, merge_sha)) == anchor:
-                continue
             try:
-                covered = await reads.is_ancestor(merge_sha, anchor)
-            except Exception:
-                covered = False
-            _green_checked[(project_id, merge_sha)] = anchor
-            if not covered:
+                if not await reads.is_ancestor(merge_sha, anchor):
+                    continue
+                runs = await reads.checks(merge_sha)
+            except Exception:  # a forge read that fails withdraws nothing
+                continue
+            still_red = [
+                run.name
+                for run in runs
+                if run.status == "completed"
+                and run.conclusion in _FAILED
+                and run.name != BATCH_GATE
+                and run.name not in passed
+            ]
+            if still_red:
+                # The blame was that check, and the batch does not rerun it.
                 continue
             async with sessions() as session:
                 landing = await session.get(

@@ -86,9 +86,11 @@ def _red_batch(forge, *, failing: list[str]) -> None:
     forge.green = ANCHOR
     forge.ran[ANCHOR] = [_gate("success")]
     # The pushes at B and C were superseded by a newer one in the concurrency
-    # group: their runs are cancelled, and only HEAD's ran.
-    forge.ran[LINE_ONE] = [_gate("cancelled")]
-    forge.ran[LINE_TWO] = [_gate("cancelled")]
+    # group: their gate is cancelled, and only HEAD's ran. A job that finished
+    # before the cancellation stays green — it must not be read as the gate's
+    # verdict.
+    forge.ran[LINE_ONE] = [_gate("cancelled"), _gate("success", "scope")]
+    forge.ran[LINE_TWO] = [_gate("cancelled"), _gate("success", "scope")]
     forge.ran[HEAD] = [
         _gate("failure"),
         _gate("failure", "backend tests (unit)"),
@@ -156,6 +158,134 @@ def test_failures_that_name_nobody_wake_every_line_in_the_batch(
         assert _landing(client, task_id).checks.value == "failed"
 
 
+def test_failures_that_name_two_lines_files_wake_both(client, app_world, forge):
+    first, second = _two_lines(client, app_world, forge)
+    _red_batch(forge, failing=["backend/tests/test_a.py"])
+    # Both lines changed the file the failing test is about: nothing unique.
+    forge.changes[LINE_TWO] = CommitChange(LINE_TWO, "feat: a too", ("backend/a.py",))
+    forge.batches[(ANCHOR, HEAD)] = BatchCommits(
+        total=3, changes=tuple(forge.changes.values()), complete=True
+    )
+
+    watch(client)
+
+    for task_id in (first, second):
+        told = _told(client, task_id)
+        assert "各自排除" in told
+        assert "backend/tests/test_a.py" in told
+        assert _landing(client, task_id).checks.value == "failed"
+
+
+def test_a_gate_still_queued_says_nothing(client, app_world, forge):
+    """`scope` finishing is not the gate finishing: the product jobs queue."""
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    told = _told(client, task_id)
+    forge.ran[LINE_ONE] = [
+        _gate("success", "scope"),
+        Check("CI required", "queued", None, "https://ci.example/gate"),
+    ]
+
+    watch(client)
+
+    assert _told(client, task_id) == told
+    assert _landing(client, task_id).checks.value == "watching"
+
+
+def test_a_later_green_batch_settles_an_intermediate_commit(client, app_world, forge):
+    """A red batch after the green one must not be sheeted home to this
+    commit: it landed before the green batch's head and is not in it."""
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    told = _told(client, task_id)
+    forge.ran[LINE_ONE] = [_gate("cancelled"), _gate("success", "scope")]
+    forge.ran["later"] = [_gate("failure")]
+    forge.covered[LINE_ONE] = ("later", forge.ran["later"])
+    forge.green = HEAD
+    forge.ahead = {(LINE_ONE, HEAD)}
+
+    watch(client)
+
+    assert _told(client, task_id) == told
+    assert _landing(client, task_id).checks.value == "passed"
+
+
+def test_the_batch_is_walked_back_when_main_green_names_nothing(
+    client, app_world, forge
+):
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=HEAD)
+    told = _told(client, task_id)
+    forge.green = None
+    forge.parents = {HEAD: LINE_TWO, LINE_TWO: LINE_ONE, LINE_ONE: ANCHOR}
+    forge.ran[HEAD] = [_gate("failure")]
+    forge.ran[LINE_TWO] = [_gate("cancelled")]
+    forge.ran[LINE_ONE] = [_gate("cancelled")]
+    forge.ran[ANCHOR] = [_gate("success")]
+    forge.changes = {
+        HEAD: CommitChange(HEAD, "feat: d", ("backend/d.py",)),
+        LINE_TWO: CommitChange(LINE_TWO, "feat: b", ("backend/b.py",)),
+        LINE_ONE: CommitChange(LINE_ONE, "feat: a", ("backend/a.py",)),
+    }
+    forge.failing[HEAD] = ["backend/tests/test_d.py"]
+
+    watch(client)
+
+    told_after = _told(client, task_id)
+    assert told_after != told
+    assert "本批共 3 个提交" in told_after
+    assert "只有这条线" in told_after
+    assert _landing(client, task_id).checks.value == "failed"
+
+
+def test_a_commit_a_later_batch_did_not_cover_keeps_its_fix(client, app_world, forge):
+    first, second = _two_lines(client, app_world, forge)
+    _red_batch(forge, failing=["backend/tests/test_nowhere.py"])
+    watch(client)
+    assert "各自排除" in _told(client, second)
+
+    forge.ran[HEAD] = [
+        _gate("success"),
+        _gate("success", "backend tests (unit)"),
+    ]
+    forge.green = HEAD
+    forge.ahead = {(LINE_ONE, HEAD)}  # only the first landed in that batch
+
+    watch(client)
+
+    assert "这条催修撤销" in _told(client, first)
+    assert "这条催修撤销" not in _told(client, second)
+    assert _landing(client, second).checks.value == "failed"
+
+
+def test_a_red_check_the_batch_does_not_rerun_is_not_withdrawn(
+    client, app_world, forge
+):
+    """A green Required CI batch says nothing about a red image build."""
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    forge.parents = {LINE_ONE: ANCHOR}
+    forge.ran[ANCHOR] = [_gate("success")]
+    forge.ran[LINE_ONE] = [
+        _gate("success"),
+        _gate("failure", "build-gateway"),
+    ]
+    watch(client)
+    assert _landing(client, task_id).checks.value == "failed"
+
+    forge.ran[HEAD] = [
+        _gate("success"),
+        _gate("success", "backend tests (unit)"),
+    ]
+    forge.green = HEAD
+    forge.ahead = {(LINE_ONE, HEAD)}
+
+    watch(client)
+
+    assert "这条催修撤销" not in _told(client, task_id)
+    assert _landing(client, task_id).checks.value == "failed"
+
+
 def test_a_later_green_batch_takes_the_blame_back(client, app_world, forge):
     first, second = _two_lines(client, app_world, forge)
     _red_batch(forge, failing=["backend/tests/test_nowhere.py"])
@@ -163,6 +293,10 @@ def test_a_later_green_batch_takes_the_blame_back(client, app_world, forge):
     assert "各自排除" in _told(client, first)
     assert "各自排除" in _told(client, second)
 
+    forge.ran[HEAD] = [
+        _gate("success"),
+        _gate("success", "backend tests (unit)"),
+    ]
     forge.green = HEAD
     forge.ahead = {(LINE_ONE, HEAD), (LINE_TWO, HEAD)}
     watch(client)

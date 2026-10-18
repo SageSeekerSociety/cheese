@@ -69,6 +69,8 @@ class _Forge:
         self.ahead: set[tuple[str, str]] = set()
         #: PR number -> the commit its merge put on main.
         self.merges: dict[int, str] = {}
+        #: sha -> its first parent, for tests that walk a batch back.
+        self.parents: dict[str, str | None] = {}
 
     async def merge_sha(self, pr_number):
         return self.merges.get(pr_number, MERGED)
@@ -77,6 +79,8 @@ class _Forge:
         return self.ran.get(sha, [])
 
     async def parent(self, sha):
+        if sha in self.parents:
+            return self.parents[sha]
         return BEFORE if sha == MERGED else None
 
     async def deployment(self, sha, since):
@@ -84,7 +88,7 @@ class _Forge:
             raise ForgeUnavailable("no deployments")
         return self.deployed
 
-    async def covering_run(self, sha):
+    async def covering_run(self, sha, *, anchor=None):
         return self.covered.get(sha)
 
     async def main_green(self):

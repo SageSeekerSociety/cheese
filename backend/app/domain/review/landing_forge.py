@@ -104,10 +104,14 @@ class LandingReads(Protocol):
         records none the platform may read."""
         ...
 
-    async def covering_run(self, sha: str) -> tuple[str, list[Check]] | None:
+    async def covering_run(
+        self, sha: str, *, anchor: str | None = None
+    ) -> tuple[str, list[Check]] | None:
         """The newest finished batch gate at or after ``sha`` — the commit the
-        run reported on, and that commit's checks. None while no gate has
-        finished yet, and on a forge that gates each merge on its own."""
+        run reported on, and that commit's checks. ``anchor`` is what
+        `main_green` names, when it names anything: with a mark to find, the
+        search may go further back. None while no gate has finished yet, and
+        on a forge that gates each merge on its own."""
         ...
 
     async def main_green(self) -> str | None:
@@ -143,7 +147,10 @@ async def reads_for(
     client = await proposal_client(project_id, session)
     tokens = await tokens_for_project(project_id, session)
     owner, repo = binding.repo.split("/", 1)
-    branch = binding.default_branch or "main"
+    # Empty means "not resolved from the provider yet" (`repositories.py`
+    # never assumes main); the batched reads simply have no branch to compare
+    # against until it is.
+    branch = binding.default_branch or None
     if binding.kind == "github_app":
         return GitHubLandingReads(
             client, tokens, binding.api_url, owner, repo, branch=branch
@@ -167,6 +174,9 @@ _LOOK_AHEAD = 20
 _LOOK_BACK = 20
 #: How many red jobs get their log read for failed test names.
 _RED_LOGS = 3
+#: How far the search goes when `main-green` names nothing: a repository may
+#: not gate main at all, and each candidate costs a call on every tick.
+_LOOK_AHEAD_NO_ANCHOR = 5
 
 #: A failed check-run's log names its failing tests in one of these shapes:
 #: pytest `FAILED tests/x.py::test_y - …`, vitest/jest `FAIL  src/x.test.ts > …`.
@@ -182,11 +192,21 @@ _RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
 
 
 def _gate(runs: list[Check]) -> Check | None:
-    """The batched gate's own check run among a commit's checks, if any."""
-    for run in runs:
-        if run.name == BATCH_GATE:
+    """The batched gate's own check run among a commit's checks, if any.
+
+    A re-run leaves more than one run of the same name on a commit; as
+    `merge_state._outcome` reads them, any pass wins, a run still going beats
+    an old red, and only then is the remaining one the answer."""
+    gates = [run for run in runs if run.name == BATCH_GATE]
+    if not gates:
+        return None
+    for run in gates:
+        if run.status == "completed" and run.conclusion == "success":
             return run
-    return None
+    for run in gates:
+        if run.status != "completed":
+            return run
+    return gates[0]
 
 
 def _failed_test_paths(log: str) -> list[str]:
@@ -211,7 +231,7 @@ class GitHubLandingReads:
         repo: str,
         transport=None,
         *,
-        branch: str = "main",
+        branch: str | None = None,
     ):
         self._client = client
         self._tokens = tokens
@@ -265,7 +285,11 @@ class GitHubLandingReads:
 
     # --- the batched main gate (#4249) -------------------------------------
 
-    async def covering_run(self, sha: str) -> tuple[str, list[Check]] | None:
+    async def covering_run(
+        self, sha: str, *, anchor: str | None = None
+    ) -> tuple[str, list[Check]] | None:
+        if not self._branch:
+            return None
         try:
             data = await self._get(
                 f"/compare/{quote(sha, safe='')}...{quote(self._branch, safe='')}"
@@ -274,8 +298,13 @@ class GitHubLandingReads:
             return None
         if data.get("status") not in ("ahead", "identical"):
             return None
+        # With a mark there is a batch to find, and it may have started several
+        # commits back. Without one the repository may not gate main at all,
+        # and every candidate costs a check-runs call on every tick: look at
+        # the newest few only.
+        depth = _LOOK_AHEAD if anchor else _LOOK_AHEAD_NO_ANCHOR
         ahead: list[str] = []
-        for commit in (data.get("commits") or [])[-_LOOK_AHEAD:]:
+        for commit in (data.get("commits") or [])[-depth:]:
             if not isinstance(commit, dict):
                 continue
             head_sha = commit.get("sha")
@@ -314,15 +343,25 @@ class GitHubLandingReads:
         listed = [c for c in (data.get("commits") or []) if isinstance(c, dict)]
         total = data.get("total_commits")
         total = total if isinstance(total, int) else len(listed)
-        complete = len(listed) <= total and len(listed) < _COMPARE_MAX_COMMITS
+        # Completeness is about what was *read*, not what was listed: past the
+        # caps some commits are never looked at, and a commit the forge refused
+        # to describe is one whose files are unknown.
+        complete = (
+            len(listed) <= total
+            and len(listed) < _COMPARE_MAX_COMMITS
+            and len(listed) <= _LOOK_BACK
+        )
         changes = []
         for commit in listed[-_LOOK_BACK:]:
             sha = commit.get("sha")
             if not sha:
+                complete = False
                 continue
             change = await self.commit_change(sha)
-            if change is not None:
-                changes.append(change)
+            if change is None:
+                complete = False
+                continue
+            changes.append(change)
         return BatchCommits(total=total, changes=tuple(changes), complete=complete)
 
     async def commit_change(self, sha: str) -> CommitChange | None:
@@ -447,7 +486,7 @@ class ForgejoLandingReads:
         owner: str,
         repo: str,
         *,
-        branch: str = "main",
+        branch: str | None = None,
     ):
         self._client = client
         self._tokens = tokens
@@ -483,7 +522,9 @@ class ForgejoLandingReads:
     # Forgejo has no batched main gate: each merge is checked on its own, so a
     # commit with no runs has simply not been checked yet.
 
-    async def covering_run(self, sha: str) -> tuple[str, list[Check]] | None:
+    async def covering_run(
+        self, sha: str, *, anchor: str | None = None
+    ) -> tuple[str, list[Check]] | None:
         return None
 
     async def main_green(self) -> str | None:
