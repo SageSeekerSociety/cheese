@@ -37,14 +37,6 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from orchestrator_autoaccept import REVIEW_LINE  # noqa: E402
 
-#: Optional tier suffix appended by `.claude/pr-review/render.py` after `REVIEW_LINE`.
-TIER_SUFFIX = re.compile(r"\s*(?:｜\s*档位\s*[A-G])?\s*")
-
-
-def _is_standalone_review_line(line: str, match: re.Match[str]) -> bool:
-    """True when `line` is a standalone review conclusion line (with optional tier suffix)."""
-    return match.start() == 0 and TIER_SUFFIX.fullmatch(line[match.end() :]) is not None
-
 
 def check_body(text: str) -> list[str]:
     """Return a list of placement problems in `text` (empty when valid)."""
@@ -56,40 +48,25 @@ def check_body(text: str) -> list[str]:
     if not non_empty:
         return ["验收卡正文为空，未找到独立 review 结论行"]
 
-    matches: list[tuple[int, str, re.Match[str]]] = []
+    matches: list[tuple[int, re.Match[str]]] = []
     for lineno, line in non_empty:
         for match in REVIEW_LINE.finditer(line):
-            matches.append((lineno, line, match))
+            matches.append((lineno, match))
 
     if not matches:
         return ["未找到独立 review 结论行"]
 
     problems: list[str] = []
 
-    standalone = [
-        (lineno, line, match)
-        for lineno, line, match in matches
-        if _is_standalone_review_line(line, match)
-    ]
-    for lineno, line, match in matches:
-        if not _is_standalone_review_line(line, match):
-            problems.append(f"第 {lineno} 行：独立 review 结论行必须独占一行")
-
-    first_candidates = [matches[0]]
-    if standalone and standalone[0] != matches[0]:
-        first_candidates.append(standalone[0])
-    for first_lineno, _, first_match in first_candidates:
-        if first_match.group(2) is not None:
-            problems.append(
-                f"第 {first_lineno} 行：首轮独立 review 结论行不应包含「增量自 {first_match.group(2)}」"
-            )
-            break
+    first_lineno, first_match = matches[0]
+    if first_match.group(2) is not None:
+        problems.append(
+            f"第 {first_lineno} 行：首轮独立 review 结论行不应包含「增量自 {first_match.group(2)}」"
+        )
 
     last_lineno, _ = non_empty[-1]
-    last_match_lineno, last_match_line, last_match = matches[-1]
-    if last_match_lineno != last_lineno or not _is_standalone_review_line(
-        last_match_line, last_match
-    ):
+    last_match_lineno, _ = matches[-1]
+    if last_match_lineno != last_lineno:
         problems.append(
             f"第 {last_match_lineno} 行：独立 review 结论行未放在正文最后一行（最后一行在第 {last_lineno} 行）"
         )

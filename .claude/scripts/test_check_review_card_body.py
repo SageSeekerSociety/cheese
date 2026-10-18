@@ -36,6 +36,9 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.body_file = self.root / "card-body.md"
+        existing = os.environ.get("PYTHONPATH", "")
+        py_path = f"{SCRIPTS_DIR}{os.pathsep}{existing}" if existing else str(SCRIPTS_DIR)
+        self.env = {**os.environ, "PYTHONPATH": py_path}
 
     def run_cli(
         self, body: str, *, script: Path = SCRIPT, via_file: bool = True
@@ -45,7 +48,9 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
             cmd = [sys.executable, str(script), "--text", str(self.body_file)]
         else:
             cmd = [sys.executable, str(script), "--body", body]
-        return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=30)
+        return subprocess.run(
+            cmd, check=False, capture_output=True, text=True, env=self.env, timeout=30
+        )
 
     def test_imports_review_line_from_orchestrator_autoaccept(self) -> None:
         guard = _load_guard()
@@ -116,6 +121,7 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
             check=False,
             capture_output=True,
             text=True,
+            env=self.env,
             timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -136,14 +142,16 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
                 str(Path(__file__).resolve()),
                 "ReviewCardBodyGuardTests.test_review_line_not_on_last_line_fails",
             ],
-            env={**os.environ, "CHECK_REVIEW_CARD_BODY_SCRIPT": str(mutant)},
+            env={**self.env, "CHECK_REVIEW_CARD_BODY_SCRIPT": str(mutant)},
             capture_output=True,
             text=True,
             check=False,
             timeout=30,
         )
         self.assertNotEqual(probe.returncode, 0, probe.stdout + probe.stderr)
+        self.assertNotIn("ModuleNotFoundError", probe.stderr)
         self.assertIn("FAIL: test_review_line_not_on_last_line_fails", probe.stderr)
+        self.assertIn("0 != 1", probe.stderr)
 
 
 if __name__ == "__main__":
