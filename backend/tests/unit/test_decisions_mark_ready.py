@@ -81,6 +81,11 @@ class _Publisher:
         self.draft = draft
         self.title = title
         self.subjects: list[str] = []
+        self.titles: list[str] = []
+        # sha -> its parents, in order; a sha absent here is a normal
+        # single-parent commit, which is what most heads are.
+        self.parents: dict[str, list[str]] = {}
+        self.subject_by_sha: dict[str, str] = {}
 
     async def pr_view(self, number):
         self.events.append("pr_view")
@@ -102,10 +107,16 @@ class _Publisher:
     async def commit_subject(self, sha):
         self.events.append("commit_subject")
         self.subjects.append(sha)
-        return "fix(x): y"
+        return self.subject_by_sha.get(sha, "fix(x): y")
+
+    async def commit_parents(self, sha):
+        self.events.append("commit_parents")
+        return self.parents.get(sha, [])
 
     async def update_pr(self, number, *, title=None):
         self.events.append("update_pr")
+        if title is not None:
+            self.titles.append(title)
         return {}
 
     async def mark_ready_for_review(self, node_id):
@@ -156,13 +167,24 @@ def _task(**fields) -> SimpleNamespace:
 
 
 async def _ready(
-    *, statuses, ancestry=("diverged",), updated=True, error=None, task=None, lag=False
+    *,
+    statuses,
+    ancestry=("diverged",),
+    updated=True,
+    error=None,
+    task=None,
+    lag=False,
+    title="fix(x): y",
+    parents=None,
+    subjects=None,
 ):
     """Call `mark_ready` with every forge side faked; returns what the caller
     sees plus the two fakes and the shared event log."""
     events: list[str] = []
     world = _World(lag=lag)
-    publisher = _Publisher(events, world, statuses=statuses)
+    publisher = _Publisher(events, world, statuses=statuses, title=title)
+    publisher.parents.update(parents or {})
+    publisher.subject_by_sha.update(subjects or {})
     forge = _Forge(events, world, ancestry=ancestry, updated=updated, error=error)
     service = AcceptService(MagicMock())
     topic = SimpleNamespace(id=ROOM, project_id=PROJECT, status=TopicStatus.active)
@@ -409,4 +431,87 @@ async def test_a_forge_hiccup_does_not_stop_the_delivery():
 
     assert answer["ready"] is True
     assert forge.update_calls == []
+    assert "mark_ready_for_review" in events
+
+
+@pytest.mark.anyio
+async def test_the_ready_title_follows_the_first_parent_past_a_merge_commit():
+    """线自己用 `git merge origin/main` 解冲突后，head 就是那条合并提交，
+    它的标题是「merge main into …」—— 仓库的标题检查拒的正是这一行（#4302）。
+
+    标题要沿 first parent 回到这条线自己写的提交；second parent 是 main 的
+    历史。取错一边，写上去的就是别人的标题。"""
+    answer, publisher, _forge, events = await _ready(
+        statuses=[_status()],
+        title="WIP: 任务名",
+        parents={"sha-1": ["task-tip", "main-tip"]},
+        subjects={
+            "sha-1": "chore(main): merge main into the change",
+            "task-tip": "fix(x): y",
+            "main-tip": "fix(other): somebody else's work",
+        },
+    )
+
+    assert answer["ready"] is True
+    assert publisher.subjects == ["task-tip"]
+    assert publisher.titles == ["fix(x): y"]
+    assert events.index("update_pr") < events.index("mark_ready_for_review")
+
+
+@pytest.mark.anyio
+async def test_the_ready_title_reads_a_single_parent_head_once():
+    """普通 head 不多跳：它就是这条线自己写的提交，标题就是它的 subject。"""
+    answer, publisher, _forge, _events = await _ready(
+        statuses=[_status()], title="WIP: 任务名"
+    )
+
+    assert answer["ready"] is True
+    assert publisher.subjects == ["sha-1"]
+    assert publisher.titles == ["fix(x): y"]
+
+
+@pytest.mark.anyio
+async def test_the_ready_title_walks_five_merges_to_the_commit_the_task_wrote():
+    """五跳以内都走得到：边界真的被数进去了，别在最后一跳前放弃。"""
+    chain = {
+        "sha-1": ["m1", "base"],
+        "m1": ["m2", "base"],
+        "m2": ["m3", "base"],
+        "m3": ["m4", "base"],
+        "m4": ["m5", "base"],
+    }
+    answer, publisher, _forge, _events = await _ready(
+        statuses=[_status()],
+        title="WIP: 任务名",
+        parents=chain,
+        subjects={"m5": "fix(x): y"},
+    )
+
+    assert answer["ready"] is True
+    assert publisher.subjects == ["m5"]
+    assert publisher.titles == ["fix(x): y"]
+
+
+@pytest.mark.anyio
+async def test_the_ready_title_gives_up_on_a_merge_chain_longer_than_five():
+    """第六跳还是合并提交：不猜，占位标题保持不变。猜错就把别人的
+    「merge main into …」写上了 PR，正是这次要消灭的那一行。"""
+    chain = {
+        "sha-1": ["m1", "base"],
+        "m1": ["m2", "base"],
+        "m2": ["m3", "base"],
+        "m3": ["m4", "base"],
+        "m4": ["m5", "base"],
+        "m5": ["m6", "base"],
+    }
+    answer, publisher, _forge, events = await _ready(
+        statuses=[_status()],
+        title="WIP: 任务名",
+        parents=chain,
+        subjects={"m6": "fix(x): y"},
+    )
+
+    assert answer["ready"] is True
+    assert publisher.subjects == []
+    assert publisher.titles == []
     assert "mark_ready_for_review" in events

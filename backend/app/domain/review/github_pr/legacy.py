@@ -208,16 +208,9 @@ class GitHubPRClient:
             )
         return resp.json()
 
-    @_as_pr_error
-    async def commit_subject(self, sha: str) -> str | None:
-        """The first line of commit `sha`'s message, or None when GitHub
-        answers without one.
-
-        Read by `AcceptService.mark_ready`: a draft PR still titled with the
-        platform's placeholder is marked ready under the commit's own title,
-        because the full `CI required` that the ready flag starts reads the
-        PR's title, and a repository checking its own titles reads nothing
-        but `WIP:` there.
+    async def _commit(self, sha: str) -> dict:
+        """Commit `sha` as GitHub answers it — the one read `commit_subject`
+        and `commit_parents` project from.
 
         A refusal raises where the rest of this class raises — `GitHubPRError`,
         or `GitHubPRRateLimited` for the quota — not `GitHubPrError`: the two
@@ -238,8 +231,40 @@ class GitHubPRClient:
             if resp.status_code == 403 and "API rate limit exceeded" in resp.text:
                 raise GitHubPRRateLimited(refusal)
             raise GitHubPRError(refusal)
-        message = ((resp.json().get("commit") or {}).get("message") or "").strip()
+        return resp.json()
+
+    @_as_pr_error
+    async def commit_subject(self, sha: str) -> str | None:
+        """The first line of commit `sha`'s message, or None when GitHub
+        answers without one.
+
+        Read by `AcceptService.mark_ready`: a draft PR still titled with the
+        platform's placeholder is marked ready under the commit's own title,
+        because the full `CI required` that the ready flag starts reads the
+        PR's title, and a repository checking its own titles reads nothing
+        but `WIP:` there."""
+        message = ((await self._commit(sha)).get("commit") or {}).get("message") or ""
+        message = message.strip()
         return message.splitlines()[0] if message else None
+
+    @_as_pr_error
+    async def commit_parents(self, sha: str) -> list[str]:
+        """The shas of commit `sha`'s parents, first parent first; empty for
+        a root commit.
+
+        Read by `AcceptService.mark_ready` before `commit_subject`: a line
+        that resolved its lag with `git merge origin/main` ends on a
+        two-parent merge commit whose subject is 「merge main into …」, not the
+        title the work lands under. More than one parent is the structural
+        mark of that merge — the subject is free text and cannot say it — so
+        the caller walks the first parent until a single-parent commit turns
+        up."""
+        data = await self._commit(sha)
+        return [
+            str(parent.get("sha"))
+            for parent in (data.get("parents") or [])
+            if parent.get("sha")
+        ]
 
     async def pr_status(self, number: int) -> PullRequestStatus:
         """`pr_view`, parsed — the structured twin of the raw dict.

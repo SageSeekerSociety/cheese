@@ -401,6 +401,16 @@ class ForgejoPRClient:
             await self._request("PATCH", f"/pulls/{number}", json=payload)
         )
 
+    async def _commit(self, sha):
+        """Commit `sha` as Forgejo answers it — the one read `commit_subject`
+        and `commit_parents` project from.
+
+        `/git/commits/{sha}`, not `/commits/{sha}`: Forgejo routes the single
+        commit under `/git` (Gitea's GitHub-compatible alias for it is not in
+        Forgejo), which is the path `landing_forge.py` and `forge_files.py`
+        already read a commit at."""
+        return await self._request("GET", f"/git/commits/{quote(sha, safe='')}")
+
     async def commit_subject(self, sha):
         """The first line of commit `sha`'s message, or None when Forgejo
         answers without one — `GitHubPRClient.commit_subject` on this forge.
@@ -409,18 +419,29 @@ class ForgejoPRClient:
         title starts with `WIP:`, so `mark_ready_for_review` below "un-drafts"
         it by rewriting that title. What it rewrites it TO is the placeholder
         minus the prefix — the task's own (Chinese) title — which is why the
-        reader of this method puts a real title on first.
-
-        `/git/commits/{sha}`, not `/commits/{sha}`: Forgejo routes the single
-        commit under `/git` (Gitea's GitHub-compatible alias for it is not in
-        Forgejo), which is the path `landing_forge.py` and `forge_files.py`
-        already read a commit at."""
-        data = await self._request("GET", f"/git/commits/{quote(sha, safe='')}")
+        reader of this method puts a real title on first."""
+        data = await self._commit(sha)
         # `_data` hands back None for a 200 with an empty body (the sibling
         # reader in `landing_forge.parent` guards the same way): no message is
         # the same answer as an empty one, and neither is a crash.
         message = (((data or {}).get("commit") or {}).get("message") or "").strip()
         return message.splitlines()[0] if message else None
+
+    async def commit_parents(self, sha):
+        """The shas of commit `sha`'s parents, first parent first; empty for
+        a root commit — `GitHubPRClient.commit_parents` on this forge.
+
+        Read by `AcceptService.mark_ready` before `commit_subject`: a line
+        that resolved its lag with `git merge main` ends on a two-parent merge
+        commit whose subject is 「merge main into …」, not the title the work
+        lands under. The caller follows the first parent until a single-parent
+        commit turns up."""
+        data = await self._commit(sha)
+        return [
+            str(parent.get("sha"))
+            for parent in ((data or {}).get("parents") or [])
+            if parent.get("sha")
+        ]
 
     async def mark_ready_for_review(self, node_id):
         pr = await self.pr_view(int(node_id))

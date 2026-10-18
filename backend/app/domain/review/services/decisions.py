@@ -166,6 +166,13 @@ async def _rebase_behind_before_ready(
     )
 
 
+#: How many merge commits `_ready_title` follows down the first parent before
+#: it gives up. A line merges the base branch in a handful of times at most;
+#: a longer chain is not this work's history, and leaving the placeholder on
+#: is the answer that cannot put somebody else's sentence on the PR.
+_READY_TITLE_HOPS = 5
+
+
 async def _ready_title(
     client: GitHubPRClient | ForgejoPRClient, view: dict
 ) -> str | None:
@@ -187,11 +194,28 @@ async def _ready_title(
     A subject that is itself a placeholder is left alone too: writing it would
     put the very title this is here to remove back on the PR, and the commit
     behind it is what has to change.
+
+    The head is not always the commit the task wrote: this repository resolves
+    a lag with `git merge origin/main` (AGENTS.md), and that merge commit
+    becomes the head. Its subject — 「merge main into …」 — is not the line the
+    work lands under, and it is exactly what the title check refuses (#4302).
+    More than one parent is the structural mark of that merge, so follow the
+    first parent until a single-parent commit turns up; the other parents are
+    the base branch's history, not this work's.
     """
     if not pr_publish.is_draft_title(view.get("title")):
         return None
     sha = str((view.get("head") or {}).get("sha") or "")
-    subject = await client.commit_subject(sha) if sha else None
+    if not sha:
+        return None
+    for _ in range(_READY_TITLE_HOPS + 1):
+        parents = await client.commit_parents(sha)
+        if len(parents) <= 1:
+            break
+        sha = parents[0]
+    else:
+        return None
+    subject = await client.commit_subject(sha)
     if subject is None or pr_publish.is_draft_title(subject):
         return None
     return subject[:255]
