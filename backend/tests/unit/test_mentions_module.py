@@ -143,9 +143,10 @@ def test_the_same_handle_twice_resolves_once():
 def test_person_mentions_takes_the_private_room_answer_as_a_keyword():
     """``dm`` 必填且 keyword-only：这一块不去读 `is_private`。
 
-    `is_private` 全仓只有 `turn/intake/rooms.py` 的 `_is_dm` 读点，棘轮连形参与关键
-    字实参都数（`test_is_private_read_points.py`）——参数按名字递进来，那个布尔就
-    不会在这里多出一个出处。"""
+    轮次组装只在 `turn/intake/rooms.py` 的 `_is_dm` 问一次「是不是私聊」，而
+    `is_private` 这个名字只许出现在 `topic/models.py`，连形参与关键字实参都算
+    （`test_is_private_read_points.py`）——参数按名字递进来，那个布尔就不会在这里
+    多出一个出处。"""
     signature = inspect.signature(mentions.person_mentions)
     dm = signature.parameters["dm"]
     assert dm.kind is inspect.Parameter.KEYWORD_ONLY

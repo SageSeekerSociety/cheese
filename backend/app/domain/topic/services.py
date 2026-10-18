@@ -174,7 +174,7 @@ class TopicService:
     async def lock_for_execution(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.lock(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if topic.status == TopicStatus.archived:
             raise ConflictError(say("roomArchivedUnarchiveFirst"))
         return topic
@@ -322,7 +322,7 @@ class TopicService:
     async def get_or_404(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.get(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         return topic
 
     async def list_for_project(
@@ -573,7 +573,7 @@ class TopicService:
         综合 is never archived."""
         topic = await self._repo.lock(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if topic.kind == TopicKind.root:
             raise ValidationError(say("projectRootCannotArchive"))
         if topic.status == TopicStatus.archived:
@@ -743,7 +743,7 @@ class TopicService:
         会话在第 5 层，本包在第 2 层。"""
         topic = await self._repo.lock(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if topic.deleted_at is not None:
             raise UnprocessableEntityError(say("channelDeletedCannotUnarchive"))
         if topic.status != TopicStatus.archived:
