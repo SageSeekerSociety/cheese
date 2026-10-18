@@ -83,7 +83,6 @@
     "beDeferredImports": "Backend deferred imports",
     "domainImportGuard": "Domain import guard",
     "harnessBoundary": "Harness boundary",
-    "isPrivateReadPoints": "Private read points",
     "fileSizes": "File size",
     "fileSizesScope": "Only files this change touched",
     "vueTsc": "Vue type check",

@@ -221,60 +221,6 @@ def first_match_findings(records: list[RouteRecord]) -> list[Shadow]:
     return findings
 
 
-def checked_findings(records, frozen):
-    """Validate exact frozen registrations before subtracting any findings.
-
-    Used by --check. A frozen pair names its two leaves by path and handler,
-    never by registration position, so a route added or removed anywhere else
-    leaves the exemption untouched. A pair whose leaves are gone, duplicated or
-    no longer shadowing fails on purpose: a stale entry fails even when no
-    currently reported shadow remains.
-    """
-    findings = first_match_findings(records)
-    positions = {id(record): position for position, record in enumerate(records)}
-
-    def leaf(path, endpoint, protocol):
-        found = [
-            record
-            for record in records
-            if (record.path, record.endpoint, record.protocol)
-            == (path, endpoint, protocol)
-        ]
-        if len(found) != 1:
-            raise ValueError(
-                f"stale frozen pair: {path} ({endpoint}) is registered "
-                f"{len(found)} times, expected exactly one"
-            )
-        return found[0]
-
-    exempt = set()
-    for pair in frozen:
-
-        def stale(pair=pair):
-            raise ValueError(f"stale frozen pair: {pair}")
-
-        if not pair.why.strip() or (pair.protocol == "ws" and pair.method != "WS"):
-            stale()
-        earlier = leaf(pair.earlier_path, pair.earlier_endpoint, pair.protocol)
-        later = leaf(pair.later_path, pair.later_endpoint, pair.protocol)
-        if positions[id(earlier)] >= positions[id(later)]:
-            stale()
-        if not _full(later, pair.witness, pair.protocol, pair.method):
-            stale()
-        winner = _first_full(records, pair.witness, pair.protocol, pair.method)
-        if winner is not earlier:
-            stale()
-        key = (earlier.index, later.index, pair.protocol, pair.method)
-        if key in exempt:
-            stale()
-        exempt.add(key)
-    return [
-        f
-        for f in findings
-        if (f.earlier.index, f.later.index, f.later.protocol, f.method) not in exempt
-    ]
-
-
 def section_marker(name: str, status: int) -> str:
     """The line that opens one `--all` section, carrying that section's status.
 
@@ -322,12 +268,7 @@ def _emit(records: list[RouteRecord], header: dict) -> tuple[int, str]:
 
 def _check(records: list[RouteRecord]) -> tuple[int, str]:
     """The first-FULL guard: 1 as soon as one shadow is provable."""
-    from scripts.route_index_frozen import FROZEN
-
-    try:
-        findings = checked_findings(records, FROZEN)
-    except ValueError as exc:
-        return 1, str(exc)
+    findings = first_match_findings(records)
     lines = [
         f"[{finding.kind}] {finding.later.protocol}/{finding.method} "
         f"#{finding.earlier.index} {finding.earlier.path} "

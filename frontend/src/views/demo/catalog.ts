@@ -34,9 +34,11 @@ import { ACCOUNT_ENTRIES } from './catalog/account'
 import { ANALYTICS_ENTRIES } from './catalog/analytics'
 import { COMMON_ENTRIES } from './catalog/common'
 import { CONVERSATION_ENTRIES } from './catalog/conversation'
+import { DOC_SHARE_ENTRIES } from './catalog/doc-share'
 import { NAVIGATION_ENTRIES } from './catalog/navigation'
 import { PANEL_TABS_ENTRIES } from './catalog/panel-tabs'
 import { PANEL_VIEW_ENTRIES } from './catalog/panel-views'
+import { TEAM_DOCS_ENTRIES } from './catalog/team-docs'
 import { ACCEPT_ENTRIES } from './catalogAccept'
 import { ADMIN_ENTRIES } from './catalogAdmin'
 import { ATTACHMENT_ENTRIES } from './catalogAttachments'
@@ -51,7 +53,6 @@ import { DOC_BLOCK_ENTRIES } from './catalogDoc'
 import { DOC_LINE_ENTRIES } from './catalogDocLine'
 import { FEEDBACK_ENTRIES } from './catalogFeedback'
 import { HOME_ENTRIES } from './catalogHome'
-import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { LIBRARY_ENTRIES } from './catalogLibrary'
 import { MARKET_ENTRIES } from './catalogMarket'
 import { MODELS_ENTRIES } from './catalogModels'
@@ -89,6 +90,8 @@ export const CATALOG: CatalogEntry[] = [
   // 账号与反馈、面板三格）拆在 `catalog/` 目录下，每册一个场景，理由写在各自
   // 文件头上。下面带着 `...` 的还是原来那批同级分册，位置一处没动。
   ...COMMON_ENTRIES,
+  ...TEAM_DOCS_ENTRIES,
+  ...DOC_SHARE_ENTRIES,
   ...CONVERSATION_ENTRIES,
   ...ACCEPT_BAR_ENTRIES,
   ...PANEL_TABS_ENTRIES,
@@ -124,9 +127,8 @@ export const CATALOG: CatalogEntry[] = [
   // 定时与触发和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
   // `catalogScenesWorkspaceFixtures.ts`。
   ...SCENES_MISC_ENTRIES,
-  // 第三批拆出来的画面（管理员看板告警、小队知识库、后台成员管理）在自己的文件里：
-  // `catalogScenesMisc2.ts`，数据在 `catalogScenesMisc2Fixtures.ts`（知识库那几条复用
-  // `catalogKnowledgeFixtures.ts`）。
+  // 第三批拆出来的画面（管理员看板告警、后台成员管理）在自己的文件里：
+  // `catalogScenesMisc2.ts`，数据在 `catalogScenesMisc2Fixtures.ts`。
   ...SCENES_MISC2_ENTRIES,
   ...SCENES_MISC3_ENTRIES,
   // 第四批拆出来的画面（空间名录、小队链接落地页、小队项目列表、提问页）在自己的文件里：
@@ -144,9 +146,6 @@ export const CATALOG: CatalogEntry[] = [
   // 通知渲染那一组（十件「一条动态长什么样」，数据在 `catalogNotificationsFixtures.ts`）
   // 在自己的文件里：`catalogNotifications.ts`。
   ...NOTIFICATION_ENTRIES,
-  // 知识库那六件（从 1508 行的 Knowledge.vue 拆出来的四块模板 + 两个对话框）在自己的
-  // 文件里：`catalogKnowledge.ts`（数据在 `catalogKnowledgeFixtures.ts`）。
-  ...KNOWLEDGE_ENTRIES,
   // 资料库页拆出来的四件：`catalogLibrary.ts`。
   ...LIBRARY_ENTRIES,
   // 命令面板拆出来的四块（顶上那一栏、结果、桌面上的操作清单、底栏）：`catalogPalette.ts`。

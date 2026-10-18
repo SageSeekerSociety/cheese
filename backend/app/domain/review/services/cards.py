@@ -68,7 +68,7 @@ async def _topic_or_404(self: pkg.AcceptService, topic_id: uuid.UUID) -> Topic:
     """
     place = await PlaceResolver(self._session).resolve(topic_id)
     if place is None:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     return place.room
 
 

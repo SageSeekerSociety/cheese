@@ -40,11 +40,8 @@ this suite — so there is no file to regenerate and no conflict to
 resolve in it. After adding, removing or reordering routes, from `backend/` run
 
 - `uv run python -m scripts.route_index --check` — no later route is provably
-  shadowed by an earlier one. The frozen pairs in
-  `scripts/route_index_frozen.py` name their two leaves by path and handler, so a
-  route added elsewhere never moves them. Never freeze a newly introduced
-  shadowing relationship just to clear the check, and never pin a pair by
-  registration position.
+  shadowed by an earlier one. A shadow is fixed by reordering or narrowing the
+  earlier route; nothing exempts one.
 
 Keep a partial index's predicate and its querying expression aligned, including
 literal values and casts; a parameterised or differently spelled expression may

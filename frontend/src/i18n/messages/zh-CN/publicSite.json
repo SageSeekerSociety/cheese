@@ -321,5 +321,11 @@
     "desktopHint": "在电脑上打开这一页下载",
     "copyLink": "复制链接",
     "copied": "已复制"
+  },
+  "sharedDoc": {
+    "pageTitle": "分享的文档",
+    "updated": "更新于 {time}",
+    "gone": "这条分享链接已失效",
+    "loadFailed": "文档加载失败"
   }
 }

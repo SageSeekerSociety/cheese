@@ -1,9 +1,8 @@
 """The route-index collector and first-match guard (v6 reading-boundary
 pilot): the counter-example set — real shadows are provable, parameterized
-later routes are witnesses, frozen pairs cite exact registrations, and
-protocols never cross. Real-app inventory assertions run under the fixed
-profile in the existing API-addressing contract suite. The index is never
-committed, so nothing here reads or writes one.
+later routes are witnesses, and protocols never cross. Real-app inventory
+assertions run under the fixed profile in the existing API-addressing contract
+suite. The index is never committed, so nothing here reads or writes one.
 """
 
 from fastapi import APIRouter, FastAPI
@@ -79,29 +78,6 @@ def test_different_methods_and_protocols_never_shadow():
         (["POST"], "/users/invite-codes", "create_invite_code"),
     )
     assert first_match_findings(collect(app)) == []
-
-
-def test_a_frozen_tuple_suppresses_exactly_itself():
-    from scripts.route_index_frozen import FROZEN
-
-    (pair,) = FROZEN
-    key = (
-        pair.earlier_path,
-        pair.earlier_endpoint,
-        pair.later_path,
-        pair.later_endpoint,
-    )
-    assert key == (
-        "/users/{userId}",
-        "app.api.routes.users.account.get_user",
-        "/users/invite-codes",
-        "app.api.routes.users.invite_codes.list_invite_codes",
-    ), "the frozen tuple cites the concrete registration records"
-    wrong = (pair.earlier_path, pair.earlier_endpoint, pair.later_path, "other")
-    assert wrong not in {
-        (f.earlier_path, f.earlier_endpoint, f.later_path, f.later_endpoint)
-        for f in FROZEN
-    }, "a near-miss is not exempt"
 
 
 def test_records_keep_their_methods_for_the_http_intersection():

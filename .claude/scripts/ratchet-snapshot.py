@@ -72,7 +72,7 @@ class Check:
     rules: tuple[str, ...] = ()
     #: `ignore_imports` for a file whose baseline lives beside its rules.
     strip: str | None = None
-    #: A pytest ledger's table (`_EXEMPT`, `_LEDGER`, `BASELINE`) lives inside
+    #: A pytest ledger's table (`_EXEMPT`, `_LEDGER`) lives inside
     #: the module that is also its rule. Naming it here cuts it out of the
     #: fingerprint, because paying an entry off is the debt payment the page
     #: counts — without this, dropping one exemption reads as a rule change.
@@ -81,9 +81,9 @@ class Check:
     #: Read by importing the module and evaluating the expression in its
     #: namespace — the ledger IS the number, and the test asserts the tree still
     #: matches it. An expression rather than an attribute name because a
-    #: ledger's unit is not always its length: `BASELINE` in the is_private
-    #: check maps each file to HOW MANY read points it holds, so those 12 files
-    #: are 20 read points and `len()` would report the files instead.
+    #: ledger's unit is not always its length: a table that maps each file to
+    #: HOW MANY entries it holds is counted by summing, and `len()` would report
+    #: the files instead.
     probe: tuple[str, str] | None = None
     #: True for a check whose verdict comes from a test run rather than a record.
     ledger: bool = False
@@ -200,15 +200,6 @@ CHECKS: tuple[Check, ...] = (
         cwd="backend",
         rules=("backend/tests/unit/test_harness_boundary.py",),
         baseline="_LEDGER",
-        ledger=True,
-    ),
-    Check(
-        id="is-private-read-points",
-        area=BOUNDARY,
-        argv=("python", "-m", "pytest", "tests/unit/test_is_private_read_points.py", "-q"),
-        cwd="backend",
-        rules=("backend/tests/unit/test_is_private_read_points.py",),
-        baseline="BASELINE",
         ledger=True,
     ),
     Check(
@@ -507,7 +498,7 @@ def _strip_ignore_imports(text: str) -> bytes:
 def _strip_baseline_table(text: str, name: str) -> bytes:
     """`text` with the top-level `name = ...` statement removed.
 
-    `_EXEMPT`, `_LEDGER` and `BASELINE` live inside the modules that also hold
+    `_EXEMPT` and `_LEDGER` live inside the modules that also hold
     the rules, so a fingerprint over the whole file would call every exemption
     change a change of rule — and the exemption that just disappeared is the
     debt payment the page is supposed to show, not a new ruler. Parsed with
@@ -1067,7 +1058,7 @@ def self_test() -> int:
         # tree is from the ledger is a number only when the test passed. The
         # fixture holds two files and three entries, so a probe that counted
         # files instead of entries would report 2 here — which is the mistake
-        # the is_private ledger's BASELINE invites.
+        # a table of per-file counts invites.
         (root / "ledger_probe.py").write_text('_EXEMPT = {"a": 1, "b": 2}\n')
         ledger = Check(
             id="ledger",
