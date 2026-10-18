@@ -888,6 +888,26 @@ def jobs_of(text):
     return jobs
 
 
+def steps_of(job_text):
+    """The top-level steps and scalar keys of a workflow job."""
+    lines = job_text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.rstrip() == "    steps:"), None)
+    if start is None:
+        raise AssertionError("job has no steps: mapping")
+    steps = []
+    for line in lines[start + 1:]:
+        if line.strip() and len(line) - len(line.lstrip()) < 6:
+            break
+        item = re.match(r"^      - ([\w-]+):[ \t]*(.*)$", line)
+        if item:
+            steps.append({item.group(1): item.group(2)})
+        elif steps:
+            key = re.match(r"^        ([\w-]+):[ \t]*(.*)$", line)
+            if key:
+                steps[-1][key.group(1)] = key.group(2)
+    return steps
+
+
 def condition_holds(expression, event_name, draft, cancelled=False):
     """Whether a workflow ``if:`` holds on a plain event.
 
@@ -1391,6 +1411,63 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertEqual(git_calls.read_text(), "2",
                              "the base fetch was not retried")
 
+
+    def test_required_backend_download_retries_once_after_cleaning_a_failure(self):
+        required = jobs_of(self.text)["required"]
+        steps = steps_of(required["text"])
+        downloads = [step for step in steps
+                     if step.get("uses", "").startswith("actions/download-artifact@")]
+        self.assertEqual(len(downloads), 2, "the failed download must get exactly one retry")
+        first, retry = downloads
+        self.assertEqual(first["id"], "download_backend_artifacts")
+        self.assertEqual(first["if"], "needs.backend.result == 'success'")
+        self.assertEqual(first["continue-on-error"], "true")
+        self.assertNotIn("continue-on-error", retry,
+                         "a failed retry must fail CI required")
+        self.assertEqual(first["uses"], retry["uses"],
+                         "the retry must keep the pinned download action")
+        self.assertEqual(required["text"].count("pattern: backend-*"), 2)
+        self.assertEqual(required["text"].count("path: ${{ runner.temp }}/backend-artifacts"), 2)
+
+        clear = next(step for step in steps
+                     if step.get("id") == "clear_backend_artifacts")
+        self.assertEqual(clear["if"],
+                         "steps.download_backend_artifacts.outcome == 'failure'")
+        self.assertEqual(clear["run"], 'rm -rf "$RUNNER_TEMP/backend-artifacts"')
+        self.assertNotIn("continue-on-error", clear,
+                         "a failed cleanup must fail CI required")
+        self.assertEqual(
+            retry["if"],
+            "steps.download_backend_artifacts.outcome == 'failure' && "
+            "steps.clear_backend_artifacts.outcome == 'success'",
+        )
+
+        coverage = next(step for step in steps
+                        if step.get("name") == "Backend coverage complete")
+        self.assertLess(steps.index(first), steps.index(clear))
+        self.assertLess(steps.index(clear), steps.index(retry))
+        self.assertLess(steps.index(retry), steps.index(coverage))
+        self.assertEqual(coverage["if"], "needs.backend.result == 'success'")
+        self.assertNotIn("continue-on-error", coverage,
+                         "incomplete shard coverage must fail CI required")
+
+    def test_required_backend_artifact_cleanup_failure_is_a_hard_failure(self):
+        steps = steps_of(jobs_of(self.text)["required"]["text"])
+        clear = next(step for step in steps
+                     if step.get("id") == "clear_backend_artifacts")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "rm", "exit 1\n")
+            proc = subprocess.run(
+                ["bash", "-e", "-c", clear["run"]],
+                env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                     "RUNNER_TEMP": str(tmp)},
+                cwd=tmp, capture_output=True, text=True,
+            )
+        self.assertNotEqual(proc.returncode, 0, "cleanup failure was swallowed")
+        self.assertNotIn("continue-on-error", clear)
 
     def test_required_ci_checks_backend_shard_coverage_exactly_once(self):
         """Every collected backend case ran on exactly one shard — checked by
