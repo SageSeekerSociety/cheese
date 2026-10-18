@@ -91,8 +91,6 @@ const {
   attribution,
   attributionSaving,
   attributionError,
-  attributionChoice,
-  attributionItems,
   saveAttribution,
   connectingGithubRepo,
   connectingGithubAccount,
@@ -457,11 +455,10 @@ function close() {
             @clear-notice="githubRepoNotice = null"
           />
           <AttributionSettings
-            :choice="attributionChoice"
-            :items="attributionItems"
+            :mode="attribution?.mode ?? null"
+            :agent-name="agentName"
             :saving="attributionSaving"
             :error="attributionError"
-            :effective="attribution?.effective ?? false"
             @save="saveAttribution"
           />
           <GithubAccountSettings

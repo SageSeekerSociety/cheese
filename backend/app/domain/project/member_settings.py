@@ -30,7 +30,7 @@ MEMBER_SETTINGS: Final = frozenset(
         "execution_environment",
         "max_concurrent_turns",
         "task_naming",
-        "forge_requester_coauthor",
+        "commit_credit",
     }
 )
 

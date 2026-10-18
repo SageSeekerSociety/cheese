@@ -1,4 +1,4 @@
-"""Git identities and human role trailers for agent-authored deliveries."""
+"""Who a delivery is credited to: the task owner, the agent, the declared people."""
 
 import uuid
 from types import SimpleNamespace
@@ -10,43 +10,17 @@ from app.domain.topic_membership.services import TopicMemberService
 
 
 @pytest.fixture(autouse=True)
-def attribution_policy(monkeypatch):
+def project(monkeypatch):
+    """The project the topic belongs to; tests set its `settings`."""
     from app.domain.project.repositories import ProjectRepository
 
-    # Existing contribution-role cases explicitly opt out of automatic credit.
-    project = SimpleNamespace(settings={"forge_requester_coauthor": False})
+    project = SimpleNamespace(settings={})
 
     async def get(_self, _project_id):
         return project
 
     monkeypatch.setattr(ProjectRepository, "get", get)
     return project
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    "default,override,credited",
-    [
-        (True, None, True),
-        (False, None, False),
-        (True, False, False),
-        (False, True, True),
-    ],
-)
-async def test_requester_credit_obeys_project_override_and_deployment_default(
-    monkeypatch, attribution_policy, default, override, credited
-):
-    monkeypatch.setattr(identity.settings, "forge_attribution_default", default)
-    attribution_policy.settings = {"forge_requester_coauthor": override}
-    _roster_owner(monkeypatch, "alice")
-    _connected(monkeypatch, {"alice": ("42", "alice")})
-    who = await identity.attribution(None, _topic("alice"))
-    assert bool(who.coauthors) is credited
-    if credited:
-        assert who.coauthors == (
-            identity.GitIdentity("alice", "42+alice@users.noreply.github.com"),
-        )
-    assert who.author.name != "alice"
 
 
 def _ids() -> tuple[uuid.UUID, uuid.UUID]:
@@ -96,14 +70,12 @@ def test_coauthor_trailer_is_omitted_for_the_platform_itself():
     ) == ("Co-authored-by: octocat <583231+octocat@users.noreply.github.com>")
 
 
-def _topic(
-    created_by: str | None, parent_id: uuid.UUID | None = None
-) -> SimpleNamespace:
+def _topic(created_by: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
         project_id=uuid.uuid4(),
         created_by=created_by,
-        parent_id=parent_id,
+        parent_id=None,
         title="Test room",
     )
 
@@ -112,19 +84,8 @@ def _topic(
 _SEATED_AGENT = "cheese-a7a0268b96ff"
 
 
-def _roster_owner(monkeypatch, answer):
-    """Stand in for the room's roster. `answer` is a handle, None, an exception to
-    raise, or a dict mapping a topic id to any of those (for the parent/child pair
-    the co-author rule reads)."""
-
-    async def _owner_of(_self, topic_id):
-        found = answer.get(topic_id) if isinstance(answer, dict) else answer
-        if isinstance(found, BaseException):
-            raise found
-        return found
-
-    monkeypatch.setattr(TopicMemberService, "owner_of", _owner_of)
-
+@pytest.fixture(autouse=True)
+def seated_agent(monkeypatch):
     async def _agent_of(_self, topic_id):
         return _SEATED_AGENT
 
@@ -143,165 +104,22 @@ def _connected(monkeypatch, accounts: dict[str, tuple[str, str]]):
     )
 
 
-@pytest.mark.anyio
-async def test_requester_is_the_rooms_human_owner_not_the_agent_that_split_it(
-    monkeypatch,
-):
-    """The bug (PR #500, #504): a 分身 splits its sub-topics under its own
-    `cheese-<hex12>` handle, so `created_by` named a robot with no GitHub
-    account — the PR opened as the bot and the commits credited nobody. The
-    roster already recorded the real human; this reads it."""
-    _roster_owner(monkeypatch, "alice")
-    who = await identity.requester_handle(None, _topic("cheese-a7a0268b96ff"))
-    assert who == "alice"
-
-
-@pytest.mark.anyio
-async def test_a_room_a_human_opened_is_unchanged(monkeypatch):
-    """Owner and creator are the same person there — the answer must not move."""
-    _roster_owner(monkeypatch, "alice")
-    assert await identity.requester_handle(None, _topic("alice")) == "alice"
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    "roster",
-    [
-        pytest.param("cheese", id="owner_is_the_platform_agent"),
-        pytest.param("cheese-a7a0268b96ff", id="owner_is_a_topic_agent"),
-        pytest.param(None, id="room_has_no_owner"),
-        pytest.param(RuntimeError("roster unreadable"), id="roster_read_blew_up"),
-    ],
-)
-async def test_no_human_on_the_roster_falls_back_to_created_by(monkeypatch, roster):
-    """Every failure mode lands on the PREVIOUS behaviour, never worse than it
-    and never an exception: attribution must not be why a PR fails to open."""
-    _roster_owner(monkeypatch, roster)
-    assert await identity.requester_handle(None, _topic("bob")) == "bob"
-
-
-@pytest.mark.anyio
-async def test_nobody_at_all_resolves_to_nobody(monkeypatch):
-    """No owner and no creator — callers must get None, not an empty handle
-    they would go on to look up."""
-    _roster_owner(monkeypatch, None)
-    assert await identity.requester_handle(None, _topic(None)) is None
-    assert await identity.requester_handle(None, _topic("")) is None
-
-
-# --- Co-authors: who is credited on a change besides the person it belongs to ---
-#
-# 归属跟推进者走 (拍板 2026-08-17): when a room changes hands, the sub-topics split
-# out of the new driver's turns are the driver's — that is what keeps the accept
-# card landing on someone still working on it — and the person who asked for the
-# thing in the first place is credited with `Co-authored-by:` instead of vanishing.
-
-
-@pytest.mark.anyio
-async def test_the_parent_rooms_owner_is_credited_when_the_child_is_someone_elses(
-    monkeypatch,
-):
-    parent = uuid.uuid4()
-    child = _topic("cheese-a7a0268b96ff", parent_id=parent)
-    _roster_owner(monkeypatch, {child.id: "bob", parent: "alice"})
-    _connected(monkeypatch, {"alice": ("583231", "alice"), "bob": ("42", "bob")})
-
-    who = await identity.attribution(None, child)
-    assert who.handle == "bob"
-    assert who.requester == identity.GitIdentity(
-        "bob", "42+bob@users.noreply.github.com"
-    )
-    assert who.author == identity.agent_identity(_SEATED_AGENT)
-    assert who.coauthors == ()
-
-
-@pytest.mark.anyio
-async def test_a_room_that_never_changed_hands_credits_nobody_twice(monkeypatch):
-    """The redundancy this removed: one room has one git identity, so naming the
-    commit's own author as a co-author claimed a contributor who does not exist."""
-    parent = uuid.uuid4()
-    child = _topic("cheese-a7a0268b96ff", parent_id=parent)
-    _roster_owner(monkeypatch, {child.id: "alice", parent: "alice"})
-    _connected(monkeypatch, {"alice": ("583231", "alice")})
-
-    assert (await identity.attribution(None, child)).coauthors == ()
-
-
-@pytest.mark.anyio
-async def test_two_handles_on_one_github_account_are_not_credited_twice(monkeypatch):
-    """The handles differ, so the handle-level check passes — but they resolve to
-    the same account, and a trailer naming the commit's own author is exactly the
-    noise this removed."""
-    parent = uuid.uuid4()
-    child = _topic(None, parent_id=parent)
-    _roster_owner(monkeypatch, {child.id: "bob", parent: "bob-old"})
-    _connected(monkeypatch, {"bob": ("42", "bob"), "bob-old": ("42", "bob")})
-
-    assert (await identity.attribution(None, child)).coauthors == ()
-
-
-@pytest.mark.anyio
-async def test_a_top_level_room_has_no_coauthors_at_all(monkeypatch):
-    """The ordinary case, and the reason most changes now carry no such trailer:
-    nobody handed this work over, so there is no second contributor to name."""
-    _roster_owner(monkeypatch, "alice")
-    _connected(monkeypatch, {"alice": ("583231", "alice")})
-
-    assert (await identity.attribution(None, _topic("alice"))).coauthors == ()
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    "parent_owner",
-    [
-        pytest.param("cheese", id="parent_is_owned_by_the_platform_agent"),
-        pytest.param("cheese-c43d2e126d4f", id="parent_is_owned_by_a_topic_agent"),
-        pytest.param(None, id="parent_has_no_owner"),
-        pytest.param(RuntimeError("roster unreadable"), id="parent_roster_blew_up"),
-    ],
-)
-async def test_only_a_real_person_is_ever_credited(monkeypatch, parent_owner):
-    """芝士 is never a co-author (拍板 2026-08-17): every commit here is one she
-    typed, so the trailer would be true of every change and carry no information.
-    A broken roster read degrades the same way — silently, never by raising."""
-    parent = uuid.uuid4()
-    child = _topic("cheese-a7a0268b96ff", parent_id=parent)
-    _roster_owner(monkeypatch, {child.id: "bob", parent: parent_owner})
-    _connected(monkeypatch, {"bob": ("42", "bob")})
-
-    who = await identity.attribution(None, child)
-    assert who.handle == "bob"
-    assert who.coauthors == ()
-
-
-@pytest.mark.anyio
-async def test_a_coauthor_without_a_github_account_is_simply_not_credited(monkeypatch):
-    """`Co-authored-by:` only works with an address GitHub can link. Inventing one
-    would produce a trailer that looks like credit and links to nobody."""
-    parent = uuid.uuid4()
-    child = _topic(None, parent_id=parent)
-    _roster_owner(monkeypatch, {child.id: "bob", parent: "alice"})
-    _connected(monkeypatch, {"bob": ("42", "bob")})
-
-    who = await identity.attribution(None, child)
-    assert who.handle == "bob"
-    assert who.coauthors == ()
-
-
-# --- Which pieces of work went into this delivery (#189) ---
-#
-# A commit's human trailers cannot answer that, and neither can `Co-authored-by:
-# Claude Fable 5`, which every Claude Code commit anywhere carries. The answer is
-# the one the card was FILED with: the room says whose code this is, because the
-# room is the only party that knows, and nothing here guesses when it doesn't.
-
-
-def _task(title: str) -> SimpleNamespace:
+def _task(
+    title: str = "做一件事",
+    *,
+    owner: str | None = None,
+    created_by: str | None = None,
+    contributors: tuple[str, ...] = (),
+    reporter: str | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
         title=title,
-        owner_handle=None,
-        created_by=None,
+        owner_handle=owner,
+        created_by=created_by,
+        author_handle=_SEATED_AGENT,
+        contributor_handles=list(contributors),
+        reporter_handle=reporter,
     )
 
 
@@ -326,7 +144,143 @@ def _rows(monkeypatch, tasks):
         wanted = set(task_ids)
         return [t for t in tasks if t.id in wanted]
 
+    async def _one(_session, task_id):
+        if isinstance(tasks, BaseException):
+            raise tasks
+        return next((t for t in tasks if t.id == task_id), None)
+
     monkeypatch.setattr(task_rows, "many", _many)
+    monkeypatch.setattr(task_rows, "one", _one)
+
+
+ALICE = identity.GitIdentity("alice", "583231+alice@users.noreply.github.com")
+APP = identity.app_identity(314883224)
+
+
+# --- Whose change it is: the task owner ---
+
+
+@pytest.mark.anyio
+async def test_the_owner_is_the_human_who_owns_the_task(monkeypatch):
+    task = _task(owner="alice", created_by="cheese-a7a0268b96ff")
+    _rows(monkeypatch, [task])
+    assert await identity.owner_handle(None, task.id) == "alice"
+
+
+@pytest.mark.anyio
+async def test_a_task_an_agent_owns_falls_back_to_the_human_who_created_it(
+    monkeypatch,
+):
+    task = _task(owner="cheese-a7a0268b96ff", created_by="alice")
+    _rows(monkeypatch, [task])
+    assert await identity.owner_handle(None, task.id) == "alice"
+
+
+@pytest.mark.anyio
+async def test_a_task_no_human_is_behind_credits_nobody(monkeypatch):
+    """An agent opened it and owns it. Nobody asked for this change, and
+    crediting the channel's owner instead would name someone who may never have
+    seen it."""
+    task = _task(owner="cheese-a7a0268b96ff", created_by="cheese")
+    _rows(monkeypatch, [task])
+    _connected(monkeypatch, {})
+    who = await identity.attribution(None, _topic("bob"), task_id=task.id)
+    assert who.owner_handle is None
+    assert who.coauthors == ()
+
+
+# --- The two credit modes ---
+
+
+@pytest.mark.anyio
+async def test_by_default_an_app_opened_pr_credits_the_owner_as_coauthor(monkeypatch):
+    task = _task(owner="alice")
+    _rows(monkeypatch, [task])
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+    who = await identity.attribution(None, _topic(), task_id=task.id, app=APP)
+    assert who.coauthors == (ALICE,)
+
+
+@pytest.mark.anyio
+async def test_a_pr_the_owner_opened_credits_the_app_beside_them(monkeypatch):
+    """GitHub makes the PR's opener the squash commit's author: the owner is
+    already on the commit, and the App is the co-author whose logo shows."""
+    task = _task(owner="alice")
+    _rows(monkeypatch, [task])
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+    who = await identity.attribution(
+        None, _topic(), task_id=task.id, opened_by=ALICE.email, app=APP
+    )
+    assert who.coauthors == (APP,)
+
+
+@pytest.mark.anyio
+async def test_an_owner_without_github_is_credited_under_the_platforms_address(
+    monkeypatch,
+):
+    task = _task(owner="alice")
+    _rows(monkeypatch, [task])
+    _connected(monkeypatch, {})
+    who = await identity.attribution(None, _topic(), task_id=task.id)
+    assert who.coauthors == (identity.platform_identity("alice"),)
+
+
+@pytest.mark.anyio
+async def test_the_agent_mode_names_no_owner(monkeypatch, project):
+    project.settings = {identity.CREDIT_SETTING: identity.CREDIT_AGENT}
+    task = _task(owner="alice", contributors=("coder",))
+    _rows(monkeypatch, [task])
+    _connected(monkeypatch, {"alice": ("583231", "alice"), "coder": ("42", "coder")})
+    who = await identity.attribution(
+        None, _topic(), card=_card([str(task.id)], task.id), task_id=task.id
+    )
+    assert who.coauthors == (
+        identity.GitIdentity("coder", "42+coder@users.noreply.github.com"),
+    )
+
+
+@pytest.mark.anyio
+async def test_a_declared_contributor_is_credited_in_either_mode(monkeypatch, project):
+    task = _task(owner="alice", contributors=("coder",), reporter="reporter")
+    _rows(monkeypatch, [task])
+    _connected(monkeypatch, {"coder": ("42", "coder")})
+    coder = identity.GitIdentity("coder", "42+coder@users.noreply.github.com")
+    for mode in identity.CREDIT_MODES:
+        project.settings = {identity.CREDIT_SETTING: mode}
+        who = await identity.attribution(
+            None, _topic(), card=_card([str(task.id)], task.id)
+        )
+        assert coder in who.coauthors
+        assert who.reporters == (identity.platform_identity("reporter"),)
+
+
+@pytest.mark.anyio
+async def test_the_author_of_the_commit_is_never_also_its_coauthor(monkeypatch):
+    """A contributor who opened the PR is already its author."""
+    task = _task(owner="alice", contributors=("alice",))
+    _rows(monkeypatch, [task])
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+    who = await identity.attribution(
+        None,
+        _topic(),
+        card=_card([str(task.id)], task.id),
+        opened_by=ALICE.email,
+        app=APP,
+    )
+    assert who.coauthors == (APP,)
+
+
+def test_an_unknown_mode_reads_as_the_owner_mode():
+    assert identity.credit_mode({}) == identity.CREDIT_OWNER
+    assert identity.credit_mode({identity.CREDIT_SETTING: "x"}) == identity.CREDIT_OWNER
+
+
+# --- Which pieces of work went into this delivery (#189) ---
+#
+# A commit's human trailers cannot answer that, and neither can `Co-authored-by:
+# Claude Fable 5`, which every Claude Code commit anywhere carries. The answer is
+# the one the card was FILED with: the room says whose code this is, because the
+# room is the only party that knows, and nothing here guesses when it doesn't.
 
 
 @pytest.mark.anyio
@@ -334,7 +288,6 @@ async def test_the_delivery_names_the_work_the_card_declared(monkeypatch):
     mine = _task("补 trailer")
     theirs = _task("修 flaky")
     _rows(monkeypatch, [mine, theirs])
-    _roster_owner(monkeypatch, "alice")
     _connected(monkeypatch, {"alice": ("583231", "alice")})
 
     who = await identity.attribution(
@@ -354,7 +307,6 @@ async def test_work_the_card_did_not_declare_is_not_named(monkeypatch):
     placeholder = _task("占位")
     running = _task("还在跑")
     _rows(monkeypatch, [mine, placeholder, running])
-    _roster_owner(monkeypatch, "alice")
     _connected(monkeypatch, {"alice": ("583231", "alice")})
 
     who = await identity.attribution(None, _topic("alice"), card=_card([str(mine.id)]))
@@ -368,7 +320,6 @@ async def test_a_card_that_declared_nothing_names_nobody(monkeypatch):
     wrong name in permanent history is worse than no name, because an audit
     believes it."""
     _rows(monkeypatch, [_task("补 trailer")])
-    _roster_owner(monkeypatch, "alice")
     _connected(monkeypatch, {"alice": ("583231", "alice")})
 
     empty = await identity.attribution(None, _topic("alice"), card=_card([]))
@@ -382,7 +333,6 @@ async def test_a_declared_id_whose_row_is_gone_costs_only_its_own_line(monkeypat
     what it names. The rest of the batch still gets its credit."""
     mine = _task("补 trailer")
     _rows(monkeypatch, [mine])
-    _roster_owner(monkeypatch, "alice")
     _connected(monkeypatch, {"alice": ("583231", "alice")})
 
     who = await identity.attribution(
@@ -397,46 +347,12 @@ async def test_a_declared_id_whose_row_is_gone_costs_only_its_own_line(monkeypat
 async def test_unreadable_work_costs_the_trailers_and_nothing_else(monkeypatch):
     """Same rule as every other part of attribution: a trailer is not worth
     failing a merge, and one broken lookup must not take the rest with it — the
-    person who asked still gets their credit."""
+    rest of the attribution still resolves."""
     _rows(monkeypatch, RuntimeError("tasks unreadable"))
-    _roster_owner(monkeypatch, "alice")
     _connected(monkeypatch, {"alice": ("583231", "alice")})
 
     who = await identity.attribution(
         None, _topic("alice"), card=_card([str(uuid.uuid4())])
     )
     assert who.tasks == ()
-    assert who.handle == "alice"
-    assert who.requester == identity.GitIdentity(
-        "alice", "583231+alice@users.noreply.github.com"
-    )
-
-
-@pytest.mark.anyio
-async def test_declared_reporter_and_code_contributor_have_distinct_git_trailers(
-    monkeypatch,
-):
-    import subprocess
-
-    from app.domain.review.pr_text import pr_trailers
-
-    task = _task("fix bug")
-    task.reporter_handle = "reporter"
-    task.contributor_handles = ["coder"]
-    _rows(monkeypatch, [task])
-    _roster_owner(monkeypatch, "requester")
-    _connected(monkeypatch, {"coder": ("42", "coder")})
-    topic = _topic("requester")
-    who = await identity.attribution(
-        None, topic, card=_card([str(task.id)]), decided_by="reviewer"
-    )
-    body = pr_trailers(topic, "reviewer", who)
-    parsed = subprocess.check_output(
-        ["git", "interpret-trailers", "--parse"], input="Fix bug\n\n" + body, text=True
-    )
-    assert "Requested-by: requester <requester@zhishi.local>" in parsed
-    assert "Reported-by: reporter <reporter@zhishi.local>" in parsed
-    assert "Reviewed-by: reviewer <reviewer@zhishi.local>" in parsed
-    assert "Co-authored-by: coder <42+coder@users.noreply.github.com>" in parsed
-    assert "Co-authored-by: requester" not in parsed
     assert who.author == identity.agent_identity(_SEATED_AGENT)

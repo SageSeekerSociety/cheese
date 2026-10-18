@@ -81,11 +81,7 @@ beforeEach(() => {
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.getGithubConnection).mockResolvedValue({ connected: false })
   vi.mocked(api.getForgeConnection).mockResolvedValue({ kind: 'github_app', connected: false, repo: null, url: null })
-  vi.mocked(api.getForgeAttribution).mockResolvedValue({
-    requester_coauthor: null,
-    effective: true,
-    deployment_default: true,
-  })
+  vi.mocked(api.getCommitCredit).mockResolvedValue({ mode: 'owner' })
 })
 
 // 设置画在盖住整个窗口的一层里（挂在 body 上），一次画一栏：打开哪一栏由 `section` 定。
@@ -135,8 +131,9 @@ describe('project settings', () => {
       expect(wrapper.element.querySelector('[data-testid="github-repository"]')).toBeNull()
       // Nobody has an account on the platform's forge: a link there lands on a sign-in page.
       expect(wrapper.element.querySelector('[data-testid="forge-repository"] a')).toBeNull()
-      expect(wrapper.element.querySelector('[data-testid="forge-attribution"]')?.textContent).toContain('当前已开启')
-      expect(api.setForgeAttribution).not.toHaveBeenCalled()
+      // Commit credit is the project's own choice, whichever forge holds the code.
+      expect(wrapper.element.querySelector('[data-testid="forge-attribution"]')).not.toBeNull()
+      expect(api.setCommitCredit).not.toHaveBeenCalled()
     } finally {
       wrapper.unmount()
     }

@@ -370,6 +370,7 @@ async def _poll_pr_card(
             protection=protection,
             chat_service=chat_service,
             runner=runner,
+            opened_by=status.opened_by,
         )
         return
     await self._session.flush()
