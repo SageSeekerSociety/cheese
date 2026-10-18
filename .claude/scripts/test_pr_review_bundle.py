@@ -38,14 +38,18 @@ case "$*" in
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac
 """
-#: pyright --outputjson's shape, reporting one error on line 3 of whatever file it is given.
+#: pyright --outputjson's shape: for each file it is given, one error on line 3 (a changed
+#: line of a.py in this fixture) and one on line 6 (unchanged), so a ⚠ that marks every
+#: error is told apart from one that marks the right ones.
 FAKE_PYRIGHT = r"""#!/usr/bin/env python3
 import json, os, sys
 files = [a for a in sys.argv[1:] if not a.startswith("-")]
 print(json.dumps({"generalDiagnostics": [
     {"file": os.path.abspath(f), "severity": "error", "message": "FAKE TYPE ERROR",
      "rule": "reportAssignmentType", "range": {"start": {"line": 2, "character": 0}}}
-    for f in files]}))
+    for f in files] + [
+    {"file": os.path.abspath(f), "severity": "error", "message": "FAKE OFF THE DIFF",
+     "range": {"start": {"line": 5, "character": 0}}} for f in files]}))
 """
 
 A_BASE = "def compute(x):\n    return x + 1\n\n\ndef unrelated_helper():\n    return 0\n"
@@ -173,12 +177,69 @@ class Bundle(unittest.TestCase):
         self.assertNotIn("## Inherited conclusion", Path(out.stdout.strip()).read_text())
         self.assertIn("blocker/major", out.stderr)
 
+    def test_a_a_previous_round_of_another_commit_is_not_inherited(self):
+        prev = self.tmp / "prev-other.md"
+        prev.write_text(f"独立 review：head {self.base[:8]} 结论 无 blocker/major\n")
+        result, why = bundle.inherit(str(self.work), "main", self.reviewed, self.merged, str(prev))
+        self.assertIsNone(result)
+        self.assertIn(f"上一轮审的是 {self.base[:8]}", why)
+
     def test_a_without_the_previous_result_nothing_is_inherited(self):
         result, why = bundle.inherit(str(self.work), "main", self.reviewed, self.merged, "")
         self.assertIsNone(result)
         self.assertIn("没有上一轮", why)
 
+    def test_a_a_kept_major_on_the_same_head_is_not_overwritten(self):
+        # A re-prepare carries this head's own result over; inheriting must not blank it.
+        prev = self.tmp / "prev-clean.md"
+        prev.write_text(f"独立 review：head {self.reviewed[:8]} 结论 无 blocker/major\n")
+        kept = self.tmp / "kept-major.json"
+        kept.write_text(json.dumps({"findings": [{"severity": "major"}]}))
+        result, why = bundle.inherit(str(self.work), "main", self.reviewed, self.merged, str(prev), str(kept))
+        self.assertIsNone(result)
+        self.assertIn("1 条 blocker/major", why)
+        kept.write_text(json.dumps({"findings": [{"severity": "minor"}]}))
+        result, _ = bundle.inherit(str(self.work), "main", self.reviewed, self.merged, str(prev), str(kept))
+        self.assertIsNotNone(result, "a kept round with only minors is no reason to re-review")
+
     # ----------------------------------------------------------------- b) slices
+    def commit_on_branch(self, name, start, files):
+        work = self.work
+        git(work, "checkout", "-q", "-b", name, start)
+        try:
+            for path, text in files.items():
+                (work / path).write_text(text)
+            git(work, "commit", "-qam", name)
+            return git(work, "rev-parse", "HEAD")
+        finally:
+            git(work, "checkout", "-q", "main")
+
+    def test_b_a_removed_line_starting_with_two_dashes_is_not_a_file_header(self):
+        start = self.commit_on_branch("dash-base", self.base, {
+            "a.py": "X = '''\n-- banner\n'''\n\n\ndef late(x):\n    return x\n"})
+        head = self.commit_on_branch("dash-head", start, {
+            "a.py": "X = '''\n'''\n\n\ndef late(x):\n    return x + 1\n"})
+        text = "\n".join(bundle.section_slices(str(self.work), start, head))
+        self.assertIn("### 改动 `late`", text)
+
+    def test_b_a_function_under_an_if_is_sliced(self):
+        start = self.commit_on_branch("if-base", self.base, {
+            "a.py": "import sys\n\nif sys.version_info >= (3,):\n    def guarded(x):\n        return x\n"})
+        head = self.commit_on_branch("if-head", start, {
+            "a.py": "import sys\n\nif sys.version_info >= (3,):\n    def guarded(x):\n        return x * 2\n"})
+        text = "\n".join(bundle.section_slices(str(self.work), start, head))
+        self.assertIn("### 改动 `guarded`", text)
+
+    def test_b_a_pure_deletion_does_not_mark_the_next_function_changed(self):
+        head = self.commit_on_branch("drop-first", self.base, {
+            "a.py": "def unrelated_helper():\n    return 0\n"})
+        files = bundle.changed_lines(str(self.work), self.base, head)
+        self.assertEqual(files["a.py"][1], set(), "a pure deletion adds no changed lines")
+        text = "\n".join(bundle.section_slices(str(self.work), self.base, head))
+        self.assertIn("### 删除 `compute`", text)
+        self.assertNotIn("改动 `unrelated_helper`", text)
+
+
     def test_b_slices_carry_the_call_site_and_no_unrelated_file(self):
         text = "\n".join(bundle.section_slices(str(self.work), self.base, self.reviewed))
         self.assertIn("### 改动 `compute`（a.py:1）", text)
@@ -207,6 +268,7 @@ class Bundle(unittest.TestCase):
         text = Path(out.stdout.strip()).read_text()
         self.assertIn("## B2. 单文件 pyright", text)
         self.assertIn("⚠ `a.py:3` FAKE TYPE ERROR（reportAssignmentType）", text)
+        self.assertIn("\n- `a.py:6` FAKE OFF THE DIFF", text, "an error on an unchanged line is not marked")
 
     def test_c_real_pyright_reports_the_bad_assignment(self):
         cmd = bundle.find_pyright(str(REPO_ROOT), None)

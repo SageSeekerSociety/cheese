@@ -361,7 +361,8 @@ PY
     # deliverer's own §4 check, and nothing in the PR under review can reach it.
     if [ -f "$ROOT/$METHOD/bundle.py" ] \
       && python3 "$ROOT/$METHOD/bundle.py" inherit --repo "$ROOT" --base "$base" --since "$since" \
-           --head "$sha" --previous "$dir/previous.md" --out "$dir/result.json"; then
+           --head "$sha" --previous "$dir/previous.md" --kept "$dir/result.json" \
+           --out "$dir/result.json"; then
       inherited=yes
     fi
     cat >> "$dir/REVIEW.md" <<EOF

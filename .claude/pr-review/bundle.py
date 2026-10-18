@@ -69,8 +69,20 @@ def show(repo, rev, path):
 
 
 # ------------------------------------------------------------------ inherit
-def inherit(repo, base, since, head, previous):
+def kept_serious(kept):
+    """Blockers and majors in a result.json already in the round for this same head — one a
+    re-prepare carried over. Inheriting would overwrite it with an empty one."""
+    try:
+        findings = json.loads(Path(kept).read_text()).get("findings") or []
+    except (OSError, ValueError, AttributeError):
+        return 0
+    return sum(1 for f in findings if isinstance(f, dict) and f.get("severity") in ("blocker", "major"))
+
+
+def inherit(repo, base, since, head, previous, kept=""):
     """(result dict | None, reason). None means: review the increment as usual."""
+    if kept and Path(kept).is_file() and (n := kept_serious(kept)):
+        return None, f"这一版已经有一份审查结果，里面有 {n} 条 blocker/major，不拿继承盖掉它"
     prev = Path(previous) if previous else None
     if not prev or not prev.is_file():
         return None, "这台机器上没有上一轮的 REVIEW-RESULT.md，读不到它的结论，照常审增量"
@@ -98,26 +110,36 @@ def inherit(repo, base, since, head, previous):
 
 # --------------------------------------------------------------- 1. slices
 def changed_lines(repo, base, head):
-    """{path: (status, set of new-side line numbers touched, set of old-side lines removed)}."""
+    """{path: (status, new-side lines added or changed, old-side lines removed, new-side
+    anchors of pure deletions)}. An anchor is the line a deletion sat after: it places the
+    deletion inside a function for the slices, and is not a changed line for pyright."""
     out = {}
     names = git(repo, "diff", "--name-status", "--no-renames", base, head) or ""
     for line in names.splitlines():
         st, _, path = line.partition("\t")
         if CODE.search(path):
-            out[path] = (st[:1], set(), set())
+            out[path] = (st[:1], set(), set(), set())
     diff = git(repo, "diff", "-U0", "--no-renames", base, head, "--", *out) if out else ""
-    path = None
+    path, header = None, False
     for line in (diff or "").splitlines():
-        if line.startswith("--- "):
+        if line.startswith("diff --git "):
+            path, header = None, True
+        elif header and line.startswith("--- "):
             path = line[6:] if line.startswith("--- a/") else None
-        elif line.startswith("+++ "):
+        elif header and line.startswith("+++ "):
             # A deleted file's +++ is /dev/null: keep the --- side's path for its hunks.
             path = line[6:] if line.startswith("+++ b/") else path
-        elif path in out and (m := HUNK.match(line)):
+        elif m := HUNK.match(line):
+            # Past the header: a removed line reading `-- x` is `--- x` here, not a file name.
+            header = False
+            if path not in out:
+                continue
             o, oc, n, nc = int(m[1]), int(m[2] or 1), int(m[3]), int(m[4] or 1)
             out[path][2].update(range(o, o + oc))
-            # A pure deletion has no new lines; the line it sat after still marks the spot.
-            out[path][1].update(range(n, n + nc) if nc else (n, n + 1))
+            if nc:
+                out[path][1].update(range(n, n + nc))
+            else:
+                out[path][3].add(n)
     return out
 
 
@@ -129,16 +151,20 @@ def py_defs(src):
         return []
     out = []
 
-    def walk(nodes, prefix):
-        for node in nodes:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                first = min([node.lineno] + [d.lineno for d in node.decorator_list])
-                out.append((prefix + node.name, node.name, first, node.end_lineno or node.lineno))
-                walk(node.body, prefix + node.name + ".")
-            elif isinstance(node, ast.ClassDef):
-                walk(node.body, prefix + node.name + ".")
+    def walk(node, prefix):
+        # Every child, not only bodies of defs: a function under `if`, `try` or `with` is
+        # still a function a diff can touch.
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                first = min([child.lineno] + [d.lineno for d in child.decorator_list])
+                out.append((prefix + child.name, child.name, first, child.end_lineno or child.lineno))
+                walk(child, prefix + child.name + ".")
+            elif isinstance(child, ast.ClassDef):
+                walk(child, prefix + child.name + ".")
+            else:
+                walk(child, prefix)
 
-    walk(tree.body, "")
+    walk(tree, "")
     return out
 
 
@@ -171,10 +197,13 @@ def defs_of(path, src):
 
 def call_sites(repo, head, name, own_path):
     """Lines in other files that use `name` as a word, with CONTEXT lines around each, as
-    (path, line, snippet). None when the name is too common to be a useful slice."""
+    (path, line, snippet). None when the name is too common to be a useful slice. Raises
+    when git grep itself failed: exit 1 is "no match", anything above is not an answer."""
     p = subprocess.run(["git", "-C", str(repo), "grep", "-n", "-I", "-w", "-F", "-e", name, head,
                         "--", "*.py", "*.ts", "*.tsx", "*.js", "*.vue"],
                        capture_output=True, text=True, errors="replace")
+    if p.returncode > 1:
+        raise RuntimeError(f"git grep {name}: {p.stderr.strip()[:200]}")
     pre = head + ":"
     hits = []
     for line in p.stdout.splitlines():
@@ -214,10 +243,10 @@ def section_slices(repo, base, head):
            f"{CONTEXT} 行）。分身先读这里，不够再开文件。"]
     files = changed_lines(repo, base, head)
     picked = []
-    for path, (st, new_lines, old_lines) in sorted(files.items()):
+    for path, (st, new_lines, old_lines, anchors) in sorted(files.items()):
         head_src = show(repo, head, path) if st != "D" else None
         head_defs = defs_of(path, head_src)
-        for d in touched(head_defs, new_lines):
+        for d in touched(head_defs, new_lines | anchors):
             picked.append((path, d, head_src, "改动"))
         base_defs = defs_of(path, show(repo, base, path)) if st != "A" else []
         still = {d[0] for d in head_defs}
@@ -236,7 +265,11 @@ def section_slices(repo, base, head):
             fence = "python" if path.endswith(".py") else "ts"
             out.append(f"```{fence}\n" + "\n".join(body) + ("\n… （截断，共 %d 行）" % (last - first + 1) if cut else "")
                        + "\n```")
-        sites = call_sites(repo, head, name, path)
+        try:
+            sites = call_sites(repo, head, name, path)
+        except RuntimeError as exc:
+            out.append(f"调用点：没查成（{exc}），分身自己 grep。")
+            continue
         if sites is None:
             out.append(f"调用点：`{name}` 这个名字太常见，不按名字切。")
             continue
@@ -305,7 +338,7 @@ def section_pyright(repo, tree, base, head, given=None):
                 continue
             fpath = os.path.relpath(d.get("file", ""), Path(tree).resolve()) if os.path.isabs(d.get("file", "")) else d.get("file", "")
             line = d.get("range", {}).get("start", {}).get("line", -1) + 1
-            mark = "⚠ " if line in files.get(fpath, ("", set(), set()))[1] else ""
+            mark = "⚠ " if line in files.get(fpath, ("", set(), set(), set()))[1] else ""
             rule = f"（{d['rule']}）" if d.get("rule") else ""
             errors.append(f"- {mark}`{fpath}:{line}` {d.get('message', '').splitlines()[0]}{rule}")
     out.append("")
@@ -337,6 +370,7 @@ def main(argv=None):
     a.add_argument("--since", required=True)
     a.add_argument("--head", required=True)
     a.add_argument("--previous", default="")
+    a.add_argument("--kept", default="", help="result.json already in this round, if any")
     a.add_argument("--out", required=True)
     f = sub.add_parser("facts")
     f.add_argument("--repo", required=True)
@@ -347,7 +381,7 @@ def main(argv=None):
     f.add_argument("--out", required=True)
     args = ap.parse_args(argv)
     if args.cmd == "inherit":
-        result, why = inherit(args.repo, args.base, args.since, args.head, args.previous)
+        result, why = inherit(args.repo, args.base, args.since, args.head, args.previous, args.kept)
         if result is None:
             print(f"bundle: 不继承：{why}", file=sys.stderr)
             return 1
