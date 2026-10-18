@@ -10,7 +10,7 @@
   "deleteFailed": "Delete failed",
   "deleteFolderBody": "The {n} files in this folder are deleted with it. This cannot be undone, and messages that referenced them will no longer open these files",
   "deleteTitle": "Delete “{name}”",
-  "docMeta": "Doc · edited by {who} {when}",
+  "docKind": "Doc",
   "download": "Download",
   "downloadFailed": "Download failed",
   "downloadOnly": "This format cannot be previewed yet; download it to view",
