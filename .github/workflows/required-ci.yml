@@ -603,6 +603,12 @@ jobs:
         # off dev — while an anchor that did not move is safe by construction:
         # the next run diffs from the older commit, which covers more, never
         # less. It is loud instead, so a stuck anchor gets noticed.
+        #
+        # Only a definite "no such ref" answer earns the create call. A timeout
+        # or a 5xx says nothing about whether the ref exists, and a second full
+        # retry budget would put this job past its five minutes — a timed-out
+        # run is a failed run to the deploy gate, which is the one outcome this
+        # job must never cause.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -614,20 +620,23 @@ jobs:
           }
           url="https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/heads/main-green"
           moved=""
+          post_code=""
           if code="$(update_ref -X PATCH --data "{\"sha\":\"$GITHUB_SHA\",\"force\":false}" "$url")" \
              && [ "${code:0:1}" = 2 ]; then
             moved=1
-          elif code="$(update_ref -X POST \
-                 --data "{\"ref\":\"refs/heads/main-green\",\"sha\":\"$GITHUB_SHA\"}" \
-                 "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs")" \
-             && [ "${code:0:1}" = 2 ]; then
-            moved=1
+          elif [ "$code" = 422 ] || [ "$code" = 404 ]; then
+            if post_code="$(update_ref -X POST \
+                   --data "{\"ref\":\"refs/heads/main-green\",\"sha\":\"$GITHUB_SHA\"}" \
+                   "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs")" \
+               && [ "${post_code:0:1}" = 2 ]; then
+              moved=1
+            fi
           fi
           if [ -n "$moved" ]; then
             echo "Main green anchor moved to $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          echo "::warning::could not move refs/heads/main-green to $GITHUB_SHA (HTTP ${code:-none}); it still points at the previous anchor, so the next main run diffs from there and covers this batch too."
+          echo "::warning::could not move refs/heads/main-green to $GITHUB_SHA (update HTTP ${code:-none}, create HTTP ${post_code:-not tried}); the next main run starts from the older anchor or the full tree, so it covers this batch too."
           echo "Main green anchor not moved: the next run covers this batch as well." >> "$GITHUB_STEP_SUMMARY"
 
   # Merge queue only: fails `CI required` on the entry's sha as soon as any job

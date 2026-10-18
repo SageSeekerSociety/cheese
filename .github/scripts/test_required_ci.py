@@ -1379,21 +1379,29 @@ class WorkflowTextTest(unittest.TestCase):
         # is loud and green instead.
         job = jobs_of(self.text)["mark-green"]
         body = run_body_containing(job["text"], "refs/heads/main-green")
-        for stub in ('echo 422\n', 'exit 7\n'):
+        # (stub, a create attempt is expected): only a definite answer about a
+        # missing ref earns the second call. A timeout keeps one retry budget,
+        # because two would outlast this job's five minutes — and a timed-out
+        # run fails the deploy gate, the one thing this job must not do.
+        for stub, creates in (('echo 422\n', True), ('exit 7\n', False), ('echo 503\n', False)):
             with self.subTest(stub=stub), tempfile.TemporaryDirectory() as tmp:
                 tmp = Path(tmp)
                 bindir = tmp / "bin"
                 bindir.mkdir()
-                _stub(bindir, "curl", stub)
+                _stub(bindir, "curl", 'printf "%s\\n" "$@" >> "$CURL_ARGS"\n' + stub)
                 env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
                        "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
-                       "GITHUB_SHA": "a" * 40, "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+                       "GITHUB_SHA": "a" * 40, "CURL_ARGS": str(tmp / "args"),
+                       "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
                 proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
                                       capture_output=True, text=True)
                 self.assertEqual(proc.returncode, 0,
                                  "a refused anchor move failed the run it must never hold up")
                 self.assertIn("::warning::", proc.stdout)
                 self.assertIn("anchor", (tmp / "summary").read_text())
+                calls = (tmp / "args").read_text()
+                self.assertEqual("-X\nPOST" in calls, creates,
+                                 f"create attempt policy wrong for {stub!r}")
 
     def _title_step(self, tmp, event_name, env_extra):
         """Run the commit-title step's real shell against a stubbed curl.
