@@ -429,7 +429,7 @@ def test_accept_sends_the_cards_words_to_the_forge(client):
     assert merge["commit_title"].startswith("chore(test): file an accept card (#")
     assert "Reviewed-by: alice <alice@zhishi.local>" in merge["commit_message"]
     assert f"/topics/{tid}" in merge["commit_message"]
-    assert f"Cheese-Card: {cid}" in merge["commit_message"]
+    assert "Cheese-" not in merge["commit_message"]
 
 
 def test_conflicting_remote_branch_refuses_delivery_without_closing_task(client):

@@ -136,11 +136,13 @@ def test_a_task_made_for_a_teammate_seats_it_in_its_room(client):
 
 
 def test_a_teammate_its_owner_cannot_add_to_the_room_is_not_given_the_task(client):
-    """In 综合 only the project's managers seat a teammate; a member who owns a
-    task there cannot hand it to one that is not seated."""
+    """A member whose role does not bring people into channels cannot seat a
+    teammate in 综合, so a task of theirs there cannot be handed to one that is
+    not seated."""
     project, _channel, seat = _project_with_a_second_teammate(client)
     general = project["root_topic_id"]
     join_project_team(client, project["id"], "bob")
+    _take_bringing_people_in_from_members(client, project["id"])
     task = open_task(client, general, owner="bob")["id"]
 
     refused = _give(client, task, seat, handle="bob")
@@ -148,6 +150,37 @@ def test_a_teammate_its_owner_cannot_add_to_the_room_is_not_given_the_task(clien
     assert refused.status_code == 403, refused.text
     assert _worked_by(client, task, handle="bob") is None
     assert seat not in _seated_agents(client, general)
+
+
+def test_a_member_gives_a_task_in_general_to_a_teammate_and_seats_it(client):
+    """Everyone in the project is in 综合, so a member whose role brings people
+    into channels seats the teammate there by giving it the task."""
+    project, _channel, seat = _project_with_a_second_teammate(client)
+    general = project["root_topic_id"]
+    join_project_team(client, project["id"], "bob")
+    task = open_task(client, general, owner="bob")["id"]
+
+    given = _give(client, task, seat, handle="bob")
+
+    assert given.status_code == 200, given.text
+    assert _worked_by(client, task, handle="bob") == seat
+    assert seat in _seated_agents(client, general)
+
+
+def _take_bringing_people_in_from_members(client, project_id: str) -> None:
+    grants = client.get(
+        f"/projects/{project_id}/roles", headers=session_auth_headers("alice")
+    ).json()["data"]["grants"]
+    changed = client.put(
+        f"/projects/{project_id}/roles",
+        json={
+            "grants": {
+                "member": [g for g in grants["member"] if g != "create_channels"]
+            }
+        },
+        headers=session_auth_headers("alice"),
+    )
+    assert changed.status_code == 200, changed.text
 
 
 def test_a_tasks_turn_is_signed_by_the_teammate_working_it(client, tmp_path):

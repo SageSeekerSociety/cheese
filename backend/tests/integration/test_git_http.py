@@ -63,7 +63,6 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
 ):
     from app.domain.project.models import Project
     from app.domain.repository import identity
-    from app.domain.review.pr_text import pr_trailers
     from app.domain.topic.models import Topic
     from tests.integration.conftest import session_auth_headers
 
@@ -115,18 +114,17 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
     assert reopened.status_code == 200, reopened.text
     assert reopened.json()["data"]["author"] == expected
 
-    async def trailers():
+    async def author():
         async with client.test_factory() as session:
             topic = await session.get(Topic, uuid.UUID(room))
             who = await identity.attribution(session, topic, task_id=task.id)
-            return pr_trailers(topic, "alice", who)
+            return who.author
 
-    assert f"Cheese-Agent: {writer['seat_handle']}" in client.portal.call(trailers)
+    assert str(client.portal.call(author)) == expected
 
 
 def test_historical_task_does_not_invent_an_agent_author(client):
     from app.domain.repository import identity
-    from app.domain.review.pr_text import pr_trailers
     from app.domain.topic.models import Topic
 
     project = post_project(client, json={"name": "Old task"}).json()["data"]
@@ -136,10 +134,9 @@ def test_historical_task_does_not_invent_an_agent_author(client):
         async with client.test_factory() as session:
             room = await session.get(Topic, task.room_id)
             who = await identity.attribution(session, room, task_id=task.id)
-            assert who.author is None
-            return pr_trailers(room, "alice", who)
+            return who.author
 
-    assert "Cheese-Agent:" not in client.portal.call(read)
+    assert client.portal.call(read) is None
 
 
 def _credential(project_id, conversation, agent):

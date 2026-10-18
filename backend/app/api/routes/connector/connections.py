@@ -121,6 +121,11 @@ async def my_devices(
     user_id = await _require_user(resolver)
     devices = await service.list_owned(user_id)
     by_device = _screens_by_device()
+    # Every machine's owner-login in one query, before the loop: one query per
+    # self-hosted machine is what this list cost before (#2991).
+    logins = await owner_login.statuses(
+        db, [d.device_id for d in devices if d.supply == Supply.self_hosted]
+    )
     views = []
     for device in devices:
         view = await _device_view(db, device, by_device.get(device.device_id, []))
@@ -128,7 +133,7 @@ async def my_devices(
         # platform (#2991): the owner's to see, not the team's. Only a machine
         # they enrolled themselves runs it; a cloud machine says nothing.
         if device.supply == Supply.self_hosted:
-            view["claude_code"] = await owner_login.status(db, device.device_id)
+            view["claude_code"] = logins.get(device.device_id)
             # Whether it can give a session a sandbox, and if not the machine's
             # own reason, worded for its owner: theirs to act on.
             view["sandbox"] = sandbox.status(

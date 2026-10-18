@@ -838,9 +838,9 @@ class TestUserRealNameService:
         profile_repo.get_profiles_by_user_ids.return_value = {
             2: _profile(user_id=2, nickname="Bob", avatar_id=3, intro="hi")
         }
-        # get_by_id will be called for user_id=1 (_ensure_user_exists) then for accessor 2
         accessor_user = _user(id=2, username="bob")
-        user_repo.get_by_id.side_effect = [_user(id=1), accessor_user]
+        user_repo.get_by_id.return_value = _user(id=1)
+        user_repo.get_by_ids.return_value = {2: accessor_user}
 
         logs, page = await service.get_access_logs(
             target_user_id=1, page_size=10, page_start=None
@@ -900,7 +900,7 @@ class TestUserRealNameService:
         log = _access_log(accessor_id=2)
         realname_repo.list_access_logs.return_value = ([log], 5)
         accessor_user = _user(id=2, username="bob")
-        user_repo.get_by_id.side_effect = [_user(id=1), accessor_user]
+        user_repo.get_by_ids.return_value = {2: accessor_user}
         profile_repo.get_profiles_by_user_ids.return_value = {
             2: _profile(user_id=2, nickname="Bob")
         }
@@ -925,11 +925,7 @@ class TestUserRealNameService:
         profile_repo.get_profiles_by_user_ids.return_value = {
             3: _profile(user_id=3, nickname="Charlie")
         }
-        user_repo.get_by_id.side_effect = [
-            _user(id=1),
-            _user(id=2, username="bob"),
-            None,
-        ]
+        user_repo.get_by_ids.return_value = {2: _user(id=2, username="bob")}
 
         logs, page = await service.get_access_logs(
             target_user_id=1, page_size=10, page_start=0
@@ -943,13 +939,13 @@ class TestUserRealNameService:
     async def test_get_access_logs_deduplicates_accessor_lookups(
         self, service, user_repo, profile_repo, realname_repo
     ) -> None:
-        """When multiple logs have the same accessor_id, get_by_id is only called once."""
+        """When multiple logs have the same accessor_id, accessors are fetched in one batch, once each."""
         user_repo.get_by_id.return_value = _user(id=1)
         log1 = _access_log(accessor_id=2)
         log2 = _access_log(accessor_id=2)
         realname_repo.list_access_logs.return_value = ([log1, log2], 2)
         accessor = _user(id=2, username="bob")
-        user_repo.get_by_id.side_effect = [_user(id=1), accessor]
+        user_repo.get_by_ids.return_value = {2: accessor}
         profile_repo.get_profiles_by_user_ids.return_value = {
             2: _profile(user_id=2, nickname="Bob", avatar_id=3, intro="hi")
         }
@@ -959,8 +955,7 @@ class TestUserRealNameService:
         )
 
         assert len(logs) == 2
-        # get_by_id called twice total: once for _ensure_user_exists, once for accessor 2
-        assert user_repo.get_by_id.await_count == 2
+        user_repo.get_by_ids.assert_awaited_once_with([2])
 
     @pytest.mark.anyio
     async def test_get_access_logs_user_not_found(self, service, user_repo) -> None:
@@ -995,7 +990,7 @@ class TestUserRealNameService:
         user_repo.get_by_id.return_value = _user(id=1)
         log = _access_log(accessor_id=2)
         realname_repo.list_access_logs.return_value = ([log], 1)
-        user_repo.get_by_id.side_effect = [_user(id=1), _user(id=2, username="bob")]
+        user_repo.get_by_ids.return_value = {2: _user(id=2, username="bob")}
         profile_repo.get_profiles_by_user_ids.return_value = {
             2: _profile(user_id=2, nickname="Bob")
         }

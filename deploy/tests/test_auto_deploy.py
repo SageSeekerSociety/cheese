@@ -660,6 +660,80 @@ class CandidateCI(unittest.TestCase):
         output, _reads = self.eligibility([refused])
         self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\n")
 
+    def test_the_deploy_job_repairs_a_sparse_workspace_before_checking_out(self):
+        # box-diag's dev-box job shares this runner and left the workspace in a
+        # non-cone sparse checkout: actions/checkout then reports green with
+        # deploy/ absent, and both the gate and the release script fail on a
+        # missing file (2026-10-18 09:46, 10:01). Repairing after a checkout is
+        # too late — the repair has to be the step before it.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        steps = workflow["jobs"]["deploy"]["steps"]
+        self.assertNotIn("uses", steps[0], "the repair must not be a checkout")
+        self.assertEqual(steps[0]["name"], "Repair a sparse workspace")
+        self.assertTrue(steps[1].get("uses", "").startswith("actions/checkout@"),
+                        "a checkout runs before the workspace is repaired")
+        body = steps[0]["run"]
+        for fragment in ("core.sparseCheckout", "git sparse-checkout disable",
+                         "info/sparse-checkout", "::warning::"):
+            self.assertIn(fragment, body)
+
+    def test_the_drift_job_repairs_the_same_shared_workspace(self):
+        # drift runs deploy/ scripts from the same checkout on the same runner;
+        # it failed on the same missing file (09:53). Its own copy of the step
+        # has to do the same work, not just carry the same name.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-drift.yml").read_text())
+        steps = workflow["jobs"]["drift"]["steps"]
+        self.assertEqual(steps[0]["name"], "Repair a sparse workspace")
+        self.assertTrue(steps[1].get("uses", "").startswith("actions/checkout@"))
+        body = steps[0]["run"]
+        for fragment in ("core.sparseCheckout", "git sparse-checkout disable",
+                         "info/sparse-checkout", "::warning::"):
+            self.assertIn(fragment, body)
+
+    def test_the_repair_step_actually_restores_a_sparse_checkout(self):
+        # Behavioural, against a real repository: leave it in the shape
+        # box-diag does, run the step's own shell, and require that the files
+        # outside the cone are back and the sparse config is gone.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        body = workflow["jobs"]["deploy"]["steps"][0]["run"]
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "ws"
+            repo.mkdir()
+
+            def git(*args):
+                return subprocess.run(["git", *args], cwd=repo, check=True,
+                                      capture_output=True, text=True)
+
+            git("init", "--quiet")
+            (repo / "deploy").mkdir()
+            (repo / "deploy" / "keep.sh").write_text("echo keep\n")
+            (repo / "outside.txt").write_text("outside\n")
+            git("add", "deploy/keep.sh", "outside.txt")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base")
+            git("sparse-checkout", "set", "--no-cone", "deploy")
+            self.assertTrue((repo / "deploy" / "keep.sh").exists())
+            self.assertFalse((repo / "outside.txt").exists(), "fixture is not sparse")
+            # Prove the fixture is really sparse by the same signal the repair
+            # has to remove — the config key alone lives at a scope that the
+            # fixture does not write.
+            before = subprocess.run(["git", "sparse-checkout", "list"], cwd=repo,
+                                    capture_output=True, text=True)
+            self.assertEqual(before.returncode, 0)
+            self.assertIn("deploy", before.stdout)
+
+            env = {**os.environ, "GITHUB_WORKSPACE": str(repo)}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue((repo / "outside.txt").exists(),
+                            "the repair left the workspace sparse")
+            after = subprocess.run(["git", "sparse-checkout", "list"], cwd=repo,
+                                   capture_output=True, text=True)
+            self.assertNotEqual(after.returncode, 0, "the workspace is still sparse")
+            info = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=repo,
+                                  capture_output=True, text=True, check=True).stdout.strip()
+            self.assertFalse((repo / info / "info" / "sparse-checkout").exists())
+
     def test_workflow_checks_eligibility_before_reserving_deploy_runner(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
         self.assertEqual(workflow["jobs"]["deploy"]["needs"], "eligibility")
@@ -682,10 +756,12 @@ class CandidateCI(unittest.TestCase):
         self.assertEqual(triggers["push"]["branches"], ["main"])
         self.assertIn("merge_group", triggers)
 
-    def test_only_a_passing_main_push_gate_run_reaches_the_eligibility_job(self):
+    def test_only_a_main_push_gate_run_that_could_release_reaches_eligibility(self):
         """The Required CI completion now triggers this workflow, so the job's
         own condition is what keeps a failed or unrelated gate run from turning
-        into a red deploy run."""
+        into a red deploy run. A cancelled one is admitted on purpose: the
+        entry point tells "a newer batch will cover it" from "nothing will",
+        and the second has to reach the refusal to be said at all."""
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
         condition = workflow["jobs"]["eligibility"]["if"]
 
@@ -704,11 +780,11 @@ class CandidateCI(unittest.TestCase):
             return bool(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307
 
         self.assertTrue(holds("workflow_run", "Required CI", "push", "main", "success"))
+        self.assertTrue(holds("workflow_run", "Required CI", "push", "main", "cancelled"))
         self.assertTrue(holds("workflow_run", "Build and Push Docker Image", "push", "main", "success"))
         self.assertTrue(holds("workflow_dispatch"))
         for named in (
             ("Required CI", "push", "main", "failure"),
-            ("Required CI", "push", "main", "cancelled"),
             # A pull request whose head branch is called main is admitted by
             # `branches: [main]` too, and its commit is not one to release.
             ("Required CI", "pull_request", "main", "success"),
@@ -772,16 +848,26 @@ class CandidateCI(unittest.TestCase):
         # run existed and was cancelled, and no later batch will cover it. The
         # summary has to name that, or the reader goes looking for a CI bug.
         step = self.step("eligibility", "Fail when this commit will not be deployed")
-        with tempfile.TemporaryDirectory() as directory:
-            summary = Path(directory) / "summary"
-            result = subprocess.run(
-                ["bash", "-e", "-c", step["run"]], capture_output=True, text=True,
-                env={**os.environ, "PATH": self.fake_bin(directory, curl="exit 7"),
-                     "CANDIDATE_SHA": self.candidate, "UNCOVERED": "true",
-                     "GITHUB_STEP_SUMMARY": str(summary)})
-            self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertIn("cancelled", summary.read_text())
-            self.assertIn("no newer commit on main", summary.read_text())
+        # The value comes from the check step's own output, not from a test's
+        # environment: read the wiring here, or a step pointed at the wrong
+        # output stays green.
+        self.assertEqual(step["env"]["UNCOVERED"],
+                         "${{ steps.check.outputs.uncovered }}")
+        # ...and the script that runs there is the one that writes it.
+        self.assertIn("uncovered=",
+                      (ROOT / "deploy" / "check-auto-deploy.py").read_text())
+        for uncovered, expected in (("true", True), ("false", False)):
+            with self.subTest(uncovered=uncovered), tempfile.TemporaryDirectory() as directory:
+                summary = Path(directory) / "summary"
+                result = subprocess.run(
+                    ["bash", "-e", "-c", step["run"]], capture_output=True, text=True,
+                    env={**os.environ, "PATH": self.fake_bin(directory, curl="exit 7"),
+                         "CANDIDATE_SHA": self.candidate, "UNCOVERED": uncovered,
+                         "GITHUB_STEP_SUMMARY": str(summary)})
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual("no newer commit on main" in summary.read_text(), expected)
+                if expected:
+                    self.assertIn("cancelled", summary.read_text())
 
     def test_every_deploy_run_names_the_commit_dev_runs(self):
         step = self.step("deploy", "Say which commit dev runs")

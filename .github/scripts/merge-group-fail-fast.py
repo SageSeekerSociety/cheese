@@ -1,4 +1,10 @@
-"""Fail a merge queue entry's `CI required` the moment one of its jobs fails.
+"""Fail a Required CI run's `CI required` the moment one of its jobs fails.
+
+Two events run it: a merge_queue entry and a push to main (the post-submit
+gate). Both hold the red until the slowest suite on their own, so both read the
+same way below; a pull request does not run it, because `CI required` there is
+the merge gate and the aggregator's own report is timely enough.
+
 
 `CI required` aggregates every suite, so GitHub cannot start it before the
 slowest suite has finished. On a merge_group run that meant a job failing at
@@ -83,9 +89,19 @@ def watch_over(jobs):
     )
 
 
-def failure_check(job, head_sha, run_url):
+def failure_check(job, head_sha, run_url, event="merge_group"):
     """The check-run body that fails `CI required` because of ``job``."""
     name = job.get("name", "?")
+    what = (
+        "this merge queue entry's Required CI run"
+        if event == "merge_group"
+        else "this main push batch's Required CI run"
+    )
+    why = (
+        "so the queue removes the entry now instead of after the slowest suite"
+        if event == "merge_group"
+        else "so main reads red now instead of after the slowest suite"
+    )
     return {
         "name": REQUIRED_CHECK,
         "head_sha": head_sha,
@@ -95,11 +111,9 @@ def failure_check(job, head_sha, run_url):
         "output": {
             "title": f"{name} failed",
             "summary": (
-                f"`{name}` concluded `{job.get('conclusion')}` in this merge queue "
-                f"entry's Required CI run ({run_url}). The rest of the run keeps "
-                "going, and its `CI required` job lists every reason when it "
-                "finishes; this check is posted early so the queue removes the "
-                "entry now instead of after the slowest suite."
+                f"`{name}` concluded `{job.get('conclusion')}` in {what} ({run_url})."
+                " The rest of the run keeps going, and its `CI required` job lists"
+                f" every reason when it finishes; this check is posted early {why}."
             ),
         },
     }
@@ -137,6 +151,7 @@ def watch(api, env, sleep=time.sleep, clock=time.monotonic):
     run_id = env["GITHUB_RUN_ID"]
     attempt = env.get("GITHUB_RUN_ATTEMPT", "1")
     head_sha = env["HEAD_SHA"]
+    event = env.get("GITHUB_EVENT_NAME", "merge_group")
     run_url = f"{env.get('GITHUB_SERVER_URL', 'https://github.com')}/{repo}/actions/runs/{run_id}"
     started = clock()
     while clock() - started < DEADLINE_SECONDS:
@@ -155,7 +170,7 @@ def watch(api, env, sleep=time.sleep, clock=time.monotonic):
         if job is not None:
             api(
                 "-X", "POST", f"repos/{repo}/check-runs", "--input", "-",
-                payload=failure_check(job, head_sha, run_url),
+                payload=failure_check(job, head_sha, run_url, event),
             )
             return f"{job.get('name')} failed: posted a failed {REQUIRED_CHECK} on {head_sha[:8]}."
         if watch_over(jobs):
