@@ -5,7 +5,7 @@
 // 原先在四个文件里**逐字重复**（中心、我的、提交、详情），而它们一起管着两件不能各写
 // 各的事：
 //
-//   1. **谁来滚**。common.scss 把 html/body/#app 定成固定高度 + `overflow: hidden`，
+//   1. **谁来滚**。外框挂着时 common.scss 把 html/body/#app 定成固定高度 + `overflow: hidden`，
 //      滚动由每一页自己领。四个文件里少写一次，那一页的内容就有一截永远够不着，而且
 //      屏幕上没有任何东西看起来坏了（见 views/feedback/scroll.spec.ts）。写在这里
 //      只有一处会错。

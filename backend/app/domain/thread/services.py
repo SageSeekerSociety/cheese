@@ -7,6 +7,7 @@ messages are answered where they were said.
 """
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
@@ -100,10 +101,97 @@ async def answered_in(session: AsyncSession, block: Block) -> uuid.UUID:
     said in a channel's main line, otherwise where it was said — and there too
     when its channel is archived, where no 支线 opens and the turn is refused
     as any turn in an archived channel is."""
-    room = await _main_line_room(session, block)
-    if room is None or room.status == "archived" or block.kind != BlockKind.message:
-        return block.conversation_id
-    return (await open_thread(session, block.id, by=block.author)).id
+    return (await answered_in_many(session, [block]))[block.id]
+
+
+async def _main_line_rooms(
+    session: AsyncSession, conversation_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """`_main_line_room` for many conversations: the status of each channel among
+    them, whose id is the key. What is not a channel is absent — a task, a 支线,
+    a private chat, an id nothing names."""
+    if not conversation_ids:
+        return {}
+    rooms = set(
+        await session.scalars(
+            select(Conversation.id).where(
+                Conversation.id.in_(conversation_ids),
+                Conversation.kind == ConversationKind.room,
+            )
+        )
+    )
+    if not rooms:
+        return {}
+    rows = await session.execute(
+        select(Topic.id, Topic.status).where(Topic.id.in_(rooms), not_a_private_chat())
+    )
+    return {topic_id: status for topic_id, status in rows.all()}
+
+
+async def _threads_under(
+    session: AsyncSession, roots: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """The 支线 each of these messages already has, keyed by its root block."""
+    rows = await session.execute(
+        select(Thread.root_block_id, Thread.id).where(Thread.root_block_id.in_(roots))
+    )
+    return {root: thread for root, thread in rows.all()}
+
+
+async def answered_in_many(
+    session: AsyncSession, blocks: Sequence[Block]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """`answered_in` for a batch, reading each table it consults once.
+
+    A message's answer place is its 支线 only when it was said in a channel's
+    main line: the scan asks that of every waiting message, and all of them are
+    about a handful of conversations. Same judgement as `answered_in`,
+    including opening the 支线 a main-line message has none for — only the
+    reads are shared.
+    """
+    blocks = list(blocks)
+    if not blocks:
+        return {}
+    conversation_ids = {block.conversation_id for block in blocks}
+    rooms = await _main_line_rooms(session, conversation_ids)
+    opens = [
+        block
+        for block in blocks
+        if block.kind == BlockKind.message
+        and block.conversation_id in rooms
+        and rooms[block.conversation_id] != "archived"
+    ]
+    threads: dict[uuid.UUID, uuid.UUID] = {}
+    if opens:
+        roots = [block.id for block in opens]
+        threads = await _threads_under(session, roots)
+        missing = [block for block in opens if block.id not in threads]
+        if missing:
+            await session.execute(
+                insert(Thread)
+                .values(
+                    [
+                        {
+                            "id": uuid.uuid4(),
+                            "project_id": block.project_id,
+                            "room_id": block.conversation_id,
+                            "root_block_id": block.id,
+                            "created_by": block.author,
+                        }
+                        for block in missing
+                    ]
+                )
+                .on_conflict_do_nothing(index_elements=[Thread.root_block_id])
+            )
+            # A 支线 another process opened first wins; read the ids back.
+            threads = await _threads_under(session, roots)
+    answers = {block.id: block.conversation_id for block in blocks}
+    answers.update(threads)
+    # A message that should have a 支线 has one now. `open_thread` asserts the
+    # same thing; without it a write lost between the insert and the read would
+    # answer in the channel's main line, where 芝士 has no session.
+    assert all(block.id in threads for block in opens)
+    return answers
 
 
 async def waiting_in_room(session: AsyncSession, room_id: uuid.UUID) -> list[uuid.UUID]:

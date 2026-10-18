@@ -413,15 +413,28 @@ async def rail_tasks(
     service = TaskService(db)
     counts = await service.underway_counts(room_ids)
     mine = await service.underway_with(room_ids, me) if actor.authenticated else []
-    rows = await project_task_rows(
+    candidates: list[Task] = []
+    if actor.authenticated:
+        # 一次把「我的」和每个房间最多补的 `RAIL_TASKS_FLOOR` 条候选一起送进
+        # `project_task_rows`：原先分两批调，同一张页上验收卡、在跑轮次、提问和最后
+        # 发言被各问了两遍。
+        per_room: dict[uuid.UUID, int] = {}
+        for task in await service.underway_others(room_ids, me):
+            taken = per_room.get(task.room_id, 0)
+            if taken < RAIL_TASKS_FLOOR:
+                per_room[task.room_id] = taken + 1
+                candidates.append(task)
+    all_rows = await project_task_rows(
         db,
         chat,
         me,
-        mine,
+        [*mine, *candidates],
         silent_of=silent_of,
         delivered_of=delivered_of,
         incomplete_of=incomplete_of,
     )
+    rows = all_rows[: len(mine)]
+    candidate_rows = all_rows[len(mine) :]
     shown: dict[str, list[dict]] = {}
     for row in sorted(rows, key=lambda row: row["last_activity_at"], reverse=True):
         if not row["stalled"]:
@@ -434,24 +447,9 @@ async def rail_tasks(
         helped = [row for row in here if row["owner_handle"] != me]
         out[room] = {"shown": owned + helped, "open": counts.get(room, 0)}
         short[room] = max(0, RAIL_TASKS_FLOOR - len(owned) - len(helped))
-    if actor.authenticated and any(short.values()):
-        # 一条一查不行：这里一次读全项目别人的、进行中的活（几百条的量级），
-        # 按最近有动静排好，每个房间顺着取够补的那几条就停手；只有取中的那几条
-        # 才做成行——行本身贵（卡、提问、在跑的一轮、最后一次说话都要读）。
-        picked: list = []
-        for task in await service.underway_others(room_ids, me):
-            if short.get(task.room_id, 0) > 0:
-                short[task.room_id] -= 1
-                picked.append(task)
-        for row in await project_task_rows(
-            db,
-            chat,
-            me,
-            picked,
-            silent_of=silent_of,
-            delivered_of=delivered_of,
-            incomplete_of=incomplete_of,
-        ):
+    for task, row in zip(candidates, candidate_rows, strict=True):
+        if short.get(task.room_id, 0) > 0:
+            short[task.room_id] -= 1
             if not row["stalled"]:
                 out[uuid.UUID(row["room_id"])]["shown"].append(
                     {**row, "filling_in": True}
