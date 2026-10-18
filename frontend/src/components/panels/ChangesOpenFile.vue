@@ -50,6 +50,7 @@ function pickFirst() {
 
 <template>
   <AdaptiveDialog v-model="open" :title="t('work.room.changes.openOther')" size="md">
+    <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to search for a file; focus moves into the search field -->
     <v-text-field
       v-model="query"
       autofocus
@@ -63,6 +64,7 @@ function pickFirst() {
       class="mb-2"
       @keydown.enter.prevent="pickFirst"
     />
+    <!-- eslint-enable vuejs-accessibility/no-autofocus -->
     <v-list v-if="matches.length" density="compact" class="py-0 open-file__list">
       <v-list-item v-for="path in matches" :key="path" @click="pick(path)">
         <v-list-item-title class="open-file__path">{{ path }}</v-list-item-title>

@@ -36,8 +36,8 @@
     "ok": "确定"
   },
   "topicSelector": {
-    "label": "添加话题",
-    "placeholder": "搜索已有话题或创建新话题"
+    "label": "添加标签",
+    "placeholder": "搜索已有标签或创建新标签"
   },
   "notFound": {
     "text": "页面不存在",

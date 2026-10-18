@@ -72,6 +72,7 @@ function segments(row: ResultRow): { text: string; hit: boolean }[] {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/interactive-supports-focus -- focus stays in the palette's input, which owns the keyboard for this listbox through aria-activedescendant -->
   <div
     :id="resultsId"
     ref="list"
@@ -85,6 +86,7 @@ function segments(row: ResultRow): { text: string; hit: boolean }[] {
       <div v-if="group.label" class="palette__group t-eyebrow-read" role="presentation">
         {{ t(group.label) }}
       </div>
+      <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/interactive-supports-focus -- an option of the listbox above; the input picks it with the arrow keys and Enter -->
       <div
         v-for="(row, i) in group.rows"
         :id="optionId(offsets[g] + i)"
