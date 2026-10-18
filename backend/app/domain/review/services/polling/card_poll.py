@@ -283,6 +283,25 @@ async def _poll_pr_card(
     await self._session.flush()
 
 
+async def _rebase_onto_base(
+    *, client, owner: str, repo: str, number: int, token: str
+) -> bool:
+    """Merge the PR's base branch into its head — the forge's Update branch.
+
+    `token` is the WRITE mint: this PUSHES a merge of base onto the PR branch
+    (the read mint has no `contents:write`; PR #575/#582 froze on that).
+    False is a non-fatal refusal — already current, the head moved under us,
+    or a conflict — and each caller says what that means for it.
+
+    Shared by the poller (BEHIND in the merge-state verdict) and by
+    `mark_ready` (before the ready flag starts the branch CI, so that CI reads
+    the workflows on main today rather than the ones the branch was cut from).
+    """
+    return await client.update_branch(
+        owner=owner, repo=repo, number=number, token=token
+    )
+
+
 async def _update_behind_branch(
     self: pkg.AcceptService,
     *,
@@ -307,10 +326,12 @@ async def _update_behind_branch(
         )
         await self._session.flush()
         return
-    # `write`, not `read` — this PUSHES a merge of main onto the PR branch
-    # (the read mint has no `contents:write`; PR #575/#582 froze on that).
-    updated = await client.update_branch(
-        owner=owner, repo=repo, number=card.pr_number or 0, token=creds.write
+    updated = await _rebase_onto_base(
+        client=client,
+        owner=owner,
+        repo=repo,
+        number=card.pr_number or 0,
+        token=creds.write,
     )
     outcome = (
         "已自动更新分支，等新一轮 CI。" if updated else "自动更新分支被拒，下一轮重试。"
