@@ -120,6 +120,24 @@ class ProbeTests(unittest.TestCase):
                 )
                 self.assertEqual((code, rows[-1]["category"]), (1, category))
 
+    def test_unparseable_readiness_body_is_described(self):
+        html = b"<html>\n<body>Bad Gateway secret-key</body></html>" + b"x" * 400
+        for body, head in (
+            (html, "<html> <body>Bad Gateway ***</body></html>"),
+            (b"x" * 262145, "x" * 300),
+        ):
+            with self.subTest(size=len(body)):
+                response = Response(body)
+                response.status = 502
+                response.headers["Content-Type"] = "text/html"
+                code, rows, _ = self.run_probe([response])
+                self.assertEqual((code, rows[-1]["category"]), (1, "invalid_response"))
+                received = rows[-1]["received"]
+                self.assertEqual(received["status"], 502)
+                self.assertEqual(received["content_type"], "text/html")
+                self.assertEqual(received["body_head"][:40], head[:40])
+                self.assertLessEqual(len(received["body_head"]), 300)
+
     def test_native_stream_requires_terminal_event(self):
         for terminal, stop, expected in (
             (True, "end_turn", None),
