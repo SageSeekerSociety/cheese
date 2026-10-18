@@ -286,19 +286,28 @@ def _turn_running_elsewhere(client) -> None:
     client.portal.call(_insert)
 
 
-def _turn_running_here(client, conversation_id: uuid.UUID) -> None:
+def _turn_running_here(client, conversation_id: uuid.UUID) -> str:
     """A turn this process is running on ``conversation_id`` whose interval row
     has not been written yet: only the in-process broker knows it, and the list
     still has to place it in its room — without a `tasks` lookup that would
-    appear only on the requests where such a turn happens to be running."""
+    appear only on the requests where such a turn happens to be running.
+    Returns its turn id, for `_turn_finished`."""
+    turn_id = str(uuid.uuid4())
     client.portal.call(
         get_broker().publish,
         str(conversation_id),
-        {
-            "type": "turn_started",
-            "turn_id": str(uuid.uuid4()),
-            "agent": "cheese-seat-here",
-        },
+        {"type": "turn_started", "turn_id": turn_id, "agent": "cheese-seat-here"},
+    )
+    return turn_id
+
+
+def _turn_finished(client, conversation_id: uuid.UUID, turn_id: str) -> None:
+    """Let the broker's process-wide activity go, so the next test in this
+    worker does not inherit a channel that is still "running"."""
+    client.portal.call(
+        get_broker().publish,
+        str(conversation_id),
+        {"type": "turn_finished", "turn_id": turn_id},
     )
 
 
@@ -308,11 +317,15 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client):
     `blocks` once each, while preserving the full response field set."""
     pid, room_ids, task_id = _seed_populated_project(client)
     _turn_running_elsewhere(client)
-    _turn_running_here(client, uuid.UUID(task_id))
+    running_here = uuid.UUID(task_id)
+    turn_id = _turn_running_here(client, running_here)
     headers = session_auth_headers("alice")
 
-    with counting_sql(client) as seen:
-        r = client.get(f"/topics?project_id={pid}", headers=headers)
+    try:
+        with counting_sql(client) as seen:
+            r = client.get(f"/topics?project_id={pid}", headers=headers)
+    finally:
+        _turn_finished(client, running_here, turn_id)
     assert r.status_code == 200, r.text
 
     payload = r.json()["data"]
