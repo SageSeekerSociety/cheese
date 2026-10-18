@@ -1,15 +1,9 @@
 // The browser half of `fe-contrast`: open one of the public pages in one
 // theme, walk what it painted, hand the runs back.
 //
-// Two callers share this file. `tests/contrast-ratchet.spec.ts` is the gate
-// that runs on a pull request; `contrast-ratchet.mjs` is the record the ratchet
-// snapshot collector reads after the merge, because the number the page records
-// and the verdict the gate gives have to come from the same walk. A second copy
-// of this code is how the two would drift apart.
+// `tests/contrast-ratchet.spec.ts` calls this from the pull-request gate.
 //
-// Plain JavaScript with no test-runner imports on purpose: the collector runs
-// the driver as a node script, outside Playwright's test runner, and a helper
-// that needed `expect` would only work for one of the two callers.
+// Keep the browser walk separate from the test assertions.
 
 import { collectRuns, floorFor } from '../frontend/scripts/contrast-ratchet-core.mjs'
 

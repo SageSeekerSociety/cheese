@@ -1,11 +1,11 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core.config import Settings, settings
 
 if TYPE_CHECKING:
     from app.domain.team.repositories import TeamRepository
@@ -67,6 +67,16 @@ class _FallbackTeam:
     name: str
     intro: str
     avatar_id: int | None
+
+
+class _RankSpace(Protocol):
+    """The only part of a space the rank rule reads.
+
+    Typed structurally so this module keeps its one-way dependency on the
+    space domain's services instead of importing its models.
+    """
+
+    enable_rank: bool
 
 
 class TaskMembershipService:
@@ -334,6 +344,59 @@ class TaskMembershipService:
         membership.updated_at = datetime.now(UTC)
         return await self._repo.save(membership)
 
+    async def _rank_reasons(
+        self,
+        task: Task,
+        user_id: int,
+        settings: Settings,
+        space: _RankSpace | None,
+        *,
+        team_id: int | None = None,
+    ) -> list[dict]:
+        """Why ``user_id`` fails the task's rank rule; empty means it passes.
+
+        The space is the task's, not the candidate team's, so the caller reads it
+        once and passes it in. Individual and team participation share this one
+        rule; ``team_id`` only picks the reason code, message and extra detail.
+        """
+        rank_repo = self._space_rank_repo
+        if space is None or not space.enable_rank or task.rank is None:
+            return []
+        if rank_repo is None:
+            return []
+        required_rank = max(0, task.rank - settings.rank_jump)
+        if required_rank <= 0:
+            return []
+        actual_rank = await rank_repo.get_rank(
+            space_id=task.space_id,  # type: ignore[arg-type]
+            user_id=user_id,
+        )
+        if actual_rank >= required_rank:
+            return []
+
+        details = {
+            "userId": user_id,
+            "actualRank": actual_rank,
+            "requiredRank": required_rank,
+            "taskId": task.id,
+        }
+        if team_id is None:
+            return [
+                {
+                    "code": "USER_RANK_NOT_HIGH_ENOUGH",
+                    "message": f"Your rank ({actual_rank}) is not high enough. Required: {required_rank}.",
+                    "details": details,
+                }
+            ]
+        details["teamId"] = team_id
+        return [
+            {
+                "code": "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH",
+                "message": f"Your rank ({actual_rank}) is not high enough for this team task. Required: {required_rank}.",
+                "details": details,
+            }
+        ]
+
     async def get_participation_eligibility(
         self,
         task: Task,
@@ -356,6 +419,17 @@ class TaskMembershipService:
             task.registration_start_at is not None and now < task.registration_start_at
         )
         registration_closed = False
+
+        # Rank 规则只看题目所属的空间，与候选团队无关：两条路径共用，进分支前读一次。
+        space: _RankSpace | None = None
+        if (
+            settings.rank_check_enforced
+            and isinstance(getattr(task, "space_id", None), int)
+            and getattr(task, "rank", None) is not None
+            and self._space_repo is not None
+            and self._space_rank_repo is not None
+        ):
+            space = await self._space_repo.get_by_id(task.space_id)  # type: ignore[arg-type]
 
         # USER 类型：只返回 user eligibility，teams 为 null。
         if task.submitter_type == 0:
@@ -420,34 +494,7 @@ class TaskMembershipService:
                     )
 
             # Rank 规则：当空间启用 rank 且任务有 rank 要求时，若开启检查则限制「用户 rank + rank_jump >= task.rank」。
-            if (
-                settings.rank_check_enforced
-                and isinstance(getattr(task, "space_id", None), int)
-                and getattr(task, "rank", None) is not None
-                and self._space_repo is not None
-                and self._space_rank_repo is not None
-            ):
-                space = await self._space_repo.get_by_id(task.space_id)  # type: ignore[arg-type]
-                if space is not None and space.enable_rank and task.rank is not None:
-                    required_rank = max(0, task.rank - settings.rank_jump)
-                    if required_rank > 0:
-                        actual_rank = await self._space_rank_repo.get_rank(
-                            space_id=task.space_id,  # type: ignore[arg-type]
-                            user_id=user_id,
-                        )
-                        if actual_rank < required_rank:
-                            reasons.append(
-                                {
-                                    "code": "USER_RANK_NOT_HIGH_ENOUGH",
-                                    "message": f"Your rank ({actual_rank}) is not high enough. Required: {required_rank}.",
-                                    "details": {
-                                        "userId": user_id,
-                                        "actualRank": actual_rank,
-                                        "requiredRank": required_rank,
-                                        "taskId": task.id,
-                                    },
-                                }
-                            )
+            reasons.extend(await self._rank_reasons(task, user_id, settings, space))
 
             eligible = is_task_approved and not reasons
             return {
@@ -597,35 +644,11 @@ class TaskMembershipService:
                     )
 
             # Rank 规则：TEAM 任务下，检查每个团队对应用户的 rank 是否满足要求。
-            if (
-                settings.rank_check_enforced
-                and isinstance(getattr(task, "space_id", None), int)
-                and getattr(task, "rank", None) is not None
-                and self._space_repo is not None
-                and self._space_rank_repo is not None
-            ):
-                space = await self._space_repo.get_by_id(task.space_id)  # type: ignore[arg-type]
-                if space is not None and space.enable_rank and task.rank is not None:
-                    required_rank = max(0, task.rank - settings.rank_jump)
-                    if required_rank > 0:
-                        actual_rank = await self._space_rank_repo.get_rank(
-                            space_id=task.space_id,  # type: ignore[arg-type]
-                            user_id=user_id,
-                        )
-                        if actual_rank < required_rank:
-                            reasons.append(
-                                {
-                                    "code": "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH",
-                                    "message": f"Your rank ({actual_rank}) is not high enough for this team task. Required: {required_rank}.",
-                                    "details": {
-                                        "userId": user_id,
-                                        "actualRank": actual_rank,
-                                        "requiredRank": required_rank,
-                                        "taskId": task.id,
-                                        "teamId": team_id,
-                                    },
-                                }
-                            )
+            reasons.extend(
+                await self._rank_reasons(
+                    task, user_id, settings, space, team_id=team_id
+                )
+            )
 
             teams_status.append(
                 {
@@ -1013,19 +1036,25 @@ class TaskSubmissionService:
             m.id: m for m in memberships_for_task if m.id in membership_ids
         }
 
+        submission_ids = [s.id for s in submissions]
+        entries_by_submission = await self._entry_repo.list_by_submission_ids(
+            submission_ids
+        )
+        reviews_by_submission = (
+            await self._review_repo.get_by_submission_ids(submission_ids)
+            if query_review
+            else {}
+        )
+
         items: list[dict] = []
         for submission in submissions:
             membership = membership_map.get(submission.membership_id)
             if membership is None:
                 continue
-            entries = list(
-                await self._entry_repo.list_by_submission_id(
-                    submission_id=submission.id
-                )
+            entries = entries_by_submission.get(submission.id, [])
+            review: TaskSubmissionReview | None = reviews_by_submission.get(
+                submission.id
             )
-            review: TaskSubmissionReview | None = None
-            if query_review:
-                review = await self._review_repo.get_by_submission_id(submission.id)
             dto = await self._build_submission_dto(
                 submission=submission,
                 membership=membership,
@@ -1068,14 +1097,18 @@ class TaskSubmissionService:
             reviewed=reviewed,
         )
 
+        submission_ids = [submission.id for submission, _, _ in rows]
+        entries_by_submission = await self._entry_repo.list_by_submission_ids(
+            submission_ids
+        )
+        reviews_by_submission = await self._review_repo.get_by_submission_ids(
+            submission_ids
+        )
+
         items: list[dict] = []
         for submission, membership, task in rows:
-            entries = list(
-                await self._entry_repo.list_by_submission_id(
-                    submission_id=submission.id
-                )
-            )
-            review = await self._review_repo.get_by_submission_id(submission.id)
+            entries = entries_by_submission.get(submission.id, [])
+            review = reviews_by_submission.get(submission.id)
             dto = await self._build_submission_dto(
                 submission=submission,
                 membership=membership,

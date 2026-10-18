@@ -47,7 +47,7 @@ covers:
 | 层 | 是什么 | 包 |
 |---|---|---|
 | 1 底座 | 没有业务判断、被所有人用的记录和工具 | `common`、`day_windows`、`conversation`、`idempotency`、`addressing`、`delivery_events`、`run_record`、`attachment`、`avatars`、`textfile`、`service_keys`、`backend_log`、`frontend_log`、`tag`、`legal`、`skill_library`、`notice_meta`、`shell_catalog` |
-| 2 身份与归属 | 谁、属于哪个团队和项目、在哪个频道里、能做什么 | `identity`、`user`、`team`、`project`、`topic`、`membership`、`topic_membership`、`authz`、`policy`、`invite`、`passkey`、`oauth`、`agent_type`、`agent_credential`、`ratchet` |
+| 2 身份与归属 | 谁、属于哪个团队和项目、在哪个频道里、能做什么 | `identity`、`user`、`team`、`project`、`topic`、`membership`、`topic_membership`、`authz`、`policy`、`invite`、`passkey`、`oauth`、`agent_type`、`agent_credential` |
 | 3 平台服务 | 被业务同步调用的能力：模型单次调用、额度与计量（含计价）、通知收件箱 | `repository`、`integration`、`webhook`、`fetch`、`remote_mcp`、`gateway_chat`、`usage`、`notification`、`agent_session`、`environment_diagnosis` |
 | 4 协作内容 | 房间里的东西：消息、线程、任务、采纳、文档、交付物、记忆、反馈、题目 | `block`、`thread`、`pin`、`mentions`、`room_task`、`task`、`review`、`living_doc`、`documents`、`library`、`deliverables`、`memory`、`feedback`、`space`、`groups`、`questions`、`answers`、`comments`、`discussion`、`materials`、`project_skill`、`search`、`docs_site`、`canvas`、`web_snippet` |
 | 5 智能体执行 | 一轮怎么跑、在哪台机器上跑 | `agent` 拆出的各包（见[下文](#agent-split)）、`agent_instance`、`machine`、`device`、`local_fs`、`shell`、`site`、`preview`、`assistant`、`delivery` |
@@ -240,7 +240,7 @@ CREATE INDEX ON session_work_leases (claim_until) WHERE claim IS NOT NULL;
 | 类 | 任务 | 动作 |
 |---|---|---|
 | A. 已经能并发跑 | routines、timed deliveries、通知邮件和推送、通知摘要、PR 轮询两项、云计算计量、云预热池 | 第一批迁出。routines 和 timed deliveries 会起轮次，先确认不持锁的进程能起轮次 |
-| B. 只做保留期清理或幂等同步 | 托管凭据缓存清理、运行记录过期、文档问答保留、棘轮快照采集、托管事件订阅对账 | 第二批迁出，每个先用两个进程跑一遍集成测试 |
+| B. 只做保留期清理或幂等同步 | 托管凭据缓存清理、运行记录过期、文档问答保留、托管事件订阅对账 | 第二批迁出，每个先用两个进程跑一遍集成测试 |
 | C. 读请求路径写进本进程内存的东西 | backend error flush：`backend_log.py` 的 `intake` 在每个进程的请求路径上写入，由持锁进程的周期任务刷出，只刷满 300 秒（`DEDUP_WINDOW_S`）的窗口。部署是单实例蓝绿双槽，后起的进程拿到锁后会刷自己攒的窗口，不会丢。出局的进程原本会丢最后不足 300 秒的窗口：`main.py` 的 `hand_over()` 先停掉周期任务、再放锁 | 第 2e 步已做：`hand_over()` 停周期任务之前强制刷一次，不论 300 秒到没到；进程退出前再刷一次，兜住交接期间新开的窗口。和是否持锁无关，是迁出锁的第一步 |
 | D. 靠本进程内存判断「谁在跑」 | 孤儿轮次清扫、排队消息清扫、进度提醒、启动恢复、托管事件监听 | 留在锁里，等[全局锁退役](#ownership-retire)那一步 |
 | 待逐个读代码 | 记忆整理、任务截止、安静任务提醒、超时投递告警、托管孤儿账号清理、云主机池、云沙箱生命周期、订阅用量导入 | 能用领取列改造的归 A，否则归 D |
