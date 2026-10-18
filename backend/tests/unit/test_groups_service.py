@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -10,6 +10,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from app.domain.groups.repositories import GroupMembershipRepository
 from app.domain.groups.services import (
     GroupQuestionService,
     GroupsService,
@@ -667,6 +668,23 @@ async def test_leave_group_owner_forbidden():
 
 
 @pytest.mark.anyio
+async def test_count_members_by_group_ids_uses_one_grouped_query():
+    session = AsyncMock()
+    result = MagicMock()
+    result.all.return_value = [(1, 2), (3, 4)]
+    session.execute.return_value = result
+    repo = GroupMembershipRepository(session)
+
+    counts = await repo.count_members_by_group_ids([1, 2, 3])
+
+    assert counts == {1: 2, 3: 4}
+    session.execute.assert_awaited_once()
+    statement = str(session.execute.await_args.args[0])
+    assert "GROUP BY group_membership.group_id" in statement
+    assert "group_membership.deleted_at IS NULL" in statement
+
+
+@pytest.mark.anyio
 async def test_list_groups_returns_items_and_page():
     repo = AsyncMock()
     profile_repo = AsyncMock()
@@ -679,7 +697,7 @@ async def test_list_groups_returns_items_and_page():
         1: _profile(group_id=1, intro="A intro"),
         2: _profile(group_id=2, intro="B intro"),
     }
-    membership_repo.count_members.side_effect = [3, 7]
+    membership_repo.count_members_by_group_ids.return_value = {1: 3, 2: 7}
 
     svc = _make_service(
         repo=repo, profile_repo=profile_repo, membership_repo=membership_repo
@@ -700,9 +718,38 @@ async def test_list_groups_returns_items_and_page():
     assert items[0]["member_count"] == 3
     assert items[1]["id"] == 2
     assert items[1]["member_count"] == 7
+    membership_repo.count_members_by_group_ids.assert_awaited_once_with([1, 2])
     assert page["total"] == 5
     assert page["hasMore"] is True
     assert page["nextStart"] == 2
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("group_count", [3, 12])
+async def test_list_groups_batches_member_counts_independent_of_page_size(group_count):
+    repo = AsyncMock()
+    profile_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    groups = [_group(id=group_id) for group_id in range(1, group_count + 1)]
+    group_ids = [group.id for group in groups]
+    repo.search.return_value = (groups, group_count)
+    profile_repo.get_profiles_by_group_ids.return_value = {}
+    membership_repo.count_members_by_group_ids.return_value = {
+        group_id: group_id * 2 for group_id in group_ids
+    }
+
+    svc = _make_service(
+        repo=repo, profile_repo=profile_repo, membership_repo=membership_repo
+    )
+
+    items, _ = await svc.list_groups(keyword=None, page_start=0, page_size=group_count)
+
+    membership_repo.count_members_by_group_ids.assert_awaited_once_with(group_ids)
+    membership_repo.count_members.assert_not_awaited()
+    assert [item["member_count"] for item in items] == [
+        group_id * 2 for group_id in group_ids
+    ]
 
 
 @pytest.mark.anyio
@@ -716,7 +763,7 @@ async def test_list_groups_no_more_pages():
     profile_repo.get_profiles_by_group_ids.return_value = {
         1: _profile(group_id=1),
     }
-    membership_repo.count_members.return_value = 1
+    membership_repo.count_members_by_group_ids.return_value = {1: 1}
 
     svc = _make_service(
         repo=repo, profile_repo=profile_repo, membership_repo=membership_repo
@@ -795,7 +842,7 @@ async def test_list_groups_profile_missing_for_some():
     profile_repo.get_profiles_by_group_ids.return_value = {
         1: _profile(group_id=1, intro="Has one"),
     }
-    membership_repo.count_members.side_effect = [1, 1]
+    membership_repo.count_members_by_group_ids.return_value = {1: 1, 2: 1}
 
     svc = _make_service(
         repo=repo, profile_repo=profile_repo, membership_repo=membership_repo
