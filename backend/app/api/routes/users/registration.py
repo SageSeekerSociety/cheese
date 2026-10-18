@@ -129,10 +129,7 @@ async def get_registration_config() -> dict:
     )
 
 
-@router.post(
-    "",
-    summary="Register User",
-)
+@router.post("", summary="Register User", dependencies=[ROUTE_DECIDES])
 async def register_user(
     payload: RegisterUserRequest,
     request: Request,

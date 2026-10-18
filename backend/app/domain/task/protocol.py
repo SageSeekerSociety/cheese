@@ -33,6 +33,7 @@ when it WAS the course. `app.domain.space.models.SpaceCategory` is the row.
 只为 `teaching` 特判，不为某个字段单开一条路径。
 """
 
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -86,6 +87,19 @@ def _ids(value: Any) -> list[int]:
     return list(seen)
 
 
+def _uuids(value: Any) -> list[str]:
+    """Document ids, in order, deduplicated; anything that is no uuid dropped."""
+    if not isinstance(value, list):
+        return []
+    seen: dict[str, None] = {}
+    for item in value:
+        try:
+            seen.setdefault(str(uuid.UUID(str(item))), None)
+        except ValueError:
+            continue
+    return list(seen)
+
+
 @dataclass(frozen=True)
 class Teaching:
     """课程级教学配置 — the frame a 创研课's agents work inside THIS week.
@@ -118,7 +132,9 @@ class Teaching:
     #: rotated link is picked up without re-saving the 项目集 — and so this key
     #: stays a small JSON blob rather than a second copy of the material library.
     material_ids: list[int] = field(default_factory=list)
-    knowledge_ids: list[int] = field(default_factory=list)
+    #: The team documents the course points its AI teammates at (#3774): their
+    #: agents may read these, and no other team document.
+    document_ids: list[str] = field(default_factory=list)
 
     @property
     def is_empty(self) -> bool:
@@ -132,7 +148,7 @@ class Teaching:
             or self.allowed_topics
             or self.avoid_in_code
             or self.material_ids
-            or self.knowledge_ids
+            or self.document_ids
         )
 
     def fill(self, template: str) -> str:
@@ -174,7 +190,7 @@ class Teaching:
             allowed_topics=_texts(raw.get("allowed_topics")),
             avoid_in_code=_texts(raw.get("avoid_in_code")),
             material_ids=_ids(raw.get("material_ids")),
-            knowledge_ids=_ids(raw.get("knowledge_ids")),
+            document_ids=_uuids(raw.get("document_ids")),
         )
 
 
