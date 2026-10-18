@@ -284,12 +284,14 @@ class VerifyBriefPathsTests(unittest.TestCase):
 
     def test_root_common_extensions_are_checked(self):
         brief = "\n".join(f"Update {path}" for path in self.root_extensions)
-        actual = [value for path in self.root_extensions for value in ("--in-flight-actual", path)]
-        result, _, errors = self.run_tool(brief, *actual)
+        result, output, errors = self.run_tool(brief)
+        self.assertEqual(result, 0, errors)
+        self.assertIn(f"verified {len(self.root_extensions)} brief path", output)
+        result, _, errors = self.run_tool(
+            "Update data.parquet\n", "--in-flight-actual", "data.parquet"
+        )
         self.assertEqual(result, 1)
-        for path in self.root_extensions:
-            with self.subTest(path=path):
-                self.assertIn(path, errors)
+        self.assertIn("overlaps in-flight", errors)
         result, _, errors = self.run_tool("Update missing.parquet\n")
         self.assertEqual(result, 1)
         self.assertIn("path does not exist", errors)
@@ -432,7 +434,8 @@ class VerifyBriefPathsTests(unittest.TestCase):
 
     def test_counted_list_accepts_common_separators(self):
         for separator in (
-            ";", "；", "&", "＆", "，以及 ", "，和 ", "、以及 ", "、和 ",
+            ";", "；", "&", "＆", "，以及 ", "，和 ", "，与 ",
+            "、以及 ", "、和 ", "、与 ",
             ", and ",
         ):
             with self.subTest(separator=separator):
