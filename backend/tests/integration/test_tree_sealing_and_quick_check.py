@@ -361,6 +361,7 @@ def test_ready_puts_the_commits_title_on_a_placeholder_pr(client, monkeypatch):
         "head": {"sha": "abc123"},
     }
     github.commit_subject.return_value = "fix(usage): a claim is answered once"
+    github.commit_parents.return_value = []
     monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
 
     async def run():
@@ -398,6 +399,7 @@ def test_ready_leaves_the_placeholder_alone_when_the_commit_is_one_too(
         "head": {"sha": "abc123"},
     }
     github.commit_subject.return_value = "WIP: still sketching this one"
+    github.commit_parents.return_value = []
     monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
 
     async def run():
@@ -426,6 +428,7 @@ def test_ready_leaves_a_title_that_is_not_the_placeholder(client, monkeypatch):
         "head": {"sha": "abc123"},
     }
     github.commit_subject.return_value = "fix(usage): some other title entirely"
+    github.commit_parents.return_value = []
     monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
 
     async def run():
@@ -463,9 +466,17 @@ def test_ready_answers_an_exhausted_quota_wherever_it_hits(client, monkeypatch):
             service = AcceptService(session, roster_team=project_team)
             task.pr_number, task.pr_url = 123, "https://example/pull/123"
             github.commit_subject.return_value = "fix(usage): a claim is answered once"
+            github.commit_parents.return_value = []
 
             # The read that opens the hand-over is always the first call, so
             # each leg spends the quota one call later than the one above it.
+            github.commit_parents.side_effect = GitHubPRRateLimited("limited")
+            parents = await service.mark_ready(room, task.id)
+            assert parents["ready"] is False and "额度暂时用尽" in parents["reason"]
+            github.commit_parents.side_effect = None
+            github.update_pr.assert_not_awaited()
+            github.mark_ready_for_review.assert_not_awaited()
+
             github.commit_subject.side_effect = GitHubPRRateLimited("limited")
             read = await service.mark_ready(room, task.id)
             assert read["ready"] is False and "额度暂时用尽" in read["reason"]
