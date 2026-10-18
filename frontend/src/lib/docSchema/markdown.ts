@@ -141,24 +141,16 @@ const DocAutolinkCjk: TokenizerExtension = {
   },
 }
 
-// Keep the complete file token literal: stripping HTML inside an invalid one
-// can turn the remaining text into a different, valid file reference.
+// Keep an HTML opener after a file path literal: stripping it can synthesize
+// a valid reference. Leave the rest to Markdown so later code and links survive.
 const DocFileReference: TokenizerExtension = {
   name: 'docFileReference',
   level: 'inline',
   start: (src) => src.indexOf('<&'),
   tokenizer(src) {
-    if (!src.startsWith('<&')) return undefined
-    let depth = 0
-    for (let i = 0; i < src.length && src[i] !== '\n'; i++) {
-      if (src[i] === '<') depth++
-      if (src[i] === '>' && --depth === 0) {
-        const raw = src.slice(0, i + 1)
-        return { type: 'text', raw, text: raw }
-      }
-    }
-    // Consume an unfinished reference once instead of rescanning its nested prefixes.
-    const raw = src.split('\n', 1)[0]
+    const match = /^<&[\w./一-鿿()-]+(?::\d+(?:-\d+)?)?<(?=\/?[A-Za-z][\w-]*[\s/>]|[!?])/.exec(src)
+    if (!match) return undefined
+    const raw = match[0]
     return { type: 'text', raw, text: raw }
   },
 }

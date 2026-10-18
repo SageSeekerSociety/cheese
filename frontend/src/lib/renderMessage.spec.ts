@@ -123,6 +123,21 @@ describe('芝士 replies', () => {
     expect(Array.from(host.querySelectorAll('strong'), (strong) => strong.textContent)).toEqual(['Before', 'between'])
     expect(host.querySelector('code')?.textContent).toBe('<&src/code.ts>')
   })
+
+  it('keeps code after an unfinished file reference literal', () => {
+    const host = document.createElement('div')
+    host.innerHTML = renderMarkdown('<&unfinished `<&src/code.ts>`', MAPS)
+
+    expect(host.querySelector('code')?.textContent).toBe('<&src/code.ts>')
+    expect(host.querySelector('[data-file]')).toBeNull()
+  })
+
+  it('keeps links after an unfinished file reference actionable', () => {
+    const host = document.createElement('div')
+    host.innerHTML = renderMarkdown('<&unfinished [docs](https://example.org)', MAPS)
+
+    expect(host.querySelector('a')?.href).toBe('https://example.org/')
+  })
 })
 
 describe('renderPlain (human messages)', () => {
