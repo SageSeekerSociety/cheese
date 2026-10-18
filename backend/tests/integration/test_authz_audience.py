@@ -184,6 +184,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "stranger",
         "agent-seat",
         "agent-rostered",
+        "agent-team",
         "retired",
     )
 
@@ -208,7 +209,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         await session.flush()
         agents = [
             await UserRepository(session).get_by_username(handle)
-            for handle in ("agent-seat", "agent-rostered")
+            for handle in ("agent-seat", "agent-rostered", "agent-team")
         ]
         assert all(agent is not None for agent in agents)
         session.add_all([AgentBinding(user_id=agent.id) for agent in agents])
@@ -216,6 +217,10 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
 
     _on_the_app_loop(client, _relationships)
     join_project_team(client, pid, "excluded")
+    # An AI teammate the project did not seat on its roster reads nothing, even
+    # with a team relation: `standing` lets an agent read only where the project
+    # listed it. This is the one handle the batch's agent branch decides.
+    join_project_team(client, pid, "agent-team")
     # A retired account still on the team's relation list is nobody: `standing`
     # resolves the handle through a user row that filters `deleted_at`, so the
     # team relation alone must not make them readable.
@@ -239,6 +244,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "stranger",  # a registered person in neither
         "agent-seat",  # an AI teammate, not on the roster
         "agent-rostered",  # an AI teammate the project did seat
+        "agent-team",  # an AI teammate on the team but not on the roster
         "nobody-0000",  # no account at all
         "retired",  # a retired account still on the team's relations
         "",  # a seat with no handle is nobody
@@ -262,6 +268,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "stranger": False,
         "agent-seat": False,
         "agent-rostered": True,
+        "agent-team": False,
         "nobody-0000": False,
         "retired": False,
         "": False,
@@ -277,7 +284,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "dave",
         [handle for handle in handles if handle and handle != "dave"],
     )
-    agents = {"agent-seat", "agent-rostered"}
+    agents = {"agent-seat", "agent-rostered", "agent-team"}
     assert _outsiders(client, pid, room) == [
         handle
         for handle in handles
