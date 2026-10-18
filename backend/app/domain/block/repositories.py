@@ -24,6 +24,7 @@
 拿到 `BlockRepository` 再取属性，方法从哪个基类来不影响。
 """
 
+import copy
 import uuid
 from collections.abc import Collection
 from datetime import UTC, datetime
@@ -135,6 +136,15 @@ class BlockRepository(
         # A platform sentence carries its key; the reader's screen renders it
         # in the reader's language (`app/core/sentences.py`).
         meta = with_keys(meta, content=content)
+        # The row owns its meta. A caller keeps the dict it passed and edits it
+        # after this write — `answer_questions` rewrites a message's
+        # `agent_recipient` in place, then re-assigns `meta` — and with the
+        # nested objects shared, that new value compared equal to the one just
+        # mutated under it and SQLAlchemy emitted no UPDATE, so the stored row
+        # kept the old recipient. `with_keys` already copies the top level;
+        # this copies what is under it.
+        if meta is not None:
+            meta = copy.deepcopy(meta)
         block = Block(
             project_id=project_id,
             conversation_id=conversation_id,

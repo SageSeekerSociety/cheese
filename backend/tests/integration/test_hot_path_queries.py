@@ -251,6 +251,11 @@ _SELF_REFERENCE_UPDATE = re.compile(
     r"^\s*UPDATE blocks\s+SET\s+turn_id\s*=", re.IGNORECASE
 )
 
+#: Whole-row reads of one block by id: the route re-reads the anchor it just
+#: wrote to answer the POST, and the repository used to read it once more
+#: after the flush. A send may cost the route's read, not two.
+_BLOCK_BY_ID = re.compile(r"\bFROM blocks WHERE blocks\.id = ")
+
 
 def test_a_sent_message_groups_under_itself_without_a_second_write(client, bearer):
     """A message block is written once, its self-reference included.
@@ -278,6 +283,11 @@ def test_a_sent_message_groups_under_itself_without_a_second_write(client, beare
     assert not patched, (
         "the message's self-reference was written as a second statement:\n"
         + "\n".join(patched)
+    )
+    reads = [s for s in statements if _BLOCK_BY_ID.search(s)]
+    assert len(reads) == 1, (
+        "the write re-read its own row; only the route's read of the anchor "
+        "it returns should ask for it by id:\n" + "\n".join(reads)
     )
     # The caller still gets the whole row back from that one INSERT.
     assert sent["seq"] > 0
