@@ -50,6 +50,7 @@ from app.core.db import SessionFactory
 from app.domain.conversation.models import Conversation
 from app.domain.project.repositories import ProjectRepository
 from app.domain.usage import pricing
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, Rates, payer_for_project
 from app.domain.usage.models import IngestCheckpoint
@@ -235,6 +236,7 @@ async def _land_row(
     # or a task or thread inside one. The usage row's own reference is to the
     # conversation, so that is where it is looked up.
     topic_id = _uuid_or_none(row.get("topic_id"))
+    logged_topic_id = topic_id
     if topic_id is not None:
         conversation = await session.scalar(
             select(Conversation.id)
@@ -282,6 +284,20 @@ async def _land_row(
         cost = rates.cost_usd(
             input_tokens, output_tokens, cache_read, cache_write, cache_write_1h
         )
+    execution = None
+    try:
+        logged_work_id = uuid.UUID(str(row.get("work_id")))
+    except ValueError:
+        logged_work_id = None
+    if logged_work_id is not None:
+        execution = await CreditBudgets(session).execution(logged_work_id, project_id)
+        if execution is not None and execution.conversation_id != logged_topic_id:
+            execution = None
+    work_id = (
+        execution.work_id
+        if execution is not None
+        else await work_index.work_at(session, logged_topic_id, row.get("ts"))
+    )
     await Ledger(session).record(
         await payer_for_project(session, project_id),
         credits=spend_to_credits(cost),
@@ -295,9 +311,9 @@ async def _land_row(
         cost_usd=cost,
         route="subscription",
         kind=row["kind"] if row.get("kind") in LINE_KINDS else "chat",
-        # The proxy log has no work id and one attributed unit can make many
-        # /v1/messages calls. Use the nearest block-carried id by timestamp.
-        turn_id=await work_index.work_at(session, topic_id, row.get("ts")),
+        turn_id=work_id,
+        # Timestamp matching can group old calls, but cannot authorize a member charge.
+        attribute_to_work=execution is not None,
     )
     return LANDED
 

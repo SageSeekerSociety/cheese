@@ -26,6 +26,7 @@ from app.domain.feedback.models import (
 )
 from app.domain.feedback.schemas import CommentOut, FeedbackDetail
 from app.domain.feedback.services.vocabulary import ADMIN_TABS, SORTS
+from app.domain.usage.incentives import CreditIncentives
 from app.domain.user.services import chosen_avatars_by_handle
 
 if TYPE_CHECKING:
@@ -431,7 +432,7 @@ async def detail_of(
             *[n.author_handle for n in notes],
         ]
     )
-    return FeedbackDetail.from_row(
+    detail = FeedbackDetail.from_row(
         row,
         supports=await svc._repo.supports_count(row.id),
         supported=(await svc._repo.has_support(row.id, handle) if handle else False),
@@ -458,6 +459,8 @@ async def detail_of(
         can_claim=can_claim,
         can_release=can_release,
     )
+    detail.reward = await CreditIncentives(svc._session).reward(f"feedback:{row.id}")
+    return detail
 
 
 async def mark_read(svc: pkg.FeedbackService, *, handle: str) -> datetime:

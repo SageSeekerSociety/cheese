@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n'
 
 import AdminQueueDetailBody from '@/components/admin/AdminQueueDetailBody.vue'
 import AdminQueueDetailSide from '@/components/admin/AdminQueueDetailSide.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 
 /**
  * AdminQueueDetail.vue — 一条反馈的详情（§4.4），三个断点共用这一个组件：
@@ -69,6 +70,7 @@ const emit = defineEmits<{
   (e: 'security', id: string, security: boolean): void
   (e: 'note', id: string, body: string): void
   (e: 'search', v: string): void
+  (e: 'reward', id: string): void
 }>()
 
 const { t } = useI18n()
@@ -150,6 +152,15 @@ function addNote() {
       />
     </div>
 
+    <div v-if="item" class="qdet__reward">
+      <p v-if="item.reward">{{ t('usage.offers.rewarded', { n: item.reward.credits }) }}</p>
+      <template v-else-if="item.status !== 'declined'">
+        <BaseButton kind="secondary" size="sm" @click="emit('reward', item.id)">{{
+          t('usage.offers.reward')
+        }}</BaseButton>
+        <p>{{ t('usage.offers.rewardHint') }}</p>
+      </template>
+    </div>
     <div class="qdet__bar">
       <button v-if="next" type="button" class="qdet__primary" @click="emit('triage', next)">
         {{ advanceLabel }}
@@ -163,6 +174,20 @@ function addNote() {
 </template>
 
 <style scoped>
+.qdet__reward {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+.qdet__reward p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 .qdet {
   display: flex;
   flex-direction: column;
