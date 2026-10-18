@@ -88,7 +88,6 @@ export const RATCHET_DETAILS: Record<string, unknown[]> = {
     },
   ],
   'domain-import-guard': [],
-  'harness-boundary': [],
   'file-sizes': [],
   'vue-tsc': [],
   'stylelint-tokens': [

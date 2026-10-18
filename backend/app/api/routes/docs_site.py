@@ -14,11 +14,12 @@ from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlencode
 
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
+from app.api.refusal import refuse
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
@@ -33,7 +34,6 @@ from app.core.errors import (
     NotFoundError,
     SystemBusyError,
     ValidationError,
-    message_key,
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import exception_text, say
@@ -221,16 +221,6 @@ class AskRequest(BaseModel):
         return v if v and _PAGE.match(v) else None
 
 
-def _refuse(status: int, message: str, retry_after: int = 0) -> JSONResponse:
-    headers = {"Retry-After": str(retry_after)} if retry_after else {}
-    body: dict = {"code": status, "message": message}
-    key = message_key(message)
-    if key is not None:
-        # A catalog sentence: the browser renders it in its reader's language.
-        body["error"] = {"message": message, "i18n": key}
-    return JSONResponse(body, status_code=status, headers=headers)
-
-
 @router.post("/ask", dependencies=[ROUTE_DECIDES])
 async def ask(
     body: AskRequest,
@@ -248,23 +238,23 @@ async def ask(
     limits = ask_limits()
     verdict = await limits.admit(auth.user_id)
     if not verdict.allowed:
-        return _refuse(429, verdict.message, verdict.retry_after)
+        return refuse(429, verdict.message, verdict.retry_after)
 
     index = await retrieval.source.get()
     if index is None:
         await limits.release(auth.user_id)
-        return _refuse(503, say("askCheeseDocsUnreadable"), 30)
+        return refuse(503, say("askCheeseDocsUnreadable"), 30)
 
     # The question is the asker's, so its cost comes out of their credits.
     rates = Rates.of(settings.docs_assistant_model, await pricing.model_rates())
     if rates is None:
         await limits.release(auth.user_id)
-        return _refuse(503, say("askCheeseNotOpen"), 60)
+        return refuse(503, say("askCheeseNotOpen"), 60)
     refused = await Ledger(db).admit(await payer_for_person(db, auth.user_id))
     await db.commit()
     if refused is not None:
         await limits.release(auth.user_id)
-        return _refuse(429, refused.message, refused.retry_after_s())
+        return refuse(429, refused.message, refused.retry_after_s())
 
     if settings.docs_assistant_agentic:
         result = assistant.Outcome()
@@ -272,10 +262,10 @@ async def ask(
         key = await assistant.gateway_key(db)
         if key is None:
             await limits.release(auth.user_id)
-            return _refuse(503, say("askCheeseNotOpen"), 60)
+            return refuse(503, say("askCheeseNotOpen"), 60)
         if not limits.try_slot():
             await limits.release(auth.user_id)
-            return _refuse(503, say("askCheeseBusy"), 10)
+            return refuse(503, say("askCheeseBusy"), 10)
 
         async def agent_events():
             try:
@@ -306,10 +296,10 @@ async def ask(
     key = await assistant.gateway_key(db) if hits else None
     if hits and key is None:
         await limits.release(auth.user_id)
-        return _refuse(503, say("askCheeseNotOpen"), 60)
+        return refuse(503, say("askCheeseNotOpen"), 60)
     if hits and not limits.try_slot():
         await limits.release(auth.user_id)
-        return _refuse(503, say("askCheeseBusy"), 10)
+        return refuse(503, say("askCheeseBusy"), 10)
 
     async def events():
         try:

@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 
+from app.domain.agent.harness import CODEX
 from app.domain.agent.harness.driven.runner import socket_path
 
 VERSION = "0.154.0"
@@ -86,7 +87,7 @@ def configure(payload: dict) -> dict:
         config["cwd"] = str(workspace)
         home = state / "home"
         home.mkdir(exist_ok=True, mode=0o700)
-        codex_home = state / "codex"
+        codex_home = state / CODEX
         codex_home.mkdir(exist_ok=True, mode=0o700)
         (codex_home / "config.toml").write_text(payload["codex_config"])
         config_path = state / "runner.json"

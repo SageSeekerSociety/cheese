@@ -2,7 +2,7 @@
 
 Enrolled devices provide execution for ordinary rooms: project files, shell commands, environment scripts, custom stdio MCP processes and preview. Claude Code runs, under its runner, on the central session host configured by `AGENT_SESSION_DEVICE_ID`. Both locations use the existing connector, with separate recorded placement and storage. See `remote-execution.md` for setup and migration.
 
-设备是**纯算力**：它不含 agent 身份，agent 由项目/话题在请求开始时独立解析（agent = 屏幕，不是机器）。设备永远向服务器**拨出**（非入站），带退避重连 + 心跳，所以躲在 NAT/防火墙后的笔记本也能托管 agent、**零入站端口**。
+设备是**纯算力**：它不含 agent 身份，agent 由项目/频道在请求开始时独立解析（agent = 屏幕，不是机器）。设备永远向服务器**拨出**（非入站），带退避重连 + 心跳，所以躲在 NAT/防火墙后的笔记本也能托管 agent、**零入站端口**。
 
 ---
 
@@ -10,7 +10,7 @@ Enrolled devices provide execution for ordinary rooms: project files, shell comm
 
 > 执行环境（沙箱，还是整台机器）见 **#2320** 和 `where-a-turn-runs.md` §四。本节只讲**已落地、改代码必须守住**的一条约束。
 
-只适用于 **Hosted**（人接入的常驻机器）：那是别人的笔记本、别人的 `claude`，他借我们算力，不是把机器交给我们。**Cloud 不适用**——平台按话题开的一次性机器，随便处置。
+只适用于 **Hosted**（人接入的常驻机器）：那是别人的笔记本、别人的 `claude`，他借我们算力，不是把机器交给我们。**Cloud 不适用**——平台按频道开的一次性机器，随便处置。
 
 **判据：除了我们放进去的东西，机器上任何一样在我们来之前是什么样，走之后还是什么样。**
 
@@ -96,7 +96,7 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
 
 5. **绑定项目/团队**。在「设置 → 设备」或各团队的「工作电脑」页把设备绑到项目（`assign_to_project`）或团队（`assign_to_team`——团队下**所有项目**都能跑在这台机器上）。只有设备的 owner 能绑，且 owner 必须是该项目/团队的成员。
 
-6. **话题选 device 算力**。两种姿势：
+6. **频道选 device 算力**。两种姿势：
    - **全局**：不配 Cloud 的部署，整个算力池就是 DeviceChannel，每次 agent 请求都落到一台在线的、绑定了该项目的设备。
    - Room and project settings select `device` or `cloud` for execution. The catalogue requires an online enrolled device before offering it.
    - Each room retains its selected execution device and its separately recorded session host. An offline device prevents further execution; the platform does not move its worktree to another machine automatically.
@@ -116,7 +116,7 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 | **curl** | `install.sh` 用 curl 下二进制 | 必须 |
 | **sha256sum**（coreutils）/ **shasum** / **openssl**（任一） | `install.sh` 算下载文件的 sha256，与响应头 `X-Checksum-SHA256` 比对 | 必须，Linux 上有前两个、macOS 上有后两个，三个都没有则拒绝安装 |
 | **tmux** | 把 runner 和它握着的 `claude` 养在持久会话里，链路掉线不丢进程 | 必须。连接器没有 tmux 就直接退出，所以 `link connect` 在批准之前先找一遍 tmux，找不到就停下并说明怎么装；桌面端在 Mac 上自带一份 |
-| **git** | agent 把项目 clone 进工作目录、把话题分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
+| **git** | agent 把项目 clone 进工作目录、把频道分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
 | **python3**（3.11 以上） | 会话的运行程序（runner）、执行器，以及平台发到机器上跑的小工具（计量隧道、`cheese serve` 的预览隧道）。只用标准库，机器上不需要 venv、不需要 `pip install` | 必须。机器上的 `python3` 低于 3.11 或者没有时（每台 Mac 自带的 `/usr/bin/python3` 都是 3.9），连接器从服务器的 toolchain 路由取一份固定版本（python-build-standalone）放到 `~/.cheese/runtime/python`，排到自己 PATH 的最前面；会话窗口也带着这个 PATH 启动。取不到时连接照常，后台服务下次启动再取 |
 | **claude** (Claude Code CLI) | Central model session, or native file tools on an executor | Required; supplied by the platform |
 | **cheesehost** 连接器 | `install.sh` 装到 `~/.local/bin/`；必须装在**该服务自己能写的目录**里，否则自更新永远失败且无声（#501） |
@@ -218,5 +218,5 @@ cheesehost link connect https://<你的站点>/connector    # 先登录：打印
 # 同一条命令拿到 token 后装用户级 service 上线——全程不需要 sudo
 
 # 平台侧：在团队「工作电脑」页把设备绑给团队（或在「设置 → 设备」绑项目）
-# 话题选 device 算力（不配 Cloud 时就是默认，也可以在房间的工作电脑选择里显式选）
+# 频道选 device 算力（不配 Cloud 时就是默认，也可以在房间的工作电脑选择里显式选）
 ```
