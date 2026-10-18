@@ -1,4 +1,4 @@
-"""The DeepSeek alias always uses the official API's current checkpoint."""
+"""The configured DeepSeek deployment uses the official API's checkpoint."""
 
 import asyncio
 import copy
