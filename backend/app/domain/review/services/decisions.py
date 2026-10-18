@@ -174,14 +174,14 @@ async def _rebase_behind_before_ready(
     try:
         binding = await binding_for_project(topic.project_id, self._session)
         base = task.base_branch or await default_branch(topic.project_id, self._session)
-    except Exception:  # noqa: BLE001 — 连仓库都读不出来时照旧翻，不卡交付
+    except Exception:  # 连仓库都读不出来时照旧翻，不卡交付
         logger.warning("ready: cannot resolve the repository", exc_info=True)
         return None
     if binding is None:
         return None
     try:
         status = await client.pr_status(number)
-    except Exception:  # noqa: BLE001 — 读不到合并态就照旧翻，不卡交付
+    except Exception:  # 读不到合并态就照旧翻，不卡交付
         logger.warning("ready: cannot read PR %s's status", number, exc_info=True)
         return None
     if _conflicts_with_base(status):
@@ -191,7 +191,7 @@ async def _rebase_behind_before_ready(
         creds, _reason = await self._app_credentials(topic)
         owner, repo = binding.repo.split("/", 1)
         forge = await self._status_client(topic.project_id)
-    except Exception:  # noqa: BLE001 — 拿不到凭据/客户端就没有换基，照旧翻
+    except Exception:  # 拿不到凭据/客户端就没有换基，照旧翻
         logger.warning("ready: no forge client to rebase with", exc_info=True)
         return None
     if creds is None:
@@ -200,7 +200,7 @@ async def _rebase_behind_before_ready(
         ancestry = await forge.compare_status(
             owner=owner, repo=repo, base=base, head=status.head_sha, token=creds.read
         )
-    except Exception:  # noqa: BLE001 — ancestry 读不到不拦（merge_state 的规矩）
+    except Exception:  # ancestry 读不到不拦（merge_state 的规矩）
         logger.warning("ready: cannot compare %s with %s", status.head_sha, base)
         ancestry = None
     if ancestry not in ("behind", "diverged"):
@@ -214,7 +214,7 @@ async def _rebase_behind_before_ready(
             number=number,
             token=creds.write,
         )
-    except Exception:  # noqa: BLE001 — 换基失败不卡交付
+    except Exception:  # 换基失败不卡交付
         logger.warning("ready: update-branch refused for #%s", number, exc_info=True)
         return None
     if updated:
@@ -224,7 +224,7 @@ async def _rebase_behind_before_ready(
     # moment ago — read once more so the two do not share one sentence.
     try:
         after = await client.pr_status(number)
-    except Exception:  # noqa: BLE001 — 见上
+    except Exception:  # 见上
         return {"ready": False, "reason": _READY_REBASE_REFUSED}
     if _conflicts_with_base(after):
         return {"ready": False, "reason": _READY_CONFLICT}
