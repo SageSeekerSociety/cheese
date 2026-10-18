@@ -82,7 +82,6 @@
     "beContracts": "Backend contracts",
     "beDeferredImports": "Backend deferred imports",
     "domainImportGuard": "Domain import guard",
-    "harnessBoundary": "Harness boundary",
     "fileSizes": "File size",
     "fileSizesScope": "Only files this change touched",
     "vueTsc": "Vue type check",
