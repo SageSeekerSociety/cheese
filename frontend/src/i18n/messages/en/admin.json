@@ -1,7 +1,4 @@
 {
-  "statusCell": {
-    "step": "{label} · step {step} of {total}"
-  },
   "assignee": {
     "label": "Assign to",
     "searching": "Searching…",

@@ -9,11 +9,15 @@ the document's readers see.
 
 import importlib.util
 import uuid
+from collections import Counter
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
+from sqlalchemy import event
+
 from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.turn.intake.preparation import living_doc_text
+from app.domain.canvas.services import settle
 from app.domain.living_doc import collab
 from app.domain.room_task.place import PlaceResolver
 from tests.conftest import seed_user
@@ -388,3 +392,43 @@ def test_cheese_writing_a_new_canvas_block_is_told_which_canvas_it_got(client):
     made = said.split("新建了画布《依赖》，编号 ", 1)[1].split("：", 1)[0]
     assert f":::canvas {made} 依赖" in _content(client, doc)
     assert _board(client, made).status_code == 200
+
+
+def test_settle_queries_canvas_rows_once_regardless_of_block_count(client):
+    project, _, doc, _ = _task_canvas(client)
+    content = "\n\n".join(":::canvas new 画布\n:::" for _ in range(12))
+    created = _write(client, doc, content, version=1)
+    canvas_ids = [uuid.UUID(canvas["id"]) for canvas in created["canvases"]]
+
+    async def _readable(_document_id: uuid.UUID) -> bool:
+        return True
+
+    async def query_count(count: int) -> int:
+        statements: list[str] = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+            statements.append(statement)
+
+        engine = client.test_app_engine.sync_engine
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            async with client.test_request_factory() as session:
+                await settle(
+                    session,
+                    "\n\n".join(
+                        f":::canvas {canvas_id} 画布\n:::"
+                        for canvas_id in canvas_ids[:count]
+                    ),
+                    document_id=uuid.UUID(doc),
+                    project_id=uuid.UUID(project),
+                    actor="alice",
+                    keep=Counter(canvas_ids[:count]),
+                    readable=_readable,
+                )
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+        return len(statements)
+
+    three = client.portal.call(query_count, 3)
+    twelve = client.portal.call(query_count, 12)
+    assert three == twelve
