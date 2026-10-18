@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from anyio.from_thread import BlockingPortal
 from sqlalchemy import func, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import forge_quota
@@ -46,6 +47,7 @@ from app.domain.ci_activity.models import (
     CiMergeQueueEvent,
     CiWorkflowRun,
 )
+from app.domain.ci_activity.store import CiActivityStore
 from app.domain.project import forge as project_forge
 from app.domain.project.models import Project, ProjectGitInstallation
 from tests.integration.conftest import a_team
@@ -481,5 +483,48 @@ def test_the_queue_is_read_from_the_window_start_then_from_the_last_sweep(
         assert first[-1][1] == NOW
         assert github.queue_reads[0][0] == NOW - ingest.QUEUE_OVERLAP
         assert github.queue_reads[-1][1] == NOW + timedelta(minutes=5)
+
+    _portal.call(_run_it)
+
+
+def test_a_busy_day_of_queue_events_is_stored_in_full(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens
+):
+    github = _GitHub()
+    github.events = [
+        QueueEvent(pr, kind, NOW - timedelta(hours=1, seconds=pr), None, "x")
+        for pr in range(3000)
+        for kind in ("added", "removed")
+    ]
+
+    async def _run_it() -> None:
+        await _connect(db_session)
+        report = await _sweep(db_session, github)
+
+        assert report["error"] == ""
+        assert await _count(db_session, CiMergeQueueEvent) == 6000
+
+    _portal.call(_run_it)
+
+
+def test_a_database_error_ends_the_sweep_with_a_recorded_reason(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
+):
+    github = _GitHub()
+    github.runs = {301: _run(301, age=timedelta(minutes=10))}
+
+    async def _refused(self, repo, events):
+        raise DBAPIError("INSERT ...", {}, Exception("disk full"))
+
+    monkeypatch.setattr(CiActivityStore, "add_queue_events", _refused)
+
+    async def _run_it() -> None:
+        await _connect(db_session)
+        report = await _sweep(db_session, github)
+
+        assert "disk full" in report["error"]
+        recorded = await db_session.scalar(select(CiActivitySweep))
+        assert recorded is not None and recorded.report["error"] == report["error"]
+        assert await _count(db_session, CiWorkflowRun) == 1
 
     _portal.call(_run_it)
