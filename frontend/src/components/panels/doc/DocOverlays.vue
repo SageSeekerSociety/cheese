@@ -495,7 +495,8 @@ function addBlockBelow() {
 // 或者整块删掉。图表、表格这类有结构的块只能删，换成正文会丢掉结构。
 // 拖它照旧是挪这一块。菜单量着手柄的位置摆在屏幕上，手柄因为鼠标移开而收起时它还在。
 const blockMenu = ref<{ pos: number; current: string; converts: boolean; top: number; left: number } | null>(null)
-function openBlockMenu(e: MouseEvent) {
+// Enter and Space open it too: the grip says role="button".
+function openBlockMenu(e: Event) {
   const ed = props.editor
   if (!ed || hoverPos.value == null) return
   const node = ed.state.doc.nodeAt(hoverPos.value)
@@ -620,6 +621,7 @@ defineExpose({ onHover, onEdited })
      (↑↓/Enter/Esc) is handled in the suggestion plugin; the mouse
      path routes through the same command(). -->
   <Transition name="doc-menu">
+    <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- `hover` is DocSlashMenu's own event, which it also fires when an item takes focus -->
     <DocSlashMenu
       v-if="slashMenu"
       :items="slashMenu.items"
@@ -691,7 +693,10 @@ defineExpose({ onHover, onEdited })
       :aria-expanded="!!blockMenu"
       :aria-label="t('work.room.doc.blockHandle')"
       :title="t('work.room.doc.blockHandle')"
+      tabindex="0"
       @click="openBlockMenu"
+      @keydown.enter.prevent="openBlockMenu"
+      @keydown.space.prevent="openBlockMenu"
     >
       <v-icon size="15">mdi-drag-vertical</v-icon>
     </span>

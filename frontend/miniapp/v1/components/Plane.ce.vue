@@ -395,6 +395,7 @@ const clip = `plane-${Math.random().toString(36).slice(2, 8)}`
           {{ s.label }}
         </text>
       </template>
+      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a draggable point is role="slider" with a tab stop and arrow keys (nudge); a fixed one has neither, and both handlers ignore it. The rule cannot read the bound role -->
       <g
         v-for="s in shown.filter((one) => one.kind === 'point')"
         :key="`p${s.key}`"

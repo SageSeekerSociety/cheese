@@ -81,6 +81,7 @@ const STROKE: Record<string, string> = {
 
 <template>
   <div class="trend" :style="{ height: `${height ?? H}px` }">
+    <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the pointer reads a past day's value off the line; the legend below states each series' latest value -->
     <svg :viewBox="`0 0 ${W} ${H}`" preserveAspectRatio="none" @mousemove="onMove" @mouseleave="hoverIndex = null">
       <!-- 网格：四条横线加刻度值。虚线、极淡，只在读值时提供参照，不抢线的注意力。 -->
       <g>

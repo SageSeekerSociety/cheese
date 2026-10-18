@@ -174,6 +174,7 @@ function entryKey(row: unknown): string {
       item-role="listitem"
     >
       <template #item="{ item }">
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused controls (the keyboard's Menu key fires it too); the row's ⋯ button opens the same menu -->
         <div v-if="item.folder" class="library-row" @contextmenu="rowMenu.open(item.key, $event)">
           <button type="button" class="library-row__open" @click="emit('openFolder', item.folder.path)">
             <v-icon icon="mdi-folder-outline" size="20" class="library-row__icon" />
@@ -195,6 +196,7 @@ function entryKey(row: unknown): string {
             </template>
           </AdaptiveMenu>
         </div>
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused controls (the keyboard's Menu key fires it too); the row's ⋯ button opens the same menu -->
         <div v-else-if="item.doc" class="library-row" @contextmenu="rowMenu.open(item.key, $event)">
           <button type="button" class="library-row__open" @click="emit('openDoc', item.doc.id)">
             <v-icon icon="mdi-file-document-edit-outline" size="20" class="library-row__icon" />
@@ -215,6 +217,7 @@ function entryKey(row: unknown): string {
             </template>
           </AdaptiveMenu>
         </div>
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused controls (the keyboard's Menu key fires it too); the row's ⋯ button opens the same menu -->
         <div
           v-else-if="item.file"
           class="library-row"
