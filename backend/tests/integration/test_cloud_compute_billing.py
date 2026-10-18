@@ -334,3 +334,82 @@ async def test_a_persons_own_device_is_never_charged(client, monkeypatch):
                 )
             )
         ).all() == []
+
+
+def test_whole_vms_are_opened_with_one_read_of_their_homes_however_many(cloud):
+    """Opening the runs of new whole VMs reads their homes once, not once per
+    VM, and not at all when none is new; each run still names its own VM's
+    room and session."""
+    from sqlalchemy import event
+
+    from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
+    from app.domain.usage.compute import VM, ComputeMeter
+
+    async def observe_new(count: int, *, homeless: int = 0):
+        async with cloud.client.test_request_factory() as db:
+            want = {}
+            for i in range(count + homeless):
+                host = CloudHost(
+                    customer_id=7,
+                    account_id=9,
+                    offering_id=1,
+                    hostname=f"vm-{uuid.uuid4().hex[:12]}",
+                    login_user="cheese",
+                    cores=2,
+                    memory_mb=4096,
+                    disk_gb=20,
+                    status=MachineStatus.running,
+                    whole_machine=True,
+                    project_id=cloud.project_id,
+                )
+                db.add(host)
+                await db.flush()
+                if i >= count:
+                    want[metering.vm_subject(host.id)] = (None, None)
+                    continue
+                room = cloud.seats[i % len(cloud.seats)].room
+                session_id = uuid.uuid4()
+                db.add(
+                    SandboxHome(
+                        host_id=host.id,
+                        spec="standard",
+                        project_id=cloud.project_id,
+                        topic_id=room,
+                        room_resource_id=str(room),
+                        resource_id=str(uuid.uuid4()),
+                        session_id=session_id,
+                    )
+                )
+                want[metering.vm_subject(host.id)] = (room, session_id)
+            await db.commit()
+
+            reads: list[str] = []
+
+            def record(conn, cursor, statement, parameters, context, executemany):
+                text = statement.lstrip().upper()
+                if text.startswith("SELECT") and "SANDBOX_HOMES" in text:
+                    reads.append(statement)
+
+            target = (await db.connection()).sync_connection
+            event.listen(target, "before_cursor_execute", record)
+            try:
+                opened, _ = await metering._observe_vms(db, ComputeMeter(db))
+            finally:
+                event.remove(target, "before_cursor_execute", record)
+            await db.commit()
+            got = {
+                run.subject: (run.topic_id, run.session_id)
+                for run in await ComputeMeter(db).open_runs(VM)
+                if run.subject in want
+            }
+            return opened, len(reads), got, want
+
+    opened3, reads3, got3, want3 = run(cloud, lambda: observe_new(3, homeless=1))
+    opened12, reads12, got12, want12 = run(cloud, lambda: observe_new(12))
+    # A sweep with every VM already open reads no homes at all.
+    opened0, reads0, _, _ = run(cloud, lambda: observe_new(0))
+
+    assert (opened3, opened12, opened0) == (4, 12, 0)
+    assert got3 == want3 and got12 == want12
+    assert reads3 == reads12 == 1
+    assert reads0 == 0
