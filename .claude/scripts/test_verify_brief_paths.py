@@ -427,11 +427,16 @@ class VerifyBriefPathsTests(unittest.TestCase):
                 self.assertIn(path, errors)
 
     def test_unknown_extension_longer_path_is_not_trimmed(self):
-        path = "docs/a.ver2中的说明.xyz"
-        result, _, errors = self.run_tool(f"更新 {path}\n")
-        self.assertEqual(result, 1)
-        self.assertIn("path does not exist", errors)
-        self.assertIn(path, errors)
+        for path in (
+            "docs/a.ver2中的说明.xyz",
+            "docs/a.ver2中的说明.1",
+            "docs/a.ver2中的说明.2024",
+        ):
+            with self.subTest(path=path):
+                result, _, errors = self.run_tool(f"更新 {path}\n")
+                self.assertEqual(result, 1)
+                self.assertIn("path does not exist", errors)
+                self.assertIn(path, errors)
 
     def test_known_path_prefix_does_not_hide_longer_path(self):
         path = "docs/a.ver2中的说明.md"

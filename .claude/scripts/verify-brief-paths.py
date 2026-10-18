@@ -193,12 +193,18 @@ def _trim_trailing_prose(token: str, known_paths: set[str]) -> str:
             continue
         # Prose may continue a known path with a version number or a ratio
         # ("中的第1.2节", "中的v2.0"); a longer real path carries a separator or
-        # ends in a file extension such as ".md" or ".7z". Trim only when it
-        # does neither, so a nonexistent longer path is never silently
-        # rewritten to this prefix. A final dot-segment of digits alone is a
-        # version or a ratio, not an extension.
-        tail = re.search(r"\.([A-Za-z0-9]{1,10})$", suffix)
-        if "/" in suffix or (tail and any(char.isalpha() for char in tail.group(1))):
+        # ends in a file extension ("中的说明.md", "中的说明.1"). Trim only when
+        # it does neither, so a nonexistent longer path is never silently
+        # rewritten to this prefix. A number after a dot is a version or a
+        # ratio, not an extension, unless its segment starts a new name.
+        prose = suffix[2:] if suffix[:2] in ("中的", "里的", "上的", "下的", "内的") else suffix
+        tail = re.search(r"\.([A-Za-z0-9]{1,10})$", prose)
+        extension_like = False
+        if tail:
+            segment = tail.group(1)
+            before = prose[tail.start() - 1] if tail.start() else ""
+            extension_like = any(char.isalpha() for char in segment) or not before.isdigit()
+        if "/" in suffix or extension_like:
             continue
         return path
     lowered = token.lower()
