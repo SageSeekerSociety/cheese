@@ -823,12 +823,13 @@ def test_reporting_yields_at_35_percent_without_advancing_coverage(
             runs_listed_from=NOW - ingest.WINDOW,
             runs_listed_to=NOW - timedelta(minutes=5),
             queue_read_to=NOW - timedelta(minutes=5),
-            report={"error": "", "installation_id": 9917},
+            report={"error": "", "installation_id": 3},
         )
         report = await _sweep(db_session, remote.reader(), backfill_slices=0)
         assert remote.requests == []
         assert report["error"]
-        # No token this round: the id it already knew is carried, not invented.
+        # No token this round: the id comes from the current binding, not the
+        # stale one the older report carried (a rebind could have changed it).
         assert report["installation_id"] == 9917
         latest = await CiActivityStore(db_session).last_sweep(REPO)
         assert latest.runs_listed_to == NOW - timedelta(minutes=5)

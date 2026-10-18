@@ -22,7 +22,6 @@ import httpx
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import forge_quota
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.ci_activity.github import CiGitHubError, GitHubCi, Listed
@@ -138,9 +137,10 @@ async def sweep_once(
     queue_read_to = last.queue_read_to if last else None
     credential = await github_read_token_for_repo(repo, session, background=True)
     if credential.token is None:
-        # No token this round; carry the last sweep's id when it had one rather
-        # than inventing one. None means "not known", never a guessed id.
-        report["installation_id"] = last.report.get("installation_id") if last else None
+        # No token this round. Report the id the current binding resolves to
+        # (the quota-closed branch still fills it) or None — never a previous
+        # sweep's id, which a re-install or rebind may have made stale.
+        report["installation_id"] = credential.installation_id
         report["error"] = credential.reason
         await store.record_sweep(
             repo,
@@ -152,16 +152,9 @@ async def sweep_once(
         )
         return report
     token = credential.token
-    # The token is already registered with its owner; reading it back through a
-    # constructed (never sent) request tells us the installation without a call
-    # and without storing the token itself.
-    report["installation_id"] = forge_quota.installation_of(
-        httpx.Request(
-            "GET",
-            "https://api.github.com/",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-    )
+    # The id came back with the credential, read off the binding and token
+    # objects already resolved — no extra request, no stored token.
+    report["installation_id"] = credential.installation_id
 
     def complete(listed: Listed, what: str) -> None:
         if listed.truncated:
