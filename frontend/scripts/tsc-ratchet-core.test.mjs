@@ -100,8 +100,8 @@ test('a missing PropType names the type-only import that fixes it', () => {
   assert.ok(text.includes("import type { PropType } from 'vue'"))
 })
 
-// `compare` and `tightenedBaseline` are the per-file arithmetic the a11y,
-// stylelint, i18n-comment and global-fallback ratchets import from here.
+// `compare` and `tightenedBaseline` are the per-file arithmetic the stylelint,
+// i18n-comment and global-fallback ratchets import from here.
 test('compare: a new or a raised count is a regression, a lowered one an improvement', () => {
   const result = compare({ 'a.vue': 2, 'c.vue': 2 }, { 'a.vue': 3, 'b.vue': 1, 'c.vue': 1 })
   assert.equal(result.ok, false)

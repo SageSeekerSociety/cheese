@@ -58,7 +58,15 @@ function onPicked(event: Event) {
           />
         </li>
       </ul>
-      <input ref="input" type="file" multiple hidden data-testid="attachment-input" @change="onPicked" />
+      <input
+        ref="input"
+        type="file"
+        multiple
+        hidden
+        data-testid="attachment-input"
+        :aria-label="t('tasks.attachmentPicker.add')"
+        @change="onPicked"
+      />
       <button type="button" class="tap__add" :disabled="uploading" @click="input?.click()">
         <v-progress-circular v-if="uploading" indeterminate size="16" width="2" />
         <v-icon v-else size="18">mdi-plus</v-icon>

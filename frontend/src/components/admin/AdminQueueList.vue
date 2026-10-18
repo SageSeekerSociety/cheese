@@ -103,6 +103,7 @@ function onKeydown(e: KeyboardEvent) {
       ref="gridEl"
       class="qlist__grid"
       role="grid"
+      tabindex="-1"
       :aria-label="t('feedback.queue.label')"
       :aria-busy="loading"
       :aria-activedescendant="activeRowId"
