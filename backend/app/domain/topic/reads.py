@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.topic.models import Topic, TopicProgress
+from app.domain.topic.models import Topic, TopicProgress, not_a_private_chat
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 
 
@@ -35,7 +35,7 @@ async def open_rooms(session: AsyncSession, room_ids: set[uuid.UUID]) -> set[uui
     rows = await session.scalars(
         select(Topic.id).where(
             Topic.id.in_(list(room_ids)),
-            Topic.is_private.is_(False),
+            not_a_private_chat(),
             Topic.members_only.is_(False),
         )
     )

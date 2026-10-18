@@ -25,6 +25,7 @@ from app.api.routes.users._common import (
 from app.api.users_deps import (
     issue_session,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
 from app.core.email import EMAIL_FORMAT
@@ -56,6 +57,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 @router.post(
     "/verify/email",
     summary="Send registration email verification code",
+    dependencies=[ROUTE_DECIDES],
 )
 async def send_register_email_code(
     payload: SendEmailCodeRequest,
@@ -127,10 +129,7 @@ async def get_registration_config() -> dict:
     )
 
 
-@router.post(
-    "",
-    summary="Register User",
-)
+@router.post("", summary="Register User", dependencies=[ROUTE_DECIDES])
 async def register_user(
     payload: RegisterUserRequest,
     request: Request,

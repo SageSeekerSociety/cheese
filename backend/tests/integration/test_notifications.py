@@ -5,7 +5,10 @@
 """
 
 import asyncio
+import re
 import uuid
+
+import pytest
 
 from app.domain.project.models import ProjectMember
 from tests.integration.conftest import post_project, session_auth_headers
@@ -455,3 +458,100 @@ def test_mark_read_flips_read(client):
 def test_mark_read_missing_404(client):
     r = client.post(f"/alerts/{MISSING_ID}/read")
     assert r.status_code == 404
+
+
+_NOTIFICATION_UPDATE = re.compile(r"^\s*UPDATE notification\b", re.IGNORECASE)
+_NOTIFICATION_SELECT = re.compile(r"\bFROM notification\b", re.IGNORECASE)
+
+
+@pytest.fixture
+def sql_log(client):
+    """Every SQL statement that reaches the database while the context is open."""
+    from sqlalchemy import event
+
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        statements.append(statement)
+
+    engine = client.test_request_factory.kw["bind"].sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        yield statements
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+
+def test_read_all_is_one_update_and_reports_the_unread_it_changed(client, sql_log):
+    """全部已读改掉的就是未读的那些，一条语句完成，不把行读回来。
+
+    以前先把整批未读行读进内存，再逐行置位：收件箱攒得越久，这一下读得越多。
+    `marked` 是这次真正改掉的行数，操作之前的未读数。
+    """
+    pid = _create_project(client)
+    for title in ("一", "二", "三"):
+        _one(
+            client,
+            pid,
+            level="light",
+            kind="change_alert",
+            title=title,
+            body="正文",
+            target_handle="alice",
+        )
+    # 已经读过的那条不该被算进这次改掉的行数。
+    already_read = _one(
+        client,
+        pid,
+        level="light",
+        kind="change_alert",
+        title="读过的",
+        body="正文",
+        target_handle="alice",
+    )
+    r = client.post(
+        f"/alerts/{already_read['id']}/read", headers=session_auth_headers("alice")
+    )
+    assert r.status_code == 200, r.text
+    # 别人的信一条也不动。
+    _one(
+        client,
+        pid,
+        level="light",
+        kind="change_alert",
+        title="给bob",
+        body="正文",
+        target_handle="bob",
+    )
+
+    unread_before = client.get(
+        f"/projects/{pid}/alerts/unread-count", headers=session_auth_headers("alice")
+    ).json()["data"]["unread"]
+    assert unread_before == 3
+
+    sql_log.clear()
+    r = client.post(
+        f"/projects/{pid}/alerts/read-all", headers=session_auth_headers("alice")
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["marked"] == unread_before
+
+    updates = [s for s in sql_log if _NOTIFICATION_UPDATE.search(s)]
+    reads = [s for s in sql_log if _NOTIFICATION_SELECT.search(s)]
+    assert len(updates) == 1, updates
+    assert reads == [], reads
+
+    assert (
+        client.get(
+            f"/projects/{pid}/alerts/unread-count",
+            headers=session_auth_headers("alice"),
+        ).json()["data"]["unread"]
+        == 0
+    )
+    assert (
+        client.get(
+            f"/projects/{pid}/alerts/unread-count",
+            headers=session_auth_headers("bob"),
+        ).json()["data"]["unread"]
+        == 1
+    )

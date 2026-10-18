@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import SystemBusyError
 from app.domain.fetch.service import fetch as fetch_url
@@ -45,7 +46,7 @@ class FetchIn(BaseModel):
     project: uuid.UUID | None = None
 
 
-@router.post("/fetch", summary="Read a URL for an agent")
+@router.post("/fetch", summary="Read a URL for an agent", dependencies=[ROUTE_DECIDES])
 async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
     # A signed-in person or an agent's scoped token; never anonymous. The
     # backend reads from inside the platform's network, so an open fetch is an
@@ -116,7 +117,11 @@ class PageCheckIn(BaseModel):
 PAGE_CHECK_TIMEOUT_S = 90.0
 
 
-@router.post("/page-check", summary="Render a page an agent made and report it")
+@router.post(
+    "/page-check",
+    summary="Render a page an agent made and report it",
+    dependencies=[ROUTE_DECIDES],
+)
 async def check_page(body: PageCheckIn, actor: ActorResolverDep) -> dict:
     """The platform's browser looks at a page so the agent does not need one.
 

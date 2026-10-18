@@ -41,6 +41,7 @@ from app.api.users_deps import (
     challenge_from_credential,
     issue_session,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
@@ -322,10 +323,7 @@ def _wrong_password(wait_seconds: int) -> AuthenticationRequiredError:
     )
 
 
-@router.post(
-    "/auth/login",
-    summary="User Login",
-)
+@router.post("/auth/login", summary="User Login", dependencies=[ROUTE_DECIDES])
 async def user_login(
     payload: LoginRequest,
     request: Request,
@@ -427,6 +425,7 @@ async def user_login(
 @router.post(
     "/auth/verify-2fa",
     summary="Complete a 2FA-gated login",
+    dependencies=[ROUTE_DECIDES],
 )
 async def verify_2fa_login(
     payload: dict,
@@ -567,8 +566,7 @@ async def _mail_sign_in_code(email: str) -> None:
 
 
 @router.post(
-    "/auth/email-code",
-    summary="Mail a sign-in code",
+    "/auth/email-code", summary="Mail a sign-in code", dependencies=[ROUTE_DECIDES]
 )
 async def request_sign_in_code(
     payload: EmailCodeSignInRequest,
@@ -602,6 +600,7 @@ async def request_sign_in_code(
 @router.post(
     "/auth/email-code/verify",
     summary="Sign in with a mailed code",
+    dependencies=[ROUTE_DECIDES],
 )
 async def verify_sign_in_code(
     payload: EmailCodeSignInVerifyRequest,
@@ -683,8 +682,7 @@ async def verify_sign_in_code(
 
 
 @router.post(
-    "/auth/refresh-token",
-    summary="Refresh Access Token",
+    "/auth/refresh-token", summary="Refresh Access Token", dependencies=[ROUTE_DECIDES]
 )
 async def refresh_access_token(
     request: Request,
@@ -732,10 +730,7 @@ async def refresh_access_token(
     )
 
 
-@router.post(
-    "/auth/logout",
-    summary="Logout",
-)
+@router.post("/auth/logout", summary="Logout", dependencies=[ROUTE_DECIDES])
 async def user_logout(
     request: Request,
     response: Response,
@@ -757,6 +752,7 @@ async def user_logout(
 @router.post(
     "/auth/sudo",
     summary="Verify credentials for privileged operations",
+    dependencies=[ROUTE_DECIDES],
 )
 async def sudo_auth(
     payload: SudoAuthRequest,
