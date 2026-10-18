@@ -1,21 +1,14 @@
 """Select merge-diff suites and fail the required check unless all pass.
 
-Two tiers, one judge. A DRAFT pull request runs only the fast tier — the
-bounded local evidence `ci-fast.py --tier quick` produces — because a draft is
-work in progress, not a delivery to review. Every other run is the full tier:
-each suite the merge diff selects (with backend ``integration``, ``e2e`` and
-``remote`` deferred from ``pull_request`` to the events that test landed code).
-The tier is decided HERE, from the event, so the check a draft produces can
-never be the one branch protection requires:
+Two tiers, one judge. Every pull request runs only the quick tier — the
+bounded evidence `ci-fast.py --tier quick` produces. Full suites run after
+landing, on a push to main (or a merge_group entry), not again on a ready PR.
 
-- a draft pull_request run is named ``CI required (draft quick)`` (the
-  aggregating job's ``name`` in required-ci.yml) and only the ``fast`` job may
-  succeed — every full suite must be SKIPPED, so a draft's green can never be
-  read as the full gate's green;
-- a push to main, a merge_group entry, or any pull_request that is not a draft
-  is named ``CI required`` and requires the selected suites (on
-  ``pull_request``, backend ``integration``, ``e2e`` and ``remote`` are
-  deferred to a run of landed code).
+Drafts aggregate as ``CI required (draft quick)``; ready PRs aggregate as
+``CI required`` and check the commit title. Both require ``fast`` to succeed
+and all full suites to be skipped. Landed-code runs also use ``CI required``,
+but require the full tier and every selected suite to succeed. Only that
+post-submit result can authorize deployment.
 
 A main push is the post-submit gate: its base is the commit `main-green` names
 (:func:`main_green_anchor`), so one run covers every commit that landed since
@@ -23,8 +16,8 @@ the gate last passed. The base is never ``github.event.before`` — that is only
 the previous tip, and the commits of a run that was superseded while pending
 would then fall outside every later diff.
 
-Fail closed: an event this module cannot read as a non-draft pull_request or a
-run of landed code is the FULL tier (the real gate), never the fast one.
+Fail closed: an event this module cannot read as a valid pull_request is the
+FULL tier, never the fast one.
 """
 
 import fnmatch
@@ -67,18 +60,10 @@ def branch_heavy_for(event_name):
 def tier_for(event_name, event):
     """Which tier this run must be — ``"full"`` or ``"quick"``.
 
-    Only a DRAFT pull_request is ``"quick"``. A ``push`` to main, a
-    ``merge_group`` entry and any pull_request whose ``draft`` flag is false are
-    ``"full"``; so is anything we cannot read — a missing/absent flag, a
-    malformed payload, an unknown event, or a non-dict event. An unreadable
-    event is the STRICT gate, never the loose one: defaulting to ``"quick"`` on
-    a parse surprise would let a draft's fast evidence stand in for the real
-    gate.
-
-    The GitHub pull_request payload's ``draft`` flag is authoritative and
-    correct on every action: it is true on ``opened``/``converted_to_draft`` and
-    false on ``ready_for_review``. The action name is not consulted — the flag
-    already carries it, and reading the flag keeps one source of truth.
+    Both draft and ready pull requests are ``"quick"``. A ``push`` to main,
+    a ``merge_group`` entry and all other events stay ``"full"``. The draft flag
+    only chooses the aggregator's name in the workflow, not its evidence tier.
+    Missing or malformed PR payloads still fail closed to the full tier.
     """
     if event_name == "merge_group":
         return "full"
@@ -86,9 +71,7 @@ def tier_for(event_name, event):
         pull = event.get("pull_request")
         if isinstance(pull, dict):
             draft = pull.get("draft")
-            if draft is False:
-                return "full"
-            if draft is True:
+            if draft is True or draft is False:
                 return "quick"
     return "full"
 

@@ -35,6 +35,9 @@ def _question_to_dto(question: Question, *, include_content: bool = True) -> dic
     }
 
 
+question_to_dto = _question_to_dto
+
+
 class QuestionsService:
     def __init__(
         self,
