@@ -100,14 +100,14 @@ async def convert(
                 content=raw,
                 headers={"Content-Type": "application/octet-stream"},
             )
-    except Exception as exc:  # noqa: BLE001 — every transport failure reads alike
+    except Exception as exc:  # every transport failure reads alike
         raise ConvertUnavailable(say("convertUnreachable")) from exc
 
     if response.status_code != 200:
         detail = ""
         try:
             detail = str(response.json().get("error") or "")
-        except Exception:  # noqa: BLE001 — a non-JSON body is just no detail
+        except Exception:  # a non-JSON body is just no detail
             detail = ""
         if response.status_code >= 500 or response.status_code in (404, 405):
             # 404/405: the running renderer predates this endpoint. That is the

@@ -134,7 +134,7 @@ class ConversationPlaces:
                         harness=harness,
                     )
                     await session.commit()
-        except Exception:  # noqa: BLE001 — never mask the original failure
+        except Exception:  # never mask the original failure
             logger.exception("failed to save session pointer for %s", topic_id)
 
     async def _room_of_conversation(

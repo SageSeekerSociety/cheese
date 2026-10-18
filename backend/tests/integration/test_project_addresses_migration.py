@@ -77,7 +77,7 @@ class World:
 
     def number(self, table: str, name: str) -> int | None:
         return self.db.fetchval(
-            f"SELECT number FROM {table} WHERE id = $1",  # noqa: S608
+            f"SELECT number FROM {table} WHERE id = $1",
             self.ids[name],
         )
 

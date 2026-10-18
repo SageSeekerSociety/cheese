@@ -176,7 +176,7 @@ async def go_on_while_working(
                 task_teammate=task_teammate,
             ):
                 gone_on.append(task_id)
-        except Exception:  # noqa: BLE001 — one task must not stop the rest
+        except Exception:  # one task must not stop the rest
             logger.warning("could not take task %s on", task_id, exc_info=True)
     return gone_on
 
@@ -338,7 +338,7 @@ async def tell_origin(
     try:
         async with session.begin_nested():
             await _tell_origin(session, task, content, task_teammate=task_teammate)
-    except Exception:  # noqa: BLE001 — a courtesy line never undoes a landing
+    except Exception:  # a courtesy line never undoes a landing
         logger.warning("could not tell task %s's discussion", task.id, exc_info=True)
 
 

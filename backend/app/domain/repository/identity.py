@@ -175,7 +175,7 @@ async def _thread(session: Any, task_id: uuid.UUID):
     this package, and this one needs the row, not that domain's behaviour."""
     try:
         return await task_rows.one(session, task_id)
-    except Exception:  # noqa: BLE001 — attribution never fails its caller
+    except Exception:  # attribution never fails its caller
         logger.info("could not read thread %s", task_id, exc_info=True)
         return None
 
@@ -189,7 +189,7 @@ async def _roster_owner(session: Any, topic_id: uuid.UUID) -> str | None:
         from app.domain.topic_membership.services import TopicMemberService
 
         return await TopicMemberService(session).owner_of(topic_id)
-    except Exception:  # noqa: BLE001 — attribution never fails its caller
+    except Exception:  # attribution never fails its caller
         logger.info("could not read roster owner for topic %s", topic_id, exc_info=True)
         return None
 
@@ -266,7 +266,7 @@ async def attribution(
     handle: str | None = None
     try:
         handle = await requester_handle(session, topic, task_id=task_id)
-    except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
+    except Exception:  # a trailer is not worth failing a merge
         logger.warning(
             "could not resolve the requester for topic %s", topic.id, exc_info=True
         )
@@ -292,7 +292,7 @@ async def attribution(
                         tuple(task.contributor_handles or ()),
                     ),
                 )
-    except Exception:  # noqa: BLE001 — same rule again: a trailer, not a gate
+    except Exception:  # same rule again: a trailer, not a gate
         logger.warning(
             "could not resolve the work behind topic %s", topic.id, exc_info=True
         )
@@ -336,7 +336,7 @@ async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:
         return None
     try:
         return await resolve_for_handle(session, handle)
-    except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
+    except Exception:  # a trailer is not worth failing a merge
         logger.warning("could not resolve a git identity for %s", handle, exc_info=True)
         return None
 

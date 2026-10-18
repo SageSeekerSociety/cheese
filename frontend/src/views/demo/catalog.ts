@@ -24,8 +24,8 @@
  * 面板三格），这里只留「这一册在整份目录里的哪一段」和那三个共用的函数。从这里出去
  * 的名字和原来一模一样，调用方一行都不用改。
  *
- * 一册要被 `catalog-ratchet.py` 算数，得在这里（或在一册里）**既被 import 又被
- * 展开** —— 只 import 不展开的那种，预览站根本没渲染它，棘轮也不认。
+ * 一册要上预览站，得在这里（或在一册里）**既被 import 又被展开** —— 只 import
+ * 不展开的那种，预览站根本没渲染它。
  */
 import type { CatalogEntry, CatalogNeed, CatalogState } from './catalog/types'
 

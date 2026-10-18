@@ -568,9 +568,7 @@ def self_test():
         ("deploy/README-backup.md", "A"),  # deploy/ wins over .md: A is tested first
         # A prefix is not enough: the copy and doc prefixes hold code too, and a file
         # judged by its prefix alone lands in a tier that is also an exemption (§4 stops
-        # re-reading it after a review) while CI keeps reading it as code. The generator
-        # under docs/ is the pointed case — .claude/scripts/check-i18n-lists.py reads it as
-        # build machinery. The loaders beside the message files stay in A, where the copy
+        # re-reading it after a review) while CI keeps reading it as code. The loaders beside the message files stay in A, where the copy
         # prefix already put them: heavier is the safe direction. What was wrong is the
         # increment exemption, and that lives in ready.exempt()'s self-test.
         ("frontend/src/i18n/messages/catalog.ts", "A"),  # the loader, not a message file

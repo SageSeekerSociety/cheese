@@ -117,7 +117,7 @@ def test_every_row_says_whose_change_it_is(edited: bytes):
 
 def test_the_panel_and_the_script_count_the_same_rows(edited: bytes):
     """数法不同的表现不是报错，是用户点第 2 条、生效第 3 条。"""
-    from io import BytesIO  # noqa: PLC0415 - only this test needs it
+    from io import BytesIO  # only this test needs it
 
     here = Path(__import__("tempfile").mkdtemp()) / "改后.docx"
     here.write_bytes(edited)

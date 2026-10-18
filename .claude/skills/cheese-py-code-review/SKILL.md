@@ -63,8 +63,7 @@ task check
 
 Check the diff against them; this skill does not restate them.
 
-- `.claude/rules/architecture.md` — module boundaries, the checked import graph,
-  the file-size cap.
+- `.claude/rules/architecture.md` — module boundaries, the checked import graph.
 - `backend/AGENTS.md` — the import graph, and `## Caps and conventions`.
 - `docs/manual/dev/backend-app.md` — the response envelope, how an error becomes a
   response, and the write gate.

@@ -274,7 +274,7 @@ async def test_without_valkey_a_seat_is_held_in_the_process(monkeypatch):
 @pytest.mark.anyio
 async def test_a_seat_falls_back_to_the_process_when_valkey_is_unreachable(monkeypatch):
     class Unreachable(Redis):
-        async def set(self, *args, **kwargs):  # noqa: A003 — the client's own name
+        async def set(self, *args, **kwargs):  # the client's own name
             raise ConnectionError("valkey is down")
 
     monkeypatch.setattr(admission, "get_redis_client", lambda: Unreachable())
@@ -301,10 +301,10 @@ async def test_a_seat_does_not_open_for_a_take_that_cannot_reach_valkey(
     inside: list[str] = []
 
     class Unreachable(Redis):
-        async def set(self, *args, **kwargs):  # noqa: A003 — the client's own name
+        async def set(self, *args, **kwargs):  # the client's own name
             raise ConnectionError("valkey is down")
 
-        async def eval(self, *args, **kwargs):  # noqa: A003 — the client's own name
+        async def eval(self, *args, **kwargs):  # the client's own name
             raise ConnectionError("valkey is down")
 
     offline = Unreachable()

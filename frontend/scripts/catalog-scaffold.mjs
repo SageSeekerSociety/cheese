@@ -2,8 +2,6 @@
 // Print the skeleton of a `/demo/catalog` entry for each component named.
 //
 //   node scripts/catalog-scaffold.mjs src/components/panels/PanelThreads.vue ...
-//   node scripts/catalog-scaffold.mjs --pending src/components/panels/
-//       every component under that prefix still in catalog-baseline.json
 //
 // It writes to stdout and nothing else: paste the imports and entries into a
 // `src/views/demo/catalog*.ts` file, replace every `TODO(catalog)` with the
@@ -18,24 +16,15 @@ import { fileURLToPath } from 'node:url'
 import { bindingNames, scaffold, TODO_IMPORT } from './catalog-scaffold-core.mjs'
 
 const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const BASELINE = path.join(FRONTEND, 'catalog-baseline.json')
-
-function files(argv) {
-  const at = argv.indexOf('--pending')
-  if (at === -1) return argv
-  const prefix = argv[at + 1] ?? 'src/'
-  const { pending } = JSON.parse(fs.readFileSync(BASELINE, 'utf8'))
-  return pending.filter((file) => file.startsWith(prefix))
-}
 
 const reader = {
   fileExists: (p) => fs.existsSync(p),
   readFile: (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : undefined),
 }
 
-const targets = files(process.argv.slice(2)).map((f) => path.relative(FRONTEND, path.resolve(FRONTEND, f)))
+const targets = process.argv.slice(2).map((f) => path.relative(FRONTEND, path.resolve(FRONTEND, f)))
 if (!targets.length) {
-  console.error('usage: catalog-scaffold.mjs <src/...vue>... | --pending <prefix>')
+  console.error('usage: catalog-scaffold.mjs <src/...vue>...')
   process.exit(2)
 }
 const names = bindingNames(targets)

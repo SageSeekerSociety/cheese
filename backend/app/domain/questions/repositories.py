@@ -305,7 +305,7 @@ class QuestionTopicRepository:
     async def get_topics_for_questions(
         self, question_ids: Sequence[int]
     ) -> dict[int, list[dict]]:
-        """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""  # noqa: E501
+        """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""
 
         if not question_ids:
             return {}

@@ -341,7 +341,7 @@ async def _pr_verdict(
             ancestry = await client.compare_status(
                 owner=owner, repo=repo, base=base, head=ref, token=creds.read
             )
-        except Exception:  # noqa: BLE001 — ancestry unreadable ≠ blocked
+        except Exception:  # ancestry unreadable ≠ blocked
             logger.warning("card %s: compare_status failed", card.id, exc_info=True)
     changed_paths: list[str] | None = None
     if any(rc.paths for rc in required):
@@ -349,7 +349,7 @@ async def _pr_verdict(
             files = await client.compare_files(
                 owner=owner, repo=repo, base=base, head=ref, token=creds.read
             )
-        except Exception:  # noqa: BLE001 — scope unknown handled conservatively
+        except Exception:  # scope unknown handled conservatively
             logger.warning("card %s: compare_files failed", card.id, exc_info=True)
             files = None
         changed_paths = None if files is None else [path for _, path in files]
@@ -819,7 +819,7 @@ async def _publish_pr_for_accept(
             topic_id=topic.id,
             project_id=topic.project_id,
         )
-    except Exception as exc:  # noqa: BLE001 — surface on the card; never direct-push
+    except Exception as exc:  # surface on the card; never direct-push
         # Read every attribute we still need BEFORE the rollback below:
         # rollback expires the instance, and an expired attribute reloads
         # itself with synchronous IO that an AsyncSession cannot perform

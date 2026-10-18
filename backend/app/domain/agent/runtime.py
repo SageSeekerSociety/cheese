@@ -636,7 +636,7 @@ class AgentWorkRunner:
             return bool(
                 chat_service.has_live_screen(record.topic_id, record.agent_handle)
             )
-        except Exception:  # noqa: BLE001 — an unanswerable probe is not a yes
+        except Exception:  # an unanswerable probe is not a yes
             logger.exception("live-screen probe failed for %s", record.topic_id)
             return False
 
@@ -754,7 +754,7 @@ class AgentWorkRunner:
                 [record.turn_id for record in entries]
             )
             probe_ok = True
-        except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
+        except Exception:  # a failed probe must not kill the sweep
             logger.exception("orphan block probe failed for %s", topic_id)
         if probe_ok:  # what reached nobody, a delivery too, leaves no live turn
             chat_service.retire_unheard({r.turn_id for r in entries} - delivered)
@@ -976,7 +976,7 @@ class AgentWorkRunner:
             return False
         try:
             exp = self._credential_expiry_of(topic_id)
-        except Exception:  # noqa: BLE001 — a lookup must never break a turn
+        except Exception:  # a lookup must never break a turn
             logger.exception("credential-expiry lookup failed for topic %s", topic_id)
             return False
         return exp is not None and exp <= time.time()

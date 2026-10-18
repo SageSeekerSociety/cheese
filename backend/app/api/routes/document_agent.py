@@ -147,7 +147,7 @@ async def ask_agent(
             if asked is not None:
                 async for chunk in _answer(questions, asked.work_id):
                     queue.put_nowait(chunk)
-        except Exception:  # noqa: BLE001 — the box is told; the log keeps why
+        except Exception:  # the box is told; the log keeps why
             logger.warning("doc agent box failed", exc_info=True)
             await emit("error", error_frame(say("docAgentCantAnswer")))
         finally:

@@ -20,7 +20,7 @@ from app.domain.agent import preview_tunnel as wire
 class _Recorder(BaseHTTPRequestHandler):
     body = b"served"
 
-    def do_GET(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler's contract
+    def do_GET(self) -> None:  # BaseHTTPRequestHandler's contract
         self.server.seen.append(self.path)  # type: ignore[attr-defined]
         payload = self.server.body  # type: ignore[attr-defined]
         self.send_response(200)

@@ -48,8 +48,7 @@ gets one made on the way (``team_terms``, ``payer_for_person``).
 
 Every name a caller takes from this module is still answered from here: the
 re-exports below are the public path, not a convenience, because callers and
-tests all along have written ``from app.domain.usage.ledger import ...``
-(``tests/unit/test_usage_ledger_module_split.py`` pins that face).
+tests all along have written ``from app.domain.usage.ledger import ...``.
 
 Two things about that face are worth saying rather than letting someone find
 out. Most of the private helpers that used to sit at this module's top level

@@ -133,7 +133,7 @@ async def write(
                 content = (message.get("content") or "").strip()
                 if content:
                     break
-    except Exception:  # noqa: BLE001 — a failed call keeps the last one written
+    except Exception:  # a failed call keeps the last one written
         logger.warning(
             "project situation call failed project=%s", project_id, exc_info=True
         )

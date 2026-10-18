@@ -98,7 +98,7 @@ class SessionRecovery:
                         agent_handle=session.agent_handle or None,
                         session_id=next(iter(found)) if len(found) == 1 else None,
                     )
-                except Exception:  # noqa: BLE001 — one topic cannot block startup
+                except Exception:  # one topic cannot block startup
                     logger.exception(
                         "session recovery failed for topic %s", session.conversation_id
                     )
@@ -142,7 +142,7 @@ class SessionRecovery:
                         session.conversation_id,
                         exc,
                     )
-                except Exception:  # noqa: BLE001 — one topic cannot block startup
+                except Exception:  # one topic cannot block startup
                     logger.exception(
                         "session recovery failed for topic %s", session.conversation_id
                     )

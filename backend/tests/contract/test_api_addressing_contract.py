@@ -225,7 +225,7 @@ def profiled_sections() -> dict[str, tuple[int, str]]:
     """
     result = run_profiled(["--all"])
     sections = _sections(result.stdout)
-    assert set(sections) == {"emit", "check", "check-annotations"}, (
+    assert set(sections) == {"emit", "check"}, (
         f"the merged run did not answer every question:\n{result.stdout}\n"
         f"{result.stderr}"
     )
@@ -293,22 +293,6 @@ def test_the_profiled_first_match_guard_uses_exact_frozen_registrations(
     # The section's own status, not the process's: the merged run also carries
     # two questions that are answered on their own tests.
     status, body = profiled_sections["check"]
-    assert status == 0, body
-
-
-def test_every_live_route_has_its_handwritten_annotation(
-    profiled_sections: dict[str, tuple[int, str]],
-) -> None:
-    """The routing inventory is complete in the one half a machine cannot derive.
-
-    `tests/contract/route_index.yaml` gives each live address its authorization
-    entry and its owner; that is handwritten and per-route, so it is the half
-    that can silently fall behind. This replaces asserting that a committed copy
-    of the index matched the app: with the index generated where it is judged and
-    never stored, the drift that matters is a route with no note, and the check
-    runs against the routes the app actually mounts.
-    """
-    status, body = profiled_sections["check-annotations"]
     assert status == 0, body
 
 

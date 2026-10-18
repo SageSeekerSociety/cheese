@@ -145,7 +145,7 @@ async def _rewrite(
                     material=material.text,
                     models=models,
                 )
-        except Exception:  # noqa: BLE001 — the last one written stands
+        except Exception:  # the last one written stands
             logger.warning(
                 "project situation failed project=%s", project_id, exc_info=True
             )

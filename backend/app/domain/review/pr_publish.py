@@ -33,8 +33,7 @@ commits and none (`sweep_draft_prs`, `_draft_pr_for_one_task`, `_branch_ahead`,
 about. Tests replace `enabled`, `dispatch`, `branch_head`, `proposal_client`,
 `sweep_draft_prs` and `_branch_ahead` on THIS module object, so every body that
 reads one of them has to live here; in the sibling it would read the sibling's
-own copy and the replacement would quietly stop taking effect. `tests/unit/
-test_pr_publish_module_split.py` holds both halves to that.
+own copy and the replacement would quietly stop taking effect.
 """
 
 import asyncio
@@ -154,7 +153,7 @@ async def _run(
             topic_id=topic_id,
             project_id=project_id,
         )
-    except Exception as exc:  # noqa: BLE001 — card stays PR-less, but never silently (#362)
+    except Exception as exc:  # card stays PR-less, but never silently (#362)
         logger.exception("PR publication failed for card %s", card_id)
         await _record_failure(session_factory, card_id=card_id, exc=exc)
         return
@@ -333,7 +332,7 @@ async def sweep_draft_prs(
                 "draft PRs of project %s wait for the next pass: %s", task_project, exc
             )
             continue
-        except Exception:  # noqa: BLE001 — one bad task must not end the sweep
+        except Exception:  # one bad task must not end the sweep
             counts["failed"] += 1
             logger.warning("draft PR not opened for task %s", task_id, exc_info=True)
             continue
@@ -749,7 +748,7 @@ async def _branch_ahead(session: AsyncSession, task_id: uuid.UUID) -> bool:
     return difference in ("ahead", "diverged")
 
 
-async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # noqa: ANN001
+async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:
     """The draft PR for one task, or None when this task cannot have one yet.
 
     None (not an error) for: a project with no App installation, a non-GitHub
