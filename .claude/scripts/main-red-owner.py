@@ -506,6 +506,7 @@ class Source:
     pr: int | None
     pr_title: str
     pr_author: str
+    pr_head: str | None
     task_id: str | None
     task_link: str | None
     merged_at: str | None
@@ -543,6 +544,7 @@ def _source(repo: str, sha: str, raw_commit: dict) -> Source:
         pr=int(pr_raw["number"]) if pr_raw and pr_raw.get("number") else None,
         pr_title=str((pr_raw or {}).get("title") or ""),
         pr_author=str(((pr_raw or {}).get("user") or {}).get("login") or ""),
+        pr_head=str(((pr_raw or {}).get("head") or {}).get("ref") or "") or None,
         task_id=task_id,
         task_link=task_link,
         merged_at=str((pr_raw or {}).get("merged_at") or "") or None,
@@ -666,7 +668,9 @@ def _pr_files(repo: str, number: int) -> tuple[str, ...]:
     return tuple(found)
 
 
-def _branches(keywords: tuple[str, ...]) -> tuple[str, ...]:
+def _branches(
+    keywords: tuple[str, ...], exclude: tuple[str, ...] = ()
+) -> tuple[str, ...]:
     try:
         text = _run(["git", "ls-remote", "--heads", "origin"], timeout=30)
     except ReadError:
@@ -679,7 +683,8 @@ def _branches(keywords: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(
         name
         for name in names
-        if any(keyword in name.lower() for keyword in keywords)
+        if name not in exclude
+        and any(keyword in name.lower() for keyword in keywords)
     )[:5]
 
 
@@ -688,6 +693,7 @@ def _fix(
     author: str,
     tests: tuple[str, ...],
     files: tuple[str, ...],
+    pr_head: str | None = None,
 ) -> Fix:
     if not author:
         return Fix(False, False, (), (), "没有可查的作者")
@@ -735,7 +741,7 @@ def _fix(
             strong.append(number)
         elif any(names_test(path, changed) for path in files):
             medium.append(number)
-    branches = _branches(keywords)
+    branches = _branches(keywords, (pr_head,) if pr_head else ())
     picked = tuple(sorted(set(strong + medium)))
     if strong:
         detail = "开放 PR {} 改了失败的测试文件".format(
@@ -847,7 +853,7 @@ def _paragraph(report: Report, batch: Batch, source: Source | None) -> str:
                 who += f" · 任务 {report.task['link']}"
             lines.append(f"来源：{who}")
         if report.fix:
-            lines.append(f"修复中：{report.fix['detail']}")
+            lines.append(f"修复线索：{report.fix['detail']}")
     else:
         shown = "、".join(c.sha[:8] for c in batch.commits[:10])
         suffix = " 等" if len(batch.commits) > 10 else ""
@@ -933,6 +939,7 @@ def collect(repo: str, value: str) -> Report:
             source.pr_author or str((raw.get("author") or {}).get("login") or ""),
             batch.tests,
             commit.files if commit else (),
+            source.pr_head,
         )
     return build_report(run, batch, source, task, fix)
 
@@ -1148,6 +1155,7 @@ def _facts_from_fixture(fixture: dict) -> tuple[RunFacts, Batch, Source | None, 
             fixture["branches"],
             tests,
             commit.files,
+            source.pr_head if source else None,
         )
     return run, batch, source, task, fix
 
@@ -1166,6 +1174,7 @@ def _source_from_raw(sha: str, raw: dict, pulls: list[dict]) -> Source:
         pr=int(pr_raw["number"]) if pr_raw else None,
         pr_title=str((pr_raw or {}).get("title") or ""),
         pr_author=str(((pr_raw or {}).get("user") or {}).get("login") or ""),
+        pr_head=str(((pr_raw or {}).get("head") or {}).get("ref") or "") or None,
         task_id=link.group(1) if link else None,
         task_link=link.group(0) if link else None,
         merged_at=str((pr_raw or {}).get("merged_at") or "") or None,
@@ -1191,8 +1200,10 @@ def _fix_from_raw(
     branches: list[str],
     tests: tuple[str, ...],
     files: tuple[str, ...],
+    pr_head: str | None = None,
 ) -> Fix:
     keywords = _keywords(tests, files)
+    branches = [b for b in branches if b != pr_head]
     ordered = sorted(
         open_prs,
         key=lambda row: str(row.get("updatedAt") or ""),
