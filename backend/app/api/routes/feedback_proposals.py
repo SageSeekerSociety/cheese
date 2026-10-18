@@ -116,7 +116,11 @@ async def list_feedback_proposals(
     return ok(cards)
 
 
-@router.post("/{topic_id}/feedback-proposals", **typed_response(FeedbackProposalResult))
+@router.post(
+    "/{topic_id}/feedback-proposals",
+    **typed_response(FeedbackProposalResult),
+    dependencies=[ROUTE_DECIDES],
+)
 async def propose_feedback(
     topic_id: uuid.UUID,
     body: FeedbackProposalIn,

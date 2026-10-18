@@ -443,6 +443,7 @@ async def update_question(
     "/{question_id}",
     summary="Delete Question",
     status_code=204,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_question(
     question_id: Annotated[int, Path()],
