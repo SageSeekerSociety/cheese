@@ -14,7 +14,6 @@ import unittest
 SCRIPT = Path(__file__).with_name("post-pull.sh")
 UV_LOCK = "backend/uv.lock"
 PNPM_LOCK = "frontend/pnpm-lock.yaml"
-BASELINES = ("frontend/import-boundary-baseline.json", "frontend/a11y-baseline.json")
 
 
 class PostPullTest(unittest.TestCase):
@@ -45,7 +44,7 @@ class PostPullTest(unittest.TestCase):
         for tool in ("uv", "pnpm", "curl"):
             self.stub(self.bin / tool, tool)
         self.git("init", "--quiet")
-        for path in (UV_LOCK, PNPM_LOCK, *BASELINES, "backend/pyproject.toml", "README.md"):
+        for path in (UV_LOCK, PNPM_LOCK, "backend/pyproject.toml", "README.md"):
             target = self.repo / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("initial\n")
@@ -103,14 +102,10 @@ class PostPullTest(unittest.TestCase):
             expected.append(["pnpm", ["--dir", "frontend", "install", "--frozen-lockfile"], str(self.repo)])
         expected.append(["curl", ["-sf", "http://localhost:8081/healthz"], str(self.repo / "backend")])
         self.assertEqual(calls, expected)
-        warnings = [line for line in result.stdout.splitlines() if "WARNING:" in line]
-        changed_baselines = [path for path in BASELINES if path in paths]
-        self.assertEqual(len(warnings), int(bool(changed_baselines)))
-        for baseline in BASELINES:
-            self.assertEqual(baseline in "\n".join(warnings), baseline in paths)
+        self.assertNotIn("WARNING:", result.stdout)
 
     def test_changes_and_nonchanges_are_independent(self) -> None:
-        watched = (UV_LOCK, PNPM_LOCK, *BASELINES)
+        watched = (UV_LOCK, PNPM_LOCK)
         for flags in itertools.product((False, True), repeat=len(watched)):
             paths = tuple(path for path, changed in zip(watched, flags) if changed)
             with self.subTest(paths=paths):
@@ -124,10 +119,7 @@ class PostPullTest(unittest.TestCase):
             "other/pyproject.toml",
             "desktop/pnpm-lock.yaml",
             "frontend/pnpm-lock.yaml.backup",
-            "frontend/import-boundary-baseline.json.backup",
-            "frontend/a11y-baseline.json.backup",
             "backend/.boundary-baseline.json",
-            "frontend/.a11y-baseline.json",
         )
         self.advance(paths)
         self.assert_effects(paths)
@@ -139,10 +131,10 @@ class PostPullTest(unittest.TestCase):
 
     def test_uses_orig_head_not_previous_reflog_entry(self) -> None:
         before = self.git("rev-parse", "HEAD")
-        self.advance((UV_LOCK, PNPM_LOCK, *BASELINES))
+        self.advance((UV_LOCK, PNPM_LOCK))
         self.advance(("README.md",))
         self.git("update-ref", "ORIG_HEAD", before)
-        self.assert_effects((UV_LOCK, PNPM_LOCK, *BASELINES))
+        self.assert_effects((UV_LOCK, PNPM_LOCK))
 
     def test_command_overrides_are_executable_paths(self) -> None:
         for tool in ("uv", "pnpm"):
@@ -154,16 +146,8 @@ class PostPullTest(unittest.TestCase):
         self.advance(paths)
         self.assert_effects(paths)
 
-    def test_deleted_baseline_is_reported(self) -> None:
-        before = self.git("rev-parse", "HEAD")
-        (self.repo / BASELINES[0]).unlink()
-        self.git("add", "--all")
-        self.git("commit", "--quiet", "-m", "remove baseline")
-        self.git("update-ref", "ORIG_HEAD", before)
-        self.assert_effects((BASELINES[0],))
-
     def test_renamed_watched_files_are_still_detected(self) -> None:
-        paths = (UV_LOCK, PNPM_LOCK, *BASELINES)
+        paths = (UV_LOCK, PNPM_LOCK)
         before = self.git("rev-parse", "HEAD")
         for path in paths:
             self.git("mv", path, f"{path}.bak")

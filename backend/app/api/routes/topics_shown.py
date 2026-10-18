@@ -60,9 +60,11 @@ from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker
+from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.topics_deps import BlockRepository, _actor_in_place
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
@@ -170,7 +172,7 @@ async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
         raise UnprocessableEntityError(say("previewPortSilent"))
 
 
-@router.post("/{topic_id}/shown")
+@router.post("/{topic_id}/shown", dependencies=[ROUTE_DECIDES])
 async def show_in_room(
     topic_id: uuid.UUID,
     body: dict,
@@ -215,7 +217,13 @@ async def show_in_room(
     #: When this call last changed what the card shows: the page or any file it
     #: loads. None when nothing was sent, so there is nothing to compare.
     saved_at: datetime | None = None
+    #: A person writing the room's files does it on the files' own terms,
+    #: whichever door they use: their role has to change files, and an original
+    #: sent in the conversation or kept in the library is not written over.
+    person = actor.authenticated and actor.via != "cheese"
     if as_ != "app" and ("content" in body or "content_b64" in body):
+        if person:
+            await require_role(db, actor, place.project_id, Permission.edit_content)
         # A remote machine's file is not in the backend worktree until published.
         # Office files and PDFs are not text, so they travel base64-encoded; a
         # caller that sends them as `content` would either fail to read them or
@@ -239,6 +247,12 @@ async def show_in_room(
                 say("artifactTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
             )
         assets = _page_assets(body, path)
+        if person:
+            for written in [path, *(asset_path for asset_path, _ in assets)]:
+                if library.library_name(written) is not None:
+                    raise UnprocessableEntityError(say("libraryOriginalReadOnly"))
+                if library.is_message_attachment(written):
+                    raise UnprocessableEntityError(say("attachmentOriginalReadOnly"))
     if as_ != "app" and ("content" in body or "content_b64" in body):
         # Through the draft history: the state this replaces stays restorable,
         # and `base_version` (the version `cheese pull` read) turns an overwrite
@@ -329,7 +343,7 @@ async def list_shown(
     return ok(page(items, len(items)))
 
 
-@router.post("/{topic_id}/shown/save")
+@router.post("/{topic_id}/shown/save", dependencies=[ROUTE_DECIDES])
 async def save_shown_to_library(
     topic_id: uuid.UUID,
     body: dict,

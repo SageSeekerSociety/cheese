@@ -15,6 +15,7 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.integration.test_project_roles import _invite
 
 OWNER = "user-1"
 PERSON = session_auth_headers(OWNER)
@@ -449,3 +450,33 @@ def test_a_proposal_names_the_closest_skill_by_title_not_by_id(client):
     shown = card["proposal"]["related"]
     assert existing["id"] not in shown, shown
     assert "「项目周报」" in shown, shown
+
+
+def test_naming_a_room_gives_a_person_no_skill_their_role_does_not(client):
+    """Writing the project's skills is ``configure_agents`` whichever door the
+    request comes in by: a person naming the room they speak from is still a
+    person, and a mentor's role does not hold it."""
+    project = _project(client)
+    room = _room(client, project)
+    _invite(client, project, "teacher", role="mentor", by=OWNER)
+    mentor = session_auth_headers("teacher")
+    written = client.post(
+        f"/projects/{project}/skills", json=METHOD, headers=PERSON
+    ).json()["data"]
+
+    made = client.post(
+        f"/topics/{room}/skills",
+        json={**METHOD, "name": "mentor-made"},
+        headers=mentor,
+    )
+    changed = client.patch(
+        f"/skills/{written['id']}?topic={room}",
+        json={"body": "导师改的"},
+        headers=mentor,
+    )
+
+    assert made.status_code == 403, made.text
+    assert changed.status_code == 403, changed.text
+    shipped = _shipped(project)
+    assert "skills/mentor-made/SKILL.md" not in shipped
+    assert "导师改的" not in shipped["skills/weekly-report/SKILL.md"]

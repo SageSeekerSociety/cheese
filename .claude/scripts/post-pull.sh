@@ -53,19 +53,7 @@ else
     echo "  No frontend dependency changes."
 fi
 
-# 4. Baseline changes (backend boundaries are measured from the merge base,
-# not stored in a baseline file).
-BASELINES=()
-for baseline in frontend/import-boundary-baseline.json frontend/a11y-baseline.json; do
-    if changed "$baseline"; then
-        BASELINES+=("$baseline")
-    fi
-done
-if ((${#BASELINES[@]})); then
-    echo "  WARNING: Baselines changed in ORIG_HEAD..HEAD: ${BASELINES[*]} — recheck counts on the merged tree."
-fi
-
-# 5. Health check
+# 4. Health check
 echo ""
 echo "==> Health check"
 if curl -sf http://localhost:8081/healthz > /dev/null 2>&1; then

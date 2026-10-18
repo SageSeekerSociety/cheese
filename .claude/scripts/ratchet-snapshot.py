@@ -17,8 +17,9 @@ missing, it timed out, or it decided this tree was not its business — is
 `not_collected` with the reason. A zero would read as "measured, nothing wrong",
 which is the one thing this arrangement exists to prevent.
 
-The exit code is not a verdict. This runs after a merge, and a snapshot is
-wanted even when a check is red, so the run exits 0 whenever it wrote one.
+The exit code is not a verdict. This runs on main, not on a pull request, and a
+snapshot is wanted even when a check is red, so the run exits 0 whenever it
+wrote one.
 
 A run that could not collect still leaves a file: the snapshot, or a record
 saying the collection failed and why. A series with a hole in it cannot tell a
@@ -71,7 +72,7 @@ class Check:
     rules: tuple[str, ...] = ()
     #: `ignore_imports` for a file whose baseline lives beside its rules.
     strip: str | None = None
-    #: A pytest ledger's table (`_EXEMPT`, `_LEDGER`, `BASELINE`) lives inside
+    #: A pytest ledger's table (`_EXEMPT`, `_LEDGER`) lives inside
     #: the module that is also its rule. Naming it here cuts it out of the
     #: fingerprint, because paying an entry off is the debt payment the page
     #: counts — without this, dropping one exemption reads as a rule change.
@@ -80,9 +81,9 @@ class Check:
     #: Read by importing the module and evaluating the expression in its
     #: namespace — the ledger IS the number, and the test asserts the tree still
     #: matches it. An expression rather than an attribute name because a
-    #: ledger's unit is not always its length: `BASELINE` in the is_private
-    #: check maps each file to HOW MANY read points it holds, so those 12 files
-    #: are 20 read points and `len()` would report the files instead.
+    #: ledger's unit is not always its length: a table that maps each file to
+    #: HOW MANY entries it holds is counted by summing, and `len()` would report
+    #: the files instead.
     probe: tuple[str, str] | None = None
     #: True for a check whose verdict comes from a test run rather than a record.
     ledger: bool = False
@@ -144,13 +145,10 @@ CHECKS: tuple[Check, ...] = (
             "frontend/eslint.config.mjs",
             "frontend/scripts/import-boundary-ratchet.mjs",
             "frontend/scripts/import-boundary-ratchet-core.mjs",
-            # Shared with the tsc and stylelint ratchets: `compare()` and
-            # `tightenedBaseline()` are what turns counts into a verdict.
-            "frontend/scripts/tsc-ratchet-core.mjs",
-            # BETTER and the status mapping both live here, for all three.
+            # BETTER, the status mapping and the plain verdict live here.
             "frontend/scripts/ratchet-report.mjs",
             # Reading eslint's JSON output into per-file counts, shared with the
-            # a11y and storage ratchets — the boundary's counts come from it.
+            # storage ratchet — the boundary's counts come from it.
             "frontend/scripts/eslint-ratchet-json.mjs",
         ),
     ),
@@ -170,7 +168,6 @@ CHECKS: tuple[Check, ...] = (
             # change to its API is a change to the fix the ratchet asks for.
             "frontend/src/lib/browserStorage.ts",
             "frontend/scripts/eslint-ratchet-json.mjs",
-            "frontend/scripts/tsc-ratchet-core.mjs",
             "frontend/scripts/ratchet-report.mjs",
         ),
     ),
@@ -217,16 +214,6 @@ CHECKS: tuple[Check, ...] = (
         ledger=True,
     ),
     Check(
-        id="is-private-read-points",
-        area=BOUNDARY,
-        argv=("python", "-m", "pytest", "tests/unit/test_is_private_read_points.py", "-q"),
-        cwd="backend",
-        rules=("backend/tests/unit/test_is_private_read_points.py",),
-        probe=("tests/unit/test_is_private_read_points.py", "sum(BASELINE.values())"),
-        baseline="BASELINE",
-        ledger=True,
-    ),
-    Check(
         id="file-sizes",
         area=SIZE,
         argv=("python", ".claude/scripts/check-file-sizes.py", "--json", "--base", "origin/main"),
@@ -242,9 +229,7 @@ CHECKS: tuple[Check, ...] = (
         #
         # The wrapper spawns both of its halves by name, and the closure follows
         # that (see `_JS_SCRIPT`), so the guard still walks everything this
-        # check reads. The ratchet's baseline — frontend/tsc-baseline.json, the
-        # frozen per-file error counts — is the measured debt, not a rule, and
-        # stays excused in NOT_A_RULE.
+        # check reads.
         argv=("node", "scripts/typecheck.mjs", "--json"),
         cwd="frontend",
         rules=(
@@ -290,14 +275,14 @@ CHECKS: tuple[Check, ...] = (
         # reading of the source can decide. The driver starts the frontend and a
         # headless Chromium itself, so this is still one command whose stdout is
         # one record. It is the same walk the e2e gate runs on a pull request —
-        # e2e/contrast-walk.mjs, shared — so the number frozen here and the
+        # e2e/contrast-walk.mjs, shared — so the number recorded here and the
         # verdict that blocks a change come out of one piece of code.
         argv=("node", "contrast-ratchet.mjs", "--json"),
         cwd="e2e",
         rules=(
             "e2e/contrast-ratchet.mjs",
             "e2e/contrast-walk.mjs",
-            # The rule itself: the floors, the ratio, the ratchet logic and the
+            # The rule itself: the floors, the ratio, the verdict and the
             # walker that runs inside the page.
             "frontend/scripts/contrast-ratchet-core.mjs",
             # The record's shape and the cannot-judge path, shared with the
@@ -530,7 +515,7 @@ def _strip_ignore_imports(text: str) -> bytes:
 def _strip_baseline_table(text: str, name: str) -> bytes:
     """`text` with the top-level `name = ...` statement removed.
 
-    `_EXEMPT`, `_LEDGER` and `BASELINE` live inside the modules that also hold
+    `_EXEMPT` and `_LEDGER` live inside the modules that also hold
     the rules, so a fingerprint over the whole file would call every exemption
     change a change of rule — and the exemption that just disappeared is the
     debt payment the page is supposed to show, not a new ruler. Parsed with
@@ -618,14 +603,6 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     "catalog-ratchet": {
         "frontend/catalog-baseline.json": "baseline: the grade-A components not in the catalog yet",
     },
-    "fe-boundary": {
-        "frontend/import-boundary-baseline.json": "baseline: the frozen boundary violations",
-    },
-    "fe-storage": {
-        "frontend/browser-storage-baseline.json": (
-            "baseline: the frozen direct Web Storage references"
-        ),
-    },
     "be-contracts": {
         "backend/scripts/__init__.py": (
             "not read: the checker asks whether a package marker exists, and the "
@@ -643,19 +620,6 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     },
     "stylelint-tokens": {
         "frontend/stylelint-baseline.json": "baseline: the frozen token counts",
-    },
-    "vue-tsc": {
-        "frontend/tsc-baseline.json": "baseline: the frozen per-file error counts",
-        # `backend/openapi.json` was the second entry here — a subject, the
-        # schema the generated types are judged against. It stopped being a file
-        # in the repository (2026-10-14), so there is nothing left to excuse: the
-        # generator asks the backend to build it, and the guard below requires
-        # every excused path to exist.
-    },
-    "fe-contrast": {
-        "frontend/contrast-baseline.json": (
-            "baseline: the frozen rendered-contrast debt on the public pages"
-        ),
     },
     "palette": {
         "frontend/palette-baseline.json": "baseline: the frozen colour literals",
@@ -944,8 +908,8 @@ def main() -> int:
         + (f", failing: {', '.join(failed)}" if failed else ""),
         file=sys.stderr,
     )
-    # The snapshot is wanted even when a check is red — it is written after a
-    # merge, when "red" has to be recorded rather than acted on.
+    # The snapshot is wanted even when a check is red — it is written on main,
+    # when "red" has to be recorded rather than acted on.
     return 0
 
 
@@ -1121,7 +1085,7 @@ def self_test() -> int:
         # tree is from the ledger is a number only when the test passed. The
         # fixture holds two files and three entries, so a probe that counted
         # files instead of entries would report 2 here — which is the mistake
-        # the is_private ledger's BASELINE invites.
+        # a table of per-file counts invites.
         (root / "ledger_probe.py").write_text('_EXEMPT = {"a": 1, "b": 2}\n')
         ledger = Check(
             id="ledger",

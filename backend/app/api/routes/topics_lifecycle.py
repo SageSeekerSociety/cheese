@@ -31,7 +31,7 @@ from app.domain.topic_membership.services import TopicMemberService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("/{topic_id}/archive")
+@router.post("/{topic_id}/archive", dependencies=[ROUTE_DECIDES])
 async def archive_topic(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -84,7 +84,7 @@ async def cleanup_status(
     )
 
 
-@router.post("/{topic_id}/unarchive")
+@router.post("/{topic_id}/unarchive", dependencies=[ROUTE_DECIDES])
 async def unarchive_topic(
     topic_id: uuid.UUID,
     db: DbSession,

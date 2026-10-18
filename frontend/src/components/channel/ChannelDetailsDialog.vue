@@ -111,6 +111,7 @@ const canMakePublic = computed(
       <div class="details__row">
         <div class="details__what">
           <span class="details__label">{{ t('work.projectSettings.channels.nameLabel') }}</span>
+          <!-- eslint-disable vuejs-accessibility/no-autofocus -- the field appears because the person pressed Edit; focus moves into it -->
           <v-text-field
             v-if="editing === 'title'"
             v-model="draft"
@@ -122,6 +123,7 @@ const canMakePublic = computed(
             autofocus
             @keydown.enter="save"
           />
+          <!-- eslint-enable vuejs-accessibility/no-autofocus -->
           <span v-else data-user-content>{{ topic.title }}</span>
         </div>
         <BaseButton v-if="editing === 'title'" kind="secondary" size="sm" @click="save">{{
@@ -134,6 +136,7 @@ const canMakePublic = computed(
       <div class="details__row">
         <div class="details__what">
           <span class="details__label">{{ t('work.channel.overview.description') }}</span>
+          <!-- eslint-disable vuejs-accessibility/no-autofocus -- the field appears because the person pressed Edit; focus moves into it -->
           <v-textarea
             v-if="editing === 'description'"
             v-model="draft"
@@ -146,6 +149,7 @@ const canMakePublic = computed(
             autocomplete="off"
             autofocus
           />
+          <!-- eslint-enable vuejs-accessibility/no-autofocus -->
           <span v-else-if="topic.description" data-user-content>{{ topic.description }}</span>
           <span v-else class="c-faint">{{ t('work.channel.overview.noDescription') }}</span>
         </div>

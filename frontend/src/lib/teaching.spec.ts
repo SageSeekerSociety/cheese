@@ -14,7 +14,7 @@ describe('teaching 表单转换', () => {
         allowedTopics: ['链表', '栈'],
         avoidInCode: ['递归'],
         materialIds: [11, 12],
-        knowledgeIds: [7],
+        documentIds: ['0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e'],
       })
     ).toEqual({
       systemPrompt: '第 {current_week} 周',
@@ -22,7 +22,7 @@ describe('teaching 表单转换', () => {
       allowedTopics: '链表, 栈',
       avoidInCode: '递归',
       materialIds: '11, 12',
-      knowledgeIds: '7',
+      documentIds: '0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e',
     })
     expect(draftFromConfig(null)).toEqual(emptyTeachingDraft())
   })
@@ -35,7 +35,7 @@ describe('teaching 表单转换', () => {
         allowedTopics: '链表，栈, 队列',
         avoidInCode: '',
         materialIds: '11, 12',
-        knowledgeIds: '',
+        documentIds: '',
       })
     ).toEqual({
       systemPrompt: '讲完链表了',
@@ -43,7 +43,7 @@ describe('teaching 表单转换', () => {
       allowedTopics: ['链表', '栈', '队列'],
       avoidInCode: [],
       materialIds: [11, 12],
-      knowledgeIds: [],
+      documentIds: [],
     })
   })
 
@@ -67,7 +67,7 @@ describe('teaching 表单转换', () => {
         allowedTopics: [],
         avoidInCode: [],
         materialIds: [],
-        knowledgeIds: [],
+        documentIds: [],
       })
     ).toBe(true)
 

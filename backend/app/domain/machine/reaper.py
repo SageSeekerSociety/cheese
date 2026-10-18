@@ -45,7 +45,6 @@ from app.domain.machine.models import (
     AiStatus,
     CloudHost,
     MachineStatus,
-    SandboxHome,
     capacity,
 )
 from app.domain.machine.progress import (
@@ -404,7 +403,8 @@ class PoolSweep:
                         await tell_replaced(self._session, home, host.whole_machine),
                     )
                 )
-            await self._repo.delete_home(home)
+        # After the lines: each is written from its home's row.
+        await self._repo.delete_homes_on(host.id)
         if first:
             await keep_host_lost(self._session, host, lost=lost, replaced=replaced)
         await self._session.commit()
@@ -451,24 +451,30 @@ class PoolSweep:
             await self._delete_at_provider(host)
 
     async def settle_waiting(self) -> None:
-        """Tell every room still waiting on a sandbox whose host is up now."""
-        for home, host in await self._repo.waiting_homes():
-            if host.device_id is None or not self._hub.is_online(host.device_id):
-                continue
-            locked = await self._session.scalar(
-                select(SandboxHome)
-                .where(SandboxHome.id == home.id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-            if locked is None or locked.waiting_since is None:
-                await self._session.commit()
-                continue
+        """Tell every room still waiting on a sandbox whose host is up now.
 
-            locked.waiting_since = None
-            line = await tell_ready(self._session, locked, host.whole_machine)
-            await self._session.commit()
-            await publish_line(locked.topic_id, line)
+        The homes on hosts that are up are locked together and settled in one
+        transaction. One another transaction holds is left for the next sweep
+        (``lock_homes``). Each is read again under the lock: a tool call may
+        have closed its line (``HostPool.tell_ready``), or a sweep removed the
+        home, since ``waiting_homes`` read it."""
+        whole_machine = {
+            home.id: host.whole_machine
+            for home, host in await self._repo.waiting_homes()
+            if host.device_id is not None and self._hub.is_online(host.device_id)
+        }
+        if not whole_machine:
+            return
+        lines = []
+        for home in await self._repo.lock_homes(list(whole_machine)):
+            if home.waiting_since is None:
+                continue
+            home.waiting_since = None
+            line = await tell_ready(self._session, home, whole_machine[home.id])
+            lines.append((home.topic_id, line))
+        await self._session.commit()
+        for topic_id, line in lines:
+            await publish_line(topic_id, line)
 
     async def settle_reservations(self) -> int:
         """Finish or drop reservations whose create call never came back.
@@ -606,7 +612,6 @@ class PoolSweep:
         ):
             # Its row is what `_provider_failing` counts; it goes once it is out
             # of the window (`list_due` hands it back then). Its homes go now.
-            for home in await self._repo.homes_on(host.id):
-                await self._repo.delete_home(home)
+            await self._repo.delete_homes_on(host.id)
             return
         await self._repo.delete(host)

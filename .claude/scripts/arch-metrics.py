@@ -5,10 +5,9 @@
     python3 .claude/scripts/arch-metrics.py --compare 721f7b04 another revision, with the deltas
     python3 .claude/scripts/arch-metrics.py --self-test        prove the numbers are counted
 
-WHY A BOARD AND NOT A GATE. The boundary checks
-(`backend/.importlinter`, `frontend/import-boundary-baseline.json`) block a new
-violation. None of them can say whether the tree is getting better, because
-each measures against a baseline — a stored file of pairs, or the tree at the
+WHY A BOARD AND NOT A GATE. The backend boundary check
+(`backend/.importlinter`) blocks a new violation. It cannot say whether the
+tree is getting better, because it measures against a baseline — a stored file of pairs, or the tree at the
 merge base — and a baseline that holds still reports success forever. This
 script is the other half: it reads the same
 declarations the checks read and prints where they stand, so "did the last month
@@ -23,9 +22,6 @@ WHAT IT MEASURES, and how each number is obtained:
                            file with a template.
   frontend.grades          Each component graded A/B/C/D with the method from
                            the frontend audit (see "the grade" below).
-  frontend.boundary        Violations frozen in `frontend/import-boundary-baseline.json`
-                           — read, not re-derived: the ESLint rule that produces
-                           them needs node_modules, and this has to run anywhere.
   backend.contracts        `importer -> imported` exceptions written per
                            contract in `backend/.importlinter`. The debt those
                            contracts hold open is measured by the gate against
@@ -157,10 +153,9 @@ REGISTRY_BASENAME_MARKERS = ("route_index", "baseline")
 #: 2026-10-14): the window this board reads is trailing, and a conflict those two
 #: files took part in before they were removed still cost a rebase, not a re-read
 #: of somebody else's logic. The list describes what the window holds, not what
-#: the tree holds today. The digest that replaced the document is the same kind of
-#: file and goes on the list for the opposite reason: it is in the tree, two
-#: branches that each moved the API surface collide on its one line, and that is
-#: the benign half of the metric.
+#: the tree holds today. The digest that replaced the document,
+#: backend/openapi.sha256, left the same way on 2026-10-17 and stays listed for
+#: the same reason.
 REGISTRY_FILES = (
     "backend/openapi.json",
     "frontend/src/api/openapi.d.ts",
@@ -221,19 +216,6 @@ def grade_frontend(root: Path) -> dict[str, Any]:
     over a template cannot see live in `.claude/scripts/frontend_grade.py`.
     """
     return load_frontend_grade().grade_frontend(root)
-
-
-def frontend_boundary(root: Path) -> dict[str, Any]:
-    """The frozen component-boundary violations, read from the ratchet's file."""
-    path = root / "frontend" / "import-boundary-baseline.json"
-    if not path.is_file():
-        return {"files": None, "violations": None, "why_missing": "no baseline file"}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return {"files": None, "violations": None, "why_missing": f"unreadable: {exc}"}
-    frozen = data.get("files") or {}
-    return {"files": len(frozen), "violations": sum(frozen.values())}
 
 
 # ---------------------------------------------------------------- the backend
@@ -816,7 +798,6 @@ def collect(
         "meta": {"root": str(root), **git_meta(root)},
         "frontend": {
             "grade_counts": grade_frontend(root),
-            "boundary": frontend_boundary(root),
         },
         "backend": {
             "contracts": parse_importlinter(root / "backend" / ".importlinter"),
@@ -866,7 +847,6 @@ def deltas(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]
 
 def render_markdown(board: dict[str, Any], compare: dict[str, Any] | None = None) -> str:
     front = board["frontend"]["grade_counts"]
-    boundary = board["frontend"]["boundary"]
     backend = board["backend"]
     contracts = backend["contracts"]
     size = board["size"]
@@ -888,12 +868,6 @@ def render_markdown(board: dict[str, Any], compare: dict[str, Any] | None = None
         out.append(
             f"| grade {grade} | {front['grades'][grade]} ({front['grade_pct'][grade]}%) |"
         )
-    if boundary["violations"] is None:
-        out.append(f"| frozen boundary violations | n/a — {boundary['why_missing']} |")
-    else:
-        out.append(
-            f"| frozen boundary violations | {boundary['violations']} in {boundary['files']} files |"
-        )
     out.append("")
 
     out.append("## Backend")
@@ -909,7 +883,7 @@ def render_markdown(board: dict[str, Any], compare: dict[str, Any] | None = None
     # is `frozen` in the ratchet snapshot rather than a count of what somebody
     # wrote down. It used to be read from here, which is why the two disagreed
     # the moment a pull request stopped carrying the list.
-    out.append("| debt behind the nine contracts | per commit, in the ratchet snapshot |")
+    out.append("| debt behind the ten contracts | per commit, in the ratchet snapshot |")
     files = backend["files"]
     out.append(f"| imports inside a function | {backend['deferred_imports']} |")
     out.append(f"| files over 1000 lines (`backend/app`) | {files['files_over_1000']} |")
@@ -1109,9 +1083,6 @@ ignore_imports =
     "backend/app/__init__.py": "",
     "backend/app/small.py": "def one():\n    from app.core.thing import read\n    return read\n",
     "backend/app/two.py": "import os\n\n\ndef two():\n    import json\n\n    def inner():\n        import re\n\n        return re\n\n    return json, inner\n",
-    "frontend/import-boundary-baseline.json": (
-        '{"_comment": "fixture", "files": {"src/components/Leaky.vue": 2, "src/views/V.vue": 1}}'
-    ),
     # A: props only. B: app-chrome store only. C: the API directly.
     # C2: the API through a resolvable chain. D: the router.
     "frontend/src/api.ts": "export const api = {}\n",
@@ -1311,11 +1282,6 @@ def self_test() -> int:
         check("C: api directly and through a chain", grades["grades"]["C"], 2)
         check("D: the router", grades["grades"]["D"], 1)
         check("a share is a percentage, not a fraction", grades["grade_pct"]["A"], 33.3)
-        check(
-            "the boundary baseline is read, not re-derived",
-            board["frontend"]["boundary"],
-            {"files": 2, "violations": 3},
-        )
 
         # -- backend ---------------------------------------------------------
         check("exceptions written in the declaration", board["backend"]["contracts"]["total"], 3)
@@ -1643,7 +1609,7 @@ def self_test() -> int:
         return 1
     print(
         "PASS: arch-metrics self-test (grades A/B/C/D incl. a transitive api reach, "
-        "exceptions written beside the nine contracts, imports inside a function, cap offenders and "
+        "exceptions written beside the ten contracts, imports inside a function, cap offenders and "
         "excess lines, hotspot churn and fix share, same-day parallel edits, "
         "conflicting merges of main split registry-only vs code, a missing or "
         "unvouched PR ref set reported as missing rather than zero, and a compare "

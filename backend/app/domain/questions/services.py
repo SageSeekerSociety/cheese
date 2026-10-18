@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.questions.models import Question, QuestionInvitation, VoteType
 from app.domain.questions.repositories import (
@@ -95,7 +96,7 @@ class QuestionsService:
             valid_topic_ids = await self._topic_repo.validate_topic_ids(list(topic_ids))
             for tid in topic_ids:
                 if tid not in valid_topic_ids:
-                    raise NotFoundError("Topic not found", data={"id": tid})
+                    raise NotFoundError(say("tagNotFound"), data={"id": tid})
         question = await self._repo.create_question(
             created_by_id=user_id,
             title=title.strip(),

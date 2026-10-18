@@ -5,6 +5,7 @@
 // composables/usePanelDoc.ts 里（#2143）。正文编辑器本身在 doc/DocSurface.vue：这里画出
 // 它的位置，把取来的东西递下去，把底下发上来的动作接住。正文不经过这里：编辑器直接绑
 // 在协同文档（`session`）上，没有一个「保存」要这一层去管。
+import type { DocBacklink } from '../../api/docLinks'
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { useMentionOutside } from '../../composables/useMentionOutside'
@@ -15,6 +16,7 @@ import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
 import type { CommentSpot } from '../../lib/docCommentSpots'
 import type { DocEdit } from '../../lib/docEdits'
 import type { DocVersionPage } from '../../lib/docHistory'
+import type { LinkableDocument } from '../../lib/docMentionMenu'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/docThreadTypes'
 import type { CanvasData } from '../../types/canvas'
@@ -33,6 +35,7 @@ import { exportMarkdown } from '../../lib/docSchema'
 import { draftWaiting, takeDraft } from '../../lib/overviewDraft'
 import { topicTitle } from '../../lib/topicState'
 
+import DocBacklinks from './doc/DocBacklinks.vue'
 import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocEditLayer from './doc/DocEditLayer.vue'
 import DocFindBar from './doc/DocFindBar.vue'
@@ -69,6 +72,10 @@ const props = withDefaults(
     fetchNotifiedMentions?: () => void
     /** 项目话题表：正文里的 `<#id>` chip 靠它认名字。 */
     topicList?: Topic[]
+    /** 打 # 时能引用的文档。 */
+    documentList?: LinkableDocument[]
+    /** 引用了这份文档的地方，画在正文末尾。 */
+    backlinks?: DocBacklink[]
     /** 画在一整页里（项目文档的项目目标）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
     /** 任务的实况文档：界面上不给它固定标题，正文自己说。 */
@@ -84,6 +91,11 @@ const props = withDefaults(
     editable: boolean
     /** 没有编辑权限（凭证说的），切不回编辑。 */
     readOnly: boolean
+    /** 只能提修改建议（导师）：能打字，打的都记成修订；不接受、不拒绝、不改标题。 */
+    suggestOnly?: boolean
+    /** 打的字记成修订。 */
+    suggesting?: boolean
+    setSuggesting?: (on: boolean) => void
     /** 正文还在路上。 */
     loading: boolean
     connection: DocConnection
@@ -140,6 +152,9 @@ const props = withDefaults(
   {
     document: null,
     deleted: false,
+    suggestOnly: false,
+    suggesting: false,
+    setSuggesting: undefined,
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     mentionNames: undefined,
@@ -147,6 +162,8 @@ const props = withDefaults(
     notifiedMentions: () => [],
     fetchNotifiedMentions: undefined,
     topicList: () => [],
+    documentList: () => [],
+    backlinks: () => [],
     bare: false,
     untitled: false,
     barTo: undefined,
@@ -173,12 +190,15 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  'open-topic': [topicId: string]
+  'open-topic': [topicId: string, blockId?: string]
   'mention-click': [handle: string]
   'open-file': [path: string]
   /** 资料库文档的标题改成了这样。 */
   rename: [title: string]
   delete: []
+  /** 「移动到…」（#3774）。 */
+  move: []
+  share: []
   'mention-outside-add': []
   'mention-outside-dismiss': []
 }>()
@@ -209,7 +229,9 @@ const titleDraft = ref(props.document?.title ?? '')
 const titleEditing = ref(false)
 watch(
   () => [props.document?.id, props.document?.title] as const,
-  ([id, name], [beforeId]) => {
+  ([id, name], [beforeId, beforeName]) => {
+    // 外层每次重画都递来一个新的 document 对象：编号和名字都没变就不是「文档改名了」。
+    if (id === beforeId && name === beforeName) return
     if (id !== beforeId || !titleEditing.value) titleDraft.value = name ?? ''
   }
 )
@@ -326,11 +348,14 @@ const mentionNames = computed<Record<string, string>>(
   () => props.mentionNames ?? (props.agentHandle ? { [props.agentHandle]: props.agentName } : {})
 )
 
+/** 能决定正文：能改，且不只是提修改建议（导师只提建议，接受、拒绝、改标题、恢复旧版都不归他）。 */
+const decides = computed(() => props.editable && !props.suggestOnly)
+
 const agentOptions = {
   editor: () => surfaceRef.value?.editor ?? null,
   ask: () => props.askAgent,
   stop: () => props.stopAgent,
-  editable: () => props.editable,
+  editable: () => decides.value,
   applyEdits: () => props.applyDocEdits,
   toComment: () => props.answerToComment,
   agentName: () => props.agentName,
@@ -339,7 +364,7 @@ const agentOptions = {
 // 选中一段找 AI 队友（浮条上那一个），和对整篇找它（顶栏上那一个）。
 const rewrite = useDocAgent({ ...agentOptions, scope: 'selection' })
 const docAgent = useDocAgent({ ...agentOptions, scope: 'document' })
-const canAskDocument = computed(() => !!props.agentHandle && !!props.askAgent)
+const canAskDocument = computed(() => !!props.agentHandle && !!props.askAgent && !props.suggestOnly)
 // 总览页上点了「让 AI 队友起草」，跳到了这一篇：编辑器在了、能问、能改，就由对整篇的
 // 那个 AI 队友接着起草（`lib/overviewDraft`）。
 watch(
@@ -483,11 +508,16 @@ defineExpose({
             :mention-names="mentionNames"
             :headings="outlineHeadings"
             :find-open="findOpen"
-            :deletable="!!document && !readOnly"
+            :deletable="!!document && !readOnly && !suggestOnly"
+            :suggest-only="suggestOnly"
+            :suggesting="suggesting"
             @delete="emit('delete')"
+            @move="emit('move')"
+            @share="emit('share')"
             @toggle-suggestions="toggleSuggestions"
             @toggle-comments="commentsRef?.toggle()"
             @toggle-editable="toggleEditable"
+            @set-suggesting="(on: boolean) => setSuggesting?.(on)"
             @history="historyOpen = true"
             @export="exportDoc"
             @open-thread="locateComment"
@@ -520,7 +550,7 @@ defineExpose({
             :agent-name="agentName"
             :count="suggestions.list.value.length"
             :decided="suggestions.decided.value"
-            :editable="editable"
+            :editable="decides"
             @step="suggestions.step"
             @accept-all="suggestions.decideAll(true)"
             @reject-all="suggestions.decideAll(false)"
@@ -574,7 +604,7 @@ defineExpose({
                 autocomplete="off"
                 :placeholder="t('work.room.doc.titlePlaceholder')"
                 :aria-label="t('work.room.doc.titleLabel')"
-                :readonly="!editable"
+                :readonly="!decides"
                 maxlength="200"
                 @focus="titleEditing = true"
                 @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
@@ -585,12 +615,16 @@ defineExpose({
               <DocSurface
                 ref="surfaceRef"
                 :editable="editable"
+                :suggesting="suggesting"
+                :author="commentAuthor"
                 :loading="loading"
                 :session="session"
                 :title="docTitle"
                 :placeholder="document ? t('work.room.doc.emptyPlaceholderLibrary') : ''"
                 :topic-id="topic?.id ?? null"
                 :topic-list="topicList"
+                :document-list="documentList"
+                :document-id="document?.id ?? null"
                 :mention-names="mentionNames"
                 :mention-people="mentionPeople"
                 :notified-mentions="notifiedMentions"
@@ -616,13 +650,18 @@ defineExpose({
               <DocEditLayer
                 :editor="surfaceRef?.editor ?? null"
                 :agent-name="agentName"
-                :editable="editable"
+                :editable="decides"
                 :rewrite="rewrite"
                 :review="review"
                 :suggestions="suggestions"
                 :suggestion-reasons="suggestionReasons"
                 :mention-names="mentionNames"
                 @open-thread="locateComment"
+              />
+              <DocBacklinks
+                :items="backlinks"
+                :names="agentHandle ? { ...mentionNames, [agentHandle]: agentName } : mentionNames"
+                @open="(id: string, block?: string) => emit('open-topic', id, block)"
               />
             </div>
           </div>
@@ -635,7 +674,7 @@ defineExpose({
         v-model:open="historyOpen"
         :load="loadVersions"
         :restore="restoreVersion"
-        :editable="editable"
+        :editable="decides"
         :name-of="nameOf"
         :mention-names="mentionNames"
         :notified-mentions="notifiedMentions"

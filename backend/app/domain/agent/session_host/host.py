@@ -298,6 +298,32 @@ class SessionHost:
     async def status(self, ref: SessionRef) -> SessionStatus | None:
         return await control.status(self, ref)
 
+    def frame_snapshots(self, turn_ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, dict]:
+        """The last frame each of these live turns' sessions reported.
+
+        One pass over the sessions this process already reads — never one
+        cross-machine call per turn — and only a session whose last frame
+        belongs to a work still in flight contributes. A turn this process
+        does not read, or whose frame belongs to a finished work, is simply
+        absent: the caller must read that as "unknown", not as age 0.
+        """
+        wanted = {str(turn_id) for turn_id in turn_ids}
+        found: dict[uuid.UUID, dict] = {}
+        if not wanted:
+            return found
+        for running in list(self._running.values()):
+            subscription = running.subscription
+            if subscription is None:
+                continue
+            frame = subscription.frame()
+            if frame is None:
+                continue
+            work = frame.get("work_id")
+            if work is None or str(work) not in wanted:
+                continue
+            found[uuid.UUID(str(work))] = frame
+        return found
+
     async def memory(self, ref: SessionRef, request: dict) -> dict | None:
         return await control.memory(self, ref, request)
 

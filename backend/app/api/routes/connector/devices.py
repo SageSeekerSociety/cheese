@@ -46,6 +46,7 @@ from app.api.routes.connector.schemas import (
     DevicePollRequest,
     DeviceStartRequest,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.core import background
 from app.core.config import settings
 from app.core.errors import UnauthorizedError
@@ -203,7 +204,7 @@ async def _recover_business_state(device_id: str) -> None:
 # --- device flow ---------------------------------------------------------------
 
 
-@router.post("/auth/device/start")
+@router.post("/auth/device/start", dependencies=[ROUTE_DECIDES])
 async def device_start(
     body: DeviceStartRequest, service: DeviceServiceDep, db: DbSession
 ) -> dict[str, Any]:
@@ -223,7 +224,7 @@ async def device_start(
     return {"device_code": code, "approve_url": approve_url, "interval": 2}
 
 
-@router.post("/auth/device/poll")
+@router.post("/auth/device/poll", dependencies=[ROUTE_DECIDES])
 async def device_poll(
     body: DevicePollRequest, service: DeviceServiceDep
 ) -> dict[str, Any]:
@@ -242,7 +243,7 @@ async def device_proposed_name(
     return {"device_name": await service.code_device_name(code)}
 
 
-@router.post("/connect")
+@router.post("/connect", dependencies=[ROUTE_DECIDES])
 async def device_connect(
     body: ConnectRequest,
     resolver: ActorResolverDep,

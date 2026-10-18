@@ -33,7 +33,7 @@
 
 // The ratchet arithmetic — a file may not go up, a file that went down should
 // have its baseline tightened, an entry for a file that no longer has any is not
-// a failure — is the same question the vue-tsc, stylelint, a11y and storage
+// a failure — is the same question the vue-tsc, stylelint and storage
 // ratchets ask of their own counts. It lives in one place (tsc-ratchet-core.mjs)
 // rather than in another copy that can drift; a second definition of
 // "regression" is a second answer to what a baseline means.

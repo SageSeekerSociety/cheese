@@ -457,14 +457,20 @@ def test_only_someone_in_the_room_can_stop_its_answer(client, sessions):
 
 
 def test_a_document_in_no_room_is_answered_by_the_projects_own_agent(client, sessions):
+    from sqlalchemy import select
+
     from app.domain.living_doc.models import Document
+    from app.domain.project.models import Project
 
     task, seat, _ = _document(client)
     project = uuid.UUID(_place(client, task)[0])
 
     async def a_project_document() -> str:
         async with client.test_factory() as db:
-            doc = Document(project_id=project, content="项目自己的文档：讲范围。")
+            team = await db.scalar(select(Project.team_id).where(Project.id == project))
+            doc = Document(
+                project_id=project, team_id=team, content="项目自己的文档：讲范围。"
+            )
             db.add(doc)
             await db.commit()
             return str(doc.id)

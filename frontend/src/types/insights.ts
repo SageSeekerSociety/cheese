@@ -43,11 +43,3 @@ export type InsightAttachment = {
   title: string
   description: string
 }
-
-export function isInsightMediaImage(media: InsightMedia): media is InsightMediaImage {
-  return media.type === 'image'
-}
-
-export function isInsightMediaVideo(media: InsightMedia): media is InsightMediaVideo {
-  return media.type === 'video'
-}

@@ -466,7 +466,7 @@ def is_test_file(relative: str) -> bool:
     Mirrors the two runners' own rules rather than a shared guess: pytest's
     default `python_files = test_*.py` under its `testpaths`, and vitest's
     default include glob under `frontend/src`. A path outside both trees is not
-    a test whatever it is called — `frontend/scripts/a11y-ratchet.test.mjs`
+    a test whatever it is called — `frontend/scripts/mdi-icons.test.mjs`
     matches vitest's glob and is excluded by the config, so picking it would aim
     the whole check at a file the inferred runner never sees.
     """

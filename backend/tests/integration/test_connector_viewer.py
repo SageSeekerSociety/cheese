@@ -339,6 +339,33 @@ def test_write_gate_and_route_use_the_same_screen_participant(client):
         _unregister(screen)
 
 
+def test_a_screen_writes_nothing_into_another_projects_inbox(client):
+    """A screen acts as its agent in the project it runs for. Naming another
+    project's inbox, with no room to be refused by, does not reach it."""
+    mine = post_project(client, json={"name": "Mine"}, owner="alice").json()["data"]
+    theirs = post_project(client, json={"name": "Theirs"}, owner="bob").json()["data"]
+    screen = _register_screen(
+        project_id=uuid.UUID(mine["id"]),
+        topic_id=uuid.UUID(mine["root_topic_id"]),
+        handle="agent-macbook",
+    )
+    _agent_identity(client, "agent-macbook")
+    try:
+        r = client.post(
+            f"/projects/{theirs['id']}/alerts",
+            json={"level": "light", "kind": "change_alert", "title": "看这里"},
+            headers={"X-Cheese-Screen": screen.token},
+        )
+        assert r.status_code == 403, r.text
+        inbox = client.get(
+            f"/projects/{theirs['id']}/alerts", headers=session_auth_headers("bob")
+        )
+        assert inbox.status_code == 200, inbox.text
+        assert [n["title"] for n in inbox.json()["data"]["data"]] == []
+    finally:
+        _unregister(screen)
+
+
 # --- 「我的设备」management CRUD ------------------------------------------------
 
 

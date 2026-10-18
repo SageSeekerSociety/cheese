@@ -65,6 +65,8 @@ const entries = computed(() =>
       @click="emit('open-page', e.key)"
       @mouseenter="emit('hover-page', e.key)"
       @mouseleave="emit('cancel-prefetch')"
+      @focusin="emit('hover-page', e.key)"
+      @focusout="emit('cancel-prefetch')"
       @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press-page', e.key)"
     >
       <template #prepend>

@@ -507,8 +507,8 @@ def key_of(scene: str) -> str:
     """`frontend/src/views/404.vue` -> `src/views/404.vue`.
 
     Baseline keys are relative to `frontend/`, like every other baseline in
-    that directory (`import-boundary-baseline.json`): a path relative to the
-    repository root only reads correctly from here.
+    that directory (`stylelint-baseline.json`): a path relative to the repository
+    root only reads correctly from here.
     """
     if not scene.startswith("frontend/"):
         raise ValueError(f"not under frontend/: {scene}")

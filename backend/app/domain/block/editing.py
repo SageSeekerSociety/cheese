@@ -19,6 +19,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
@@ -33,12 +34,15 @@ from app.domain.block.models import (
 from app.domain.block.ports import Dispatcher, Notifier, RecordInstruction
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+
+# The task an edit belongs to: its id and the room it is in. A bare table —
+# `room_task` imports this domain, so reaching its service from here closes a
+# C3 cycle.
+from app.domain.block.task_rows import _tasks
 from app.domain.conversation.services import is_task
-from app.domain.delivery_events import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
-from app.domain.notification.models import NotificationType
-from app.domain.room_task.services import TaskService
 
 
 class EditedText(Protocol):
@@ -209,8 +213,10 @@ async def _tell_the_card(
     """What the owner says in a task reaches the task's own session; an edit
     goes the same way, saying it is one."""
 
-    task = await TaskService(session).get(task_id)
-    if task is None:
+    room_id = await session.scalar(
+        select(_tasks.c.room_id).where(_tasks.c.id == task_id)
+    )
+    if room_id is None:
         return
     await record_instruction(
         session,
@@ -219,10 +225,10 @@ async def _tell_the_card(
             # it first said, and the ledger keeps one delivery per event.
             id=uuid.uuid4(),
             type=NotificationType.ROOM_NOTICE,
-            payload={"projectId": str(block.project_id), "topicId": str(task.room_id)},
+            payload={"projectId": str(block.project_id), "topicId": str(room_id)},
             occurred_at=block.updated_at,
         ),
-        task_id=task.id,
+        task_id=task_id,
         content=(
             f"{editor} 改了之前说的一句（消息 id {block.id}），改后是：\n"
             f"{block.content}"

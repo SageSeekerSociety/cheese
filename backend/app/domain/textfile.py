@@ -94,11 +94,6 @@ def decode_text(data: bytes) -> str | None:
         return None
 
 
-def looks_binary(data: bytes) -> bool:
-    """True when `data` must not be handed to a text editor."""
-    return decode_text(data) is None
-
-
 def content_version(data: bytes) -> str:
     """Stable id for one exact file content.
 

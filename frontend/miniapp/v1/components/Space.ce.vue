@@ -239,6 +239,7 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <div ref="box" class="space" :style="{ height: `${H}px` }">
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a focusable three-dimensional figure, announced as an image with its own roledescription: the pointer turns it and the arrow keys do the same (key) -->
     <div
       ref="stage"
       class="stage"

@@ -176,7 +176,7 @@ async def list_room_tasks(
         branch=branch,
         latest=latest,
     )
-    return conditional_json(ok(page(items, len(items))), if_none_match)
+    return await conditional_json(ok(page(items, len(items))), if_none_match)
 
 
 @router.get("/{topic_id}/task")
@@ -203,7 +203,7 @@ async def task_related(
     return ok(await related_of(db, task))
 
 
-@router.post("/{topic_id}/opening")
+@router.post("/{topic_id}/opening", dependencies=[ROUTE_DECIDES])
 async def retry_opening(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -225,7 +225,7 @@ async def retry_opening(
     return ok({"opening": "drafting"})
 
 
-@router.post("/{topic_id}/close")
+@router.post("/{topic_id}/close", dependencies=[ROUTE_DECIDES])
 async def conclude_task(
     topic_id: uuid.UUID,
     body: ConclusionIn,
@@ -351,7 +351,7 @@ class TaskUpdateIn(BaseModel):
     contributor_handles: list[str] | None = Field(default=None, max_length=50)
 
 
-@router.post("/{topic_id}/tasks")
+@router.post("/{topic_id}/tasks", dependencies=[ROUTE_DECIDES])
 async def create_task(
     topic_id: uuid.UUID,
     body: TaskCreateIn,
@@ -384,7 +384,7 @@ async def create_task(
     return ok(out)
 
 
-@router.patch("/{topic_id}/task")
+@router.patch("/{topic_id}/task", dependencies=[ROUTE_DECIDES])
 async def update_task(
     topic_id: uuid.UUID,
     body: TaskUpdateIn,

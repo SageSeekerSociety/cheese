@@ -17,7 +17,7 @@ import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker
 import type { Block, Topic } from '../../../cx_types'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocLinkTarget } from '../../../lib/docLinks'
-import type { RefItem } from '../../../lib/docMentionMenu'
+import type { LinkableDocument, RefItem } from '../../../lib/docMentionMenu'
 import type { ThreadPlace } from '../../../lib/docThreadTypes'
 import type { CanvasData } from '../../../types/canvas'
 
@@ -42,6 +42,7 @@ import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
+import { createSuggestMode, setSuggesting } from '../../../lib/docSuggestMode'
 import { refsVersion } from '../../../lib/refDirectory'
 import { createTokenChips, tokenChipsKey } from '../../../lib/tokenChips'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
@@ -54,10 +55,16 @@ import DocLinkCallout from './DocLinkCallout.vue'
 import DocOverlays from './DocOverlays.vue'
 import DocProse from './DocProse.vue'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     /** 能不能改。只读时 tiptap 收键盘，浮层里的控件也不出场。 */
     editable: boolean
+    /** 建议模式：打的字记成修订，不直接改正文（lib/docSuggestMode.ts）。 */
+    suggesting?: boolean
+    /** 记在修订上的作者：自己的 handle。 */
+    author?: string
     /** 正文还在路上：画骨架，编辑器让位。 */
     loading: boolean
     /** 这一篇的协同文档；还没打开时是 null。 */
@@ -73,6 +80,10 @@ const props = withDefaults(
     notifiedMentions?: string[]
     /** 打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
+    /** 打 # 时能引用的文档（读的人能读的）。 */
+    documentList?: LinkableDocument[]
+    /** 这一份自己的 id：不引用自己。 */
+    documentId?: string | null
     /** 能写评论（归档话题的文档不能）。 */
     canComment?: boolean
     /** 没解决的评论串：它们评的那几个字标出来。 */
@@ -100,12 +111,16 @@ const props = withDefaults(
     mentionNames: () => ({}),
     notifiedMentions: () => [],
     mentionPeople: () => [],
+    documentList: () => [],
+    documentId: null,
     canComment: true,
     openThreads: () => new Set<string>(),
     activeThread: null,
     scrollTick: 0,
     agentHandle: null,
     canvas: null,
+    suggesting: false,
+    author: '',
     title: '',
     placeholder: '',
   }
@@ -260,7 +275,12 @@ function onHover(e: MouseEvent) {
 const displayTick = ref(0)
 
 // 打 @ 挑人、打 # 挑话题（composables/useDocRefMenu.ts）。
-const refMenu = useDocRefMenu({ people: () => props.mentionPeople, topics: () => props.topicList })
+const refMenu = useDocRefMenu({
+  people: () => props.mentionPeople,
+  topics: () => props.topicList,
+  documents: () => props.documentList,
+  self: () => props.documentId,
+})
 
 // 编辑器绑在这一份协同文档上：文档换了（换房间、重连拿到的是另一份）就整个重建，
 // 因为 Collaboration 扩展只在建编辑器时认一次文档。
@@ -304,6 +324,10 @@ function buildEditor(session: DocSession): DocEditor {
       }),
       createCommentHighlights({ open: () => props.openThreads, active: () => props.activeThread ?? null }),
       createEditMarks(),
+      createSuggestMode({
+        author: () => props.author,
+        onRefused: () => emit('error', t('work.room.doc.mode.blockRefused')),
+      }),
       createEmptyLineHint(),
       createSlashCommands({
         onStart: showSlashMenu,
@@ -369,6 +393,15 @@ watch(
   (v) => editor.value?.setEditable(v, false)
 )
 
+// 建议模式跟着外面的开关走；编辑器重建（换了一份文档）时也照着它开好。
+watch(
+  [() => props.suggesting, editor],
+  ([on, ed]) => {
+    if (ed) setSuggesting(ed, on)
+  },
+  { immediate: true }
+)
+
 /** 编辑器里现在这一版正文（markdown）。 */
 function serializeVisual(): string | null {
   return editor.value ? serializeDoc(editor.value) : null
@@ -386,6 +419,7 @@ defineExpose({
 <template>
   <!-- 根元素上是那两件「针脚」：⌘S 从页面原样落到这里（存不存是取数那一半的事），
        鼠标经过转给浮层量坐标（坐标系就是这个壳的矩形）。 -->
+  <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/mouse-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- delegation: clicks on links and comment marks in the text, and the pointer's position for the block handle; the comment panel lists every thread for the keyboard -->
   <div class="doc-editor-wrap" @click="onDocClick" @mouseover="onHover" @pointerdown.capture="onPointerDown">
     <!-- 正文还在路上时画它的节奏，别把编辑器摆出来：一个空的编辑器会亮出
          占位的那句灰字，而那句话的意思是「这篇文档是空的」——文档有内容、
@@ -408,6 +442,7 @@ defineExpose({
       @hover="refMenu.hover"
     />
     <!-- 压在正文上的那几块：评论 CTA、slash 菜单、代码块工具条、块手柄。 -->
+    <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- `hover` is the slash menu's own event, which it also fires when an item takes focus -->
     <DocOverlays
       ref="overlaysRef"
       :editor="editor"

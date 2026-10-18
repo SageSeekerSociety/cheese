@@ -72,11 +72,15 @@ from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
-from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.topics_deps import BlockOut, BlockRepository, _actor_in_place
-from app.api.write_access import CHEESE_ONLY_IN_ROOM
+from app.api.topics_deps import (
+    BlockOut,
+    BlockRepository,
+    _actor_in_place,
+    require_person_speaks,
+)
+from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
 from app.auth.project_roles import may
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -88,7 +92,6 @@ from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.mentions import mentioned_outside
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.agent_instance.adapters import project_team
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_identity import InputReconciliationPending
@@ -112,7 +115,9 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 ATTACHMENTS_PER_MESSAGE = 9
 
 
-@router.post("/{topic_id}/messages", operation_id="chat-publish")
+@router.post(
+    "/{topic_id}/messages", operation_id="chat-publish", dependencies=[ROUTE_DECIDES]
+)
 async def send_chat_message(
     topic_id: uuid.UUID,
     body: ChatMessageIn,
@@ -154,18 +159,7 @@ async def send_chat_message(
         # An agent credential whose seat in this room was revoked. The seat is
         # the grant, so it may not go on writing here under a person's rules.
         raise ForbiddenError("An agent must hold a seat in this room to write here")
-    if place.room.status == "archived":
-        # An archived channel is read, not spoken in: its main line, its 支线
-        # and its tasks alike. Unarchiving it is how it is spoken in again.
-        raise ForbiddenError(say("roomArchivedUnarchiveFirst"))
-    if place.inner_id is None and not await TopicMemberService(db).may_speak(
-        place.room, actor.handle, team=project_team
-    ):
-        # A channel's main line is its members speaking. Anyone in the project
-        # reads it and answers in a 支线 under it; speaking in the main line
-        # is joining first.
-        raise ForbiddenError(say("channelJoinToPost"))
-    await require_role(db, actor, place.project_id, Permission.speak)
+    await require_person_speaks(db, actor, place)
     content = body.content.strip()
     attachments = [
         {"path": a.path, "mime": a.mime}

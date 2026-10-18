@@ -35,8 +35,8 @@ from app.domain.device.models import DeviceHealthRow
 from app.domain.platform_stats.ports import TurnCounts
 from app.domain.review.archive import OPEN_CARD_STATUSES
 from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.review.notes import _STUCK as STUCK_NOTE_CODES  # noqa: PLC2701
 from app.domain.review.notes import NoteCode
+from app.domain.review_note_codes import _STUCK as STUCK_NOTE_CODES  # noqa: PLC2701
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -58,7 +58,8 @@ SETTLED_STATUSES: tuple[AcceptStatus, ...] = (
 #: 作废的判据：**`note_code`，不是 `status`**（见 docstring 第 2 条）。
 VOIDED = NoteCode.voided
 
-#: 停住了的 note 码 —— 从 `notes._STUCK` 读，**不在这里再抄一份名单**。抄两份的症状
+#: 停住了的 note 码 —— 从 `review_note_codes._STUCK` 读，**不在这里再抄一份
+#: 名单**。抄两份的症状
 #: 是新加一个码时只改了一边，它在看板上永远安静（`notes.py` 的 docstring 记着这个
 #: 坑：`🌿 分支分叉` 和 `🚪 PR 被关` 都这么红不起来过）。名单本身见文件头 import。
 

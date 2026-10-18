@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -23,10 +24,12 @@ from app.domain.agent import dispatch_log, execution
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceNotReady,
+    DeviceOffline,
     DeviceUnreachable,
 )
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
+from app.domain.machine import session_work
 from app.domain.room_task.place import session_keeps_work
 from app.domain.topic.reads import execution_room
 
@@ -98,9 +101,15 @@ class ExecutionRequest(BaseModel):
     timeout: float = Field(default=660, gt=0, le=660)
 
 
-@router.post("/topics/{topic_id}/execution/{resource_id}", include_in_schema=False)
 @router.post(
-    "/topics/{topic_id}/execution/session-{resource_id}", include_in_schema=False
+    "/topics/{topic_id}/execution/{resource_id}",
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
+)
+@router.post(
+    "/topics/{topic_id}/execution/session-{resource_id}",
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
 )
 async def execute(
     topic_id: uuid.UUID,
@@ -129,7 +138,7 @@ async def execute(
     # row would make an unrelated column removal break every tool call on it.
     room = await execution_room(db, room_id)
     if room is None:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     if claims.get("p") != str(room.project_id):
         raise ForbiddenError("Execution belongs to another project")
     # The credential outlives the agent's seat: an agent taken off the room
@@ -293,6 +302,13 @@ async def execute(
         # 等结果时链路才断掉的那一档不在这里：它是 ``DeviceOffline`` 本身
         # （``drop_transport`` 把在飞的 future 全置成它），而那时候帧已经出去了。
         await _settle(db, dispatch, dispatch_log.Outcome.failed)
+        await _distrust(db, session_id, target)
+        raise
+    except DeviceOffline:
+        # The link went down under the call (``LinkInterrupted``): the frame
+        # was out, so nothing is settled, but these hands are not to be handed
+        # out again unchecked.
+        await _distrust(db, session_id, target)
         raise
     except DeviceCallError as exc:
         # 机器回话了，说的是它自己的失败。只有一句话能撑起「确定没发生」：这个 id 上
@@ -304,6 +320,7 @@ async def execute(
         # 来，那是一次答复，这条路由收到的是 200。
         if _NOT_ACCEPTED in str(exc):
             await _settle(db, dispatch, dispatch_log.Outcome.failed)
+        await _distrust(db, session_id, target)
         raise
     except TimeoutError as exc:
         # The machine holds its link and does not answer. That is a fault of the
@@ -318,6 +335,7 @@ async def execute(
         # 一次工具报错交给模型，这一轮照样跑下去 —— 就没有重派，也没有谁需要读它。
         # 它不会顶掉别的轮次的重发：``unsettled()`` 只回答「这几轮里有什么悬着」，见
         # 那里的 ``since``。
+        await _distrust(db, session_id, target)
         raise GatewayTimeoutError(say("executionTimedOut")) from exc
     else:
         await _settle(db, dispatch, dispatch_log.Outcome.done)
@@ -329,6 +347,21 @@ async def execute(
             trace_id,
             time.monotonic_ns(),
         )
+
+
+async def _distrust(
+    db: AsyncSession, session_id: uuid.UUID | None, lease: dict
+) -> None:
+    """The machine failed this call: the session's next request for hands
+    checks them whole instead of being handed these again
+    (``session_work.distrust``). Like ``_settle``, a failure here never
+    changes how the call ends; the check then simply waits out its window."""
+    if session_id is None:
+        return
+    try:
+        await session_work.distrust(db, session_id, lease.get("generation"))
+    except Exception:  # See `_settle`: the call's outcome stands.
+        logger.exception("hands of session %s not marked for a check", session_id)
 
 
 async def _settle(

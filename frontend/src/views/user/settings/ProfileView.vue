@@ -45,6 +45,7 @@
             class="avatar-field__input"
             type="file"
             :accept="avatarAccept"
+            :aria-label="t('account.profile.changeAvatar')"
             @change="onAvatarPicked"
           />
         </div>

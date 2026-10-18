@@ -17,6 +17,7 @@ from app.api.users_deps import (
     SudoTicketRequest,
     _spend_sudo_ticket,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
@@ -56,6 +57,7 @@ async def list_oauth_connections(
 @router.delete(
     "/{userId}/oauth/connections/{connectionId}",
     summary="Unbind OAuth connection",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_oauth_connection(
     user_id: Annotated[int, Path(ge=0, alias="userId")],

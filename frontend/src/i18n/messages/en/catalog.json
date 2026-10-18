@@ -12,6 +12,14 @@
     "s3": {
       "name": "Read-only",
       "note": "No edit permission: a single 'Read-only' on the left, no toggling back to editable."
+    },
+    "s4": {
+      "name": "Suggesting",
+      "note": "Someone who can edit switches to Suggesting: what they type becomes suggestions, and the bar counts them."
+    },
+    "s5": {
+      "name": "A mentor opens it",
+      "note": "Someone who can only suggest stays in Suggesting with no switch; hovering says who accepts."
     }
   },
   "panelDocOutline": {
@@ -495,7 +503,7 @@
     }
   },
   "publishTaskView": {
-    "about": "Publish page: top to bottom one task (content, participants, timing, categories and topics, more settings); when several are read from a file, a task list appears above and the checked ones publish together, the button saying how many.",
+    "about": "Publish page: top to bottom one task (content, participants, timing, categories and tags, more settings); when several are read from a file, a task list appears above and the checked ones publish together, the button saying how many.",
     "s1": {
       "name": "Publish one",
       "note": "Default cell: a publish form (task content at the top, 'Import from file' and 'Use a template' at its top-right), the button says 'Publish', and the line beside it says 'Needs admin review after publishing'."
@@ -1407,37 +1415,6 @@
     "s4": {
       "name": "Nothing waiting",
       "note": "Read, and there really is nothing: it says 'No alerts' rather than leaving a blank block."
-    }
-  },
-  "knowledgeView": {
-    "about": "The team knowledge base: the toolbar, the grid and the table, and the two dialogs. Fetching and writing stay in the page — this half only reads props and reports actions.",
-    "s1": {
-      "name": "Grid, four resources",
-      "note": "The default: cards, one per resource, with type, author and time."
-    },
-    "s2": {
-      "name": "Table view",
-      "note": "Switched to the table: the same rows as a list, with an actions menu on each row."
-    },
-    "s3": {
-      "name": "First load",
-      "note": "Not back yet: a spinner in the middle, not an empty base."
-    },
-    "s4": {
-      "name": "Could not load",
-      "note": "A failed read states the reason and offers a retry."
-    },
-    "s5": {
-      "name": "No permission",
-      "note": "On 401/403 it says there is no access and offers no retry."
-    },
-    "s6": {
-      "name": "Nothing in the base",
-      "note": "Read, and there really are none: it offers how to add the first one."
-    },
-    "s7": {
-      "name": "Filtered to nothing",
-      "note": "Read, and the current filters match nothing: it says so and suggests adjusting them."
     }
   },
   "adminMembersPageView": {

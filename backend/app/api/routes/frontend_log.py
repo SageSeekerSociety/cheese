@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.domain import frontend_log  # module import: tests swap the intake singleton
 from app.domain.frontend_log import FrontendErrorBatchIn
 from app.domain.project.services import ProjectService
@@ -11,7 +12,7 @@ from app.domain.project.services import ProjectService
 router = APIRouter(prefix="/frontend-errors", tags=["frontend-errors"])
 
 
-@router.post("")
+@router.post("", dependencies=[ROUTE_DECIDES])
 async def report_frontend_errors(
     body: FrontendErrorBatchIn, db: DbSession, request: Request
 ) -> dict:

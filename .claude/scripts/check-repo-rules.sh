@@ -204,7 +204,7 @@ $(grep -rnE --include='*.py' \
 # RATCHETED, deliberately: 111 pre-existing hits across 40 view/component files
 # are frozen in frontend/palette-baseline.json and only NEW ones fail. A rule
 # that goes red on 111 sites gets switched off, and then it protects nothing —
-# same reasoning, same shape, as stylelint-baseline.json and tsc-baseline.json.
+# same reasoning, same shape, as stylelint-baseline.json.
 # Baselines only ever go down: `--update-palette-baseline` refuses to raise one.
 #
 # NOT matched, on purpose: `transparent` (theme-neutral), `:color="expr"`

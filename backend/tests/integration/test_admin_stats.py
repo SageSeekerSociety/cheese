@@ -22,10 +22,12 @@ import json
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select, update
 
+from app.api.routes import admin_stats
 from app.core.config import settings
 from app.domain.device.models import DeviceRow
 from app.domain.feedback.models import Feedback, FeedbackStatus, FeedbackTimeline
@@ -658,6 +660,125 @@ def test_performance_reads_the_metrics_the_middleware_now_writes(client, as_admi
     # 除了它自己之外没有任何请求在飞 —— 报 0 才是真的 0，报 1 会让空闲的平台看着像
     # 「有一条请求一直没处理完」。
     assert after.json()["data"]["active_requests"] == 0
+
+
+# --- 会话主机的内存与会话数（#1824 第二轮的补测量） ----------------------------
+
+
+class _SessionHost:
+    """一条只回答会话主机三件事的假 hub：在线与否、开着的屏幕、一次 ``cat``。"""
+
+    def __init__(self, *, screens=(), stdout=None, raises=None, online=True):
+        self._screens = list(screens)
+        self._stdout = stdout
+        self._raises = raises
+        self._online = online
+
+    def is_online(self, device_id):
+        return self._online
+
+    def all_online_screens(self):
+        return self._screens if self._online else []
+
+    async def exec(self, device_id, argv, *, timeout=None):
+        assert device_id == "session-host"
+        assert argv == ["cat", "/proc/meminfo"]
+        if self._raises is not None:
+            raise self._raises
+        return {"exit": 0, "stdout": self._stdout}
+
+
+def _screen_on(device_id: str):
+    return SimpleNamespace(device_id=device_id)
+
+
+def test_performance_carries_the_session_hosts_memory_and_open_sessions(
+    client, as_admin, monkeypatch
+):
+    """读得到主机时，三个字段就是主机自己报的两个数加它上面开着的会话数。
+
+    `sessions_active` 的口径是一个屏幕 = 一个会话，所以落在这台设备上的屏幕才数；
+    别的设备上的不数。
+    """
+    monkeypatch.setattr(settings, "agent_session_device_id", "session-host")
+    monkeypatch.setattr(
+        admin_stats,
+        "device_hub",
+        _SessionHost(
+            screens=[
+                _screen_on("session-host"),
+                _screen_on("session-host"),
+                _screen_on("somewhere-else"),
+            ],
+            stdout="MemTotal:       16252928 kB\nMemAvailable:    6291456 kB\n",
+        ),
+    )
+
+    r = client.get("/admin/stats/performance", headers=session_auth_headers(as_admin))
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["session_host"] == {
+        "mem_total_mib": 15872,
+        "mem_available_mib": 6144,
+        "sessions_active": 2,
+    }
+
+
+def test_performance_answers_unknown_memory_when_the_session_host_will_not_say(
+    client, as_admin, monkeypatch
+):
+    """主机连不上时三个字段都是 `null`，请求照样 200 —— 读不到不是看板坏了。
+
+    会话数也一样：屏幕表只列在线设备上的会话，主机掉线不等于上面的会话停了，
+    所以这里答「不知道」而不是一个确定的 0。
+    """
+    monkeypatch.setattr(settings, "agent_session_device_id", "session-host")
+    monkeypatch.setattr(
+        admin_stats,
+        "device_hub",
+        _SessionHost(raises=OSError("no link"), online=False),
+    )
+
+    r = client.get("/admin/stats/performance", headers=session_auth_headers(as_admin))
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["session_host"] == {
+        "mem_total_mib": None,
+        "mem_available_mib": None,
+        "sessions_active": None,
+    }
+
+
+def test_a_wedged_session_host_does_not_hold_the_board_open(
+    client, as_admin, monkeypatch
+):
+    """主机收了命令却不回话时，看板不能陪着一起等：整次读取有上限。
+
+    假 hub 会睡十秒才回来。把上限调小，这次请求必须很快带着 `null` 回来；
+    没有上限的实现会陪它睡完，这条在这里红掉。
+    """
+    monkeypatch.setattr(settings, "agent_session_device_id", "session-host")
+    monkeypatch.setattr(admin_stats, "SESSION_HOST_READ_TIMEOUT_S", 0.05)
+
+    class _WedgedHost(_SessionHost):
+        finished = False
+
+        async def exec(self, device_id, argv, *, timeout=None):
+            await asyncio.sleep(10)
+            self.finished = True
+            return {"exit": 0, "stdout": "MemTotal: 16252928 kB\n"}
+
+    hub = _WedgedHost()
+    monkeypatch.setattr(admin_stats, "device_hub", hub)
+
+    started = time.monotonic()
+    r = client.get("/admin/stats/performance", headers=session_auth_headers(as_admin))
+    elapsed = time.monotonic() - started
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["session_host"]["mem_total_mib"] is None
+    assert elapsed < 2, elapsed
+    assert hub.finished is False
 
 
 # --- 上一窗口合计（prev）：环比差的数据源 -------------------------------------

@@ -14,6 +14,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.sentences import say
+from app.domain.agent import turn_resume
 from app.domain.agent.credits_notice import spent_reason
 from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
 from app.domain.agent.platform_failures import (
@@ -123,6 +124,33 @@ class HookEvents:
         except Exception:  # noqa: BLE001 — a failed read must not break the notice
             logger.exception("could not read credits-refused stamp for %s", turn_id)
             return False
+
+    async def _resume_later(
+        self,
+        project_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        result: AgentResult,
+        *,
+        seat: str | None,
+        route: str | None,
+    ) -> None:
+        try:
+            await turn_resume.after_failure(
+                self.sessions,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                seat=seat,
+                failed_turn_id=turn_id,
+                result=result,
+                route=route,
+            )
+        except Exception:
+            # The failure card is already posted; a resume that could not be
+            # scheduled leaves the seat where it was before this existed.
+            logger.exception(
+                "could not schedule a resume after turn %s failed", turn_id
+            )
 
     async def accept(
         self,
@@ -344,6 +372,9 @@ class HookEvents:
                     harness=event.harness,
                 )
             if event.is_error:
+                # Only a failure the service reported: the watchdog's timeout
+                # and a spent balance are not waits (`turn_resume`).
+                resumable = False
                 if event.text.strip() == TURN_TIMEOUT_MESSAGE:
                     # The watchdog's own verdict, and the only failure whose
                     # session may still be alive — everything downstream of it
@@ -388,6 +419,7 @@ class HookEvents:
                     line, meta = _turn_failure_notice(
                         event.text, event.failure_code, log=event.log
                     )
+                    resumable = True
                 error_line, error_code = line, meta.get("code")
                 payload = await post_system_event(
                     sessions, room_id, line, turn_id, meta=meta, inner_id=inner_id
@@ -399,6 +431,19 @@ class HookEvents:
                     # message it hangs under says the reply failed.
                     if inner_id is not None:
                         await self.thread_replied(inner_id)
+                if resumable:
+                    await self._resume_later(
+                        project_id,
+                        topic_id,
+                        turn_id,
+                        event,
+                        # Only the seat that failed: the room's last speaker
+                        # is a guess, and with several seats a guess wakes the
+                        # wrong agent. Not resuming is the safer miss.
+                        seat=event.agent_handle
+                        or (state.acting_agent if state is not None else None),
+                        route=state.route if state is not None else None,
+                    )
             elif event.text.strip():
                 # Terminal output, the final response included, stays in
                 # activity: a reply reaches the room only through chat_send,

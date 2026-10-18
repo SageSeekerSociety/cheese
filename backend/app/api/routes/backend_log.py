@@ -21,6 +21,7 @@ from fastapi import APIRouter, Header
 from app.api.auth import require_seated_agent
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import BadRequestError, UnauthorizedError
 from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
 from app.domain import backend_log  # module import: tests swap the intake singleton
@@ -51,7 +52,7 @@ def _room(
     raise UnauthorizedError("invalid sandbox token")
 
 
-@router.post("")
+@router.post("", dependencies=[ROUTE_DECIDES])
 async def report_backend_errors(
     body: BackendErrorBatchIn,
     db: DbSession,

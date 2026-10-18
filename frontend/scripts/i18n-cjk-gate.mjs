@@ -52,7 +52,7 @@ function option(name, fallback) {
 
 const update = process.argv.includes('--update')
 // Accepting new debt is a decision someone makes on purpose, by typing this —
-// the same guard the storage and a11y ratchets put on their own updates.
+// the same guard the storage ratchet puts on its own updates.
 const freezeNew = process.argv.includes('--freeze-new')
 const baselinePath = resolve(ROOT, option('--baseline', 'i18n-comments-baseline.json'))
 

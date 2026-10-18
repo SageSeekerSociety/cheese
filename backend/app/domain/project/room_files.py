@@ -479,11 +479,17 @@ def artifact_kind_for(path: str) -> str:
 
 def clean_artifact_path(raw: str) -> str:
     """A workspace-relative pointer — reject absolute paths, traversal, and .git.
-    The file itself is read later via the guarded workspace reader."""
-    path = (raw or "").strip()
+    The file itself is read later via the guarded workspace reader.
+
+    Returned in its one spelling, without ``.`` segments or empty ones: the
+    rules that read a path's first segment (a library original, a file sent in
+    the conversation) must see the same path the file is written to, and
+    ``./uploads/x`` or ``uploads//x`` lands on ``uploads/x``."""
+    given = (raw or "").strip()
+    path = "/".join(part for part in given.split("/") if part not in ("", "."))
     if not path:
         raise ValidationError(say("pathEmpty"))
     parts = path.split("/")
-    if path.startswith("/") or ".." in parts or ".git" in parts:
+    if given.startswith("/") or ".." in parts or ".git" in parts:
         raise ValidationError(say("pathMustBeRelative"))
     return path

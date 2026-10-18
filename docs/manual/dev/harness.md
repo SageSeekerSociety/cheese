@@ -70,6 +70,8 @@ Codex 和 pi 的驱动方式一样：会话机上一个 runner 拥有 agent 进�
 
 三种骨架的会话都在中心会话机上，手在房间的执行机上，用到才领（`CentralChannel`）。pi 的工具是 pi 自己的 read、write、edit、bash、ls、find、grep，平台的扩展换掉的只是它们底下的文件与进程操作（pi 的 `Operations` 注入点），经 runner（`pi/machine.py`）、走另外两个骨架同一个 `RemoteClient` 到执行机：一个文件操作是执行器自己答的一次调用（`control` 的 `files`，`remote_execution/machine_files.py`，路径不限于工作区，和 Claude Code 的 Read、Write 一样），bash 是一条命令，和 Codex 的一样在用户的 shell 里、先载入 profile 的快照。grep 的搜索本身不经注入的操作（pi 在自己那台机器上起 ripgrep），扩展把它整个换成执行器上的一次搜索（用平台装在执行机上的 ripgrep，见 `agent/toolchain.py`；还没装好时用机器自己 PATH 上的，都没有才按 git 不忽略的文件自己找），输出照 pi 的格式。执行器在 ping 里声明 `machine_files`；还没升级的旧执行器上，这些操作明说执行服务是旧版本，等它空闲升级。后台任务在执行机上有自己的终端（`pi/relay.py`），runner 把它的输出抄回中心机（`pi/jobs.py`）。仓库自己的说明和技能在会话到了机器上时读（`pi/repository.py`、`pi/project_skills.py`）；会话还在占位工作区时第一次领到机器，那次操作不执行，先把仓库的说明交给它，和另外两个骨架一样。
 
+Codex 和 pi 没有 Claude Code 的 `Monitor`，平台照 Claude Code 2.1.282 的语义补了一个同名工具（`driven/monitor.py`，工具定义也在那里）：命令在执行机上、用 Bash 同一个 shell 后台跑，调用当场返回任务 id；它每打一行 stdout，runner 就对会话说一次（200 ms 内的几行并成一条，令牌桶 10 条、每 2 秒补一条，压了 30 秒还在刷就停掉）；命令退出、到 `timeout_ms`（默认 5 分钟，最多 30 分钟）或被 `TaskStop` 停下时结束。会话正在干活时这句话插进当前这一轮（Codex 的 `turn/steer`，pi 的 `steer`），闲着时它自己开一轮（`unsolicited`，和 pi 的分身在后台结束时一样）。命令照项目对 Bash 的 `permissions.deny` 判，和 Claude Code 房间里的 Monitor 一样；分身没有它，它打的字只说给会话本身。
+
 镜像里的记录只在两小时之内落进房间（`driven/subscription.py` 的 `STALE_S`，按 journal 记下的时间算：Claude Code 和 Codex 用会话机记录的时间，pi 用后端镜像到它的时间）。更老还没落的，只可能是这期间没人在读：后端或机器不在，或者每次 drain 都卡在同一条记录上。那时房间早已不等它了，这一轮已经结束，消息也重发过或告诉过人，所以游标直接越过它，房间不会再收到这些记录。
 
 输入账（`driven/runner.py` 的 `Runner.accept`）是重连安全的那一半：id 是平台的，一个没看到回话的后端重发同一个 id 拿到的是同一个结果，而不是第二轮；同一个 id 配不同的正文当场拒绝——拿第一次的结果回答它会报告一件从没发出去的事。写进会话的一个输入，到的次数因此不由重连次数决定。

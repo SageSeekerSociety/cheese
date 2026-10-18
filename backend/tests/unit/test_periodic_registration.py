@@ -426,6 +426,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("notification digest", 113),
         ("delivery resend", 114),
         ("docs question retention", 86400),
+        ("turn resumes", 30),
         ("timed deliveries", 30),
         ("overdue deliveries", 115),
         ("routines", 30),

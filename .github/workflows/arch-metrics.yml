@@ -4,25 +4,32 @@ name: Architecture metrics
 # architecture stands — the frontend's A/B/C/D component grades, the frozen
 # entries behind the nine backend contracts, files over their size cap, and the
 # hotspots of the last 30 and 90 days — and how each number moved against the
-# revision 30 days back. Runs on main and weekly, never in a pull request: the
-# boundary checks (`backend/.importlinter`,
-# `frontend/import-boundary-baseline.json`) are what block a change, and this
-# exists so that "did the last month help" has an answer that is not an
-# argument.
+# revision 30 days back. Never in a pull request: the boundary checks
+# (`backend/.importlinter`, `frontend/import-boundary-baseline.json`) are what
+# block a change, and this exists so that "did the last month help" has an
+# answer that is not an argument.
 #
 # Since the ratchet board was added, this job also COLLECTS: it runs every gate
-# check against the merged commit and stores what each one said, beside the
-# commit and the fingerprint of the rules that decided it, as
-# ratchet-snapshot.json. The board alone could not answer the page's question —
-# it reads the baseline files, so "116 frontend boundary exemptions" was a
-# number about what had been frozen, not about the tree. The checks are run
-# here, after the merge, on purpose: a gate's own verdict on a PR is what blocks
-# the PR, and this records what the gate said about what actually landed.
+# check against main's tip and stores what each one said, beside the commit and
+# the fingerprint of the rules that decided it, as ratchet-snapshot.json. The
+# board alone could not answer the page's question — it reads the baseline
+# files, so "116 frontend boundary exemptions" was a number about what had been
+# frozen, not about the tree. The checks are run here, on the merged tree, on
+# purpose: a gate's own verdict on a PR is what blocks the PR, and this records
+# what the gate said about what actually landed.
+#
+# WHY A SCHEDULE AND NOT A PUSH. This ran on every push to main until
+# 2026-10-17, and that trigger collected less than its name said: main moves
+# several times an hour, the concurrency group below cancels each run a later push
+# supersedes, and in the three hours to 15:25 UTC seven pushes started a run,
+# four were cancelled before writing a snapshot, and the seven cost 53.8 job
+# minutes. Every three hours is dense enough for the page's direction — its 60
+# points span 7.5 days — every run finishes, and the cost is one run per
+# interval instead of one per merge. `workflow_dispatch` collects on demand,
+# after a cleanup, when waiting for the clock is not wanted.
 on:
-  push:
-    branches: [main]
   schedule:
-    - cron: "23 4 * * 1" # Mondays, 04:23 UTC
+    - cron: "23 */3 * * *" # every three hours, at :23
   workflow_dispatch: {}
 
 permissions:
@@ -56,7 +63,7 @@ jobs:
       # and never runs on a pull request, so it could not fail one either way;
       # what it must not do is fail the run it belongs to, because almost
       # everything it reads is an input somebody else owns — a git ref that ages
-      # out of the checkout, a baseline file mid-migration, a 04:23 run on a
+      # out of the checkout, a baseline file mid-migration, a 03:23 run on a
       # runner having a bad night. A red X there would say "the architecture got
       # worse", which is a claim this job is not entitled to make. The numbers
       # land in the job summary and the JSON artifact; reading them is the check.
@@ -291,9 +298,9 @@ jobs:
         with:
           name: arch-metrics
           path: ${{ runner.temp }}/arch-metrics.json
-          # A weekly board is kept to be compared with, so the artifact matters
-          # more than the retention default suggests — but not enough to fight
-          # the organization's storage policy over.
+          # A board collected every three hours is kept to be compared with, so
+          # the artifact matters more than the retention default suggests — but
+          # not enough to fight the organization's storage policy over.
           retention-days: 90
 
       # Kept at least as long as the board: a snapshot is only useful as a
