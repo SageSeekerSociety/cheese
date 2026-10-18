@@ -241,7 +241,7 @@ class PushToMainTest(unittest.TestCase):
         reason = rerun.refusal(
             self.push(), REPO, failed_log="AssertionError: 'open' != 'closed'"
         )
-        self.assertIn("matches no known flake signature", reason)
+        self.assertIn("no known flake signature was found outside a test step", reason)
 
     def test_a_push_to_main_without_a_readable_log_is_refused(self):
         reason = rerun.refusal(self.push(), REPO, failed_log=None)
@@ -309,6 +309,7 @@ class LogSignatureTest(unittest.TestCase):
         ),
         ("http-403-rate-limit", "HTTP 403: API rate limit exceeded for installation"),
         ("http-403-rate-limit", "gh: API rate limit exceeded (HTTP 403)"),
+        ("http-403-rate-limit", "gh: API rate limit exceeded for installation ID 1."),
         ("http-403-rate-limit", "API rate limit exceeded - HTTP 403"),
         ("runner-lost", "runner lost communication with the host"),
         ("runner-lost", "lost communication with the server"),
@@ -376,6 +377,7 @@ class LogSignatureTest(unittest.TestCase):
             "API Error: Connection dropped (ECONNRESET)（server_error）",
             "API rate limit exceeded for installation ID 1.",
             '        json={"message": "API rate limit exceeded for installation ID 1."},',
+            "AssertionError: read ECONNRESET",
             "Failed to download uv: HTTP 404 Not Found",
             "uv: checksum mismatch",
             self.PYTEST_REPORT,
@@ -428,6 +430,8 @@ class LogSignatureTest(unittest.TestCase):
         "=========================== warnings summary ==========================",
         "===================== slowest 10 durations =====================",
         "=============== 2 failed, 8 passed, 1 warning in 3.04s ===============",
+        "================= 1 error in 0.05s =================",
+        "================= 3 skipped in 0.10s =================",
     )
     UNICODE_BANNERS = (
         "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯",  # vitest
@@ -438,6 +442,69 @@ class LogSignatureTest(unittest.TestCase):
         for banner in self.BANNERS + self.UNICODE_BANNERS:
             with self.subTest(banner=banner):
                 self.assertIsNone(rerun.flake_log_signature(f"{banner}\n{flake}"))
+
+    def test_a_test_step_is_excluded_whole(self):
+        """Whatever a runner echoes live is test text: console output before
+        the report, failed suites, unhandled rejections, TAP lines."""
+        step = "frontend\tUnit tests\t2026-10-18T09:06:04Z "
+        for log in (
+            # vitest: a passing/failing test's console output, then the report.
+            "\n".join((
+                step + " RUN  v5.0.3 /home/runner/work/cheese/cheese/frontend",
+                step + "stderr | src/x.spec.ts > logs then fails",
+                step + "Error: read ECONNRESET",
+                step + "⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯",
+                step + " FAIL  src/x.spec.ts > x > fails",
+                step + "AssertionError: expected 1 to be 2",
+            )),
+            # vitest: a suite that throws at import time.
+            "\n".join((
+                step + " RUN  v5.0.3 /home/runner/work/cheese/cheese/frontend",
+                step + "⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯",
+                step + "Error: read ECONNRESET while connecting to the fixture",
+            )),
+            # vitest: an unhandled rejection from a passing test.
+            "\n".join((
+                step + " RUN  v5.0.3 /home/runner/work/cheese/cheese/frontend",
+                step + "⎯⎯⎯ Unhandled Errors ⎯⎯⎯",
+                step + "Error: Error: read ECONNRESET",
+            )),
+            # node --test, whose TAP stream marks the session.
+            "\n".join((
+                step + "TAP version 13",
+                step + "# Error: read ECONNRESET",
+                step + "not ok 1 - a test",
+            )),
+            # unittest's header alone marks the step as a test step too.
+            "\n".join((
+                step + "FAIL: test_x (__main__.TestX)",
+                step + "read ECONNRESET while reading",
+            )),
+            # pytest -v: the per-test line carries the parametrize id.
+            "\n".join((
+                step + "============================= test session starts"
+                " ==============================",
+                step + "tests/unit/test_x.py::test_x[API Error: read ECONNRESET]"
+                " FAILED [ 50%]",
+            )),
+        ):
+            with self.subTest(log=log.splitlines()[0]):
+                self.assertIsNone(rerun.flake_log_signature(log))
+
+    def test_ansi_colour_is_stripped_before_matching(self):
+        esc = "\x1b["
+        log = "\n".join((
+            "frontend\tUnit tests\t2026-10-18T09:06:04Z "
+            + esc + "1m" + esc + "30m" + esc + "46m RUN " + esc + "49m" + esc + "39m",
+            "frontend\tUnit tests\t2026-10-18T09:06:04Z "
+            + esc + "31m⎯⎯⎯⎯" + esc + "39m" + esc + "41m Failed Tests 1 " + esc + "49m",
+            "frontend\tUnit tests\t2026-10-18T09:06:04Z Error: read ECONNRESET",
+        ))
+        self.assertIsNone(rerun.flake_log_signature(log))
+        # A real flake in another step is still read, colour or not.
+        other = ("backend\tInstall dependencies\t2026-10-18T09:07:00Z "
+                 + esc + "31mError: read ECONNRESET" + esc + "39m")
+        self.assertEqual(rerun.flake_log_signature(log + "\n" + other)["id"], "econnreset")
 
     def test_each_report_marker_starts_the_bound_on_its_own(self):
         flake = "read ECONNRESET"
@@ -670,6 +737,31 @@ class RunIdEntryTest(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertIn("::error::", out)
 
+    def test_the_workflow_saved_json_path_reads_a_push_run_s_log(self):
+        """rerun-failed.yml calls the saved-JSON form, not --run."""
+        run_object = run(event="push", head_branch="main")
+        saved = list(sys.argv)
+        self.addCleanup(lambda: sys.argv.__setitem__(slice(None), saved))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            path.write_text(json.dumps(run_object), encoding="utf-8")
+            sys.argv[:] = ["rerun-failed.py", str(path), REPO]
+            fetches = []
+
+            def fetch_logs(run_id, repository):
+                fetches.append((run_id, repository))
+                return self.FLAKE_LOG
+
+            out = io.StringIO()
+            with (
+                mock.patch.object(rerun, "fetch_failed_logs", side_effect=fetch_logs),
+                mock.patch.object(rerun, "rerun_failed_jobs") as rerun_jobs,
+                contextlib.redirect_stdout(out),
+            ):
+                self.assertEqual(rerun.main(), 0)
+        self.assertEqual(fetches, [(42, REPO)])
+        rerun_jobs.assert_not_called()
+
     def test_a_pull_request_run_never_reads_a_log(self):
         code, _, calls, log_fetches = self.call(
             ["--run", "42", REPO], run(), log=self.FLAKE_LOG
@@ -782,6 +874,29 @@ class GhCallTest(unittest.TestCase):
             contextlib.redirect_stderr(io.StringIO()),
         ):
             self.assertIsNone(rerun.fetch_failed_logs("42", "o/r"))
+
+    def test_a_gh_command_that_exits_non_zero_is_refused(self):
+        # Valid JSON on a failed exit: the return code alone must refuse it.
+        failed = subprocess.CompletedProcess([], 1, stdout='{"id": 42}', stderr="boom")
+        with (
+            mock.patch.object(rerun.subprocess, "run", return_value=failed),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertIsNone(rerun.fetch_run("42", "o/r"))
+            self.assertIsNone(rerun.fetch_failed_logs("42", "o/r"))
+            self.assertEqual(rerun.rerun_failed_jobs("42", "o/r"), "boom")
+
+    def test_a_run_that_is_not_json_is_unreadable(self):
+        garbage = subprocess.CompletedProcess([], 0, stdout="not json", stderr="")
+        with (
+            mock.patch.object(rerun.subprocess, "run", return_value=garbage),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertIsNone(rerun.fetch_run("42", "o/r"))
+
+    def test_a_signature_entry_that_is_not_an_object_is_rejected(self):
+        with self.assertRaises(ValueError):
+            rerun.validate_log_signatures(["read ECONNRESET"])
 
     def test_a_hung_gh_is_a_refusal_not_a_traceback(self):
         with (

@@ -98,12 +98,31 @@ _REPORT_START = re.compile(
     r"^(?:=+ (?:FAILURES|ERRORS|short test summary info|warnings summary"
     r"|slowest \d+ durations) =+"
     r"|(?:=+ )?\d+ (?:failed|passed|error|skipped)\b[^\n]* =+"
-    r"|\W{3,} Failed Tests\b"
-    r"|-{3,} Captured .+ -{3,}"
+    r"|\W{3,} (?:Failed Tests|Failed Suites|Unhandled Errors|Unhandled Rejection)"
+    r"\b|-{3,} Captured .+ -{3,}"
     r"|_{3,} .+ _{3,}$"
     # vitest indents its per-test line: ` FAIL  src/x.spec.ts > x > fails`.
     r"| *FAIL {2,}\S.* > "
     r"|FAIL: |ERROR: |Traceback \(most recent call last\):$)"
+)
+# A test runner announces its session before it prints anything a test owns:
+# vitest's ` RUN  v5.0.3`, node's TAP stream, pytest's session banner, go's
+# `=== RUN`. ANSI colour codes are stripped first, because CI's vitest and
+# `gh run view` both colour their output and every marker above is anchored at
+# the start of the line.
+#
+# A step that matches one is a test step: every line in it is test-owned text,
+# before and after the failure report alike — console output the runner echoes
+# live (`stderr | ...`, node's `# Error: ...`), failed suites, unhandled
+# rejections, and the report itself. Nothing in such a step is flake evidence.
+# Every other step is scanned normally.
+_TEST_SESSION = re.compile(
+    r"^(?: *RUN +v\d"
+    r"|TAP version \d+"
+    r"|=+ test session starts =+"
+    r"|=== RUN"
+    r"|(?:FAIL|ERROR): "
+    r"|Traceback \(most recent call last\):$)"
 )
 # A passing pytest run still prints its `warnings summary` and slowest-durations
 # banners, and either can carry a signature in a test id. Those banners must
@@ -193,9 +212,12 @@ def diagnosis(run: dict, pattern: dict) -> str:
     )
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
 def _message(line: str) -> str:
-    """One log line without the "<job>\\t<step>\\t<timestamp> " gh prefixes."""
-    return _LOG_PREFIX.sub("", line, count=1)
+    """One log line without gh's prefixes or ANSI colour codes."""
+    return _ANSI.sub("", _LOG_PREFIX.sub("", line, count=1))
 
 
 def _log_key(line: str) -> tuple[str, str] | None:
@@ -219,14 +241,13 @@ def flake_log_signature(
     """
     if not failed_log:
         return None
-    reported: set[tuple[str, str]] = set()
-    step = ("", "")
+    lines = []
     for line in failed_log.splitlines():
-        key = _log_key(line)
-        if key is not None:
-            step = key
-        message = _message(line)
-        if step in reported:
+        lines.append((_log_key(line) or ("", ""), _message(line)))
+    test_steps = {key for key, message in lines if _TEST_SESSION.match(message)}
+    reported: set[tuple[str, str]] = set()
+    for step, message in lines:
+        if step in test_steps or step in reported:
             continue
         if _REPORT_START.match(message):
             reported.add(step)
@@ -288,8 +309,8 @@ def _reason(
                 " could not be read, so a flake cannot be confirmed"
             )
         return (
-            f"run {run.get('id')} is a push to main whose failed job log matches"
-            " no known flake signature; read it and decide by hand"
+            f"run {run.get('id')} is a push to main and no known flake signature"
+            " was found outside a test step's report; read it and decide by hand"
         )
     return None
 
