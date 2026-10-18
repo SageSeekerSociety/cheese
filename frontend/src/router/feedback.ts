@@ -193,6 +193,14 @@ export default [
         meta: { titleKey: 'navigation.admin.ratchet', isFullPage: true },
       },
       {
+        // 平台自己仓库的 CI 与合并队列（`/admin/ci-activity`）：作业等机器多久、每台机器上
+        // 每个作业跑多久、PR 在队列里等多久。读后端扫描进库的表，不碰 GitHub。
+        path: 'ci-activity',
+        name: 'AdminCiActivity',
+        component: () => import('@/views/admin/AdminCiActivityPage.vue'),
+        meta: { titleKey: 'navigation.admin.ciActivity', isFullPage: true },
+      },
+      {
         // 网关模型管理那一页。和其它分区一样是后台里的一块，不是独立域名。
         path: 'models',
         name: 'AdminModels',

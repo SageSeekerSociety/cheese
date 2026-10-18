@@ -11,6 +11,7 @@
  * `src/network` 会把 `legacy-network` 的账记上新的一笔。契约本就写在 `LegalDocumentView.vue` 上。
  */
 import type { CreditAudit, CreditPack, CreditTeamDetail, CreditTeamPage, Plan } from '@/lib/adminCredits'
+import type { CiBoard, CiJobRow, CiStepRow } from '@/views/admin/ciActivityApi'
 import type { MachinesOverview } from '@/views/admin/machinesApi'
 import type { RatchetBoard, RatchetCheck } from '@/views/admin/ratchetApi'
 import type { RunRecordDetail, RunRecordGroup, RunRecordOverview } from '@/views/admin/runRecordsApi'
@@ -518,3 +519,152 @@ export const CRV_MACHINES: MachinesOverview = {
     sandboxes_lost: 0,
   },
 }
+
+/** 「CI 与合并队列」这一屏的一份板子：两天、四个小时、一台自托管机器加一池托管机器。
+ *  第一天没有合并，所以那天的中位数是 `null`（折线在那里断开，不是落到 0）。 */
+const CI_EMPTY = { n: 0, mean: null, p50: null, p90: null, max: null }
+export const CRV_CI_BOARD: CiBoard = {
+  repo: 'SageSeekerSociety/cheese',
+  days: 2,
+  since: '2026-10-16T00:00:00+00:00',
+  until: '2026-10-18T00:00:00+00:00',
+  generated_at: '2026-10-17T22:40:00+00:00',
+  sweep: {
+    at: '2026-10-17T22:35:00+00:00',
+    error: '',
+    jobs_owed: 0,
+    covered_from: '2026-09-17T22:35:00+00:00',
+    complete: true,
+  },
+  headline: {
+    merge_queue_minutes: { n: 140, mean: 92.4, p50: 63.2, p90: 233.1, max: 610 },
+    runner_wait_seconds: {
+      all: { n: 13000, mean: 230, p50: 58, p90: 760, max: 3300 },
+      hosted: { n: 12600, mean: 236, p50: 61, p90: 772, max: 3300 },
+      self_hosted: { n: 400, mean: 15, p50: 4, p90: 5, max: 1309 },
+    },
+    ci_required_minutes: {
+      pull_request: { n: 300, mean: 18.3, p50: 12.5, p90: 38.1, max: 106 },
+      merge_group: { n: 160, mean: 17.3, p50: 12.1, p90: 37.5, max: 85 },
+    },
+    rounds: {
+      prs: 140,
+      pr_rounds: { n: 140, mean: 2.1, p50: 1, p90: 4, max: 15 },
+      queue_rounds: { n: 140, mean: 1.1, p50: 1, p90: 1, max: 6 },
+      more_than_one: 0.5,
+      histogram: [
+        { rounds: 0, prs: 2 },
+        { rounds: 1, prs: 68 },
+        { rounds: 2, prs: 36 },
+        { rounds: 3, prs: 18 },
+        { rounds: 4, prs: 9 },
+        { rounds: 5, prs: 7 },
+      ],
+    },
+    fail_then_pass: { runs: 9, of: 610, share: 0.0148 },
+    busy_runners: {
+      n: 2760,
+      mean: 38.9,
+      p50: 40,
+      p90: 44,
+      max: 58,
+      share: { pr: 0.63, queue: 0.34, main: 0.02, other: 0.01 },
+    },
+  },
+  daily: [
+    {
+      day: '2026-10-16',
+      merged: 0,
+      merge_queue_p50: null,
+      merge_queue_p90: null,
+      runner_wait_hosted_p50: 48,
+      runner_wait_self_hosted_p50: 4,
+      ci_required_pr_p50: 12.1,
+      ci_required_queue_p50: null,
+    },
+    {
+      day: '2026-10-17',
+      merged: 140,
+      merge_queue_p50: 63.2,
+      merge_queue_p90: 233.1,
+      runner_wait_hosted_p50: 61,
+      runner_wait_self_hosted_p50: 4,
+      ci_required_pr_p50: 12.5,
+      ci_required_queue_p50: 12.1,
+    },
+  ],
+  hourly: [6, 7, 8, 9].map((h) => ({
+    hour: `2026-10-17T0${h}:00:00+00:00`,
+    busy_mean: 30 + h,
+    busy_peak: 44 + h,
+    pr_mean: 20 + h,
+    queue_mean: 10,
+    main_mean: 1,
+    other_mean: 0,
+    hosted_mean: 28 + h,
+    self_hosted_mean: 2,
+    queue_depth_peak: 8 + h,
+  })),
+  hour_of_day: Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    busy_mean: hour >= 6 && hour <= 9 ? 30 + hour : null,
+    busy_peak: hour >= 6 && hour <= 9 ? 44 + hour : null,
+    pr_mean: null,
+    queue_mean: null,
+    main_mean: null,
+    other_mean: null,
+  })),
+  runners: [
+    {
+      runner: 'hosted: ubuntu-latest',
+      kind: 'hosted',
+      jobs: 9000,
+      failed: 120,
+      busy_hours: 610.4,
+      utilisation: null,
+      wait_p50_s: 61,
+      duration_p50_s: 95,
+    },
+    {
+      runner: 'cheese-ci-runner-1',
+      kind: 'self_hosted',
+      jobs: 140,
+      failed: 2,
+      busy_hours: 9.6,
+      utilisation: 0.2,
+      wait_p50_s: 4,
+      duration_p50_s: 240,
+    },
+  ],
+  ejections: [
+    { reason: 'failed_checks', actor: 'github-merge-queue', count: 59 },
+    { reason: 'merge_conflict', actor: 'github-merge-queue', count: 57 },
+  ],
+}
+
+export const CRV_CI_JOBS: CiJobRow[] = [
+  {
+    name: 'e2e / e2e',
+    workflow: 'Required CI',
+    jobs: 160,
+    failed: 6,
+    duration_s: { n: 160, mean: 640, p50: 610, p90: 900, max: 1300 },
+    wait_p50_s: 58,
+    busy_hours: 28.4,
+  },
+  {
+    name: 'backend / pure (1)',
+    workflow: 'Required CI',
+    jobs: 460,
+    failed: 3,
+    duration_s: { n: 460, mean: 300, p50: 290, p90: 410, max: 700 },
+    wait_p50_s: 62,
+    busy_hours: 38.3,
+  },
+]
+
+export const CRV_CI_STEPS: CiStepRow[] = [
+  { name: 'Set up job', number: 1, duration_s: { n: 160, mean: 2, p50: 2, p90: 3, max: 9 } },
+  { name: 'Run e2e', number: 6, duration_s: { n: 160, mean: 560, p50: 540, p90: 820, max: 1200 } },
+  { name: 'Upload report', number: 7, duration_s: { ...CI_EMPTY } },
+]
