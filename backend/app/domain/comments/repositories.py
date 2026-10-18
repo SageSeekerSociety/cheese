@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, select
@@ -5,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.comments.models import Comment
 from app.domain.questions.models import Attitude
+from app.domain.reads import get_by_ids
 
 
 class CommentRepository:
@@ -49,6 +51,11 @@ class CommentRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_ids(self, comment_ids: Sequence[int]) -> dict[int, Comment]:
+        return await get_by_ids(
+            self._session, Comment, comment_ids, Comment.deleted_at.is_(None)
+        )
 
     async def create(
         self,

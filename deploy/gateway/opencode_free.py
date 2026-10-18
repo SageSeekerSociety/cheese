@@ -3,7 +3,6 @@
 import copy
 import hashlib
 import inspect
-import itertools
 import json
 import secrets
 import string
@@ -15,12 +14,19 @@ from urllib.parse import urlsplit
 import httpx
 
 _sessions = OrderedDict()
-_counter = itertools.count(1)
+_last_timestamp = 0
+_counter = 0
 _alphabet = string.ascii_letters + string.digits
 
 
 def _id(prefix):
-    value = (int(time.time() * 1000) * 4096 + next(_counter) % 4096) & ((1 << 48) - 1)
+    global _last_timestamp, _counter
+    timestamp = int(time.time() * 1000)
+    # Match OpenCode's per-millisecond sequence: the free endpoint rejects
+    # sessions whose sequence has accumulated across earlier requests.
+    _counter = _counter + 1 if timestamp == _last_timestamp else 1
+    _last_timestamp = timestamp
+    value = (timestamp * 4096 + _counter) & ((1 << 48) - 1)
     if prefix == "ses":
         value ^= (1 << 48) - 1
     return f"{prefix}_{value:012x}" + "".join(secrets.choice(_alphabet) for _ in range(14))
@@ -83,6 +89,7 @@ class AgentStream(httpx.AsyncByteStream):
         self.closed = False
         self.choices = set()
         self.finished = set()
+        self.tool_chunks = {}
 
     def event(self, lines):
         data = "\n".join(line[5:].lstrip(" ") for line in lines if line.startswith("data:"))
@@ -109,7 +116,48 @@ class AgentStream(httpx.AsyncByteStream):
                 if name in self.aliases:
                     function["name"] = self.aliases[name]
         other = [line for line in lines if not line.startswith("data:")]
-        return ("\n".join([*other, "data: " + json.dumps(chunk)]) + "\n\n").encode()
+        parts = []
+        for choice in chunk.get("choices", []):
+            index = choice.get("index", 0)
+            calls = choice.get("delta", {}).get("tool_calls") or []
+            if not calls and index not in self.tool_chunks:
+                parts.append({**chunk, "choices": [choice]})
+                continue
+            # The pinned Messages converter cannot track interleaved calls.
+            # Collect only tools with the existing library; text still streams.
+            pending = self.tool_chunks.setdefault(index, [])
+            pending.append({**chunk, "choices": [{**choice, "index": 0}]})
+            delta = {key: value for key, value in choice.get("delta", {}).items() if key != "tool_calls"}
+            if choice.get("finish_reason") is None:
+                parts.append({**chunk, "choices": [{**choice, "delta": delta}]})
+                continue
+            from litellm import stream_chunk_builder
+            from litellm.types.utils import ModelResponseStream
+
+            result = stream_chunk_builder([ModelResponseStream(**part) for part in pending])
+            tools = result.choices[0].message.tool_calls if result is not None else None
+            if not tools:
+                raise httpx.RemoteProtocolError("OpenCode free returned incomplete tool calls")
+            if delta:
+                parts.append({**chunk, "choices": [{**choice, "delta": delta, "finish_reason": None}]})
+            for position, call in enumerate(tools):
+                tool = {"index": position, **call.model_dump(exclude_none=True)}
+                function = tool["function"]
+                name = function.get("name")
+                if name in self.missing:
+                    raise httpx.RemoteProtocolError(f"OpenCode free called unavailable tool: {name}")
+                function["name"] = self.aliases.get(name, name)
+                tool_choice = {**choice, "delta": {"tool_calls": [tool]},
+                               "finish_reason": choice["finish_reason"] if position == len(tools) - 1 else None}
+                if delta or position:
+                    tool_choice.pop("logprobs", None)
+                parts.append({**chunk, "choices": [tool_choice]})
+            del self.tool_chunks[index]
+        if not chunk.get("choices"):
+            parts = [chunk]
+        for part in parts[:-1]:
+            part.pop("usage", None)
+        return b"".join(("\n".join([*other, "data: " + json.dumps(part)]) + "\n\n").encode() for part in parts)
 
     async def __aiter__(self):
         lines = []

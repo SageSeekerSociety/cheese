@@ -181,6 +181,7 @@ def test_a_teammate_whose_session_is_gone_has_its_turn_closed(client):
     after.report_gone(topic, "second", before.sessions[(topic, second)].session_id)
     replaced = _service(client, after)
     assert client.portal.call(replaced.recover_sessions) == 1
+    client.portal.call(replaced.replays_settled)
     client.portal.call(runner.resume_orphans, replaced)
 
     still_open = {
@@ -378,6 +379,7 @@ def test_an_unanswered_conversation_is_unknown_not_dead(client):
     assert client.portal.call(replaced.recover_sessions) == 1, (
         "只有 keeper 答了 ping，B 聋"
     )
+    client.portal.call(replaced.replays_settled)
     client.portal.call(runner.resume_orphans, replaced)
 
     b_sid = before.sessions[(topic, mate_b)].session_id
