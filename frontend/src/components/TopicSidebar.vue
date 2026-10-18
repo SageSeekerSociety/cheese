@@ -668,6 +668,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 >
                   <template #item="{ item }">
                     <div>
+                      <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- `hover` is TopicRailRow's own event, which it also fires on focusin -->
                       <TopicRailRow
                         :row="item"
                         :selected="item.topic.id === selectedTopicId"

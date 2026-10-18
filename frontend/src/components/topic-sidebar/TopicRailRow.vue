@@ -195,6 +195,7 @@ function onMenuToggle(open: boolean) {
       </span>
     </template>
     <v-list-item-title class="d-flex align-center topic-title">
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the field replaces the title because the person chose Rename; focus moves into it -->
       <v-text-field
         v-if="renaming"
         v-model="draftTitle"
@@ -210,6 +211,7 @@ function onMenuToggle(open: boolean) {
         @keyup.esc="emit('cancel-rename')"
         @blur="emit('commit-rename', draftTitle)"
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
       <template v-else>
         <span
           class="text-truncate"

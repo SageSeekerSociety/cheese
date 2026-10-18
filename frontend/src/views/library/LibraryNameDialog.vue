@@ -77,6 +77,7 @@ function submit() {
         clearable
         hide-details
       />
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to type a name; focus moves into the name field -->
       <v-text-field
         v-model="nameField"
         :label="t('work.library.nameField')"
@@ -87,6 +88,7 @@ function submit() {
         :error-messages="props.error || undefined"
         :hide-details="!props.error"
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
     </form>
   </AdaptiveDialog>
 </template>
