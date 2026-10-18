@@ -14,6 +14,7 @@ Forgejo answers none of them: it gates each merge on its own, and a commit
 with no runs there has simply not been checked yet.
 """
 
+import asyncio
 import logging
 import re
 import uuid
@@ -140,6 +141,20 @@ class LandingReads(Protocol):
         """Whether ``descendant`` is ``commit`` or comes after it."""
         ...
 
+    async def dispatch_bisect(
+        self, sha: str, tests: list[str], nonce: str
+    ) -> str | None:
+        """Rerun ``tests`` on ``sha`` in a culprit probe run; the run's id, or
+        None when the forge cannot run one (no permission, no default branch,
+        the run never showed up)."""
+        ...
+
+    async def bisect_verdict(self, run_id: str) -> str:
+        """``pass``, ``fail`` or ``unknown`` for a probe run. Only the step that
+        runs the named tests failing is ``fail``; a run still going, or one
+        that broke anywhere else, is ``unknown``."""
+        ...
+
 
 async def reads_for(
     project_id: uuid.UUID, session: AsyncSession
@@ -190,6 +205,14 @@ _TEST_PATH = re.compile(
     r"(?<![\w/.-])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+"
     r"\.(?:py|pyi|ts|tsx|js|jsx|vue|go|rs|java))"
 )
+
+#: The workflow that reruns named tests on one commit, and the step in it whose
+#: failure alone means "the tests fail on that commit".
+BISECT_WORKFLOW = "culprit-bisect.yml"
+BISECT_TEST_STEP = "run the named tests"
+#: Looking for a just-dispatched run: GitHub lists it a moment late.
+_RUN_LOOKUPS = 3
+_RUN_LOOKUP_WAIT_S = 3.0
 
 #: A completed check that went red. `cancelled` is not one: a newer push to
 #: main cancels the run it superseded.
@@ -482,6 +505,71 @@ class GitHubLandingReads:
             failed = failed or seen
         return failed
 
+    async def dispatch_bisect(
+        self, sha: str, tests: list[str], nonce: str
+    ) -> str | None:
+        if not self._branch:
+            return None
+        # Ask first: without `actions: write` the POST is a 403 the App would
+        # be counted for.
+        if (await self._tokens.granted_permissions()).get("actions") != "write":
+            return None
+        token, _ = await self._tokens.installation_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        }
+        async with forge_client(transport=self._transport, timeout=20.0) as http:
+            resp = await http.post(
+                f"{self._base}/actions/workflows/{BISECT_WORKFLOW}/dispatches",
+                headers=headers,
+                # `ref` must be a branch: a bare commit cannot be dispatched.
+                json={
+                    "ref": self._branch,
+                    "inputs": {"sha": sha, "tests": " ".join(tests), "nonce": nonce},
+                },
+            )
+        if resp.status_code != 204:
+            return None
+        # The run's head is the branch's, so the nonce in its name is the only
+        # thing that ties it to this dispatch.
+        for attempt in range(_RUN_LOOKUPS):
+            if attempt:
+                await asyncio.sleep(_RUN_LOOKUP_WAIT_S)
+            try:
+                data = await self._get(
+                    f"/actions/workflows/{BISECT_WORKFLOW}/runs",
+                    {"event": "workflow_dispatch", "per_page": 30},
+                )
+            except ForgeUnavailable:
+                return None
+            for run in data.get("workflow_runs") or []:
+                if run.get("name") == f"culprit {nonce}" and run.get("id"):
+                    return str(run["id"])
+        return None
+
+    async def bisect_verdict(self, run_id: str) -> str:
+        try:
+            run = await self._get(f"/actions/runs/{quote(run_id, safe='')}")
+            if run.get("status") != "completed":
+                return "unknown"
+            data = await self._get(
+                f"/actions/runs/{quote(run_id, safe='')}/jobs", {"per_page": 100}
+            )
+        except ForgeUnavailable:
+            return "unknown"
+        conclusions = [
+            step.get("conclusion")
+            for job in data.get("jobs") or []
+            for step in job.get("steps") or []
+            if step.get("name") == BISECT_TEST_STEP
+        ]
+        if "failure" in conclusions:
+            return "fail"
+        if "success" in conclusions:
+            return "pass"
+        return "unknown"
+
     async def _includes(self, deployed: str, sha: str) -> bool:
         if deployed == sha:
             return True
@@ -553,3 +641,11 @@ class ForgejoLandingReads:
 
     async def is_ancestor(self, commit: str, descendant: str) -> bool:
         return False
+
+    async def dispatch_bisect(
+        self, sha: str, tests: list[str], nonce: str
+    ) -> str | None:
+        return None
+
+    async def bisect_verdict(self, run_id: str) -> str:
+        return "unknown"

@@ -11,6 +11,7 @@ The rules, as stated before the code was written:
 """
 
 import asyncio
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -355,3 +356,114 @@ def test_a_neutral_gate_counts_as_a_pass():
         Check("CI required", "completed", "neutral", "", suite=1),
     ]
     assert gate_run(runs).conclusion == "neutral"
+
+
+# --- the culprit probe -------------------------------------------------------
+#
+# - The dispatch names the default branch (never a commit), the probed commit,
+#   the tests and a nonce; its run is found by the nonce in the run's name.
+# - Without `actions: write` nothing is posted.
+# - Only the step that runs the named tests failing is a failure; any other
+#   break, or a run still going, is unknown.
+
+
+class _ActionsTokens(_Tokens):
+    def __init__(self, actions: str | None = "write"):
+        super().__init__(granted=("checks",))
+        if actions:
+            self._granted["actions"] = actions
+
+
+def _probe_reads(*, actions="write", runs=None, steps=(), status="completed"):
+    posts: list[dict] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix("/repos/o/r")
+        if request.method == "POST":
+            assert path == "/actions/workflows/culprit-bisect.yml/dispatches"
+            posts.append(json.loads(request.content))
+            return httpx.Response(204)
+        if path == "/actions/workflows/culprit-bisect.yml/runs":
+            return httpx.Response(200, json={"workflow_runs": runs or []})
+        if path == "/actions/runs/7":
+            return httpx.Response(200, json={"status": status})
+        if path == "/actions/runs/7/jobs":
+            return httpx.Response(
+                200,
+                json={
+                    "jobs": [
+                        {
+                            "steps": [
+                                {"name": name, "conclusion": conclusion}
+                                for name, conclusion in steps
+                            ]
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    reads = GitHubLandingReads(
+        None,
+        _ActionsTokens(actions),
+        "https://api.github.test",
+        "o",
+        "r",
+        transport=httpx.MockTransport(handle),
+        branch="main",
+    )
+    return reads, posts
+
+
+def test_the_dispatch_names_the_branch_the_commit_and_the_nonce(monkeypatch):
+    monkeypatch.setattr("app.domain.review.landing_forge._RUN_LOOKUP_WAIT_S", 0)
+    reads, posts = _probe_reads(runs=[{"id": 7, "name": "culprit n-1"}])
+    run = asyncio.run(
+        reads.dispatch_bisect("a" * 40, ["backend/tests/unit/test_x.py"], "n-1")
+    )
+    assert run == "7"
+    assert posts == [
+        {
+            "ref": "main",
+            "inputs": {
+                "sha": "a" * 40,
+                "tests": "backend/tests/unit/test_x.py",
+                "nonce": "n-1",
+            },
+        }
+    ]
+
+
+def test_another_nonce_is_not_our_run(monkeypatch):
+    monkeypatch.setattr("app.domain.review.landing_forge._RUN_LOOKUP_WAIT_S", 0)
+    reads, _ = _probe_reads(runs=[{"id": 7, "name": "culprit other"}])
+    assert asyncio.run(reads.dispatch_bisect("a" * 40, ["t.py"], "n-1")) is None
+
+
+def test_without_actions_write_nothing_is_posted():
+    for actions in (None, "read"):
+        reads, posts = _probe_reads(
+            actions=actions, runs=[{"id": 7, "name": "culprit n"}]
+        )
+        assert asyncio.run(reads.dispatch_bisect("a" * 40, ["t.py"], "n")) is None
+        assert posts == []
+
+
+def _verdict(steps, status="completed"):
+    reads, _ = _probe_reads(steps=steps, status=status)
+    return asyncio.run(reads.bisect_verdict("7"))
+
+
+def test_the_named_tests_step_decides_the_verdict():
+    named = "run the named tests"
+    assert _verdict([("install", "success"), (named, "success")]) == "pass"
+    assert _verdict([("install", "success"), (named, "failure")]) == "fail"
+
+
+def test_a_break_before_the_tests_is_unknown():
+    assert _verdict([("install backend dependencies", "failure")]) == "unknown"
+    assert _verdict([("run the named tests", "skipped")]) == "unknown"
+    assert (
+        _verdict([("run the named tests", "success")], status="in_progress")
+        == "unknown"
+    )
