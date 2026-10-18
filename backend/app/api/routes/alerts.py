@@ -111,7 +111,7 @@ async def create_notification(
     if body.topic_id is not None:
         place = await place_or_404(db, body.topic_id)
         if place.project_id != project_id:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         conversation_id = place.conversation_id
         room_id = place.room_id
     if actor.authenticated:
