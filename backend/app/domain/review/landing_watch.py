@@ -998,7 +998,7 @@ def _batch_checks_failed_prompt(
         lines.append("失败用例所在的文件只有这条线的提交改过，先按这个方向修。")
     else:
         lines.append(
-            "失败用例对不上唯一一个提交，本批每条线都先各自排除："
+            "没有哪条在看的线能单独认领这些失败用例，本批每条线都先各自排除："
             "确认不是你的改动导致的，就在任务里说明理由；是你的就修。"
         )
     return "\n".join(lines) + "\n" + _how_to_fix(task_id, reopened)
