@@ -13,7 +13,8 @@ Baselines from the paper, kept here for interpreting a result:
 
 Thresholds are heuristics sitting between those medians, not proofs. The
 baseline figures above are quoted only to interpret a band: no code reads
-them, and only the two thresholds below decide a verdict.
+them. A band is decided by the two thresholds below together with the
+minimum-comparable-cells gate and the split-half warning in ``verdict``.
 
 The equal-error-rate figure is a *paper* baseline (arXiv:2607.10252), quoted
 here only so a reader can interpret a band; it is NOT reproduced by this
