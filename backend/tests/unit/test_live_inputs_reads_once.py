@@ -81,6 +81,8 @@ def test_missing_ids_and_non_message_blocks_match_the_one_by_one_answer():
         [note.id, msg.id],
         [msg.id, note.id],
         [msg.id, uuid.uuid4(), msg.id],
+        [note.id, quoted.id],  # the quote is itself one of the inputs
+        [quoted.id, note.id],
         [],
     ):
         got = asyncio.run(live_inputs(_CountingSession(blocks), ids))
