@@ -41,6 +41,7 @@ from app.domain.agent.turn.intake.ports import (
     WorkExecutor,
 )
 from app.domain.agent.turn.state.execution import ExecutionState
+from app.domain.agent.turn.store.human import HumanHandoff
 from app.domain.agent.turn_ledger import project_pool
 from app.domain.delivery.agent import DeliveryTargetChanged
 from app.domain.delivery.input_identity import InputReconciliationPending
@@ -127,6 +128,7 @@ class RunnerIntake:
         client_id: str | None = None,
         quoted_context: dict | None = None,
         may_summon: bool = True,
+        handoff: HumanHandoff | None = None,
     ) -> uuid.UUID:
         """Persist one human message now, then deliver it to whoever it named.
 
@@ -155,6 +157,7 @@ class RunnerIntake:
             attachments=attachments,
             client_id=client_id,
             quoted_context=quoted_context,
+            handoff=handoff,
         )
         turn_id = user_block_id
         recipient = next(

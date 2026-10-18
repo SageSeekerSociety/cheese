@@ -264,10 +264,11 @@ async def roster_rows(
     它们是**渲染**这张表，不是再读一次「项目里有谁」——所以这里只是同一次读的一个形
     状，不是第二个出处。
     """
+    return rows_of(await roster(session, project_id, team=team))
+
+
+def rows_of(members: Sequence[Member]) -> list[dict]:
+    """:func:`roster_rows` for a caller already holding the :func:`roster` read."""
     # No agent calls a member's own agent (#2991): one reading this roster in
     # its prompt would only learn a name it cannot call.
-    return [
-        member.as_dict()
-        for member in await roster(session, project_id, team=team)
-        if member.owner_handle is None
-    ]
+    return [member.as_dict() for member in members if member.owner_handle is None]

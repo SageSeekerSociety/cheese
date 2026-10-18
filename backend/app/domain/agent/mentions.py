@@ -32,6 +32,7 @@
 
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -53,7 +54,7 @@ from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc.models import Document, DocumentComment
-from app.domain.membership.roster import roster_rows
+from app.domain.membership.roster import Member, roster_rows, rows_of
 from app.domain.mentions import (
     canonicalize_refs,
     dangling_refs,
@@ -139,6 +140,7 @@ async def person_mentions(
     agent,
     *,
     dm: bool,
+    members: Sequence[Member] | None = None,
 ) -> PersonMentions:
     """The mention rewrite a person's message gets in ``topic``: friendly
     ``@名字`` / ``@话题名`` become ``<@handle>`` / ``<#id>`` tokens, except in a
@@ -152,7 +154,10 @@ async def person_mentions(
     读它，也不该让它的名字在第二个模块里出现。
 
     Sending (`post_user_message`) and editing (`text_as_sent`) both read a
-    person's words through here, so an edit stores what sending stores."""
+    person's words through here, so an edit stores what sending stores.
+
+    ``members`` is the project's `roster` when the caller already read it
+    (sending hands over the request's read); without it the roster is read."""
     agent_handles = (
         await TopicMemberService(session).agent_handles(topic.id)
         if "@" in content
@@ -184,6 +189,8 @@ async def person_mentions(
         roster = (
             []
             if "@" not in content or dm
+            else rows_of(members)
+            if members is not None
             else await roster_rows(session, topic.project_id, team=project_team)
         )
         # 这间房真正坐着的 AI 席位先答这个名字：排到名册最前，名册上没有它
