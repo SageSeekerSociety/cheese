@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.answers.repositories import AnswerRepository
+from app.domain.questions.lookup import ensure_question_exists
 from app.domain.questions.models import Question, QuestionInvitation, VoteType
 from app.domain.questions.repositories import (
     QuestionInvitationRepository,
@@ -32,6 +33,9 @@ def _question_to_dto(question: Question, *, include_content: bool = True) -> dic
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
+
+
+question_to_dto = _question_to_dto
 
 
 class QuestionsService:
@@ -623,9 +627,7 @@ class QuestionInvitationService:
         return result
 
     async def _ensure_question_exists(self, question_id: int) -> None:
-        question = await self._question_repo.get_by_id(question_id)
-        if question is None:
-            raise NotFoundError("Question not found", data={"id": question_id})
+        await ensure_question_exists(self._question_repo, question_id)
 
     async def _get_answered_map(
         self, question_id: int, user_ids: set[int]

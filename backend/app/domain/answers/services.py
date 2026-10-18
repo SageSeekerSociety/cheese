@@ -1,6 +1,7 @@
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.answers.models import Answer
 from app.domain.answers.repositories import AnswerRepository
+from app.domain.questions.lookup import ensure_question_exists
 from app.domain.questions.models import VoteType
 from app.domain.questions.repositories import QuestionRepository
 from app.domain.user.author_dto import profile_to_author
@@ -154,9 +155,7 @@ class AnswersService:
         )
 
     async def _ensure_question_exists(self, question_id: int) -> None:
-        question = await self._question_repo.get_by_id(question_id)
-        if question is None:
-            raise NotFoundError("Question not found", data={"id": question_id})
+        await ensure_question_exists(self._question_repo, question_id)
 
     async def _ensure_answer_exists(self, answer_id: int) -> Answer:
         answer = await self._repo.get_by_id(answer_id)

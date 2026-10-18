@@ -1,17 +1,10 @@
-import re
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.team.models import RecruitmentStatus, TeamRecruitmentPost
-
-_HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
-
-
-def _use_fts(token: str) -> bool:
-    """Return True when *token* is suitable for PostgreSQL FTS."""
-    return len(token) > 2 and _HAS_WORD_CHAR_RE.search(token) is not None
+from app.domain.team.repositories import _use_fts
 
 
 class RecruitmentRepository:

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -476,11 +477,7 @@ class RequiredCITest(unittest.TestCase):
 
 
 class TierForTest(unittest.TestCase):
-    """The event → tier table, the single source of the whole scheme's safety.
-
-    Only a DRAFT pull_request is quick. Everything else — merge queue, a
-    non-draft PR, and any event this cannot read — is the full gate.
-    """
+    """Draft and ready PRs are quick; landed code retains the full gate."""
 
     def test_merge_group_is_always_full(self):
         # The queue entry is the run the production deploy chain reads
@@ -490,37 +487,33 @@ class TierForTest(unittest.TestCase):
             gate.tier_for("merge_group", {"pull_request": {"draft": True}}), "full"
         )
 
-    def test_a_non_draft_pull_request_is_full(self):
-        # Includes ready_for_review: promoting a draft starts a full run.
+    def test_a_non_draft_pull_request_is_quick(self):
+        # Readiness changes the check name, not the branch's quick tier.
         for action in ("opened", "synchronize", "reopened", "ready_for_review"):
             with self.subTest(action=action):
                 event = {"action": action, "pull_request": {"draft": False}}
-                self.assertEqual(gate.tier_for("pull_request", event), "full")
+                self.assertEqual(gate.tier_for("pull_request", event), "quick")
 
-    def test_only_a_draft_pull_request_is_quick(self):
+    def test_non_pull_request_events_cannot_select_quick(self):
+        for event_name in ("push", "merge_group", "workflow_dispatch", "schedule", ""):
+            for draft in (True, False):
+                with self.subTest(event_name=event_name, draft=draft):
+                    self.assertEqual(gate.tier_for(
+                        event_name, {"pull_request": {"draft": draft}}), "full")
+
+    def test_a_draft_pull_request_is_quick(self):
         for action in ("opened", "synchronize", "converted_to_draft"):
             with self.subTest(action=action):
                 event = {"action": action, "pull_request": {"draft": True}}
                 self.assertEqual(gate.tier_for("pull_request", event), "quick")
 
-    def test_the_draft_flag_not_the_action_is_authoritative(self):
-        # Same action, opposite flag: the flag wins, so a stale/renamed action
-        # can never promote a draft to the full gate (or vice versa).
-        for action in ("opened", "ready_for_review", "synchronize", "reopened"):
-            with self.subTest(action=action, draft=False):
-                self.assertEqual(
-                    gate.tier_for(
-                        "pull_request", {"action": action, "pull_request": {"draft": False}}
-                    ),
-                    "full",
-                )
-            with self.subTest(action=action, draft=True):
-                self.assertEqual(
-                    gate.tier_for(
-                        "pull_request", {"action": action, "pull_request": {"draft": True}}
-                    ),
-                    "quick",
-                )
+    def test_readiness_does_not_change_the_branch_tier(self):
+        for action in ("opened", "ready_for_review", "converted_to_draft", "synchronize"):
+            for draft in (False, True):
+                with self.subTest(action=action, draft=draft):
+                    self.assertEqual(gate.tier_for(
+                        "pull_request", {"action": action, "pull_request": {"draft": draft}}
+                    ), "quick")
 
     def test_an_unreadable_event_fails_closed_to_full(self):
         for event_name, event in (
@@ -1755,6 +1748,139 @@ class WorkflowTextTest(unittest.TestCase):
                 )
 
 
+class TitleRecheckTest(unittest.TestCase):
+    """Run the real recheck shell; only GitHub responses are substituted."""
+
+    def recheck(self, *, completed=False, fast="failure", required="failure",
+                status="completed", attempt=1, same_title=False, newer=False,
+                pull_changes=None, source_changes=None):
+        head = "a" * 40
+        pull = {"number": 7, "state": "open", "draft": False,
+                "title": 'fix: corrected title $(touch pwned)',
+                "head": {"sha": head, "repo": {"full_name": "owner/repo"}},
+                "base": {"ref": "main"}}
+        event_pull = json.loads(json.dumps(pull))
+        pull.update(pull_changes or {})
+        source = {"id": 99, "head_sha": head, "event": "pull_request",
+                  "conclusion": "failure", "run_attempt": attempt,
+                  "head_repository": {"full_name": "owner/repo"},
+                  "display_title": pull["title"] if same_title else "bad title"}
+        source.update(source_changes or {})
+        event = {"pull_request": event_pull, "workflow_run": source}
+        data = {"pull": pull, "runs": [{"databaseId": 100 if newer else 99, "status": status}],
+                "jobs": [{"name": "fast", "databaseId": 101, "conclusion": fast},
+                         {"name": "CI required", "databaseId": 202, "conclusion": required}]}
+        text = WORKFLOW.with_name("pr-title.yml").read_text()
+        body = textwrap.dedent(run_body_containing(text, "gh"))
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            stub = bindir / "gh"
+            stub.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
+                import json, os, subprocess, sys
+                from pathlib import Path
+                args = sys.argv[1:]
+                data = json.loads(Path(os.environ["STUB_DATA"]).read_text())
+                with open(os.environ["STUB_CALLS"], "a") as log:
+                    print(json.dumps(args), file=log)
+                if args[:2] == ["run", "list"]:
+                    answer = data["runs"]
+                elif args[:2] == ["run", "view"]:
+                    answer = {"jobs": data["jobs"]}
+                elif args[0] == "api":
+                    answer = [data["pull"]] if "/commits/" in args[1] else data["pull"]
+                elif args[:2] == ["run", "rerun"]:
+                    raise SystemExit(0)
+                else:
+                    raise AssertionError(args)
+                if "--jq" in args:
+                    # The pre-fix workflow uses gh's jq projection. This path
+                    # lets the same fixture exercise that old shell in a red run.
+                    subprocess.run(["jq", "-r", args[args.index("--jq") + 1]],
+                                   input=json.dumps(answer), text=True, check=True)
+                else:
+                    print(json.dumps(answer))
+                '''))
+            stub.chmod(0o755)
+            (tmp / "event.json").write_text(json.dumps(event))
+            (tmp / "data.json").write_text(json.dumps(data))
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_REPOSITORY": "owner/repo", "HEAD_SHA": head,
+                   "GITHUB_EVENT_NAME": "workflow_run" if completed else "pull_request",
+                   "GITHUB_EVENT_PATH": str(tmp / "event.json"),
+                   "STUB_DATA": str(tmp / "data.json"), "STUB_CALLS": str(tmp / "calls")}
+            result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", body],
+                                    cwd=tmp, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse((tmp / "pwned").exists())
+            calls = [json.loads(line) for line in (tmp / "calls").read_text().splitlines()] if (tmp / "calls").exists() else []
+            return [call[call.index("--job") + 1] for call in calls if call[:2] == ["run", "rerun"]]
+
+    def test_recheck_job_accepts_title_edits_and_one_failed_pr_completion(self):
+        condition = jobs_of(WORKFLOW.with_name("pr-title.yml").read_text())["recheck"]["if"]
+        for event_name, draft, fork, action, title_changed, conclusion, attempt, expected in (
+            ("pull_request", False, False, "edited", True, "", 1, True),
+            ("pull_request", False, False, "edited", False, "", 1, False),
+            ("pull_request", True, False, "edited", True, "", 1, False),
+            ("pull_request", False, True, "edited", True, "", 1, False),
+            ("pull_request", False, False, "ready_for_review", False, "", 1, True),
+            ("workflow_run", False, False, "completed", False, "failure", 1, True),
+            ("workflow_run", False, False, "completed", False, "failure", 2, False),
+            ("workflow_run", False, False, "completed", False, "success", 1, False),
+            ("workflow_run", False, True, "completed", False, "failure", 1, False),
+        ):
+            repo = "fork/repo" if fork else "owner/repo"
+            context = {"event_name": event_name, "repository": "owner/repo", "event": {
+                "action": action, "changes": {"title": title_changed},
+                "pull_request": {"draft": draft, "head": {"repo": {"full_name": repo}}},
+                "workflow_run": {"event": "pull_request", "conclusion": conclusion,
+                                 "run_attempt": attempt, "head_repository": {"full_name": repo}}}}
+
+            def value(match):
+                found = context
+                for key in match.group().split(".")[1:]:
+                    found = found[key]
+                return repr(found)
+
+            expression = re.sub(r"github(?:\.\w+)+", value, condition)
+            expression = expression.replace("&&", " and ").replace("||", " or ").replace("!", "not ")
+            with self.subTest(context=context):
+                self.assertEqual(bool(eval(expression, {"__builtins__": {}}, {})), expected)  # noqa: S307
+
+    def test_title_edit_restarts_failed_fast_and_its_downstream_gate(self):
+        self.assertEqual(self.recheck(), ["101"])
+
+    def test_title_edit_keeps_successful_quick_or_legacy_full_evidence(self):
+        for fast in ("success", "skipped"):
+            with self.subTest(fast=fast):
+                self.assertEqual(self.recheck(fast=fast), ["202"])
+
+    def test_title_edit_during_run_is_recovered_on_its_completion_once(self):
+        self.assertEqual(self.recheck(status="in_progress"), [])
+        self.assertEqual(self.recheck(completed=True), ["101"])
+        self.assertEqual(self.recheck(completed=True, attempt=2), [])
+        self.assertEqual(self.recheck(completed=True, same_title=True), [])
+        self.assertEqual(self.recheck(completed=True, newer=True), [])
+
+    def test_completion_cannot_restart_main_or_other_repositories(self):
+        for changes in ({"event": "push"}, {"conclusion": "success"},
+                        {"head_repository": {"full_name": "fork/repo"}}):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.recheck(completed=True, source_changes=changes), [])
+
+    def test_only_the_current_ready_same_repository_pr_can_be_rechecked(self):
+        for completed in (False, True):
+            for changes in ({"state": "closed"}, {"draft": True}, {"base": {"ref": "release"}},
+                            {"head": {"sha": "b" * 40, "repo": {"full_name": "owner/repo"}}},
+                            {"head": {"sha": "a" * 40, "repo": {"full_name": "fork/repo"}}}):
+                with self.subTest(completed=completed, changes=changes):
+                    self.assertEqual(self.recheck(completed=completed, pull_changes=changes), [])
+        for required in ("skipped", "cancelled"):
+            with self.subTest(required=required):
+                self.assertEqual(self.recheck(required=required), [])
+
+
 class MainCliTest(unittest.TestCase):
     """The ``scope``/``check`` wiring that the runner actually invokes."""
 
@@ -2052,7 +2178,7 @@ class MainCliTest(unittest.TestCase):
                 env=pr_env, cwd=tmp, check=True, capture_output=True, text=True,
             )
             pr_written = dict(line.split("=", 1) for line in pr_out.read_text().splitlines())
-            self.assertEqual(pr_written["tier"], "full")
+            self.assertEqual(pr_written["tier"], "quick")
             self.assertEqual(pr_written["branch_heavy"], "false")
             self.assertEqual(pr_written["backend"], "true")
             self.assertEqual(pr_written["e2e"], "false")
@@ -2061,12 +2187,9 @@ class MainCliTest(unittest.TestCase):
 
             pr_needs = {
                 "scope": {"result": "success", "outputs": pr_written},
-                "fast": {"result": "skipped"},
-                "api": {"result": "success", "outputs": {"moved": "false"}},
-                **{
-                    k: {"result": "success" if pr_written[k] == "true" else "skipped"}
-                    for k in gate.PATHS
-                },
+                "fast": {"result": "success"},
+                "api": {"result": "skipped"},
+                **{k: {"result": "skipped"} for k in gate.PATHS},
             }
             pr_check = subprocess.run(
                 [sys.executable, str(tmp / "required-ci.py"), "check"],
@@ -2108,6 +2231,54 @@ class MainCliTest(unittest.TestCase):
                 cwd=tmp, capture_output=True, text=True,
             )
             self.assertNotEqual(mg_check_fail.returncode, 0)
+
+    def test_branch_workflow_and_cli_require_only_fast_but_landed_code_requires_suites(self):
+        jobs = jobs_of(WORKFLOW.read_text())
+        script = WORKFLOW.parent.parent / "scripts" / "required-ci.py"
+        for event_name, draft in (("pull_request", True), ("pull_request", False),
+                                  ("push", None), ("merge_group", None)):
+            with self.subTest(event_name=event_name, draft=draft), tempfile.TemporaryDirectory() as tmp:
+                payload = {"pull_request": {"draft": draft}} if draft is not None else {}
+                tier = gate.tier_for(event_name, payload)
+                expected_tier = "quick" if event_name == "pull_request" else "full"
+                self.assertEqual(tier, expected_tier)
+                # A gate change selects every suite; the workflow's actual ifs
+                # must still suppress them all for BOTH kinds of pull request.
+                outputs = {k: str(v).lower() for k, v in gate.select(
+                    [".github/workflows/required-ci.yml"], event_name).items()}
+                outputs.update(tier=tier, branch_heavy=str(event_name != "pull_request").lower())
+                needs = {"scope": {"result": "success", "outputs": outputs}}
+                for job in (*gate.PATHS, "api", "fast"):
+                    runs = ApiSurfaceTest._holds(jobs[job]["if"], outputs, "", True)
+                    expected_run = job == "fast" if tier == "quick" else job in gate.PATHS
+                    self.assertEqual(runs, expected_run, job)
+                    needs[job] = {"result": "success" if runs else "skipped"}
+                active = [jobs[job]["name"] for job in ("required", "required-draft")
+                          if condition_holds(jobs[job]["if"], event_name, draft)]
+                self.assertEqual(active, ["CI required (draft quick)" if draft else "CI required"])
+                env = {**os.environ, "GITHUB_EVENT_NAME": event_name,
+                       "GITHUB_EVENT_PATH": self._event_file(tmp, payload)}
+
+                def check():
+                    return subprocess.run([sys.executable, str(script), "check"],
+                                          env={**env, "CI_NEEDS": json.dumps(needs)},
+                                          capture_output=True, text=True)
+
+                result = check()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                required_jobs = ("fast",) if tier == "quick" else tuple(gate.PATHS)
+                for job in required_jobs:
+                    for bad in ("failure", "cancelled", "skipped"):
+                        needs[job]["result"] = bad
+                        result = check()
+                        self.assertNotEqual(result.returncode, 0, f"{event_name}: {job}={bad}")
+                        self.assertIn(f"{job}: expected success", result.stderr)
+                    needs[job]["result"] = "success"
+                if tier == "quick":
+                    for job in (*gate.PATHS, "api"):
+                        needs[job]["result"] = "success"
+                        self.assertNotEqual(check().returncode, 0, f"PR ran full suite {job}")
+                        needs[job]["result"] = "skipped"
 
     def test_check_mode_fails_closed_when_the_event_is_unreadable(self):
         env = {**os.environ, "GITHUB_EVENT_NAME": "pull_request",
