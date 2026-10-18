@@ -177,6 +177,24 @@ def test_a_later_green_batch_takes_the_blame_back(client, app_world, forge):
     assert _told(client, first) == before
 
 
+def test_a_red_commit_a_later_green_batch_covered_says_nothing(
+    client, app_world, forge
+):
+    """The watch may first look after the next batch already settled it."""
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    told = _told(client, task_id)
+    forge.ran[LINE_ONE] = [_gate("failure")]
+    forge.ran[HEAD] = [_gate("success")]
+    forge.green = HEAD
+    forge.ahead = {(LINE_ONE, HEAD)}
+
+    watch(client)
+
+    assert _told(client, task_id) == told
+    assert _landing(client, task_id).checks.value == "passed"
+
+
 def test_a_green_batch_says_nothing(client, app_world, forge):
     first, second = _two_lines(client, app_world, forge)
     told_first = _told(client, first)

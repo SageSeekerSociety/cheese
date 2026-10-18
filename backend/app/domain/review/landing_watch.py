@@ -399,6 +399,19 @@ def _checks(reads: LandingReads, project_id, sha: str, memo: dict):
     return _once(memo, (project_id, "checks", sha), lambda: reads.checks(sha))
 
 
+def _green(reads: LandingReads, project_id, memo: dict):
+    return _once(memo, (project_id, "green"), reads.main_green)
+
+
+def _covered(reads: LandingReads, project_id, sha: str, anchor: str, memo: dict):
+    """Whether the green batch `main-green` ends covers ``sha``."""
+    return _once(
+        memo,
+        (project_id, "covered", sha, anchor),
+        lambda: reads.is_ancestor(sha, anchor),
+    )
+
+
 async def _judge_checks(
     reads: LandingReads, sha: str, *, project_id, memo: dict
 ) -> Judgement | None:
@@ -412,10 +425,15 @@ async def _judge_checks(
     ]
     gate = _gate(own)
     if gate is not None and gate.conclusion in _FAILED:
+        anchor = await _green(reads, project_id, memo)
+        if anchor and await _covered(reads, project_id, sha, anchor, memo):
+            # A later batch went green over this commit: that red is settled.
+            return Judgement(ChecksOutcome.passed, ())
         parent = await reads.parent(sha)
-        if await _gate_ran(reads, project_id, parent, memo):
-            # The commit before it was gated on its own, so this repository
-            # checks each merge as it lands and the old rule still holds.
+        if anchor is None and await _gate_ran(reads, project_id, parent, memo):
+            # No batch mark exists and the commit before it was gated on its
+            # own: this repository checks each merge as it lands, and the old
+            # rule still holds.
             return await _judge_merge(
                 reads, sha, red, parent=parent, project_id=project_id, memo=memo
             )
@@ -510,7 +528,7 @@ async def _judge_batch(
     red = tuple(run for run in head_checks if run.conclusion in _FAILED)
     if not red:
         return Judgement(ChecksOutcome.passed, ())
-    anchor = await _once(memo, (project_id, "green"), reads.main_green)
+    anchor = await _green(reads, project_id, memo)
     commits = None
     if anchor:
         commits = await _once(
