@@ -423,9 +423,10 @@ class CandidateCI(unittest.TestCase):
         for changes in ({"head_sha": "b" * 40}, {"head_branch": "feature"},
                         {"head_branch": f"gh-readonly-queue/release/pr-7-{'b' * 40}"},
                         {"head_repository": {"full_name": "fork/app"}}, {"event": "pull_request"},
-                        {"event": "push", "head_branch": "main"}):
+                        {"event": "push", "head_branch": "feature"}):
             with self.subTest(changes=changes):
                 self.assertFalse(self.ready([self.run_record()], [self.queue_record(**changes)]))
+        self.assertTrue(self.ready([self.run_record()], [self.queue_record(event="push", head_branch="main")]))
 
     def test_rerunning_an_older_run_cannot_hide_its_failure_behind_a_newer_id(self):
         rerun = self.run_record(id=9, updated_at="2026-09-22T13:00:00Z", conclusion="failure")
@@ -487,12 +488,12 @@ class CandidateCI(unittest.TestCase):
         self.assertNotIn("concurrency", workflow)
         self.assertEqual(workflow["jobs"]["deploy"]["concurrency"]["group"], "deploy-dev")
         triggers = workflow.get("on", workflow.get(True))
-        self.assertEqual(set(triggers["workflow_run"]["workflows"]), {"Build and Push Docker Image"})
+        self.assertEqual(set(triggers["workflow_run"]["workflows"]), {"Build and Push Docker Image", "Required CI"})
 
-    def test_required_ci_runs_once_per_commit_in_the_merge_queue(self):
+    def test_required_ci_runs_on_main_push_and_merge_queue(self):
         required = yaml.safe_load((ROOT / ".github/workflows/required-ci.yml").read_text())
         triggers = required.get("on", required.get(True))
-        self.assertNotIn("push", triggers)
+        self.assertEqual(triggers["push"]["branches"], ["main"])
         self.assertIn("merge_group", triggers)
 
     def test_ci_rerun_while_waiting_for_deploy_runner_fails_the_release(self):

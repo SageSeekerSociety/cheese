@@ -39,14 +39,17 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  push:
+    branches: [main]
   merge_group:
     types: [checks_requested]
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: required-ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: required-ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'push' && 'main' || github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -54,7 +57,7 @@ jobs:
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
     # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.scope.outputs.backend }}
@@ -81,7 +84,8 @@ jobs:
       - name: Select suites for the complete merge diff
         id: scope
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Every selected suite waits on this fetch, so one transient network
           # error here reddens the whole run. Retry it; the selection below is
@@ -455,7 +459,7 @@ jobs:
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
     # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -501,7 +505,7 @@ jobs:
       # job below has no title step: a draft's title is the platform's
       # placeholder, nothing to check, and `ready_for_review` starts this job.
       - name: Commit titles follow the convention
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -580,7 +584,7 @@ jobs:
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
     # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

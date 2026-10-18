@@ -22,9 +22,13 @@ merge queue entry is the FULL tier (the real gate), never the fast one.
 import fnmatch
 import json
 import os
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 PATHS = json.loads(Path(__file__).with_name("required-ci-paths.json").read_text())
 
@@ -63,15 +67,13 @@ def tier_for(event_name, event):
     false on ``ready_for_review``. The action name is not consulted — the flag
     already carries it, and reading the flag keeps one source of truth.
     """
-    if event_name == "merge_group":
+    if event_name in ("merge_group", "push", "workflow_dispatch"):
         return "full"
     if event_name == "pull_request" and isinstance(event, dict):
         pull = event.get("pull_request")
         if isinstance(pull, dict):
             draft = pull.get("draft")
-            if draft is False:
-                return "full"
-            if draft is True:
+            if draft in (True, False):
                 return "quick"
     return "full"
 
@@ -224,9 +226,54 @@ def api_failures(needs, outputs, tier):
     return [], moved == "true"
 
 
+def _last_green_main_sha(repository, token, head_sha):
+    """Return the newest commit on main whose full Required CI succeeded, or None."""
+    url = (
+        f"https://api.github.com/repos/{repository}/actions/workflows/"
+        "required-ci.yml/runs?status=completed&conclusion=success&per_page=30"
+    )
+    req = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    body = None
+    for wait in (2, 5, None):
+        try:
+            with urlopen(req, timeout=20) as resp:
+                body = json.load(resp)
+            break
+        except (URLError, ConnectionError, TimeoutError, ValueError) as err:
+            if wait is None or (isinstance(err, HTTPError) and err.code < 500):
+                return None
+            time.sleep(wait)
+    if not isinstance(body, dict):
+        return None
+    for run in body.get("workflow_runs") or []:
+        if not isinstance(run, dict):
+            continue
+        sha = run.get("head_sha") or ""
+        branch = run.get("head_branch") or ""
+        ev = run.get("event") or ""
+        if (
+            run.get("status") == "completed"
+            and run.get("conclusion") == "success"
+            and ev in ("push", "merge_group", "workflow_dispatch")
+            and (branch == "main" or branch.startswith("gh-readonly-queue/main/"))
+            and re.fullmatch(r"[0-9a-f]{40}", sha)
+            and sha != head_sha
+        ):
+            return sha
+    return None
+
+
 def effective_base(event_base, head="HEAD"):
     """Resolve the one base both the receipt and suite diff must use."""
-    if os.environ.get("GITHUB_EVENT_NAME") == "merge_group":
+    event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+    if event_name == "merge_group":
         # The event base may be the preceding queue entry's synthetic tree.
         # Only landed main can exclude a prefix from this run's coverage.
         main_ref = "+refs/heads/main:refs/remotes/origin/main"
@@ -250,6 +297,27 @@ def effective_base(event_base, head="HEAD"):
             "merge_group uses the landed origin/main ancestor; the event base may "
             "contain an unlanded queue prefix, whose changes remain in coverage"
         )
+    elif event_name == "push":
+        head_sha = subprocess.check_output(["git", "rev-parse", head]).decode().strip()
+        repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+        token = os.environ.get("GH_TOKEN", "").strip()
+        green_sha = _last_green_main_sha(repo, token, head_sha) if repo and token else None
+        if green_sha:
+            for attempt in range(3):
+                if subprocess.call(["git", "fetch", "--no-tags", "--depth=1", "origin", green_sha]) == 0:
+                    break
+                if attempt == 2:
+                    raise subprocess.CalledProcessError(1, ["git", "fetch", green_sha])
+                time.sleep(2)
+            base = subprocess.check_output(
+                ["git", "rev-parse", "--verify", f"{green_sha}^{{commit}}"]
+            ).decode().strip()
+            reason = f"post-submit uses last green Required CI commit {base[:12]} on main"
+        else:
+            base = subprocess.check_output(
+                ["git", "rev-parse", "--verify", f"{event_base}^{{commit}}"]
+            ).decode().strip()
+            reason = "uses the event-provided base"
     else:
         base = subprocess.check_output(
             ["git", "rev-parse", "--verify", f"{event_base}^{{commit}}"]

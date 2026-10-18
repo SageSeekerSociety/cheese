@@ -96,8 +96,8 @@ def ci_ready(candidate: str, say=print) -> bool:
     # the queue run's head SHA is the SHA that lands on main.
     for workflow, events, on_branch in (
         ("build.yml", {"push", "workflow_dispatch"}, lambda branch: branch == "main"),
-        ("required-ci.yml", {"merge_group"},
-         lambda branch: branch.startswith("gh-readonly-queue/main/")),
+        ("required-ci.yml", {"merge_group", "push", "workflow_dispatch"},
+         lambda branch: branch == "main" or branch.startswith("gh-readonly-queue/main/")),
     ):
         runs = [run for run in workflow_runs(repository, workflow, candidate)
                 if run["head_sha"] == candidate and on_branch(run["head_branch"] or "")

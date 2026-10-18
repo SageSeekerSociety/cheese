@@ -490,37 +490,35 @@ class TierForTest(unittest.TestCase):
             gate.tier_for("merge_group", {"pull_request": {"draft": True}}), "full"
         )
 
-    def test_a_non_draft_pull_request_is_full(self):
-        # Includes ready_for_review: promoting a draft starts a full run.
+    def test_push_and_workflow_dispatch_are_always_full(self):
+        for event_name in ("push", "workflow_dispatch"):
+            with self.subTest(event_name=event_name):
+                self.assertEqual(gate.tier_for(event_name, {}), "full")
+
+    def test_a_non_draft_pull_request_is_quick(self):
+        # Branch CI runs only the quick tier (ci-fast); full suites run on
+        # post-submit (push to main) and merge_group.
         for action in ("opened", "synchronize", "reopened", "ready_for_review"):
             with self.subTest(action=action):
                 event = {"action": action, "pull_request": {"draft": False}}
-                self.assertEqual(gate.tier_for("pull_request", event), "full")
+                self.assertEqual(gate.tier_for("pull_request", event), "quick")
 
-    def test_only_a_draft_pull_request_is_quick(self):
+    def test_a_draft_pull_request_is_quick(self):
         for action in ("opened", "synchronize", "converted_to_draft"):
             with self.subTest(action=action):
                 event = {"action": action, "pull_request": {"draft": True}}
                 self.assertEqual(gate.tier_for("pull_request", event), "quick")
 
-    def test_the_draft_flag_not_the_action_is_authoritative(self):
-        # Same action, opposite flag: the flag wins, so a stale/renamed action
-        # can never promote a draft to the full gate (or vice versa).
+    def test_a_boolean_draft_flag_is_required_for_quick_tier(self):
         for action in ("opened", "ready_for_review", "synchronize", "reopened"):
-            with self.subTest(action=action, draft=False):
-                self.assertEqual(
-                    gate.tier_for(
-                        "pull_request", {"action": action, "pull_request": {"draft": False}}
-                    ),
-                    "full",
-                )
-            with self.subTest(action=action, draft=True):
-                self.assertEqual(
-                    gate.tier_for(
-                        "pull_request", {"action": action, "pull_request": {"draft": True}}
-                    ),
-                    "quick",
-                )
+            for draft in (False, True):
+                with self.subTest(action=action, draft=draft):
+                    self.assertEqual(
+                        gate.tier_for(
+                            "pull_request", {"action": action, "pull_request": {"draft": draft}}
+                        ),
+                        "quick",
+                    )
 
     def test_an_unreadable_event_fails_closed_to_full(self):
         for event_name, event in (
@@ -1612,7 +1610,7 @@ class MainCliTest(unittest.TestCase):
                 env=pr_env, cwd=tmp, check=True, capture_output=True, text=True,
             )
             pr_written = dict(line.split("=", 1) for line in pr_out.read_text().splitlines())
-            self.assertEqual(pr_written["tier"], "full")
+            self.assertEqual(pr_written["tier"], "quick")
             self.assertEqual(pr_written["branch_heavy"], "false")
             self.assertEqual(pr_written["backend"], "true")
             self.assertEqual(pr_written["e2e"], "false")
@@ -1621,10 +1619,10 @@ class MainCliTest(unittest.TestCase):
 
             pr_needs = {
                 "scope": {"result": "success", "outputs": pr_written},
-                "fast": {"result": "skipped"},
-                "api": {"result": "success", "outputs": {"moved": "false"}},
+                "fast": {"result": "success"},
+                "api": {"result": "skipped"},
                 **{
-                    k: {"result": "success" if pr_written[k] == "true" else "skipped"}
+                    k: {"result": "skipped"}
                     for k in gate.PATHS
                 },
             }
@@ -1680,6 +1678,22 @@ class MainCliTest(unittest.TestCase):
             env=env, cwd=WORKFLOW.parent.parent.parent, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not match the event", result.stderr)
+
+    def test_last_green_main_sha_skips_head_and_non_main_runs(self):
+        head = "a" * 40
+        green = "b" * 40
+        runs = {
+            "workflow_runs": [
+                {"status": "completed", "conclusion": "success", "event": "push", "head_branch": "main", "head_sha": head},
+                {"status": "completed", "conclusion": "success", "event": "pull_request", "head_branch": "task/1", "head_sha": "c" * 40},
+                {"status": "completed", "conclusion": "failure", "event": "push", "head_branch": "main", "head_sha": "d" * 40},
+                {"status": "completed", "conclusion": "success", "event": "push", "head_branch": "main", "head_sha": green},
+            ]
+        }
+        import io
+        from unittest.mock import patch
+        with patch.object(gate, "urlopen", return_value=io.BytesIO(json.dumps(runs).encode())):
+            self.assertEqual(gate._last_green_main_sha("owner/repo", "tok", head), green)
 
     def test_check_mode_fails_closed_when_needs_is_not_an_object(self):
         # `toJSON(needs)` is always an object, so this is unreachable in a real

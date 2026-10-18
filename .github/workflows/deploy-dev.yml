@@ -60,7 +60,7 @@ on:
         type: string
         default: ""
   workflow_run:
-    workflows: ["Build and Push Docker Image"]
+    workflows: ["Build and Push Docker Image", "Required CI"]
     types: [completed]
     branches: [main]
 
