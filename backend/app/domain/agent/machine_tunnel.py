@@ -188,7 +188,7 @@ def open_tunnel(
     raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     if secure:
         if insecure:
-            context = ssl._create_unverified_context()  # noqa: S323 — opt-in only
+            context = ssl._create_unverified_context()  # opt-in only
         else:
             context = ssl.create_default_context(cafile=ca_path or None)
         raw = context.wrap_socket(raw, server_hostname=host)
@@ -655,7 +655,7 @@ def watch_session(
                 logger.info("the session this helper served has ended")
                 end()
                 return
-        except Exception as error:  # noqa: BLE001 — see the docstring
+        except Exception as error:  # see the docstring
             logger.warning("session check failed: %r", error)
 
 

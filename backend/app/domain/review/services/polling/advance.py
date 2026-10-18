@@ -83,7 +83,7 @@ async def _advance_github_card(
 ) -> None:
     try:
         owner, repo = await self._pr_repo_of(card, topic)
-    except Exception as exc:  # noqa: BLE001 — pause this tick, retry next
+    except Exception as exc:  # pause this tick, retry next
         logger.warning("card %s: cannot resolve PR repo: %s", card.id, exc)
         return
 

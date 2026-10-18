@@ -21,7 +21,7 @@ from app.api.routes.installer import router
 
 
 class _ServesBinary(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):  # noqa: N802
+    def do_GET(self):
         body = b'#!/bin/sh\necho cheesehost "$@"\n'
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))

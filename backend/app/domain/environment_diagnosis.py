@@ -149,7 +149,7 @@ async def diagnose(
             usage = Usage.of(payload.get("usage"))
             cost_usd = response_cost(r)
             content = payload["choices"][0]["message"]["content"] or ""
-    except Exception:  # noqa: BLE001 — a failed call is an answer of None
+    except Exception:  # a failed call is an answer of None
         logger.warning("environment diagnosis call failed", exc_info=True)
         return None
     if usage is not None and (usage.total_tokens or cost_usd):

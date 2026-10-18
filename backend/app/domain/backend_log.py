@@ -658,6 +658,6 @@ async def report_request_failure(
                 return False
             await session.commit()
             return True
-    except Exception:  # noqa: BLE001 — reporting a failure must never add one
+    except Exception:  # reporting a failure must never add one
         logger.warning("backend error report failed for %s %s", method, path)
         return False

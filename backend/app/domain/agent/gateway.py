@@ -219,7 +219,7 @@ class LlmGateway:
             rows = payload.get("data") if isinstance(payload, dict) else None
             if not isinstance(rows, list):
                 raise ValueError("gateway /model/info carries no data list")
-        except Exception:  # noqa: BLE001 — an unreachable gateway is not an empty one
+        except Exception:  # an unreachable gateway is not an empty one
             logger.warning("gateway models failed", exc_info=True)
             return None
 
@@ -295,7 +295,7 @@ class LlmGateway:
                 r.raise_for_status()
                 key = r.json().get("key")
                 return key if isinstance(key, str) and key else None
-        except Exception:  # noqa: BLE001 — admin failures never fail a turn
+        except Exception:  # admin failures never fail a turn
             logger.warning("gateway mint_project_key failed", exc_info=True)
             return None
 
@@ -319,7 +319,7 @@ class LlmGateway:
                 r.raise_for_status()
                 key = r.json().get("key")
                 return key if isinstance(key, str) and key else None
-        except Exception:  # noqa: BLE001 — the person is told 芝士 is unavailable
+        except Exception:  # the person is told 芝士 is unavailable
             logger.warning("gateway mint_person_key failed", exc_info=True)
             return None
 
@@ -334,7 +334,7 @@ class LlmGateway:
                 )
                 r.raise_for_status()
                 return True
-        except Exception:  # noqa: BLE001 — the caller says what was left
+        except Exception:  # the caller says what was left
             logger.warning("gateway revoke_key failed", exc_info=True)
             return False
 
@@ -350,7 +350,7 @@ class LlmGateway:
                 )
                 r.raise_for_status()
                 return True
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("gateway set_key_budget failed", exc_info=True)
             return False
 
@@ -407,7 +407,7 @@ class LlmGateway:
                         continue
                     metrics = mine.get("metrics") or {}
                     _add_row(by, {**metrics, "model": name})
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("gateway daily_spend_by_model failed", exc_info=True)
             return None
         return by

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Effective route index, first-FULL guard and annotation coverage.
+"""Effective route index and first-FULL guard.
 
     uv run python -m scripts.route_index --emit  # the index as JSON lines
     uv run python -m scripts.route_index --check  # nothing provably shadowed
-    uv run python -m scripts.route_index --check-annotations  # every route noted
-    uv run python -m scripts.route_index --all  # all three, one child, one import
+    uv run python -m scripts.route_index --all  # both, one child, one import
 
-The three questions above are asked about the same collected inventory, and the
+The two questions above are asked about the same collected inventory, and the
 collector cannot run without the application imported — the expensive part of
-each run. `--all` answers them in one child and delimits the three answers, so a
-caller that wants more than one pays for the import once. Each section carries
+each run. `--all` answers them in one child and delimits the two answers, so a
+caller that wants both pays for the import once. Each section carries
 the status code that command would have exited with on its own; the process
 exits 0 only when all of them did.
 
@@ -286,31 +285,6 @@ def _check(records: list[RouteRecord]) -> tuple[int, str]:
     return 0, "\n".join(lines)
 
 
-def _annotations(records: list[RouteRecord], sidecar: str | None) -> tuple[int, str]:
-    """Annotation coverage: 1 when the sidecar is missing an address or is bad."""
-    from scripts.route_index_annotations import (
-        DEFAULT_SIDECAR,
-        check_annotation_coverage,
-    )
-
-    rows = [
-        {
-            "protocol": record.protocol,
-            "methods": sorted(record.methods),
-            "path": record.path,
-        }
-        for record in records
-    ]
-    try:
-        keys = check_annotation_coverage(rows, sidecar or DEFAULT_SIDECAR)
-    except ValueError as exc:
-        return 1, f"route annotations invalid: {exc}"
-    return 0, (
-        f"route annotations complete ({len(records)} registrations; "
-        f"{keys} annotated addresses)"
-    )
-
-
 def main() -> int:
     from scripts.route_index_profile import (
         in_profile_worker,
@@ -337,19 +311,9 @@ def main() -> int:
         "--check", action="store_true", help="run the first-match guard"
     )
     judgement.add_argument(
-        "--check-annotations",
-        action="store_true",
-        help="verify every live route has its handwritten annotation",
-    )
-    judgement.add_argument(
         "--all",
         action="store_true",
-        help="run all three in this process, each under its own status marker",
-    )
-    parser.add_argument(
-        "--annotations",
-        metavar="FILE",
-        help="override the route annotation sidecar",
+        help="run both in this process, each under its own status marker",
     )
     args = parser.parse_args()
 
@@ -361,7 +325,6 @@ def main() -> int:
             [
                 ("emit", *_emit(records, profile_header())),
                 ("check", *_check(records)),
-                ("check-annotations", *_annotations(records, args.annotations)),
             ]
         )
     if args.emit:
@@ -369,10 +332,6 @@ def main() -> int:
         return 0
     if args.check:
         status, text = _check(records)
-        print(text)
-        return status
-    if args.check_annotations:
-        status, text = _annotations(records, args.annotations)
         print(text)
         return status
     parser.print_help()

@@ -362,7 +362,7 @@ async def _finish_feishu(
     try:
         config = await feishu_settings_for(db, row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())
-    except Exception as exc:  # noqa: BLE001 — the person reads why, on the page
+    except Exception as exc:  # the person reads why, on the page
         # Feishu's answer goes by Feishu's own words, under the code the page
         # words; an IntegrationError is that answer even when it is said with
         # a key. A refusal of ours goes by its sentence's key.

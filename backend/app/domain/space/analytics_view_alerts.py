@@ -35,7 +35,7 @@ def _count_pending_submission_reviews(ctx: _Context) -> int:
 
 
 def _count_stalled_tasks(ctx: _Context, *, now: datetime) -> int:
-    """Tasks that have at least one approved participant but no submission for 14 days."""  # noqa: E501
+    """Tasks that have at least one approved participant but no submission for 14 days."""
     threshold = now - timedelta(days=STALLED_TASK_DAYS)
     stalled = 0
     for task in ctx.tasks:
@@ -66,7 +66,7 @@ def _count_overdue_unreviewed_submissions(ctx: _Context, *, now: datetime) -> in
 
 
 def _count_inactive_publishers(ctx: _Context, *, now: datetime) -> int:
-    """Publishers that have created tasks historically but none in the last 30 days."""  # noqa: E501
+    """Publishers that have created tasks historically but none in the last 30 days."""
     threshold = now - timedelta(days=INACTIVE_PUBLISHER_DAYS)
     latest_by_creator: dict[int, datetime] = {}
     for task in ctx.tasks:

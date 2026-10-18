@@ -353,7 +353,7 @@ def platform_tool_names(cheese_source: str) -> list[str]:
     `PLATFORM_TOOLS` in this release's `cheese.py`, the one table every harness
     reads. A module of its own, so the CLI's `__main__` block does not run."""
     module = types.ModuleType("cheese_platform_tools")
-    exec(compile(cheese_source, "cheese", "exec"), module.__dict__)  # noqa: S102
+    exec(compile(cheese_source, "cheese", "exec"), module.__dict__)
     return list(module.PLATFORM_TOOLS.names())
 
 

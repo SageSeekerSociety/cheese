@@ -1,4 +1,4 @@
-"""Unit tests for SpaceService – targeting 100 % coverage of app/domain/space/services.py."""  # noqa: E501
+"""Unit tests for SpaceService – targeting 100 % coverage of app/domain/space/services.py."""
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -547,7 +547,7 @@ class TestUpdateSpace:
 
     @pytest.mark.anyio
     async def test_no_fields_updated_still_saves(self):
-        """When no optional fields are passed, the space is still saved with an updated timestamp."""  # noqa: E501
+        """When no optional fields are passed, the space is still saved with an updated timestamp."""
         repo = AsyncMock()
         space = _make_space()
         repo.get_by_id.return_value = space
@@ -913,7 +913,7 @@ class TestAddAdmin:
     @pytest.mark.anyio
     async def test_admin_repo_none_raises(self):
         svc = _build_service(admin_repo=None)
-        # Without admin_repo, _ensure_admin returns immediately, then we hit the None check  # noqa: E501
+        # Without admin_repo, _ensure_admin returns immediately, then we hit the None check
         with pytest.raises(BadRequestError, match="Space admin repository unavailable"):
             await svc.add_admin(
                 space_id=1,
@@ -1162,7 +1162,7 @@ class TestUpdateAdminRole:
 
     @pytest.mark.anyio
     async def test_change_non_owner_role(self):
-        """Test updating an ADMIN's role to another non-OWNER role (direct save path)."""  # noqa: E501
+        """Test updating an ADMIN's role to another non-OWNER role (direct save path)."""
         admin_repo = AsyncMock()
         # In practice SpaceAdminRole only has OWNER=0 and ADMIN=1 but the code path
         # supports the else branch when new_role is not OWNER and relation is not OWNER.

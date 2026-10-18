@@ -196,7 +196,7 @@ async def _look_at(
                 record_instruction=record_instruction,
                 task_teammate=task_teammate,
             )
-        except Exception as exc:  # noqa: BLE001 — one merge must not stop the rest
+        except Exception as exc:  # one merge must not stop the rest
             logger.warning("landing watch failed for %s", landing_id, exc_info=True)
             return 0, f"{landing_id}: {exc}"
         return looked, None

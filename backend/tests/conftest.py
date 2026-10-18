@@ -133,7 +133,7 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB
 # used to be registered by the chat-stack import this file no longer makes. The
 # per-test clear builds its table list from Base.metadata once per process
 # (`_clean_slate_queries`), so they are registered here, before the first clear.
-import app.domain.agent.turn_inputs  # noqa: F401, E402
+import app.domain.agent.turn_inputs  # noqa: E402
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
 from app.core.db import Base, get_db  # noqa: E402
 from app.core.db import engine as app_engine  # noqa: E402
@@ -381,7 +381,7 @@ class ScriptedSession(Runner):
         # fails instead, naming what broke.
         try:
             self.channel.arrive(self.topic_id, message, agent=self.actor)
-        except Exception as exc:  # noqa: BLE001 — surfaced as the turn's failure
+        except Exception as exc:  # surfaced as the turn's failure
             logging.getLogger(__name__).exception("the scripted session raised")
             if not self.working:
                 self.observe(
@@ -996,8 +996,7 @@ def bearer() -> Callable[[str], dict[str, str]]:
     def _headers(handle: str) -> dict[str, str]:
         # Deferred import: the shared helper lives in the integration conftest,
         # and only integration tests request this fixture. Minting here instead
-        # would be a second source of truth for the same token —
-        # tests/unit/test_no_adhoc_auth_helpers.py exists to stop exactly that.
+        # would be a second source of truth for the same token.
         from tests.integration.conftest import session_auth_headers
 
         return session_auth_headers(handle)
@@ -1934,7 +1933,7 @@ async def _drop_superseded_templates() -> None:
         for name in doomed:
             try:
                 await conn.execute(f'DROP DATABASE IF EXISTS "{name}"')
-            except Exception:  # noqa: BLE001, PERF203 — in use is not an error here
+            except Exception:  # in use is not an error here
                 continue
     finally:
         await conn.close()
@@ -1993,7 +1992,7 @@ def _ensure_template() -> bool:
             _touch_template_use(_TEMPLATE_DB)
             asyncio.run(_drop_superseded_templates())
             return True
-    except Exception:  # noqa: BLE001 — fall back to the slow path, never block
+    except Exception:  # fall back to the slow path, never block
         return False
 
 
@@ -2023,7 +2022,7 @@ def revision_template(revision: str) -> str | None:
                 asyncio.run(_rename_db(building, template))
             _touch_template_use(template)
             return template
-    except Exception:  # noqa: BLE001 — the caller migrates directly instead
+    except Exception:  # the caller migrates directly instead
         return None
 
 
@@ -2080,13 +2079,13 @@ def _create_and_migrate(db_name: str, db_url: str) -> None:
         try:
             asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
             return
-        except Exception:  # noqa: BLE001 — the slow path below is still correct
+        except Exception:  # the slow path below is still correct
             _TEMPLATE_READY = _ensure_template()
             if _TEMPLATE_READY:
                 try:
                     asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
                     return
-                except Exception:  # noqa: BLE001 — same reason
+                except Exception:  # same reason
                     _TEMPLATE_READY = False
     _migrate_fresh_db(db_name, db_url)
 

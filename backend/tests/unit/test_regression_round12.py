@@ -78,7 +78,7 @@ def test_questions_followed_route_before_question_id():
     assert followed_idx is not None, f"/followed route not found in {paths}"
     assert param_idx is not None, f"/{{question_id}} route not found in {paths}"
     assert followed_idx < param_idx, (
-        f"/followed (index {followed_idx}) must come before /{'{question_id}'} (index {param_idx})"  # noqa: E501
+        f"/followed (index {followed_idx}) must come before /{'{question_id}'} (index {param_idx})"
     )
 
 

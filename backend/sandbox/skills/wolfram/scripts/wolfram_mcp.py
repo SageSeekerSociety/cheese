@@ -347,7 +347,7 @@ class Server:
                 await self.reply(
                     mid, error={"code": -32601, "message": f"未知方法 {method}"}
                 )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log("处理失败", method, traceback.format_exc())  # 栈写日志
             # 对端只拿摘要
             await self.reply(
@@ -364,7 +364,7 @@ class Server:
         except KeyError as e:
             # 少参数是最常见的调用错误
             return {"content": [text(f"缺少参数 {e}")], "isError": True}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log("工具失败", name, traceback.format_exc())  # 栈写日志
             # 工具级失败不拖垮进程
             return {
@@ -390,7 +390,7 @@ class Server:
                 continue  # 空行跳过
             try:
                 msg = json.loads(line)  # 一行一条消息
-            except Exception:  # noqa: BLE001
+            except Exception:
                 # 解析错误要回，id 只能是 null
                 await self.reply(
                     None, error={"code": -32700, "message": "不是合法 JSON"}

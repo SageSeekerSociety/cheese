@@ -467,7 +467,7 @@ def keep_room_files(home: Path, executor: dict | None, url: str, resource: str):
     try:
         with tarfile.open(archive, "w:gz") as bundle:
             bundle.add(room, arcname=CHECKOUT_DIR, recursive=True)
-        digest = hashlib.md5()  # noqa: S324 — the bucket's ETag of one PUT
+        digest = hashlib.md5()  # the bucket's ETag of one PUT
         with archive.open("rb") as source:
             for block in iter(lambda: source.read(1 << 20), b""):
                 digest.update(block)

@@ -15,8 +15,7 @@
 `app/api/deps.py`、`app/domain/repository/identity.py` 里的函数内导入、以及单测都按
 `from app.domain.oauth.services import …` 取名字，这里逐个再导出；`settings` 也仍
 从这里读，所以按 `app.domain.oauth.services.settings` 打的补丁照旧生效（读 settings
-的代码本来就在本模块）。`todo` 里那一条——`test_oauth_service.py` 用到的每个名字都
-还取得到——有 `test_oauth_services_module_split.py` 钉着。
+的代码本来就在本模块）。
 
 **类上的方法只转发。** 搬走的方法在类上留一行，把 `self` 和自己的参数原样交给
 `tokens.py` / `connections.py` 里接收者是 `svc` 的同名函数。这样类上不再有任何判断

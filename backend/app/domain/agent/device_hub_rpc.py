@@ -231,7 +231,7 @@ class RemoteDeviceHub:
                 # A release remains healthy enough to finish requests already in
                 # flight; the next successful poll restores the read view.
                 continue
-            except Exception:  # noqa: BLE001 — the read view must not freeze
+            except Exception:  # the read view must not freeze
                 # Anything else used to end this loop for the life of the
                 # process, and nothing observes the task: it is created bare and
                 # only ever awaited by `close()` under `return_exceptions=True`,
@@ -532,5 +532,5 @@ def _log_callback_failure(task: asyncio.Task[object]) -> None:
         task.result()
     except asyncio.CancelledError:
         return
-    except Exception:  # noqa: BLE001 - recovery retries on the next reconnect
+    except Exception:  # recovery retries on the next reconnect
         logger.exception("device connection recovery callback failed")

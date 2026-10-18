@@ -83,7 +83,7 @@ class _Refreshes:
     times out, and every reconnect starts another refresh of everything.
     """
 
-    def __init__(  # noqa: ANN001
+    def __init__(
         self,
         chat,
         announce: Announce,
@@ -154,7 +154,7 @@ class _Refreshes:
                     task_teammate=self._task_teammate,
                     **event,
                 )
-        except Exception:  # noqa: BLE001 — the next event or tick retries
+        except Exception:  # the next event or tick retries
             logger.warning("Forge refresh failed for %s", event, exc_info=True)
 
 
@@ -220,7 +220,7 @@ async def _listen(refreshes: _Refreshes, sessions: SessionFactory):
                     # A clean socket close must also stop the subscription renewer.
                     subscription.cancel()
                 raise ConnectionError("Forge event connection closed")
-        except Exception as exc:  # noqa: BLE001 — reconnect; periodic reconciliation remains live
+        except Exception as exc:  # reconnect; periodic reconciliation remains live
             if _relay_restarted(exc):
                 logger.info("Forge event relay restarted; reconnecting")
             else:
