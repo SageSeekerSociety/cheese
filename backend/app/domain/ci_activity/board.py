@@ -19,7 +19,7 @@ page and a script over the same runs agree:
 * **Merge-queue time** — a PR merged through the queue in the window: its first
   ``added`` to its ``merged`` removal. Every ejection and re-entry in between is
   part of the time it took.
-* **CI rounds** — for each PR merged through the queue in the window: the
+* **CI rounds** — for each PR merged in the window, directly or through the queue: the
   `Required CI` runs on its ``pull_request`` events that reached a verdict
   (success or failure; a run cancelled by a newer push is not a round), and
   separately its ``merge_group`` runs that reached one.
@@ -52,6 +52,7 @@ from app.domain.ci_activity.models import (
     CiActivitySweep,
     CiJob,
     CiJobStep,
+    CiMergedPullRequest,
     CiMergeQueueEvent,
     CiWorkflowRun,
 )
@@ -174,22 +175,26 @@ async def _required_runs(session: AsyncSession, repo: str, since: datetime, unti
     )
 
 
-async def _first_attempt_jobs(session: AsyncSession, run_row_ids: list) -> dict:
+async def _first_attempt_jobs(
+    session: AsyncSession, run_row_ids: list
+) -> dict[Any, tuple[set[str], datetime | None]]:
     """Per run row: (names of its first attempt's jobs, last completion among them)."""
-    out: dict = defaultdict(lambda: [set(), None])
-    if not run_row_ids:
-        return out
-    rows = await session.execute(
-        select(CiJob.run_row_id, CiJob.name, CiJob.completed_at).where(
-            CiJob.run_row_id.in_(run_row_ids), CiJob.run_attempt == 1
+    names: dict[Any, set[str]] = defaultdict(set)
+    last: dict[Any, datetime | None] = {}
+    if run_row_ids:
+        rows = await session.execute(
+            select(CiJob.run_row_id, CiJob.name, CiJob.completed_at).where(
+                CiJob.run_row_id.in_(run_row_ids), CiJob.run_attempt == 1
+            )
         )
+        for run_row_id, name, completed in rows:
+            names[run_row_id].add(name)
+            seen = last.get(run_row_id)
+            if completed is not None and (seen is None or completed > seen):
+                last[run_row_id] = completed
+    return defaultdict(
+        lambda: (set(), None), {k: (v, last.get(k)) for k, v in names.items()}
     )
-    for run_row_id, name, completed in rows:
-        entry = out[run_row_id]
-        entry[0].add(name)
-        if completed is not None and (entry[1] is None or completed > entry[1]):
-            entry[1] = completed
-    return out
 
 
 async def _failed_before_last(session: AsyncSession, run_row_ids: list) -> dict:
@@ -275,7 +280,7 @@ async def build_board(
     wait_by_day: dict[tuple[str, date], list[float]] = defaultdict(list)
     machines: dict[str, dict[str, Any]] = {}
     spans: dict[str, list[tuple[datetime, datetime]]] = defaultdict(list)
-    busy_seconds: Counter = Counter()
+    busy_seconds: dict[str, float] = defaultdict(float)
     for job in jobs:
         wait = _seconds(job.created_at, job.started_at)
         took = _seconds(job.started_at, job.completed_at)
@@ -340,7 +345,7 @@ async def build_board(
         durations[run.event].append(took / 60)
         duration_by_day[(run.event, _day(run.created_at))].append(took / 60)
 
-    rounds = await _rounds(session, repo, passages)
+    rounds = await _rounds(session, repo, w)
     retried = [r for r in runs if r.run_attempt > 1]
     failed_before = await _failed_before_last(session, [r.id for r in retried])
     verdict_runs = [r for r in runs if r.conclusion in VERDICTS]
@@ -422,7 +427,7 @@ async def build_board(
     }
 
 
-def _shares(seconds: Counter) -> dict[str, float | None]:
+def _shares(seconds: dict[str, float]) -> dict[str, float | None]:
     total = sum(seconds.values())
     return {cls: (seconds[cls] / total if total else None) for cls in CLASSES}
 
@@ -508,32 +513,50 @@ async def _ejections(session, repo, w: Window) -> list[dict[str, Any]]:
     ]
 
 
-async def _rounds(session, repo, passages) -> dict[str, Any]:
+async def _rounds(session, repo, w: Window) -> dict[str, Any]:
     """Required CI rounds of each merged PR.
 
     A pull_request run names its PR only while the head branch exists, so most
     runs of a merged PR carry no number; those are matched by the PR's head
-    branch (kept on its queue events), counting only runs created before it
-    merged so a later PR reusing the branch name is not counted.
+    branch, counting only runs created during the PR's lifetime so other PRs
+    reusing its branch name are not counted. Queue membership is not required.
     """
-    prs = [pr for pr, *_ in passages]
-    if not prs:
+    pulls = list(
+        await session.scalars(
+            select(CiMergedPullRequest).where(
+                CiMergedPullRequest.repo == repo,
+                CiMergedPullRequest.merged_at >= w.since,
+                CiMergedPullRequest.merged_at < w.until,
+            )
+        )
+    )
+    last = await session.scalar(
+        select(CiActivitySweep)
+        .where(CiActivitySweep.repo == repo)
+        .order_by(CiActivitySweep.started_at.desc())
+        .limit(1)
+    )
+    covered_from = last.runs_listed_from if last else None
+    coverage = {
+        "covered_from": covered_from.isoformat() if covered_from else None,
+        "incomplete_prs": sum(
+            covered_from is None or p.created_at < covered_from for p in pulls
+        ),
+    }
+    if not pulls:
         return {
             "prs": 0,
             "pr_rounds": summary([]),
             "queue_rounds": summary([]),
             "more_than_one": None,
             "histogram": [],
+            **coverage,
         }
-    merged_at = {pr: merged for pr, _, merged, _ in passages}
-    branches = await session.execute(
-        select(CiMergeQueueEvent.pr_number, CiMergeQueueEvent.head_branch).where(
-            CiMergeQueueEvent.repo == repo,
-            CiMergeQueueEvent.pr_number.in_(prs),
-            CiMergeQueueEvent.head_branch.is_not(None),
-        )
-    )
-    by_branch = {branch: pr for pr, branch in branches}
+    by_number = {p.pr_number: p for p in pulls}
+    by_branch: dict[str, list[CiMergedPullRequest]] = defaultdict(list)
+    for pull in pulls:
+        if pull.head_branch:
+            by_branch[pull.head_branch].append(pull)
     rows = await session.execute(
         select(
             CiWorkflowRun.pr_number,
@@ -545,7 +568,7 @@ async def _rounds(session, repo, passages) -> dict[str, Any]:
             CiWorkflowRun.workflow_path == REQUIRED_CI_PATH,
             CiWorkflowRun.conclusion.in_(VERDICTS),
             or_(
-                CiWorkflowRun.pr_number.in_(prs),
+                CiWorkflowRun.pr_number.in_(list(by_number)),
                 and_(
                     CiWorkflowRun.pr_number.is_(None),
                     CiWorkflowRun.head_branch.in_(list(by_branch)),
@@ -556,13 +579,17 @@ async def _rounds(session, repo, passages) -> dict[str, Any]:
     pr_rounds: Counter = Counter()
     queue_rounds: Counter = Counter()
     for number, branch, event, created in rows:
-        pr = number if number is not None else by_branch.get(branch)
-        if pr not in merged_at or created > merged_at[pr]:
-            continue
-        if event == "pull_request":
-            pr_rounds[pr] += 1
-        elif event == "merge_group":
-            queue_rounds[pr] += 1
+        candidates = (
+            [by_number[number]] if number in by_number else by_branch.get(branch, [])
+        )
+        for pull in candidates:
+            if not pull.created_at <= created <= pull.merged_at:
+                continue
+            if event == "pull_request":
+                pr_rounds[pull.pr_number] += 1
+            elif event == "merge_group":
+                queue_rounds[pull.pr_number] += 1
+    prs = list(by_number)
     per_pr = [float(pr_rounds[pr]) for pr in prs]
     histogram = Counter(min(int(n), 5) for n in per_pr)
     return {
@@ -571,6 +598,7 @@ async def _rounds(session, repo, passages) -> dict[str, Any]:
         "queue_rounds": summary([float(queue_rounds[pr]) for pr in prs]),
         "more_than_one": sum(n > 1 for n in per_pr) / len(per_pr),
         "histogram": [{"rounds": k, "prs": histogram[k]} for k in range(0, 6)],
+        **coverage,
     }
 
 

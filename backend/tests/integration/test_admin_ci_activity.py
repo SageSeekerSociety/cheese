@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.domain.ci_activity.models import (
     CiJob,
     CiJobStep,
+    CiMergedPullRequest,
     CiMergeQueueEvent,
     CiWorkflowRun,
 )
@@ -146,6 +147,18 @@ def _board(client, days=1) -> dict:
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]
+
+
+def _pull(
+    pr, branch, created=T0 - timedelta(minutes=5), merged=T0 + timedelta(minutes=90)
+):
+    return CiMergedPullRequest(
+        repo=REPO,
+        pr_number=pr,
+        head_branch=branch,
+        created_at=created,
+        merged_at=merged,
+    )
 
 
 def test_a_stranger_cannot_read_the_page(client, as_admin):
@@ -282,6 +295,7 @@ def test_a_merged_prs_rounds_include_runs_github_no_longer_links(client, as_admi
             superseded,
             queue,
             after,
+            _pull(8, "feat/eight", merged=merged),
             _event(8, "added", T0 + timedelta(minutes=55), branch="feat/eight"),
             _event(
                 8,
@@ -300,6 +314,30 @@ def test_a_merged_prs_rounds_include_runs_github_no_longer_links(client, as_admi
     assert rounds["pr_rounds"]["mean"] == pytest.approx(2)
     assert rounds["queue_rounds"]["mean"] == pytest.approx(1)
     assert rounds["more_than_one"] == pytest.approx(1)
+
+
+def test_direct_merge_rounds_exclude_other_uses_of_the_same_branch(client, as_admin):
+    seed_user(client, ADMIN)
+    _seed(
+        client,
+        [
+            _pull(81, "feat/reused"),
+            _pull(82, "feat/no-ci"),
+            _run(pr=None, branch="feat/reused", created=T0 - timedelta(days=2)),
+            _run(pr=None, branch="feat/reused", created=T0),
+            _run(pr=None, branch="feat/reused", created=T0 + timedelta(minutes=20)),
+            _run(pr=None, branch="feat/reused", created=T0 + timedelta(minutes=100)),
+        ],
+    )
+
+    board = _board(client)
+
+    assert board["headline"]["rounds"]["prs"] == 2
+    assert board["headline"]["rounds"]["pr_rounds"]["mean"] == pytest.approx(1)
+    assert board["headline"]["rounds"]["queue_rounds"]["mean"] == 0
+    assert board["headline"]["rounds"]["more_than_one"] == pytest.approx(0.5)
+    assert board["headline"]["merge_queue_minutes"]["n"] == 0
+    assert board["headline"]["rounds"]["incomplete_prs"] == 2
 
 
 def test_a_run_that_passed_only_on_a_rerun_is_fail_then_pass(client, as_admin):

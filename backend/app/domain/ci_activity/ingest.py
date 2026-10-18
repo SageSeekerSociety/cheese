@@ -19,8 +19,9 @@ and every person delivering a card share):
 3. **Jobs.** Read the jobs of completed runs whose stored jobs are behind the
    run's attempt, newest first, at most `jobs_budget` runs per sweep. A run
    whose conclusion is `skipped` used no runner; its jobs are not read.
-4. **Merge queue.** Read the queue events of every PR updated since the last
-   sweep's `queue_read_to` (the window's start on the first sweep), one
+4. **Pull requests and merge queue.** Read merge facts and queue events of
+   every PR updated since the last sweep's `queue_read_to` (the window's start
+   on the first sweep), one
    `QUEUE_SLICE` of update time per search.
 
 Then everything older than the window is pruned and the sweep is recorded with
@@ -127,6 +128,7 @@ async def sweep_once(
         "jobs_read": 0,
         "jobs_owed": 0,
         "queue_events_added": 0,
+        "merged_prs_upserted": 0,
         "pruned_runs": 0,
         "gone_runs": 0,
         "truncated": [],
@@ -218,6 +220,9 @@ async def sweep_once(
                 owner=owner, repo=name, token=token, since=cursor, until=until
             )
             spent(listed, f"queue from {cursor.isoformat()}")
+            report["merged_prs_upserted"] += await store.upsert_merged_pull_requests(
+                repo, listed.items
+            )
             report["queue_events_added"] += await store.add_queue_events(repo, events)
             cursor = queue_read_to = until
     except (CiGitHubError, httpx.HTTPError, SQLAlchemyError) as exc:

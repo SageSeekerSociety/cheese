@@ -1,7 +1,7 @@
 """The CI activity tables: workflow runs, their jobs, the jobs' steps, the merge
-queue's events, and the sweeps that filled them.
+queue's events, merged pull requests, and the sweeps that filled them.
 
-Five tables because these are five kinds of thing, each read on its own: the
+Separate tables hold each kind of thing, each read on its own: the
 page groups jobs by runner without touching steps, reads steps for one job
 name at a time, and reads queue events without touching Actions at all. A job's
 steps are a table and not a JSON list on the job because the page asks for
@@ -177,6 +177,29 @@ class CiMergeQueueEvent(UuidPk, Base):
             "repo", "pr_number", "kind", "at", name="uq_ci_merge_queue_events_event"
         ),
         Index("ix_ci_merge_queue_events_repo_at", "repo", "at"),
+    )
+
+
+class CiMergedPullRequest(UuidPk, Base):
+    """A merged PR, including merges that never entered the merge queue.
+
+    Creation and merge times bound branch-name matching after GitHub removes
+    a deleted branch's PR association from its Actions runs.
+    """
+
+    __tablename__ = "ci_merged_pull_requests"
+
+    repo: Mapped[str] = mapped_column(String(200))
+    pr_number: Mapped[int] = mapped_column(Integer)
+    head_branch: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    merged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "repo", "pr_number", name="uq_ci_merged_pull_requests_repo_pr_number"
+        ),
+        Index("ix_ci_merged_pull_requests_repo_merged_at", "repo", "merged_at"),
     )
 
 
