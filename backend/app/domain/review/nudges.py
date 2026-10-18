@@ -65,7 +65,7 @@ def _ci_log_howto(repo_full_name: str) -> str:
     repo = repo_full_name or "<owner>/<repo>"
     return (
         "上面是失败 job 的名字、Actions 页面链接，以及日志里错误行附近的片段。"
-        "要看完整日志，在本话题的工作区里跑：\n"
+        "要看完整日志，在本频道的工作区里跑：\n"
         "```bash\n"
         f"gh api repos/{repo}/actions/jobs/<job_id>/logs\n"
         "```\n"
@@ -204,7 +204,7 @@ async def _review_nudge(
             f"{body}\n\n"
             "在对应任务目录按意见修改、验证并提交，用 cheese push-fix 更新原 PR。"
             "如果你不同意某条意见，"
-            "在话题里说清理由，让人来定。"
+            "在频道里说清理由，让人来定。"
         ),
         detail=body,
         detail_label=say("labelReviewComments"),
@@ -244,7 +244,7 @@ def _conflict_nudge(*, card: AcceptCard, status) -> pr_signals.PendingNudge | No
             "留冲突标记，直接提交会把对方的修改悄悄丢掉。在对方那一版上把你的改动"
             "重做一遍，做法见 cheese 技能里「合并冲突」一节。"
             "提交后用 cheese push-fix 更新原 PR，说明处理结果。\n"
-            "如果冲突解不动、或者不该由你来解，在话题里说清楚卡在哪。"
+            "如果冲突解不动、或者不该由你来解，在频道里说清楚卡在哪。"
         ),
         note=f"PR #{card.pr_number} 与目标分支冲突，正在解决",
         note_code=notes.NoteCode.merge_conflict,
@@ -302,7 +302,7 @@ def _title_nudge(
             "标题改回来。要合并，就用 cheese_describe 把这张卡的标题改成该落的那"
             "一行（`subject` 参数）：平台会同时把 GitHub 上的 PR 标题改成它，仓库"
             "的检查会按新标题重跑。改完等检查绿了，再采纳或等自动合并。\n"
-            "如果改的是 PR 标题而不是卡片，请在话题里说清为什么卡片那行才是对的。"
+            "如果改的是 PR 标题而不是卡片，请在频道里说清为什么卡片那行才是对的。"
         ),
         # 平台提示统一契约：房间那条可见的一行是 `event`，两行标题（都来自外部、
         # 都可能很长）折进 `meta.detail`，谁看都能一眼对上。
