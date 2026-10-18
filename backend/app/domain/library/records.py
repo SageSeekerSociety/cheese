@@ -149,16 +149,6 @@ async def attachment_file(
     return await asyncio.to_thread(service.room_file_path, project_id, room_id, path)
 
 
-async def attachment_exists(
-    session: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID, path: str
-) -> bool:
-    """这个地址今天还读得到吗：资料库里那一份可以被人删掉，引用它的消息还在。"""
-    name = service.library_name(path)
-    if name is not None:
-        return await exists(session, project_id, name)
-    return await asyncio.to_thread(service.room_file_exists, project_id, room_id, path)
-
-
 def _split_attachment_paths(paths: list[str]) -> tuple[dict[str, str], list[str]]:
     """把一批地址分成资料库的名字和房间自己的路径：前者 name -> 地址,后者原样。"""
     names: dict[str, str] = {}

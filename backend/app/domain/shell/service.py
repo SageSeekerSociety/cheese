@@ -117,9 +117,3 @@ async def effective_shells(
             project=project, task=task, category=category, space=space
         )
     return out
-
-
-async def effective_shell(session: AsyncSession, project) -> Shell:
-    """The 壳 one project runs under. Same chain as `effective_shells`."""
-    resolved = await effective_shells(session, [project])
-    return resolved[project.id]
