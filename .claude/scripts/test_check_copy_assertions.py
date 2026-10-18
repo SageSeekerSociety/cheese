@@ -358,17 +358,63 @@ class CopyAssertionGuardTests(unittest.TestCase):
 
 
     def test_an_unterminated_block_comment_is_not_reported_as_clean(self) -> None:
-        # JSX 文本里的 `/*` 会被当成块注释开头；到文件末尾还没闭合时，
-        # 后面整段都看不见，这时不能报通过。
+        # 一段到文件末尾都没闭合的块注释，后面整段都看不见，这时不能报通过。
         with tempfile.TemporaryDirectory() as directory:
             root = self._fixture(
                 directory,
-                "render(<code>src/*.ts</code>);\n"
+                "render(<p>x</p>);\n"
+                "  /* 忘了闭合\n"
                 "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')",
             )
             result = self._run(SCRIPT, root)
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertNotIn("通过", result.stdout)
+
+    def test_a_jsx_path_is_not_a_block_comment(self) -> None:
+        # `src/*.ts` 前面是字母，`**/*.ts` 前面是 `*`，都不是注释开头；
+        # 后面即使真有 `*/`，也不能把中间的真断言遮掉。
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._fixture(
+                directory,
+                "render(<code>src/*.ts</code>);\n"
+                "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')\n"
+                "const glob = '**/*.ts';\n"
+                "  /* 真正的块注释，这里闭合了 */\n",
+            )
+            result = self._run(SCRIPT, root)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("整句断言", result.stderr)
+
+    def test_a_backtick_in_jsx_text_is_not_reported_as_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._fixture(
+                directory,
+                "render(<p>a ` b</p>);\n"
+                "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')",
+            )
+            result = self._run(SCRIPT, root)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertNotIn("通过", result.stdout)
+
+    def test_a_string_after_a_keyword_is_a_string(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._fixture(
+                directory,
+                "function f() { return 'a /* b'; }\n"
+                "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')",
+            )
+            result = self._run(SCRIPT, root)
+            self.assertEqual(result.returncode, 1, result.stderr)
+
+    def test_a_phantom_string_does_not_hide_the_assertion_after_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._fixture(
+                directory,
+                "render(<p>x = 'y</p>); "
+                "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')",
+            )
+            result = self._run(SCRIPT, root)
+            self.assertEqual(result.returncode, 1, result.stderr)
 
     def test_unreadable_file_suppresses_the_baseline_advice(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

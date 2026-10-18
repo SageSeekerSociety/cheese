@@ -207,6 +207,22 @@ STRING_KEYWORDS = frozenset(
 )
 
 
+#: `/*` 前面是这些字符（或空白）时，它才真的在开一段注释。
+COMMENT_START = frozenset("=([{,:;)")
+
+
+def opens_block_comment(line: str, index: int) -> bool:
+    """index 上的 `/*` 是不是真在开一段注释。
+
+    JSX 文本里的路径（`<code>src/*.ts</code>`）和 glob（`**/*.ts`）前面是
+    字母或 `*`，不是注释；把它们当成注释开头会遮掉后面真正的代码。
+    """
+    if index == 0:
+        return True
+    before = line[index - 1]
+    return before in " \t" or before in COMMENT_START
+
+
 def opens_string(line: str, index: int) -> bool:
     """index 上的引号是不是在开一个字符串。
 
@@ -282,7 +298,7 @@ def mask_comments(
             for rest in range(index, len(masked)):
                 masked[rest] = " "
             break
-        if line.startswith("/*", index):
+        if line.startswith("/*", index) and opens_block_comment(line, index):
             in_block = True
             masked[index] = masked[index + 1] = " "
             index += 2
