@@ -65,7 +65,7 @@ if not os.path.isabs(GIT_DIR):
 PASS, FAIL, UNKNOWN, BLOCKED = 0, 1, 2, 3
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 FAST_HOOKS = {
-    "guards": ["repo-rules", "action-pins", "manual-anchors", "doc-references"],
+    "guards": ["repo-rules", "row-read-in-loop", "action-pins", "manual-anchors", "doc-references"],
     "backend": ["ruff", "boundary-check", "migration-fork"],
     "frontend": ["eslint", "stylelint", "boundary-check-frontend", "scene-ratchet"],
 }

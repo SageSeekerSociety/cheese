@@ -32,7 +32,7 @@ SCRIPT = Path(__file__).with_name("ci-fast.py")
 ALL_HOOKS = [
     "ruff", "boundary-check", "migration-fork",
     "eslint", "stylelint", "boundary-check-frontend", "scene-ratchet",
-    "repo-rules", "action-pins", "manual-anchors", "doc-references",
+    "repo-rules", "row-read-in-loop", "action-pins", "manual-anchors", "doc-references",
     "pyright", "frontend-typecheck", "openapi-document",
 ]
 BACKEND_HOOKS = {"ruff", "boundary-check", "migration-fork"}
@@ -41,7 +41,7 @@ BACKEND_HOOKS = {"ruff", "boundary-check", "migration-fork"}
 # with `PRE_PUSH_HOOKS` in ci-fast.py.
 PRE_PUSH_HOOKS = {"openapi-document"}
 FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet"}
-GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "doc-references"}
+GUARD_HOOKS = {"repo-rules", "row-read-in-loop", "action-pins", "manual-anchors", "doc-references"}
 # Hooks that judge against the merge base, so they are the ones that must report
 # not-run — never a pass — when there is no base or the caller names another one.
 # Kept in step with `MERGE_BASE_HOOKS` in ci-fast.py.

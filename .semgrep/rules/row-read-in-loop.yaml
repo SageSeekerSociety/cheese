@@ -1,0 +1,17 @@
+rules:
+  - id: row-read-in-loop
+    languages: [python]
+    message: ORM primary-key read inside a loop (batch it)
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              for $X in $Y:
+                  ...
+          - pattern-inside: |
+              async for $X in $Y:
+                  ...
+      - pattern: await $DB.get(...)
+      - metavariable-regex:
+          metavariable: $DB
+          regex: '^(session|db|self\._session|self\._db)$'

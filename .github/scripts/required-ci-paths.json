@@ -49,6 +49,8 @@
     "frontend/**",
     "deploy/**",
     ".claude/scripts/**",
+    ".semgrep/**",
+    ".pre-commit-config.yaml",
     ".github/workflows/**"
   ],
   "deploy": [
@@ -147,6 +149,7 @@
     ".github/scripts/ci_fast_process.py",
     ".github/scripts/ci_fast_pytest_plugin.py",
     ".github/scripts/test_ci_fast.py",
+    ".github/scripts/test_required_ci.py",
     ".github/scripts/required-ci.py",
     ".github/scripts/required-ci-paths.json",
     ".pre-commit-config.yaml",

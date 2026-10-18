@@ -150,6 +150,12 @@ class RequiredCITest(unittest.TestCase):
         selected = gate.select(["docs/architecture.md"])
         self.assertEqual({k for k, v in selected.items() if v}, {"guards"})
 
+    def test_semgrep_rule_and_precommit_config_run_guards(self):
+        for path in (".semgrep/rules/row-read-in-loop.yaml", ".pre-commit-config.yaml"):
+            with self.subTest(path=path):
+                selected = gate.select([path])
+                self.assertTrue(selected["guards"])
+
     def test_remote_dependencies_select_both_acceptance_jobs(self):
         for path in (
             "backend/uv.lock",
