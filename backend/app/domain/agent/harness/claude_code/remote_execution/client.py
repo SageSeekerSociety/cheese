@@ -209,6 +209,18 @@ def cheese_source() -> Path:
     return Path(__file__).resolve().parents[6] / "sandbox/cheese"
 
 
+#: The session's working directory under a fixed, short name. The shell's
+#: directory is reset between commands, so a line that spells the path out pays
+#: for the platform's own home — UUIDs all the way down — in most of its Bash
+#: calls (36% of them, in the trajectory that asked for this). `T` is the same
+#: name in every session; each session's own value is the project it sees, so
+#: two sessions on one machine never mean each other's directory. The line is
+#: told about it in its prompt (`harness.prompt.WORKING_DIRECTORY`), and the
+#: shell prefix forwards it to the executor with the command
+#: (`shell_prefix.FORWARDED_ENV`).
+WORKING_DIRECTORY = "T"
+
+
 def prepare(
     directory,
     target: dict[str, Any],
@@ -447,6 +459,10 @@ def prepare(
     (directory / "mcp.json").write_text(json.dumps({"mcpServers": servers}))
     env = {
         "HOME": str(home),
+        # The same short name in every session, and this session's own project
+        # under it: what the line can type instead of the path it would
+        # otherwise spell out in every Bash command.
+        WORKING_DIRECTORY: seen,
         "CLAUDE_CONFIG_DIR": str(config),
         "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
         "DISABLE_AUTOUPDATER": "1",

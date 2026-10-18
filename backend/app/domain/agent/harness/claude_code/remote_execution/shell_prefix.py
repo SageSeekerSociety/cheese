@@ -71,6 +71,10 @@ else:
 # there — and the build's messaging socket and its token name a process on
 # this host, so they stay too.
 FORWARDED_ENV = (
+    # The session's working directory under its short name
+    # (`client.WORKING_DIRECTORY`): the command runs on the executor, so the
+    # name has to cross with it or `cd "$T"` names nothing there.
+    "T",
     "AI_AGENT",
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
