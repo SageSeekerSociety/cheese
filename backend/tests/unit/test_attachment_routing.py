@@ -14,17 +14,18 @@ from tests.support.pictures import BROKEN_PNG, picture
 
 def _library(monkeypatch, data: bytes) -> None:
     # The library is substituted here; HTTP/WS integration covers real files.
-    async def present(*args):
-        return True
+    # The turn asks for a whole message at once, so the fakes answer per batch.
+    async def present(_session, _project_id, _room_id, paths):
+        return set(paths)
 
-    async def stored(*args):
-        return data
+    async def stored(_session, _project_id, _room_id, paths):
+        return {path: data for path in paths}
 
     monkeypatch.setattr(
-        "app.domain.agent.prompt.library_records.attachment_exists", present
+        "app.domain.agent.prompt.library_records.attachments_present", present
     )
     monkeypatch.setattr(
-        "app.domain.agent.prompt.library_records.read_attachment", stored
+        "app.domain.agent.prompt.library_records.read_attachments", stored
     )
 
 
