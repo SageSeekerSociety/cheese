@@ -69,37 +69,40 @@ GH_TIMEOUT = 120
 # line of the job's own output.
 _LOG_PREFIX = re.compile(r"^[^\t\n]*\t[^\t\n]*\t(?:\ufeff)?\S+\s")
 
-# pytest prints a failure in blocks, and every block quotes test-owned text:
-# the test source (in `--tb=auto`, which `ci_fast_checks.py` gets by passing no
-# `--tb`), the indented statement under a `file:line:` location (`--tb=short`),
-# the assertion introspection (`E   `), the `_ test_x[id] _` header, the short
-# summary, and the whole `--- Captured stdout call ---` section. A signature
-# found in any of them would call a real failure a flake.
+# A failure report quotes text the test owns — its source, its expected
+# values, its captured output — and any of those can contain a signature word
+# like `ECONNRESET` or a rate-limit message. Such a line must never be read as
+# evidence of infrastructure flake, so the scan skips the shapes a report
+# writes those lines in:
 #
-# So the scan skips from a report banner or a `file:line: ` location to the
-# end of the pytest invocation — the `N failed, M passed ... in Xs` count line
-# that closes the report. Everything a test printed or asserted sits in that
-# region, including `--- Captured stdout call ---` text at column 0. A run
-# that never reaches the count line is skipped to the end of the log, which
-# only means a flake there is left for a person instead of rerun.
+#   * any indented line. pytest reprints the failing statement and the whole
+#     test body indented (`--tb=short` and `--tb=auto` alike), and unittest
+#     reprints its source lines indented; a tool reporting its own failure
+#     writes at column 0.
+#   * a `--- Captured stdout/stderr ... ---` section, whatever its text, until
+#     the next report banner. Its lines are the test's own output at column 0.
+#   * the report's own column-0 markers: the FAILURES/ERRORS/short-summary
+#     banners, the `_ test_x[id] _` header, `FAILED `/`ERROR ` summary lines,
+#     the `>` and `E   ` lines of a `--tb=auto` report, and the introspected
+#     `assert ` lines.
+#
+# The state is dropped whenever the log moves to another job or step: the
+# prefix names both, and a report can only run on inside the step that started
+# it. Without that bound a traceback early in one step would swallow every
+# later step's output, hiding a real flake instead.
+#
+# The bias is deliberate: an unrecognised line is refused rather than rerun, so
+# a missed flake costs one person a look while a wrong rerun costs the failed
+# job set again and delays the real diagnosis.
 _PYTEST_BANNER = re.compile(
     r"^(?:=+ (?:FAILURES|ERRORS|short test summary info|warnings summary"
     r"|slowest \d+ durations) =+"
     r"|-{3,} Captured .+ -{3,}|_{3,} .+ _{3,})$"
 )
 _PYTEST_CAPTURED = re.compile(r"^-{3,} Captured .+ -{3,}$")
-_PYTEST_LOCATION = re.compile(r"^\S+:\d+: ")
-# Without `-q`, pytest decorates the closing count: `===== 1 failed in 0.04s
-# =====`. `no tests ran` closes a run the same way.
-_PYTEST_END = re.compile(
-    r"^=*\s*(?:\d+ (?:failed|passed|error|skipped)\b|no tests ran\b)"
+_PYTEST_REPORT = re.compile(
+    r"^(?:FAILED |ERROR |FAIL: |ERROR: |>{1,2}\s|E {2,}|assert |AssertionError)"
 )
-# unittest, which repo-guards runs over these helper tests, prints a traceback
-# instead of a pytest report: a `File "...", line N` frame followed by the
-# indented source line. That source is test text too.
-_UNITTEST_LOCATION = re.compile(r'^\s+File ".*", line \d+')
-_UNITTEST_END = re.compile(r"^(?:Ran \d+ tests?\b|FAILED \()")
-_PYTEST_REPORT = re.compile(r"^(?:FAILED |ERROR |>{1,2}\s|E {2,}|assert )")
 
 
 def load_patterns(path: Path = PATTERNS) -> list[dict]:
@@ -186,44 +189,45 @@ def _message(line: str) -> str:
     return _LOG_PREFIX.sub("", line, count=1)
 
 
+def _log_key(line: str) -> tuple[str, str] | None:
+    """The job and step a `gh run view --log-failed` line belongs to, if named."""
+    fields = line.split("\t", 3)
+    if len(fields) >= 3:
+        return fields[0], fields[1]
+    return None
+
+
 def flake_log_signature(
     failed_log: str | None, signatures: tuple[dict, ...] | list[dict] | None = None
 ) -> dict | None:
     """The first known flake signature a non-report line of ``failed_log`` matches.
 
-    Pytest's own report lines are skipped: they quote the test's expected
-    values, so an `ECONNRESET` or a rate-limit message written in a test would
-    otherwise make a real failure look like infrastructure flake.
+    Report lines are skipped (see the patterns above): they quote the test's
+    own text, so an `ECONNRESET` or a rate-limit message written in a test
+    would otherwise make a real failure look like infrastructure flake. A
+    captured-output block and the report markers end no later than the step
+    that started them, so a later step's real failure is still read.
     """
     if not failed_log:
         return None
-    in_report = False
+    key: tuple[str, str] | None = None
     in_captured = False
     for line in failed_log.splitlines():
+        line_key = _log_key(line)
+        if line_key is not None and line_key != key:
+            key = line_key
+            in_captured = False
         message = _message(line)
         if _PYTEST_CAPTURED.match(message):
             in_captured = True
-            in_report = True
             continue
         if in_captured:
-            # Only a banner ends a captured block: its text can itself contain
-            # a count line (`1 passed in 0.01s` from a nested pytest).
             if _PYTEST_BANNER.match(message):
                 in_captured = False
-            else:
-                continue
-        if (
-            _PYTEST_BANNER.match(message)
-            or _PYTEST_LOCATION.match(message)
-            or _UNITTEST_LOCATION.match(message)
-        ):
-            in_report = True
             continue
-        if in_report:
-            if _PYTEST_END.match(message) or _UNITTEST_END.match(message):
-                in_report = False
+        if not message.strip() or message[:1].isspace():
             continue
-        if _PYTEST_REPORT.match(message):
+        if _PYTEST_BANNER.match(message) or _PYTEST_REPORT.match(message):
             continue
         for signature in LOG_SIGNATURES if signatures is None else signatures:
             if re.search(signature["pattern"], message, re.IGNORECASE):

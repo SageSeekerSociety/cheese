@@ -226,7 +226,7 @@ class PushToMainTest(unittest.TestCase):
 
     FLAKE_LOG = (
         "backend\tRun backend tests\t2026-10-18T00:00:00Z\n"
-        "  read ECONNRESET\n"
+        "Error: read ECONNRESET\n"
     )
 
     def push(self, **changes):
@@ -384,6 +384,29 @@ class LogSignatureTest(unittest.TestCase):
             with self.subTest(log=log):
                 self.assertIsNone(rerun.flake_log_signature(log))
 
+    def test_an_indented_line_is_not_flake_evidence(self):
+        """pytest and unittest reprint test source indented; a tool writes at 0."""
+        for log in (
+            "    read ECONNRESET",
+            "backend\tRun tests\t2026-10-18T09:06:04Z     read ECONNRESET",
+        ):
+            with self.subTest(log=log):
+                self.assertIsNone(rerun.flake_log_signature(log))
+
+    def test_a_captured_block_does_not_swallow_a_later_step(self):
+        log = "\n".join(
+            (
+                "backend\tRun tests\t2026-10-18T09:06:04Z"
+                " ----------------------------- Captured stdout call"
+                " -----------------------------",
+                "backend\tRun tests\t2026-10-18T09:06:04Z"
+                " Error: read ECONNRESET",
+                "backend\tInstall dependencies\t2026-10-18T09:07:00Z"
+                " gh: API rate limit exceeded (HTTP 403)",
+            )
+        )
+        self.assertEqual(rerun.flake_log_signature(log)["id"], "http-403-rate-limit")
+
     def test_a_flake_line_beside_a_test_report_still_matches(self):
         log = "\n".join(
             (
@@ -398,14 +421,26 @@ class LogSignatureTest(unittest.TestCase):
         """Each shape is a separate row so deleting one branch reddens a test."""
         flake = "read ECONNRESET"
         blocks = {
-            "failures banner": f"=================== FAILURES ===================\n{flake}",
-            "errors banner": f"=================== ERRORS ===================\n{flake}",
-            "test header": f"__________________ test_x[{flake}] __________________\n{flake}",
-            "short summary banner": (
-                f"============= short test summary info =============\n{flake}"
+            "failures banner": (
+                "=================== FAILURES ===================\n"
+                f"______ test_x[{flake}] ______\n"
+                f"    {flake}"
             ),
-            "location line (short)": f"test_x.py:64: in test_x\n{flake}",
-            "location line (auto)": f"test_x.py:64: AssertionError: {flake}",
+            "errors banner": (
+                "=================== ERRORS ===================\n"
+                f"______ test_x[{flake}] ______\n"
+                f"    {flake}"
+            ),
+            "test header": (
+                f"__________________ test_x[{flake}] __________________\n"
+                f"    {flake}"
+            ),
+            "short summary banner": (
+                "============= short test summary info =============\n"
+                f"FAILED tests/unit/test_x.py::test_x - {flake}"
+            ),
+            "location line (short)": f"test_x.py:64: in test_x\n    {flake}",
+            "location line (auto)": f"test_x.py:64: AssertionError\n    {flake}",
             "indented source": f"test_x.py:64: in test_x\n    {flake}",
             "auto source block": (
                 "__________________ test_x __________________\n"
