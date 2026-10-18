@@ -78,7 +78,7 @@ API 那条路的前提是应用拿到了文档权限（管理员在飞书后台�
 
 ## webhook：从外面推进一条消息 {#webhook}
 
-`backend/app/domain/webhook/` 是**外部系统**（CI、部署流水线）往一个话题时间线里发消息的门。
+`backend/app/domain/webhook/` 是**外部系统**（CI、部署流水线）往一个频道时间线里发消息的门。
 
 凭据是 HMAC 令牌，**一个字都不存**（`backend/app/core/webhook_auth.py`）：`WebhookToken` 只存一个 `version` 计数器，令牌里嵌着它。`mint` 把版本 +1 并签发一个含新版本的令牌（这就是轮换：此前发出的全部立刻失效），`revoke` 只 +1 而不发新令牌（这就是撤销）。`verify` 重新验签、并把令牌里的 `v` 和行上的当前值比对。
 
