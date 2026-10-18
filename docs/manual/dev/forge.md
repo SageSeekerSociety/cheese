@@ -54,7 +54,7 @@ covers:
 - App JWT 的 TTL 是 540 秒（GitHub 的上限是 10 分钟，留出时钟偏差）。
 - 交给机器的令牌（`GitHubAppTokens.installation_token`）原样要这个安装的全部授权（`granted_permissions`，向 GitHub 读一次缓存 10 分钟）：GitHub 只要请求里有一项安装没有的权限就拒掉整次签发，原样要是唯一不会被拒的请求；安装新接受了一项授权，下一次签发就带上。
 - 后端开 PR、合并用的写令牌（`write_token`）按名字要 `contents: write` + `metadata: read` + `pull_requests: write` + **`workflows: write`**，不拿授权表去收窄，所以安装被收回其中一项时，签发当场被拒并带着 GitHub 的原因。`workflows: write` 是承重的：没有它，GitHub 会拒绝任何碰 `.github/workflows/*` 的分支的**推送**（"refusing to allow a GitHub App to create or update workflow … without `workflows` permission"），在采纳时表现为一个说不清的 422（2026-08-16，话题 ee17b136）。App 一直有这个授权，只是签发请求没要——GitHub 会收窄到你开口要的那些。
-- 安装的授权表里有 `actions: write` 时，写令牌再加要 `actions: write`（重跑 workflow 要它）；没有时照上面四项签。App 新加的授权要每个安装的所有者各自接受，没接受的安装照旧签发。
+- App 新加的授权（例如重跑 workflow 要的 `actions: write`）要每个安装的所有者各自接受。接受了的安装，交给机器的令牌随授权表带上它；没接受的安装照旧签发。写令牌只要上面四项，不跟着授权表变。
 - 从哪个安装签发是按项目解析的：App id 和私钥是平台级一份，每个连上的仓库有自己的 `installation_id`（`project_git_installations`）。
 
 **Forgejo 侧**是项目账号本身：密码存在 `ProjectForge.account_password` 里，读的时候过 `forge_password` / 写的时候过 `seal_forge_password`。另外 `ensure_author_email` 会把 agent 的署名邮箱登记到那个账号上（并发登记同一个邮箱会拿 422，所以那里先读一遍再补——登记完还要求它是 verified）。

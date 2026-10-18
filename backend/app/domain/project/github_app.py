@@ -177,13 +177,8 @@ class GitHubAppTokens:
         Spelled out because a revoked grant has to fail HERE: if an admin took
         `contents: write` away, GitHub says "not granted" at the mint, where the
         message is readable, instead of handing back a weaker token that dies
-        later at `git push` with an unexplained 403. So the grant map never
-        narrows the named set; it only decides `actions: write`, which an
-        installation holds only once its owner accepts the App's request for
-        it, and which asking for anyway would fail the whole mint.
+        later at `git push` with an unexplained 403.
         """
-        if (await self.granted_permissions()).get("actions") == "write":
-            return _WRITE_PERMISSIONS | {"actions": "write"}
         return _WRITE_PERMISSIONS
 
     async def granted_permissions(self) -> dict[str, str]:
