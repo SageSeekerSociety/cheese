@@ -59,11 +59,6 @@ export interface ListNotificationsResponse {
   page: EncodedCursorPage
 }
 
-export interface NotificationUpdate {
-  id: number
-  read: boolean
-}
-
 export interface MarkAllAsReadResponse {
   count: number
 }
