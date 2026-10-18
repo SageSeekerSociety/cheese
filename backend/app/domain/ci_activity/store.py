@@ -33,9 +33,10 @@ _QUEUE_BRANCH = re.compile(r"^gh-readonly-queue/.+/pr-(\d+)-[0-9a-f]+$")
 #: The runner group GitHub's own runners are in.
 HOSTED_GROUP = "GitHub Actions"
 
-#: Runs one INSERT carries. A run row binds 18 values and asyncpg refuses a
-#: statement with more than 32767, so one statement holds at most 1820 runs; a
-#: sweep after a day of downtime lists about 2000.
+#: Rows one INSERT carries. asyncpg refuses a statement with more than 32767
+#: bound values: a run row binds 18 (at most 1820 runs a statement; a sweep after
+#: a day of downtime lists about 2000), a queue event 8 (4095; a busy day here
+#: has had 2659).
 UPSERT_BATCH = 500
 
 
@@ -136,7 +137,8 @@ class CiActivityStore:
             set_={**{c: stmt.excluded[c] for c in refreshed}, "ingested_at": now},
         )
         result = await self._session.execute(stmt)
-        return int(result.rowcount or 0)
+        # rowcount exists on the CursorResult execute() returns for DML at runtime
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def oldest_open_run(self, repo: str, since: datetime) -> datetime | None:
         """When the oldest run created since ``since`` that has not completed
@@ -241,8 +243,15 @@ class CiActivityStore:
         return stored
 
     async def add_queue_events(self, repo: str, events: list[QueueEvent]) -> int:
-        if not events:
-            return 0
+        inserted = 0
+        for start in range(0, len(events), UPSERT_BATCH):
+            inserted += await self._add_events(
+                repo, events[start : start + UPSERT_BATCH]
+            )
+        await self._session.commit()
+        return inserted
+
+    async def _add_events(self, repo: str, events: list[QueueEvent]) -> int:
         result = await self._session.execute(
             insert(CiMergeQueueEvent)
             .values(
@@ -262,9 +271,7 @@ class CiActivityStore:
             .on_conflict_do_nothing(constraint="uq_ci_merge_queue_events_event")
             .returning(CiMergeQueueEvent.id)
         )
-        inserted = len(list(result))
-        await self._session.commit()
-        return inserted
+        return len(list(result))
 
     async def last_sweep(self, repo: str) -> CiActivitySweep | None:
         return await self._session.scalar(
@@ -316,4 +323,5 @@ class CiActivityStore:
             )
         )
         await self._session.commit()
-        return int(runs.rowcount or 0)
+        # rowcount exists on the CursorResult execute() returns for DML at runtime
+        return int(runs.rowcount or 0)  # type: ignore[attr-defined]
