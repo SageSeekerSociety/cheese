@@ -671,7 +671,8 @@ def base_tree(root: Path, rev: str, dest: Path) -> Path:
         raise Unjudgeable(f"cannot unpack the tree at {rev}: {exc}") from exc
     if not (dest / "frontend" / "src").is_dir():
         raise Unjudgeable(f"the tree at {rev} has no {SRC_DIR}/ to grade")
-    return dest
+    # macOS resolves /var to /private/var; use the same path spelling as resolved imports.
+    return dest.resolve()
 
 
 def classify(grades: dict[str, Any], views: dict[str, str]) -> Baseline:
