@@ -80,6 +80,23 @@ async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUI
     return room or conversation_id
 
 
+async def rooms_of(
+    session: AsyncSession, conversations: list[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """`room_of` for a batch in one query: each conversation mapped to its room,
+    itself for a room. The reverse of `rooms_of_inner`, which starts from the
+    rooms."""
+    found = {conversation: conversation for conversation in conversations}
+    if conversations:
+        for inner_id, room_id in await session.execute(
+            select(_inside.c.id, _inside.c.room_id).where(
+                _inside.c.id.in_(conversations)
+            )
+        ):
+            found[inner_id] = room_id
+    return found
+
+
 async def room_of_thread(
     session: AsyncSession, conversation_id: uuid.UUID
 ) -> uuid.UUID | None:
