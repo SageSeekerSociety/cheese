@@ -1409,37 +1409,6 @@
       "note": "Read, and there really is nothing: it says 'No alerts' rather than leaving a blank block."
     }
   },
-  "knowledgeView": {
-    "about": "The team knowledge base: the toolbar, the grid and the table, and the two dialogs. Fetching and writing stay in the page — this half only reads props and reports actions.",
-    "s1": {
-      "name": "Grid, four resources",
-      "note": "The default: cards, one per resource, with type, author and time."
-    },
-    "s2": {
-      "name": "Table view",
-      "note": "Switched to the table: the same rows as a list, with an actions menu on each row."
-    },
-    "s3": {
-      "name": "First load",
-      "note": "Not back yet: a spinner in the middle, not an empty base."
-    },
-    "s4": {
-      "name": "Could not load",
-      "note": "A failed read states the reason and offers a retry."
-    },
-    "s5": {
-      "name": "No permission",
-      "note": "On 401/403 it says there is no access and offers no retry."
-    },
-    "s6": {
-      "name": "Nothing in the base",
-      "note": "Read, and there really are none: it offers how to add the first one."
-    },
-    "s7": {
-      "name": "Filtered to nothing",
-      "note": "Read, and the current filters match nothing: it says so and suggests adjusting them."
-    }
-  },
   "adminMembersPageView": {
     "about": "The admin 'members' page: the platform-admin roster in two groups (the root list from config, and the ones added here), with add and remove.",
     "s1": {

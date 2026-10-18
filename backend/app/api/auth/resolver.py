@@ -120,6 +120,13 @@ class ActorResolver:
         named = (claims or {}).get("t")
         return uuid.UUID(named) if named else None
 
+    def credential_project(self) -> uuid.UUID | None:
+        """The project the presented session credential was minted in; None for
+        a person or a token naming no project."""
+        claims = scoped_token_claims(self._cheese_token) if self._cheese_token else None
+        named = (claims or {}).get("p")
+        return uuid.UUID(named) if named else None
+
     async def _confine_task_credential(self, topic_id: uuid.UUID | None) -> None:
         """A credential minted for a task's conversation acts in no other
         conversation — not its room, not another task — even the session-wide
