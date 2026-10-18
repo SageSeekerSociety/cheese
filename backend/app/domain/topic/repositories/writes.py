@@ -63,8 +63,10 @@ async def lock(repo: pkg.TopicRepository, topic_id: uuid.UUID) -> Topic | None:
             select(Topic)
             .where(Topic.id == topic_id)
             # Serialize execution admission with archival while allowing
-            # hook writes whose foreign keys only take KEY SHARE.
-            .with_for_update(key_share=True)
+            # hook writes whose foreign keys only take KEY SHARE. `read=True`
+            # is what renders FOR KEY SHARE: without it `key_share=True`
+            # renders FOR NO KEY UPDATE, which excludes itself.
+            .with_for_update(read=True, key_share=True)
             .execution_options(populate_existing=True)
         )
     ).one_or_none()
@@ -81,7 +83,7 @@ async def lock_all_in_project(
                 select(Topic)
                 .where(Topic.project_id == project_id)
                 .order_by(Topic.created_at)
-                .with_for_update(key_share=True)
+                .with_for_update(read=True, key_share=True)
                 .execution_options(populate_existing=True)
             )
         ).all()
