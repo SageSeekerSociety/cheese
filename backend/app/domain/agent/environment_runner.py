@@ -439,14 +439,19 @@ def mirror_install(work: Path, environment: dict, log) -> None:
     if uv is None:
         log.write(f"{now()} mirror: uv is not on PATH; the startup script installs\n")
         return
-    # The whole pre-install stays inside a small share of the preparation's own
-    # 30 minutes: a mirror that takes longer than this is a mirror the startup
-    # script is better off without, and it still has its own time to install.
-    deadline = time.monotonic() + 900
+    # Ten minutes, on top of the startup script's own 30: a mirror that has not
+    # served the checksums in that time is a mirror the startup script is
+    # better off without, and it still has its own time to install.
+    deadline = time.monotonic() + 600
     for project in _uv_projects(work):
         try:
             _mirror_install_project(uv, project, environment, deadline)
-        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            subprocess.SubprocessError,
+        ) as error:
             log.write(
                 f"{now()} mirror: {project.name}: {error};"
                 " the startup script installs\n"
@@ -528,6 +533,7 @@ def _mirror_step(
     script's own share of the preparation."""
     budget = deadline - time.monotonic()
     if budget <= 0:
+        # i18n-exempt: read in the runner's log, never shown to a person
         raise RuntimeError("the mirror install ran out of time")
     result = subprocess.run(
         [uv, *arguments],
@@ -535,10 +541,16 @@ def _mirror_step(
         env=environment,
         capture_output=True,
         text=True,
+        # uv can echo a path or a package name that is not UTF-8 (a Windows
+        # ANSI code page, a checkout with one odd filename). A decode error
+        # here is a ValueError, which the caller does not catch, and would make
+        # preparation fail where this whole step is meant to fall back.
+        errors="replace",
         timeout=budget,
     )
     if result.returncode:
         said = (result.stderr or result.stdout).strip().splitlines()
+        # i18n-exempt: uv's own words, into the runner's log on the machine
         raise RuntimeError(
             f"uv {arguments[0]} exited {result.returncode}"
             + (f": {said[-1]}" if said else "")
@@ -689,10 +701,12 @@ def run(config, directory, command, *, adopt=None, task_work=None):
                                 " this project\n"
                             )
                             continue
-                    if stage == "startup":
+                    if stage == "startup" and config[key].strip():
                         # What the lock's own URLs would fetch from abroad,
                         # through the mirror instead; the startup script's
                         # `uv sync --frozen` then audits rather than downloads.
+                        # A project with no startup script installs nothing,
+                        # and gets nothing installed for it.
                         mirror_install(work, script_environment, log)
                     script = directory / f"{attempt}-{stage}.sh"
                     script.write_text(config[key])
