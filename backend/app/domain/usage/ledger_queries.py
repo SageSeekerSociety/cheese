@@ -166,7 +166,7 @@ class LedgerQueries:
 def _verdict(
     payer: Payer, budgets: Mapping[uuid.UUID, Refusal], balance: Balance | None
 ) -> Refusal | None:
-    if payer.project_id in budgets:
+    if payer.project_id is not None and payer.project_id in budgets:
         return budgets[payer.project_id]
     if balance is None:
         return None

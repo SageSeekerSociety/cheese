@@ -85,7 +85,7 @@ class UsageService:
 
     async def admit_projects(
         self, project_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, object]:
+    ) -> dict[uuid.UUID, ledger.Refusal | None]:
         """`admit_project` for a batch: project id → ``ledger.Refusal`` or None.
         Projects missing from the table raise, as the single form does."""
         from app.domain.project.services import ProjectService
