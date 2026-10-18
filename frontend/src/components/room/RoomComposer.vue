@@ -26,9 +26,8 @@ import { toast } from 'vuetify-sonner'
 import { useComposerText } from '@/composables/useComposerText'
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
-import { useVoiceInput } from '@/composables/useVoiceInput'
+import { useVoiceInput, type VoiceHeard } from '@/composables/useVoiceInput'
 
-import { hearVoice } from '../../api'
 import { pastedTextName } from '../../lib/attachments'
 import {
   expandComposerMentions,
@@ -81,6 +80,8 @@ const props = defineProps<{
   replyLabel?: string | null
   /** 发一张自己的清单；不给就没有这个入口。 */
   postChecklist?: (steps: string[]) => Promise<boolean>
+  /** 把说的一段交给后端听写；不给就没有麦克风。 */
+  hearVoice?: (wav: Blob) => Promise<VoiceHeard>
 }>()
 
 const checklistOpen = ref(false)
@@ -436,6 +437,7 @@ const SWAP_LINGER_MS = 8000
 const canVoice = computed(
   () =>
     !!props.topic &&
+    !!props.hearVoice &&
     typeof navigator !== 'undefined' &&
     !!navigator.mediaDevices?.getUserMedia &&
     typeof window.AudioContext === 'function'
@@ -448,7 +450,7 @@ let ownEdit = false
 
 const voice = useVoiceInput({
   maxSeconds: VOICE_MAX_SECONDS,
-  hear: (wav) => hearVoice(props.topic!.id, wav),
+  hear: (wav) => props.hearVoice!(wav),
   onHeard: (heard) => landVoice(heard.text, heard.raw),
 })
 const voiceOpen = computed(() => voice.state.value !== 'idle')

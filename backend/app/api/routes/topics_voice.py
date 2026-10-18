@@ -9,10 +9,11 @@ service as the names the recording is heard with.
 import uuid
 
 from fastapi import APIRouter, File, UploadFile
+from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.topic_member_rows import roster_rows
 from app.api.topics_deps import _actor_in_place, require_person_speaks
 from app.api.write_access import ROUTE_DECIDES
@@ -29,7 +30,16 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 _MAX_BYTES = 4 * 1024 * 1024
 
 
-@router.post("/{topic_id}/voice", dependencies=[ROUTE_DECIDES])
+class HeardOut(BaseModel):
+    text: str
+    raw: str
+    seconds: float
+    remaining_seconds: int
+
+
+@router.post(
+    "/{topic_id}/voice", dependencies=[ROUTE_DECIDES], **typed_response(HeardOut)
+)
 async def hear_voice(
     topic_id: uuid.UUID,
     db: DbSession,

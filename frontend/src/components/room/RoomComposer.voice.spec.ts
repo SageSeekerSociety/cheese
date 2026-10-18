@@ -16,13 +16,6 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../api', async () => {
-  const actual = await vi.importActual<typeof import('../../api')>('../../api')
-  return { ...actual, hearVoice: vi.fn() }
-})
-
-import { hearVoice } from '../../api'
-
 import RoomComposer from './RoomComposer.vue'
 
 import { setLocale } from '@/i18n'
@@ -42,6 +35,7 @@ const TOPIC = {
   status: 'active',
 } as unknown as Topic
 
+const hearVoice = vi.fn<(wav: Blob) => Promise<{ text: string; raw: string }>>()
 let processor: { onaudioprocess: ((e: unknown) => void) | null } | null = null
 const getUserMedia = vi.fn()
 
@@ -89,6 +83,7 @@ function mount(initial = '') {
         modelValue: draft.value,
         'onUpdate:modelValue': (v: string) => (draft.value = v),
         onSend,
+        hearVoice,
       }),
   })
   const utils = render(Wrapper, { global: { plugins: [createVuetify({ components, directives })] } })
@@ -111,7 +106,7 @@ async function done() {
 beforeEach(() => {
   setLocale('zh-CN')
   processor = null
-  vi.mocked(hearVoice).mockReset()
+  hearVoice.mockReset()
   getUserMedia.mockReset().mockResolvedValue({ getTracks: () => [{ stop() {} }] })
   vi.stubGlobal('AudioContext', FakeAudioContext)
   Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia }, configurable: true })
@@ -123,7 +118,7 @@ afterEach(() => {
 
 describe('语音输入', () => {
   it('说完的话落在光标处，前后的字不动，@名字成了标签', async () => {
-    vi.mocked(hearVoice).mockResolvedValue({ text: '@芝士 帮我看一下。', raw: '嗯艾特芝士帮我看一下' })
+    hearVoice.mockResolvedValue({ text: '@芝士 帮我看一下。', raw: '嗯艾特芝士帮我看一下' })
     const { draft, box } = mount('开头结尾')
     placeCaret(box(), 2)
 
@@ -133,14 +128,13 @@ describe('语音输入', () => {
 
     expect(draft.value).toBe(`开头<@${CHEESE.handle}> 帮我看一下。结尾`)
     // 发上去的是 16 kHz、16 位单声道 WAV：44 字节头加每秒 32000 字节。
-    const [topicId, wav] = vi.mocked(hearVoice).mock.calls[0]
-    expect(topicId).toBe('t1')
+    const [wav] = hearVoice.mock.calls[0]
     expect(wav.type).toBe('audio/wav')
     expect(wav.size).toBe(44 + 1.5 * 32000)
   })
 
   it('「还原原话」换成一字不差的转写，再点换回来', async () => {
-    vi.mocked(hearVoice).mockResolvedValue({ text: '周四之前改好。', raw: '嗯周三不对周四之前改好' })
+    hearVoice.mockResolvedValue({ text: '周四之前改好。', raw: '嗯周三不对周四之前改好' })
     const { draft } = mount('前面')
 
     await startTalking()
@@ -169,7 +163,7 @@ describe('语音输入', () => {
   })
 
   it('录着按 Enter 是说完，不是发送', async () => {
-    vi.mocked(hearVoice).mockResolvedValue({ text: '好的', raw: '好的' })
+    hearVoice.mockResolvedValue({ text: '好的', raw: '好的' })
     const { draft, box, onSend } = mount('')
 
     await startTalking()
@@ -194,7 +188,7 @@ describe('语音输入', () => {
   })
 
   it('听写失败：后端的话就地说出来，正文不动', async () => {
-    vi.mocked(hearVoice).mockRejectedValue(new Error('今天的语音输入已经用完，明天再来。'))
+    hearVoice.mockRejectedValue(new Error('今天的语音输入已经用完，明天再来。'))
     const { draft } = mount('原来的字')
 
     await startTalking()
