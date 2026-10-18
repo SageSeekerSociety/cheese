@@ -42,5 +42,18 @@ def test_the_pool_keeps_a_whole_hosts_slots_free() -> None:
     assert settings.cloud_pool_min_free_slots == capacity(host)
 
 
+def test_a_pressed_pool_keeps_an_idle_sandbox_three_minutes() -> None:
+    """While the pool has no free slot (or a session waits for one), an idle
+    sandbox on a platform host is destroyed after three minutes instead of ten,
+    so the slot goes to whoever is waiting on it (#1829). Long enough to cover
+    a session's pause between two tool calls, so a working session does not
+    lose its sandbox; short enough that a slot held by a session that stopped
+    is back within about one wait (a slow placement measured 160 s at the
+    median, 2026-10-17)."""
+    pressed = settings.cloud_sandbox_idle_stop_pressed_s
+    assert pressed == 180
+    assert pressed < settings.cloud_sandbox_idle_stop_s
+
+
 def test_a_pr_reaches_its_card_within_a_minute() -> None:
     assert settings.accept_pr_poll_interval_s == 60

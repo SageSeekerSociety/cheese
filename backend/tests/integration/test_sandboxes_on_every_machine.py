@@ -113,6 +113,28 @@ async def test_a_sandbox_in_use_is_kept(client, monkeypatch):
     assert await _home(client, room) is not None
 
 
+async def test_a_pressed_pool_does_not_shorten_a_persons_computers_idle_time(
+    client, monkeypatch
+):
+    """Pool pressure is the platform's business: a sandbox on a person's own
+    computer keeps its own idle time, so five minutes still counts as just
+    used (#1829)."""
+    room = await _on_alices_computers(client, monkeypatch)
+    # No cloud host at all: the pool has no free slot to speak of.
+
+    await _last_used(client, room, timedelta(minutes=5))
+    destroyed = await _sweep(client, monkeypatch)
+
+    destroyed.assert_not_awaited()
+    assert await _home(client, room) is not None
+
+    await _last_used(client, room, timedelta(minutes=11))
+    destroyed = await _sweep(client, monkeypatch)
+
+    assert destroyed.await_args.args[1:3] == (room.device, "destroy")
+    assert await _home(client, room) is None
+
+
 async def test_a_sandbox_left_behind_is_destroyed_by_the_same_sweep(
     client, monkeypatch
 ):
