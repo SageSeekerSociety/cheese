@@ -11,9 +11,9 @@ from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.space_access import space_admin_ids
 from app.core.errors import BadRequestError
 from app.core.sentences import say
-from app.domain.space.repositories import SpaceAdminRelationRepository
 from app.domain.task.models import Task
 from app.domain.task.repositories import TaskMentorRepository
 from app.domain.user.services import users_by_handle
@@ -34,11 +34,8 @@ async def set_mentors(
     """
     users = await users_by_handle(session, handles)
     admin_ids: set[int] = set()
-    if handles and task.space_id is not None:
-        relations = await SpaceAdminRelationRepository(session).list_admins(
-            task.space_id
-        )
-        admin_ids = {relation.user_id for relation in relations}
+    if any(user.id != creator_user_id for user in users.values()):
+        admin_ids = await space_admin_ids(session, space_id=task.space_id)
     for handle in handles:
         user = users.get(handle)
         if user is None:

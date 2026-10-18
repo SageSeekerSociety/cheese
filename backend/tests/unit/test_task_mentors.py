@@ -118,9 +118,7 @@ async def test_admins_are_saved_in_the_order_given(mentor_sql):
     replace.assert_awaited_once_with(42, ["ta", "teacher", "ta"])
 
 
-@pytest.mark.anyio
-async def test_each_table_is_read_once(mentor_sql):
-    session, engine = mentor_sql
+async def _selects(engine, session, handles) -> list[str]:
     statements: list[str] = []
 
     def count_select(_conn, _cursor, statement, _params, _context, _many):
@@ -129,14 +127,29 @@ async def test_each_table_is_read_once(mentor_sql):
 
     event.listen(engine.sync_engine, "before_cursor_execute", count_select)
     try:
-        await _set(session, ["ta", "teacher", "ta"])
+        await _set(session, handles)
     finally:
         event.remove(engine.sync_engine, "before_cursor_execute", count_select)
+    return statements
 
-    def reads(table: str) -> int:
-        pattern = re.compile(rf'\bFROM "?{table}"?(\s|$)')
-        return sum(bool(pattern.search(s)) for s in statements)
 
-    assert reads("user") == 1, statements
-    assert reads("space_admin_relation") == 1, statements
+def _reads(statements: list[str], table: str) -> int:
+    pattern = re.compile(rf'\bFROM "?{table}"?(\s|$)')
+    return sum(bool(pattern.search(s)) for s in statements)
+
+
+@pytest.mark.anyio
+async def test_each_table_is_read_once(mentor_sql):
+    session, engine = mentor_sql
+    statements = await _selects(engine, session, ["ta", "teacher", "ta"])
+    assert _reads(statements, "user") == 1, statements
+    assert _reads(statements, "space_admin_relation") == 1, statements
     assert len(statements) == 2, statements
+
+
+@pytest.mark.anyio
+async def test_creator_alone_skips_the_admin_read(mentor_sql):
+    session, engine = mentor_sql
+    statements = await _selects(engine, session, ["teacher"])
+    assert _reads(statements, "space_admin_relation") == 0, statements
+    assert len(statements) == 1, statements
