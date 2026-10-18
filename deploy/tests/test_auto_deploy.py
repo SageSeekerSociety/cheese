@@ -508,8 +508,14 @@ class CandidateCI(unittest.TestCase):
         self.assertFalse(self.ready([self.run_record()], replaced, covered=True))
 
     def waiting(self, runs):
+        def workflow_runs(_repository, workflow, _candidate):
+            # Answering every workflow with the same list would hide a lookup
+            # pointed at the wrong one: build.yml's runs are not the gate.
+            if workflow != "required-ci.yml":
+                return []
+            return runs
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), \
-                patch.object(GUARD, "workflow_runs", return_value=runs):
+                patch.object(GUARD, "workflow_runs", side_effect=workflow_runs):
             return GUARD.ci_waiting(self.candidate)
 
     def test_a_gate_that_has_not_finished_is_waited_for_not_refused(self):
@@ -564,6 +570,10 @@ class CandidateCI(unittest.TestCase):
         def workflow_runs(_repository, workflow, _candidate):
             if workflow == "build.yml":
                 reads.append(self.clock.now)
+            elif workflow != "required-ci.yml":
+                # ci_waiting asks about Required CI; a lookup pointed at any
+                # other workflow must not be answered with the gate's runs.
+                return []
             build, ci = answers[min(len(reads) - 1, len(answers) - 1)]
             return build if workflow == "build.yml" else ci
         with tempfile.TemporaryDirectory() as directory:
@@ -592,6 +602,20 @@ class CandidateCI(unittest.TestCase):
         self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\n")
         self.assertGreater(len(reads), 1)
         self.assertLessEqual(reads[-1], 180)
+
+    def test_the_entry_point_reports_waiting_while_the_gate_runs(self):
+        # The build's completion is usually the first of the two events and the
+        # gate is still running then; the whole point of the waiting state is
+        # that this entry point says so instead of refusing. Driving only
+        # ci_waiting would leave `waiting = not ready and ...` unwatched.
+        running = ([self.run_record()],
+                   [self.gate_run(status="in_progress", conclusion=None)])
+        output, _reads = self.eligibility([running])
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=true\n")
+        # And a gate that really failed is still a refusal, not a wait.
+        refused = ([self.run_record()], [self.gate_run(conclusion="failure")])
+        output, _reads = self.eligibility([refused])
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\n")
 
     def test_workflow_checks_eligibility_before_reserving_deploy_runner(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
@@ -645,6 +669,9 @@ class CandidateCI(unittest.TestCase):
             # A pull request whose head branch is called main is admitted by
             # `branches: [main]` too, and its commit is not one to release.
             ("Required CI", "pull_request", "main", "success"),
+            # A push run on some other branch (a fork's main, a tag push) is
+            # likewise not this repository's main.
+            ("Required CI", "push", "someone-elses-main", "success"),
             # A merge-queue entry runs on the queue's temporary branch.
             ("Required CI", "merge_group", f"gh-readonly-queue/main/pr-1-{'b' * 40}", "success"),
         ):

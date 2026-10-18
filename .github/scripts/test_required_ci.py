@@ -1762,12 +1762,25 @@ class MainCliTest(unittest.TestCase):
             changed.write_text("x = 1\n")
             git("add", "backend/app/api/rooms.py")
             git("commit", "-qm", "change a backend file")
+            # A second commit, so the anchor is not the previous tip: with one
+            # commit between them, an implementation that diffs from HEAD~1 (or
+            # from github.event.before) returns the anchor's sha by accident and
+            # drops exactly the commits a superseded run left behind.
+            (tmp / "frontend/src/main.ts").parent.mkdir(parents=True)
+            (tmp / "frontend/src/main.ts").write_text("y\n")
+            git("add", "frontend/src/main.ts")
+            git("commit", "-qm", "change a frontend file")
 
             proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            previous_tip = subprocess.check_output(
+                ["git", "rev-parse", "HEAD~1"], cwd=tmp, text=True).strip()
             self.assertEqual(written["base"], anchor)
+            self.assertNotEqual(written["base"], previous_tip,
+                                "the push used the previous tip, not the green anchor")
             self.assertEqual(written["tier"], "full")
             self.assertEqual(written["branch_heavy"], "true")
             self.assertEqual(written["backend"], "true")
+            self.assertEqual(written["frontend"], "true")
             self.assertIn("last green gate result", proc.stdout)
 
     def test_a_main_push_without_an_anchor_scopes_every_tracked_path(self):
