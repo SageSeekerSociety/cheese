@@ -43,7 +43,7 @@ from app.domain.notification.handlers import (
 )
 from app.domain.notification.models import ChannelDelivery, Notification
 from app.domain.notification.publisher import build_notification_event_handler
-from app.domain.user.services import user_by_handle
+from app.domain.user.services import users_by_handle
 
 logger = logging.getLogger(__name__)
 
@@ -102,14 +102,18 @@ class Ledger:
         也不记 —— `reporter_handle` 可能是外部提交的一个名字，少发一条通知好过账本
         里挂一行永远发不出去的投递。
         """
+        handles = [
+            recipient.handle
+            for recipient in addressed.recipients
+            if how_it_arrives(recipient.handle) is Arrival.mailbox
+        ]
+        users = await users_by_handle(self._session, handles)
         pending: list[Pending] = []
-        for recipient in addressed.recipients:
-            if how_it_arrives(recipient.handle) is not Arrival.mailbox:
-                continue
-            user = await user_by_handle(self._session, recipient.handle)
+        for handle in handles:
+            user = users.get(handle)
             if user is None:
                 continue
-            row = await self.record_mailbox(event, recipient.handle, user.id)
+            row = await self.record_mailbox(event, handle, user.id)
             if row is not None:
                 pending.append(row)
         return pending
