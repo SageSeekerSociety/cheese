@@ -159,6 +159,7 @@ defineExpose({ reload: io.load })
     <p v-if="error" role="alert" class="outs__error t-meta">{{ error }}</p>
     <p v-if="!files.length" class="t-meta c-faint">{{ t('work.task.noOutputs') }}</p>
     <ul v-else class="outs__list">
+      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused buttons (the keyboard's Menu key fires it too) -->
       <li v-for="output in files" :key="output.path" class="outs-row" @contextmenu="rowMenu.open(output.path, $event)">
         <AdaptiveMenu v-bind="rowMenu.bind(output.path)" :actions="outputActions(output)" :title="name(output.path)">
           <template #activator />

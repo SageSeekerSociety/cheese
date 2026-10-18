@@ -27,6 +27,7 @@ const emit = defineEmits<{
 <template>
   <div class="palette__actions" role="menu" :aria-label="title" @mousedown.prevent>
     <div class="palette__actions-head">{{ title }}</div>
+    <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/interactive-supports-focus -- focus stays in the palette's input, which moves through these items with the arrow keys and names the current one with aria-activedescendant -->
     <div
       v-for="(action, i) in actions"
       :id="actionId(i)"

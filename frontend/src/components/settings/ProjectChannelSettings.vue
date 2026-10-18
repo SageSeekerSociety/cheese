@@ -298,6 +298,7 @@ function actions(c: ChannelEntry): MenuAction[] {
       :close-disabled="saving"
       @primary="saveEdit"
     >
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to rename or describe the channel; focus moves into its field -->
       <v-text-field
         v-if="editing?.kind === 'rename'"
         v-model="draft"
@@ -332,6 +333,7 @@ function actions(c: ChannelEntry): MenuAction[] {
         hide-details
         autocomplete="off"
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
     </AdaptiveDialog>
 
     <AdaptiveDialog

@@ -365,6 +365,7 @@ void openPlace()
           />
           <span v-if="chatNews" class="chat-rail__news" aria-hidden="true" />
         </div>
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drag handle for the pointer; without it the split stays where it is -->
         <div
           v-if="mdAndUp && !focusMode && docked"
           class="pane-resizer"
@@ -375,6 +376,7 @@ void openPlace()
 
         <!-- 面板浮层背后的遮罩。点它收起面板——和 Esc 同一条路。 -->
         <Transition name="panel-scrim">
+          <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- Esc closes the panel too -->
           <div v-if="panelFloat && panelOpen" class="panel-scrim" @click="closePanel" />
         </Transition>
 
