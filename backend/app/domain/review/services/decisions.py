@@ -295,7 +295,7 @@ async def push_fix(
             "reason": "" if pushed else "任务已无依赖，PR 没有新提交",
         }
     if not cards:
-        return {"pushed": False, "reason": "这个话题手上没有骑着 PR 的验收卡"}
+        return {"pushed": False, "reason": "这个频道手上没有骑着 PR 的验收卡"}
     card = cards[0]
     assert card.pr_number is not None  # filtered above; for the type checker
     topic = await self._topic_or_404(card.topic_id)
