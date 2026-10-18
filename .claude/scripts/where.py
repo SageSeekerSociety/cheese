@@ -16,7 +16,7 @@ an AST node — a ``Name``, an attribute access, an imported alias, a definition
 so a comment or a string that merely mentions the name is not a use. ``grep``
 cannot make that distinction; that is the reason to run this instead.
 
-Output is grouped by file, tests last, one ``line: source`` row per use. A file is
+Output is grouped by file, tests last (app/, scripts/, tests/ sort that way), one ``line: source`` row per use. A file is
 tagged ``imports`` when it imports the module the symbol is defined in, which
 separates the real callers from an unrelated function that shares the name.
 """
@@ -146,7 +146,7 @@ def _names_module(node, scope, module, path, modules):
 def render(result):
     if not result:
         return "no uses found"
-    ordered = sorted(result, key=lambda p: (p.startswith("backend/tests/"), p))
+    ordered = sorted(result)  # app/ and scripts/ sort before tests/
     out = []
     for path in ordered:
         entry = result[path]

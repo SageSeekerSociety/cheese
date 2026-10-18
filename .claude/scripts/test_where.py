@@ -24,6 +24,9 @@ FILES = {
     "app/attr.py": "from app import lib\n\n\ndef run():\n    return lib.widget()\n",
     "app/commented.py": "# widget is mentioned here only\nNOTE = 'call widget later'\n",
     "app/other.py": "def widget():\n    return 2\n",
+    "app/rel.py": "import app.other\nfrom app.other import widget as w\nfrom .lib import widget\n\n\ndef run():\n    return widget()\n",
+    "app/user.py": "from app.other import widget\n\n\ndef run():\n    return widget()\n",
+    "scripts/zz_tool.py": "from app.lib import widget\n\nwidget()\n",
     "tests/unit/test_lib.py": "from app.lib import widget\n\n\ndef test_it():\n    assert widget() == 1\n",
 }
 
@@ -71,8 +74,18 @@ class WhereTest(unittest.TestCase):
 
     def test_module_importers_include_tests(self):
         found = where.find(self.root, "backend/app/lib.py")
-        self.assertEqual(set(found), {"backend/app/caller.py", "backend/app/attr.py",
-                                      "backend/tests/unit/test_lib.py"})
+        self.assertEqual(set(found), {"backend/app/caller.py", "backend/app/attr.py", "backend/app/rel.py",
+                                      "backend/scripts/zz_tool.py", "backend/tests/unit/test_lib.py"})
+        # only the statement that reaches app.lib is listed, not `import app.other` beside it
+        self.assertEqual(found["backend/app/rel.py"]["lines"], [(3, "from .lib import widget")])
+        self.assertEqual(found["backend/app/attr.py"]["lines"], [(1, "from app import lib")])
+
+    def test_tags_follow_the_module_scope(self):
+        found = where.find(self.root, "widget")  # no module scope: nothing can be told apart
+        self.assertEqual(found["backend/app/caller.py"]["tags"], {"uses"})
+        found = where.find(self.root, "app.lib.widget")
+        self.assertEqual(found["backend/app/caller.py"]["tags"], {"imports"})
+        self.assertNotIn("backend/app/user.py", found)  # namesake from app.other, outside the scope
 
     def test_comment_filter_is_what_keeps_the_set_equal(self):
         def text_match(tree, name):
@@ -83,7 +96,7 @@ class WhereTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.assertEqual(found, grep_calibrated(self.root, "widget"))
 
-    def test_cli_renders_tests_last(self):
+    def test_cli_prints_files_with_their_rows(self):
         out = subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root), "widget"],
                              capture_output=True, text=True, check=True).stdout
         self.assertLess(out.index("app/caller.py"), out.index("tests/unit/test_lib.py"))
