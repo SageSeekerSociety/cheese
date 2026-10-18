@@ -37,11 +37,12 @@ NEW_MARKER = re.compile(
 )
 FILE_SUFFIXES = frozenset(
     {
-        ".a",
         ".avif",
         ".bat",
+        ".bmp",
         ".c",
         ".cfg",
+        ".cjs",
         ".conf",
         ".cpp",
         ".css",
@@ -50,6 +51,7 @@ FILE_SUFFIXES = frozenset(
         ".docx",
         ".gif",
         ".go",
+        ".gz",
         ".h",
         ".html",
         ".ico",
@@ -69,10 +71,13 @@ FILE_SUFFIXES = frozenset(
         ".mkv",
         ".mov",
         ".mp4",
+        ".mts",
+        ".parquet",
         ".patch",
         ".pdf",
         ".php",
         ".png",
+        ".proto",
         ".py",
         ".pyi",
         ".rb",
@@ -90,11 +95,14 @@ FILE_SUFFIXES = frozenset(
         ".tsv",
         ".txt",
         ".vue",
+        ".wasm",
+        ".webm",
         ".webp",
         ".woff2",
         ".xml",
         ".yaml",
         ".yml",
+        ".zip",
     }
 )
 NEW_DESCRIPTORS = frozenset(
@@ -103,6 +111,7 @@ NEW_DESCRIPTORS = frozenset(
         "path", "paths", "文件", "接口", "模块", "路径",
     }
 )
+LIST_CONNECTORS = frozenset({"and", "和", "与", "以及"})
 ROOT_FILENAME_STOPWORDS = frozenset(
     {
         "api", "change", "ci", "cli", "db", "e2e", "feature", "http", "id",
@@ -143,6 +152,24 @@ def _is_root_filename(token: str) -> bool:
     )
 
 
+def _attached_descriptor(token: str) -> str:
+    for word in ("文件", "接口", "模块", "路径"):
+        if not token.startswith(word):
+            continue
+        remainder = token[len(word):]
+        if not remainder.isascii():
+            continue
+        if (
+            remainder
+            and remainder[0].isalnum()
+            and "/" in remainder
+            or _is_root_filename(remainder)
+            or Path(remainder).suffix.lower() in FILE_SUFFIXES
+        ):
+            return word
+    return ""
+
+
 def _is_path_token(token: str, known_paths: set[str]) -> bool:
     if token in known_paths or "/" in token or token.startswith("."):
         return True
@@ -163,9 +190,11 @@ def _trim_trailing_prose(token: str) -> str:
         ):
             return token[:end]
     if "/" in token:
-        matches = list(re.finditer(r"\.[A-Za-z]{2,10}[A-Za-z0-9]{0,4}(?=[㐀-鿿])", token))
-        if matches:
-            return token[:matches[-1].end()]
+        matches = list(re.finditer(r"\.([A-Za-z0-9]{1,10})(?=[㐀-鿿])", token))
+        for match in reversed(matches):
+            extension = match.group(1)
+            if not extension.isdigit() and not re.fullmatch(r"[vV](?:er)?\d+", extension):
+                return token[:match.end()]
     return token
 
 
@@ -220,7 +249,7 @@ def _marker_count(gap: str) -> int | None:
 def _is_list_separator(gap: str) -> bool:
     return gap.strip(" \t`'\"").lower() in {
         ",", "，", "、", ";", "；", "&", "＆", "and", "和", "与", "以及",
-        ", and", "，和", "，以及",
+        ", and", ",和", ",以及", "，和", "，以及", "、和", "、以及",
     }
 
 
@@ -260,14 +289,7 @@ def extract_brief_paths(
             if not match:
                 continue
             token = _trim_trailing_prose(match.group().rstrip(".,;:!?"))
-            descriptor = next(
-                (
-                    word
-                    for word in ("文件", "接口", "模块", "路径")
-                    if token.startswith(word) and "/" in token[len(word):]
-                ),
-                "",
-            )
+            descriptor = _attached_descriptor(token)
             if descriptor:
                 start = marker.start()
                 ignored_unicode_spans.append((start, marker.end() + start_offset + len(token)))
@@ -288,19 +310,32 @@ def extract_brief_paths(
         for match in PATH_TOKEN.finditer(line):
             if any(marker.start() <= match.start() < marker.end() for marker in markers):
                 continue
-            token = _trim_trailing_prose(match.group().rstrip(".,;:!?"))
-            end = match.start() + len(token)
-            if any(start <= match.start() and end <= span_end for start, span_end in unicode_spans):
+            raw_token = _trim_trailing_prose(match.group().rstrip(".,;:!?"))
+            raw_end = match.start() + len(raw_token)
+            if any(start <= match.start() and raw_end <= span_end for start, span_end in unicode_spans):
                 continue
-            before = line[match.start() - 1] if match.start() else ""
+            token = raw_token
+            token_start = match.start()
+            descriptor = _attached_descriptor(token)
+            if descriptor:
+                ignored_unicode_spans.append((match.start(), raw_end))
+                token = token[len(descriptor):]
+                token_start += len(descriptor)
+            end = token_start + len(token)
+            before = line[token_start - 1] if token_start else ""
+            if token.lower() in LIST_CONNECTORS and token not in known_paths and any(
+                remaining and _is_list_separator(line[counted_ends[marker_end]:token_start])
+                for marker_end, remaining in counted_remaining.items()
+            ):
+                continue
             if token.endswith(("/", "\\")):
                 continue
             marker_gaps = [
-                (marker, line[marker.end():match.start()])
+                (marker, line[marker.end():token_start])
                 for marker in markers
-                if marker.end() < match.start()
-                and line[marker.end():match.start()].strip(" \t`'\"()[]{}<>:：,，、;；（）【】")
-                and _marker_gap_is_valid(line[marker.end():match.start()])
+                if marker.end() < token_start
+                and line[marker.end():token_start].strip(" \t`'\"()[]{}<>:：,，、;；（）【】")
+                and _marker_gap_is_valid(line[marker.end():token_start])
             ]
             pathlike = (
                 _is_path_token(token, known_paths)
@@ -316,7 +351,7 @@ def extract_brief_paths(
             if not marker_applies:
                 for marker_end, remaining in counted_remaining.items():
                     previous_end = counted_ends[marker_end]
-                    if remaining and _is_list_separator(line[previous_end:match.start()]):
+                    if remaining and _is_list_separator(line[previous_end:token_start]):
                         counted_list_applies = True
                         counted_remaining[marker_end] = remaining - 1
                         counted_ends[marker_end] = end
@@ -332,7 +367,7 @@ def extract_brief_paths(
             ):
                 continue
             if _is_path_token(token, known_paths) or marker_applies or counted_list_applies:
-                candidates[(match.start(), end, token)] = None
+                candidates[(token_start, end, token)] = None
                 if marker_applies:
                     marker, gap = marker_gaps[-1]
                     count = _marker_count(gap)
@@ -351,6 +386,20 @@ def extract_brief_paths(
                 continue
             token = match.group("path")
             candidates[(start, end, token)] = None
+        ordered = sorted(candidates)
+        descriptor_words = {"文件", "接口", "模块", "路径"}
+        shadowed_paths = {
+            (start, end, token)
+            for start, end, token in ordered
+            if any(
+                other_start < start
+                and other_end == end
+                and line[other_start:start] in descriptor_words
+                for other_start, other_end, _ in ordered
+            )
+        }
+        for candidate in shadowed_paths:
+            candidates.pop(candidate, None)
         ordered = sorted(candidates)
         counted_remaining: dict[int, int] = {}
         counted_ends: dict[int, int] = {}

@@ -35,18 +35,32 @@ class VerifyBriefPathsTests(unittest.TestCase):
         (self.root / "docs/config.md").write_text("present\n", encoding="utf-8")
         (self.root / "docs/new-api.md").write_text("present\n", encoding="utf-8")
         (self.root / "docs/v9.9").write_text("present\n", encoding="utf-8")
+        (self.root / "docs/a.ver2").write_text("present\n", encoding="utf-8")
         (self.root / "public/logo.png").write_text("present\n", encoding="utf-8")
         (self.root / "public/logo.avif").write_text("present\n", encoding="utf-8")
         (self.root / "public/demo.mp4").write_text("present\n", encoding="utf-8")
         (self.root / "public/font.woff2").write_text("present\n", encoding="utf-8")
         (self.root / "public/openapi.sha256").write_text("present\n", encoding="utf-8")
+        (self.root / "public/lib.a").write_text("present\n", encoding="utf-8")
+        (self.root / "public/module.io").write_text("present\n", encoding="utf-8")
+        (self.root / "public/module.ml").write_text("present\n", encoding="utf-8")
         (self.root / "logo.avif").write_text("present\n", encoding="utf-8")
+        (self.root / "文档.md").write_text("present\n", encoding="utf-8")
         (self.root / "README.md").write_text("readme\n", encoding="utf-8")
         (self.root / "后台管理布局统一-方案B.pdf").write_text("present\n", encoding="utf-8")
         (self.root / "Makefile").write_text("all:\n\ttrue\n", encoding="utf-8")
+        root_extensions = (
+            "data.parquet", "settings.cjs", "vite.config.mts", "schema.proto",
+            "release.zip", "archive.gz", "video.mp4", "root-font.woff2",
+            "root-openapi.sha256", "image.bmp", "archive.mkv", "movie.mov",
+            "runtime.wasm", "stream.webm",
+        )
+        for path in root_extensions:
+            (self.root / path).write_text("present\n", encoding="utf-8")
+        self.root_extensions = root_extensions
         self.git(
-            "add", "src", "docs", "public", "logo.avif", "README.md", "Makefile",
-            "后台管理布局统一-方案B.pdf",
+            "add", "src", "docs", "public", "logo.avif", "文档.md", "README.md", "Makefile",
+            *root_extensions, "后台管理布局统一-方案B.pdf",
         )
         self.git("commit", "-qm", "initial")
         self.initial = self.git("rev-parse", "HEAD").strip()
@@ -135,6 +149,16 @@ class VerifyBriefPathsTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("overlaps in-flight", errors)
         self.assertIn("src/overlap.py", errors)
+
+    def test_cjk_descriptor_before_ascii_path_keeps_actual_path(self):
+        result, _, errors = self.run_tool(
+            "更新 接口docs/api.md中的签名。\n",
+            "--in-flight-actual", "docs/api.md",
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("overlaps in-flight", errors)
+        self.assertIn("docs/api.md", errors)
+        self.assertNotIn("接口docs/api.md", errors)
 
     def test_explicit_paths_do_not_read_implicit_stdin(self):
         class UnexpectedInput:
@@ -234,10 +258,12 @@ class VerifyBriefPathsTests(unittest.TestCase):
                 self.assertEqual(result, 0, errors)
                 self.assertIn("verified 0 brief path", output)
 
-    def test_dotted_domain_prose_is_not_a_root_path(self):
-        result, output, errors = self.run_tool("Update example.com configuration\n")
-        self.assertEqual(result, 0, errors)
-        self.assertIn("verified 0 brief path", output)
+    def test_dotted_prose_is_not_a_root_path(self):
+        for brief in ("Update example.com configuration\n", "Update object.a description\n"):
+            with self.subTest(brief=brief):
+                result, output, errors = self.run_tool(brief)
+                self.assertEqual(result, 0, errors)
+                self.assertIn("verified 0 brief path", output)
 
     def test_root_unknown_extension_is_checked(self):
         result, output, errors = self.run_tool("更新 logo.avif中的引用。\n")
@@ -250,10 +276,24 @@ class VerifyBriefPathsTests(unittest.TestCase):
         self.assertIn("overlaps in-flight", errors)
         self.assertIn("logo.avif", errors)
 
+    def test_root_common_extensions_are_checked(self):
+        brief = "\n".join(f"Update {path}" for path in self.root_extensions)
+        actual = [value for path in self.root_extensions for value in ("--in-flight-actual", path)]
+        result, _, errors = self.run_tool(brief, *actual)
+        self.assertEqual(result, 1)
+        for path in self.root_extensions:
+            with self.subTest(path=path):
+                self.assertIn(path, errors)
+        result, _, errors = self.run_tool("Update missing.parquet\n")
+        self.assertEqual(result, 1)
+        self.assertIn("path does not exist", errors)
+        self.assertIn("missing.parquet", errors)
+
     def test_unknown_extension_is_trimmed_before_chinese_prose(self):
         for path in (
             "public/logo.png", "public/logo.avif", "public/demo.mp4",
-            "public/font.woff2", "public/openapi.sha256",
+            "public/font.woff2", "public/openapi.sha256", "public/lib.a",
+            "public/module.io", "public/module.ml",
         ):
             with self.subTest(path=path):
                 result, output, errors = self.run_tool(f"更新 {path}中的引用。\n")
@@ -278,6 +318,11 @@ class VerifyBriefPathsTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("overlaps in-flight", errors)
         self.assertIn("docs/v9.9说明", errors)
+
+    def test_version_word_suffix_is_not_trimmed(self):
+        result, output, errors = self.run_tool("新建 docs/a.ver2说明\n")
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 1 brief path", output)
 
     def test_new_marker_extracts_untracked_extensionless_path(self):
         result, output, errors = self.run_tool("新建 Dockerfile\n")
@@ -316,15 +361,19 @@ class VerifyBriefPathsTests(unittest.TestCase):
                 self.assertEqual(result, 0, errors)
                 self.assertIn("verified 1 brief path", output)
 
-    def test_adjacent_descriptor_checks_existing_nested_path(self):
-        result, _, errors = self.run_tool(
-            "新增接口docs/new-api.md\n",
-            "--in-flight-actual", "docs/new-api.md",
-        )
-        self.assertEqual(result, 1)
-        self.assertIn("marked new but already exists", errors)
-        self.assertIn("overlaps in-flight", errors)
-        self.assertIn("docs/new-api.md", errors)
+    def test_new_marker_descriptor_handles_root_filenames(self):
+        for brief, path in (
+            ("新增文件Makefile\n", "Makefile"),
+            ("新建文件README.md\n", "README.md"),
+        ):
+            with self.subTest(path=path):
+                result, _, errors = self.run_tool(
+                    brief, "--in-flight-actual", path
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("marked new but already exists", errors)
+                self.assertIn("overlaps in-flight", errors)
+                self.assertIn(path, errors)
 
     def test_root_chinese_descriptor_is_not_split_from_filename(self):
         result, output, errors = self.run_tool("新增接口文档.md\n")
@@ -376,7 +425,10 @@ class VerifyBriefPathsTests(unittest.TestCase):
         self.assertIn("方案.md", errors)
 
     def test_counted_list_accepts_common_separators(self):
-        for separator in (";", "；", "&", "＆"):
+        for separator in (
+            ";", "；", "&", "＆", "，以及 ", "，和 ", "、以及 ", "、和 ",
+            ", and ",
+        ):
             with self.subTest(separator=separator):
                 result, _, errors = self.run_tool(
                     f"新增 2 个文件 src/new-a.py{separator}src/existing.py\n",
