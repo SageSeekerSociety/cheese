@@ -10,9 +10,9 @@ deployment says otherwise.
 
 None is a preference. The cap is what the cluster's shared storage has to
 hold: ten sandbox hosts provide forty standard sandbox slots, and their disks
-written full fill the current 400 GB shared storage pool; the two further
-places are whole cloud VMs, which count like hosts and over-commit that pool
-by their own disks. The cap moves only with the storage behind it. The
+written full fill the current 400 GB shared storage pool; each place above ten
+over-commits it by a disk, whoever takes it. The cap moves only with the
+storage behind it. The
 free-slot floor is one host's worth of sandboxes:
 below it, the sweep starts creating the next host, so a session arriving then
 is placed rather than waiting for one; measured 160 seconds at the median when
@@ -28,7 +28,8 @@ from app.domain.machine.models import CloudHost, capacity
 
 def test_the_pool_may_hold_twelve_hosts() -> None:
     """Twelve places, whole VMs among them: ten sandbox hosts provide forty
-    standard sandbox slots, four to a host, and two more places are for VMs."""
+    standard sandbox slots, four to a host, and each place above ten
+    over-commits the shared pool by a disk."""
     assert settings.cloud_pool_max_hosts == 12
 
 
