@@ -366,7 +366,11 @@ def test_a_rooms_header_reads_its_threads_three_times_however_many_there_are(cli
     own list, 回复了我, 还在当支线用 — and the list it read is handed to
     `moving_topics`, which used to ask the table a fourth time for the same
     answer. Four was the count before that hand-down; the assertion says the
-    fourth read stays gone, and the same however many 支线 the room has."""
+    fourth read stays gone, and the same however many 支线 the room has.
+
+    This is one route's whole budget, not a statement about `moving_topics`:
+    a new question of the header that reads the room's 支线 itself is meant to
+    be shared with the rest, and this count is where that gets noticed."""
     tid = _channel_with_threads(client, n)
 
     reads = _count_matching(
@@ -376,19 +380,20 @@ def test_a_rooms_header_reads_its_threads_three_times_however_many_there_are(cli
     assert reads == 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"
 
 
-def test_moving_names_the_same_rooms_handed_the_pages_read(client):
-    """`threads=` is a short-cut, not a second rule: handed the page's own read
-    of the room's 支线, `moving_topics` names exactly the rooms it names having
-    read them itself — including a room whose 支线 is where the turn runs."""
-    tid = _channel_with_threads(client, 3)
+def _a_thread_in(client, tid):
+    """One 支线 of the room."""
 
-    async def _a_thread() -> uuid.UUID:
+    async def _find() -> uuid.UUID:
         async with client.test_factory() as s:
             return await s.scalar(
                 select(Thread.id).where(Thread.room_id == uuid.UUID(tid))
             )
 
-    thread = client.portal.call(_a_thread)
+    return client.portal.call(_find)
+
+
+def _a_turn_in(client, thread_id):
+    """A turn delivered into the 支线 a moment ago — one still running."""
     now = datetime.now(UTC)
 
     async def _plant() -> None:
@@ -396,7 +401,7 @@ def test_moving_names_the_same_rooms_handed_the_pages_read(client):
             s.add(
                 AgentTurn(
                     id=uuid.uuid4(),
-                    conversation_id=thread,
+                    conversation_id=thread_id,
                     continuation_id=uuid.uuid4(),
                     author="alice",
                     content="开始吧",
@@ -407,6 +412,14 @@ def test_moving_names_the_same_rooms_handed_the_pages_read(client):
             await s.commit()
 
     client.portal.call(_plant)
+
+
+def test_moving_names_the_same_rooms_handed_the_pages_read(client):
+    """`threads=` is a short-cut, not a second rule: handed the page's own read
+    of the room's 支线, `moving_topics` names exactly the rooms it names having
+    read them itself — including a room whose 支线 is where the turn runs."""
+    tid = _channel_with_threads(client, 3)
+    _a_turn_in(client, _a_thread_in(client, tid))
 
     async def _both() -> tuple[set[uuid.UUID], set[uuid.UUID]]:
         async with client.test_factory() as alone_session:
@@ -423,3 +436,24 @@ def test_moving_names_the_same_rooms_handed_the_pages_read(client):
     alone, handed = client.portal.call(_both)
 
     assert alone == handed == {uuid.UUID(tid)}
+
+
+def test_moving_does_not_answer_for_a_room_it_was_not_asked_about(client):
+    """The page it is handed may cover more rooms than the question names (a
+    list's whole page). A turn running in another room's 支线 must not make this
+    room moving: only the rooms asked about are answered for."""
+    asked = _channel_with_threads(client, 1)
+    elsewhere = _channel_with_threads(client, 1)
+    _a_turn_in(client, _a_thread_in(client, elsewhere))
+
+    async def _moving() -> set[uuid.UUID]:
+        async with client.test_factory() as s:
+            threads = await threads_of_rooms(
+                s, [uuid.UUID(asked), uuid.UUID(elsewhere)]
+            )
+            assert len(threads) == 2
+            return await moving_topics(
+                s, [uuid.UUID(asked)], running=set(), threads=threads
+            )
+
+    assert client.portal.call(_moving) == set()
