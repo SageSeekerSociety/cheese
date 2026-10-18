@@ -91,6 +91,17 @@ EXAMPLES: tuple[tuple[str, str, bool], ...] = (
         False,
     ),
     (
+        "正则里的撇号不吞掉后面的真断言",
+        "const re = /it's/; expect(notice.textContent).toBe('Save failed: HTTP 500')",
+        True,
+    ),
+    (
+        "JSX 文本里的撇号不吞掉后面的真断言",
+        "render(<p>Don't panic</p>); "
+        "expect(notice.textContent).toBe('Save failed: HTTP 500')",
+        True,
+    ),
+    (
         "正则里的撇号不吞掉后面的注释",
         "const re = /it's/; // expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')",
         False,
@@ -344,6 +355,46 @@ class CopyAssertionGuardTests(unittest.TestCase):
             self.assertEqual(
                 payload["stale"], [["frontend/src/gone.spec.ts", "已经删掉的那一句。"]]
             )
+
+
+    def test_an_unterminated_block_comment_is_not_reported_as_clean(self) -> None:
+        # JSX 文本里的 `/*` 会被当成块注释开头；到文件末尾还没闭合时，
+        # 后面整段都看不见，这时不能报通过。
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._fixture(
+                directory,
+                "render(<code>src/*.ts</code>);\n"
+                "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')",
+            )
+            result = self._run(SCRIPT, root)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertNotIn("通过", result.stdout)
+
+    def test_unreadable_file_suppresses_the_baseline_advice(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "tree"
+            (root / "frontend/src").mkdir(parents=True)
+            baseline = Path(directory) / "baseline.json"
+            baseline.write_text(
+                json.dumps(
+                    [[FIXTURE, "本月的芝士额度已用完，11月1日重置。"]],
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            if not hasattr(os, "geteuid") or os.geteuid() != 0:
+                target = root / FIXTURE
+                target.write_text("expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')\n", encoding="utf-8")
+                target.chmod(0o000)
+                try:
+                    result = self._run(SCRIPT, root, "--baseline", str(baseline))
+                finally:
+                    target.chmod(0o644)
+            else:
+                self.skipTest("以 root 跑时 chmod 挡不住读取，判不了这个场景")
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertNotIn("删掉这一行", result.stderr)
+            self.assertNotIn("通过", result.stdout)
 
     @unittest.skipIf(
         hasattr(os, "geteuid") and os.geteuid() == 0,

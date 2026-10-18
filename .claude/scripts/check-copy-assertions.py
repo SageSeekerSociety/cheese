@@ -50,7 +50,8 @@ BASELINE. 2026-10-18 主干上已有 11 处，冻结在 `BASELINE` 里，一处�
 （文件、字面量）。集合只许减：树里少了一处而 BASELINE 还留着，是失败而不是
 通过，所以还掉一处不会在别处换来一处新的。要重数就 `--dump`，照着结果改
 `BASELINE`。基线漂出视线时，报告和干净树一模一样，那是守卫唯一赔不起的失败，
-所以读不了的目录和文件一律退 2，绝不当作「没有命中」。
+所以读不了的目录和文件、以及遮罩不到底的源码（注释或模板到末尾还没闭合）
+一律退 2，绝不当作「没有命中」。
 
 Usage: check-copy-assertions.py [--root DIR] [--json] [--dump]
                                 [--baseline PATH]
@@ -143,6 +144,10 @@ class CannotJudge(Exception):
     """这棵树不是要判的那棵。"""
 
 
+class Unreadable(Exception):
+    """这个文件遮罩不了，看不见的部分不能当作没有命中。"""
+
+
 @dataclass(frozen=True)
 class Finding:
     path: str
@@ -181,17 +186,45 @@ def reads_copy(subject: str) -> bool:
     return bool(read_names(subject) & COPY_NAMES)
 
 
-def closes_on_line(line: str, start: int, quote: str) -> bool:
-    """这一行里 start 之后还有没有配对的同种引号。"""
-    index = start + 1
-    while index < len(line):
-        if line[index] == "\\":
-            index += 2
-            continue
-        if line[index] == quote:
-            return True
-        index += 1
-    return False
+#: 引号前一格是这些符号时，它多半真的在开一个字符串。
+STRING_START = frozenset("=([{,:?+-!&|;*%^~<>")
+
+#: 引号前一个词是这些关键字时也一样（`return 'x'`、`do 'x'`）。
+STRING_KEYWORDS = frozenset(
+    {
+        "return",
+        "case",
+        "throw",
+        "yield",
+        "await",
+        "typeof",
+        "instanceof",
+        "in",
+        "of",
+        "do",
+        "else",
+    }
+)
+
+
+def opens_string(line: str, index: int) -> bool:
+    """index 上的引号是不是在开一个字符串。
+
+    JSX 文本里的撇号（`Don't`）和正则里的引号（`/it's/`）前面是字母，不能
+    当作字符串开头——否则同一行后面的代码会被吞掉。这一行有没有配对的右引号
+    说明不了问题：那种判断会把撇号和后面断言的字面量配成一对。
+    """
+    before = index - 1
+    while before >= 0 and line[before] in " \t":
+        before -= 1
+    if before < 0:
+        return True
+    if line[before] in STRING_START:
+        return True
+    word_end = before
+    while before >= 0 and (line[before].isalnum() or line[before] in "_$"):
+        before -= 1
+    return line[before + 1 : word_end + 1] in STRING_KEYWORDS
 
 
 def mask_comments(
@@ -240,11 +273,9 @@ def mask_comments(
             index += 1
             continue
         if char in "'\"":
-            # 这一行找不到配对的右引号时，它更可能是 JSX 里的撇号或正则里的
-            # 引号，不当作字符串开头：否则后面的代码会被当成字符串吞掉。
-            if closes_on_line(line, index, char):
+            if opens_string(line, index):
                 quote = char
-                in_string[index] = True
+            in_string[index] = bool(quote)
             index += 1
             continue
         if line.startswith("//", index):
@@ -279,7 +310,10 @@ def scan_file(path: Path, root: Path) -> list[Finding]:
             line, in_block, in_template
         )
         for match in CALL.finditer(code):
-            if in_string[match.start()]:
+            # 整条断言都在某个字符串里时，那是测试自己拼的源码，不是断言；
+            # 只有开头落在字符串里不算——JSX 文本里的撇号会开出一个假字符串，
+            # 它后面的真断言不能被连坐。
+            if all(in_string[match.start() : match.end()]):
                 continue
             literal = match.group("literal")
             if match.group("quote") == "`" and "${" in literal:
@@ -298,6 +332,11 @@ def scan_file(path: Path, root: Path) -> list[Finding]:
                     literal=literal,
                 )
             )
+    if in_block or in_template:
+        # 遮罩器到最后还停在注释或模板里，说明这行源码它读不懂（例如 JSX
+        # 文本里的 `/*`）。看不见的部分不能当作没有命中。
+        opened = "块注释" if in_block else "模板字面量"
+        raise Unreadable(f"第 {len(lines)} 行末尾还停在{opened}里，判断不了这一文件")
     return found
 
 
@@ -328,7 +367,7 @@ def scan(root: Path) -> tuple[list[Finding], list[str]]:
     for path in paths:
         try:
             findings.extend(scan_file(path, root))
-        except (OSError, UnicodeDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, Unreadable) as exc:
             unreadable.append(f"{path.relative_to(root).as_posix()}: {exc}")
     return findings, unreadable
 
