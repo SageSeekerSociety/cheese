@@ -419,7 +419,12 @@ so `gh pr merge` can request queue entry while required checks are pending.
 The queue tests its changes against the latest main and preceding queued
 changes before merging.
 
-`.github/workflows/required-ci.yml` runs on both `pull_request` and `merge_group`.
+`.github/workflows/required-ci.yml` runs on `pull_request`, `merge_group`, and
+`push` to `main`. A push run is the post-submit gate and it batches: the
+concurrency group is fixed on `main` (one running, one waiting, a newer push
+replaces the waiter), and each run diffs from `refs/heads/main-green`, the last
+commit a push run proved green, so a commit whose own run was replaced is still
+in the next run's diff. Only a passing run moves that ref.
 It calls the existing suites selected by `.github/scripts/required-ci-paths.json`.
 Documentation-only changes run repository guards. Failed scope detection, failed
 or cancelled selected suites, and unexpected skips fail `CI required`. A draft PR
@@ -428,8 +433,9 @@ runs the fast tier instead, aggregated by a separate job named
 workflow, so a cancelled run still shows its name and not its expression. The
 full-tier job checks this repo's commit titles with
 `.github/scripts/check-commit-title.py`:
-the PR title on a pull request, and every squash commit about to land in the
-merge queue. Remote
+the PR title on a pull request, every squash commit about to land in the merge
+queue, and the commits a main push landed — the last as warnings only, since
+they are already on `main`. Remote
 execution acceptance remains advisory pending the stability target in #1279; the
 MCP latest-version canary runs on schedule or manual dispatch.
 

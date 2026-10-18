@@ -1510,6 +1510,271 @@ class WorkflowTextTest(unittest.TestCase):
                 )
 
 
+def triggers_of(text):
+    """The ``on:`` mapping: ``{event name: block text}``.
+
+    Parsed like :func:`jobs_of`, without a YAML library: this suite runs on a
+    bare ``python3``.
+    """
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.rstrip() == "on:")
+    found, current = {}, None
+    for line in lines[start + 1:]:
+        if line.strip() and not line.startswith(" "):
+            break
+        event = re.match(r"^  (\w+):\s*$", line)
+        if event:
+            current = found[event.group(1)] = []
+        elif current is not None:
+            current.append(line)
+    return {name: "\n".join(block) for name, block in found.items()}
+
+
+def concurrency_group(expression, event_name, ref, sha):
+    """The group a run lands in, from the workflow's own expression."""
+    match = re.search(r"\$\{\{(.*?)\}\}", expression, re.S)
+    if match is None:
+        raise AssertionError(f"not a concurrency group: {expression!r}")
+    py = match.group(1).strip()
+    for token, value in (("github.event_name", event_name),
+                         ("github.ref", ref), ("github.sha", sha)):
+        py = py.replace(token, repr(value))
+    py = py.replace("&&", " and ").replace("||", " or ")
+    return "required-ci-" + eval(py, {"__builtins__": {}})  # noqa: S307
+
+
+class PushBatchTest(unittest.TestCase):
+    """A push run is the post-submit gate, and it batches."""
+
+    def test_a_push_to_main_is_a_batch_of_one_running_and_one_waiting(self):
+        text = WORKFLOW.read_text()
+        triggers = triggers_of(text)
+        self.assertEqual(triggers["push"].strip(), "branches: [main]")
+        head = text.split("\njobs:\n", 1)[0]
+        group = re.search(r"^  group: (.+)$", head, re.M).group(1)
+        cancel = re.search(r"^  cancel-in-progress: (.+)$", head, re.M).group(1)
+        # Two pushes use the same group whatever their sha: that is what lets
+        # the second one wait and a third replace it. A per-sha group would run
+        # every push at once, which is not a batch.
+        self.assertEqual(
+            concurrency_group(group, "push", "refs/heads/main", "a" * 40),
+            concurrency_group(group, "push", "refs/heads/main", "b" * 40),
+        )
+        # The running push is never cancelled: it always finishes and reports,
+        # and the waiting one is the one a newer push replaces.
+        self.assertFalse(condition_holds(cancel, "push", None))
+        # pull_request and merge_group keep their own groups.
+        self.assertNotEqual(
+            concurrency_group(group, "pull_request", "refs/pull/1/merge", "a" * 40),
+            concurrency_group(group, "pull_request", "refs/pull/2/merge", "a" * 40),
+        )
+        self.assertNotEqual(
+            concurrency_group(group, "merge_group", "refs/heads/main", "a" * 40),
+            concurrency_group(group, "merge_group", "refs/heads/main", "b" * 40),
+        )
+        self.assertTrue(condition_holds(cancel, "pull_request", False))
+
+    def test_only_a_passing_push_run_moves_the_green_anchor(self):
+        job = jobs_of(WORKFLOW.read_text())["main-green"]
+        # `required` is the aggregation: a job that needs it runs only when it
+        # passed, so a red batch leaves the anchor where it was and the next
+        # batch covers the failure too. push only: a PR run proves a branch,
+        # not main.
+        self.assertIn("required", job["text"])
+        self.assertIn("github.event_name == 'push'", job["text"])
+        self.assertIn("contents: write", job["text"])
+
+    def _run_anchor_step(self, tmp, statuses, sha):
+        bindir = Path(tmp) / "bin"
+        bindir.mkdir()
+        calls = Path(tmp) / "calls"
+        _stub(bindir, "curl", (
+            'args=""\n'
+            'for a in "$@"; do args="$args $a"; done\n'
+            'printf "%s\\n" "$args" >> "$CALLS"\n'
+            'n=$(wc -l < "$CALLS")\n'
+            'case "$n" in\n'
+            + "\n".join(f'  {i + 1}) printf "%s" {code} ;;'
+                        for i, code in enumerate(statuses))
+            + '\n  *) printf "%s" 500 ;;\n'
+            'esac\n'
+            'out=""\nprev=""\nfor a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+            'printf "{}" > "$out"\n'
+        ))
+        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+               "RUNNER_TEMP": str(tmp), "CALLS": str(calls),
+               "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x", "SHA": sha}
+        return subprocess.run(
+            ["bash", "-e", "-c", run_body_containing(WORKFLOW.read_text(), "main-green.json")],
+            env=env, cwd=tmp, capture_output=True, text=True,
+        ), calls
+
+    def test_the_green_anchor_is_created_once_and_moved_after_that(self):
+        sha = "c" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            created, calls = self._run_anchor_step(tmp, ["201"], sha)
+            self.assertEqual(created.returncode, 0, created.stderr)
+            self.assertEqual(len(calls.read_text().splitlines()), 1)
+            self.assertIn("-X POST", calls.read_text())
+            self.assertIn(f'"sha":"{sha}"', calls.read_text())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            moved, calls = self._run_anchor_step(tmp, ["422", "200"], sha)
+            self.assertEqual(moved.returncode, 0, moved.stderr)
+            lines = calls.read_text().splitlines()
+            self.assertEqual(len(lines), 2, lines)
+            # 422 is "the ref exists"; the move must be a forced PATCH, since
+            # the anchor never fast-forwards.
+            self.assertIn("-X PATCH", lines[1])
+            self.assertIn("/git/refs/heads/main-green", lines[1])
+            self.assertIn('"force":true', lines[1])
+
+    def test_a_failed_anchor_write_fails_the_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc, _calls = self._run_anchor_step(tmp, ["500"], "c" * 40)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("::error::", proc.stderr)
+
+    def _run_title_step(self, tmp, event_name, base, head="h" * 40):
+        bindir = Path(tmp) / "bin"
+        bindir.mkdir()
+        _stub(bindir, "curl", (
+            'out=""\nprev=""\nfor a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+            'printf "%s" \'{"commits":[{"commit":{"message":"update stuff\\nfiller"}}]}\' > "$out"\n'
+            'printf 200\n'
+        ))
+        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+               "RUNNER_TEMP": str(tmp), "GITHUB_EVENT_NAME": event_name,
+               "BASE_SHA": base, "HEAD_SHA": head,
+               "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x"}
+        # The step pipes into the repository's checker by relative path, the way
+        # a runner checks the repository out.
+        return subprocess.run(
+            ["bash", "-e", "-c", run_body_containing(WORKFLOW.read_text(), "api()")],
+            env=env, cwd=WORKFLOW.parent.parent.parent,
+            capture_output=True, text=True,
+        )
+
+    def test_a_landed_title_is_reported_and_does_not_fail_the_gate(self):
+        # The title is already on main and nobody can retitle it, so a red here
+        # would hold back a validated commit over formatting.
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = self._run_title_step(tmp, "push", "b" * 40)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("::warning::", proc.stdout)
+        self.assertNotIn("::error::", proc.stdout)
+
+    def test_a_push_with_no_previous_commit_checks_nothing(self):
+        for base in ("", "0" * 40):
+            with self.subTest(base=base):
+                with tempfile.TemporaryDirectory() as tmp:
+                    proc = self._run_title_step(tmp, "push", base)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertNotIn("::warning::", proc.stdout)
+                self.assertIn("No previous main commit", proc.stdout)
+
+    def test_a_title_about_to_land_is_still_fatal(self):
+        # The merge queue's entry is refused, as before: there the author can
+        # still fix it.
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = self._run_title_step(tmp, "merge_group", "b" * 40)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("::error::", proc.stdout)
+
+    def test_a_push_diffs_from_the_green_anchor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, base, middle, head = self._batch_repo(Path(tmp), anchor=True)
+            # The workflow fetches the event base before calling the script, so
+            # the only thing that can choose the anchor is the script itself.
+            self._fetch(work, base)
+            written, proc = self._scope(work, base, "push")
+            # The event's `before` is the oldest commit, but the run must start
+            # at the anchor: the commit in between had its run replaced.
+            self.assertEqual(written["base"], middle)
+            self.assertEqual(written["tier"], "full")
+            self.assertEqual(written["branch_heavy"], "true")
+            self.assertIn(f"Effective base: {middle}", proc.stdout)
+            # Diff anchor..HEAD selects the e2e change only, not the backend
+            # one the anchor already covered.
+            self.assertEqual(written["e2e"], "true")
+            self.assertEqual(written["backend"], "false")
+
+    def test_a_push_without_an_anchor_diffs_from_its_before(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, base, _middle, _head = self._batch_repo(Path(tmp), anchor=False)
+            self._fetch(work, base)
+            written, _proc = self._scope(work, base, "push")
+            self.assertEqual(written["base"], base)
+            # Both changes are in the diff: backend and e2e.
+            self.assertEqual(written["e2e"], "true")
+            self.assertEqual(written["backend"], "true")
+
+    def test_a_push_with_neither_an_anchor_nor_a_before_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _base, _middle, _head = self._batch_repo(Path(tmp), anchor=False)
+            _written, proc = self._scope(work, "", "push", check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("green anchor", proc.stderr)
+
+    @staticmethod
+    def _fetch(work, sha):
+        subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", sha],
+                       cwd=work, check=True, capture_output=True)
+
+    @staticmethod
+    def _git(cwd, *args):
+        return subprocess.run(
+            ["git", "-c", "user.email=test@example.com", "-c", "user.name=test",
+             "-c", "commit.gpgsign=false", *args],
+            cwd=cwd, check=True, capture_output=True, text=True,
+        )
+
+    def _batch_repo(self, tmp, anchor):
+        """An origin with three commits, a work clone at depth one, and scripts."""
+        origin = tmp / "origin"
+        origin.mkdir()
+        self._git(origin, "init", "-q", "-b", "main")
+        (origin / "base.txt").write_text("base\n")
+        self._git(origin, "add", "base.txt")
+        self._git(origin, "commit", "-qm", "base")
+        base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=origin, text=True).strip()
+        (origin / "backend").mkdir()
+        (origin / "backend" / "app.py").write_text("x = 1\n")
+        self._git(origin, "add", "backend/app.py")
+        self._git(origin, "commit", "-qm", "backend change")
+        middle = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=origin, text=True).strip()
+        (origin / "e2e").mkdir()
+        (origin / "e2e" / "login.spec.ts").write_text("y\n")
+        self._git(origin, "add", "e2e/login.spec.ts")
+        self._git(origin, "commit", "-qm", "e2e change")
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=origin, text=True).strip()
+        if anchor:
+            self._git(origin, "branch", "main-green", middle)
+        work = tmp / "work"
+        subprocess.run(["git", "clone", "-q", "--depth=1", f"file://{origin}", str(work)],
+                       check=True, capture_output=True)
+        scripts = WORKFLOW.parent.parent / "scripts"
+        for name in ("required-ci.py", "required-ci-paths.json"):
+            shutil.copy(scripts / name, work / name)
+        return work, base, middle, head
+
+    def _scope(self, work, event_base, event_name, check=True):
+        out = work / "github_output"
+        (work / "event.json").write_text("{}")
+        env = {**os.environ, "GITHUB_EVENT_NAME": event_name,
+               "GITHUB_EVENT_PATH": str(work / "event.json"),
+               "GITHUB_OUTPUT": str(out)}
+        proc = subprocess.run(
+            [sys.executable, str(work / "required-ci.py"), "scope", event_base],
+            env=env, cwd=work, capture_output=True, text=True,
+        )
+        if check:
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        written = (dict(line.split("=", 1) for line in out.read_text().splitlines())
+                   if check else {})
+        return written, proc
+
+
 class MainCliTest(unittest.TestCase):
     """The ``scope``/``check`` wiring that the runner actually invokes."""
 

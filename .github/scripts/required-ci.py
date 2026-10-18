@@ -11,12 +11,18 @@ the check a draft produces can never be the one branch protection requires:
   aggregating job's ``name`` in required-ci.yml) and only the ``fast`` job may
   succeed — every full suite must be SKIPPED, so a draft's green can never be
   read as the full gate's green;
-- a merge_group entry, or any pull_request that is not a draft, is named ``CI
-  required`` and requires the selected suites (on ``pull_request``, backend
-  ``integration``, ``e2e`` and ``remote`` are deferred to ``merge_group``).
+- a push to main, a merge_group entry, or any pull_request that is not a draft,
+  is named ``CI required`` and requires the selected suites (on
+  ``pull_request``, backend ``integration``, ``e2e`` and ``remote`` are
+  deferred to ``merge_group``).
 
 Fail closed: an event this module cannot read as a non-draft pull_request or a
 merge queue entry is the FULL tier (the real gate), never the fast one.
+
+A push run is the post-submit gate, and it batches: it diffs from
+:data:`GREEN_REF`, the last commit Required CI proved green, rather than from
+the push's own ``before``. A commit whose run the concurrency group replaced is
+therefore inside the next run's diff, and no landed change goes untested.
 """
 
 import fnmatch
@@ -37,6 +43,12 @@ TIERS = ("full", "quick")
 #: ``branch_heavy=false`` tells ``test.yml`` to skip backend ``integration``).
 QUEUE_ONLY_SUITES = ("e2e", "remote")
 
+#: The branch a passing push run points at its own head. A push run's diff
+#: starts here, so it covers every commit since the last proof — including the
+#: ones whose own run the concurrency group replaced.
+GREEN_REF = "refs/heads/main-green"
+GREEN_TRACKING = "refs/remotes/origin/main-green"
+
 
 def branch_heavy_for(event_name):
     """Whether heavy suites (backend integration, e2e, remote) run on this event.
@@ -51,8 +63,9 @@ def branch_heavy_for(event_name):
 def tier_for(event_name, event):
     """Which tier this run must be — ``"full"`` or ``"quick"``.
 
-    Only a DRAFT pull_request is ``"quick"``. A ``merge_group`` entry and any
-    pull_request whose ``draft`` flag is false are ``"full"``; so is anything we
+    Only a DRAFT pull_request is ``"quick"``. A ``push`` to main, a
+    ``merge_group`` entry and any pull_request whose ``draft`` flag is false are
+    ``"full"``; so is anything we
     cannot read — a missing/absent flag, a malformed payload, an unknown event,
     or a non-dict event. An unreadable event is the STRICT gate, never the
     loose one: defaulting to ``"quick"`` on a parse surprise would let a draft's
@@ -224,9 +237,48 @@ def api_failures(needs, outputs, tier):
     return [], moved == "true"
 
 
+def green_anchor():
+    """``GREEN_REF``'s commit, or ``""`` when no push run has passed yet."""
+    try:
+        subprocess.check_call(
+            ["git", "fetch", "--no-tags", "--depth=1", "origin",
+             f"+{GREEN_REF}:{GREEN_TRACKING}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError:
+        return ""
+    return subprocess.check_output(
+        ["git", "rev-parse", "--verify", f"{GREEN_TRACKING}^{{commit}}"]
+    ).decode().strip()
+
+
 def effective_base(event_base, head="HEAD"):
     """Resolve the one base both the receipt and suite diff must use."""
-    if os.environ.get("GITHUB_EVENT_NAME") == "merge_group":
+    event_name = os.environ.get("GITHUB_EVENT_NAME")
+    if event_name == "push":
+        # The batch: every change since Required CI last proved main green.
+        # The event's ``before`` is only the bootstrap fallback — using it would
+        # drop the commits whose own push run the concurrency group replaced.
+        anchor = green_anchor()
+        if anchor:
+            return anchor, (
+                "push starts at refs/heads/main-green, the last commit Required "
+                "CI proved green, so a run the concurrency group replaced is "
+                "still covered"
+            )
+        if event_base:
+            base = subprocess.check_output(
+                ["git", "rev-parse", "--verify", f"{event_base}^{{commit}}"]
+            ).decode().strip()
+            return base, (
+                "no green anchor yet; the first push run uses the commit before "
+                "this push"
+            )
+        raise SystemExit(
+            "a push has neither a green anchor (refs/heads/main-green) nor a "
+            "previous commit to diff from"
+        )
+    if event_name == "merge_group":
         # The event base may be the preceding queue entry's synthetic tree.
         # Only landed main can exclude a prefix from this run's coverage.
         main_ref = "+refs/heads/main:refs/remotes/origin/main"

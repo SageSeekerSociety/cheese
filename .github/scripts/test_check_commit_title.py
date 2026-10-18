@@ -106,6 +106,21 @@ class CommitTitleTest(unittest.TestCase):
     def test_no_title_at_all_is_a_failure(self):
         self.assertEqual(run(stdin="").returncode, 1)
 
+    def test_warn_only_reports_the_same_findings_without_failing(self):
+        """Post-submit Required CI reads titles that already landed: it reports
+        them as warnings and lets the gate through."""
+        result = run("--warn-only", stdin="update stuff\nfix: fine\n")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("::warning::", result.stdout)
+        self.assertIn("update stuff", result.stdout)
+        self.assertNotIn("::error::", result.stdout)
+        self.assertIn("already on main", result.stdout)
+
+    def test_warn_only_still_fails_on_nothing_to_check(self):
+        # A warnings-only mode is not a silent pass when the input never
+        # arrived: an empty check would report nothing about anything.
+        self.assertEqual(run("--warn-only", stdin="").returncode, 1)
+
     def test_a_draft_pull_requests_placeholder_title_is_not_judged(self):
         draft = pull_request(title="WIP: 回复变长时对话栏不再贴住最下端", draft=True)
         result = run("--pull-request", draft)
