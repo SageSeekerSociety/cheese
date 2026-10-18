@@ -406,7 +406,7 @@ def test_settle_queries_canvas_rows_once_regardless_of_block_count(client):
     async def query_count(count: int) -> int:
         statements: list[str] = []
 
-        def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        def record(conn, cursor, statement, parameters, context, executemany):
             statements.append(statement)
 
         engine = client.test_app_engine.sync_engine

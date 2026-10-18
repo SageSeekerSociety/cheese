@@ -370,7 +370,7 @@ async def keep_device_room_files(
             return 0
     try:
         listed = await list_device_storage(device_id, hub=hub)
-    except Exception:  # noqa: BLE001 — its next connection looks again
+    except Exception:  # its next connection looks again
         # WARNING: a machine that went again right after connecting is the
         # usual cause, and that is no fault anyone must answer.
         logger.warning("room files not looked at device=%s", device_id, exc_info=True)
@@ -392,7 +392,7 @@ async def keep_device_room_files(
                     session, device_id, project_id, resource, hub=hub, storage=storage
                 )
                 looked += 1
-            except Exception:  # noqa: BLE001 — one home must not stop the others
+            except Exception:  # one home must not stop the others
                 logger.warning(
                     "room files not looked at device=%s resource=%s",
                     device_id,

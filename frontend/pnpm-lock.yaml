@@ -363,9 +363,6 @@ importers:
       stylelint-config-standard-vue:
         specifier: ^1.0.0
         version: 1.0.0(postcss-html@1.8.0)(stylelint@16.23.0(typescript@5.9.2))
-      stylelint-order:
-        specifier: ^6.0.4
-        version: 6.0.4(stylelint@16.23.0(typescript@5.9.2))
       stylelint-prettier:
         specifier: ^5.0.3
         version: 5.0.3(prettier@3.2.4)(stylelint@16.23.0(typescript@5.9.2))
@@ -4899,11 +4896,6 @@ packages:
     resolution: {integrity: sha512-8sLjZwK0R+JlxlYcTuVnyT2v+htpdrjDOKuMcOVdYjt52Lh8hWRYpxBPoKx/Zg+bcjc3wx6fmQevMmUztS/ccA==}
     engines: {node: '>=4'}
 
-  postcss-sorting@8.0.2:
-    resolution: {integrity: sha512-M9dkSrmU00t/jK7rF6BZSZauA5MAaBW4i5EnJXspMwt4iqTh/L9j6fgMnbElEOfyRyfLfVbIHj/R52zHzAPe1Q==}
-    peerDependencies:
-      postcss: ^8.4.20
-
   postcss-value-parser@4.2.0:
     resolution: {integrity: sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==}
 
@@ -5372,11 +5364,6 @@ packages:
     engines: {node: '>=18.12.0'}
     peerDependencies:
       stylelint: ^16.1.0
-
-  stylelint-order@6.0.4:
-    resolution: {integrity: sha512-0UuKo4+s1hgQ/uAxlYU4h0o0HS4NiQDud0NAUNI0aa8FJdmYHA5ZZTFHiV5FpmE3071e9pZx5j0QpVJW5zOCUA==}
-    peerDependencies:
-      stylelint: ^14.0.0 || ^15.0.0 || ^16.0.1
 
   stylelint-prettier@5.0.3:
     resolution: {integrity: sha512-B6V0oa35ekRrKZlf+6+jA+i50C4GXJ7X1PPmoCqSUoXN6BrNF6NhqqhanvkLjqw2qgvrS0wjdpeC+Tn06KN3jw==}
@@ -10826,10 +10813,6 @@ snapshots:
       cssesc: 3.0.0
       util-deprecate: 1.0.2
 
-  postcss-sorting@8.0.2(postcss@8.5.6):
-    dependencies:
-      postcss: 8.5.6
-
   postcss-value-parser@4.2.0: {}
 
   postcss@8.5.28:
@@ -11401,12 +11384,6 @@ snapshots:
     dependencies:
       stylelint: 16.23.0(typescript@5.9.2)
       stylelint-config-recommended: 14.0.1(stylelint@16.23.0(typescript@5.9.2))
-
-  stylelint-order@6.0.4(stylelint@16.23.0(typescript@5.9.2)):
-    dependencies:
-      postcss: 8.5.6
-      postcss-sorting: 8.0.2(postcss@8.5.6)
-      stylelint: 16.23.0(typescript@5.9.2)
 
   stylelint-prettier@5.0.3(prettier@3.2.4)(stylelint@16.23.0(typescript@5.9.2)):
     dependencies:

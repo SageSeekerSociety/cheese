@@ -940,7 +940,7 @@ async def get_branch_protection(
         token: str | None = None
         try:
             token = await github_app_read_token_for_project(project_id, db)
-        except Exception:  # noqa: BLE001 — display-only: degrade, never 500
+        except Exception:  # display-only: degrade, never 500
             logger.warning(
                 "branch-protection: token mint failed project=%s",
                 project_id,

@@ -175,7 +175,7 @@ class TurnLifecycle:
                 )
                 if closed:
                     await session.commit()
-        except Exception:  # noqa: BLE001 — the Stop matters more than the row
+        except Exception:  # the Stop matters more than the row
             logger.exception("could not close open turns for topic %s", topic_id)
 
     def row_is_dead(

@@ -177,7 +177,7 @@ async def _check(conn, ids: dict) -> None:
         "SELECT conversation_id, path FROM local_fs_access"
     ) == {room: "room", task: "task"}
     for table in ("native_inputs", "timed_deliveries", "agent_sessions"):
-        assert await conn.fetchval(f"SELECT conversation_id FROM {table}") == task  # noqa: S608
+        assert await conn.fetchval(f"SELECT conversation_id FROM {table}") == task
 
     # Removing the task removes what belonged to it and nothing of the room's.
     await conn.execute("DELETE FROM tasks WHERE id = $1", task)
@@ -189,7 +189,7 @@ async def _check(conn, ids: dict) -> None:
         "webhook_tokens",
         "agent_sessions",
     ):
-        left = await conn.fetch(f"SELECT conversation_id FROM {table}")  # noqa: S608
+        left = await conn.fetch(f"SELECT conversation_id FROM {table}")
         assert [row[0] for row in left] == ([] if table == "agent_sessions" else [room])
 
 

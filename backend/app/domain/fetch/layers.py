@@ -154,7 +154,7 @@ async def rung_plain_http(url: str, timeout: float = 15.0) -> Attempt:
                 body = await _read_capped(r)
     except NotPublic:
         raise
-    except Exception as exc:  # noqa: BLE001 — every failure here is just a miss
+    except Exception as exc:  # every failure here is just a miss
         return Attempt(
             "plain-http",
             False,
@@ -264,7 +264,7 @@ async def rung_impersonated(url: str, timeout: float = 25.0) -> Attempt:
         status, body = await asyncio.wait_for(_follow(), timeout=timeout + 5)
     except NotPublic:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return Attempt(
             "impersonated",
             False,
@@ -297,7 +297,7 @@ async def rung_reader_service(
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             r = await client.get(endpoint.rstrip("/") + "/" + url)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return Attempt(
             "reader-service",
             False,
@@ -342,7 +342,7 @@ async def rung_browser(url: str, endpoint: str, timeout: float = 75.0) -> Attemp
                 endpoint.rstrip("/") + "/render",
                 json={"url": url, "settle_seconds": BROWSER_SETTLE_SECONDS},
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return Attempt(
             "browser", False, note=f"{type(exc).__name__}", seconds=loop.time() - start
         )

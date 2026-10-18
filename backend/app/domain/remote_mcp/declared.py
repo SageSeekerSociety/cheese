@@ -319,7 +319,7 @@ async def read(
     if fresh or entry is None:
         try:
             declared = await _fetch(db, project_id)
-        except Exception:  # noqa: BLE001 — a forge outage must not fail a session
+        except Exception:  # a forge outage must not fail a session
             logger.warning("remote_mcp: .mcp.json unreadable project=%s", project_id)
             # The last answer stands while the forge is down. A session's
             # servers are part of what it was started with, so answering "none"
@@ -352,7 +352,7 @@ async def _refresh(engine: AsyncEngine, project_id: uuid.UUID) -> None:
     try:
         async with AsyncSession(engine, expire_on_commit=False) as session:
             declared = await _fetch(session, project_id)
-    except Exception:  # noqa: BLE001 — the last answer stands, as in `read`
+    except Exception:  # the last answer stands, as in `read`
         logger.warning("remote_mcp: .mcp.json unreadable project=%s", project_id)
         entry = _cache.get(project_id)
         if entry is not None:
@@ -389,7 +389,7 @@ async def last_author(db: AsyncSession, project_id: uuid.UUID) -> str | None:
         found = await forge.repository_data(
             project_id, db, "/commits?path=.mcp.json&limit=1&per_page=1"
         )
-    except Exception:  # noqa: BLE001 — a name to show is not worth a refusal
+    except Exception:  # a name to show is not worth a refusal
         return None
     if not isinstance(found, list) or not found or not isinstance(found[0], dict):
         return None

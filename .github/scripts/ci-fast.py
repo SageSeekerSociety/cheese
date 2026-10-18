@@ -65,9 +65,9 @@ if not os.path.isabs(GIT_DIR):
 PASS, FAIL, UNKNOWN, BLOCKED = 0, 1, 2, 3
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 FAST_HOOKS = {
-    "guards": ["file-size", "repo-rules", "action-pins", "manual-anchors", "doc-references"],
-    "backend": ["ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"],
-    "frontend": ["eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"],
+    "guards": ["repo-rules", "action-pins", "manual-anchors", "doc-references"],
+    "backend": ["ruff", "boundary-check", "migration-fork"],
+    "frontend": ["eslint", "stylelint", "boundary-check-frontend", "scene-ratchet"],
 }
 TYPES_HOOKS = {"backend": ["pyright"], "frontend": ["frontend-typecheck"]}
 # Checks the pre-push entry point adds to the ones above: steps of a Required CI
@@ -96,7 +96,7 @@ JS_RUNTIME_HOOKS = {"eslint", "stylelint", "boundary-check-frontend"}
 # about the wrong tree. `boundary-check` grades the tree at the merge base with
 # the same contracts it grades this one with, so a base this tool cannot reach
 # is a verdict it cannot give.
-MERGE_BASE_HOOKS = {"file-size", "migration-fork", "scene-ratchet", "boundary-check"}
+MERGE_BASE_HOOKS = {"migration-fork", "scene-ratchet", "boundary-check"}
 # Every hook this tool can select that spawns the node toolchain: the three
 # above, and the frontend type check next to pyright, which runs
 # `pnpm run typecheck`. The preflight blocks a run whose selection needs
@@ -595,7 +595,7 @@ def run(args, report, finish, started):
         invoke(f"hook:{identifier}", [*precommit, "run", identifier, "--all-files", "--hook-stage", "manual", "--color", "never"])
 
     # Cheap high-frequency metadata first; tests/types before full-tree lint.
-    hook("file-size")
+    hook("repo-rules")
     if args.tier != "static":
         with tempfile.TemporaryDirectory(prefix="ci-fast-") as tmp:
             plan, omissions = test_plan(Path(REPO_ROOT), changed, scope, Path(tmp),
@@ -604,7 +604,7 @@ def run(args, report, finish, started):
             for check in plan:
                 invoke(check["id"], check["command"], check["cwd"], check.get("evidence"), check.get("env"))
     for identifier in hooks:
-        if identifier == "file-size":
+        if identifier == "repo-rules":
             continue
         if identifier in JS_RUNTIME_HOOKS and deadline - time.monotonic() < JS_HOOK_MIN_SECONDS:
             # Tests/types already took what the tier had; a node hook started

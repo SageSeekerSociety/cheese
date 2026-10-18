@@ -273,7 +273,7 @@ def _real_addresses(host: str) -> list[IPAddress]:
                 params={"name": host, "type": kind},
                 timeout=8,
             ).json()
-        except Exception:  # noqa: BLE001 — any failure means "not verified"
+        except Exception:  # any failure means "not verified"
             continue
         for record in answer.get("Answer") or []:
             if record.get("type") in (1, 28):

@@ -435,7 +435,7 @@ def run_on_the_machine(target, command):
         try:
             answer = call("read", out=offsets["out"], err=offsets["err"], wait=20)
             failing_since, delay = None, SHELL_READ_RETRY_S[0]
-        except Exception as exc:  # noqa: BLE001 — the command outlives the link
+        except Exception as exc:  # the command outlives the link
             link = isinstance(exc, MachineOutOfReach | OSError | TimeoutError)
             failing_since = failing_since or time.monotonic()
             if not link and time.monotonic() - failing_since > SHELL_ERROR_RETRY_S:

@@ -38,7 +38,7 @@ class TaskParticipantNotApprovedError(ForbiddenError):
 class YourRankIsNotHighEnoughError(BadRequestError):
     def __init__(self, required_rank: int, current_rank: int) -> None:
         super().__init__(
-            message=f"Your rank ({current_rank}) is not high enough. Required: {required_rank}",  # noqa: E501
+            message=f"Your rank ({current_rank}) is not high enough. Required: {required_rank}",
             data={"requiredRank": required_rank, "currentRank": current_rank},
         )
 
@@ -99,7 +99,7 @@ class EmailOrPhoneRequiredError(BadRequestError):
 class YourTeamMemberRankIsNotHighEnoughError(ForbiddenError):
     def __init__(self, member_id: int, required_rank: int, current_rank: int) -> None:
         super().__init__(
-            message=f"Team member rank ({current_rank}) is not high enough. Required: {required_rank}",  # noqa: E501
+            message=f"Team member rank ({current_rank}) is not high enough. Required: {required_rank}",
             data={
                 "memberId": member_id,
                 "requiredRank": required_rank,

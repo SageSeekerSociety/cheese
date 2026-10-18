@@ -195,7 +195,7 @@ async def _check_rate(key: str) -> _RateAnswer | None:
             ),
             timeout=settings.request_limit_redis_timeout_s,
         )
-    except Exception as error:  # noqa: BLE001 — fail open, said once a minute
+    except Exception as error:  # fail open, said once a minute
         _redis_warning.say(error)
         return None
     allowed, remaining, retry_after_ms, reset_ms = (int(v) for v in answer)

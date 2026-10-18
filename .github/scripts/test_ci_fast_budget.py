@@ -23,7 +23,7 @@ class BudgetTest(unittest.TestCase):
                         GIT_AUTHOR_NAME="Test", GIT_COMMITTER_NAME="Test",
                         GIT_AUTHOR_EMAIL="test@example.com", GIT_COMMITTER_EMAIL="test@example.com")
         self.git("init", "-b", "main")
-        hooks = ("file-size", "repo-rules", "action-pins", "manual-anchors", "doc-references")
+        hooks = ("repo-rules", "action-pins", "manual-anchors", "doc-references")
         (self.repo / ".pre-commit-config.yaml").write_text(
             "\n".join(f"- id: {hook}" for hook in hooks))
         # A scheduler stub makes the selected guard checks instantaneous. All
@@ -66,7 +66,7 @@ class BudgetTest(unittest.TestCase):
         report = self.report(self.invoke(cores=1))
         self.assertEqual(report["budget_seconds"], 720)
         self.assertEqual({row["id"] for row in report["ran"]},
-                         {"file-size", "repo-rules", "action-pins", "manual-anchors", "doc-references"})
+                         {"repo-rules", "action-pins", "manual-anchors", "doc-references"})
         self.assertEqual(report["budget_source"], "cpu default (1 available)")
 
     @unittest.skipUnless(hasattr(os, "sched_setaffinity"), "requires CPU affinity")

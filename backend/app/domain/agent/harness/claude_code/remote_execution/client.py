@@ -657,7 +657,7 @@ def reached_skills(target_path, target, args):
             path,
             view=target.get("central_workspace"),
         )
-    except Exception as error:  # noqa: BLE001 — the call it followed succeeded
+    except Exception as error:  # the call it followed succeeded
         print(f"skills not updated after {path}: {error!r}", file=sys.stderr)
 
 
@@ -730,7 +730,7 @@ def transport(config, target_path):
         host = PlatformHost(client, invoke, call_id, doc_versions)
         try:
             text = cheese.run_platform_tool(tool, args, host)
-        except Exception as exc:  # noqa: BLE001 — the agent reads the reason
+        except Exception as exc:  # the agent reads the reason
             return {"error": failure_text(exc)}
         # Pictures the tool hands back (a mini-app's, as the platform ran it)
         # travel as image blocks after the text, for `proxy.js` to pass on.
