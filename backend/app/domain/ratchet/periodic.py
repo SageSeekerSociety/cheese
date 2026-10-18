@@ -11,4 +11,5 @@ def register_periodic_jobs(jobs: PeriodicJobs, *, sessions: SessionFactory) -> N
         "ratchet ingest",
         settings.ratchet_ingest_interval_s,
         lambda: ingest.ingest_snapshots(sessions),
+        forge_bound=True,
     )
