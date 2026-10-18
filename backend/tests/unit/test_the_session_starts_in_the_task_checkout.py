@@ -42,6 +42,9 @@ def machine(monkeypatch):
         if method == "context_fs":
             return {"generation": "g1", "entries": {}, "instructions": ""}
         if method == "invoke":
+            # Taking the hands does this when there is no token file yet
+            # (`RemoteClient.acquire`); `prepare` must not keep it.
+            self.config["execution_token"] = "lease-token"
             command = params["args"]["command"]
             if TASK in command:
                 # A first open installs before it prints the path, which is
@@ -94,6 +97,50 @@ def test_a_task_session_starts_in_its_checkout(tmp_path, pinned, machine, monkey
         method == "invoke" and TASK in params["args"]["command"]
         for method, params in machine
     )
+
+
+def test_the_leases_credential_stays_out_of_the_target(
+    tmp_path, pinned, machine, monkeypatch
+):
+    """Taking the hands keeps the credential beside the target, never in it —
+    a target that carries it is written to disk and embedded in the plugin."""
+    _prepare(tmp_path, pinned, monkeypatch, TASK)
+    written = (tmp_path / "seat" / "remote-session" / "execution.json").read_text()
+    assert "lease-token" not in written
+    for path in (tmp_path / "seat" / "remote-session").rglob("*"):
+        if path.is_file() and path.suffix in {".json", ".js"}:
+            assert "lease-token" not in path.read_text(), path
+
+
+def test_a_relative_file_path_is_anchored_at_the_checkout(monkeypatch):
+    """`SendUserFile` reads a relative path from where the session is, not from
+    the project view, which for a task is its checkout."""
+    from app.domain.agent.harness.claude_code.remote_execution import send_user_file
+
+    monkeypatch.setenv("CHEESE_TOPIC", TASK)
+
+    class Client:
+        def working_directory(self):
+            return CHECKOUT
+
+        def platform_request(self, args):
+            raise AssertionError("nothing to publish")
+
+        def publish_message(self, payload, args):
+            raise AssertionError("nothing to caption")
+
+    def invoke(call, args):
+        raise RuntimeError("no machine in this test")
+
+    result = send_user_file.deliver_send_user_file(
+        Client(),
+        {"workspace": ROOM},
+        {"id": "relative"},
+        {"files": [{"path": "docs/report.pdf"}]},
+        invoke,
+    )
+    entry = result["value"]["attachments"][0]
+    assert entry["path"] == CHECKOUT + "/docs/report.pdf"
 
 
 def test_the_checkout_is_opened_on_the_machine(
