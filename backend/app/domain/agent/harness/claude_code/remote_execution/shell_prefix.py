@@ -405,11 +405,17 @@ def run_on_the_machine(target, command):
     # substitution rather than escaping a value that is about to be replaced.
     short_name = os.environ.get(WORKING_DIRECTORY)
     spelled_later = target.get("workspace") == DEFERRED_WORKSPACE
+    client = RemoteClient(target)
     if short_name is not None and not spelled_later:
-        short_name = outward(short_name)
+        if short_name in {DEFERRED_WORKSPACE, target.get("virtual_workspace")}:
+            # The session started before its machine was rented, so its name
+            # was the placeholder: the machine has it now, and the directory it
+            # stands for is the task's checkout, not the project view.
+            short_name = client.working_directory(notice=False)
+        else:
+            short_name = outward(short_name)
     merge = _same_file(1, 2)
     command_id = "shell-" + uuid.uuid4().hex
-    client = RemoteClient(target)
 
     def call(operation, **params):
         return client.call(

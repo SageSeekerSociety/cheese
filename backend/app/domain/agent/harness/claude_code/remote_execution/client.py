@@ -300,11 +300,30 @@ def prepare(
         seen = placeholder if at_placeholder else info["workspace"]
         if not at_placeholder:
             workspace = Path(info["workspace"])
-    carry_conversation(config, extra_args, seen)
+    # Where the session starts — and what `$T` stands for. A task's session
+    # starts in its own checkout, which is only opened once the machine that
+    # holds the project is at hand: a placeholder session keeps the project
+    # view (there is no checkout to open yet), and takes its checkout when the
+    # platform relaunches it onto the machine (`_take_leased_machine`).
+    start = seen
+    if (
+        not unavailable
+        and not at_placeholder
+        and target.get("kind") != "private"
+        and os.environ.get("CHEESE_TOPIC")
+    ):
+        working = client.working_directory()
+        if working and working != info["workspace"]:
+            start = working if local else session_path(working)
+    carry_conversation(config, extra_args, start)
     target = dict(
         target,
         workspace=info["workspace"],
         session_workspace=seen,
+        # Where the session itself starts, when that is not where it sees the
+        # project: a task's session starts in its checkout (`enter` makes the
+        # directory there before it chdirs, so the view stays where it was).
+        start_directory=start,
         # Where its paths are rewritten from once it takes its machine
         # (`RemoteClient.call`): the directory it started in, not the
         # placeholder a session in its own namespace sees.
@@ -435,7 +454,7 @@ def prepare(
     )
     settings_path = directory / "settings.json"
     settings_path.write_text(json.dumps(settings))
-    write_claude_state(config, seen)
+    write_claude_state(config, start)
     servers = {
         "native": {
             "type": "stdio",
@@ -465,7 +484,7 @@ def prepare(
         # shell prefix reads it here and binds it in each command's shell
         # (`shell_prefix.bind_working_directory`); the executor's environment is
         # what a native session there would have, with no such variable.
-        WORKING_DIRECTORY: seen,
+        WORKING_DIRECTORY: start,
         "CLAUDE_CONFIG_DIR": str(config),
         "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
         "DISABLE_AUTOUPDATER": "1",
@@ -542,8 +561,8 @@ def prepare(
         # `workspace`; `cwd` is where this host holds it, for starting there.
         "command": command if local else [*helper, "enter", str(target_path), *command],
         "env": env,
-        "cwd": seen if local else str(workspace),
-        "workspace": seen,
+        "cwd": start if local else str(workspace),
+        "workspace": start,
         "execution": str(target_path),
     }
     (directory / "launch.json").write_text(json.dumps(launch))
