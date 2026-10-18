@@ -13,6 +13,8 @@ import 就是 C3 说的那条环。抄对了 SQL 一样；抄错了不报错 —
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.sqltypes import NullType
 
@@ -60,6 +62,41 @@ def test_the_copies_say_the_real_table_names() -> None:
     """表名也要对得上：抄成另一张表的列名，SQL 会静默读到别处。"""
     for name, bare, model in COPIES:
         assert bare.name == model.__tablename__, name
+
+
+def test_project_material_takes_their_rows_and_not_their_models() -> None:
+    """裸表副本还回来不算还：模型 import 一旦加回去，那条环就回来了。
+
+    C3 的基线是从 merge base 量的，那棵树里 `project_material -> room_task.models`
+    和 `-> review.models` 都在，所以把它们加回去检查只会回到「和基线一样」，不红。
+    已经还掉的那两条边只能在这里钉住——判据和 `counterpart` 那条一样：本包只许读
+    `project_material_rows` 里的副本，不许 import 那两个包的 `models`。
+    """
+    import ast
+
+    root = Path(__file__).resolve().parents[2]
+    forbidden = ("app.domain.room_task.models", "app.domain.review.models")
+    offenders: dict[str, list[str]] = {}
+    for name in ("project_material.py", "project_material_rows.py"):
+        source = (root / "app/domain" / name).read_text(encoding="utf-8")
+        module = f"app.domain.{name[:-3]}"
+        found = []
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            if node.level:
+                base = module.split(".")[: -node.level]
+                head = ".".join(base + (node.module.split(".") if node.module else []))
+            else:
+                head = node.module or ""
+            if head in forbidden:
+                found.append(head)
+        if found:
+            offenders[name] = found
+    assert not offenders, (
+        f"project_material 又 import 了真模型：{offenders}。"
+        "只读的那几列走 project_material_rows 的副本，不要在包内把边加回去。"
+    )
 
 
 def test_the_spelled_out_status_values_are_the_models_own() -> None:

@@ -51,6 +51,17 @@ def _agent_imports(source: str, module: str) -> set[str]:
     return found
 
 
+def test_the_guard_scans_the_package_it_thinks_it_does() -> None:
+    """先钉住扫描范围：目录改名或路径写错时，上面那条会「扫了 0 个文件」全绿。
+
+    `offenders` 为空既可能是真干净，也可能是 glob 一个都没匹配上——这两种情况在
+    断言里长得一样。这里要求至少扫到本包的入口文件。
+    """
+    scanned = {py.name for py in PACKAGE.rglob("*.py")}
+    entry = {"__init__.py", "services.py", "configuration.py"}
+    assert entry <= scanned, sorted(scanned)
+
+
 def test_no_module_in_agent_instance_imports_the_agent_package() -> None:
     """这个包里一个 import 都不许有：有了一条，那条环就回来了。"""
     offenders = {}
