@@ -5,6 +5,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from app.domain.repository.identity import noreply_email
+
 
 @dataclass
 class PullRequestStatus:
@@ -69,6 +71,19 @@ class PullRequestStatus:
     #: payload; that reads as "cannot confirm" and stops the merge, which is
     #: the safe side of a title nobody can check.
     title: str = ""
+    #: The address of the human whose account opened the PR, None when a bot
+    #: (the App) did. GitHub makes the opener the author of the squash commit,
+    #: so this decides who the landed commit is credited to.
+    opened_by: str | None = None
+
+
+def pr_opener(data: dict) -> str | None:
+    """The GitHub no-reply address of the person who opened the PR in `data`,
+    None when it was a bot or the payload does not say."""
+    user = data.get("user") or {}
+    if user.get("type") != "User" or not user.get("id") or not user.get("login"):
+        return None
+    return noreply_email(str(user["id"]), str(user["login"]))
 
 
 def _parse_github_time(raw: object) -> datetime | None:
@@ -116,6 +131,7 @@ def parse_pull_request_status(data: dict) -> PullRequestStatus:
         ),
         draft=bool(data.get("draft")),
         title=str(data.get("title") or ""),
+        opened_by=pr_opener(data),
         # Gated on `merged` on purpose — see PullRequestStatus's docstring
         # for what this field holds on an unmerged PR.
         merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
