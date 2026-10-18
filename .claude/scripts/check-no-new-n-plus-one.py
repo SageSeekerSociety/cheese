@@ -255,8 +255,6 @@ async def _boundary_check(module: ModuleType) -> None:
     await middleware({"type": "http"}, None, send)
 
     watch = inside[0]
-    if watch is None:
-        raise AssertionError("中间件里 current_watch() 为空")
     if module.current_watch() is not None:
         raise AssertionError("请求结束后 ContextVar 没有恢复")
     if not watch.closed:
@@ -273,34 +271,46 @@ def _never_raises_check(module: ModuleType) -> None:
     failed to count, so a statement it cannot fingerprint must be dropped
     quietly, and a report that hits an unusable logger must not escape either.
     """
-    watch = module.RequestWatch()
-    try:
-        watch.note(object())  # not even a string: must be swallowed, not raised
-    except Exception as exc:  # noqa: BLE001 - raising here is the failure
-        # Kept separate from the report check below: sharing one try made a
-        # note() that raised end this case before the report ever ran, which
-        # is how the report half stopped being covered.
-        raise AssertionError(f"note() 记录不了这条语句时抛了出来: {exc}") from exc
-    if watch.groups:
-        raise AssertionError("无法指纹的语句被记了下来")
-    watch.note("SELECT 1", stack=STACK)
-    watch.note("SELECT 1", stack=STACK)
+    class Sink:
+        """Records both kinds of line, and fails only when asked to."""
 
-    class ExplodingLogger:
-        def __init__(self) -> None:
+        def __init__(self, *, explode: bool) -> None:
+            self.explode = explode
+            self.debugged: list = []
             self.warned: list = []
 
+        def debug(self, *args, **_kwargs) -> None:
+            self.debugged.append(args)
+
         def warning(self, *args, **_kwargs) -> None:
-            # The log line is the detector's whole output, so record that one
-            # was asked for before failing the way a broken sink would.
             self.warned.append(args)
-            raise RuntimeError("log sink is broken")
+            if self.explode:
+                raise RuntimeError("log sink is broken")
 
-        def debug(self, *_args, **_kwargs) -> None:
-            return None
-
+    watch = module.RequestWatch()
     original = module.logger
-    sink = ExplodingLogger()
+    quiet = Sink(explode=False)
+    module.logger = quiet
+    try:
+        try:
+            watch.note(object())  # not a string: swallowed, not raised
+        except Exception as exc:  # noqa: BLE001 - raising here is the failure
+            # Kept separate from the report check below: sharing one try made
+            # a note() that raised end this case before the report ever ran.
+            raise AssertionError(
+                f"note() 记录不了这条语句时抛了出来: {exc}"
+            ) from exc
+    finally:
+        module.logger = original
+    if watch.groups:
+        raise AssertionError("无法指纹的语句被记了下来")
+    if not quiet.debugged:
+        # The module says a swallowed failure leaves a trail for a human.
+        raise AssertionError("note() 吞掉语句时没有留下 debug 日志")
+    watch.note("SELECT 1", stack=STACK)
+    watch.note("SELECT 1", stack=STACK)
+
+    sink = Sink(explode=True)
     module.logger = sink
     try:
         module.report(watch)
@@ -330,6 +340,10 @@ def _begin_finish_check(module: ModuleType) -> None:
         # A task that inherited the watch must stop counting into a request
         # nobody will report.
         raise AssertionError("finish() 之后 watch 没有关闭")
+    before = sum(group.count for group in watch.groups.values())
+    watch.note(SELECT_TOPICS.format(3), stack=STACK)
+    if sum(group.count for group in watch.groups.values()) != before:
+        raise AssertionError("finish() 之后还往已关闭的 watch 里记语句")
     if module.current_watch() is not None:
         raise AssertionError("finish() 之后 ContextVar 没有恢复")
 
@@ -406,8 +420,15 @@ def main() -> int:
         for case in CASES:
             try:
                 matched, detail = judge(module, case)
-            except Exception as exc:  # a crash is "cannot judge"
-                raise CannotJudge(f"场景「{case.name}」跑不下去: {exc}") from exc
+            except Exception as exc:
+                # A detector that raises on a legal statement is a regression
+                # of the detector, not a tree we cannot judge: record it and
+                # keep running the rest, so one crash does not hide every
+                # other case behind exit 2.
+                failures.append(
+                    {"case": case.name, "detail": f"探测器抛了异常: {exc}"}
+                )
+                continue
             if not matched:
                 failures.append({"case": case.name, "detail": detail})
         try:

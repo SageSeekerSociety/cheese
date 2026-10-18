@@ -144,6 +144,56 @@ class NPlusOneGuardTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("记录与报告不抛异常", result.stderr)
 
+    def test_a_note_that_stops_leaving_a_trail_turns_this_guard_red(self) -> None:
+        def stop_logging(source: str) -> str:
+            return source.replace(
+                '            logger.debug("query watch could not record a statement", exc_info=True)',
+                "            pass",
+                1,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            module = self._mutate(
+                directory,
+                stop_logging,
+                "query watch could not record a statement",
+            )
+            result = self._run(SCRIPT, "--module", str(module))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("没有留下 debug 日志", result.stderr)
+
+    def test_a_note_that_ignores_the_closed_watch_turns_this_guard_red(
+        self,
+    ) -> None:
+        def ignore_closed(source: str) -> str:
+            return source.replace(
+                "        if self.closed:\n            return\n", "", 1
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            module = self._mutate(
+                directory,
+                ignore_closed,
+                "        if self.closed:\n            return\n",
+            )
+            result = self._run(SCRIPT, "--module", str(module))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("还往已关闭的 watch 里记语句", result.stderr)
+
+    def test_a_detector_crash_is_a_failure_not_cannot_judge(self) -> None:
+        def crash(source: str) -> str:
+            anchor = (
+                "    def note(self, statement: str, *, stack: Sequence[str] | None = None) -> None:\n"
+            )
+            return source.replace(anchor, anchor + '        raise RuntimeError("boom")\n', 1)
+
+        with tempfile.TemporaryDirectory() as directory:
+            module = self._mutate(directory, crash, "    def note(self, statement")
+            result = self._run(SCRIPT, "--module", str(module))
+        # 1, not 2: the detector is broken, the tree is judgeable.
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("探测器抛了异常", result.stderr)
+
     def test_a_finish_that_leaves_the_watch_open_turns_this_guard_red(self) -> None:
         # finish() closes the watch so a task that inherited it stops counting.
         def leave_open(source: str) -> str:
@@ -164,24 +214,29 @@ class NPlusOneGuardTests(unittest.TestCase):
         self.assertIn("begin/finish 边界", result.stderr)
 
     def test_a_dollar_quote_that_keeps_its_tag_turns_this_guard_red(self) -> None:
-        # $$...$$ and $tag$...$tag$ are both documented; a case has to cover
-        # each, or dropping the tagged branch goes unnoticed.
-        def only_untagged(source: str) -> str:
-            return source.replace(
-                '_DOLLAR_QUOTED = re.compile(r"\\$[A-Za-z_0-9]*\\$.*?\\$[A-Za-z_0-9]*\\$", re.DOTALL)',
-                '_DOLLAR_QUOTED = re.compile(r"\\$\\$.*?\\$\\$", re.DOTALL)',
-                1,
-            )
-
-        with tempfile.TemporaryDirectory() as directory:
-            module = self._mutate(
-                directory,
-                only_untagged,
-                "_DOLLAR_QUOTED = re.compile",
-            )
-            result = self._run(SCRIPT, "--module", str(module))
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn("$tag$", result.stderr)
+        # $$...$$ and $tag$...$tag$ are both documented; one case each, so a
+        # branch dropped in either direction is noticed.
+        pattern = '_DOLLAR_QUOTED = re.compile(r"\\$[A-Za-z_0-9]*\\$.*?\\$[A-Za-z_0-9]*\\$", re.DOTALL)'
+        for name, replacement, expected in (
+            ("只认 $$", '_DOLLAR_QUOTED = re.compile(r"\\$\\$.*?\\$\\$", re.DOTALL)', "$tag$"),
+            (
+                "只认 $tag$",
+                '_DOLLAR_QUOTED = re.compile(r"\\$[A-Za-z_0-9]+\\$.*?\\$[A-Za-z_0-9]+\\$", re.DOTALL)',
+                "（$$）",
+            ),
+        ):
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory() as directory:
+                    module = self._mutate(
+                        directory,
+                        lambda source, replacement=replacement: source.replace(
+                            pattern, replacement, 1
+                        ),
+                        "_DOLLAR_QUOTED = re.compile",
+                    )
+                    result = self._run(SCRIPT, "--module", str(module))
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(expected, result.stderr)
 
     def test_a_detector_that_never_reports_turns_this_guard_red(self) -> None:
         override = (
@@ -257,7 +312,9 @@ class NPlusOneGuardTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         names = [failure["case"] for failure in payload["failures"]]
         self.assertIn("同指纹同栈 3 次 → 报", names)
-        self.assertEqual(len(payload["failures"]), len(names))
+        # The count has to match what actually ran, not just be a plausible
+        # number: a case that stopped running would otherwise go unnoticed.
+        self.assertGreaterEqual(payload["cases"], 16)
 
     def test_the_real_detector_has_the_fingerprint_this_guard_pins(self) -> None:
         # If the fingerprint is rewritten rather than loosened, the mutations
