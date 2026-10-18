@@ -11,12 +11,12 @@ from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.space_access import is_space_admin
 from app.core.errors import BadRequestError
 from app.core.sentences import say
+from app.domain.space.repositories import SpaceAdminRelationRepository
 from app.domain.task.models import Task
 from app.domain.task.repositories import TaskMentorRepository
-from app.domain.user.services import user_by_handle
+from app.domain.user.services import users_by_handle
 
 
 async def set_mentors(
@@ -26,14 +26,24 @@ async def set_mentors(
     handles: Sequence[str],
     creator_user_id: int | None,
 ) -> None:
-    """Record who joins every claimer's project as a mentor."""
+    """Record who joins every claimer's project as a mentor.
+
+    Two reads for the whole list, not two per handle: the accounts in one query
+    and the board's admins in another. Handles are still checked in the order
+    given, so the first bad one is the one reported, as before.
+    """
+    users = await users_by_handle(session, handles)
+    admin_ids: set[int] = set()
+    if handles and task.space_id is not None:
+        relations = await SpaceAdminRelationRepository(session).list_admins(
+            task.space_id
+        )
+        admin_ids = {relation.user_id for relation in relations}
     for handle in handles:
-        user = await user_by_handle(session, handle)
+        user = users.get(handle)
         if user is None:
             raise BadRequestError(say("accountNotFound", handle=handle))
-        if user.id != creator_user_id and not await is_space_admin(
-            session, space_id=task.space_id, user_id=user.id
-        ):
+        if user.id != creator_user_id and user.id not in admin_ids:
             raise BadRequestError(say("mentorNotSpaceAdmin", handle=handle))
     await TaskMentorRepository(session).replace(task.id, handles)
 
