@@ -1,0 +1,90 @@
+"""`task_row_json` is byte-identical to the per-row Pydantic path, and cheaper."""
+
+import json
+import time
+import uuid
+from datetime import UTC, datetime, timedelta, timezone
+
+from app.domain.room_task.adapters import task_row_json
+from app.domain.room_task.models import Task, TaskStatus, TaskTitleSource
+from app.domain.room_task.schemas import TaskOut
+
+PROJECT_ID = uuid.UUID(int=2)
+ROOM_ID = uuid.UUID(int=1)
+T0 = datetime(2026, 10, 17, 12, 0, 0, 123456, tzinfo=UTC)
+
+
+def _tasks(count: int) -> list[Task]:
+    return [
+        Task(
+            id=uuid.UUID(int=i + 10),
+            project_id=PROJECT_ID,
+            room_id=ROOM_ID,
+            number=i if i % 9 else None,
+            title=f"任务 {i}",
+            title_source=TaskTitleSource.human if i % 4 else TaskTitleSource.auto,
+            status=TaskStatus.open if i % 2 else TaskStatus.closed,
+            owner_handle=f"u{i % 7}" if i % 5 else None,
+            reviewer_handle="r" if i % 3 else None,
+            contributor_handles=[f"h{i}", "x"] if i % 6 == 0 else [],
+            created_by="c",
+            branch_name=f"task/{i}" if i % 4 == 0 else None,
+            base_branch="main",
+            base_task_id=uuid.UUID(int=i) if i % 10 == 0 else None,
+            historical_delivery_id=uuid.UUID(int=i) if i % 11 == 0 else None,
+            pr_number=i if i % 4 == 0 else None,
+            document_id=uuid.UUID(int=i + 5) if i % 7 == 0 else None,
+            accepted_by="a" if i % 13 == 0 else None,
+            accepted_at=T0 if i % 13 == 0 else None,
+            closed_at=T0.astimezone(timezone(timedelta(hours=8)))
+            if i % 5 == 0
+            else None,
+            source_block_id=uuid.UUID(int=i + 7) if i % 3 == 0 else None,
+            upgraded_from_block_id=uuid.UUID(int=i + 9) if i % 17 == 0 else None,
+            conclusion=f"done {i}" if i % 8 == 0 else None,
+            created_at=T0,
+            updated_at=T0.replace(tzinfo=None) if i % 19 == 0 else T0,
+        )
+        for i in range(count)
+    ]
+
+
+def _bytes(rows: list[dict]) -> bytes:
+    return json.dumps(rows, ensure_ascii=False).encode()
+
+
+def _old(tasks):
+    return [TaskOut.model_validate(t).model_dump(mode="json") for t in tasks]
+
+
+def _new(tasks):
+    return [task_row_json(t) for t in tasks]
+
+
+def test_1000_rows_are_byte_identical_to_task_out() -> None:
+    tasks = _tasks(1000)
+    assert _bytes(_new(tasks)) == _bytes(_old(tasks))
+
+
+def test_rows_are_built_without_pydantic_validation(monkeypatch) -> None:
+    def boom(*_a, **_k):
+        raise AssertionError("per-row model_validate is back")
+
+    monkeypatch.setattr(TaskOut, "model_validate", boom)
+    assert len(_new(_tasks(50))) == 50
+
+
+def test_assembly_is_faster_than_per_row_validation() -> None:
+    tasks = _tasks(1000)
+
+    def best(fn) -> float:
+        runs = []
+        for _ in range(5):
+            start = time.perf_counter()
+            fn(tasks)
+            runs.append(time.perf_counter() - start)
+        return min(runs)
+
+    new, old = best(_new), best(_old)
+    # Measured ~0.78 (27 ms vs 34 ms per 1000 rows); the rest is ORM attribute reads.
+    assert new < old * 0.95, (new, old)
