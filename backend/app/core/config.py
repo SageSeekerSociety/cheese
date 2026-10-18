@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.machine_config import MachineSettings
 from app.core.sandbox_config import SandboxSettings
 
 # The gateway mounts this whole app under `/api` and strips that one segment
@@ -60,11 +61,12 @@ def parse_data_encryption_keys(value: str) -> tuple[bytes, ...]:
     return tuple(keys)
 
 
-class Settings(BaseSettings, SandboxSettings):
-    # The base class above is the sandbox's own settings and the package
-    # mirrors a room fetches through (`core/sandbox_config`); they are a base
-    # class rather than sections below because this module is at the size cap
-    # it is held to and that section stands alone.
+class Settings(BaseSettings, SandboxSettings, MachineSettings):
+    # The base classes above are the sandbox's own settings and the package
+    # mirrors a room fetches through (`core/sandbox_config`), and the machines a
+    # sandbox runs on (`core/machine_config`); they are base classes rather than
+    # sections below because this module is at the size cap it is held to and
+    # those sections stand alone.
     # `validate_by_name` exists for exactly one field, `platform_admin_handles`:
     # it carries a `validation_alias` (so the deploy keeps working through the
     # env-name change), and in pydantic a field with an alias is otherwise
@@ -676,155 +678,6 @@ class Settings(BaseSettings, SandboxSettings):
     # (CONNECTOR_WS_OVERRIDES, commits ce30e62 + 6327c7e).
     connector_ws_overrides: dict[str, str] = {}
 
-    # --- MicroCloud: the platform's pool of cloud hosts ---
-    # Every cloud host belongs to the platform, under one MicroCloud customer and
-    # account of its own, and carries the sandboxes of sessions from any project.
-    # Cheese is one MicroCloud tenant and keeps the opaque provider secret
-    # server-side. Empty secret = the feature reports itself unavailable without
-    # breaking self-hosted compute.
-    microcloud_base_url: str = ""
-    microcloud_tenant_secret: str = ""
-    microcloud_timeout_s: float = 30.0
-    # Pin a specific granted offering (machine type + zone + template); 0 = take
-    # the first active one, which is right while a tenant is granted exactly one.
-    microcloud_offering_id: int = 0
-    # The size every cloud host is created with. Every value is clamped into the
-    # chosen offering's own range, so these are preferences, not guarantees.
-    # Four sandboxes at their full 3 GiB limit fit in 16 GiB less the host's own
-    # quarter (`models.capacity`); a 4 GiB host held one.
-    microcloud_default_cores: int = 4
-    microcloud_default_memory_mb: int = 16384
-    microcloud_default_disk_gb: int = 40
-    # Prepare the default CPU offering; zero disables replenishment.
-    microcloud_warm_pool_size: int = Field(default=0, ge=0, le=5)
-    # Requires deploy/cloud-control.py on the backend host before enrollment.
-    microcloud_direct_control: bool = False
-    microcloud_warm_max_age_seconds: int = Field(default=3600, ge=300, le=86400)
-    microcloud_login_user: str = "cheese"
-    # What one session's sandbox on a Cloud machine may use
-    # (`remote_execution/sandbox_host.py`), whatever else shares the machine.
-    # Memory: 3 GiB, a quarter of what the default 16 GiB host gives its
-    # sandboxes. Sessions in this repository's
-    # own earlier sandboxes had `pnpm run build` and `vue-tsc` OOM-killed at
-    # 2 GiB (docs/topics), and the limit is there so that a session over it is
-    # killed alone, not to share the machine out evenly. No swap, so a session
-    # at its limit is killed instead of pushing the machine into swap. CPU:
-    # two cores each, so a session alone on a host gets half of it; when they
-    # all run, sessions share by equal weight. Processes: stops a
-    # fork bomb, well above the threads a Node or JVM build starts.
-    cloud_sandbox_memory_mb: int = Field(default=3072, ge=64)
-    cloud_sandbox_swap_mb: int = Field(default=0, ge=0)
-    cloud_sandbox_cpus: int = Field(default=2, ge=1, le=1024)
-    cloud_sandbox_pids: int = Field(default=4096, ge=16)
-    # Disk. A sandbox's home — its checkout, its dependencies, its /tmp — is on
-    # the disk of the machine it runs on, shared with every other sandbox there
-    # and, on a person's computer, with everything of theirs. Every machine
-    # holding a sandbox has its free bytes and inodes read this often
-    # (`machine/disk_guard.py`); below these shares free, of either, it takes
-    # no new sandbox and its heaviest sandbox is stopped. The shares are the
-    # defaults of Kubernetes' `nodefs.available` and `nodefs.inodesFree`.
-    # Inodes are their own floor: on 2026-10-14 a dev host ran out of them
-    # with 15 GB still free.
-    sandbox_disk_check_s: int = Field(default=60, ge=10, le=3600)
-    sandbox_disk_free_floor: float = Field(default=0.10, ge=0, le=0.9)
-    sandbox_inodes_free_floor: float = Field(default=0.05, ge=0, le=0.9)
-    # What each home holds is read by walking every file in it: about 13 s on a
-    # dev host holding 880 thousand inodes (2026-10-14), so a walk every check
-    # would keep the disk busy a fifth of the time. It is walked this often, and
-    # at once whenever a check finds the disk below a floor, so an eviction
-    # still picks the sandbox holding the most.
-    sandbox_disk_walk_s: int = Field(default=300, ge=10, le=86400)
-    # What one sandbox is expected to take of a host's disk, for how many a
-    # host runs at once (`models.capacity`), after `cloud_host_disk_reserve_gb`
-    # for the host itself and its projects' package stores. Measured on dev,
-    # 2026-10-14: a sandbox with one task's checkout and its dependencies held
-    # 1.5–2.3 GB and 95–130 thousand inodes; one project's package store held
-    # 6.5 GB.
-    cloud_sandbox_disk_gb: int = Field(default=4, ge=1)
-    cloud_host_disk_reserve_gb: int = Field(default=10, ge=0)
-    # What one sandbox on a platform host may hold, however much room the rest
-    # of the disk has (`disk_guard`): a sandbox over it is stopped before it
-    # can fill the host for the others. About five times the measurement
-    # above. Not on a person's computer, whose disk is theirs to fill; there
-    # only the floors above apply.
-    cloud_sandbox_disk_budget_gb: int = Field(default=12, ge=1)
-    cloud_sandbox_inode_budget: int = Field(default=600_000, ge=1000)
-    # An operator's SSH public key, authorised on every machine the platform
-    # opens, next to the one-shot bootstrap key. That key is erased the moment
-    # enrollment succeeds, so without this nobody can read a Cloud machine's
-    # connector journal afterwards — which is why the 2026-08-29 failure on
-    # machine 477 was never diagnosed. Platform-provisioned machines only: a
-    # self-hosted box is someone else's and never gets a key of ours.
-    microcloud_operator_ssh_pubkey: str = ""
-    # The platform's fund account for its hosts, and the balance kept in it.
-    # MicroCloud bills compute against this; 0 disables top-ups (an operator funds
-    # it by hand).
-    microcloud_account_name: str = "compute"
-    microcloud_initial_funds: float = 1000.0
-    # Sandbox slots per host core: how many sessions' sandboxes one host runs at
-    # once, unless its memory holds fewer at `cloud_sandbox_memory_mb` each
-    # (`models.capacity`). A sandbox holds its slot for as long as it exists.
-    cloud_host_slots_per_core: int = Field(default=2, ge=1, le=16)
-    # A cloud sandbox is destroyed once its conversation has run no turn and
-    # its session has asked for no tool for this long (`machine/lifecycle.py`).
-    cloud_sandbox_idle_stop_s: int = Field(default=180, ge=60, le=86400)
-    # A command the executor still runs for the session keeps an otherwise
-    # idle sandbox up, but no longer than this after the session's last activity.
-    cloud_sandbox_background_cap_s: int = Field(default=900, ge=0, le=7 * 86400)
-    # Pre-scale: when the free slots of the pool's live hosts fall below this,
-    # the pool sweep claims (or creates) the next host before anyone waits on it.
-    # The default host (four cores, 16 GiB, 40 GB) runs four sandboxes, so the
-    # floor is one host's worth: the next host is under way once fewer than four
-    # slots are free, instead of only once the pool is full. A deployment that
-    # creates a different host size sets this to that host's capacity.
-    cloud_pool_min_free_slots: int = Field(default=4, ge=0, le=64)
-    # How long a host that has no sandbox on it is kept before it is released.
-    cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
-    # The most hosts the pool holds at once, whole cloud VMs among them. It
-    # protects the MicroCloud cluster. Ten places give forty sandbox slots, the
-    # current 400 GB thin pool's worth written full; two more are whole VMs,
-    # over-committing it by two disks. Raise this only as that pool grows.
-    cloud_pool_max_hosts: int = Field(default=12, ge=1, le=500)
-    # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
-    # The offering a session that asks for a whole machine gets its VM from
-    # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
-    # the choice. A VM counts against `cloud_pool_max_hosts` like a host.
-    microcloud_vm_offering_id: int = 0
-    # The size every whole cloud VM is created with, clamped into the offering's
-    # own range; what a session is charged is spec × time, recorded on its row.
-    cloud_vm_cores: int = Field(default=4, ge=1)
-    cloud_vm_memory_mb: int = Field(default=8192, ge=1024)
-    cloud_vm_disk_gb: int = Field(default=40, ge=10)
-    # A session's VM is released once its room has run no turn and the session
-    # has asked for no tool for this long, after its work is pushed. The next
-    # tool call prepares a new one, which takes minutes: longer than a
-    # sandbox's idle stop.
-    cloud_vm_idle_release_s: int = Field(default=1800, ge=60, le=7 * 86400)
-    # A command the executor still runs for the session keeps an idle VM up,
-    # but no longer than this after its last activity — longer than a
-    # sandbox's cap, since a VM's idle release is longer too.
-    cloud_vm_background_cap_s: int = Field(default=3600, ge=0, le=7 * 86400)
-    # Credits one cloud sandbox costs per hour it runs, from start to idle stop
-    # (usage/compute.py). Unset on purpose: the price is the product owner's to
-    # set, and with none set no cloud sandbox starts, so cloud compute never
-    # runs free by accident. 0 is an explicit "free".
-    cloud_sandbox_credits_per_hour: float | None = Field(default=None, ge=0)
-    # Credits per hour of a whole cloud VM, by its size as cores and GiB of
-    # memory, e.g. `{"4c8g": 30}` (usage.compute.vm_spec). A size not named
-    # here cannot be started.
-    cloud_vm_credits_per_hour: dict[str, float] = Field(default_factory=dict)
-    # How long a SETTLED machine may go without being re-checked against
-    # MicroCloud by the sweep. Never would let a machine destroyed upstream sit
-    # here as `running` forever (which happened, and also consumed the
-    # per-project limit).
-    microcloud_reconcile_interval_s: float = 120.0
-    # How often to sweep for machines that came up and still need enrolling as
-    # devices. Ten seconds, not sixty: a Cloud topic's first turn waits on this
-    # clock, and at 60s a person waited up to a minute on a timer for a machine
-    # that was already there. A tick with nothing unsettled is three cheap
-    # queries.
-    machine_enroll_interval_seconds: int = 10
-
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     # The sandbox's own settings — the callback base, the token, the retired
     # shim directory — and the package mirrors a room fetches through are the
@@ -1004,21 +857,21 @@ class Settings(BaseSettings, SandboxSettings):
     memory_migration_chunk: int = 60
 
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
-    # How often the background poller checks an open PR's CI / the deploy
-    # workflow it triggers after merge. This is the clock every card's merge
-    # state is mirrored on, so it is also how late a green or merged PR reaches
-    # its card; `review/queries.CHECK_WATCH_TICKS` counts 「还在等 CI」 off three
-    # of these.
+    # How often the poller checks an open PR's CI / its post-merge deploy —
+    # the clock every card's merge state is mirrored on (`CHECK_WATCH_TICKS`).
     accept_pr_poll_interval_s: int = 60
+    # 草稿扫描自己的时钟（卡轮询不跟着慢）：一个候选每遍要问 GitHub 两次，
+    # 2026-10-18 实测 23 个候选每 60 秒 ≈2,760 次/小时。
+    draft_pr_sweep_interval_s: int = 300
+    # 只扫这段时间里动过的活（最后一条消息，没人说过就按建任务时刻）；0＝不过滤。
+    draft_pr_sweep_activity_window_s: int = 7200
     # 卡面上的合并态是快照，而采纳按钮按它亮不亮。读卡这条路也会重算一次陈旧的
-    # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 来读一
-    # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是
-    # 必须的：读卡是热点，不能每个读者都替全平台去问一次 GitHub。
+    # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 读到的
+    # 都是同一份旧快照。读卡是热点，不能让每个读者都替全平台去问一次 GitHub。
     accept_pr_snapshot_floor_s: int = 60
-    # How long one card read waits for those refreshes. They run side by side,
-    # one per card however many readers ask, and finish in the background past
-    # this; the next read gets what they wrote. Each is a few GitHub calls, and
-    # in sequence they once held `GET /topics/{id}/accept-card` for 40 s.
+    # How long one card read waits for those refreshes (one per card, side by
+    # side); each is a few GitHub calls, and in sequence they once held
+    # `GET /topics/{id}/accept-card` for 40 s.
     accept_pr_snapshot_read_wait_s: float = 2.0
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that

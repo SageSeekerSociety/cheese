@@ -381,12 +381,16 @@ async def open_draft_prs(
     *,
     dispatch_pending: DispatchPending,
     record_instruction: RecordInstruction,
+    quiet_window_s: int | None = None,
 ) -> dict:
     """有东西就有 PR (#718 拍板①): give every batch with commits a draft PR,
     without waiting for anyone to file a card.
 
     The observation and every reason it is an observation rather than a hook
-    live in `pr_publish.sweep_draft_prs`; this is only the clock.
+    live in `pr_publish.sweep_draft_prs`; this is only the clock. The
+    periodic one passes ``quiet_window_s`` to keep the tick cheap; a catch-up
+    call (a reconnect, a lost event) leaves it ``None`` so every open batch is
+    looked at.
     """
 
     result = dict(
@@ -394,6 +398,7 @@ async def open_draft_prs(
             chat.session_factory,
             announce=announce,
             record_instruction=record_instruction,
+            quiet_window_s=quiet_window_s,
         )
     )
     await deliver_dependency_notices(chat, dispatch_pending=dispatch_pending)

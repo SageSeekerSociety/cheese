@@ -36,8 +36,7 @@ def _room_to_grow(hosts, monkeypatch, *, whole_machine: bool) -> None:
     )
 
 
-def test_idle_sandboxes_are_reclaimed_after_three_minutes():
-    assert Settings.model_fields["cloud_sandbox_idle_stop_s"].default == 180
+def test_a_sandbox_keeps_its_background_command_for_fifteen_minutes():
     assert Settings.model_fields["cloud_sandbox_background_cap_s"].default == 900
 
 

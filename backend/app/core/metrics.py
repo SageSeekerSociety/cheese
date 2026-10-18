@@ -146,11 +146,6 @@ class MetricsRegistry:
                 self._histograms[key] = Histogram(**kwargs)
             return self._histograms[key]
 
-    def histograms_named(self, name: str) -> list[Histogram]:
-        """这个名下**所有**标签组合的直方图（一个标签组合一条）。"""
-        with self._lock:
-            return [h for h in self._histograms.values() if h.name == name]
-
     def _key(self, name: str, labels: dict[str, str] | None) -> str:
         if not labels:
             return name

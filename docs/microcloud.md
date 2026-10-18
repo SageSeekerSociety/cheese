@@ -22,7 +22,7 @@ user-facing route lists hosts. The admin dashboard counts them.
 | Setting | Default | What it does |
 |---|---|---|
 | `CLOUD_HOST_SLOTS_PER_CORE` | 2 | Sandbox slots per host core. A slot is a sandbox, for as long as it exists. |
-| `CLOUD_SANDBOX_IDLE_STOP_S` | 180 | A sandbox whose conversation runs no turn and whose session asked for no tool this long is destroyed. |
+| `CLOUD_SANDBOX_IDLE_STOP_S` | 600 | A sandbox whose conversation runs no turn and whose session asked for no tool this long is destroyed. |
 | `CLOUD_SANDBOX_BACKGROUND_CAP_S` | 900 | A command the executor still runs for the session (a Bash call sent to the background) keeps an idle sandbox up, until this long after the session's last activity. |
 | `CLOUD_VM_BACKGROUND_CAP_S` | 3600 | The same keep-alive for a whole cloud VM's sandbox. Longer than a sandbox's, because a VM's idle release (1800 s) is longer than a sandbox's. |
 | `CLOUD_POOL_MIN_FREE_SLOTS` | 4 | When the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. The default is one host's worth of sandboxes — the default host runs four — so the next host is under way once fewer than four slots are free; a deployment that creates a different host size sets this to that host's capacity. An idle host is not let go if that would take the free slots below it. |
