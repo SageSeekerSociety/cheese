@@ -156,6 +156,13 @@ export function usePanelDoc(props: PanelDocProps) {
     wantsEditable.value = !wantsEditable.value
   }
 
+  // 建议模式（修订）：自己切的；只能提建议的人（导师）一直在里面。
+  const wantsSuggesting = ref(false)
+  const suggesting = computed(() => collab.suggestOnly.value || wantsSuggesting.value)
+  function setSuggesting(on: boolean) {
+    wantsSuggesting.value = on
+  }
+
   /** 文档的节点树：正文里那些段落在服务端那一侧的身份（id、出自哪一次活）。 */
   function fetchDocNodes(): Promise<Block[]> {
     const did = documentId.value
@@ -340,6 +347,8 @@ export function usePanelDoc(props: PanelDocProps) {
     renames: collab.renames,
     peers: collab.peers,
     readOnly: collab.readOnly,
+    suggestOnly: collab.suggestOnly,
+    suggesting,
     // 这一篇现在是什么状态
     editable,
     loading,
@@ -379,6 +388,7 @@ export function usePanelDoc(props: PanelDocProps) {
       return did ? (await getDocumentAbout(did)).title ?? '' : null
     },
     toggleEditable,
+    setSuggesting,
     setError,
     fetchDocNodes,
     imageSrc,

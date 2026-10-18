@@ -1,5 +1,4 @@
 import type { Component } from 'vue'
-import type { Knowledge } from '@/types'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -66,9 +65,6 @@ import Compute from './detail/Compute.vue'
 import Members from './detail/Members.vue'
 import Pending from './Pending.vue'
 
-import KnowledgeEmpty from '@/components/teams/knowledge/KnowledgeEmpty.vue'
-import KnowledgeTable from '@/components/teams/knowledge/KnowledgeTable.vue'
-import KnowledgeToolbar from '@/components/teams/knowledge/KnowledgeToolbar.vue'
 import i18n, { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
@@ -150,29 +146,5 @@ it('renders the pending requests and invitations page in English', async () => {
   await screen.findByText('A project')
   expect(screen.getByText('My requests')).toBeTruthy()
   expect(screen.getAllByText('Pending').length).toBe(2)
-  expectNoChinese()
-})
-
-it('renders the knowledge toolbar, table and empty state in English', async () => {
-  const resource = {
-    id: 1,
-    name: 'Notes',
-    type: 'CODE',
-    labels: ['guide'],
-    creator: { id: 1, nickname: 'Alice', avatarId: 1 },
-    createdAt: 0,
-  } as unknown as Knowledge
-  mount(KnowledgeToolbar, {
-    searchQuery: null,
-    typeFilter: null,
-    tagFilter: null,
-    viewMode: 'grid',
-    resourceTypes: ['TEXT', 'MATERIAL', 'LINK', 'CODE'],
-    availableTags: [],
-  })
-  mount(KnowledgeTable, { items: [resource], ownerId: 1 })
-  mount(KnowledgeEmpty, { hasFilters: true })
-  expect(await screen.findByText('Code snippet')).toBeTruthy()
-  expect(screen.getByText('Upload resource')).toBeTruthy()
   expectNoChinese()
 })

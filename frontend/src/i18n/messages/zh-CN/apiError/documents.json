@@ -78,5 +78,18 @@
   "taskDocParticipantsOnly": "只有任务的负责人和协作者可以修改这个任务的文档，意见请在频道里提",
   "attachmentOriginalReadOnly": "对话里发来的原件不能修改，可以基于它新建一份",
   "docAgentDraftNeedsBlankOverview": "只能为还空着的项目总览起草",
-  "docWholeWriteNeedsBlank": "这份文档已有内容，只能逐处修改（cheese_doc_edit），不能整篇覆盖"
+  "docWholeWriteNeedsBlank": "这份文档已有内容，只能逐处修改（cheese_doc_edit），不能整篇覆盖",
+  "docTeamMembersOnly": "只有团队成员能打开团队的文档",
+  "docTeamNotForAgent": "AI 队友读不到这份团队文档",
+  "docTeamNoAgent": "团队文档里不能找 AI 队友",
+  "docTeamNoImages": "团队文档里暂时不能放图片",
+  "docTeamNoApps": "团队文档里暂时不能放小程序",
+  "docNotMovable": "任务、对话里的文档和项目目标不能移动",
+  "docMoveAuthorOrAdmin": "只有作者和团队管理员能移动这份文档",
+  "docMoveNoSuchPlace": "没有这个团队或项目",
+  "docMoveArchivedProject": "不能移动到已归档的项目",
+  "docShareNotAllowed": "项目文档只有能发布项目网站的人可以分享；团队和个人的文档只有作者和团队管理员可以分享",
+  "docShareGone": "这条分享链接已失效",
+  "docShareAppElsewhere": "这个小程序属于另一份文档，没有随这份文档分享",
+  "docShareImageUnavailable": "这张图片没有随文档分享"
 }

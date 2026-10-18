@@ -44,14 +44,6 @@ class TestUserStatisticsRepository:
         assert await repo.count_task_memberships(1) == 5
 
     @pytest.mark.anyio
-    async def test_count_knowledge_entries(self):
-        session = _mock_session()
-        session.execute.return_value = _mock_scalar_one(10)
-        repo = UserStatisticsRepository(session)
-
-        assert await repo.count_knowledge_entries(1) == 10
-
-    @pytest.mark.anyio
     async def test_count_submissions(self):
         session = _mock_session()
         session.execute.return_value = _mock_scalar_one(7)
@@ -81,7 +73,6 @@ class TestUserStatisticsRepository:
         session.execute.side_effect = [
             _mock_scalar_one(3),  # teams
             _mock_scalar_one(5),  # tasks
-            _mock_scalar_one(10),  # knowledge
             _mock_scalar_one(7),  # submissions
             _mock_scalar_one(4),  # questions
             _mock_scalar_one(6),  # answers
@@ -92,7 +83,6 @@ class TestUserStatisticsRepository:
         assert result == {
             "teamCount": 3,
             "taskParticipationCount": 5,
-            "knowledgeCount": 10,
             "submissionCount": 7,
             "questionCount": 4,
             "answerCount": 6,

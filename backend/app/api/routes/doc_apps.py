@@ -125,6 +125,14 @@ async def _ran(db: DbSession, body: AppCodeIn) -> check.Ran | None:
         ) from None
 
 
+def _project_of(reached) -> uuid.UUID:
+    """The project a mini app's versions are kept in; a team's own document has
+    none to keep them in yet (#3774)."""
+    if reached.doc.project_id is None:
+        raise UnprocessableEntityError(say("docTeamNoApps"))
+    return reached.doc.project_id
+
+
 @router.get(
     "/apps/{key}",
     response_model=Envelope[AppOut],
@@ -216,12 +224,13 @@ async def create_app(
     reached = await reach(db, resolver, document_id, enforce=True)
     await require_writable(db, reached)
     author = _writer(reached, resolver)
+    project_id = _project_of(reached)
     ran = await _ran(db, body)
     snippets = Snippets(db)
     snippet = await snippets.create(reached.doc.id, author)
     version = await snippets.add_version(
         snippet,
-        project_id=reached.doc.project_id,
+        project_id=project_id,
         code=body.code,
         note=body.note,
         author=author,
@@ -251,7 +260,7 @@ async def add_app_version(
     reached, snippet = await _snippet(db, resolver, key, enforce=True)
     await require_writable(db, reached)
     author = _writer(reached, resolver)
-    project_id = reached.doc.project_id
+    project_id = _project_of(reached)
     ran = await _ran(db, body)
     version = await Snippets(db).add_version(
         snippet,

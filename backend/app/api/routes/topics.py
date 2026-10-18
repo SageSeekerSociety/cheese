@@ -561,7 +561,7 @@ async def get_topic(
     place = await place_or_404(db, topic_id)
     if place.task is not None:
         # A task is read as `GET /topics/{task}/task`.
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     topic = place.room
     actor = await _actor_in_place(resolver, place)
     # 这三处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
