@@ -654,7 +654,9 @@ class ActorResolver:
         支线's, and is resolved to its room there.
         """
         if room is None and topic_id is None:
-            raise ValueError("authorize_topic needs topic_id or room")
+            raise ValueError(  # i18n-exempt: programmer invariant, never shown
+                "authorize_topic needs topic_id or room"
+            )
         await self._refuse_archived_write(
             project_id=project_id,
             topic_id=room.id if room is not None else topic_id,
@@ -672,6 +674,7 @@ class ActorResolver:
             if room is not None:
                 room_id = room.id
             else:
+                assert topic_id is not None  # refused above when both are absent
                 room_id = await conversations.room_of(self._session, topic_id)
             _log.info("topic_access_denied", handle=actor.handle, topic=str(room_id))
             row = (
@@ -702,7 +705,9 @@ class ActorResolver:
         """
         if room is None:
             if topic_id is None:
-                raise ValueError("can_access_topic needs topic_id or room")
+                raise ValueError(  # i18n-exempt: programmer invariant, never shown
+                    "can_access_topic needs topic_id or room"
+                )
             topic_id = await conversations.room_of(self._session, topic_id)
             room = await TopicRepository(self._session).get(topic_id)
         else:

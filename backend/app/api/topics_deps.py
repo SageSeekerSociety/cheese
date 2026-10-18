@@ -69,9 +69,7 @@ async def _actor_in_place(resolver: ActorResolver, place: Place) -> Actor:
     )
     # The place already carries the room row: hand it in so the door does not
     # look the conversation's room up and read that row again.
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, room=place.room
-    )
+    await resolver.authorize_topic(actor, project_id=place.project_id, room=place.room)
     return actor
 
 

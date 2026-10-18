@@ -80,12 +80,15 @@ def _room_lookups(statements) -> int:
 
 @contextmanager
 def _door_handed_only_the_id():
-    """The door as it was before the change: no room row, so it looks it up."""
+    """The door as it was before the change: the id alone, no room row, so it
+    resolves the conversation's room itself."""
     original = ActorResolver.authorize_topic
 
     async def without_the_room(
         self, actor, *, project_id, topic_id=None, room=None, enforce=False
     ):
+        if topic_id is None and room is not None:
+            topic_id = room.id
         return await original(
             self, actor, project_id=project_id, topic_id=topic_id, enforce=enforce
         )
@@ -112,6 +115,18 @@ def test_a_channel_read_makes_no_conversation_lookup(client, path):
         response, statements = _statements_while(client, read)
     assert response.status_code == 200, response.text
     assert _room_lookups(statements) >= 1
+
+
+def test_a_refused_read_makes_no_conversation_lookup(client):
+    """The refusal path reads the room row it was handed too: carol is on the
+    team, not in the private channel, and is told the channel does not exist."""
+    p, a, _b = _private_channels(client)
+    response, statements = _statements_while(
+        client,
+        lambda: client.get(f"/topics/{a}", headers=session_auth_headers("carol")),
+    )
+    assert response.status_code == 404, response.text
+    assert _room_lookups(statements) == 0
 
 
 def _private_channels(client):
