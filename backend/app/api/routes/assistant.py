@@ -20,11 +20,12 @@ from dataclasses import replace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import get_consumptions, get_session_host
 from app.api.request_deps import AuthUser, DbSession
+from app.api.refusal import refuse
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.core import AuthUserInfo
@@ -34,7 +35,6 @@ from app.core.db import async_session_factory
 from app.core.errors import (
     BaseError,
     NotFoundError,
-    message_key,
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
@@ -209,16 +209,6 @@ class AskIn(BaseModel):
         return v
 
 
-def _refuse(status: int, message: str, retry_after: int = 0) -> JSONResponse:
-    headers = {"Retry-After": str(retry_after)} if retry_after else {}
-    body: dict = {"code": status, "message": message}
-    key = message_key(message)
-    if key is not None:
-        # A catalog sentence: the browser renders it in its reader's language.
-        body["error"] = {"message": message, "i18n": key}
-    return JSONResponse(body, status_code=status, headers=headers)
-
-
 @router.post("/conversations/{conversationId}/ask", dependencies=[ROUTE_DECIDES])
 async def ask(
     conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
@@ -239,11 +229,11 @@ async def ask(
     rates = Rates.of(settings.assistant_model, await pricing.model_rates())
     key = await person_key(db, auth.user_id, async_session_factory)
     if rates is None or key is None or not people.available():
-        return _refuse(503, say("assistantNotOpen"), 60)
+        return refuse(503, say("assistantNotOpen"), 60)
     refused = await Ledger(db).admit(await payer_for_person(db, auth.user_id))
     await db.commit()
     if refused is not None:
-        return _refuse(429, refused.message, refused.retry_after_s())
+        return refuse(429, refused.message, refused.retry_after_s())
 
     redis = get_redis_client()
     slot = (
@@ -252,7 +242,7 @@ async def ask(
         else await assistant.take_conversation(redis, conversation_id)
     )
     if redis is None or slot is None:
-        return _refuse(429, say("assistantStillAnswering"), 5)
+        return refuse(429, say("assistantStillAnswering"), 5)
     held_at = time.monotonic()
 
     try:
