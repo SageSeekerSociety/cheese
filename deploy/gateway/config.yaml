@@ -168,9 +168,10 @@ model_list:
     litellm_params:
       model: deepseek/deepseek-flash
       api_key: os.environ/DEEPSEEK_API_KEY
+      order: 3
     model_info:
       cheese_selectable: true
-      cheese_label: DeepSeek V4.1 Flash 1017
+      cheese_label: DeepSeek V4.1 Flash
       cheese_efforts: [low, high]
       # Official peak rates bound the budget estimate; off-peak billing is half.
       # https://api-docs.deepseek.com/quick_start/pricing/
@@ -183,6 +184,7 @@ model_list:
       supports_vision: true
       supports_adaptive_thinking: true
       supports_output_config: true
+      supports_mid_conversation_system: false
       # The window Claude Code is told (CLAUDE_CODE_MAX_CONTEXT_TOKENS), and
       # LiteLLM's own figure for this model is 1,000,000. DeepSeek counts the
       # request's max_tokens against its 1,048,576 window, and Claude Code asks

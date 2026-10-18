@@ -42,6 +42,15 @@ _REQUIRED_CHECKS = ("database", "redis", "routes")
 # A check that had nothing to do is not a failing check.
 _HEALTHY_STATUSES = frozenset({"up", "skipped"})
 
+# Installed and cleared by the application lifespan; core never imports its
+# composition root to inspect the clocks that process owns.
+_periodic_health: Callable[[], dict[str, Any]] | None = None
+
+
+def set_periodic_health(read: Callable[[], dict[str, Any]] | None) -> None:
+    global _periodic_health
+    _periodic_health = read
+
 
 async def health_report() -> dict[str, Any]:
     """Every check's status, in this process, with no caller behind it.
@@ -56,6 +65,9 @@ async def health_report() -> dict[str, Any]:
     checks["routes"] = _check_routes()
     checks["event_loop"] = _check_event_loop()
     checks["alerting"] = _check_alerting()
+    checks["periodic_jobs"] = (
+        _periodic_health() if _periodic_health is not None else {"status": "skipped"}
+    )
 
     overall = (
         "healthy"

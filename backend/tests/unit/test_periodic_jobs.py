@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.background import PeriodicJobs, PeriodicRunner
+from app.core.background import periodic_health, watch_periodic_jobs
 from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio
@@ -39,6 +40,71 @@ class _Runs:
         if self._wins:
             self.last[name] = now
         return self._wins
+
+
+async def test_health_names_an_unstarted_clock_only_when_this_process_owns_it():
+    runner = PeriodicRunner("machine maintenance", 10, asyncio.Event().wait)
+    waiting = periodic_health([runner], owns_work=False)
+    assert waiting["status"] == "up"
+    owned = periodic_health([runner], owns_work=True)
+    assert owned["status"] == "down"
+    assert owned["unhealthy"] == {"machine maintenance": "not_started"}
+
+
+async def test_health_distinguishes_started_work_from_successful_work():
+    started = asyncio.Event()
+    complete = asyncio.Event()
+
+    async def job():
+        started.set()
+        await complete.wait()
+
+    runner = PeriodicRunner("machine maintenance", 3600, job)
+    runner.start(_Runs(), datetime.now(UTC) - timedelta(hours=2))
+    try:
+        await asyncio.wait_for(started.wait(), HANG_S)
+        reading = runner.health()
+        assert reading["status"] == "running"
+        assert reading["last_started_at"] is not None
+        assert reading["last_succeeded_at"] is None
+        complete.set()
+        await asyncio.sleep(0)
+        reading = runner.health()
+        assert reading["last_succeeded_at"] is not None
+        assert reading["running_since"] is None
+    finally:
+        await runner.stop()
+
+
+async def test_the_watchdog_notices_a_clock_that_was_never_started(caplog):
+    runner = PeriodicRunner("machine maintenance", 10, asyncio.Event().wait)
+    alerted = asyncio.Event()
+
+    class Alerted(type(caplog.handler)):
+        def emit(self, record):
+            super().emit(record)
+            if "machine maintenance" in record.getMessage():
+                alerted.set()
+
+    import logging
+
+    handler = Alerted()
+    logger = logging.getLogger("cheesex.background")
+    logger.addHandler(handler)
+    watching = asyncio.create_task(
+        watch_periodic_jobs(
+            lambda: periodic_health([runner], owns_work=True),
+            interval_s=0.005,
+            grace_s=0.01,
+        )
+    )
+    try:
+        await asyncio.wait_for(alerted.wait(), HANG_S)
+        assert any("not_started" in record.getMessage() for record in handler.records)
+    finally:
+        watching.cancel()
+        await asyncio.gather(watching, return_exceptions=True)
+        logger.removeHandler(handler)
 
 
 async def _runs_within(
