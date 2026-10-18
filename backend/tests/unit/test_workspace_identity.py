@@ -59,12 +59,8 @@ def test_no_identity_rather_than_an_address_that_links_to_nobody():
     assert identity.identity_from_profile(None, {"login": "octocat"}) is None
 
 
-def test_coauthor_trailer_is_omitted_for_the_platform_itself():
-    """`Co-authored-by: 芝士 <cheese@zhishi.local>` would put an unlinkable
-    address in permanent history for no gain — the trailer exists to credit a
-    HUMAN."""
+def test_a_coauthor_is_one_trailer_line():
     assert identity.coauthored_by(None) is None
-    assert identity.coauthored_by(identity.CHEESE_IDENTITY) is None
     assert identity.coauthored_by(
         identity.GitIdentity("octocat", "583231+octocat@users.noreply.github.com")
     ) == ("Co-authored-by: octocat <583231+octocat@users.noreply.github.com>")
@@ -197,7 +193,9 @@ async def test_by_default_an_app_opened_pr_credits_the_owner_as_coauthor(monkeyp
     task = _task(owner="alice")
     _rows(monkeypatch, [task])
     _connected(monkeypatch, {"alice": ("583231", "alice")})
-    who = await identity.attribution(None, _topic(), task_id=task.id, app=APP)
+    who = await identity.attribution(
+        None, _topic(), task_id=task.id, app=APP, lane="github"
+    )
     assert who.coauthors == (ALICE,)
 
 
@@ -209,7 +207,7 @@ async def test_a_pr_the_owner_opened_credits_the_app_beside_them(monkeypatch):
     _rows(monkeypatch, [task])
     _connected(monkeypatch, {"alice": ("583231", "alice")})
     who = await identity.attribution(
-        None, _topic(), task_id=task.id, opened_by=ALICE.email, app=APP
+        None, _topic(), task_id=task.id, opened_by=ALICE.email, app=APP, lane="github"
     )
     assert who.coauthors == (APP,)
 
@@ -266,8 +264,53 @@ async def test_the_author_of_the_commit_is_never_also_its_coauthor(monkeypatch):
         card=_card([str(task.id)], task.id),
         opened_by=ALICE.email,
         app=APP,
+        lane="github",
     )
     assert who.coauthors == (APP,)
+
+
+@pytest.mark.anyio
+async def test_on_github_the_owner_authors_the_branch_commits_and_the_app_is_credited(
+    monkeypatch,
+):
+    task = _task(owner="alice")
+    _rows(monkeypatch, [task])
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+    who = await identity.attribution(
+        None, _topic(), task_id=task.id, app=APP, lane="github"
+    )
+    assert who.commit_author == ALICE
+    assert who.commit_coauthors == (APP,)
+
+
+@pytest.mark.anyio
+async def test_on_github_the_agent_mode_commits_as_the_app(monkeypatch, project):
+    project.settings = {identity.CREDIT_SETTING: identity.CREDIT_AGENT}
+    task = _task(owner="alice")
+    _rows(monkeypatch, [task])
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+    who = await identity.attribution(
+        None, _topic(), task_id=task.id, app=APP, lane="github"
+    )
+    assert who.commit_author == APP
+    assert who.commit_coauthors == ()
+
+
+@pytest.mark.anyio
+async def test_on_the_platform_forge_芝士_authors_and_the_owner_is_credited(
+    monkeypatch,
+):
+    """Each address there belongs to one account: the owner's cannot be the
+    author in every project, so 芝士 is, under its own address, by name."""
+    task = _task(owner="alice")
+    _rows(monkeypatch, [task])
+    _connected(monkeypatch, {})
+    who = await identity.attribution(None, _topic(), task_id=task.id, lane="forgejo")
+    assert who.commit_author == identity.GitIdentity(
+        identity.CHEESE_NAME, identity.agent_identity(_SEATED_AGENT).email
+    )
+    assert who.commit_coauthors == (identity.platform_identity("alice"),)
+    assert who.coauthors == who.commit_coauthors
 
 
 def test_an_unknown_mode_reads_as_the_owner_mode():
