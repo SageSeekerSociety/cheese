@@ -408,12 +408,24 @@ def run_on_the_machine(target, command):
     spelled_later = target.get("workspace") == DEFERRED_WORKSPACE
     client = RemoteClient(target)
     if short_name is not None and not spelled_later:
-        if short_name in {DEFERRED_WORKSPACE, target.get("virtual_workspace")}:
-            # The session started before its machine was rented, so its name is
-            # the placeholder. It stays one here: the transport spells it after
-            # it takes the hands, where the checkout is known — a machine the
-            # session was moved to holds another one than the target file says.
-            spelled_later = True
+        placeholder = target.get("virtual_workspace")
+        if short_name == DEFERRED_WORKSPACE or (
+            placeholder and short_name == placeholder != target.get("workspace")
+        ):
+            if target.get("lease_path"):
+                # The session started before its machine was rented, so its
+                # name is the placeholder. It stays one here: the transport
+                # spells it after it takes the hands, where the checkout is
+                # known — a machine the session was moved to holds another one
+                # than the target file says.
+                spelled_later = True
+            else:
+                # No lease to take: where the machine holds the project is what
+                # this target says, so the checkout can be asked for here.
+                short_name = client.working_directory(notice=False)
+        elif target.get("checkout_pending"):
+            # The launch could not ask for the checkout; the machine is here.
+            short_name = client.working_directory(notice=False)
         else:
             short_name = outward(short_name)
     merge = _same_file(1, 2)

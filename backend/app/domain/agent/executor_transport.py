@@ -942,15 +942,23 @@ class RemoteClient:
             try:
                 checkout = task_checkout(self, topic, notice=notice)
             except Exception:  # not kept: the next call asks again
+                self.config["checkout_pending"] = True
+                self._save_target()
                 return self.config.get("workspace")
             finally:
                 self.resolving_working_directory.yes = False
+            self.config.pop("checkout_pending", None)
             self.config["working_directory"] = checkout or self.config.get("workspace")
             self.config["working_directory_lease"] = self.config.get("generation")
-            target_file = self.config.get("target_file")
-            if target_file:
-                _replace_file(target_file, json.dumps(self.config))
+            self._save_target()
             return self.config["working_directory"]
+
+    def _save_target(self):
+        """Write this client's config back to the target file, whole and atomically
+        (`_replace_file`): the next command is a process of its own."""
+        target_file = self.config.get("target_file")
+        if target_file:
+            _replace_file(target_file, json.dumps(self.config))
 
     def acquire(self, *, deadline, abandoned=None, preparing=None):
         """Take this session's hands through the platform (`lease_path`): the
@@ -1310,10 +1318,11 @@ class RemoteClient:
                 deadline=operation_deadline, abandoned=abandoned, preparing=preparing
             )
             workspace = self.config["workspace"]
-            if original_workspace != workspace:
+            if original_workspace != workspace or self.config.get("checkout_pending"):
                 # The session started somewhere else — before its machine was
-                # rented — and its short name is spelled the machine's way here,
-                # into its task's checkout when it works one (`working_directory`).
+                # rented — or could not ask for its checkout then; its short
+                # name is spelled the machine's way here, into its task's
+                # checkout when it works one (`working_directory`).
                 workspace = self.working_directory()
             if params and method == "invoke":
                 params = {**params, "args": dict(params.get("args", {}))}
