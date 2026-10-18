@@ -208,7 +208,7 @@ async def replay(svc: pkg.RoomSessions, session: SessionRef) -> None:
     on reading it. Returns once the tail is landed; raises what stopped the
     reading before it was."""
     seat = svc._seat_of(session)
-    if seat not in svc.live or (seat in svc.tasks and not svc.tasks[seat].done()):
+    if seat not in svc.live:
         return
     svc._listen(seat, recovered=True)
     reading = svc.tasks[seat]

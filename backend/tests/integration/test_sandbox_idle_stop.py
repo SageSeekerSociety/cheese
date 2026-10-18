@@ -313,6 +313,25 @@ def sweep(case) -> dict:
     return run(case, SandboxSweeper(case.client.test_request_factory).sweep)
 
 
+def test_recovery_keeps_its_sandbox_while_other_idle_sandboxes_are_reclaimed(cloud):
+    recovering, idle = cloud.seats[:2]
+    protected = working_on(cloud, recovering, "recovering-host")
+    disposable = working_on(cloud, idle, "idle-host")
+    time_passes(cloud, recovering, timedelta(minutes=20))
+    time_passes(cloud, idle, timedelta(minutes=20))
+
+    async def inspect():
+        sweeper = SandboxSweeper(
+            cloud.client.test_request_factory,
+            recovering=lambda conversation: conversation == recovering.room,
+        )
+        return await sweeper.sweep()
+
+    assert run(cloud, inspect)["destroyed"] == 1
+    assert protected.exists()
+    assert not disposable.exists()
+
+
 def maintain(case):
     async def go():
         async with case.client.test_request_factory() as db:
