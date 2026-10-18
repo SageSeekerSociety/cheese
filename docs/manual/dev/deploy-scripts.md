@@ -177,7 +177,7 @@ covers:
 
 ## 这些脚本的测试 {#tests}
 
-`deploy/tests/` 是这套脚本的测试，入口是 `.github/workflows/deploy-scripts-test.yml`——`workflow_call`，由 `.github/workflows/required-ci.yml:77` 调进来，所以它是必过检查的一部分。
+`deploy/tests/` 是这套脚本的测试，入口是 `.github/workflows/deploy-scripts-test.yml`——`workflow_call`，由 `.github/workflows/required-ci.yml` 的 `deploy` job 调进来，所以它是必过检查的一部分。
 
 为什么值得单独一个 workflow（workflow 头部自己写的）：`test.yml` 只覆盖 `backend/**`，从前 `deploy/` 下的改动**没被任何人执行过**就这么上了机器；2026-08-11 的 dev 故障（一次归属交接排在还能中止它的检查之前）就是这样带过去的——六个绿 job，没有一个碰过那个文件。
 

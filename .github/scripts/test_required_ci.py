@@ -1264,6 +1264,144 @@ class WorkflowTextTest(unittest.TestCase):
         self.assertFalse(condition_holds(draft["if"], "pull_request", True, True))
         self.assertFalse(condition_holds(full["if"], "merge_group", None, True))
 
+    @staticmethod
+    def _concurrency_group(text, event_name, ref, sha):
+        """The run's concurrency group, evaluated for one event."""
+        group = re.search(r"(?m)^  group: (.*)$", text).group(1).strip()
+
+        def evaluate(match):
+            expression = (match.group(1).strip()
+                          .replace("github.event_name", repr(event_name))
+                          .replace("github.ref", repr(ref)).replace("github.sha", repr(sha))
+                          .replace("&&", " and ").replace("||", " or "))
+            return str(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307
+
+        return re.sub(r"\$\{\{(.*?)\}\}", evaluate, group)
+
+    def test_main_pushes_queue_in_one_group_while_pull_requests_cancel(self):
+        # The batching is GitHub's: one run executing, at most one pending, and a
+        # newer pending run replaces the older one — which only happens inside
+        # one group. One group per sha (the old shape) would run every commit and
+        # never queue; cancelling a push would drop a commit's coverage.
+        self.assertRegex(self.text, r"(?m)^  push:\n    branches: \[main\]$")
+        first = self._concurrency_group(self.text, "push", "refs/heads/main", "a" * 40)
+        second = self._concurrency_group(self.text, "push", "refs/heads/main", "b" * 40)
+        self.assertEqual(first, second,
+                         "each main push got its own concurrency group, so nothing queues")
+        self.assertNotEqual(
+            self._concurrency_group(self.text, "pull_request", "refs/pull/1/merge", "a" * 40),
+            self._concurrency_group(self.text, "pull_request", "refs/pull/2/merge", "b" * 40),
+            "pull requests share one group, so a new one cancels the wrong run")
+        self.assertIn(
+            "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", self.text,
+            "a push must not cancel an in-flight batch (cancel-in-progress must be pull-request only)")
+
+    def test_the_anchor_moves_only_after_a_green_main_push(self):
+        job = jobs_of(self.text)["mark-green"]
+        self.assertIn("needs: required", job["text"])
+        self.assertIn("github.event_name == 'push'", job["if"])
+        # cancelled() in an if: drops GitHub's implicit success(): a failed
+        # aggregator would otherwise still move the anchor forward.
+        self.assertIn("needs.required.result == 'success'", job["if"])
+        self.assertIn("contents: write", job["text"])
+        self.assertIn("refs/heads/main-green", job["text"])
+
+    def test_a_failed_anchor_push_does_not_fail_the_run(self):
+        # The deploy gate reads this run's conclusion, so one network error on
+        # this push would hold a commit off dev. A stale anchor is safe by
+        # construction — the next run diffs from the older commit — so the step
+        # is loud and green instead.
+        job = jobs_of(self.text)["mark-green"]
+        body = run_body_containing(job["text"], "refs/heads/main-green")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "git", 'echo "fatal: unable to access" >&2\nexit 128\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_SHA": "a" * 40, "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0,
+                             "a refused anchor push failed the run it must never hold up")
+            self.assertIn("::warning::", proc.stdout)
+            self.assertIn("anchor", (tmp / "summary").read_text())
+
+    def _title_step(self, tmp, event_name, env_extra):
+        """Run the commit-title step's real shell against a stubbed curl.
+
+        The stub records the URL it was asked for, so a test can tell which base
+        the step compared against — a stub answering every URL with the same
+        body would stay green through a step pointed at the wrong variable.
+        """
+        body = run_body_containing(self.text, "api()")
+        bindir = Path(tmp) / "bin"
+        bindir.mkdir()
+        _stub(bindir, "curl", (
+            'out=""\nprev=""\nfor a in "$@"; do\n'
+            '  case "$a" in https://*) printf "%s\\n" "$a" >> "$CURL_URLS";; esac\n'
+            '  [ "$prev" = "-o" ] && out="$a"; prev="$a"\n'
+            'done\n'
+            'printf "%s" \'{"commits":[{"commit":{"message":"update stuff\\nfiller"}}]}\' > "$out"\n'
+            'printf 200\n'
+        ))
+        urls = Path(tmp) / "curl_urls"
+        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+               "RUNNER_TEMP": str(tmp), "GITHUB_EVENT_NAME": event_name,
+               "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+               "GITHUB_SHA": "h" * 40, "CURL_URLS": str(urls), **env_extra}
+        proc = subprocess.run(["bash", "-e", "-c", body],
+                              cwd=WORKFLOW.parent.parent.parent,
+                              env=env, capture_output=True, text=True)
+        return proc, (urls.read_text() if urls.exists() else "")
+
+    def test_a_landed_title_is_reported_and_does_not_fail_the_gate(self):
+        # The title is already on main and nobody can retitle it, so a red here
+        # would hold back a validated commit (and dev) over formatting.
+        with tempfile.TemporaryDirectory() as tmp:
+            proc, urls = self._title_step(tmp, "push", {"PUSH_BASE_SHA": "b" * 40})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("::warning::", proc.stdout)
+        self.assertNotIn("::error::", proc.stdout)
+        # The batch base is the anchor this run resolved, not the merge_group
+        # variable (empty on a push) and not an empty string.
+        self.assertIn(f"compare/{'b' * 40}...{'h' * 40}", urls, urls)
+
+    def test_a_landed_title_without_an_anchor_is_reported_the_same_way(self):
+        # The first push after the gate moved to main has no anchor; it checks
+        # the push payload's own commits, still without failing the run.
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = Path(tmp) / "event.json"
+            payload.write_text('{"commits": [{"message": "update stuff\\nfiller"}]}')
+            proc, urls = self._title_step(tmp, "push", {"PUSH_BASE_SHA": "", "GITHUB_EVENT_PATH": str(payload)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("::warning::", proc.stdout)
+        # No anchor: it must not try to compare against an empty base.
+        self.assertEqual(urls, "")
+
+    def test_a_title_about_to_land_is_still_fatal(self):
+        # In the merge queue the author can still fix it: that one is refused.
+        with tempfile.TemporaryDirectory() as tmp:
+            proc, urls = self._title_step(tmp, "merge_group", {"BASE_SHA": "b" * 40, "HEAD_SHA": "h" * 40})
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("::error::", proc.stdout)
+        self.assertIn(f"compare/{'b' * 40}...{'h' * 40}", urls, urls)
+
+    def test_a_moved_anchor_is_silent(self):
+        job = jobs_of(self.text)["mark-green"]
+        body = run_body_containing(job["text"], "refs/heads/main-green")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "git", 'exit 0\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_SHA": "a" * 40, "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("::warning::", proc.stdout)
+
     def test_backend_integration_is_deferred_to_merge_group(self):
         jobs = jobs_of(self.text)
         self.assertIn("branch_heavy", jobs["scope"]["text"])
@@ -1403,12 +1541,34 @@ class WorkflowTextTest(unittest.TestCase):
             ))
             _stub(bindir, "python3", "exit 0\n")
             env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
-                   "GIT_CALLS": str(git_calls), "BASE_SHA": "b" * 40}
+                   "GIT_CALLS": str(git_calls), "EVENT_BASE": "b" * 40}
             proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
                                   capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(git_calls.read_text(), "2",
                              "the base fetch was not retried")
+
+    def test_a_main_push_does_not_fetch_a_base_the_event_does_not_name(self):
+        # A push has no base worth fetching: github.event.before is only the
+        # previous tip, and the script resolves `main-green` itself. A step that
+        # still fetched the event base would pay a network call, and on an
+        # anchor-less first push it would fail on an empty ref.
+        body = run_body_containing(self.text, "required-ci.py scope")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            git_calls = tmp / "git_calls"
+            _stub(bindir, "git", 'printf "%s\\n" "$*" >> "$GIT_CALLS"\n')
+            _stub(bindir, "python3", 'printf "%s\\n" "$*" >> "$PY_CALLS"\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GIT_CALLS": str(git_calls), "PY_CALLS": str(tmp / "py_calls"),
+                   "GITHUB_EVENT_NAME": "push", "EVENT_BASE": ""}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertFalse(git_calls.exists(), "a push fetched a base it cannot use")
+            self.assertIn("scope", (tmp / "py_calls").read_text())
 
 
     def test_required_backend_download_retries_once_after_cleaning_a_failure(self):
@@ -1566,12 +1726,158 @@ class MainCliTest(unittest.TestCase):
             self.assertEqual(written["e2e"], "false")
             self.assertEqual(written["remote"], "false")
             self.assertEqual(written["cifast"], "false")
-            self.assertIn("e2e/remote 留给合并队列", proc.stdout)
+            self.assertIn("e2e/remote 留给落码后的 run", proc.stdout)
             # The api job compares the document against the commit this diff
             # was taken from, so the two cannot be answering different questions.
             self.assertEqual(written["base"], base)
             self.assertTrue(all(v in ("true", "false") for k, v in written.items()
                                 if k not in ("tier", "base")))
+
+    def _push_repo(self, tmp):
+        """A throwaway repo with ``origin`` pointing at itself, so the push
+        pipeline can fetch its own refs the way the workflow does."""
+
+        def git(*args):
+            subprocess.run(
+                ["git", "-c", "user.email=test@example.com", "-c", "user.name=test",
+                 "-c", "commit.gpgsign=false", *args],
+                cwd=tmp, check=True, capture_output=True, text=True)
+
+        git("init", "-q", "-b", "main")
+        git("remote", "add", "origin", str(tmp))
+        (tmp / "base.txt").write_text("base\n")
+        git("add", "base.txt")
+        git("commit", "-qm", "base")
+        return git
+
+    def _push_scope(self, tmp, event_path):
+        scripts = WORKFLOW.parent.parent / "scripts"
+        out = tmp / "github_output"
+        proc = subprocess.run(
+            [sys.executable, str(scripts / "required-ci.py"), "scope", ""],
+            env={**os.environ, "GITHUB_EVENT_NAME": "push",
+                 "GITHUB_EVENT_PATH": event_path, "GITHUB_OUTPUT": str(out)},
+            cwd=tmp, check=True, capture_output=True, text=True,
+        )
+        return proc, dict(line.split("=", 1) for line in out.read_text().splitlines())
+
+    def test_a_main_push_diffs_from_the_green_anchor(self):
+        # The batch base is the commit the gate last passed on: the previous tip
+        # would drop the commits of a run that a newer push superseded.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            git("update-ref", "refs/heads/main-green", "HEAD")
+            anchor = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            changed = tmp / "backend/app/api/rooms.py"
+            changed.parent.mkdir(parents=True)
+            changed.write_text("x = 1\n")
+            git("add", "backend/app/api/rooms.py")
+            git("commit", "-qm", "change a backend file")
+            # A second commit, so the anchor is not the previous tip: with one
+            # commit between them, an implementation that diffs from HEAD~1 (or
+            # from github.event.before) returns the anchor's sha by accident and
+            # drops exactly the commits a superseded run left behind.
+            (tmp / "frontend/src/main.ts").parent.mkdir(parents=True)
+            (tmp / "frontend/src/main.ts").write_text("y\n")
+            git("add", "frontend/src/main.ts")
+            git("commit", "-qm", "change a frontend file")
+
+            proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            previous_tip = subprocess.check_output(
+                ["git", "rev-parse", "HEAD~1"], cwd=tmp, text=True).strip()
+            self.assertEqual(written["base"], anchor)
+            self.assertNotEqual(written["base"], previous_tip,
+                                "the push used the previous tip, not the green anchor")
+            self.assertEqual(written["tier"], "full")
+            self.assertEqual(written["branch_heavy"], "true")
+            self.assertEqual(written["backend"], "true")
+            self.assertEqual(written["frontend"], "true")
+            self.assertIn("last green gate result", proc.stdout)
+
+    def test_an_anchor_off_the_pushed_history_widens_the_scope(self):
+        # The ref is only ever written from a main push run, so this takes a
+        # rewritten ref. A diff against a commit that is not on this history is
+        # not a diff of what landed, and can miss a change whose content happens
+        # to match — so the run must widen instead of trusting it.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            git("checkout", "-qb", "side")
+            (tmp / "side.txt").write_text("x\n")
+            git("add", "side.txt")
+            git("commit", "-qm", "a commit that never landed on main")
+            side = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            git("checkout", "-q", "main")
+            git("update-ref", "refs/heads/main-green", side)
+            changed = tmp / "backend/app/api/rooms.py"
+            changed.parent.mkdir(parents=True)
+            changed.write_text("x = 1\n")
+            git("add", "backend/app/api/rooms.py")
+            git("commit", "-qm", "change a backend file")
+
+            proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            self.assertEqual(written["base"], "")
+            self.assertIn("is not an ancestor", proc.stdout)
+            self.assertEqual(written["backend"], "true")
+            self.assertEqual(written["e2e"], "true")
+
+    def test_a_main_push_without_an_anchor_scopes_every_tracked_path(self):
+        # The first push after the gate moved to main has no anchor to diff
+        # from; a narrower guess would let a commit no run covered go untested.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            changed = tmp / "e2e/tests/login.spec.ts"
+            changed.parent.mkdir(parents=True)
+            changed.write_text("x\n")
+            git("add", "e2e/tests/login.spec.ts")
+            git("commit", "-qm", "touch e2e")
+
+            proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            self.assertEqual(written["base"], "")
+            # Read off the tree, not off a diff: the e2e path is in scope even
+            # though nothing says it changed, and paths outside the tree are not.
+            self.assertEqual(written["e2e"], "true")
+            self.assertEqual(written["frontend"], "false")
+            self.assertIn("no usable refs/heads/main-green anchor", proc.stdout)
+
+    def test_an_anchorless_main_push_never_runs_the_api_job_without_a_base(self):
+        # Without an anchor every tracked path counts as changed, which selects
+        # backend and frontend together; `api` is gated on the frontend suite NOT
+        # being selected, so it is skipped and the empty base is never read. If
+        # that stops holding, api runs with BASE_SHA="" and its fetch of
+        # `origin ""` fails the whole full-tier run on every main push until the
+        # first anchor exists.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            for rel in ("backend/app/main.py", "frontend/src/main.ts"):
+                target = tmp / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("x\n")
+            git("add", "-A")
+            git("commit", "-qm", "touch both sides")
+
+            _proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            self.assertEqual(written["base"], "")
+            self.assertEqual((written["backend"], written["frontend"]), ("true", "true"),
+                             "api would run with no base to compare the document against")
+            self.assertFalse(gate.api_selected(written, written["tier"]))
 
     def test_pull_request_defers_e2e_and_remote_while_merge_group_requires_them(self):
         scripts = WORKFLOW.parent.parent / "scripts"
@@ -1617,7 +1923,7 @@ class MainCliTest(unittest.TestCase):
             self.assertEqual(pr_written["backend"], "true")
             self.assertEqual(pr_written["e2e"], "false")
             self.assertEqual(pr_written["remote"], "false")
-            self.assertIn("e2e/remote 留给合并队列", pr_scope.stdout)
+            self.assertIn("e2e/remote 留给落码后的 run", pr_scope.stdout)
 
             pr_needs = {
                 "scope": {"result": "success", "outputs": pr_written},
@@ -1650,7 +1956,7 @@ class MainCliTest(unittest.TestCase):
             self.assertEqual(mg_written["branch_heavy"], "true")
             self.assertEqual(mg_written["e2e"], "true")
             self.assertEqual(mg_written["remote"], "true")
-            self.assertNotIn("e2e/remote 留给合并队列", mg_scope.stdout)
+            self.assertNotIn("e2e/remote 留给落码后的 run", mg_scope.stdout)
 
             mg_needs_skipped = {
                 "scope": {"result": "success", "outputs": mg_written},
