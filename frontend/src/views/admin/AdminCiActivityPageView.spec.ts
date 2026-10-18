@@ -101,9 +101,26 @@ describe('AdminCiActivityPageView', () => {
     const view = mount({ board: CRV_CI_BOARD, jobs: CRV_CI_JOBS })
 
     await fireEvent.click(view.getByRole('button', { name: 'e2e / e2e' }))
-    expect(view.emitted('setJob')).toEqual([['e2e / e2e']])
+    expect(view.emitted('setJob')).toEqual([
+      [{ name: 'e2e / e2e', workflow_path: '.github/workflows/required-ci.yml' }],
+    ])
 
-    await view.rerender({ board: CRV_CI_BOARD, jobs: CRV_CI_JOBS, job: 'e2e / e2e', steps: CRV_CI_STEPS })
+    await view.rerender({ board: CRV_CI_BOARD, jobs: CRV_CI_JOBS, job: CRV_CI_JOBS[0], steps: CRV_CI_STEPS })
     view.getByText('Run e2e')
+  })
+
+  it('omits an unobserved hour and keeps an observed zero', () => {
+    const hour = CRV_CI_BOARD.hour_of_day[0]
+    const board: CiBoard = {
+      ...CRV_CI_BOARD,
+      hour_of_day: [
+        { ...hour, hour: 0, busy_mean: null },
+        { ...hour, hour: 1, busy_mean: 0 },
+      ],
+    }
+    const view = mount({ board })
+
+    expect(view.queryByText('ciActivity.hourOfDay.label {"hour":"00"}')).toBeNull()
+    expect(view.getAllByText('ciActivity.hourOfDay.label {"hour":"01"}').length).toBeGreaterThan(0)
   })
 })

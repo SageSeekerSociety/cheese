@@ -4,7 +4,7 @@
  * them without fetching. Board, job and step requests have separate selection
  * keys; the backend sweep handles GitHub requests independently of this page.
  */
-import type { CiBoard, CiJobRow, CiStepRow } from '@/views/admin/ciActivityApi'
+import type { CiBoard, CiJobIdentity, CiJobRow, CiStepRow } from '@/views/admin/ciActivityApi'
 
 import { onMounted, ref } from 'vue'
 
@@ -20,7 +20,7 @@ const failed = ref(false)
 const runner = ref<string | null>(null)
 const jobs = ref<CiJobRow[]>([])
 const jobsLoading = ref(false)
-const job = ref<string | null>(null)
+const job = ref<CiJobIdentity | null>(null)
 const steps = ref<CiStepRow[]>([])
 const stepsLoading = ref(false)
 
@@ -33,6 +33,7 @@ async function loadBoard() {
   const seq = ++boardSeq
   loading.value = true
   failed.value = false
+  board.value = null
   try {
     const next = await getCiBoard(days.value)
     if (seq === boardSeq) board.value = next
@@ -46,6 +47,7 @@ async function loadBoard() {
 async function loadJobs() {
   const seq = ++jobsSeq
   jobsLoading.value = true
+  jobs.value = []
   try {
     const next = await getCiJobs(days.value, runner.value)
     if (seq === jobsSeq) jobs.value = next.jobs
@@ -86,7 +88,7 @@ function setRunner(next: string | null) {
   void loadJobs()
 }
 
-function setJob(next: string | null) {
+function setJob(next: CiJobIdentity | null) {
   job.value = next
   void loadSteps()
 }

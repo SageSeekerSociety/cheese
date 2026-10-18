@@ -163,7 +163,7 @@ export const VIEW_ADMIN_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.adminCiActivityPageView.s2.note')
         },
-        props: { job: 'e2e / e2e', steps: CRV_CI_STEPS, runner: 'cheese-ci-runner-1' },
+        props: { job: CRV_CI_JOBS[0], steps: CRV_CI_STEPS, runner: 'cheese-ci-runner-1' },
         expect: 'Run e2e',
       },
       {

@@ -150,6 +150,7 @@ async def _jobs_in(session: AsyncSession, repo: str, w: Window):
             CiJob.labels,
             CiWorkflowRun.event,
             CiWorkflowRun.workflow_name,
+            CiWorkflowRun.workflow_path,
         )
         .join(CiWorkflowRun, CiWorkflowRun.id == CiJob.run_row_id)
         .where(
@@ -626,19 +627,20 @@ async def _sweep_status(session, repo, w: Window) -> dict[str, Any] | None:
 async def job_table(
     session: AsyncSession, repo: str, *, days: int, runner: str | None = None
 ) -> list[dict[str, Any]]:
-    """Per job name: how long it waits and takes, how often it fails."""
+    """Per workflow and job name: wait, duration and failures."""
     w = window(days)
     jobs = await _jobs_in(session, repo, w)
-    rows: dict[str, dict[str, Any]] = {}
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
     for job in jobs:
         group = runner_group(job.runner_kind, job.runner_name, list(job.labels or []))
         if runner is not None and group != runner:
             continue
         row = rows.setdefault(
-            job.name,
+            (job.workflow_path, job.name),
             {
                 "name": job.name,
                 "workflow": job.workflow_name,
+                "workflow_path": job.workflow_path,
                 "durations": [],
                 "waits": [],
                 "failed": 0,
@@ -657,6 +659,7 @@ async def job_table(
         {
             "name": r["name"],
             "workflow": r["workflow"],
+            "workflow_path": r["workflow_path"],
             "jobs": r["jobs"],
             "failed": r["failed"],
             "duration_s": summary(r["durations"]),
@@ -670,9 +673,15 @@ async def job_table(
 
 
 async def step_table(
-    session: AsyncSession, repo: str, *, days: int, job: str, runner: str | None = None
+    session: AsyncSession,
+    repo: str,
+    *,
+    days: int,
+    workflow: str,
+    job: str,
+    runner: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Per step of one job name: how long it takes."""
+    """Per step of one workflow's job: how long it takes."""
     w = window(days)
     rows = await session.execute(
         select(
@@ -685,10 +694,12 @@ async def step_table(
             CiJob.labels,
         )
         .join(CiJob, CiJob.id == CiJobStep.job_row_id)
+        .join(CiWorkflowRun, CiWorkflowRun.id == CiJob.run_row_id)
         .where(
             and_(
                 CiJob.repo == repo,
                 CiJob.name == job,
+                CiWorkflowRun.workflow_path == workflow,
                 CiJob.started_at >= w.since,
                 CiJob.started_at < w.until,
             )

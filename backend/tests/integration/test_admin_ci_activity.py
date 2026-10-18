@@ -30,6 +30,7 @@ from app.domain.ci_activity.models import (
     CiMergeQueueEvent,
     CiWorkflowRun,
 )
+from app.domain.ci_activity.schemas import CiBoardOut, CiJobsOut, CiStepsOut
 from tests.conftest import seed_user
 from tests.integration.conftest import session_auth_headers
 
@@ -146,7 +147,9 @@ def _board(client, days=1) -> dict:
         f"/admin/ci-activity?days={days}", headers=session_auth_headers(ADMIN)
     )
     assert response.status_code == 200, response.text
-    return response.json()["data"]
+    data = response.json()["data"]
+    CiBoardOut.model_validate(data)
+    return data
 
 
 def _pull(
@@ -419,7 +422,12 @@ def test_the_job_and_step_tables_narrow_to_one_runner(client, as_admin):
     ).json()["data"]["jobs"]
     steps = client.get(
         "/admin/ci-activity/steps",
-        params={"days": 1, "job": "e2e / e2e", "runner": "cheese-ci-runner-2"},
+        params={
+            "days": 1,
+            "workflow": REQUIRED,
+            "job": "e2e / e2e",
+            "runner": "cheese-ci-runner-2",
+        },
         headers=headers,
     ).json()["data"]["steps"]
 
@@ -429,3 +437,63 @@ def test_the_job_and_step_tables_narrow_to_one_runner(client, as_admin):
     assert [(s["name"], s["duration_s"]["p50"]) for s in steps] == [
         ("Run e2e", pytest.approx(800))
     ]
+
+
+def test_same_job_name_in_different_workflows_stays_separate(client, as_admin):
+    seed_user(client, ADMIN)
+    backup = _run(path=".github/workflows/backup-freshness.yml")
+    backup.workflow_name = "Backup freshness"
+    tls = _run(path=".github/workflows/tls-expiry.yml")
+    tls.workflow_name = "TLS expiry"
+    jobs = [
+        _job(
+            r,
+            name="check",
+            took_s=seconds,
+            kind="self_hosted",
+            runner="cheese-dev-env1",
+        )
+        for r, seconds in [(backup, 10), (tls, 50)]
+    ]
+    _seed(client, [backup, tls, *jobs])
+    _seed(
+        client,
+        [
+            CiJobStep(
+                job_row_id=j.id,
+                number=1,
+                name="Check",
+                conclusion="success",
+                started_at=j.started_at,
+                completed_at=j.completed_at,
+            )
+            for j in jobs
+        ],
+    )
+    headers = session_auth_headers(ADMIN)
+    rows = client.get(
+        "/admin/ci-activity/jobs",
+        params={"days": 1, "runner": "cheese-dev-env1"},
+        headers=headers,
+    ).json()["data"]["jobs"]
+
+    CiJobsOut.model_validate({"jobs": rows})
+    assert len(rows) == 2
+    assert {
+        (r["workflow_path"], r["name"], r["jobs"], r["duration_s"]["p50"]) for r in rows
+    } == {(backup.workflow_path, "check", 1, 10), (tls.workflow_path, "check", 1, 50)}
+    step_data = client.get(
+        "/admin/ci-activity/steps",
+        params={
+            "days": 1,
+            "runner": "cheese-dev-env1",
+            "workflow": backup.workflow_path,
+            "job": "check",
+        },
+        headers=headers,
+    ).json()["data"]
+    CiStepsOut.model_validate(step_data)
+    steps = step_data["steps"]
+    assert [
+        (s["name"], s["duration_s"]["n"], s["duration_s"]["p50"]) for s in steps
+    ] == [("Check", 1, 10)]

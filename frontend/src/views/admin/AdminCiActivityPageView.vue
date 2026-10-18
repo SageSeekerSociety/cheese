@@ -5,7 +5,7 @@
  * backfill stays visible so partial history cannot read as a complete period.
  */
 import type { ChartSeries } from '@/components/admin/AdminLineChart.vue'
-import type { CiBoard, CiJobRow, CiStepRow, CiSummary } from '@/views/admin/ciActivityApi'
+import type { CiBoard, CiJobIdentity, CiJobRow, CiStepRow, CiSummary } from '@/views/admin/ciActivityApi'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -38,7 +38,7 @@ const props = withDefaults(
     steps?: CiStepRow[]
     stepsLoading?: boolean
     /** The job whose steps are expanded, or null. */
-    job?: string | null
+    job?: CiJobIdentity | null
   }>(),
   {
     board: null,
@@ -57,13 +57,17 @@ const props = withDefaults(
 const emit = defineEmits<{
   setDays: [days: number]
   setRunner: [runner: string | null]
-  setJob: [job: string | null]
+  setJob: [job: CiJobIdentity | null]
   retry: []
 }>()
 
 const { t } = useI18n()
 
 const headline = computed(() => props.board?.headline ?? null)
+
+function selectedJob(row: CiJobIdentity): boolean {
+  return props.job?.name === row.name && props.job?.workflow_path === row.workflow_path
+}
 
 const windowOptions = computed(() =>
   WINDOWS.map((d) => ({ value: String(d), label: t('ciActivity.window.days', { n: d }) }))
@@ -239,11 +243,18 @@ const depthSeries = computed<ChartSeries[]>(() => [
 ])
 
 const hourOfDayRows = computed(() =>
-  (props.board?.hour_of_day ?? []).map((h) => ({
-    id: String(h.hour),
-    label: t('ciActivity.hourOfDay.label', { hour: String(h.hour).padStart(2, '0') }),
-    value: round1(h.busy_mean) ?? 0,
-  }))
+  (props.board?.hour_of_day ?? []).flatMap((h) => {
+    const value = round1(h.busy_mean)
+    return value === null
+      ? []
+      : [
+          {
+            id: String(h.hour),
+            label: t('ciActivity.hourOfDay.label', { hour: String(h.hour).padStart(2, '0') }),
+            value,
+          },
+        ]
+  })
 )
 
 const ejectionRows = computed(() =>
@@ -429,14 +440,14 @@ const hostedLabel = (runner: string) => runner.replace(/^hosted: /, t('ciActivit
               </tr>
             </thead>
             <tbody>
-              <template v-for="j in jobs" :key="j.name">
-                <tr :class="{ 'aci__row--on': job === j.name }">
+              <template v-for="j in jobs" :key="JSON.stringify([j.workflow_path, j.name])">
+                <tr :class="{ 'aci__row--on': selectedJob(j) }">
                   <td>
                     <button
                       type="button"
                       class="aci__pick"
-                      :aria-expanded="job === j.name"
-                      @click="emit('setJob', job === j.name ? null : j.name)"
+                      :aria-expanded="selectedJob(j)"
+                      @click="emit('setJob', selectedJob(j) ? null : { name: j.name, workflow_path: j.workflow_path })"
                     >
                       {{ j.name }}
                     </button>
@@ -449,7 +460,7 @@ const hostedLabel = (runner: string) => runner.replace(/^hosted: /, t('ciActivit
                   <td class="t-num">{{ dash(seconds(j.wait_p50_s)) }}</td>
                   <td class="t-num">{{ fmtNum(j.failed) }}</td>
                 </tr>
-                <tr v-if="job === j.name">
+                <tr v-if="selectedJob(j)">
                   <td colspan="7" class="aci__steps">
                     <p v-if="stepsLoading && !steps.length" class="t-meta-read">{{ t('ciActivity.state.loading') }}</p>
                     <p v-else-if="!steps.length" class="t-meta-read">{{ t('ciActivity.steps.empty') }}</p>

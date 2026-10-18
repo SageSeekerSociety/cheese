@@ -645,6 +645,7 @@ export const CRV_CI_BOARD: CiBoard = {
 
 export const CRV_CI_JOBS: CiJobRow[] = [
   {
+    workflow_path: '.github/workflows/required-ci.yml',
     name: 'e2e / e2e',
     workflow: 'Required CI',
     jobs: 160,
@@ -655,6 +656,7 @@ export const CRV_CI_JOBS: CiJobRow[] = [
   },
   {
     name: 'backend / pure (1)',
+    workflow_path: '.github/workflows/required-ci.yml',
     workflow: 'Required CI',
     jobs: 460,
     failed: 3,

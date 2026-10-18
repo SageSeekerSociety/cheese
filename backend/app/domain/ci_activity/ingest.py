@@ -231,6 +231,9 @@ async def sweep_once(
         report["error"] = f"{type(exc).__name__}: {exc}"
 
     report["pruned_runs"] = await store.prune(repo, window_start)
+    if runs_listed_from is not None:
+        # Pruning removes coverage even when backfill once reached further back.
+        runs_listed_from = max(window_start, runs_listed_from)
     report["jobs_owed"] = await store.count_runs_owing_jobs(repo)
     await store.record_sweep(
         repo,

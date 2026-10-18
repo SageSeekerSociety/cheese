@@ -33,7 +33,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import forge_quota
-from app.domain.ci_activity import ingest
+from app.domain.ci_activity import board, ingest
 from app.domain.ci_activity.github import (
     CiGitHubError,
     CiQuotaRefused,
@@ -302,6 +302,47 @@ def test_direct_merges_are_stored_without_fabricating_queue_events(
         assert await _count(db_session, CiMergeQueueEvent) == 0
         await CiActivityStore(db_session).prune(REPO, NOW)
         assert await _count(db_session, CiMergedPullRequest) == 0
+
+    _portal.call(_run_it)
+
+
+def test_pruned_ci_history_is_reported_as_incomplete(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens
+):
+    github = _GitHub()
+
+    async def _run_it() -> None:
+        await _connect(db_session)
+        store = CiActivityStore(db_session)
+        await store.upsert_runs(REPO, [_run(710, age=timedelta(days=3))])
+        first = await _sweep(db_session, github, at=NOW - timedelta(days=2))
+        assert first["error"] == ""
+        await store.upsert_runs(
+            REPO, [_run(711, age=timedelta(hours=2), pull_requests=[{"number": 71}])]
+        )
+        db_session.add(
+            CiMergedPullRequest(
+                repo=REPO,
+                pr_number=71,
+                head_branch="feat/710",
+                created_at=NOW - timedelta(days=3, hours=12),
+                merged_at=NOW - timedelta(hours=1),
+            )
+        )
+        await db_session.commit()
+        w = board.Window(
+            NOW.replace(hour=0), NOW.replace(hour=0) + timedelta(days=1), [NOW.date()]
+        )
+        before = await board._rounds(db_session, REPO, w)
+        assert before["pr_rounds"]["mean"] == 2
+        assert before["incomplete_prs"] == 0
+
+        latest = await _sweep(db_session, github)
+        assert latest["pruned_runs"] == 1
+        after = await board._rounds(db_session, REPO, w)
+        assert after["pr_rounds"]["mean"] == 1
+        assert after["incomplete_prs"] == 1
+        assert after["covered_from"] == (NOW - ingest.WINDOW).isoformat()
 
     _portal.call(_run_it)
 

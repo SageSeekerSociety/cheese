@@ -104,8 +104,12 @@ export interface CiBoard {
   ejections: CiEjection[]
 }
 
-export interface CiJobRow {
+export interface CiJobIdentity {
   name: string
+  workflow_path: string
+}
+
+export interface CiJobRow extends CiJobIdentity {
   workflow: string
   jobs: number
   failed: number
@@ -132,10 +136,10 @@ export function getCiJobs(days: number, runner: string | null): Promise<{ jobs: 
 
 export function getCiSteps(
   days: number,
-  job: string,
+  job: CiJobIdentity,
   runner: string | null
 ): Promise<{ job: string; steps: CiStepRow[] }> {
-  const query = new URLSearchParams({ days: String(days), job })
+  const query = new URLSearchParams({ days: String(days), job: job.name, workflow: job.workflow_path })
   if (runner) query.set('runner', runner)
   return request<{ job: string; steps: CiStepRow[] }>(`/admin/ci-activity/steps?${query}`)
 }
