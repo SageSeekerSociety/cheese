@@ -131,9 +131,9 @@ class MachineSettings(BaseModel):
     # How long a host that has no sandbox on it is kept before it is released.
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
     # The most hosts the pool holds at once, whole cloud VMs among them. It
-    # protects the MicroCloud cluster. Ten places give forty sandbox slots, the
-    # current 400 GB thin pool's worth written full; two more are whole VMs,
-    # over-committing it by two disks. Raise this only as that pool grows.
+    # protects the MicroCloud cluster: the current 400 GB shared thin pool holds
+    # ten hosts' disks written full, so each place above ten over-commits it by
+    # a disk. Raise this only as that pool grows.
     cloud_pool_max_hosts: int = Field(default=12, ge=1, le=500)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
