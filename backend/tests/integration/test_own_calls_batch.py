@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import event, select
 
 from app.domain.agent.own_calls import seat_if_named
-from app.domain.agent_instance.models import AgentInstance, OwnAgent
+from app.domain.agent_instance.models import AgentInstance, OwnAgent, OwnCallers
 from app.domain.agent_instance.own import callable_by, callable_by_many
 from app.domain.agent_instance.own.settings import SETTING
 from app.domain.identity.handles import agent_instance_handle
@@ -21,7 +21,9 @@ from tests.turn_log import a_topic
 pytestmark = pytest.mark.anyio
 
 
-async def _own(session, project_id, owner: User) -> uuid.UUID:
+async def _own(
+    session, project_id, owner: User, callers: OwnCallers = OwnCallers.owner
+) -> uuid.UUID:
     agent = AgentInstance(
         project_id=project_id,
         handle=f"own-{uuid.uuid4().hex[:8]}",
@@ -31,7 +33,12 @@ async def _own(session, project_id, owner: User) -> uuid.UUID:
     session.add(agent)
     await session.flush()
     session.add(
-        OwnAgent(instance_id=agent.id, owner_user_id=owner.id, harness="claude-code")
+        OwnAgent(
+            instance_id=agent.id,
+            owner_user_id=owner.id,
+            harness="claude-code",
+            callers=callers,
+        )
     )
     return agent.id
 
@@ -52,12 +59,19 @@ async def test_naming_four_agents_judges_them_in_one_query(db_factory, monkeypat
         assert other is not None
         mine = [await _own(session, topic.project_id, me) for _ in range(2)]
         theirs = await _own(session, topic.project_id, other)
+        opened = await _own(session, topic.project_id, other, OwnCallers.project)
         ghost = uuid.uuid4()
         await session.commit()
 
-        ids = [*mine, theirs, ghost]
+        ids = [*mine, theirs, opened, ghost]
         singly = {i: await callable_by(session, i, "u") for i in ids}
-        assert singly == {mine[0]: True, mine[1]: True, theirs: False, ghost: False}
+        assert singly == {
+            mine[0]: True,
+            mine[1]: True,
+            theirs: False,
+            opened: True,
+            ghost: False,
+        }
 
         queries: list[str] = []
 
@@ -70,6 +84,11 @@ async def test_naming_four_agents_judges_them_in_one_query(db_factory, monkeypat
         try:
             assert await callable_by_many(session, ids, "u") == singly
             assert len(queries) == 1
+            # an agent is never someone an agent answers to, even an open one
+            for agent_caller in ("cheese", "芝士"):
+                assert await callable_by_many(session, ids, agent_caller) == {
+                    i: await callable_by(session, i, agent_caller) for i in ids
+                }
             queries.clear()
             content = " ".join(f"<@{agent_instance_handle(i)}>" for i in ids)
             project = SimpleNamespace(settings={SETTING: True})
@@ -77,4 +96,4 @@ async def test_naming_four_agents_judges_them_in_one_query(db_factory, monkeypat
             assert len(queries) == 1
         finally:
             event.remove(engine, "before_cursor_execute", count)
-    assert sorted(seated) == sorted(agent_instance_handle(i) for i in mine)
+    assert sorted(seated) == sorted(agent_instance_handle(i) for i in [*mine, opened])
