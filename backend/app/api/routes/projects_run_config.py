@@ -271,16 +271,12 @@ async def list_device_sessions(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require(project_id, actor, Permission.edit_settings)
-    listed, hidden = [], 0
-    for topic, session in await device_sessions(db, project_id, device_id):
-        try:
-            await resolver.authorize_topic(
-                actor, project_id=project_id, topic_id=topic.id
-            )
-        except ForbiddenError:
-            hidden += 1
-            continue
-        listed.append(session)
+    placed = await device_sessions(db, project_id, device_id)
+    readable = await resolver.readable_topic_ids(
+        actor, project_id=project_id, topics=[topic for topic, _ in placed]
+    )
+    listed = [session for topic, session in placed if topic.id in readable]
+    hidden = len(placed) - len(listed)
     return ok({"sessions": listed, "hidden": hidden})
 
 

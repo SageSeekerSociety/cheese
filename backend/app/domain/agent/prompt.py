@@ -22,6 +22,7 @@ import uuid
 from collections import Counter
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import raster_images
@@ -226,18 +227,35 @@ def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
     return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]
 
 
+async def _blocks_by_id(
+    session: AsyncSession, ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Block]:
+    """One IN query for ``ids``; ids with no row are simply absent."""
+    if not ids:
+        return {}
+    rows = await session.execute(select(Block).where(Block.id.in_(set(ids))))
+    return {b.id: b for b in rows.scalars()}
+
+
 async def live_inputs(
     session: AsyncSession, block_ids: list[uuid.UUID]
 ) -> tuple[Block | None, Block | None]:
     """Read the persisted authored message, quote and validated reply edge."""
-    stored = replied = None
+    found = await _blocks_by_id(session, block_ids)
+    stored = reply_id = None
     for block_id in block_ids:
-        block = await session.get(Block, block_id)
+        block = found.get(block_id)
         if block is not None:
             if block.kind == BlockKind.message:
                 stored = block
             if block.reply_to is not None:
-                replied = await session.get(Block, block.reply_to)
+                reply_id = block.reply_to
+    if reply_id is None:
+        replied = None
+    elif reply_id in found:
+        replied = found[reply_id]
+    else:
+        replied = (await _blocks_by_id(session, [reply_id])).get(reply_id)
     return stored, replied
 
 

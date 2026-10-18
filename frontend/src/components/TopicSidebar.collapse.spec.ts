@@ -217,7 +217,7 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     // 一路展开到它自己那一行，动静就回到那一行上，开关不再替它说
     await fireEvent.click(toggleFor(container, 'a'))
     await fireEvent.click(toggleFor(container, 'a1'))
-    expect(rowFor(container, 'a1x').querySelector('[data-state="working"]')).not.toBeNull()
+    expect(rowFor(container, 'a1x').querySelector('.rail-members__one')).not.toBeNull()
     expect(toggleFor(container, 'a').classList.contains('subtree-toggle--working')).toBe(false)
   })
 

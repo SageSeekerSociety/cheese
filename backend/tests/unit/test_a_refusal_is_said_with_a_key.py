@@ -504,7 +504,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/task/attachment_service.py": 10,
     "app/domain/task/inputs.py": 7,
     "app/domain/task/services.py": 17,
-    "app/domain/task/task_pdf_draft_service.py": 13,
+    "app/domain/task/task_pdf_draft_service.py": 12,
     "app/domain/team/membership_services.py": 15,
     "app/domain/team/recruitment_services.py": 6,
     "app/domain/team/repositories.py": 1,

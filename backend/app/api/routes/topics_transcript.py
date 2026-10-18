@@ -17,7 +17,7 @@ some (`output_bytes`) and this endpoint hands it over when somebody opens it.
 
 What stays behind, and why. `_actor_in_place` (identity, then the room's roster
 -- the shape every `topics_*` module imports it in), `Block`,
-`BlockKind`, `BlockOut` and `BlockRepository` are imported from
+`BlockKind` and `BlockRepository` are imported from
 `app.api.topics_deps.py` rather than from `app.domain.block.*`. That module is
 where the route-shared pieces of topics.py live now: importing a repository or a
 model through it adds no exemption to the guard in
@@ -28,8 +28,13 @@ of every `topics_*` module carrying its own. Before it existed this file took al
 five names from `routes/topics.py`, which made one route another route's
 dependency; that is the shape C4 forbids. `without_output` is the one name
 topics.py read only for the transcript, so it leaves with the code and is
-imported from `app.domain.agent.step_output` directly. topics.py imports nothing
-from this module, so there is no cycle.
+imported from `app.domain.agent.step_output` directly. The payloads themselves
+come from `app.domain.block.adapters.dump_blocks_json` (the batch dumper
+`topics_asks.py` already uses): one TypeAdapter pass per 500 rows with a yield
+between chunks, where the old list comprehension ran 120 synchronous Pydantic
+constructions back to back on a 120-step page. It is an adapter, not a
+repository, so the import guard's (route, repository) ratchet is untouched.
+topics.py imports nothing from this module, so there is no cycle.
 
 Ordering. This module sorts after `topics.py` and after every other `topics_*`
 module (`_` > `.`, and `transcript` > `title`), so its two paths mount later in
@@ -56,7 +61,6 @@ from app.api.response import ok, page
 from app.api.topics_deps import (
     Block,
     BlockKind,
-    BlockOut,
     BlockRepository,
     _actor_in_place,
 )
@@ -65,6 +69,7 @@ from app.core.sentences import say
 from app.domain.agent.run_records import for_site
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_times import turn_starts
+from app.domain.block.adapters import dump_blocks_json
 from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -129,9 +134,11 @@ async def topic_transcript(
     # What a step printed stays behind: a page of 120 steps would otherwise
     # carry up to 120 × 8 KiB. The row says it has some (`output_bytes`), and
     # `step_output` below hands it over when somebody opens it.
-    items = [
-        without_output(BlockOut.model_validate(b).model_dump(mode="json")) for b in site
-    ]
+    # Validate and serialize the page in batches: `dump_blocks_json` runs a
+    # TypeAdapter over up to 500 rows at a time and yields to the loop between
+    # batches. Per-row `model_validate().model_dump()` here would hold the loop
+    # for every step of a 120-step page.
+    items = [without_output(item) for item in await dump_blocks_json(site)]
     # The platform's own running (a turn queued, a sandbox woken, a model
     # request retried) is kept apart from the conversation; the 现场 shows it
     # among the steps of the same span. The span is the page's: from its
