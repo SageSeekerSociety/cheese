@@ -295,7 +295,7 @@ async def push_fix(
             "reason": "" if pushed else "任务已无依赖，PR 没有新提交",
         }
     if not cards:
-        return {"pushed": False, "reason": "这个话题手上没有骑着 PR 的验收卡"}
+        return {"pushed": False, "reason": "这个频道手上没有骑着 PR 的验收卡"}
     card = cards[0]
     assert card.pr_number is not None  # filtered above; for the type checker
     topic = await self._topic_or_404(card.topic_id)
@@ -631,7 +631,7 @@ async def void(
     reason = say("cardVoidedReason", note=note.strip()) if note.strip() else ""
     headline = (
         f"{VOIDED_PREFIX}：<@{decided_by}> 作废于状态「{was}」。"
-        f"话题可以重新提交审阅。{reason}"
+        f"频道可以重新提交审阅。{reason}"
     )
     if archive.pr_left_open(card):
         # 跟归档收敛同一条产品判断 (review/archive.py 的模块 docstring)：平台

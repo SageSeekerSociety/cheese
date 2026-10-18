@@ -105,7 +105,7 @@ afterEach(() => {
 })
 
 describe('fetchSpace', () => {
-  it('取板的时候连着分类话题和我的排名一起要 —— 页头那两处读的是它们', async () => {
+  it('取板的时候连着分类标签和我的排名一起要 —— 页头那两处读的是它们', async () => {
     await data().fetchSpace(SPACE_ID)
 
     expect(spaceDetail).toHaveBeenCalledWith(SPACE_ID, {
@@ -365,7 +365,7 @@ describe('管理员', () => {
   })
 })
 
-describe('分类话题', () => {
+describe('分类标签', () => {
   beforeEach(async () => {
     spaceDetail.mockResolvedValue({ space: space(SPACE_ID, { classificationTopics: [{ id: 1 }, { id: 2 }] }) })
     // 服务端把改完之后的那张名单原样送回来，就像真接口那样。
@@ -391,6 +391,6 @@ describe('分类话题', () => {
     spaceUpdate.mockRejectedValue(new Error('403'))
 
     await expect(data().addClassificationTopics([4])).resolves.toBeUndefined()
-    expect(toast.error).toHaveBeenCalledWith('更新分类话题失败')
+    expect(toast.error).toHaveBeenCalledWith('更新分类标签失败')
   })
 })
