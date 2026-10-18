@@ -41,6 +41,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -430,8 +431,7 @@ async def test_a_recovery_failure_that_is_not_a_peer_state_is_still_an_error(
 
 
 async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
-    """The same standing inside `recover_sessions`: the topic whose machine said
-    no is skipped, every other session is still recovered."""
+    """An unreadable session stays pending while another finishes recovery."""
     import uuid
 
     from app.domain.agent.chat import REPLAYS_AT_ONCE, ChatService
@@ -459,10 +459,18 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
     chat._compute = Compute()
     chat.live = LiveWork()
     chat._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
+    chat.prewarm = SimpleNamespace(nudge=lambda session: None)
 
-    assert await chat.recover_sessions(DEVICE) == 2
-    await chat.replays_settled()
-    assert replayed == [sessions[1]]
+    try:
+        assert await chat.recover_sessions(DEVICE) == 2
+        await asyncio.wait_for(chat.live.replays[sessions[1].conversation_id], 1)
+        assert replayed == [sessions[1]]
+        assert chat.replaying(sessions[0].conversation_id) is not None
+    finally:
+        tasks = list(chat.live.replays.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def test_a_public_route_that_reaches_a_failing_machine_still_warns(

@@ -14,11 +14,9 @@ can answer without reading the table, so that is what these assert.
 """
 
 import re
-from collections.abc import Iterator
-from contextlib import contextmanager
 
 import pytest
-from sqlalchemy import event, text
+from sqlalchemy import text
 
 from tests.integration.conftest import (
     a_team,
@@ -26,32 +24,11 @@ from tests.integration.conftest import (
     post_message,
     post_project,
 )
+from tests.support.counting_session import counting_sql
 
 OWNER = "roster-owner"
 PROJECT = "00000000-0000-0000-0000-0000000000aa"
 TOPIC_ONE = "00000000-0000-0000-0000-000000000001"
-
-
-@contextmanager
-def counting_sql(client) -> Iterator[list[str]]:
-    """Every SQL statement the app's requests issued while the block runs, in order.
-
-    Listens on the engine requests are served from, not on every engine: the
-    app starts its own work as it comes up (taking over a previous process's
-    turns, sweeping storage) on an engine of its own, and on a slow machine
-    those queries land inside the block and get charged to the request.
-    """
-    seen: list[str] = []
-
-    def _record(conn, cursor, statement, parameters, context, executemany):
-        seen.append(" ".join(statement.split()))
-
-    engine = client.test_app_engine.sync_engine
-    event.listen(engine, "after_cursor_execute", _record)
-    try:
-        yield seen
-    finally:
-        event.remove(engine, "after_cursor_execute", _record)
 
 
 def _seeded_rooms(client, project_id: str, headers: dict) -> list[dict]:
