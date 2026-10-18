@@ -116,8 +116,9 @@ def test_people_named_are_invited_and_unknown_names_are_reported(
     assert friend.username in invited.text
 
 
-# The account lookup is the one statement that matches on ``lower(email)``.
-_ACCOUNT_LOOKUP = re.compile(r'lower\("user"\.email\)', re.IGNORECASE)
+# An account lookup matches on the lowered username or email; counting either
+# catches a lookup that batches one of the two and loops over the other.
+_ACCOUNT_LOOKUP = re.compile(r'lower\("user"\.(username|email)\)', re.IGNORECASE)
 
 
 def _account_lookups(api_client, db_session, user_client, invite: int) -> int:

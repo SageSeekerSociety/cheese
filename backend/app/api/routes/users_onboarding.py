@@ -54,7 +54,7 @@ from app.domain.project.protection import BRANCH_PROTECTION_KEY
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.user.about import WorkRole, record_guide_answers
-from app.domain.user.repositories import UserRepository
+from app.domain.user.services import lookup_accounts
 
 # The signed-in user answers for themselves and makes their own project:
 # `require_auth_user` is the whole check.
@@ -135,7 +135,7 @@ async def finish_onboarding(
     asked_for = list(dict.fromkeys(q.strip() for q in payload.invitees if q.strip()))
     # Everyone named is found in one statement before any invitation is
     # written, not one lookup per person.
-    handles = await UserRepository(session).lookup_accounts(asked_for)
+    handles = await lookup_accounts(session, asked_for)
     for asked in asked_for:
         handle = handles.get(asked.lower())
         if handle is None:
