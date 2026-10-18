@@ -542,9 +542,12 @@ def _mirror_step(
         capture_output=True,
         text=True,
         # uv can echo a path or a package name that is not UTF-8 (a Windows
-        # ANSI code page, a checkout with one odd filename). A decode error
-        # here is a ValueError, which the caller does not catch, and would make
-        # preparation fail where this whole step is meant to fall back.
+        # ANSI code page, a checkout with one odd filename). Replacing the
+        # undecodable bytes keeps the message — which is what the log line is
+        # for — where strict decoding would lose it to a UnicodeDecodeError.
+        # The caller catches ValueError as well, so a decoder this change
+        # cannot foresee still ends in the fallback rather than in a failed
+        # preparation.
         errors="replace",
         timeout=budget,
     )

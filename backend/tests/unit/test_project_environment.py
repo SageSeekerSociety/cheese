@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -617,6 +618,10 @@ def test_mirror_install_fetches_the_locked_versions_through_the_mirror(tmp_path)
     assert export[2] == install[2] == str(project)
     assert export[1] == install[1] == "https://mirror.test/simple"
     assert "sync" not in calls.read_text()
+    # Scratch, not something the checkout keeps or the next run inherits.
+    exported = Path(export[0].split(" -o ", 1)[1])
+    assert not exported.is_relative_to(project)
+    assert not exported.exists()
 
 
 def test_mirror_install_creates_the_environment_before_installing(tmp_path):
@@ -751,10 +756,10 @@ def test_task_startup_runs_after_a_failed_mirror_install(tmp_path, monkeypatch):
 def test_mirror_install_survives_output_that_is_not_utf8(tmp_path):
     """uv echoing a path it could not encode must cost the checkout nothing.
 
-    A decode error is a ValueError, which the caller does not catch: without
-    `errors="replace"` it would fail the whole preparation rather than fall
-    back, and the startup script — which installs fine on its own — would
-    never run.
+    Two protections cover this: `errors="replace"` keeps the message, and the
+    caller's catch names ValueError, which is what a decode error is. Either
+    one alone is enough, so the test is red only when both are gone — which is
+    the state this change found the code in.
     """
     work, _ = _uv_project(tmp_path)
     script = tmp_path / "uv"
@@ -762,3 +767,4 @@ def test_mirror_install_survives_output_that_is_not_utf8(tmp_path):
     script.chmod(0o755)
     log = _mirror(tmp_path, work)
     assert "mirror: backend:" in log
+    assert "the startup script installs" in log
