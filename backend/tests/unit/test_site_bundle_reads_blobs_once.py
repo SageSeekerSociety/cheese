@@ -1,10 +1,11 @@
 """A publication source reads its entry blobs in one round trip, byte for byte.
 
-Only the directories whose bundle passes validation can become candidates, and
-the entry blob is what decides whether each one is static. Reading that blob per
-candidate sends the forge one request for every candidate the user is waiting
-on; reading the same oids together answers all of them in one call. The answers
-must be the bytes each candidate would have got on its own.
+Every directory whose bundle passes validation needs its own `index.html` read
+to decide whether it is a static candidate: reading that blob per candidate
+sends the forge one request for each one the user is waiting on, and reading the
+same oids together answers all of them in one call. The two directories below
+are built so that the answer depends on which candidate gets which bytes — not
+only on how many requests went out.
 """
 
 import asyncio
@@ -38,7 +39,6 @@ class Reader:
     def __init__(self, project_id):
         self.project_id = project_id
         self.calls: list[list[str]] = []
-        self.answers: dict[str, bytes] = {}
 
     async def revision(self):
         return git_store.head(self.project_id)
@@ -64,10 +64,7 @@ class Reader:
 
     async def committed_blobs(self, oids):
         self.calls.append(list(oids))
-        self.answers.update(
-            {oid: _blob(git_store.path(self.project_id), oid) for oid in oids}
-        )
-        return {oid: self.answers[oid] for oid in oids}
+        return {oid: _blob(git_store.path(self.project_id), oid) for oid in oids}
 
 
 @pytest.fixture
@@ -75,12 +72,18 @@ def repository(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
     project_id = uuid.uuid4()
     repo = git_store.ensure_repo(project_id)
+    # alpha is a static entry: it is the one candidate.
     (repo / "alpha").mkdir()
     (repo / "alpha/index.html").write_text('<img src="alpha.png">')
     (repo / "alpha/alpha.png").write_bytes(b"\x89PNG alpha")
+    # beta passes bundle validation and takes part in the batch, but its own
+    # html names a file its bundle does not hold — so beta drops out, and it
+    # can only drop out if beta was judged by beta's own bytes. It holds
+    # alpha.png too, so the wrong bytes would put beta back in.
     (repo / "beta").mkdir()
-    (repo / "beta/index.html").write_text('<script src="beta.js"></script>')
-    (repo / "beta/beta.js").write_text("document.title = 'beta'")
+    (repo / "beta/index.html").write_text('<img src="missing.png">')
+    (repo / "beta/alpha.png").write_bytes(b"\x89PNG beta")
+    # gamma never passes validation: its bundle holds a symlink.
     (repo / "gamma").mkdir()
     (repo / "gamma/index.html").write_text('<img src="gamma.png">')
     (repo / "gamma/link.png").symlink_to("gamma.png")
@@ -96,22 +99,21 @@ def test_only_the_bundles_that_pass_are_read_and_they_are_read_once(repository):
     alpha = _git(repo, "rev-parse", "HEAD:alpha/index.html")
     beta = _git(repo, "rev-parse", "HEAD:beta/index.html")
 
-    source = asyncio.run(publication_source(None, project_id))
+    asyncio.run(publication_source(None, project_id))
 
-    # gamma's bundle holds a symlink, so it never becomes a candidate and its
-    # entry blob is never asked for.
-    assert source["candidates"] == [
-        {"directory": "alpha", "entry_file": "alpha/index.html"},
-        {"directory": "beta", "entry_file": "beta/index.html"},
-    ]
+    # Two of the three pass validation, and both are read in a single call;
+    # gamma's symlink keeps it out of the batch entirely.
     assert reader.calls == [[alpha, beta]]
 
 
-def test_the_bytes_of_a_together_read_are_those_of_one_at_a_time(repository):
+def test_each_candidate_is_decided_by_its_own_entry_blob(repository):
     project_id, repo, reader = repository
-    alpha = _git(repo, "rev-parse", "HEAD:alpha/index.html")
-    beta = _git(repo, "rev-parse", "HEAD:beta/index.html")
 
-    asyncio.run(publication_source(None, project_id))
+    source = asyncio.run(publication_source(None, project_id))
 
-    assert reader.answers == {oid: _blob(repo, oid) for oid in (alpha, beta)}
+    # beta drops out and alpha stays in only if beta was judged by beta's own
+    # html and alpha by alpha's: handed the same entry's bytes for both, the
+    # two would answer alike and this list would be empty or hold both.
+    assert source["candidates"] == [
+        {"directory": "alpha", "entry_file": "alpha/index.html"}
+    ]
