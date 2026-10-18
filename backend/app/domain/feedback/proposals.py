@@ -174,13 +174,6 @@ class ProposalService:
             {"key": f"feedback-proposal:{topic_id}"},
         )
 
-    async def _is_dismissed(self, topic_id: uuid.UUID, fingerprint: str) -> bool:
-        stmt = select(FeedbackProposalDismissal.id).where(
-            FeedbackProposalDismissal.topic_id == topic_id,
-            FeedbackProposalDismissal.fingerprint == fingerprint,
-        )
-        return (await self._session.execute(stmt)).scalar_one_or_none() is not None
-
     async def _dismissed(self, topic_id: uuid.UUID) -> set[str]:
         stmt = select(FeedbackProposalDismissal.fingerprint).where(
             FeedbackProposalDismissal.topic_id == topic_id
