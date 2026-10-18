@@ -1177,10 +1177,8 @@ async def write_topic_progress(
         if inner_id is not None
         else await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle)
     )
-    if not plans_the_turn:
-        if inner_id is not None:
-            raise ForbiddenError("A task's checklist is written by its session")
-        await require_person_speaks(db, actor, place)
+    if inner_id is not None and not plans_the_turn:
+        raise ForbiddenError("A task's checklist is written by its session")
     if body.new and body.message is not None:
         raise ValidationError("message and new cannot both be given")
     current = None
@@ -1192,6 +1190,8 @@ async def write_topic_progress(
             raise NotFoundError("Checklist not found in this room")
         if current is not None and current.author != actor.handle:
             raise ForbiddenError("Only the author can edit this message")
+    if not plans_the_turn and current is None:  # Posting is speaking; editing is not.
+        await require_person_speaks(db, actor, place)
     items = [
         {"id": str(number), "subject": todo.content, "status": todo.status}
         for number, todo in enumerate(body.todos, start=1)

@@ -448,6 +448,25 @@ def test_a_person_posts_no_checklist_in_an_archived_room(client):
     assert _messages_by(client, room, "alice") == []
 
 
+def test_a_person_still_ticks_their_own_checklist_once_the_room_is_archived(client):
+    """Ticking a step edits a message already said, as any edit of one's own
+    message does; it is not speaking again."""
+    room = _shared_room(client)
+    alice = session_auth_headers("alice")
+    posted = _write(client, room, alice, PLAN).json()["data"]["message_id"]
+    archived = client.post(
+        f"/topics/{room}/archive", json={"by": "alice"}, headers=alice
+    )
+    assert archived.status_code == 200, archived.text
+
+    done = [{**t, "status": "completed"} for t in PLAN]
+    ticked = _write(client, room, alice, done, message=posted)
+
+    assert ticked.status_code == 200, ticked.text
+    (message,) = _messages_by(client, room, "alice")
+    assert message["content"] == "✓ 核实 issue 论断\n✓ 写实现\n✓ 补测试"
+
+
 def test_a_person_whose_role_does_not_speak_posts_no_checklist(client):
     """A project may take speaking away from a role; a checklist is speaking."""
     room = _shared_room(client)
