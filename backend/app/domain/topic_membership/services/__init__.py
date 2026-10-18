@@ -425,9 +425,15 @@ class TopicMemberService:
     async def may_bring_in(self, topic: Topic, actor: str) -> bool:
         """May ``actor`` add someone to this channel: a person in it whose role
         lets them bring people into channels, or someone who manages it. An AI
-        teammate's seat lets it act in the channel, not invite."""
+        teammate's seat lets it act in the channel, not invite. Everyone in the
+        project is in 综合 without a seat of their own, and a role that lets
+        them bring people in already says they are in the project."""
         if (
-            await self._repo.get(topic_id=topic.id, member_handle=actor) is not None
+            (
+                topic.kind == TopicKind.root
+                or await self._repo.get(topic_id=topic.id, member_handle=actor)
+                is not None
+            )
             and not await IdentityService(self._session).is_agent(actor)
             and await self.may_open_channels(topic.project_id, actor)
         ):

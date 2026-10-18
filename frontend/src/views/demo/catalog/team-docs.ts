@@ -33,6 +33,8 @@ const ROWS: LibraryRow[] = [
       title: '实验室新人须知',
       doc_version: 4,
       author: 'liming',
+      created_by: 'liming',
+      drafted_by: 'cheese',
       created_at: '2026-10-10T09:00:00Z',
       updated_at: '2026-10-17T15:00:00Z',
     }),
@@ -48,6 +50,7 @@ const ROWS: LibraryRow[] = [
       title: '组会轮值表',
       doc_version: 2,
       author: 'alice',
+      created_by: 'alice',
       created_at: '2026-10-08T09:00:00Z',
       updated_at: '2026-10-12T10:00:00Z',
     }),
@@ -82,7 +85,7 @@ export const TEAM_DOCS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '有文档',
-        note: '行上写谁什么时候改的；点一行整页打开。',
+        note: '行上写作者和最后一次改动的时间：让芝士写的文档，让它写的人和芝士并列；点一行整页打开。',
         props: {},
         expect: '实验室新人须知',
       },
@@ -104,6 +107,10 @@ export const TEAM_DOCS_ENTRIES: CatalogEntry[] = [
     teleport: true,
     args: {
       document: { id: 'd1', projectId: '', title: '实验室新人须知' },
+      authors: [
+        { handle: 'liming', name: '李明', avatar: null, agent: false },
+        { handle: 'cheese', name: '芝士', avatar: null, agent: true },
+      ],
       wiring: wiring('第一周：领工位、开通服务器账号。'),
       error: '',
       parent: { label: '视觉课题组的文档', to: { path: '/teams/vision/docs' } },
@@ -115,7 +122,7 @@ export const TEAM_DOCS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '打开一份',
-        note: '和资料库里打开一份是同一个面板，多人同时编辑、评论、修改记录都一样。',
+        note: '和资料库里打开一份是同一个面板，多人同时编辑、评论、修改记录都一样。标题下面是作者。',
         props: {},
         expect: '第一周：领工位',
       },
