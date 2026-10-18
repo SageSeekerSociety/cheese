@@ -23,8 +23,8 @@ from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
 from app.domain.agent.document import question
 from app.domain.agent.harness.prompt import WRITING
+from app.domain.agent.model_catalog import catalog
 from app.domain.agent.supply import GATEWAY
-from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.services import ProjectService

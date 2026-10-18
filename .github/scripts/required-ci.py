@@ -1,34 +1,32 @@
 """Select merge-diff suites and fail the required check unless all pass.
 
-Two tiers, one judge. A DRAFT pull request runs only the fast tier — the
-bounded local evidence `ci-fast.py --tier quick` produces — because a draft is
-work in progress, not a delivery to review. Every other run is the full tier:
-each suite the merge diff selects (with backend ``integration``, ``e2e`` and
-``remote`` deferred from ``pull_request`` to ``merge_group``). The tier is decided HERE, from the event, so
-the check a draft produces can never be the one branch protection requires:
+Two tiers, one judge. Every pull request runs only the quick tier — the
+bounded evidence `ci-fast.py --tier quick` produces. Full suites run after
+landing, on a push to main (or a merge_group entry), not again on a ready PR.
 
-- a draft pull_request run is named ``CI required (draft quick)`` (the
-  aggregating job's ``name`` in required-ci.yml) and only the ``fast`` job may
-  succeed — every full suite must be SKIPPED, so a draft's green can never be
-  read as the full gate's green;
-- a merge_group entry, or any pull_request that is not a draft, is named ``CI
-  required`` and requires the selected suites (on ``pull_request``, backend
-  ``integration``, ``e2e`` and ``remote`` are deferred to ``merge_group``).
+Drafts aggregate as ``CI required (draft quick)``; ready PRs aggregate as
+``CI required`` and check the commit title. Both require ``fast`` to succeed
+and all full suites to be skipped. Landed-code runs also use ``CI required``,
+but require the full tier and every selected suite to succeed. Only that
+post-submit result can authorize deployment.
 
-Fail closed: an event this module cannot read as a non-draft pull_request or a
-merge queue entry is the FULL tier (the real gate), never the fast one.
+A main push is the post-submit gate: its base is the commit `main-green` names
+(:func:`main_green_anchor`), so one run covers every commit that landed since
+the gate last passed. The base is never ``github.event.before`` — that is only
+the previous tip, and the commits of a run that was superseded while pending
+would then fall outside every later diff.
+
+Fail closed: an event this module cannot read as a valid pull_request is the
+FULL tier, never the fast one.
 """
 
 import fnmatch
 import json
 import os
-import re
 import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 PATHS = json.loads(Path(__file__).with_name("required-ci-paths.json").read_text())
 
@@ -36,18 +34,25 @@ PATHS = json.loads(Path(__file__).with_name("required-ci-paths.json").read_text(
 #: the fast job. A draft's aggregation accepts only ``quick``.
 TIERS = ("full", "quick")
 
-#: Suites deferred to the merge queue: on ``pull_request`` events ``scope``
+#: Suites deferred to a run of landed code: on ``pull_request`` events ``scope``
 #: always outputs ``false`` for them and ``check`` expects ``skipped`` (while
 #: ``branch_heavy=false`` tells ``test.yml`` to skip backend ``integration``).
 QUEUE_ONLY_SUITES = ("e2e", "remote")
+
+#: The ref a main push run takes its base from: the commit the last successful
+#: gate result on main was about. The ``mark-green`` job in required-ci.yml
+#: moves it after a green run; a red one leaves it, so the next run's diff
+#: covers both.
+MAIN_GREEN_REF = "refs/heads/main-green"
+MAIN_GREEN_TRACKING = "refs/remotes/origin/main-green"
 
 
 def branch_heavy_for(event_name):
     """Whether heavy suites (backend integration, e2e, remote) run on this event.
 
     On ``pull_request`` runs only the cheap suites run and heavy suites are
-    deferred to ``merge_group``. Any other or unreadable event returns ``True``
-    (fail closed).
+    deferred to a run of landed code (``push`` on main, or a ``merge_group``
+    entry). Any other or unreadable event returns ``True`` (fail closed).
     """
     return event_name != "pull_request"
 
@@ -55,25 +60,18 @@ def branch_heavy_for(event_name):
 def tier_for(event_name, event):
     """Which tier this run must be — ``"full"`` or ``"quick"``.
 
-    Only a DRAFT pull_request is ``"quick"``. A ``merge_group`` entry and any
-    pull_request whose ``draft`` flag is false are ``"full"``; so is anything we
-    cannot read — a missing/absent flag, a malformed payload, an unknown event,
-    or a non-dict event. An unreadable event is the STRICT gate, never the
-    loose one: defaulting to ``"quick"`` on a parse surprise would let a draft's
-    fast evidence stand in for the real merge gate.
-
-    The GitHub pull_request payload's ``draft`` flag is authoritative and
-    correct on every action: it is true on ``opened``/``converted_to_draft`` and
-    false on ``ready_for_review``. The action name is not consulted — the flag
-    already carries it, and reading the flag keeps one source of truth.
+    Both draft and ready pull requests are ``"quick"``. A ``push`` to main,
+    a ``merge_group`` entry and all other events stay ``"full"``. The draft flag
+    only chooses the aggregator's name in the workflow, not its evidence tier.
+    Missing or malformed PR payloads still fail closed to the full tier.
     """
-    if event_name in ("merge_group", "push", "workflow_dispatch"):
+    if event_name == "merge_group":
         return "full"
     if event_name == "pull_request" and isinstance(event, dict):
         pull = event.get("pull_request")
         if isinstance(pull, dict):
             draft = pull.get("draft")
-            if draft in (True, False):
+            if draft is True or draft is False:
                 return "quick"
     return "full"
 
@@ -226,48 +224,75 @@ def api_failures(needs, outputs, tier):
     return [], moved == "true"
 
 
-def _last_green_main_sha(repository, token, head_sha):
-    """Return the newest commit on main whose full Required CI succeeded, or None."""
-    url = (
-        f"https://api.github.com/repos/{repository}/actions/workflows/"
-        "required-ci.yml/runs?status=completed&conclusion=success&per_page=30"
-    )
-    req = Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
-    body = None
-    for wait in (2, 5, None):
-        try:
-            with urlopen(req, timeout=20) as resp:
-                body = json.load(resp)
+def main_green_anchor(attempts=3):
+    """The commit ``main-green`` names, or ``""`` when there is no such ref.
+
+    This is the base of a post-submit run on main. ``ls-remote --exit-code``
+    answers "no such ref" (exit 2) separately from a failed read, so a first
+    push after the gate moved to main runs with every path in scope instead of
+    reddening. A read or fetch that keeps failing is also ``""``, for the same
+    reason in the other direction: a wider diff never hides a commit, while a
+    red main run would hold the deploy gate over a base this could have widened
+    past.
+    """
+    for attempt in range(1, attempts + 1):
+        probe = subprocess.run(
+            ["git", "ls-remote", "--exit-code", "origin", MAIN_GREEN_REF],
+            capture_output=True, text=True,
+        )
+        if probe.returncode == 2:
+            return ""
+        if probe.returncode == 0 and probe.stdout.strip():
             break
-        except (URLError, ConnectionError, TimeoutError, ValueError) as err:
-            if wait is None or (isinstance(err, HTTPError) and err.code < 500):
-                return None
-            time.sleep(wait)
-    if not isinstance(body, dict):
-        return None
-    for run in body.get("workflow_runs") or []:
-        if not isinstance(run, dict):
-            continue
-        sha = run.get("head_sha") or ""
-        branch = run.get("head_branch") or ""
-        ev = run.get("event") or ""
-        if (
-            run.get("status") == "completed"
-            and run.get("conclusion") == "success"
-            and ev in ("push", "merge_group", "workflow_dispatch")
-            and (branch == "main" or branch.startswith("gh-readonly-queue/main/"))
-            and re.fullmatch(r"[0-9a-f]{40}", sha)
-            and sha != head_sha
-        ):
-            return sha
-    return None
+        if attempt == attempts:
+            print(f"::warning::reading {MAIN_GREEN_REF} failed "
+                  f"({probe.stderr.strip() or probe.returncode}); every path is in scope")
+            return ""
+        time.sleep(2)
+    refspec = f"+{MAIN_GREEN_REF}:{MAIN_GREEN_TRACKING}"
+    # Depth one only where the checkout already is: a full clone (a developer
+    # running this by hand) keeps its history, which is what lets the ancestry
+    # check below answer.
+    shallow = subprocess.check_output(
+        ["git", "rev-parse", "--is-shallow-repository"]
+    ).decode().strip() == "true"
+    depth = ["--depth=1"] if shallow else []
+    for attempt in range(1, attempts + 1):
+        fetched = subprocess.run(
+            ["git", "fetch", "--no-tags", *depth, "origin", refspec],
+            capture_output=True, text=True,
+        )
+        if fetched.returncode == 0:
+            return subprocess.check_output(
+                ["git", "rev-parse", MAIN_GREEN_TRACKING]
+            ).decode().strip()
+        if attempt == attempts:
+            print(f"::warning::fetching {MAIN_GREEN_REF} failed "
+                  f"({fetched.stderr.strip() or fetched.returncode}); every path is in scope")
+            return ""
+        time.sleep(2)
+    return ""  # pragma: no cover - the loop either returns or returns above
+
+
+def _is_ancestor(ancestor, descendant):
+    """Whether ``ancestor`` is on ``descendant``'s history.
+
+    A depth-one checkout cannot answer this — git sees each fetched commit as
+    its own shallow root and calls two commits on one line unrelated — so a
+    shallow repository is answered "yes": the anchor is only ever written from
+    a main push run, and refusing every batch over a check the clone cannot
+    make would widen the scope of every push to the whole tree.
+    """
+    shallow = subprocess.check_output(
+        ["git", "rev-parse", "--is-shallow-repository"]
+    ).decode().strip()
+    if shallow == "true":
+        print("Shallow checkout: the anchor's ancestry is not checkable here.")
+        return True
+    return subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        capture_output=True,
+    ).returncode == 0
 
 
 def effective_base(event_base, head="HEAD"):
@@ -298,26 +323,25 @@ def effective_base(event_base, head="HEAD"):
             "contain an unlanded queue prefix, whose changes remain in coverage"
         )
     elif event_name == "push":
-        head_sha = subprocess.check_output(["git", "rev-parse", head]).decode().strip()
-        repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
-        token = os.environ.get("GH_TOKEN", "").strip()
-        green_sha = _last_green_main_sha(repo, token, head_sha) if repo and token else None
-        if green_sha:
-            for attempt in range(3):
-                if subprocess.call(["git", "fetch", "--no-tags", "--depth=1", "origin", green_sha]) == 0:
-                    break
-                if attempt == 2:
-                    raise subprocess.CalledProcessError(1, ["git", "fetch", green_sha])
-                time.sleep(2)
-            base = subprocess.check_output(
-                ["git", "rev-parse", "--verify", f"{green_sha}^{{commit}}"]
-            ).decode().strip()
-            reason = f"post-submit uses last green Required CI commit {base[:12]} on main"
+        base = main_green_anchor()
+        if base and not _is_ancestor(base, head):
+            # The anchor is only ever written from a main push run, so this
+            # should not happen; if it does (a rewritten ref), a diff against it
+            # is not a diff of what landed, so widen instead of guessing.
+            print(f"::warning::{MAIN_GREEN_REF} ({base}) is not an ancestor of "
+                  f"{head}; every tracked path is in scope")
+            base = ""
+        if base:
+            reason = (
+                f"push uses the last green gate result ({MAIN_GREEN_REF}), so the "
+                "batch covers every commit that landed since; github.event.before "
+                "is only the previous tip and would drop a superseded run's commits"
+            )
         else:
-            base = subprocess.check_output(
-                ["git", "rev-parse", "--verify", f"{event_base}^{{commit}}"]
-            ).decode().strip()
-            reason = "uses the event-provided base"
+            reason = (
+                f"no usable {MAIN_GREEN_REF} anchor, so every tracked path is in "
+                "scope: a commit no run has covered cannot be skipped"
+            )
     else:
         base = subprocess.check_output(
             ["git", "rev-parse", "--verify", f"{event_base}^{{commit}}"]
@@ -329,6 +353,11 @@ def effective_base(event_base, head="HEAD"):
 def changed_files(base, head="HEAD"):
     # No rename detection: moving code must test both the old and new area.
     # Fetch/ancestry failures propagate; never fall back to a narrower diff.
+    if not base:
+        # No base to compare with (a main push before the first green anchor):
+        # every tracked path counts as changed, which is the widest selection
+        # this diff can express.
+        return subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
     return subprocess.check_output(
         ["git", "diff", "--name-only", "--no-renames", "-z", base, head]
     ).decode().split("\0")
@@ -347,7 +376,10 @@ def actions_run_url():
 def main():
     if sys.argv[1] == "scope":
         event_name, event = _read_event()
-        event_base, reason = effective_base(sys.argv[2])
+        # A main push names no base it can trust, so the argument is empty and
+        # effective_base resolves the anchor itself.
+        event_base_arg = sys.argv[2] if len(sys.argv) > 2 else ""
+        event_base, reason = effective_base(event_base_arg)
         changed = changed_files(event_base)
         tier = tier_for(event_name, event)
         # Non-queue-only select() flags are kept whatever the tier: the aggregation
@@ -360,11 +392,11 @@ def main():
         # The commit the ``api`` job prints the base document from: the same
         # base this diff was taken against, so the two answer one question.
         outputs["base"] = event_base
-        print(f"Event base: {sys.argv[2]}")
-        print(f"Effective base: {event_base}")
+        print(f"Event base: {event_base_arg or '(none)'}")
+        print(f"Effective base: {event_base or '(none: every tracked path)'}")
         print(f"Base reason: {reason}")
         if not branch_heavy_for(event_name):
-            print("Queue-only suites: backend integration, e2e/remote 留给合并队列")
+            print("Queue-only suites: backend integration, e2e/remote 留给落码后的 run")
         suites = ", ".join(suite for suite, is_selected in selected.items() if is_selected)
         print(f"Selected suites: {suites or 'none'}")
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
@@ -381,7 +413,7 @@ def main():
             raise SystemExit("\n".join(f"{error} (run: {run_url})" for error in errors))
         print(f"Every selected suite passed (tier: {expected_tier}).")
     else:
-        raise SystemExit("Usage: required-ci.py scope BASE_SHA | check")
+        raise SystemExit("Usage: required-ci.py scope [BASE_SHA] | check")
 
 
 if __name__ == "__main__":

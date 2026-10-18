@@ -59,7 +59,7 @@ query($q: String!, $after: String) {
           first: 30
           itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]
         ) {
-          totalCount
+          pageInfo { hasNextPage }
           nodes {
             __typename
             ... on AddedToMergeQueueEvent { createdAt actor { login } }
@@ -229,7 +229,7 @@ class GitHubCi:
             if not isinstance(number, int):
                 continue
             items = timeline.get("nodes") or []
-            if int(timeline.get("totalCount") or 0) > len(items):
+            if (timeline.get("pageInfo") or {}).get("hasNextPage"):
                 out.truncated = True
             for item in items:
                 event = _queue_event(number, item, node.get("headRefName"))

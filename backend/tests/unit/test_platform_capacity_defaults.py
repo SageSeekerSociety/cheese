@@ -9,9 +9,11 @@ what is pinned here is the platform's opinion of its own size until a
 deployment says otherwise.
 
 None is a preference. The cap is what the cluster's shared storage has to
-hold: ten hosts provide forty standard sandbox slots, and their disks written
-full fill the current 400 GB shared storage pool, so the cap moves only with
-the storage behind it. The free-slot floor is one host's worth of sandboxes:
+hold: ten sandbox hosts provide forty standard sandbox slots, and their disks
+written full fill the current 400 GB shared storage pool; each place above ten
+over-commits it by a disk, whoever takes it. The cap moves only with the
+storage behind it. The
+free-slot floor is one host's worth of sandboxes:
 below it, the sweep starts creating the next host, so a session arriving then
 is placed rather than waiting for one; measured 160 seconds at the median when
 it did wait (2026-10-17). The interval is the clock every card's merge state
@@ -24,10 +26,11 @@ from app.core.config import settings
 from app.domain.machine.models import CloudHost, capacity
 
 
-def test_the_pool_may_hold_ten_hosts() -> None:
-    """Ten hosts provide forty standard sandbox slots, four to a host,
-    within the current 400 GB shared storage pool."""
-    assert settings.cloud_pool_max_hosts == 10
+def test_the_pool_may_hold_twelve_hosts() -> None:
+    """Twelve places, whole VMs among them: ten sandbox hosts provide forty
+    standard sandbox slots, four to a host, and each place above ten
+    over-commits the shared pool by a disk."""
+    assert settings.cloud_pool_max_hosts == 12
 
 
 def test_the_pool_keeps_a_whole_hosts_slots_free() -> None:

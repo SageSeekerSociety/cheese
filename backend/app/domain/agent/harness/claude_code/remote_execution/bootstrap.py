@@ -104,16 +104,13 @@ def portable(release):
     return runpy.run_path(str(Path(release) / "remote-execution/portable.py"))
 
 
-def package_mirrors(release):
-    """The mirror policy for a room's package downloads
-    (`app/domain/agent/package_mirrors.py`), which the launcher script applies
-    too. Shipped beside this file; read from the source tree when this runs from
-    a checkout, the way `runtime.project_hooks` reads its own."""
-    beside = Path(release) / "remote-execution/package_mirrors.py"
+def shipped(release, name):
+    """A policy module shipped beside this file (`app/domain/agent/<name>.py`),
+    read from the source tree when this runs from a checkout the way
+    `runtime.project_hooks` reads its own."""
+    beside = Path(release) / "remote-execution" / f"{name}.py"
     if not beside.exists():
-        beside = Path(__file__).resolve().parents[6] / (
-            "app/domain/agent/package_mirrors.py"
-        )
+        beside = Path(__file__).resolve().parents[6] / f"app/domain/agent/{name}.py"
     return runpy.run_path(str(beside))
 
 
@@ -1106,11 +1103,16 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
         # `governed` is the other half: each name with the value the policy puts
         # there, so only a room holding that value can be told to drop it.
         mirrors = payload.get("package_mirrors") or {}
-        policy = package_mirrors(release) if mirrors else None
+        policy = shipped(release, "package_mirrors") if mirrors else None
         governed = policy["governed"](mirrors) if policy is not None else {}
         if policy is not None:
             for name, value in policy["environment"](mirrors, store).items():
                 package_env.setdefault(name, variables.get(name, value))
+        # How many test workers this room's tools may start, from its CPU quota
+        # (`worker_quota`), defaulted the same way.
+        quota = shipped(release, "worker_quota")
+        for name, value in quota["environment"](payload.get("sandbox")).items():
+            package_env.setdefault(name, variables.get(name, value))
         env = dict(os.environ)
         for name in list(env):
             # Except, on Windows, the one the connector sets for every command:

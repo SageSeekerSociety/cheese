@@ -9,7 +9,7 @@ the vm spec's idle time (``Spec.idle_s``): the session's own conversation runs
 no turn of its own — not its room's, which every task of the channel hangs
 under, and where another line's work used to keep this session's VM for days —
 the session has asked for no tool since, and no command the executor runs for
-it in the background keeps it up (up to ``cloud_sandbox_background_cap_s``). A
+it in the background keeps it up (up to ``cloud_vm_background_cap_s``). A
 home that no session holds any more is measured by its own activity and
 released like any other: it is nobody else's to release.
 
@@ -59,6 +59,7 @@ async def release_idle(db, lifecycle) -> int:
                 SandboxHome.session_id,
                 SandboxHome.topic_id,
                 SandboxHome.active_at,
+                SandboxHome.spec,
                 CloudHost.device_id,
             )
             .join(CloudHost, CloudHost.id == SandboxHome.host_id)

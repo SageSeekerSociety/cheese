@@ -120,7 +120,7 @@ class MachineSettings(BaseModel):
     # A command the executor still runs for the session (a Bash call sent to the
     # background) keeps an otherwise idle sandbox up, but no longer than this
     # after the session's last activity.
-    cloud_sandbox_background_cap_s: int = Field(default=3600, ge=0, le=7 * 86400)
+    cloud_sandbox_background_cap_s: int = Field(default=900, ge=0, le=7 * 86400)
     # Pre-scale: when the free slots of the pool's live hosts fall below this,
     # the pool sweep claims (or creates) the next host before anyone waits on it.
     # The default host (four cores, 16 GiB, 40 GB) runs four sandboxes, so the
@@ -130,16 +130,15 @@ class MachineSettings(BaseModel):
     cloud_pool_min_free_slots: int = Field(default=4, ge=0, le=64)
     # How long a host that has no sandbox on it is kept before it is released.
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
-    # The most hosts the pool holds at once. It protects the MicroCloud cluster;
-    # a session that finds the pool full is told capacity is tight and to try
-    # later. The current cluster supports ten hosts, forty standard sandbox
-    # slots, within its 400 GB shared thin pool. Raise this only when the
-    # storage behind it grows.
-    cloud_pool_max_hosts: int = Field(default=10, ge=1, le=500)
+    # The most hosts the pool holds at once, whole cloud VMs among them. It
+    # protects the MicroCloud cluster: the current 400 GB shared thin pool holds
+    # ten hosts' disks written full, so each place above ten over-commits it by
+    # a disk. Raise this only as that pool grows.
+    cloud_pool_max_hosts: int = Field(default=12, ge=1, le=500)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
-    # the choice. Each VM counts against `cloud_pool_max_hosts` like a host.
+    # the choice. A VM counts against `cloud_pool_max_hosts` like a host.
     microcloud_vm_offering_id: int = 0
     # The size every whole cloud VM is created with, clamped into the offering's
     # own range. One size: what a session is charged is spec × time, and the
@@ -152,6 +151,10 @@ class MachineSettings(BaseModel):
     # tool call prepares a new one, which takes minutes, so this is longer
     # than a sandbox's idle stop.
     cloud_vm_idle_release_s: int = Field(default=1800, ge=60, le=7 * 86400)
+    # A command the executor still runs for the session keeps an idle VM up,
+    # but no longer than this after its last activity — longer than a
+    # sandbox's cap, since a VM's idle release is longer too.
+    cloud_vm_background_cap_s: int = Field(default=3600, ge=0, le=7 * 86400)
     # Credits one cloud sandbox costs per hour it runs, from start to idle stop
     # (usage/compute.py). Unset on purpose: the price is the product owner's to
     # set, and with none set no cloud sandbox starts, so cloud compute never
