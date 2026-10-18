@@ -27,7 +27,6 @@ from pathlib import Path
 
 if __package__:
     from . import runtime_core as core
-    from app.domain.agent.executor_transport import WORKING_DIRECTORY
 else:
     # A script run has this file's directory first on `sys.path`; one loaded by
     # path — `bootstrap` installs one, `predecessor` loads the release's — has
@@ -35,7 +34,6 @@ else:
     if str(Path(__file__).resolve().parent) not in sys.path:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
     import runtime_core as core
-    from executor_transport import WORKING_DIRECTORY
 
 # The `control` operations that reach a command rather than make one. `dispatch`
 # in `runtime.py` reads this: an executor that is draining still runs these.
@@ -510,14 +508,6 @@ def shell(self, params):
                 for name, value in (params.get("env") or {}).items()
                 if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
             )
-            # The session's spelling of a path is Git Bash's on a Windows
-            # executor (`/c/Users/x`); a command's `cwd` is turned into this
-            # machine's below, and the one path the session is told to name
-            # gets the same treatment. Git Bash opens either spelling, so a
-            # shell command loses nothing; a native program reading the name
-            # is otherwise handed a path it cannot open.
-            if WORKING_DIRECTORY in env:
-                env[WORKING_DIRECTORY] = core.native_path(env[WORKING_DIRECTORY])
             if params.get("kind") == "bash":
                 argv = self.shell_argv(
                     params["body"] + " && pwd -P >| " + shlex.quote(str(record / "cwd"))
