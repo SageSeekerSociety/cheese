@@ -22,6 +22,9 @@ class WorkChat:
 
     session_factory: async_sessionmaker[AsyncSession] | None = None
 
+    def replaying(self, topic_id: uuid.UUID):
+        return None
+
     @property
     def _sessions(self) -> async_sessionmaker[AsyncSession]:
         if self.session_factory is None:

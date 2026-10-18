@@ -563,6 +563,32 @@ def test_an_idle_vm_is_pushed_and_released(cloud):
     assert _host(case, seat).machine_id not in (None, machine)
 
 
+def test_recovering_vms_do_not_hide_an_unrelated_idle_vm(cloud):
+    case = cloud
+    seats = [_room(case, WHOLE_VM) for _ in range(cloud_vm.PER_SWEEP + 1)]
+    for index, seat in enumerate(seats):
+        _working(case, seat)
+        _idle_for(
+            case,
+            seat,
+            timedelta(seconds=settings.cloud_vm_idle_release_s + 600 - index * 60),
+        )
+    pending = {seat.room for seat in seats[:-1]}
+
+    async def sweep():
+        async with case.client.test_request_factory() as db:
+            lifecycle = SandboxLifecycle(
+                db,
+                hub=case.hub,
+                recovering=lambda conversation: conversation in pending,
+            )
+            return await cloud_vm.release_idle(db, lifecycle)
+
+    assert case.client.portal.call(sweep) == 1
+    assert all(_host(case, seat) is not None for seat in seats[:-1])
+    assert _host(case, seats[-1]) is None
+
+
 def test_a_background_command_keeps_a_vm_past_its_idle_release(cloud, monkeypatch):
     """A VM's keep-alive is its own and longer than a sandbox's. A command the
     executor still runs for the session holds the VM past the idle release that
