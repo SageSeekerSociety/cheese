@@ -26,6 +26,7 @@
 #       subagent topology that tier spends. A tier G change is mechanical: no
 #       reviewer runs, prepare writes a result.json that says so, and post can
 #       be run straight away.
+#       Also appends PRECOMPUTED.md (.claude/pr-review/precompute.py): ci:fast pass/not_run, symbol refs, trial merges.
 #       The round — REVIEW-RESULT.md, meta and the review tree — is left under
 #       $HOME/.cheese/review-cache (PR_REVIEW_DIR overrides), not /tmp, so a
 #       machine change does not take it away; the old
@@ -426,6 +427,7 @@ EOF
 - Result: $dir/result.json
 - Post: \`$HERE/pr-review.sh post $dir\`
 EOF
+  python3 "$HERE/../pr-review/precompute.py" --repo "$ROOT" --tree "$tree" --base "$merge_base" --head "$sha" --pr "$pr" --pr-body "$dir/pr.md" --scripts "$HERE" --out "$dir/PRECOMPUTED.md" >&2 && { printf '\n' ; cat "$dir/PRECOMPUTED.md"; } >> "$dir/REVIEW.md" || echo "pr-review: precompute failed; REVIEW.md carries no PRECOMPUTED section" >&2
   echo "$dir/REVIEW.md"
 }
 
