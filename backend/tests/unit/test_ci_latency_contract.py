@@ -164,9 +164,7 @@ def test_the_pre_push_added_hook_stays_out_of_the_commit_gate():
         "openapi-document 跑的已经不是 CI 那一步的 export_openapi --check"
     )
     static = load_workflow("test.yml")["jobs"]["static"]
-    step = step_named(
-        static, "OpenAPI document builds, digest and untyped ratchet hold"
-    )
+    step = step_named(static, "OpenAPI document builds and untyped ratchet holds")
     assert "export_openapi --check" in step["run"], _rule(
         "static job 里那一步和本地钩子不再跑同一条命令"
     )
