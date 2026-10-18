@@ -137,7 +137,7 @@ class Bundle(unittest.TestCase):
             "reviewed_sha": self.reviewed, "summary": "s", "candidates_found": len(findings),
             "candidates_refuted": 0, "not_covered": [],
             "findings": [{"severity": s, "kind": "runtime", "file": "a.py", "line": 2, "title": "t",
-                          "failure": "f", "evidence": "e", "rung": 4, "confirm_with": ""}
+                          "failure": "f", "evidence": "e", "rung": 4}
                          for s in findings]}))
         post = self.run_script(root, self.reviewed, "post", str(d))
         self.assertEqual(post.returncode, 0, post.stderr)
@@ -188,7 +188,7 @@ class Bundle(unittest.TestCase):
         major = {"reviewed_sha": self.merged, "summary": "a real major", "candidates_found": 1,
                  "candidates_refuted": 0, "not_covered": [],
                  "findings": [{"severity": "major", "kind": "runtime", "file": "a.py", "line": 2, "title": "t",
-                               "failure": "f", "evidence": "e", "rung": 4, "confirm_with": ""}]}
+                               "failure": "f", "evidence": "e", "rung": 4}]}
         (d / "result.json").write_text(json.dumps(major))
         again = self.run_script("kept", self.merged, "prepare", PR, self.merged, "--since", self.reviewed)
         self.assertEqual(again.returncode, 0, again.stderr)
