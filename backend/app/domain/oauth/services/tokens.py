@@ -79,7 +79,8 @@ def _decrypt_stored_token(
     Tokens are encrypted at rest (``app.core.crypto``), so a value sealed
     under a key no longer configured makes decryption raise. That must not blow up
     the caller (the repository-connect route treats None as "link the account
-    first", it does not handle exceptions from here) — but it must never be silent either: an
+    first", it does not handle exceptions from here) — but it must never be
+    silent either: an
     unnoticed token problem is exactly how the "returns raw ciphertext" bug
     survived, so this always logs.
     """
