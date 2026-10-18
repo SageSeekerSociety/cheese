@@ -183,6 +183,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "roster-out",
         "stranger",
         "agent-seat",
+        "retired",
     )
 
     async def _relationships(session):
@@ -210,6 +211,17 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
 
     _on_the_app_loop(client, _relationships)
     join_project_team(client, pid, "excluded")
+    # A retired account still on the team's relation list is nobody: `standing`
+    # resolves the handle through a user row that filters `deleted_at`, so the
+    # team relation alone must not make them readable.
+    join_project_team(client, pid, "retired")
+
+    async def _retire(session):
+        retired = await UserRepository(session).get_by_username("retired")
+        assert retired is not None
+        retired.deleted_at = datetime.now(UTC)
+
+    _on_the_app_loop(client, _retire)
 
     handles = [
         "dave",  # the project's owner
@@ -222,6 +234,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "stranger",  # a registered person in neither
         "agent-seat",  # an AI teammate, not on the roster
         "nobody-0000",  # no account at all
+        "retired",  # a retired account still on the team's relations
     ]
     batch = _many(client, pid, handles)
     each = _one_by_one(client, pid, handles)
@@ -242,4 +255,5 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "stranger": False,
         "agent-seat": False,
         "nobody-0000": False,
+        "retired": False,
     }
