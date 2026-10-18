@@ -59,8 +59,10 @@ class TopicRepository:
             upgraded_from_block_id=upgraded_from_block_id,
         )
 
-    async def lock(self, topic_id: uuid.UUID) -> Topic | None:
-        return await writes.lock(self, topic_id=topic_id)
+    async def lock(
+        self, topic_id: uuid.UUID, *, for_admission: bool = False
+    ) -> Topic | None:
+        return await writes.lock(self, topic_id=topic_id, for_admission=for_admission)
 
     async def lock_all_in_project(self, project_id: uuid.UUID) -> list[Topic]:
         return await writes.lock_all_in_project(self, project_id=project_id)

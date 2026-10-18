@@ -172,7 +172,7 @@ class TopicService:
         return await self._repo.lock(topic_id)
 
     async def lock_for_execution(self, topic_id: uuid.UUID) -> Topic:
-        topic = await self._repo.lock(topic_id)
+        topic = await self._repo.lock(topic_id, for_admission=True)
         if topic is None:
             raise NotFoundError(say("topicNotFound"))
         if topic.status == TopicStatus.archived:

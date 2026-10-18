@@ -1,7 +1,9 @@
 """频道的写 —— 建行、加锁、开一间私聊。
 
 从 `repositories.py` 拆出来的一段。`lock` 和 `lock_all_in_project` 是给归档用的：
-归档要冻结整棵话题树，所以它取的是 KEY SHARE 锁，让只带外键的挂钩写入照样能过。
+归档要冻结整棵话题树，所以它取的是排他锁，同时让只带外键的挂钩写入照样能过
+（`FOR NO KEY UPDATE` 与它们取的 `FOR KEY SHARE` 不冲突）。执行准入走同一个
+`lock`，但要的是 `FOR SHARE`：准入之间不排队，归档仍然挡得住。
 
 `TopicRepository` 上的同名方法是转发。
 """
@@ -57,16 +59,32 @@ async def add(
     return topic
 
 
-async def lock(repo: pkg.TopicRepository, topic_id: uuid.UUID) -> Topic | None:
+async def lock(
+    repo: pkg.TopicRepository,
+    topic_id: uuid.UUID,
+    *,
+    for_admission: bool = False,
+) -> Topic | None:
+    """Hold the room row for the rest of the transaction.
+
+    The room's own state changes — archive, unarchive, cleanup — lock the way
+    ``FOR NO KEY UPDATE`` does (``key_share=True`` with ``read`` unset): it
+    excludes itself and an admission, and still lets a hook write whose
+    foreign key only needs ``FOR KEY SHARE`` through.
+
+    One execution admission asks for ``FOR SHARE`` instead. Two admissions do
+    not queue on this row then — they write their own session rows, and the
+    session row's ``FOR UPDATE`` is their serialisation point — while an
+    archive in flight still blocks the admission and makes it re-read the
+    archived state. ``key_share=True`` would render ``FOR KEY SHARE``, which
+    excludes neither another admission nor the archive's update.
+    """
+    keys = {"read": True} if for_admission else {"key_share": True}
     return (
         await repo._session.scalars(
             select(Topic)
             .where(Topic.id == topic_id)
-            # Serialize execution admission with archival while allowing
-            # hook writes whose foreign keys only take KEY SHARE. `read=True`
-            # is what renders FOR KEY SHARE: without it `key_share=True`
-            # renders FOR NO KEY UPDATE, which excludes itself.
-            .with_for_update(read=True, key_share=True)
+            .with_for_update(**keys)
             .execution_options(populate_existing=True)
         )
     ).one_or_none()
@@ -83,7 +101,7 @@ async def lock_all_in_project(
                 select(Topic)
                 .where(Topic.project_id == project_id)
                 .order_by(Topic.created_at)
-                .with_for_update(read=True, key_share=True)
+                .with_for_update(key_share=True)
                 .execution_options(populate_existing=True)
             )
         ).all()
