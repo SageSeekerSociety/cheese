@@ -100,6 +100,53 @@ def test_a_plain_member_adds_but_does_not_remove(client):
     assert r.status_code == 403
 
 
+def _teammate(client, project_id: str) -> str:
+    """A second AI teammate of the project, by the seat a channel adds."""
+    return client.post(
+        f"/projects/{project_id}/agents",
+        json={"handle": "reviewer", "display_name": "评审"},
+    ).json()["data"]["seat_handle"]
+
+
+def test_a_plain_member_brings_an_ai_teammate_into_a_channel_they_are_in(client):
+    """Bringing someone into a channel you are in is a member's to do, and an
+    AI teammate is brought in the same way as a person."""
+    p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
+    join_project_team(client, p["id"], "bob")
+    tid = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+    client.post(f"/topics/{tid}/join", headers=session_auth_headers("bob"))
+    seat = _teammate(client, p["id"])
+
+    r = client.post(
+        f"/topics/{tid}/members",
+        json={"handle": seat},
+        headers=session_auth_headers("bob"),
+    )
+    assert r.status_code == 200, r.text
+    assert seat in {m["member_handle"] for m in _roster(client, tid)}
+
+
+def test_a_plain_member_brings_an_ai_teammate_into_general(client):
+    """Everyone in the project is in 综合, so a member is in it and brings an
+    AI teammate in as they would into any channel they are in."""
+    p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
+    join_project_team(client, p["id"], "bob")
+    general = p["root_topic_id"]
+    seat = _teammate(client, p["id"])
+
+    r = client.post(
+        f"/topics/{general}/members",
+        json={"handle": seat},
+        headers=session_auth_headers("bob"),
+    )
+    assert r.status_code == 200, r.text
+    assert seat in {m["member_handle"] for m in _roster(client, general)}
+
+
 def test_duplicate_member_rejected(client):
     tid = _topic(client, created_by="alice")
     client.post(
