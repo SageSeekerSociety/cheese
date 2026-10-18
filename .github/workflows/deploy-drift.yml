@@ -52,7 +52,9 @@ jobs:
           git rev-parse --git-dir >/dev/null 2>&1 || exit 0
           git config --local --unset-all core.sparseCheckout || true
           git config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
-          git sparse-checkout disable 2>/dev/null || true
+          if ! git sparse-checkout disable; then
+            echo "::warning::could not disable a leftover sparse checkout; deploy scripts may be missing"
+          fi
           rm -f "$(git rev-parse --git-dir)/info/sparse-checkout"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

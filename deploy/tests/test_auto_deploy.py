@@ -674,7 +674,7 @@ class CandidateCI(unittest.TestCase):
                         "a checkout runs before the workspace is repaired")
         body = steps[0]["run"]
         for fragment in ("core.sparseCheckout", "git sparse-checkout disable",
-                         "info/sparse-checkout"):
+                         "info/sparse-checkout", "::warning::"):
             self.assertIn(fragment, body)
 
     def test_the_drift_job_repairs_the_same_shared_workspace(self):
@@ -687,7 +687,7 @@ class CandidateCI(unittest.TestCase):
         self.assertTrue(steps[1].get("uses", "").startswith("actions/checkout@"))
         body = steps[0]["run"]
         for fragment in ("core.sparseCheckout", "git sparse-checkout disable",
-                         "info/sparse-checkout"):
+                         "info/sparse-checkout", "::warning::"):
             self.assertIn(fragment, body)
 
     def test_the_repair_step_actually_restores_a_sparse_checkout(self):

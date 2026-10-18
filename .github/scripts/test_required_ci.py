@@ -1327,7 +1327,11 @@ class WorkflowTextTest(unittest.TestCase):
             # Without the token the API answers 401 and the step stays green
             # while the anchor never moves — the failure this change is about.
             self.assertIn("Authorization: Bearer x", args)
-            self.assertIn("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}", job["text"])
+            # The token has to sit on this step, not on a neighbour: an env
+            # entry elsewhere in the job leaves $GH_TOKEN empty here, the API
+            # answers 401, and the step only warns — green, anchor frozen.
+            anchor_step = job["text"].split("- name: Point main-green", 1)[1].split("\n      - ", 1)[0]
+            self.assertIn("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}", anchor_step)
             # The server decides whether this is a fast-forward; a force here
             # would let a rewritten main hide commits from the next batch.
             payload = "\n".join(args)
@@ -1359,8 +1363,12 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertNotIn("::warning::", proc.stdout)
             self.assertIn("a" * 40, (tmp / "summary").read_text())
             calls = (tmp / "args").read_text()
+            call_args = calls.splitlines()
             self.assertIn("-X\nPATCH", calls)
             self.assertIn("-X\nPOST", calls)
+            # Create has its own endpoint: POSTing to the update URL answers 404
+            # and the anchor stays missing.
+            self.assertIn("https://api.github.com/repos/owner/repo/git/refs", call_args)
             self.assertIn('"ref":"refs/heads/main-green"', calls)
             self.assertIn(f'"sha":"{"a" * 40}"', calls)
 
