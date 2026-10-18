@@ -73,11 +73,6 @@ else:
 # there — and the build's messaging socket and its token name a process on
 # this host, so they stay too.
 FORWARDED_ENV = (
-    # The session's working directory under its short name: the command runs on
-    # the executor, so the name has to cross with it or `cd "$T"` names nothing
-    # there. How it is spelled on the way is the transport's business, beside
-    # every other path a command names (`executor_transport.WORKING_DIRECTORY`).
-    WORKING_DIRECTORY,
     "AI_AGENT",
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
@@ -88,6 +83,25 @@ FORWARDED_ENV = (
     "GIT_EDITOR",
     "NoDefaultCurrentDirectoryInExePath",
 )
+
+
+def bind_working_directory(body, environment):
+    """``body`` with the session's short name bound in the shell that runs it.
+
+    Not in the command's environment: a build running natively on the executor
+    has no variable there, and a room's command must see exactly the environment
+    that one sees (the equivalence check holds the two equal). Bound as a shell
+    variable it is still there for what the line is told to write, `cd "$T"`,
+    and the value crosses inside `body`, so the transport respells it where the
+    machine holds the project — a session started before its machine was rented
+    names a placeholder that does not exist there.
+    """
+    value = environment.get(WORKING_DIRECTORY)
+    if value is None:
+        return body
+    return f"{WORKING_DIRECTORY}={shlex.quote(value)}\n{body}"
+
+
 # The build wraps each Bash command as
 # `source <snapshot> 2>/dev/null || true && <options> && eval '<command>'
 # < /dev/null && pwd -P >| <tmp>/claude-<hex>-cwd`. The snapshot is of this
@@ -368,13 +382,8 @@ def run_on_the_machine(target, command):
             )
         ).decode()
     env = {name: os.environ[name] for name in FORWARDED_ENV if name in os.environ}
-    # Both name a directory of this session's, so both are spelled where the
-    # executor holds it. `T` is the short name the line was told to use; a
-    # session in a directory of its own (`virtual_workspace`) would otherwise
-    # hand the machine a path that exists only here.
-    for name in ("CLAUDE_PROJECT_DIR", WORKING_DIRECTORY):
-        if name in os.environ:
-            env[name] = outward(os.environ[name])
+    if "CLAUDE_PROJECT_DIR" in os.environ:
+        env["CLAUDE_PROJECT_DIR"] = outward(os.environ["CLAUDE_PROJECT_DIR"])
     merge = _same_file(1, 2)
     command_id = "shell-" + uuid.uuid4().hex
     client = RemoteClient(target)
@@ -415,7 +424,7 @@ def run_on_the_machine(target, command):
             started = call(
                 "start",
                 kind="bash" if bash else "sh",
-                body=outward(body),
+                body=bind_working_directory(outward(body), os.environ),
                 cwd=cwd,
                 env=env,
                 merge=merge,
