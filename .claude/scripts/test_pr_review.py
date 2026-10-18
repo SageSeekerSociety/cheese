@@ -37,7 +37,8 @@ GH = r"""#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$*" in
   *.head.sha*) case "$*" in *pulls/8*) echo "$PR8_HEAD" ;; *pulls/9*) echo "$PR9_HEAD" ;;
-    *pulls/10*) echo "$PR10_HEAD" ;; *pulls/11*) echo "$PR11_HEAD" ;; *) echo "$PR_HEAD" ;; esac ;;
+    *pulls/10*) echo "$PR10_HEAD" ;; *pulls/11*) echo "$PR11_HEAD" ;;
+    *pulls/12*) echo "$PR12_HEAD" ;; *) echo "$PR_HEAD" ;; esac ;;
   *.base.ref*) echo main ;;
   *--paginate*/commits*)
     case "$*" in *pulls/8*) printf '%s\n' $PR8_COMMITS ;;
@@ -133,6 +134,11 @@ class PrReview(unittest.TestCase):
         (work / "backend").mkdir(parents=True, exist_ok=True)
         (work / "backend/AGENTS.md").write_text("# BACKEND AGENTS TEXT\n")
         (work / "f.txt").write_text("base\n")
+        # Every commit in this fixture gets a per-run id in its base tree. Two runs started
+        # in the same second otherwise produce identical commit hashes, and a test that
+        # names a round by PR and SHA (the /tmp compatibility link) would race the other
+        # run for the same path.
+        (work / ".test-run-id").write_text(uuid.uuid4().hex + "\n")
         git(work, "add", "-A")
         git(work, "commit", "-qm", "base")
         git(work, "remote", "add", "origin", str(origin))
@@ -189,22 +195,14 @@ class PrReview(unittest.TestCase):
         git(work, "commit", "-qm", "rewrite the rule")
         cls.rule_edit = git(work, "rev-parse", "HEAD")
         git(work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_RULE_EDIT}/head")
-        # A PR whose reviewed commit is followed by a merge of the base branch: main moves
-        # on after the review, the branch merges it, and the head the card sees is the
-        # merge. Everything it brings in is main's own version, so §4 exempts the increment.
+        # A PR that is reviewed before its head merges the base branch. Only the reviewed
+        # commit exists here: the test moves main and merges it afterwards, the order in
+        # which it really happens, so prepare cannot fetch the merge the review predates.
         git(work, "checkout", "-q", "-b", "base-merge", "main")
         (work / "f2.txt").write_text("branch\n")
         git(work, "add", "f2.txt")
         git(work, "commit", "-qm", "the change under review")
         cls.base_merge_reviewed = git(work, "rev-parse", "HEAD")
-        git(work, "checkout", "-q", "main")
-        (work / "main-only.txt").write_text("main\n")
-        git(work, "add", "main-only.txt")
-        git(work, "commit", "-qm", "main moves on")
-        git(work, "push", "-q", "origin", "main")
-        git(work, "checkout", "-q", "base-merge")
-        git(work, "merge", "-q", "--no-autostash", "--no-edit", "main")
-        cls.base_merge_head = git(work, "rev-parse", "HEAD")
         git(work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_BASE_MERGE}/head")
         git(work, "checkout", "-q", "main")
         git(work, "fetch", "-q", "origin")
@@ -238,8 +236,9 @@ class PrReview(unittest.TestCase):
             "PR9_COMMITS": self.mixed,
             "PR10_HEAD": self.rule_edit,
             "PR10_COMMITS": self.rule_edit,
-            "PR11_HEAD": self.base_merge_head,
+            "PR11_HEAD": self.base_merge_reviewed,
             "PR11_COMMITS": self.base_merge_reviewed,
+            "PR12_HEAD": self.shas[-1],
             "PR_REVIEW_DIR": str(self.tmp / "reviews"),
         }
         for key, value in (env_extra or {}).items():
@@ -306,10 +305,12 @@ class PrReview(unittest.TestCase):
         self.gitlog.unlink()
         self.post(review_md, "minor")
         seen = self.gitlog.read_text().splitlines()
-        # The script resolves its own root before it knows which subcommand runs.
-        self.assertEqual(seen[0], "<unset>")
-        self.assertTrue(seen[1:])
-        self.assertEqual(set(seen[1:]), {"1"})
+        # Once post's own work starts, no git call may run without the guard. Where the
+        # script's pre-dispatch lookups fall is an implementation detail: they may see the
+        # caller's value, which here is unset, or the guard if a later refactor exports it
+        # earlier — either way, from the first guarded call on, nothing may be unset.
+        self.assertIn("1", seen)
+        self.assertEqual(set(seen[seen.index("1"):]), {"1"})
 
     def test_the_round_lives_in_the_home_cache_and_survives_post_and_a_lost_tmp_link(self):
         home = self.tmp / "cache-home"
@@ -338,6 +339,32 @@ class PrReview(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertTrue(out.stdout.startswith("可递：head "), out.stdout)
 
+    def test_ready_falls_back_to_a_round_that_is_only_in_tmp(self):
+        # A round made before the default moved has no cache copy and no symlink. The
+        # lookup must read /tmp as well, or every review done before this change becomes
+        # invisible to ready the moment it merges.
+        review_md, _ = self.prepare()
+        d, _ = self.post(review_md, "minor")
+        old = Path("/tmp") / f"pr-review-12-{self.shas[-1][:12]}.input"
+        self.addCleanup(shutil.rmtree, old, ignore_errors=True)
+        old.mkdir()
+        for name in ("meta", "REVIEW-RESULT.md"):
+            shutil.copy(d / name, old / name)
+        (old / "meta").write_text(
+            (old / "meta").read_text().replace("pr=7", "pr=12"))
+        # A compatibility link whose target is gone is newer than the round. It is not a
+        # round, and picking it would hide the one that is: ready would die on its meta.
+        dangling = Path("/tmp") / f"pr-review-12-{'f' * 12}.input"
+        dangling.symlink_to(self.tmp / "gone")
+        self.addCleanup(dangling.unlink, missing_ok=True)
+        home = self.tmp / "empty-home"
+        home.mkdir()
+        out = self.run_script("ready", "12", env_extra={
+            "PR_REVIEW_DIR": None, "HOME": str(home), "CI_JSON": self.GREEN})
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertTrue(out.stdout.startswith("可递：head "), out.stdout)
+        self.assertIn(f"review {self.shas[-1][:8]}", out.stdout)
+
     def test_re_preparing_the_same_commit_keeps_its_conclusion(self):
         # Re-running prepare for a commit that already has a round (after a machine change,
         # or to redo a review that never posted) must not throw away a conclusion that still
@@ -347,11 +374,13 @@ class PrReview(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         d, _ = self.post(Path(out.stdout.strip()), "minor")
         conclusion = (d / "REVIEW-RESULT.md").read_text()
+        result = (d / "result.json").read_text()
         out = self.run_script("prepare", PR, env_extra=env)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(Path(out.stdout.strip()).parent, d)
         self.assertEqual((d / "REVIEW-RESULT.md").read_text(), conclusion)
-        # What prepare rebuilds is written fresh; the conclusion is what survives.
+        self.assertEqual((d / "result.json").read_text(), result)
+        # What prepare rebuilds is written fresh; the round's own files are what survive.
         self.assertTrue((d / "meta").exists())
 
     def test_prepare_decides_the_tier_and_prints_its_criteria(self):
@@ -722,14 +751,28 @@ class PrReview(unittest.TestCase):
         self.assertIn(f"review {self.mech[:8]} 结论 无 blocker/major｜档位 G", out.stdout)
 
     def test_ready_takes_the_original_conclusion_when_the_head_only_merged_main(self):
-        # The card's line is the reviewed commit's; the PR head moved because the branch
-        # merged origin/main, and everything that came in is main's own version. §4 exempts
-        # that increment, so the original conclusion stands and prepare is not asked again.
-        out = self.run_script("prepare", PR_BASE_MERGE, self.base_merge_reviewed)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        review_md = Path(out.stdout.strip())
-        d, _ = self.post(review_md, "minor")
-        ready = self.ready(d)
+        # In the order it happens: review the commit, post, then main moves and the branch
+        # merges it. Everything the merge brings in is main's own version, so §4 exempts
+        # the increment, the original conclusion stands, and prepare is not run again.
+        try:
+            out = self.run_script("prepare", PR_BASE_MERGE, self.base_merge_reviewed)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            review_md = Path(out.stdout.strip())
+            d, _ = self.post(review_md, "minor")
+            git(self.work, "checkout", "-q", "main")
+            (self.work / "main-only.txt").write_text("main\n")
+            git(self.work, "add", "main-only.txt")
+            git(self.work, "commit", "-qm", "main moves on")
+            git(self.work, "push", "-q", "origin", "main")
+            git(self.work, "checkout", "-q", "base-merge")
+            git(self.work, "merge", "-q", "--no-autostash", "--no-edit", "main")
+            merged = git(self.work, "rev-parse", "HEAD")
+            git(self.work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_BASE_MERGE}/head")
+            git(self.work, "fetch", "-q", "origin")
+        finally:
+            git(self.work, "checkout", "-q", "main")
+        ready = self.run_script("ready", str(d), env_extra={
+            "PR11_HEAD": merged, "CI_JSON": self.GREEN})
         self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
         self.assertIn("只合了主干", ready.stdout)
         self.assertIn("不用重审", ready.stdout)
@@ -753,7 +796,12 @@ class PrReview(unittest.TestCase):
         self.assertIn(f"--since {self.shas[-1][:8]}", out.stdout)
 
     def test_dry_run_prints_without_writing(self):
-        review_md, _ = self.prepare()
+        # Its own root: prepare keeps a previous round's REVIEW-RESULT.md, and a shared
+        # fixture directory would make this assertion depend on test order.
+        out = self.run_script("prepare", PR, env_extra={
+            "PR_REVIEW_DIR": str(self.tmp / "dry-run-reviews")})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        review_md = Path(out.stdout.strip())
         d, out = self.post(review_md, "major", dry=True)
         self.assertIn("有 1 条", out.splitlines()[0])
         self.assertFalse((d / "REVIEW-RESULT.md").exists())
@@ -893,13 +941,36 @@ class ReviewFindingsTrend(unittest.TestCase):
         self.addCleanup(link.unlink, missing_ok=True)
         out = subprocess.run(
             [sys.executable, str(REPO_ROOT / ".claude/scripts/review-findings-trend.py"),
-             "--json"],
+             "--json", "--top", "10000"],  # the host's /tmp is read too; do not let it truncate
             capture_output=True, text=True,
             env={**os.environ, "HOME": str(home), "PR_REVIEW_DIR": ""})
         self.assertEqual(out.returncode, 0, out.stderr)
         rows = [r for r in json.loads(out.stdout)["top"] if r["cluster"] == f"test｜{area}"]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["rounds"], 1)
+
+    def test_with_no_dir_it_reads_rounds_left_in_tmp(self):
+        # Rounds made before the default moved are only in /tmp. The board must read them,
+        # or everything reviewed before the move disappears from it.
+        home = self.tmp / "home-empty"
+        home.mkdir()
+        area = f"backend/tests_{uuid.uuid4().hex[:8]}"
+        d = Path("/tmp") / f"pr-review-998-{uuid.uuid4().hex[:12]}.input"
+        d.mkdir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        (d / "result.json").write_text(json.dumps({
+            "reviewed_sha": "b" * 40, "summary": "", "candidates_found": 1,
+            "candidates_refuted": 0, "not_covered": [],
+            "findings": [self.finding("test", f"{area}/t.py", "minor")],
+        }))
+        out = subprocess.run(
+            [sys.executable, str(REPO_ROOT / ".claude/scripts/review-findings-trend.py"),
+             "--json", "--top", "10000"],
+            capture_output=True, text=True,
+            env={**os.environ, "HOME": str(home), "PR_REVIEW_DIR": ""})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        rows = [r for r in json.loads(out.stdout)["top"] if r["cluster"] == f"test｜{area}"]
+        self.assertEqual(len(rows), 1)
 
     def test_with_no_dir_it_reads_where_prepare_writes(self):
         # prepare writes under $PR_REVIEW_DIR. Looking in /tmp regardless would tell a
