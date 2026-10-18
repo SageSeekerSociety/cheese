@@ -495,7 +495,6 @@ class TestUserAuthService:
             answerCount=20,
             teamCount=30,
             taskParticipationCount=40,
-            knowledgeCount=50,
             submissionCount=60,
         )
         repos["stats_repo"].aggregate.return_value = stats
@@ -506,7 +505,6 @@ class TestUserAuthService:
         assert dto["answer_count"] == 20
         assert dto["team_count"] == 30
         assert dto["task_participation_count"] == 40
-        assert dto["knowledge_count"] == 50
         assert dto["submission_count"] == 60
 
 

@@ -6,13 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.adapters import project_team
 from app.domain.membership.roster import roster_rows
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, is_private_chat
 from app.domain.user.about import about_by_handles
 from app.domain.user.services import timezones_by_handles
 
 
 def _is_dm(topic: Topic) -> bool:
-    """这间房是不是一间私聊。**这是 `is_private` 在这个文件里唯一的读点。**
+    """这间房是不是一间私聊。**这是这个文件里唯一问「是不是私聊」的地方。**
 
     私聊是项目内名册两席的房间（结论 19），这一轮凡是「私聊要不一样」的地方，答
     案都从这里推出来，不再各自问一遍那个布尔：同一件事问 N 遍，N 遍的判据就会各
@@ -32,7 +32,7 @@ def _is_dm(topic: Topic) -> bool:
     就可以广播出去。两个问题分开问，是因为它们答错的后果不同：答不出「对面是
     谁」，退路是项目默认的芝士；答错「这间房有没有名册」，正文就出了房间。
     """
-    return topic.is_private
+    return is_private_chat(topic)
 
 
 async def room_roster(

@@ -162,8 +162,11 @@ class TestGetTopic:
         svc, repo = _make_service()
         repo.get_by_id.return_value = None
 
-        with pytest.raises(NotFoundError, match="Topic not found"):
+        with pytest.raises(NotFoundError) as raised:
             await svc.get_tag(999)
+        error = raised.value.to_response_body()["error"]
+        assert error["i18n"]["key"] == "resourceNotFound"
+        assert error["data"] == {"id": 999}
 
 
 # ---------------------------------------------------------------------------

@@ -154,7 +154,7 @@ async def leave_project(
 # 人点头。
 
 
-@router.post("/projects/{project_id}/invitations")
+@router.post("/projects/{project_id}/invitations", dependencies=[ROUTE_DECIDES])
 async def invite_member(
     project_id: uuid.UUID,
     body: InvitationCreate,
@@ -207,7 +207,7 @@ async def list_my_invitations(db: DbSession, resolver: ActorResolverDep) -> dict
     return ok(page(rows, len(rows)))
 
 
-@router.post("/invitations/{invitation_id}/respond")
+@router.post("/invitations/{invitation_id}/respond", dependencies=[ROUTE_DECIDES])
 async def respond_to_invitation(
     invitation_id: uuid.UUID,
     body: InvitationRespond,
@@ -222,7 +222,7 @@ async def respond_to_invitation(
     return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))
 
 
-@router.delete("/invitations/{invitation_id}")
+@router.delete("/invitations/{invitation_id}", dependencies=[ROUTE_DECIDES])
 async def revoke_invitation(
     invitation_id: uuid.UUID,
     db: DbSession,

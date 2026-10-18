@@ -78,7 +78,7 @@ describe('TeachingFields', () => {
     // 周次也折在这里：它是**空间默认**，而这块板底下各项目集在第几周并不一样，
     // 摆在外面等于请人填一个多半管不对的数。要用它的老师知道自己在写 `{current_week}`。
     expect(view.getByLabelText('spaces.teaching.fields.currentWeek')).toBeTruthy()
-    expect(view.getByLabelText('spaces.teaching.fields.knowledgeIds')).toBeTruthy()
+    expect(view.getByLabelText('spaces.teaching.fields.documentIds')).toBeTruthy()
   })
 
   it('参考资料那一栏收起：清单和「库里还没有」都不占地方，点开才出', async () => {
@@ -125,7 +125,7 @@ describe('TeachingFields', () => {
         allowedTopics: [],
         avoidInCode: [],
         materialIds: [],
-        knowledgeIds: [],
+        documentIds: [],
       })
     )
 

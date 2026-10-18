@@ -92,6 +92,10 @@ async def tell_new_mentions(
     """Tell the people this store newly @-mentions, and return whom it
     mentions that cannot open the document (for its writer alone), if anyone.
     Runs in the store's transaction."""
+    if doc.project_id is None:
+        # A team's own document tells nobody yet: its readers are the team's,
+        # and a mention's notice opens a project's document (#3774).
+        return None
     added = [h for h in _handles(after) if h not in set(_handles(before))]
     if not added:
         return None

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
@@ -35,6 +36,7 @@ class LanguageRequest(BaseModel):
 @router.put(
     "/me/language",
     summary="Save the UI language the signed-in user picked",
+    dependencies=[ROUTE_DECIDES],
 )
 async def set_my_language(
     payload: LanguageRequest,
