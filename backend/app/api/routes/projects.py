@@ -72,7 +72,8 @@ from app.domain.project.protection import (
     github_repo_snapshot,
 )
 from app.domain.project.schemas import (
-    ForgeAttributionUpdate,
+    CommitCredit,
+    CommitCreditUpdate,
     ProjectCreate,
     ProjectOut,
     StartStepsOut,
@@ -82,7 +83,7 @@ from app.domain.project_permissions import PERMISSION_ORDER, Permission
 from app.domain.project_progress import feed as progress_feed
 from app.domain.project_situation import service as situation_service
 from app.domain.project_situation.schemas import SituationOut
-from app.domain.repository.identity import requester_credit_enabled
+from app.domain.repository.identity import CREDIT_SETTING, credit_mode
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_task import naming
 from app.domain.room_task.archive import close_room_tasks
@@ -728,46 +729,34 @@ async def get_project_forge(
     )
 
 
-@router.get("/{project_id}/forge-attribution")
-async def get_forge_attribution(
+@router.get("/{project_id}/commit-credit", **typed_response(CommitCredit))
+async def get_commit_credit(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
-    return ok(
-        {
-            "requester_coauthor": (project.settings or {}).get(
-                "forge_requester_coauthor"
-            ),
-            "effective": requester_credit_enabled(project.settings or {}),
-            "deployment_default": settings.forge_attribution_default,
-        }
-    )
+    return ok({"mode": credit_mode(project.settings or {})})
 
 
-@router.put("/{project_id}/forge-attribution", dependencies=[ROUTE_DECIDES])
-async def save_forge_attribution(
+@router.put(
+    "/{project_id}/commit-credit",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(CommitCredit),
+)
+async def save_commit_credit(
     project_id: uuid.UUID,
-    body: ForgeAttributionUpdate,
+    body: CommitCreditUpdate,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
     actor = await member_setting_actor(resolver, project_id)
     project = await ProjectService(db).get_or_404(project_id)
-    if body.requester_coauthor is None:
-        await change_project_settings(
-            db, project, {}, remove=("forge_requester_coauthor",), by=actor.handle
-        )
-    else:
-        await change_project_settings(
-            db,
-            project,
-            {"forge_requester_coauthor": body.requester_coauthor},
-            by=actor.handle,
-        )
-    return await get_forge_attribution(project_id, db, resolver)
+    await change_project_settings(
+        db, project, {CREDIT_SETTING: body.mode}, by=actor.handle
+    )
+    return await get_commit_credit(project_id, db, resolver)
 
 
 @router.get("/{project_id}/task-naming")
