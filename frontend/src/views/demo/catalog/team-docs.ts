@@ -109,6 +109,8 @@ export const TEAM_DOCS_ENTRIES: CatalogEntry[] = [
       parent: { label: '视觉课题组的文档', to: { path: '/teams/vision/docs' } },
       moving: false,
       move: NO_MOVE,
+      sharing: false,
+      share: { title: '', loading: false, mayShare: false, url: null, busy: false, error: '' },
     },
     states: [
       {
