@@ -113,7 +113,6 @@ class PermissionChecker:
             Resource.SPACE_CATEGORY: "space",
             Resource.PROJECT: "project",
             Resource.PROJECT_MEMBERSHIP: "project",
-            Resource.KNOWLEDGE: "knowledge",
             Resource.DISCUSSION: "discussion",
             Resource.QUESTION: "question",
             Resource.ANSWER: "answer",

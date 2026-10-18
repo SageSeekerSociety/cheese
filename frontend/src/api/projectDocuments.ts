@@ -24,7 +24,11 @@ export function listProjectDocuments(
   const params = new URLSearchParams({ limit: String(limit) })
   if (cursor) params.set('cursor', cursor)
   return request<{ data: ListedDocument[]; next: string | null }>(`${base(projectId)}?${params}`).then((page) => {
-    rememberNumbered('docs', page.data)
+    // 项目的文档都带着它的项目；团队自己的文档不在这一页里，也没有编号可记。
+    rememberNumbered(
+      'docs',
+      page.data.flatMap((doc) => (doc.project_id ? [{ ...doc, project_id: doc.project_id }] : []))
+    )
     return page
   })
 }

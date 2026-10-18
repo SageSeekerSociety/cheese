@@ -67,6 +67,9 @@ async def document_image(
     if kind not in _IMAGE_KINDS:
         raise UnprocessableEntityError(say("attachmentImageOnly"))
     project_id = reached.doc.project_id
+    if project_id is None:
+        # Pictures live in a project's library; a team's own document has none.
+        raise UnprocessableEntityError(say("docTeamNoImages"))
     name = library.library_name(clean)
     if name is not None:
         data = await library_records.read(db, project_id, name)

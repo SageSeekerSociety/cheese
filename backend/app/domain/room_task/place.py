@@ -121,7 +121,7 @@ async def place_or_404(session: AsyncSession, place_id: uuid.UUID) -> Place:
     """
     place = await PlaceResolver(session).conversation(place_id)
     if place is None:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     return place
 
 

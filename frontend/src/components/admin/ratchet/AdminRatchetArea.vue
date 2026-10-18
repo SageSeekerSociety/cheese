@@ -28,7 +28,6 @@ const CHECK_KEYS: Record<string, string> = {
   'be-deferred-imports': 'ratchet.check.beDeferredImports',
   'domain-import-guard': 'ratchet.check.domainImportGuard',
   'harness-boundary': 'ratchet.check.harnessBoundary',
-  'is-private-read-points': 'ratchet.check.isPrivateReadPoints',
   'file-sizes': 'ratchet.check.fileSizes',
   'vue-tsc': 'ratchet.check.vueTsc',
   'stylelint-tokens': 'ratchet.check.stylelintTokens',

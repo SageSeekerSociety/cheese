@@ -120,6 +120,13 @@ class ActorResolver:
         named = (claims or {}).get("t")
         return uuid.UUID(named) if named else None
 
+    def credential_project(self) -> uuid.UUID | None:
+        """The project the presented session credential was minted in; None for
+        a person or a token naming no project."""
+        claims = scoped_token_claims(self._cheese_token) if self._cheese_token else None
+        named = (claims or {}).get("p")
+        return uuid.UUID(named) if named else None
+
     async def _confine_task_credential(self, topic_id: uuid.UUID | None) -> None:
         """A credential minted for a task's conversation acts in no other
         conversation — not its room, not another task — even the session-wide
@@ -643,7 +650,7 @@ class ActorResolver:
             if room is not None and room.members_only:
                 # Someone outside a private channel is not told it exists: the
                 # answer is the one a channel that was never made gets.
-                raise NotFoundError("Topic not found")
+                raise NotFoundError(say("topicNotFound"))
             raise ForbiddenError(say("topicMemberOnly"))
 
     async def can_access_topic(
@@ -745,13 +752,13 @@ class ActorResolver:
         to somebody this answers yes about).
 
         The rule is not restated here. The handle is swapped on the actor and the
-        door's own method answers, which keeps the one read of ``is_private``
-        where it is (``seats_only``; ``tests/unit/test_is_private_read_points.py``
-        is a ratchet: a
-        second read point is a second declaration of the same fact, and two
-        declarations drift). What is taken as given is the credential half only —
-        a handle in a body presents nothing, and this asks whether the room would
-        admit them if it did.
+        door's own method answers, which keeps the access rules' one question of
+        whether a room is a private chat where it is (``seats_only``;
+        ``tests/unit/test_is_private_read_points.py`` allows no Python read of the
+        flag outside ``topic/models.py``: a second read point is a second declaration
+        of the same fact, and two declarations drift). What is taken as given is
+        the credential half only — a handle in a body presents nothing, and this
+        asks whether the room would admit them if it did.
         """
         if not actor.authenticated:
             return False
