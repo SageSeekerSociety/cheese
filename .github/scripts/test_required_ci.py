@@ -17,16 +17,21 @@ spec = importlib.util.spec_from_file_location(
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
-WORKFLOW = Path(__file__).resolve().parent.parent / "workflows" / "required-ci.yml"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "required-ci.yml"
 
 
 class RequiredCITest(unittest.TestCase):
     def test_main_parent_preserves_standalone_push_selections(self):
         # Representative files from every former standalone main-push pattern.
+        # Every path here must exist in the tree: the assertion below selects by
+        # pattern, so a deleted path still selects its suite and reads as true —
+        # `.claude/scripts/check.sh` and `.github/scripts/check.py` sat here long
+        # after they were removed, and nothing noticed.
         previous = {
             "backend": [
                 "backend/app/main.py",
-                "deploy/metering-proxy/proxy.py",
+                "deploy/metering-proxy/cheese_billing_core.py",
                 ".pre-commit-config.yaml",
                 ".github/scripts/ensure-apt.sh",
                 ".github/workflows/test.yml",
@@ -35,26 +40,26 @@ class RequiredCITest(unittest.TestCase):
             "e2e": [
                 "backend/app/main.py",
                 "frontend/src/main.ts",
-                "e2e/tests/login.ts",
+                "e2e/tests/auth.spec.ts",
                 ".github/scripts/ci-test-evidence.py",
                 ".github/workflows/e2e.yml",
             ],
             "cli": [
                 "cli/main.go",
-                "backend/tests/fixtures/wire/frame.json",
+                "backend/tests/fixtures/wire/heartbeat.json",
                 ".github/workflows/cli.yml",
             ],
             "guards": [
                 "backend/app/main.py",
                 "frontend/src/main.ts",
-                "deploy/run.sh",
-                ".claude/scripts/check.sh",
+                "deploy/deploy.sh",
+                "scripts/check.sh",
                 ".pre-commit-config.yaml",
                 ".github/workflows/test.yml",
-                ".github/scripts/check.py",
+                ".github/scripts/required-ci.py",
             ],
             "deploy": [
-                "deploy/run.sh",
+                "deploy/deploy.sh",
                 ".github/workflows/deploy-scripts-test.yml",
                 ".github/workflows/deploy-dev.yml",
                 ".github/workflows/deploy-drift.yml",
@@ -83,6 +88,12 @@ class RequiredCITest(unittest.TestCase):
             for path in paths:
                 with self.subTest(suite=suite, path=path):
                     self.assertTrue(gate.select([path])[suite])
+                    self.assertTrue(
+                        (REPO_ROOT / path).exists(),
+                        f"{path} is named here but is not in the tree: the "
+                        "selection above matches by pattern, so a deleted path "
+                        "still passes it",
+                    )
 
     def test_remote_execution_plugin_runs_the_build_contracts(self):
         # headless_contract.py launches -p through the plugin and the executor,
@@ -213,7 +224,7 @@ class RequiredCITest(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertTrue(gate.select([path])["frontend"])
-        self.assertFalse(gate.select([".claude/scripts/check.sh"])["frontend"])
+        self.assertFalse(gate.select(["scripts/check.sh"])["frontend"])
 
     def test_combined_merge_group_checks_every_changed_area(self):
         selected = gate.select(["frontend/src/main.ts", "cli/main.go"])
@@ -277,7 +288,7 @@ class RequiredCITest(unittest.TestCase):
                 self.assertTrue(gate.select([path])["deploy"])
 
     def test_shared_wire_fixture_checks_both_languages(self):
-        selected = gate.select(["backend/tests/fixtures/wire/frame.json"])
+        selected = gate.select(["backend/tests/fixtures/wire/heartbeat.json"])
         self.assertTrue(selected["backend"] and selected["cli"])
 
     def test_backend_hook_edits_run_the_hooks_that_consume_them(self):
