@@ -12,6 +12,7 @@ from app.domain.groups.models import (
     GroupQuestionRelationship,
     GroupTarget,
 )
+from app.domain.reads import get_by_ids
 
 
 @overload
@@ -49,6 +50,11 @@ class GroupRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_ids(self, group_ids: Sequence[int]) -> dict[int, Group]:
+        return await get_by_ids(
+            self._session, Group, group_ids, Group.deleted_at.is_(None)
+        )
 
     async def search(
         self,
