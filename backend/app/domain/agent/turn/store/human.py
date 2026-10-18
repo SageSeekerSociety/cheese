@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.core.work_context import parse_work_id
+from app.domain.block.adapters import dump_blocks_json
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.output_effects import append_output
 from app.domain.block.queries import client_delivery_bundle, message_reply_target
@@ -124,10 +125,7 @@ async def persist_human_message(
                     for block in legacy_blocks
                     if (block.meta or {}).get("client_id") == client_id
                 )
-                payloads = [
-                    BlockOut.model_validate(block).model_dump(mode="json")
-                    for block in legacy_blocks
-                ]
+                payloads = await dump_blocks_json(legacy_blocks)
                 block_ids = [block.id for block in legacy_blocks]
                 await idem.record_result(
                     session,
