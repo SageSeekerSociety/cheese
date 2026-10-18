@@ -2,7 +2,7 @@
 
 Six counts, one table each in another domain: the teams they joined
 (``TeamUserRelation``), the task memberships and submissions (``task``), the
-knowledge entries, questions and answers they wrote. All four packages sit
+questions and answers they wrote. All the packages sit
 above ``app.domain.user`` in the layer table, which is why this lives here and
 not next to the dto it fills — ``UserAuthService.build_user_dto`` takes these
 through the port ``app.domain.user.ports.UserStatistics`` names.
@@ -19,7 +19,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.answers.models import Answer
-from app.domain.knowledge.models import Knowledge
 from app.domain.questions.models import Question
 from app.domain.task.models import TaskMembership, TaskSubmission
 from app.domain.team.models import TeamUserRelation
@@ -44,14 +43,6 @@ class UserStatisticsRepository:
             TaskMembership.member_id == user_id,
             TaskMembership.is_team.is_(False),
             TaskMembership.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return int(result.scalar_one() or 0)
-
-    async def count_knowledge_entries(self, user_id: int) -> int:
-        stmt = select(func.count(Knowledge.id)).where(
-            Knowledge.created_by == user_id,
-            Knowledge.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
@@ -83,14 +74,12 @@ class UserStatisticsRepository:
     async def aggregate(self, user_id: int) -> dict[str, int]:
         teams = await self.count_teams(user_id)
         tasks = await self.count_task_memberships(user_id)
-        knowledge = await self.count_knowledge_entries(user_id)
         submissions = await self.count_submissions(user_id)
         questions = await self.count_questions(user_id)
         answers = await self.count_answers(user_id)
         return {
             "teamCount": teams,
             "taskParticipationCount": tasks,
-            "knowledgeCount": knowledge,
             "submissionCount": submissions,
             "questionCount": questions,
             "answerCount": answers,

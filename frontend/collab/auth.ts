@@ -14,6 +14,9 @@ export interface Ticket {
   agent: boolean
   /** Read-only: the document is shown, and any change the client sends is dropped. */
   ro: boolean
+  /** Suggest only: the person comments and suggests but does not change the
+   *  text (a mentor, #3830); see ./suggestGuard.ts. Absent on older tickets. */
+  sg?: boolean
   exp: number
 }
 

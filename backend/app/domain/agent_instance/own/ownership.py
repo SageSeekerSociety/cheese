@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance import account_connections
 from app.domain.agent_instance.models import AgentInstance, OwnAgent, OwnCallers
-from app.domain.agent_instance.own.connections import Login, _held, logins
+from app.domain.agent_instance.own.connections import (
+    Login,
+    _held,
+    logins,
+    logins_by_owners,
+)
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.user.models import User
 from app.domain.user.services import faces_by_handle
@@ -108,13 +113,23 @@ async def owned_in_project(
     may call it — those their owners removed included (``is_active`` false).
     The callers column rides along because the row holding it is this
     package's: a reader below that wants it calls this, not ``OwnAgent``."""
+    return [
+        (instance, owned.owner_user_id, owned.callers)
+        for instance, owned in await owned_rows_in_project(db, project_id)
+    ]
+
+
+async def owned_rows_in_project(
+    db: AsyncSession, project_id: uuid.UUID
+) -> list[tuple[AgentInstance, Owned]]:
+    """The project's instances and their ownership, including inactive ones."""
     rows = await db.execute(
-        select(AgentInstance, OwnAgent.owner_user_id, OwnAgent.callers)
+        select(AgentInstance, *_OWNED[1:])
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
         .where(AgentInstance.project_id == project_id)
         .order_by(AgentInstance.created_at)
     )
-    return [(instance, owner, callers) for instance, owner, callers in rows]
+    return [(instance, Owned(instance.id, *values)) for instance, *values in rows]
 
 
 async def connection_of(db: AsyncSession, owned: Owned) -> Login | None:
@@ -131,6 +146,30 @@ async def connection_of(db: AsyncSession, owned: Owned) -> Login | None:
         if login.device_id == owned.device_id:
             return login
     return None
+
+
+async def connections_of(
+    db: AsyncSession, owners: list[Owned]
+) -> dict[uuid.UUID, Login | None]:
+    """Resolve a page without rereading any owner's connections for each agent."""
+    by_owner = await logins_by_owners(db, {owned.owner_user_id for owned in owners})
+    connections: dict[tuple[int, bool, str | None], Login] = {
+        (owner_id, login.on_account, login.id): login
+        for owner_id, logins in by_owner.items()
+        for login in logins
+    }
+    return {
+        owned.instance_id: connections.get(
+            (
+                owned.owner_user_id,
+                owned.on_account,
+                str(owned.account_connection_id)
+                if owned.on_account
+                else owned.device_id,
+            )
+        )
+        for owned in owners
+    }
 
 
 async def owner_of(db: AsyncSession, instance_id: uuid.UUID) -> tuple[str, str] | None:

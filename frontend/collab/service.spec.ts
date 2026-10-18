@@ -8,6 +8,8 @@ import { createServer, type Server as HttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider'
+import { Transform } from '@tiptap/pm/transform'
+import { updateYFragment } from '@tiptap/y-tiptap'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
@@ -17,8 +19,10 @@ import {
   DOC_SCHEMA_PARAM,
   DOC_SCHEMA_VERSION,
   exportMarkdown,
+  FIELD,
   liveNode,
   liveSuggestions,
+  suggestionId,
   writeMarkdown,
 } from '../src/lib/docSchema'
 
@@ -92,10 +96,17 @@ class FakeBackend {
   }
 }
 
-function ticket(sub: string, opts: { ro?: boolean; doc?: string; key?: string } = {}): string {
+function ticket(sub: string, opts: { ro?: boolean; sg?: boolean; doc?: string; key?: string } = {}): string {
   const enc = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64url')
   const head = enc({ alg: 'HS256', typ: 'JWT' })
-  const body = enc({ doc: opts.doc ?? DOC, sub, agent: false, ro: !!opts.ro, exp: Date.now() / 1000 + 60 })
+  const body = enc({
+    doc: opts.doc ?? DOC,
+    sub,
+    agent: false,
+    ro: !!opts.ro,
+    sg: !!opts.sg,
+    exp: Date.now() / 1000 + 60,
+  })
   const sig = createHmac('sha256', opts.key ?? deriveKey(SECRET, 'ticket'))
     .update(`${head}.${body}`)
     .digest('base64url')
@@ -273,6 +284,24 @@ describe('the live document', () => {
     await new Promise((r) => setTimeout(r, 300))
     expect(backend.content).not.toContain('只读者写的')
     expect(exportMarkdown(writer.doc)).not.toContain('只读者写的')
+  })
+
+  it('takes a mentor’s own suggestion and drops a change they make to the text', async () => {
+    const { backend, url } = await setup('原文。\n')
+    const mentor = client(url, ticket('mentor', { sg: true }))
+    const writer = client(url, ticket('xiaowang'))
+    await until(() => exportMarkdown(mentor.doc).includes('原文') && exportMarkdown(writer.doc).includes('原文'))
+    writeMarkdown(mentor.doc, '原文。\n\n导师直接改的。\n')
+    await new Promise((r) => setTimeout(r, 300))
+    expect(exportMarkdown(writer.doc)).not.toContain('导师直接改的')
+
+    // The first connection is now ahead of the document with the refused change; a fresh one suggests.
+    const suggested = suggestedCopy(writer.doc, '导师建议的。', suggestionId('mentor'))
+    const fresh = client(url, ticket('mentor', { sg: true }))
+    await until(() => exportMarkdown(fresh.doc).includes('原文'))
+    Y.applyUpdate(fresh.doc, Y.encodeStateAsUpdate(suggested, Y.encodeStateVector(fresh.doc)))
+    await until(() => liveSuggestions(writer.doc).some((item) => item.new.includes('导师建议的')))
+    expect(backend.content).not.toContain('导师直接改的')
   })
 
   it('keeps a backend write when the live document stores again, together with typing that came after', async () => {
@@ -664,3 +693,17 @@ describe('an edit to part of the live document', () => {
     expect(backend.sent.at(-1)?.suggestions).toEqual([expect.objectContaining({ author: 'cheese-agent' })])
   })
 })
+
+/** A copy of `doc` with `text` inserted after the first paragraph, marked as a suggestion by `id`. */
+function suggestedCopy(doc: Y.Doc, text: string, id: string): Y.Doc {
+  const copy = new Y.Doc()
+  Y.applyUpdate(copy, Y.encodeStateAsUpdate(doc))
+  const node = liveNode(copy)
+  const at = 1 + (node.firstChild?.content.size ?? 0)
+  const mark = node.type.schema.marks.insertion.create({ id })
+  const next = new Transform(node).insert(at, node.type.schema.text(text, [mark])).doc
+  copy.transact(() =>
+    updateYFragment(copy, copy.getXmlFragment(FIELD), next, { mapping: new Map(), isOMark: new Map() })
+  )
+  return copy
+}

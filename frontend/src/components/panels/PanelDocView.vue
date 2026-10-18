@@ -91,6 +91,11 @@ const props = withDefaults(
     editable: boolean
     /** 没有编辑权限（凭证说的），切不回编辑。 */
     readOnly: boolean
+    /** 只能提修改建议（导师）：能打字，打的都记成修订；不接受、不拒绝、不改标题。 */
+    suggestOnly?: boolean
+    /** 打的字记成修订。 */
+    suggesting?: boolean
+    setSuggesting?: (on: boolean) => void
     /** 正文还在路上。 */
     loading: boolean
     connection: DocConnection
@@ -147,6 +152,9 @@ const props = withDefaults(
   {
     document: null,
     deleted: false,
+    suggestOnly: false,
+    suggesting: false,
+    setSuggesting: undefined,
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     mentionNames: undefined,
@@ -188,6 +196,9 @@ const emit = defineEmits<{
   /** 资料库文档的标题改成了这样。 */
   rename: [title: string]
   delete: []
+  /** 「移动到…」（#3774）。 */
+  move: []
+  share: []
   'mention-outside-add': []
   'mention-outside-dismiss': []
 }>()
@@ -337,11 +348,14 @@ const mentionNames = computed<Record<string, string>>(
   () => props.mentionNames ?? (props.agentHandle ? { [props.agentHandle]: props.agentName } : {})
 )
 
+/** 能决定正文：能改，且不只是提修改建议（导师只提建议，接受、拒绝、改标题、恢复旧版都不归他）。 */
+const decides = computed(() => props.editable && !props.suggestOnly)
+
 const agentOptions = {
   editor: () => surfaceRef.value?.editor ?? null,
   ask: () => props.askAgent,
   stop: () => props.stopAgent,
-  editable: () => props.editable,
+  editable: () => decides.value,
   applyEdits: () => props.applyDocEdits,
   toComment: () => props.answerToComment,
   agentName: () => props.agentName,
@@ -350,7 +364,7 @@ const agentOptions = {
 // 选中一段找 AI 队友（浮条上那一个），和对整篇找它（顶栏上那一个）。
 const rewrite = useDocAgent({ ...agentOptions, scope: 'selection' })
 const docAgent = useDocAgent({ ...agentOptions, scope: 'document' })
-const canAskDocument = computed(() => !!props.agentHandle && !!props.askAgent)
+const canAskDocument = computed(() => !!props.agentHandle && !!props.askAgent && !props.suggestOnly)
 // 总览页上点了「让 AI 队友起草」，跳到了这一篇：编辑器在了、能问、能改，就由对整篇的
 // 那个 AI 队友接着起草（`lib/overviewDraft`）。
 watch(
@@ -494,11 +508,16 @@ defineExpose({
             :mention-names="mentionNames"
             :headings="outlineHeadings"
             :find-open="findOpen"
-            :deletable="!!document && !readOnly"
+            :deletable="!!document && !readOnly && !suggestOnly"
+            :suggest-only="suggestOnly"
+            :suggesting="suggesting"
             @delete="emit('delete')"
+            @move="emit('move')"
+            @share="emit('share')"
             @toggle-suggestions="toggleSuggestions"
             @toggle-comments="commentsRef?.toggle()"
             @toggle-editable="toggleEditable"
+            @set-suggesting="(on: boolean) => setSuggesting?.(on)"
             @history="historyOpen = true"
             @export="exportDoc"
             @open-thread="locateComment"
@@ -531,7 +550,7 @@ defineExpose({
             :agent-name="agentName"
             :count="suggestions.list.value.length"
             :decided="suggestions.decided.value"
-            :editable="editable"
+            :editable="decides"
             @step="suggestions.step"
             @accept-all="suggestions.decideAll(true)"
             @reject-all="suggestions.decideAll(false)"
@@ -585,7 +604,7 @@ defineExpose({
                 autocomplete="off"
                 :placeholder="t('work.room.doc.titlePlaceholder')"
                 :aria-label="t('work.room.doc.titleLabel')"
-                :readonly="!editable"
+                :readonly="!decides"
                 maxlength="200"
                 @focus="titleEditing = true"
                 @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
@@ -596,6 +615,8 @@ defineExpose({
               <DocSurface
                 ref="surfaceRef"
                 :editable="editable"
+                :suggesting="suggesting"
+                :author="commentAuthor"
                 :loading="loading"
                 :session="session"
                 :title="docTitle"
@@ -629,7 +650,7 @@ defineExpose({
               <DocEditLayer
                 :editor="surfaceRef?.editor ?? null"
                 :agent-name="agentName"
-                :editable="editable"
+                :editable="decides"
                 :rewrite="rewrite"
                 :review="review"
                 :suggestions="suggestions"
@@ -653,7 +674,7 @@ defineExpose({
         v-model:open="historyOpen"
         :load="loadVersions"
         :restore="restoreVersion"
-        :editable="editable"
+        :editable="decides"
         :name-of="nameOf"
         :mention-names="mentionNames"
         :notified-mentions="notifiedMentions"

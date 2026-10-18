@@ -78,5 +78,18 @@
   "taskDocParticipantsOnly": "Only the task's owner and collaborators can change this task's document; say what you think in the channel",
   "attachmentOriginalReadOnly": "Files sent in a conversation can't be changed. You can create a new file based on one",
   "docAgentDraftNeedsBlankOverview": "Drafting is only for a project overview that is still empty",
-  "docWholeWriteNeedsBlank": "This document already has content: change it passage by passage (cheese_doc_edit), not as a whole"
+  "docWholeWriteNeedsBlank": "This document already has content: change it passage by passage (cheese_doc_edit), not as a whole",
+  "docTeamMembersOnly": "Only the team's members can open its documents",
+  "docTeamNotForAgent": "AI teammates can't read this team document",
+  "docTeamNoAgent": "AI teammates aren't available in team documents",
+  "docTeamNoImages": "Team documents can't hold pictures yet",
+  "docTeamNoApps": "Team documents can't hold mini apps yet",
+  "docNotMovable": "A task's or a conversation's document and the project goals can't be moved",
+  "docMoveAuthorOrAdmin": "Only the author and the team's admins can move this document",
+  "docMoveNoSuchPlace": "There is no such team or project",
+  "docMoveArchivedProject": "Documents can't be moved to an archived project",
+  "docShareNotAllowed": "A project's document is shared by whoever may publish the project's site; a team's or a person's own, by its author or a team admin",
+  "docShareGone": "This share link no longer works",
+  "docShareAppElsewhere": "This mini app belongs to another document and is not shared with this one",
+  "docShareImageUnavailable": "This image is not shared with the document"
 }

@@ -1,5 +1,8 @@
 <template>
+  <!-- A document opens on its own page: it draws its own header, outside the team page frame. -->
+  <router-view v-if="route.name === 'TeamsDocument' && teamData" />
   <DetailView
+    v-else
     :team-data="teamData"
     :is-member="isMember"
     :not-found="notFound"
@@ -51,7 +54,8 @@ const forbidden = computed(() => isForbidden(loadError.value))
 const PAGE_TITLES: Record<string, string> = {
   TeamsDetailDefault: 'home.nav.teamProjects',
   TeamsDetailMembers: 'home.nav.teamMembers',
-  TeamsDetailKnowledge: 'home.nav.teamKnowledge',
+  TeamsDetailDocs: 'home.nav.teamDocs',
+  TeamsDocument: 'home.nav.teamDocs',
   TeamsDetailCompute: 'home.nav.teamCompute',
   TeamsDetailCredits: 'home.nav.teamCredits',
 }

@@ -2,7 +2,7 @@
  * 资料库页拆出来的四件在预览站里的条目：所在位置那一行、那一列的行、打开的那一份、
  * 起名字的对话框。
  *
- * 单独一份的理由和 `catalogKnowledge.ts` 一样：`catalog.ts` 已经顶着 `frontend/src`
+ * 单独一份，是因为 `catalog.ts` 已经顶着 `frontend/src`
  * 那一千行的上限。四件都只吃 props：取数、挪动、上传都在 `ProjectLibraryView.vue`
  * 和 `composables/useLibraryNaming.ts` 里，行上那点事（点开、下载、替换、改名、
  * 版本、删除）也都报回页里，所以这里不用装假后端。
@@ -47,6 +47,7 @@ const ROWS: LibraryRow[] = [
     rank: '2',
     doc: listedDocument({
       id: 'd1',
+      team_id: 1,
       project_id: 'p1',
       kind: 'doc',
       title: '2026 采购口径',
