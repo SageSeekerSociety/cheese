@@ -24,7 +24,7 @@ from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
-from app.api.topics_deps import _actor_in_place, _parse_moment
+from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
 from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
 from app.core.config import settings
@@ -1167,12 +1167,10 @@ async def write_topic_progress(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
     if not actor.authenticated:
-        # The global development token opens the room but is nobody, and a
-        # message needs an author.
+        # The global development token is nobody, and a message needs an author.
         raise ForbiddenError("Sign in to write a checklist")
-    # A task's checklist is written by the task's own session, and shown as its
-    # progress; a room's or a 支线's by an agent seated in the room, as a
-    # message in that conversation.
+    # A task's checklist is its own session's, shown as its progress; a room's or
+    # a 支线's is a seated agent's, or a person's said like any message of theirs.
     inner_id = place.task_id
     plans_the_turn = (
         resolver.credential_conversation() == inner_id
@@ -1192,6 +1190,8 @@ async def write_topic_progress(
             raise NotFoundError("Checklist not found in this room")
         if current is not None and current.author != actor.handle:
             raise ForbiddenError("Only the author can edit this message")
+    if not plans_the_turn and current is None:  # Posting is speaking; editing is not.
+        await require_person_speaks(db, actor, place)
     items = [
         {"id": str(number), "subject": todo.content, "status": todo.status}
         for number, todo in enumerate(body.todos, start=1)
