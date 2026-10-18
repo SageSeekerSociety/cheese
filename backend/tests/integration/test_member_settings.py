@@ -150,7 +150,7 @@ def test_someone_without_the_permission_changes_nothing(client, project, who):
         ("compute-configs", {"default": VM}),
         ("compute-configs", {"max_concurrent_turns": 40}),
         ("task-naming", {"mode": "manual"}),
-        ("forge-attribution", {"requester_coauthor": True}),
+        ("commit-credit", {"mode": "agent"}),
         ("tier-policy", {"allowed_tiers": ["included"]}),
     ):
         refused = client.put(f"/projects/{pid}/{path}", json=body, headers=headers)

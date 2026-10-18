@@ -108,21 +108,19 @@ async def test_a_merge_leaves_the_keys_it_does_not_name(client):
 
 
 async def test_two_routes_each_write_their_own_key(client):
-    """Route level: task naming and forge attribution are separate settings, and
+    """Route level: task naming and commit credit are separate settings, and
     saving one of them is not a reason for the other to change."""
     pid = await _named(client)
 
     named = client.put(f"/projects/{pid}/task-naming", json={"mode": "manual"})
     assert named.status_code == 200, named.text
-    attributed = client.put(
-        f"/projects/{pid}/forge-attribution", json={"requester_coauthor": False}
-    )
+    attributed = client.put(f"/projects/{pid}/commit-credit", json={"mode": "agent"})
     assert attributed.status_code == 200, attributed.text
 
     stored = await _stored(client, pid)
 
     assert stored[naming.SETTINGS_KEY] == "manual"
-    assert stored["forge_requester_coauthor"] is False
+    assert stored["commit_credit"] == "agent"
 
 
 async def test_a_key_written_outside_the_routes_survives_a_save(client):

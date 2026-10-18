@@ -96,11 +96,7 @@ beforeEach(() => {
     repo: null,
     url: null,
   })
-  vi.mocked(api.getForgeAttribution).mockResolvedValue({
-    requester_coauthor: null,
-    effective: true,
-    deployment_default: true,
-  })
+  vi.mocked(api.getCommitCredit).mockResolvedValue({ mode: 'owner' })
   vi.mocked(api.getBranchProtection).mockResolvedValue(rules())
   vi.mocked(api.listProjectMembers).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listOAuthConnections).mockResolvedValue({ connections: [] })

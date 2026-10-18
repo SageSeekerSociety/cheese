@@ -814,7 +814,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     forgejo_url: str = ""
     forgejo_api_url: str = ""
     forgejo_admin_token: str = ""
-    forge_attribution_default: bool = True
     forge_event_relay_url: str = ""
     forge_event_secret: str = ""
     # Only the public relay loads the deployment -> shared secret mapping.

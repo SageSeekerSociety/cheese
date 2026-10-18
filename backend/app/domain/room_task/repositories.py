@@ -117,7 +117,7 @@ class TaskRepository:
 
     async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
         """These threads, oldest first. Ids that name nothing are simply absent
-        — the caller (`Cheese-Task:`) has a list somebody wrote down, and a row
+        — the caller (`Link:`) has a list somebody wrote down, and a row
         that has since been deleted is a line it cannot write, not an error."""
         if not task_ids:
             return []
