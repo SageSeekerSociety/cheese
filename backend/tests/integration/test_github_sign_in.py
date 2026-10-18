@@ -4,6 +4,7 @@ The exchange with GitHub is faked; the callback, the state, the binding and
 the stored, encrypted tokens are real.
 """
 
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -29,6 +30,7 @@ def github(monkeypatch):
     monkeypatch.setattr(settings, "oauth_github_app_client_secret", "app-secret")
     monkeypatch.setattr(settings, "oauth_github_app_redirect_url", _CALLBACK)
     tokens = {"access_token": "ghu_first", "refresh_token": "ghr_first"}
+    tokens["refresh_token_expires_in"] = 15897600
 
     async def fake_exchange_code(self, code):
         return {**tokens, "expires_in": 28800}
@@ -95,6 +97,22 @@ def test_binding_an_account_through_github_sign_in_lets_its_prs_open_as_it(
     # The login is what every credit and the settings page show.
     assert profile["login"] == "octo"
     assert token == "ghu_first"
+    _assert_refresh_expiry(db_session, _portal, user, 15897600)
+
+
+def _assert_refresh_expiry(db_session, portal, user, seconds):
+    async def read():
+        return await OAuthConnectionRepository(db_session).get_by_user_and_provider(
+            user.user_id, "github_app"
+        )
+
+    conn = portal.call(read)
+    assert conn.refresh_token_expires is not None
+    assert (
+        datetime.now(UTC) + timedelta(seconds=seconds - 60)
+        < conn.refresh_token_expires
+        < datetime.now(UTC) + timedelta(seconds=seconds + 60)
+    )
 
 
 def test_github_sign_in_alone_can_connect_a_repository(
@@ -165,6 +183,7 @@ def test_signing_in_again_renews_the_stored_authorization(
     )
     api_client.cookies.clear()
     github["access_token"] = "ghu_second"
+    github["refresh_token_expires_in"] = 3600
 
     again = _sign_in_with_github(api_client)
 
@@ -173,6 +192,7 @@ def test_signing_in_again_renews_the_stored_authorization(
     )
     _found, token = _github_of(db_session, _portal, user)
     assert token == "ghu_second"
+    _assert_refresh_expiry(db_session, _portal, user, 3600)
 
 
 def test_a_sign_in_state_without_its_cookie_is_refused(

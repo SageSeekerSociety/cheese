@@ -53,7 +53,7 @@ covers:
 - 一小时有效，缓存到剩不到 20 分钟才重签（一次密集调用只花一次上游签发）。
 - App JWT 的 TTL 是 540 秒（GitHub 的上限是 10 分钟，留出时钟偏差）。
 - 交给机器的令牌（`GitHubAppTokens.installation_token`）原样要这个安装的全部授权（`granted_permissions`，向 GitHub 读一次缓存 10 分钟）：GitHub 只要请求里有一项安装没有的权限就拒掉整次签发，原样要是唯一不会被拒的请求。安装新接受了一项授权，授权表的缓存过期之后的那次签发才带上；缓存着的令牌在剩不到 20 分钟时才重签，所以最晚要等它们都过期，一般在一小时之内。
-- 后端开 PR、合并用的写令牌（`write_token`）按名字要 `contents: write` + `metadata: read` + `pull_requests: write` + **`workflows: write`**，不拿授权表去收窄，所以安装被收回其中一项时，签发当场被拒并带着 GitHub 的原因。`workflows: write` 是承重的：没有它，GitHub 会拒绝任何碰 `.github/workflows/*` 的分支的**推送**（"refusing to allow a GitHub App to create or update workflow … without `workflows` permission"），在采纳时表现为一个说不清的 422（2026-08-16，话题 ee17b136）。App 一直有这个授权，只是签发请求没要——GitHub 会收窄到你开口要的那些。
+- 后端开 PR、合并用的写令牌（`write_token`）按名字要 `contents: write` + `metadata: read` + `pull_requests: write` + **`workflows: write`**，不拿授权表去收窄，所以安装被收回其中一项时，签发当场被拒并带着 GitHub 的原因。`workflows: write` 是承重的：没有它，GitHub 会拒绝任何碰 `.github/workflows/*` 的分支的**推送**（"refusing to allow a GitHub App to create or update workflow … without `workflows` permission"），在采纳时表现为一个说不清的 422（2026-08-16，频道 ee17b136）。App 一直有这个授权，只是签发请求没要——GitHub 会收窄到你开口要的那些。
 - App 新加的授权（例如重跑 workflow 要的 `actions: write`）要每个安装的所有者各自接受。接受了的安装，交给机器的令牌随授权表带上它；没接受的安装照旧签发。写令牌只要上面四项，不跟着授权表变。
 - 从哪个安装签发是按项目解析的：App id 和私钥是平台级一份，每个连上的仓库有自己的 `installation_id`（`project_git_installations`）。
 
@@ -89,7 +89,7 @@ webhook 打不到部署上（部署常常在客户网络里），所以有一个
   - 没有这样的记录才问 `GET /rate_limit`（这一问不扣额度）。这一问本身被拒成额度用完，也算不能用；问不到别的原因（非 200 时会记一条日志），照常跑，跑出来的拒绝会记下来挡住下一个。
   - 读不变的东西不扣额度。`forge_client` 发出的普通 GET（不是流式下载）只要带着平台签的安装令牌，就记下 GitHub 回的 ETag 和回答（`core/forge_etags.py`，按安装 + URL + `Accept` 记，最多 1024 条，单条超过 256 KiB 不记）。下次同样的读带上 `If-None-Match`，GitHub 回 304 就不扣额度，调用方拿到的是记下的那份完整回答。键里不放令牌：令牌每小时重签，而 304 本身就是 GitHub 确认那份回答没变。Forgejo 不走这条。
   - draft 扫在一个项目上碰到额度用完（`ForgeRateLimitedError`），这一趟就不再碰这个项目剩下的任务，只记一行日志。
-- 归档话题上的卡**不在名单里**（`open_pr_card_ids` 就把它们排除了）：继续跟等于拿批准人的 GitHub 凭据去动一件没人再跟的工作。
+- 归档频道上的卡**不在名单里**（`open_pr_card_ids` 就把它们排除了）：继续跟等于拿批准人的 GitHub 凭据去动一件没人再跟的工作。
 - 还有一条单独的扫：还没递卡的任务，如果分支已经有提交，就替它开一个 **draft** PR（`sweep_draft_prs` → `_draft_pr_for_one_task`）。每跳最多看 `UNCARDED_TASKS_PER_TICK`（10）个的是另一条：已经有 PR、但没递卡的任务，看它是不是在 GitHub 上被合了（`poll_uncarded_task_prs`）。
 - 一条卡在某个时刻是「已经有人递了卡」的——这个问题的答案比行锁稳定：合并是**先合再写库**的，中间那一瞬 `status` 还是 `open`，而分支已经进了主干；照 `status` 判会开出一个永远合不上的 PR。递了卡的活从那一刻起 PR 就归它（`open_pr_for_card`），所以那条判据（有没有卡）永远不会漂。
 

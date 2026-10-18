@@ -63,6 +63,7 @@ def _connection(**overrides):
         "created_at": NOW,
         "raw_profile": None,
         "token_expires": None,
+        "refresh_token_expires": None,
         "refresh_token": None,
     }
     defaults.update(overrides)
@@ -942,6 +943,7 @@ class TestCreateConnection:
             access_token=None,
             refresh_token=None,
             token_expires=None,
+            refresh_token_expires=None,
         )
         assert result["id"] == 1
 
@@ -987,7 +989,7 @@ class TestUpdateConnectionTokens:
         # 刷 token 的调用方根本没跟 provider 要过用户信息，要是顺手把 profile 覆盖
         # 成空，设置页上那行「已连接 <名字>」就会莫名其妙退回一串数字 id。
         repo.update_tokens.assert_awaited_once_with(
-            7, None, None, None, raw_profile=None
+            7, None, None, None, raw_profile=None, refresh_token_expires=None
         )
 
 
@@ -1130,7 +1132,7 @@ class TestGetGithubUserToken:
             refresh_token=None,
         )
 
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.WARNING):
             assert await svc.get_github_user_token(42) is None
 
         # 判的是这条记录自己的 logger 名，不只看文本。caplog 的 handler 挂在根上，

@@ -36,6 +36,7 @@ from app.domain.agent.executor_transport import (
     RemoteClient,
     failure_text,
 )
+from app.domain.agent.harness import PI
 from app.domain.agent.harness.driven import monitor, runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.mcp_gateway import (
@@ -872,7 +873,7 @@ class Runner(runner.Runner[Journal]):
         self.journal.remember("session_id", session_id)
         self.journal.remember(
             "owner",
-            json.dumps({"harness": "pi", "agent_handle": opening.agent_handle}),
+            json.dumps({"harness": PI, "agent_handle": opening.agent_handle}),
         )
         return session_id
 
