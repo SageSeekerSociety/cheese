@@ -9,6 +9,7 @@
       <slot></slot>
     </div>
 
+    <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the fade above the button is a bigger target for the pointer; the button inside is the keyboard's way, and its click lands here -->
     <div v-if="shouldShowBtn" class="collapse-button-container" @click="show = true">
       <slot name="button">
         <BaseButton kind="ghost" block :ripple="false" prepend-icon="mdi-chevron-down" class="collapse-button">

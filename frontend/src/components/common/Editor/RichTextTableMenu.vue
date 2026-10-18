@@ -47,7 +47,13 @@ function insertTable(rows: number, cols: number) {
       </button>
     </div>
     <div v-else class="rt-pop" @mousedown.prevent>
-      <div class="rt-grid" @mouseleave="grid.rows = grid.cols = 0">
+      <!-- Only a container: each cell is its own button. Leaving the grid by pointer or by Tab clears the highlight. -->
+      <div
+        class="rt-grid"
+        role="presentation"
+        @mouseleave="grid.rows = grid.cols = 0"
+        @focusout="grid.rows = grid.cols = 0"
+      >
         <template v-for="r in GRID" :key="r">
           <button
             v-for="c in GRID"

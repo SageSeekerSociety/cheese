@@ -131,9 +131,14 @@
           <div class="d-flex align-center">
             <i18n-t scope="global" keypath="tasks.verifyDialog.consent" tag="span">
               <template #statement>
-                <span class="text-primary font-weight-medium privacy-link" @click.stop.prevent="directShowPrivacy">
+                <!-- A button, so Tab and Enter open the statement; .stop.prevent keeps the checkbox from toggling. -->
+                <button
+                  type="button"
+                  class="text-primary font-weight-medium privacy-link"
+                  @click.stop.prevent="directShowPrivacy"
+                >
                   {{ t('tasks.verifyDialog.privacyStatement') }}
-                </span>
+                </button>
               </template>
             </i18n-t>
             <v-tooltip location="end" max-width="300">

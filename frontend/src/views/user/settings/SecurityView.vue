@@ -220,6 +220,7 @@
 
             <div v-else-if="setupStep === 'verify'" key="verify" class="setup">
               <p class="setup__lede">{{ t('account.security.verifyLede') }}</p>
+              <!-- eslint-disable vuejs-accessibility/no-autofocus -- this step appears because the person chose to turn on two-step sign-in; focus moves into the code they are asked for -->
               <v-otp-input
                 v-model="verificationCode"
                 autofocus
@@ -229,6 +230,7 @@
                 :error="!!verifyError"
                 @finish="emit('enable-totp')"
               />
+              <!-- eslint-enable vuejs-accessibility/no-autofocus -->
               <p v-if="verifyError" class="setup__error">{{ verifyError }}</p>
             </div>
 
