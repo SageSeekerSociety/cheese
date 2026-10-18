@@ -4,16 +4,8 @@ The landing watch cannot always tell from a failed test's file which commit of
 a batch broke it; when the batch is long enough to be worth it, this bisects
 the range instead. Each step checks out a midpoint commit and runs only the
 test files the red jobs named, so a step costs the failing tests, not the
-suite. The search is capped: a batch of n commits needs ceil(log2 n) steps,
-and past `MAX_STEPS` the answer is "could not tell" rather than a guess.
-
-Run from the repository root, on `main`, with the commit to start from:
-
-    python3 .github/scripts/bisect-culprit.py --base A --head D \
-        --tests $'tests/unit/test_a.py\\nfrontend/src/foo.test.ts'
-
-The result is written to the step summary and published as a `bisect-culprit`
-check run on the head commit, which is where the landing watch reads it.
+suite. The search is capped: past MAX_STEPS the answer is "could not tell"
+rather than a guess.
 """
 
 from __future__ import annotations
@@ -84,9 +76,7 @@ def red_at(repo: Path, commit: str, tests: list[str]) -> bool:
         if code not in (0, PYTEST_NO_TESTS):
             return True
     if frontend:
-        code = _run(
-            ["pnpm", "exec", "vitest", "run", *frontend], repo / "frontend"
-        )
+        code = _run(["pnpm", "exec", "vitest", "run", *frontend], repo / "frontend")
         if code != 0:
             return True
     return False
@@ -174,9 +164,7 @@ def main(argv: list[str]) -> int:
     if not range_commits:
         publish(args.head, "indeterminate: the batch has no commits")
         return 0
-    culprit, steps = bisect(
-        range_commits, lambda commit: red_at(repo, commit, tests)
-    )
+    culprit, steps = bisect(range_commits, lambda commit: red_at(repo, commit, tests))
     if culprit is None:
         publish(args.head, f"indeterminate: {len(range_commits)} commits, {steps} steps")
     else:
