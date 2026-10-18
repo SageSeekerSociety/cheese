@@ -28,7 +28,7 @@ WEEK_THREE = {
     "allowed_topics": ["循环", "数组"],
     "avoid_in_code": ["递归"],
     "material_ids": [7],
-    "knowledge_ids": [11],
+    "document_ids": ["0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e"],
 }
 
 
@@ -222,7 +222,7 @@ def test_from_json_drops_what_it_cannot_read_rather_than_raising() -> None:
             "allowed_topics": "循环",  # a bare string, not a list
             "avoid_in_code": ["递归", "", "  ", 7, "递归"],  # blanks + dupe + non-text
             "material_ids": [7, "8", 0, -1, True, 7],  # strings/positivity/bool/dupe
-            "knowledge_ids": None,
+            "document_ids": ["not-a-uuid", None],
         }
     )
 
@@ -231,7 +231,7 @@ def test_from_json_drops_what_it_cannot_read_rather_than_raising() -> None:
     assert got.allowed_topics == []
     assert got.avoid_in_code == ["递归"]
     assert got.material_ids == [7]
-    assert got.knowledge_ids == []
+    assert got.document_ids == []
 
 
 def test_true_is_not_week_one() -> None:
@@ -269,7 +269,9 @@ def test_the_section_carries_the_course_the_week_scope_and_the_课件() -> None:
         course="创研课 2026 秋",
         teaching=Teaching.from_json(WEEK_THREE),
         materials=[{"id": 7, "name": "第 3 周讲义.pdf", "url": "/uploads/m7.pdf"}],
-        knowledge=[{"id": 11, "name": "递归与分治", "description": "上节课的补充"}],
+        documents=[
+            {"id": "0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e", "title": "递归与分治"}
+        ],
     )
 
     section = teaching_section(context)
@@ -281,7 +283,9 @@ def test_the_section_carries_the_course_the_week_scope_and_the_课件() -> None:
     assert "- 循环" in section and "- 数组" in section
     assert "递归" in section  # avoid_in_code
     assert "第 3 周讲义.pdf" in section and "/uploads/m7.pdf" in section
-    assert "递归与分治" in section and "id=11" in section
+    assert (
+        "递归与分治" in section and "id=0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e" in section
+    )
 
 
 def test_a_course_that_never_named_itself_still_reads() -> None:

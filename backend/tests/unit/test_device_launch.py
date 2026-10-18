@@ -27,7 +27,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.claude_code.session_launch import (
     session_settings,
 )
-from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.launch import MachinePlace
 from app.domain.project_skill.service import session_skill_bundle
 
 PIN = device_launch.CLAUDE_PINNED_VERSION

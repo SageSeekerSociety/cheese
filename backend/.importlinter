@@ -9,7 +9,7 @@
 # file states the whole shape once, in the tool that reads the import graph.
 #
 # RUN IT
-#     cd backend && uv run lint-imports          the nine contracts on their own,
+#     cd backend && uv run lint-imports          the ten contracts on their own,
 #                                                exit 0/1. This file writes no
 #                                                exemptions, so this is the raw
 #                                                graph, not the verdict — every
@@ -410,6 +410,13 @@ unmatched_ignore_imports_alerting = warn
 # a document's mini-apps are part of the document, it keeps its pictures in the
 # `library` blob store on the same layer, and only routes import it.
 #
+# `review_note_codes` joined at layer 1 (2026-10-17): the note code and the level it
+# renders as are read by `room_task.presentation` (layer 4) to place a card on the
+# board, and `review` reads `room_task` the other way — each importing the other is
+# the C3 cycle this move removes. The vocabulary came down; the writers
+# (`record` / `annotate` / `clear`) stayed in `review/notes.py`, which needs the
+# card's two columns.
+#
 # `project_permissions` joined at layer 1 (2026-10-16): the roles of a project
 # and what each may do (#3830) are asked by `topic`, `topic_membership`,
 # `review` and `membership` alike, and `project` sits beside the first two, so
@@ -536,16 +543,42 @@ unmatched_ignore_imports_alerting = warn
 # 「现状」 (`project_situation`, which also needs `agent.harness.prompt.WRITING`
 # and so sits above `agent`) and the document agent drafting the overview
 # (`agent`, layer 3). It sits below both so that neither reaches up.
+# `repository` lost its last three upward edges (2026-10-17). They were one
+# mistake in two shapes. Three of them read a task's row — is it still open,
+# which branch and last landed head, what did the card's declared work turn out
+# to be — through `room_task.models.Task` and `room_task.services.TaskService`,
+# because `repository` is layer 3 and `room_task` is layer 4 and nobody had
+# written down what it actually needed: columns. So `repository/task_rows.py`
+# declares those columns as a bare `table(...)`, the way
+# `topic/repositories/statements.py` declares `tasks`, `threads` and `blocks`,
+# and the three readers take it from there. Only reads go through the copy; a
+# write or a decision still comes from `room_task.services`, which owns the
+# table. `tests/unit/test_repository_task_rows_match_their_rows.py` pins the
+# copy to the real table, and its opposite number in `topic` does the same
+# there — both compare which table a statement's columns belong to, because
+# `find_tables` hands back an annotated copy of an ORM table that `is` never
+# matches, which is also why the `topic` guard's "borrowed a model table"
+# assertion had never been able to go red until now.
+#
+# The fourth was a path, not a row: `repository.service.session_dir` copies a
+# project's confirmed skills out of `project_skill`'s mirror directory and
+# therefore imported `project_skill.service.mirror_root` to learn where that
+# directory is. Where a path is is a convention, not a query, and it now sits
+# at layer 1 in `skill_library.project_skills_root` — the same move as
+# `event_author` and `event_about`, for the same reason: one writer and one
+# other reader, three layers apart, needing one string. `mirror_root` stays in
+# `project_skill.service` as a one-line wrapper; it is the name its own callers
+# and the tests that patch it use.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
     platform_stats : feature_stats : dashboard : project_progress : project_situation : onboarding
     routine : task_quiet : admin : room_cleanup : wake_watch
     agent : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
-    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet : project_material
+    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : event_about : event_author : project_permissions
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : event_about : event_author : project_permissions
 containers =
     app.domain
 exhaustive = true
@@ -557,3 +590,32 @@ unmatched_ignore_imports_alerting = warn
 # 笔（`topic -> block`），只是合并进仓库的树里记的模块路径不再是导入方了。
 # **2026-10-16**：为此手写的三条豁免已删——`check_boundaries.py` 现在自己认得这种
 # 改名（见 C3 那段），不必在声明里再写一遍。
+
+[importlinter:contract:platform-not-claude-code]
+# H1 — the platform side of the harness seam holds no Claude Code knowledge: it
+# gets finished `AgentEvent`s from the room's session path, and stores and
+# sends them; translating is the adapter's job (`docs/fusion-design.md`). Only
+# the session-core drivers and the adapter's outer edges import its door.
+# Direct imports only: reaching it through a driver is the seam working.
+name = H1 the platform side does not import the Claude Code adapter
+type = forbidden
+source_modules =
+    app.domain.agent.chat
+    app.domain.agent.chat_admission
+    app.domain.agent.chat_lifecycle
+    app.domain.agent.chat_live_input
+    app.domain.agent.chat_places
+    app.domain.agent.room
+    app.domain.agent.room_events
+    app.domain.agent.runtime
+    app.domain.agent.runtime_orphans
+    app.domain.agent.turn
+    app.domain.agent.turn_adoption
+    app.domain.agent.turn_counts
+    app.domain.agent.turn_inputs
+    app.domain.agent.turn_ledger
+    app.domain.agent.turn_speakers
+    app.domain.agent.turn_times
+    app.domain.agent.turn_usage
+forbidden_modules = app.domain.agent.harness.claude_code
+allow_indirect_imports = true

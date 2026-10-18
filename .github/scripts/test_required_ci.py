@@ -389,6 +389,9 @@ class RequiredCITest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "skipped"},
+            # A backend change the paths do not send to the frontend: the api
+            # job answers whether the surface moved, and here it did not.
+            "api": {"result": "success", "outputs": {"moved": "false"}},
             **{
                 k: {"result": "success" if v else "skipped"}
                 for k, v in selected.items()
@@ -408,6 +411,7 @@ class RequiredCITest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "success"},
+            "api": {"result": "skipped"},
             **{k: {"result": "skipped"} for k in selected},
         }
 
@@ -428,6 +432,48 @@ class RequiredCITest(unittest.TestCase):
         needs = self.needs()
         del needs["scope"]["outputs"]["backend"]
         self.assertTrue(gate.failures(needs, "full"))
+
+    def test_pull_request_skips_e2e_and_remote_even_when_paths_match(self):
+        for path in (
+            "backend/app/api/rooms.py",
+            "e2e/tests/login.spec.ts",
+            "scripts/remote_execution/room_fixture.py",
+            ".github/scripts/required-ci.py",
+        ):
+            with self.subTest(path=path):
+                pr_selected = gate.select([path], "pull_request")
+                self.assertFalse(pr_selected["e2e"])
+                self.assertFalse(pr_selected["remote"])
+                self.assertTrue(pr_selected["guards"])
+        mg_selected = gate.select(
+            ["e2e/tests/login.spec.ts", "scripts/remote_execution/room_fixture.py"],
+            "merge_group",
+        )
+        self.assertTrue(mg_selected["e2e"])
+        self.assertTrue(mg_selected["remote"])
+
+    def test_check_accepts_skipped_e2e_and_remote_on_pull_request_only(self):
+        pr_needs = self.needs()
+        pr_needs["scope"]["outputs"]["branch_heavy"] = "false"
+        for suite in ("e2e", "remote"):
+            pr_needs["scope"]["outputs"][suite] = "false"
+            pr_needs[suite]["result"] = "skipped"
+        self.assertEqual(gate.failures(pr_needs, "full", "pull_request"), [])
+        raw_skipped = self.needs()
+        for suite in ("e2e", "remote"):
+            raw_skipped[suite]["result"] = "skipped"
+        self.assertEqual(gate.failures(raw_skipped, "full", "pull_request"), [])
+        mismatch = self.needs()
+        mismatch["scope"]["outputs"]["branch_heavy"] = "true"
+        for suite in ("e2e", "remote"):
+            mismatch[suite]["result"] = "skipped"
+        self.assertTrue(gate.failures(mismatch, "full", "pull_request"))
+        for suite in ("e2e", "remote"):
+            with self.subTest(suite=suite):
+                mg_needs = self.needs()
+                mg_needs["scope"]["outputs"]["branch_heavy"] = "true"
+                mg_needs[suite]["result"] = "skipped"
+                self.assertTrue(gate.failures(mg_needs, "full", "merge_group"))
 
 
 class TierForTest(unittest.TestCase):
@@ -503,6 +549,9 @@ class AggregationTierTest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "skipped"},
+            # A backend change the paths do not send to the frontend: the api
+            # job answers whether the surface moved, and here it did not.
+            "api": {"result": "success", "outputs": {"moved": "false"}},
             **{
                 k: {"result": "success" if v else "skipped"}
                 for k, v in selected.items()
@@ -516,6 +565,7 @@ class AggregationTierTest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "success"},
+            "api": {"result": "skipped"},
             **{k: {"result": "skipped"} for k in selected},
         }
 
@@ -571,6 +621,209 @@ class AggregationTierTest(unittest.TestCase):
         needs = self.needs()
         del needs["scope"]["outputs"]["tier"]
         self.assertTrue(gate.failures(needs, "full"))
+
+
+class ApiSurfaceTest(unittest.TestCase):
+    """A backend change that moves the OpenAPI document runs the frontend suite.
+
+    The frontend compiles against types generated from that document, so a
+    change that moves it and lands without the frontend suite has shipped an
+    API surface nobody compiled the frontend against. No path says when the
+    document moved; the ``api`` job says it, and the required check must hold
+    the frontend suite to that answer.
+    """
+
+    def needs(self, paths=("backend/app/api/rooms.py",), api=None, frontend=None):
+        selected = gate.select(list(paths))
+        outputs = {k: str(v).lower() for k, v in selected.items()}
+        outputs["tier"] = "full"
+        needs = {
+            "scope": {"result": "success", "outputs": outputs},
+            "fast": {"result": "skipped"},
+            **{k: {"result": "success" if v else "skipped"} for k, v in selected.items()},
+        }
+        if api is not None:
+            needs["api"] = api
+        if frontend is not None:
+            needs["frontend"] = {"result": frontend}
+        return needs
+
+    def test_a_moved_surface_without_the_frontend_suite_is_red(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="skipped")
+        self.assertTrue(gate.failures(needs, "full"))
+
+    def test_a_moved_surface_with_the_frontend_suite_green_passes(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="success")
+        self.assertEqual(gate.failures(needs, "full"), [])
+
+    def test_a_moved_surface_with_a_red_frontend_suite_is_red(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="failure")
+        self.assertTrue(gate.failures(needs, "full"))
+
+    def test_an_unmoved_surface_leaves_the_frontend_suite_out(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "false"}},
+                           frontend="skipped")
+        self.assertEqual(gate.failures(needs, "full"), [])
+
+    def test_a_backend_change_with_no_answer_from_api_is_red(self):
+        # A job that did not report whether the surface moved has not excused
+        # the frontend suite it would have started.
+        for api in ({"result": "failure"}, {"result": "cancelled"}, {"result": "skipped"},
+                    None, {"result": "success"},
+                    {"result": "success", "outputs": {"moved": ""}},
+                    {"result": "success", "outputs": {"moved": "maybe"}}):
+            with self.subTest(api=api):
+                self.assertTrue(gate.failures(self.needs(api=api, frontend="skipped"), "full"))
+
+    def test_api_runs_only_where_the_paths_left_the_question_open(self):
+        # A frontend change already runs the suite, and a change outside the
+        # backend cannot move the document: neither asks api.
+        for paths in (("frontend/src/main.ts",),
+                      ("backend/app/api/rooms.py", "frontend/src/main.ts"),
+                      ("docs/workflows.md",)):
+            with self.subTest(paths=paths):
+                ran = self.needs(paths, api={"result": "success", "outputs": {"moved": "false"}})
+                self.assertTrue(gate.failures(ran, "full"))
+                skipped = self.needs(paths, api={"result": "skipped"})
+                self.assertEqual(gate.failures(skipped, "full"), [])
+
+    def test_a_draft_never_asks_api(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}})
+        needs["scope"]["outputs"]["tier"] = "quick"
+        needs["fast"]["result"] = "success"
+        for suite in gate.PATHS:
+            needs[suite] = {"result": "skipped"}
+        self.assertTrue(gate.failures(needs, "quick"))
+        needs["api"] = {"result": "skipped"}
+        self.assertEqual(gate.failures(needs, "quick"), [])
+
+    @staticmethod
+    def _holds(expression, outputs, moved, needs_succeeded):
+        """Whether an ``if:`` over scope outputs and ``needs.api.outputs.moved``
+        holds, given whether every job it needs succeeded.
+
+        A condition with no status function gets GitHub's implicit
+        ``success()``: a skipped or failed need skips the job whatever the rest
+        says. Only the operators these two conditions use are read; anything
+        else raises, so a rewritten condition fails here instead of passing."""
+        expr = expression.strip()
+        match = re.fullmatch(r"\$\{\{(.*)\}\}", expr, re.S)
+        expr = (match.group(1) if match else expr).strip()
+        if not re.search(r"\b(?:success|failure|always|cancelled)\(\)", expr):
+            expr = f"{needs_succeeded!r} && ({expr})"
+        expr = re.sub(r"needs\.scope\.outputs\.(\w+)",
+                      lambda m: repr(outputs.get(m.group(1), "")), expr)
+        expr = expr.replace("needs.api.outputs.moved", repr(moved))
+        expr = expr.replace("!cancelled()", "True")
+        expr = expr.replace("&&", " and ").replace("||", " or ")
+        if re.search(r"[&|]|![^=]|needs\.", expr):
+            raise AssertionError(f"unsupported condition: {expression!r} -> {expr}")
+        return bool(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307
+
+    def test_the_workflow_conditions_produce_what_the_judge_requires(self):
+        # Run every combination through the two `if:`s exactly as written in
+        # required-ci.yml, give each job the result GitHub would, and ask the
+        # judge. A condition that drifted from the judge — api asked when the
+        # paths already chose the frontend, or the frontend left out when api
+        # saw the surface move — leaves a combination the judge refuses.
+        jobs = jobs_of(WORKFLOW.read_text())
+        api_if, frontend_if = jobs["api"]["if"], jobs["frontend"]["if"]
+        for tier in ("full", "quick"):
+            for backend in ("true", "false"):
+                for frontend in ("true", "false"):
+                    for moved in ("true", "false"):
+                        with self.subTest(tier=tier, backend=backend,
+                                          frontend=frontend, moved=moved):
+                            outputs = {suite: "false" for suite in gate.PATHS}
+                            outputs.update(tier=tier, backend=backend, frontend=frontend)
+                            api_runs = self._holds(api_if, outputs, "", True)
+                            self.assertEqual(api_runs, gate.api_selected(outputs, tier))
+                            # A skipped job's outputs are empty strings.
+                            api_moved = moved if api_runs else ""
+                            # frontend needs scope (succeeded) and api, which
+                            # succeeded only if it ran.
+                            frontend_runs = self._holds(frontend_if, outputs, api_moved,
+                                                        api_runs)
+                            needs = {
+                                "scope": {"result": "success", "outputs": outputs},
+                                "fast": {"result": "success" if tier == "quick" else "skipped"},
+                                "api": ({"result": "success", "outputs": {"moved": moved}}
+                                        if api_runs else {"result": "skipped"}),
+                            }
+                            for suite in gate.PATHS:
+                                runs = (frontend_runs if suite == "frontend"
+                                        else tier == "full" and outputs[suite] == "true")
+                                needs[suite] = {"result": "success" if runs else "skipped"}
+                            self.assertEqual(gate.failures(needs, tier), [])
+
+    def test_the_api_output_is_the_one_the_compare_step_writes(self):
+        # The frontend's `if:` reads `needs.api.outputs.moved`; the job maps it
+        # from a step's output. A renamed step id or output key leaves it empty,
+        # and an empty `moved` is a judge-red run on every backend change.
+        text = jobs_of(WORKFLOW.read_text())["api"]["text"]
+        mapped = re.search(r"^      moved: \$\{\{ steps\.([\w-]+)\.outputs\.(\w+) \}\}$",
+                           text, re.M)
+        self.assertIsNotNone(mapped, "the api job does not map `moved` from a step output")
+        step_id, key = mapped.groups()
+        self.assertEqual(key, "moved")
+        self.assertRegex(text, rf"(?m)^        id: {re.escape(step_id)}$")
+        step = text[text.index(f"id: {step_id}"):]
+        self.assertIn("export_openapi --stdout", step.split("\n      - ")[0])
+
+    def run_compare(self, head_doc, base_doc, base_exit=0):
+        """Run the api job's real comparison shell against stub git and uv.
+
+        The stub uv prints ``head_doc`` from the change's backend/ and
+        ``base_doc`` from the base worktree's, and exits ``base_exit`` there.
+        Returns the process and what the step wrote to $GITHUB_OUTPUT.
+        """
+        body = run_body_containing(WORKFLOW.read_text(), "export_openapi --stdout")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "repo" / "backend").mkdir(parents=True)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "git",
+                  'if [ "$1" = worktree ]; then mkdir -p "${@: -2:1}/backend"; fi\n')
+            # Prints only from the two backend/ directories the step must run
+            # it in; anywhere else is a step that changed directory wrongly.
+            _stub(bindir, "uv",
+                  'case "$PWD" in\n'
+                  '  "$RUNNER_TEMP/base/backend") printf "%s" "$BASE_DOC"; exit "$BASE_EXIT";;\n'
+                  '  */repo/backend) printf "%s" "$HEAD_DOC";;\n'
+                  '  *) echo "uv run from $PWD" >&2; exit 3;;\n'
+                  'esac\n')
+            output = tmp / "github_output"
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "RUNNER_TEMP": str(tmp / "runner"), "GITHUB_OUTPUT": str(output),
+                   "BASE_SHA": "0" * 40, "HEAD_DOC": head_doc, "BASE_DOC": base_doc,
+                   "BASE_EXIT": str(base_exit)}
+            (tmp / "runner").mkdir()
+            # `bash -e`: the shell GitHub gives a Linux `run:` step.
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp / "repo",
+                                  capture_output=True, text=True)
+            written = output.read_text() if output.exists() else ""
+        return proc, written
+
+    def test_the_compare_step_reports_a_moved_document(self):
+        proc, written = self.run_compare('{"paths": {"/a": {}}}\n', '{"paths": {}}\n')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(written.splitlines(), ["moved=true"])
+
+    def test_the_compare_step_reports_an_unmoved_document(self):
+        proc, written = self.run_compare('{"paths": {}}\n', '{"paths": {}}\n')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(written.splitlines(), ["moved=false"])
+
+    def test_a_base_that_cannot_print_its_document_fails_the_step(self):
+        # No document at the base is no answer: the step must fail (which the
+        # judge reads as red) rather than call an empty file "moved" or not.
+        proc, written = self.run_compare('{"paths": {}}\n', "", base_exit=1)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("moved=", written)
 
 
 def run_bodies(text):
@@ -992,6 +1245,193 @@ class WorkflowTextTest(unittest.TestCase):
         self.assertFalse(condition_holds(draft["if"], "pull_request", True, True))
         self.assertFalse(condition_holds(full["if"], "merge_group", None, True))
 
+    def test_backend_integration_is_deferred_to_merge_group(self):
+        jobs = jobs_of(self.text)
+        self.assertIn("branch_heavy", jobs["scope"]["text"])
+        self.assertIn(
+            "integration: ${{ needs.scope.outputs.branch_heavy == 'true' }}",
+            jobs["backend"]["text"],
+        )
+        test_yml = (WORKFLOW.parent / "test.yml").read_text()
+        test_jobs = jobs_of(test_yml)
+        self.assertIn("integration", test_jobs)
+        self.assertEqual(
+            test_jobs["integration"]["if"],
+            "${{ inputs.integration && github.event_name != 'pull_request' }}",
+        )
+        collect_body = run_body_containing(test_yml, "backend-expected")
+        compare_body = run_body_containing(test_yml, "assert_shards_complete")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            uv_log = tmp / "uv_args"
+            _stub(bindir, "uv", 'printf "%s\\n" "$*" >> "$UV_LOG"\n')
+            _stub(bindir, "python3", "exit 0\n")
+            env = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "RUNNER_TEMP": str(tmp),
+                "UV_LOG": str(uv_log),
+                "PLAN_ARTIFACT": "backend-expected",
+                "TEST_RESULT": "success",
+            }
+            subprocess.run(
+                ["bash", "-e", "-c", collect_body],
+                env={**env, "EXPECT_INTEGRATION": "false"},
+                cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            self.assertIn("-m not integration", uv_log.read_text())
+            uv_log.write_text("")
+            subprocess.run(
+                ["bash", "-e", "-c", collect_body],
+                env={**env, "EXPECT_INTEGRATION": "true"},
+                cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            self.assertNotIn("not integration", uv_log.read_text())
+
+            pr_ok = subprocess.run(
+                ["bash", "-e", "-c", compare_body],
+                env={**env, "EXPECT_INTEGRATION": "false", "INTEGRATION_RESULT": "skipped"},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertEqual(pr_ok.returncode, 0, pr_ok.stderr)
+            mg_fail = subprocess.run(
+                ["bash", "-e", "-c", compare_body],
+                env={**env, "EXPECT_INTEGRATION": "true", "INTEGRATION_RESULT": "skipped"},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertNotEqual(mg_fail.returncode, 0)
+
+    def test_the_title_step_asks_curl_for_a_retry_and_keeps_the_body(self):
+        # #4144: one TLS reset on the API GET reddened a merge-queue entry. The
+        # shell cannot retry the request itself, so it asks curl for a retry
+        # budget; run the step's real shell against a curl stub that records its
+        # arguments and succeeds, and the request must arrive with that budget
+        # and the body must still reach the checker verbatim.
+        body = run_body_containing(self.text, "api()")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            curl_args = tmp / "curl_args"
+            _stub(bindir, "curl", (
+                'out=""\n'
+                'prev=""\n'
+                'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+                'printf "%s\\n" "$*" >> "$CURL_ARGS"\n'
+                'printf "%s" \'{"number":7}\' > "$out"\n'
+                'printf 200\n'
+            ))
+            _stub(bindir, "python3", 'printf "%s\\n" "$*" >> "$PY_ARGS"\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "RUNNER_TEMP": str(tmp), "CURL_ARGS": str(curl_args),
+                   "PY_ARGS": str(tmp / "py_args"), "GITHUB_REPOSITORY": "owner/repo",
+                   "PR_NUMBER": "7", "GH_TOKEN": "x",
+                   "GITHUB_EVENT_NAME": "pull_request"}
+            subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp, check=True,
+                           capture_output=True, text=True)
+            args = curl_args.read_text()
+            # --retry-all-errors alone retries nothing: curl's default retry
+            # count is zero, so the count is what makes a TLS reset retry.
+            self.assertRegex(args, r"--retry(?:=|\s+)[1-9]\d*",
+                             f"no retry count, so nothing is retried: {args}")
+            self.assertIn("--retry-all-errors", args, f"no all-errors switch: {args}")
+            self.assertIn("--max-time", args, f"no bound on a hung read: {args}")
+            self.assertEqual((tmp / "pull.json").read_text(), '{"number":7}',
+                             "the response did not reach the checker verbatim")
+
+    def test_the_title_step_does_not_hand_python_an_empty_body(self):
+        # A read that really fails is reported where it happened and exits
+        # there. The merge_group branch used to pipe curl straight into python,
+        # which turned the network error into a JSONDecodeError on "".
+        body = run_body_containing(self.text, "api()")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "curl",
+                  'printf "curl: (35) TLS connect error\\n" >&2\nexit 35\n')
+            _stub(bindir, "python3", 'printf "%s\\n" "$*" >> "$PY_ARGS"\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "RUNNER_TEMP": str(tmp), "PY_ARGS": str(tmp / "py_args"),
+                   "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                   "BASE_SHA": "b" * 40, "HEAD_SHA": "h" * 40,
+                   "GITHUB_EVENT_NAME": "merge_group"}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertNotEqual(proc.returncode, 0, "a failed read did not fail the step")
+            self.assertFalse((tmp / "py_args").exists(),
+                             "python was reached after a failed read")
+            self.assertIn("curl exit 35", proc.stderr)
+            self.assertIn("HTTP", proc.stderr)
+
+    def test_the_scope_step_retries_a_failed_base_fetch(self):
+        # The base fetch is the same single shot on the same pool, and every
+        # selected suite waits on it: a transient network error there reddens
+        # the whole run.
+        body = run_body_containing(self.text, "required-ci.py scope")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            git_calls = tmp / "git_calls"
+            _stub(bindir, "git", (
+                'n=$(cat "$GIT_CALLS" 2>/dev/null || echo 0)\n'
+                'n=$((n + 1))\n'
+                'printf "%s" "$n" > "$GIT_CALLS"\n'
+                '[ "$n" -ge 2 ] || { echo "fatal: unable to access" >&2; exit 128; }\n'
+            ))
+            _stub(bindir, "python3", "exit 0\n")
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GIT_CALLS": str(git_calls), "BASE_SHA": "b" * 40}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(git_calls.read_text(), "2",
+                             "the base fetch was not retried")
+
+
+    def test_required_ci_checks_backend_shard_coverage_exactly_once(self):
+        """Every collected backend case ran on exactly one shard — checked by
+        test.yml's own `test-complete` job, or, when Required CI turns that job
+        off, by `CI required` itself. Never by neither."""
+        jobs = jobs_of(self.text)
+        delegated = "coverage-job: false" in jobs["backend"]["text"]
+        test_jobs = jobs_of((WORKFLOW.parent / "test.yml").read_text())
+        self.assertIn("inputs.coverage-job", test_jobs["test-complete"]["if"])
+        self.assertEqual(
+            "assert_shards_complete" in jobs["required"]["text"], delegated,
+            "CI required must run the shard-coverage check exactly when it "
+            "turns test.yml's test-complete off",
+        )
+        if not delegated:
+            return
+        body = run_body_containing(self.text, "assert_shards_complete")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            args_log = tmp / "args"
+            env = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "RUNNER_TEMP": str(tmp),
+                "ARGS_LOG": str(args_log),
+            }
+            for verdict, expect_ok in ((0, True), (1, False)):
+                _stub(bindir, "python3", f'printf "%s\\n" "$*" > "$ARGS_LOG"\nexit {verdict}\n')
+                done = subprocess.run(
+                    ["bash", "-e", "-c", body], env=env, cwd=tmp,
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(done.returncode == 0, expect_ok, done.stderr)
+                self.assertEqual(
+                    args_log.read_text().split(),
+                    ["-m", "scripts.assert_shards_complete",
+                     f"{tmp}/backend-artifacts", "--plan", "backend-expected"],
+                )
+
 
 class MainCliTest(unittest.TestCase):
     """The ``scope``/``check`` wiring that the runner actually invokes."""
@@ -1036,15 +1476,122 @@ class MainCliTest(unittest.TestCase):
                 "GITHUB_EVENT_PATH": self._event_file(tmp, {"pull_request": {"draft": True}}),
                 "GITHUB_OUTPUT": str(out),
             }
-            subprocess.run([sys.executable, str(tmp / "required-ci.py"), "scope", base],
-                           env=env, cwd=tmp, check=True, capture_output=True, text=True)
+            proc = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "scope", base],
+                env=env, cwd=tmp, check=True, capture_output=True, text=True,
+            )
             written = dict(line.split("=", 1) for line in out.read_text().splitlines())
-            # The changed backend file selects backend (and e2e/remote/guards);
+            # The changed backend file selects backend and guards on pull_request,
+            # while backend integration, e2e and remote are left to merge_group;
             # a draft event makes it the quick tier.
             self.assertEqual(written["tier"], "quick")
+            self.assertEqual(written["branch_heavy"], "false")
             self.assertEqual(written["backend"], "true")
+            self.assertEqual(written["e2e"], "false")
+            self.assertEqual(written["remote"], "false")
             self.assertEqual(written["cifast"], "false")
-            self.assertTrue(all(v in ("true", "false") for k, v in written.items() if k != "tier"))
+            self.assertIn("e2e/remote 留给合并队列", proc.stdout)
+            # The api job compares the document against the commit this diff
+            # was taken from, so the two cannot be answering different questions.
+            self.assertEqual(written["base"], base)
+            self.assertTrue(all(v in ("true", "false") for k, v in written.items()
+                                if k not in ("tier", "base")))
+
+    def test_pull_request_defers_e2e_and_remote_while_merge_group_requires_them(self):
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+
+            def git(*args):
+                subprocess.run(
+                    ["git", "-c", "user.email=test@example.com", "-c", "user.name=test",
+                     "-c", "commit.gpgsign=false", *args],
+                    cwd=tmp, check=True, capture_output=True, text=True)
+
+            git("init", "-q", "-b", "main")
+            git("remote", "add", "origin", str(tmp))
+            (tmp / "base.txt").write_text("base\n")
+            git("add", "base.txt")
+            git("commit", "-qm", "base")
+            base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            git("checkout", "-qb", "entry")
+            for rel in ("backend/app/api/rooms.py", "e2e/tests/login.spec.ts"):
+                target = tmp / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("x = 1\n")
+                git("add", rel)
+            git("commit", "-qm", "touch backend and e2e")
+
+            pr_out = tmp / "pr_output"
+            pr_env = {
+                **os.environ,
+                "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_EVENT_PATH": self._event_file(tmp, {"pull_request": {"draft": False}}),
+                "GITHUB_OUTPUT": str(pr_out),
+            }
+            pr_scope = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "scope", base],
+                env=pr_env, cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            pr_written = dict(line.split("=", 1) for line in pr_out.read_text().splitlines())
+            self.assertEqual(pr_written["tier"], "full")
+            self.assertEqual(pr_written["branch_heavy"], "false")
+            self.assertEqual(pr_written["backend"], "true")
+            self.assertEqual(pr_written["e2e"], "false")
+            self.assertEqual(pr_written["remote"], "false")
+            self.assertIn("e2e/remote 留给合并队列", pr_scope.stdout)
+
+            pr_needs = {
+                "scope": {"result": "success", "outputs": pr_written},
+                "fast": {"result": "skipped"},
+                "api": {"result": "success", "outputs": {"moved": "false"}},
+                **{
+                    k: {"result": "success" if pr_written[k] == "true" else "skipped"}
+                    for k in gate.PATHS
+                },
+            }
+            pr_check = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "check"],
+                env={**pr_env, "CI_NEEDS": json.dumps(pr_needs)},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertEqual(pr_check.returncode, 0, pr_check.stderr)
+
+            mg_out = tmp / "mg_output"
+            mg_env = {
+                **os.environ,
+                "GITHUB_EVENT_NAME": "merge_group",
+                "GITHUB_EVENT_PATH": self._event_file(tmp, {}),
+                "GITHUB_OUTPUT": str(mg_out),
+            }
+            mg_scope = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "scope", base],
+                env=mg_env, cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            mg_written = dict(line.split("=", 1) for line in mg_out.read_text().splitlines())
+            self.assertEqual(mg_written["branch_heavy"], "true")
+            self.assertEqual(mg_written["e2e"], "true")
+            self.assertEqual(mg_written["remote"], "true")
+            self.assertNotIn("e2e/remote 留给合并队列", mg_scope.stdout)
+
+            mg_needs_skipped = {
+                "scope": {"result": "success", "outputs": mg_written},
+                "fast": {"result": "skipped"},
+                "api": {"result": "success", "outputs": {"moved": "false"}},
+                **{
+                    k: {"result": "success" if mg_written[k] == "true" else "skipped"}
+                    for k in gate.PATHS
+                },
+            }
+            mg_needs_skipped["e2e"]["result"] = "skipped"
+            mg_check_fail = subprocess.run(
+                [sys.executable, str(tmp / "required-ci.py"), "check"],
+                env={**mg_env, "CI_NEEDS": json.dumps(mg_needs_skipped)},
+                cwd=tmp, capture_output=True, text=True,
+            )
+            self.assertNotEqual(mg_check_fail.returncode, 0)
 
     def test_check_mode_fails_closed_when_the_event_is_unreadable(self):
         env = {**os.environ, "GITHUB_EVENT_NAME": "pull_request",

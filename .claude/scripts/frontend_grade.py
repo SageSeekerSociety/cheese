@@ -158,6 +158,31 @@ def frontend_files(root: Path, suffix: str) -> list[Path]:
     return sorted(p for p in src.rglob(f"*{suffix}") if p.is_file())
 
 
+class SourceTexts:
+    """Every source file's text, read once per run and shared by its readers.
+
+    Three steps need the same text: `api_reach` walks the tree for the import
+    graph, `grade_component` re-reads the component it grades, and
+    `grade_frontend` re-reads every `.vue` for its line count. A scoring run over
+    751 components therefore read each one three times, the second and third
+    copies byte-identical to the first. One reader is created per run and passed
+    down. `read` resolves the path first, so every spelling of it — `./x`,
+    `a/../x`, an absolute one — is one key and one read.
+    """
+
+    def __init__(self) -> None:
+        self._texts: dict[Path, str] = {}
+
+    def read(self, path: Path) -> str:
+        """The text of `path`, read from disk only the first time this run asks."""
+        key = path.resolve()
+        text = self._texts.get(key)
+        if text is None:
+            text = key.read_text(encoding="utf-8", errors="replace")
+            self._texts[key] = text
+        return text
+
+
 def is_api_root(rel: str) -> bool:
     """Is this module part of the API surface? `rel` is repo-relative."""
     if rel in API_EXCLUDED:
@@ -219,7 +244,7 @@ def _export_is_type_only(leading_type: str | None, clause: str) -> bool:
     return bool(listed) and all(_TYPE_SPECIFIER.match(part) for part in listed)
 
 
-def api_reach(root: Path) -> set[Path]:
+def api_reach(root: Path, sources: SourceTexts | None = None) -> set[Path]:
     """Modules under `frontend/src` whose import graph reaches an API root.
 
     Direct reach is a value import of an API root or a bare `fetch`/`axios`;
@@ -235,15 +260,21 @@ def api_reach(root: Path) -> set[Path]:
     out empty and every component graded A (356 became 486). Resolving here
     rather than refusing a relative root keeps every caller correct without
     each one having to remember.
+
+    `sources` is the run's reader. This walk is the first step that needs a
+    file's text, so a caller grading the whole tree passes the same reader on to
+    `grade_component` and `grade_frontend` instead of letting each read it again;
+    a caller that only asks for the reach set gets a reader of its own.
     """
     root = root.resolve()
     src = repo_src(root)
+    sources = SourceTexts() if sources is None else sources
     graph: dict[Path, set[Path]] = {}
     reach: set[Path] = set()
     for path in sorted(list(src.rglob("*.ts")) + list(src.rglob("*.vue"))):
         if not path.is_file():
             continue
-        text = code_of(path, path.read_text(encoding="utf-8", errors="replace"))
+        text = code_of(path, sources.read(path))
         deps: set[Path] = set()
         direct = bool(RAW_HTTP.search(text))
         for is_type, spec in specifiers(text):
@@ -555,20 +586,31 @@ def bare_injects(script: str) -> int:
     return count
 
 
-def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> Grade:
+def grade_component(
+    root: Path,
+    path: Path,
+    reach: set[Path] | None = None,
+    sources: SourceTexts | None = None,
+) -> Grade:
     """Grade the component at `path` (a `.vue` or a `.ts` file under src).
 
     `reach` is `api_reach(root)` — passed in when grading many files, because
     building it reads the whole tree and grading one file should not.
+
+    `sources` is the run's reader. Pass the one `api_reach` used when grading
+    many files: that walk has already read `path`, and this is the second of the
+    three reads a scoring run used to make. Grading one file alone reads it
+    once.
 
     `root` is resolved for the same reason as in `api_reach`: an API root is
     recognised by `relative_to(root)`, which a relative root silently fails.
     """
     root = root.resolve()
     src = repo_src(root)
+    sources = SourceTexts() if sources is None else sources
     if reach is None:
-        reach = api_reach(root)
-    text = path.read_text(encoding="utf-8", errors="replace")
+        reach = api_reach(root, sources)
+    text = sources.read(path)
     # Comments are not code: a file that says "this does not import
     # vue-router" in a comment is not a file that imports it.
     script = strip_js_comments("\n".join(SCRIPT_BLOCK.findall(text)))
@@ -647,14 +689,15 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
 def grade_frontend(root: Path) -> dict[str, Any]:
     """Count `.vue` components and grade each one A/B/C/D (the board's number)."""
     src = root / "frontend" / "src"
-    reach = api_reach(root)
+    sources = SourceTexts()
+    reach = api_reach(root, sources)
     grades: Counter[str] = Counter()
     lines_by_grade: Counter[str] = Counter()
     total_lines = 0
     for path in frontend_files(root, ".vue"):
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = sources.read(path)
         lines = text.count("\n") + 1
-        grade = grade_component(root, path, reach).letter
+        grade = grade_component(root, path, reach, sources).letter
         grades[grade] += 1
         lines_by_grade[grade] += lines
         total_lines += lines
@@ -796,11 +839,12 @@ def self_test() -> int:
             path = root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(body, encoding="utf-8")
-        reach = api_reach(root)
+        sources = SourceTexts()
+        reach = api_reach(root, sources)
         components = root / "frontend" / "src" / "components"
 
         def letter(name: str) -> str:
-            return grade_component(root, components / name, reach).letter
+            return grade_component(root, components / name, reach, sources).letter
 
         check("vue-router named in a // comment is not a router read", letter("LineComment.vue"), "A")
         check("vue-router, $router, $parent in a /* */ comment are not read", letter("BlockComment.vue"), "A")
@@ -811,7 +855,7 @@ def self_test() -> int:
             letter("NestedTemplate.vue"),
             "D",
         )
-        router_link = grade_component(root, components / "RouterLink.vue", reach)
+        router_link = grade_component(root, components / "RouterLink.vue", reach, sources)
         check("a page whose only router use is the tag it renders is D", router_link.letter, "D")
         check(
             "and the tag is the reason",

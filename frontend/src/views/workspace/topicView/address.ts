@@ -90,9 +90,12 @@ export function useTopicAddress(opts: { place: () => TopicPlace; desktop: Ref<bo
     const { projectId, topicId } = opts.place()
     void router.push({ name: 'workspace-topic', params: { projectId, topicId } })
   }
-  function openTopic(topicId: string) {
-    if (topicId === opts.place().topicId) return
-    void router.push(refRoute(opts.place().projectId, topicId))
+  function openTopic(topicId: string, blockId?: string) {
+    if (topicId === opts.place().topicId) {
+      if (blockId) jumpTo(blockId)
+      return
+    }
+    void router.push(refRoute(opts.place().projectId, topicId, blockId))
   }
   function jumpTo(blockId: string) {
     void router.replace({ query: { ...route.query, block: blockId } })

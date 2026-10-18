@@ -39,8 +39,6 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
-from functools import partial
 from pathlib import Path
 
 if sys.platform != "win32":
@@ -85,6 +83,7 @@ RELEASE_FILES = core.RELEASE_FILES
 CONTROL_INSPECT = commands.SHELL_INSPECT
 NATIVE_TOOLS = core.NATIVE_TOOLS
 COMMAND_ABANDONED_S = core.COMMAND_ABANDONED_S
+OUTPUT_KEPT_S = core.OUTPUT_KEPT_S
 EXECUTOR_IDLE_EXIT_S = core.EXECUTOR_IDLE_EXIT_S
 EXECUTOR_IDLE_CHECK_S = core.EXECUTOR_IDLE_CHECK_S
 STOP_SIGNALS = core.STOP_SIGNALS
@@ -157,8 +156,15 @@ class Executor:
         self.collected, self.snapshot = {}, None
         self.snapshot_lock, self.cli_lock = threading.Lock(), threading.Lock()
         self.clients = {}
-        # Agent types' servers, by name: their definitions come with the calls.
-        self.agent_specs = {}
+        # Commands added in project settings and agent types' own, by name:
+        # their definitions come with the calls.
+        self.handed_specs = {}
+        # What the session's gateway hands with a local server's calls
+        # (`RemoteClient._local_start`): the values of the project secrets its
+        # definition names, and — on a member's computer — the fingerprints of
+        # the commands its owner lets run here. Read when the server starts.
+        self.server_values = {}
+        self.server_allowed = {}
         self.client_lock, self.log_lock = threading.Lock(), threading.Lock()
         self.db_lock, self.context_fs_entries = threading.Lock(), {}
         # Socket clients load this module without opening the service database.
@@ -306,7 +312,8 @@ class Executor:
                 except (OSError, ValueError):
                     continue
                 last = max(finished, self.collected.get(record.name, 0))
-                if meta.get("watched") and time.time() - last > COMMAND_ABANDONED_S:
+                kept = OUTPUT_KEPT_S if meta.get("kept") else COMMAND_ABANDONED_S
+                if meta.get("watched") and time.time() - last > kept:
                     shutil.rmtree(record, ignore_errors=True)
 
     def bash(self, args, key=None):
@@ -339,7 +346,11 @@ class Executor:
 
     def dispatch(self, method, params):
         if isinstance(params, dict) and isinstance(params.get("spec"), dict):
-            self.agent_specs[params["server"]] = params["spec"]
+            self.handed_specs[params["server"]] = params["spec"]
+        if isinstance(params, dict) and isinstance(params.get("values"), dict):
+            self.server_values[params["server"]] = params["values"]
+        if isinstance(params, dict) and "allowed" in params:
+            self.server_allowed[params["server"]] = params["allowed"]
         if method == "begin_upgrade":
             with self.admission_lock:
                 busy = not self.upgrading and (
@@ -555,78 +566,15 @@ def serve(state):
     executor.db.close()
 
 
-def bridge(state, server, *, call=None):
-    if call is None:
-        call = partial(request, state)
-
-    output_lock = threading.Lock()
-    bridge_id = uuid.uuid4().hex
-
-    def handle(data):
-        if "id" not in data:
-            return
-        try:
-            method = data["method"]
-            params = data.get("params", {})
-            if method == "initialize":
-                result = {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "cheese-execution", "version": "0.1.0"},
-                }
-            elif method == "ping":
-                result = {}
-            elif method == "tools/call":
-                value = call(
-                    "invoke",
-                    {
-                        "id": f"mcp-{bridge_id}-{data['id']}",
-                        "server": server,
-                        "tool": params["name"],
-                        "args": params.get("arguments", {}),
-                        # Claude Code, the only bridge user, fires the hooks.
-                        "platform": True,
-                    },
-                )
-                result = value.get("value") or {
-                    "content": [{"type": "text", "text": value["error"]}],
-                    "isError": True,
-                }
-            else:
-                result = call(
-                    "mcp", {"server": server, "method": method, "params": params}
-                )
-            response = {"jsonrpc": "2.0", "id": data["id"], "result": result}
-        except Exception as exc:
-            response = {
-                "jsonrpc": "2.0",
-                "id": data["id"],
-                "error": {"code": -32000, "message": str(exc)},
-            }
-        with output_lock:
-            print(json.dumps(response), flush=True)
-
-    threads = []
-    for line in sys.stdin:
-        thread = threading.Thread(target=handle, args=(json.loads(line),))
-        thread.start()
-        threads.append(thread)
-    for thread in threads:
-        thread.join()
-
-
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["start", "serve", "bridge", "request", "stop"])
+    parser.add_argument("mode", choices=["start", "serve", "request", "stop"])
     parser.add_argument("--state", required=True, type=Path)
-    parser.add_argument("--server", default="native")
     args = parser.parse_args()
     state = args.state if args.state.match("/proc/self/fd/*") else args.state.resolve()
     if args.mode == "serve":
         serve(state)
-    elif args.mode == "bridge":
-        bridge(state, args.server)
     elif args.mode == "request":
         value = json.load(sys.stdin)
         print(json.dumps(request(state, value["method"], value.get("params"))))

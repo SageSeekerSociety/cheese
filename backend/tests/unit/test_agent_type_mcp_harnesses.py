@@ -2,13 +2,14 @@
 
 A type declares its servers as a Claude Code subagent does (`mcpServers`), and
 the platform hands a session of a teammate of that type the inline stdio ones
-as definitions (`agent_mcp` in its execution target, or pi's launch). The
+as definitions (`mcp_commands` in its execution target, or pi's launch). The
 server runs on the room's machine, as the checkout's `.mcp.json` servers do,
 and the project's own hooks hold around its calls.
 
-What is under test is the session side and a real executor: that each harness
-lists the tool as `mcp__<server>__<tool>`, that a call runs on the machine,
-and which hooks ran around it. The machine's checkout never names the server.
+What is under test is the session side and a real executor: that each
+harness's own MCP client reaches the server at the session's gateway, that a
+call runs on the machine, and which hooks ran around it. The machine's checkout
+never names the server.
 """
 
 import argparse
@@ -22,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from tests.pinned_claude import claude_binary
+from tests.support.mcp_gateway_client import call_tool, text_of, tool_names
 
 SCRIPTS = Path(__file__).resolve().parents[3] / "scripts/remote_execution"
 
@@ -147,37 +149,22 @@ def _log(project: Path) -> list[dict]:
 def test_codex_lists_and_calls_the_types_server_on_the_machine(
     acceptance, tmp_path, monkeypatch
 ):
+    """Codex fires no hooks of its own, so the machine runs the project's
+    around the call its MCP client makes at the gateway."""
     from app.domain.agent.harness.codex.tools import RemoteTools
 
     executor, target, project = _machine(acceptance, tmp_path / "codex", monkeypatch)
-    own = {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+    own = {**target, "mcp_commands": {"lint": _definition(tmp_path)}}
+    # A teammate of another type, on the same machine, has no such server.
+    assert "lint" not in RemoteTools(dict(target)).client.session_servers()
+    gateway = RemoteTools(own).gateway()
+    gateway.start()
     try:
-        # A teammate of another type, on the same machine, has no such tool.
-        other = RemoteTools(dict(target))
-        listed = asyncio.run(other.discover())
-        assert "mcp__lint__where" not in [tool["name"] for tool in listed]
+        assert tool_names(gateway, "lint") == ["where"]
 
-        tools = RemoteTools(own)
-        names = [tool["name"] for tool in asyncio.run(tools.discover())]
-        assert "mcp__lint__where" in names
-
-        def call(call_id, note):
-            return asyncio.run(
-                tools(
-                    "item/tool/call",
-                    {
-                        "tool": "mcp__lint__where",
-                        "callId": call_id,
-                        "arguments": {"note": note},
-                    },
-                )
-            )
-
-        allowed = call("call-1", "hello")
-        assert allowed["success"] is True, allowed
-        assert allowed["contentItems"][0]["text"] == (
-            f"TYPE_SERVER from-the-type hello @{project}"
-        )
+        allowed = call_tool(gateway, "lint", "where", {"note": "hello"})
+        assert not allowed.get("isError"), allowed
+        assert text_of(allowed) == f"TYPE_SERVER from-the-type hello @{project}"
         pre, post = _log(project)
         assert (pre["hook_event_name"], pre["tool_name"]) == (
             "PreToolUse",
@@ -186,11 +173,12 @@ def test_codex_lists_and_calls_the_types_server_on_the_machine(
         assert pre["tool_input"] == {"note": "hello"}
         assert post["hook_event_name"] == "PostToolUse"
 
-        denied = call("call-2", "FORBIDDEN")
-        assert denied["success"] is False
-        assert "PROJECT_POLICY: no forbidden notes" in denied["contentItems"][0]["text"]
+        denied = call_tool(gateway, "lint", "where", {"note": "FORBIDDEN"})
+        assert denied["isError"] is True
+        assert "PROJECT_POLICY: no forbidden notes" in text_of(denied)
         assert [e["hook_event_name"] for e in _log(project)[2:]] == ["PreToolUse"]
     finally:
+        gateway.close()
         subprocess.run(executor.command("stop"), capture_output=True, timeout=30)
 
 
@@ -202,11 +190,14 @@ def test_a_checkout_server_of_the_same_name_keeps_its_name(tmp_path):
     client = RemoteClient(
         {
             "mcp_servers": ["lint"],
-            "agent_mcp": {"lint": _definition(tmp_path), "own": _definition(tmp_path)},
+            "mcp_commands": {
+                "lint": _definition(tmp_path),
+                "own": _definition(tmp_path),
+            },
         }
     )
     assert client.session_servers() == ["lint", "own"]
-    assert client.agent_servers() == ["own"]
+    assert client.command_servers() == ["own"]
 
 
 def test_a_session_at_the_placeholder_lists_no_stdio_server():
@@ -219,7 +210,7 @@ def test_a_session_at_the_placeholder_lists_no_stdio_server():
         "kind": "deferred",
         "workspace": DEFERRED_WORKSPACE,
         "mcp_servers": [],
-        "agent_mcp": {"lint": {"command": "x"}},
+        "mcp_commands": {"lint": {"command": "x"}},
         "remote_mcp": {"path": "/topics/t/mcp", "servers": ["tracker"]},
     }
     assert RemoteClient(placeholder).session_servers() == ["tracker"]
@@ -228,9 +219,10 @@ def test_a_session_at_the_placeholder_lists_no_stdio_server():
 
 
 def test_pi_runs_the_types_server_beside_the_checkouts(tmp_path, monkeypatch):
-    """pi's runner is its MCP client: the room's machine starts the type's
-    server as it starts the checkout's, and runs the project's hooks around
-    the call."""
+    """pi's own MCP client reaches the type's server at the session's gateway,
+    which the extension is told of; the room's machine starts it as it starts
+    the checkout's. pi asks for the project's hooks around the call as around
+    any of its own (`platform.ts`), and the call itself runs none again."""
     from app.domain.agent.harness.pi.machine import Machine
     from app.domain.agent.harness.pi.runner import Runner
     from tests.support.room_machine import room_machine
@@ -243,47 +235,47 @@ def test_pi_runs_the_types_server_beside_the_checkouts(tmp_path, monkeypatch):
     (work / ".claude/settings.json").write_text(json.dumps({"hooks": HOOKS}))
     runner = Runner(tmp_path / "pi")
 
+    async def hooks(event, index, note, **more):
+        return await runner.dispatch(
+            "hooks",
+            {
+                "event": event,
+                "tool": "mcp__lint__where",
+                "id": f"call-{index}",
+                "input": {"note": note},
+                **more,
+            },
+        )
+
     async def session():
         with room_machine(tmp_path / "machine", checkout=work) as target:
             runner.machine = Machine(
-                {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+                {**target, "mcp_commands": {"lint": _definition(tmp_path)}}
             )
             try:
                 await runner.open_servers()
                 home = runner.write_extension(
                     {"index.ts": "export default function () {}\n"}
                 )
-                answers: list[object] = []
-                for index, note in enumerate(("hello", "FORBIDDEN")):
-                    try:
-                        answers.append(
-                            await runner.dispatch(
-                                "mcp",
-                                {
-                                    "id": f"call-{index}",
-                                    "tool": "mcp__lint__where",
-                                    "arguments": {"note": note},
-                                },
-                            )
-                        )
-                    except Exception as error:  # noqa: BLE001 — the answer under test
-                        answers.append(error)
-                return (home / "platform.json").read_text(), answers
+                gateway = runner.gateway
+                assert gateway is not None
+                before = await hooks("PreToolUse", 0, "hello")
+                result = await asyncio.to_thread(
+                    call_tool, gateway, "lint", "where", {"note": "hello"}
+                )
+                await hooks("PostToolUse", 0, "hello", result=result)
+                refused = await hooks("PreToolUse", 1, "FORBIDDEN")
+                return (home / "platform.json").read_text(), before, result, refused
             finally:
                 await runner.close()
 
-    manifest, (allowed, denied) = asyncio.run(session())
-    assert [tool["name"] for tool in json.loads(manifest)["mcp"]] == [
-        "mcp__lint__where"
-    ]
-    assert allowed == {
-        "content": [
-            {"type": "text", "text": f"TYPE_SERVER from-the-type hello @{work}"}
-        ],
-        "isError": False,
-    }
-    assert isinstance(denied, RuntimeError)
-    assert "PROJECT_POLICY: no forbidden notes" in str(denied)
+    manifest, before, allowed, refused = asyncio.run(session())
+    [server] = json.loads(manifest)["mcp"].items()
+    assert server[0] == "lint"
+    assert server[1]["url"].startswith("http://127.0.0.1:")
+    assert before == {"input": {"note": "hello"}}
+    assert text_of(allowed) == f"TYPE_SERVER from-the-type hello @{work}"
+    assert "PROJECT_POLICY: no forbidden notes" in refused["denied"]
     assert [(e["hook_event_name"], e["tool_input"]["note"]) for e in _log(work)] == [
         ("PreToolUse", "hello"),
         ("PostToolUse", "hello"),
@@ -332,30 +324,17 @@ def test_a_private_chats_scratch_runs_the_types_server(tmp_path):
     from app.domain.agent.harness.pi.runner import Runner
 
     target, work = _scratch(tmp_path / "scratch")
-    own = {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+    own = {**target, "mcp_commands": {"lint": _definition(tmp_path)}}
     try:
-        tools = RemoteTools(own)
-        names = [tool["name"] for tool in asyncio.run(tools.discover())]
-        assert "mcp__lint__where" in names
-        other = [
-            tool["name"] for tool in asyncio.run(RemoteTools(dict(target)).discover())
-        ]
-        assert "mcp__lint__where" not in other
-
-        called = asyncio.run(
-            tools(
-                "item/tool/call",
-                {
-                    "tool": "mcp__lint__where",
-                    "callId": "call-1",
-                    "arguments": {"note": "codex"},
-                },
-            )
-        )
-        assert called["success"] is True, called
-        assert called["contentItems"][0]["text"] == (
-            f"TYPE_SERVER from-the-type codex @{work}"
-        )
+        assert "lint" not in RemoteTools(dict(target)).client.session_servers()
+        gateway = RemoteTools(own).gateway()
+        gateway.start()
+        try:
+            assert tool_names(gateway, "lint") == ["where"]
+            called = call_tool(gateway, "lint", "where", {"note": "codex"})
+        finally:
+            gateway.close()
+        assert text_of(called) == f"TYPE_SERVER from-the-type codex @{work}"
 
         runner = Runner(tmp_path / "pi")
 
@@ -363,19 +342,14 @@ def test_a_private_chats_scratch_runs_the_types_server(tmp_path):
             runner.machine = Machine(dict(own))
             try:
                 await runner.open_servers()
-                return await runner.dispatch(
-                    "mcp",
-                    {
-                        "id": "call-2",
-                        "tool": "mcp__lint__where",
-                        "arguments": {"note": "pi"},
-                    },
+                assert runner.gateway is not None
+                return await asyncio.to_thread(
+                    call_tool, runner.gateway, "lint", "where", {"note": "pi"}
                 )
             finally:
                 await runner.close()
 
-        answer = asyncio.run(pi())
-        assert answer["content"][0]["text"] == f"TYPE_SERVER from-the-type pi @{work}"
+        assert text_of(asyncio.run(pi())) == f"TYPE_SERVER from-the-type pi @{work}"
     finally:
         subprocess.run(
             RemoteClient(target).command("stop"), capture_output=True, timeout=30
@@ -388,8 +362,9 @@ def test_a_private_chats_scratch_runs_the_types_server(tmp_path):
 def test_claude_code_lists_and_calls_the_types_server_on_the_machine(
     acceptance, tmp_path, monkeypatch
 ):
-    """The session bridges the type's server like a checkout's; the build fires
-    the project's hooks around its call, and the machine runs it."""
+    """Claude Code's own MCP client reaches the type's server at the session's
+    gateway like a checkout's; the build fires the project's hooks around its
+    call, and the machine runs it."""
     sys.path.insert(0, str(SCRIPTS))
     import headless_contract as contract
 
@@ -399,7 +374,7 @@ def test_claude_code_lists_and_calls_the_types_server_on_the_machine(
     release = acceptance.execution_release
     monkeypatch.setattr(release, "mount_state", lambda _path: release.MOUNT_LIVE)
     executor, target, project = _machine(acceptance, folder, monkeypatch)
-    target = {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+    target = {**target, "mcp_commands": {"lint": _definition(tmp_path)}}
     home = folder / "home"
     (home / ".claude").mkdir(parents=True)
     launch = acceptance.client.prepare(
@@ -443,9 +418,9 @@ def test_claude_code_lists_and_calls_the_types_server_on_the_machine(
 
 
 def test_two_pi_sessions_on_one_machine_each_get_their_own_answer(tmp_path):
-    """pi numbers its tool calls per session, so two sessions on one room's
-    machine can both make a `call-0`. The machine answers each with its own
-    call, never with what it answered the other one."""
+    """Each session's MCP client numbers its requests from the start, so two
+    sessions on one room's machine both send a request 1. The machine answers
+    each with its own call, never with what it answered the other one."""
     from app.domain.agent.harness.pi.machine import Machine
     from app.domain.agent.harness.pi.runner import Runner
     from tests.support.room_machine import room_machine
@@ -457,17 +432,13 @@ def test_two_pi_sessions_on_one_machine_each_get_their_own_answer(tmp_path):
         runner = Runner(tmp_path / name)
         runner.journal.remember("session_id", f"session-{name}")
         runner.machine = Machine(
-            {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+            {**target, "mcp_commands": {"lint": _definition(tmp_path)}}
         )
         try:
             await runner.open_servers()
-            return await runner.dispatch(
-                "mcp",
-                {
-                    "id": "call-0",
-                    "tool": "mcp__lint__where",
-                    "arguments": {"note": note},
-                },
+            assert runner.gateway is not None
+            return await asyncio.to_thread(
+                call_tool, runner.gateway, "lint", "where", {"note": note}
             )
         finally:
             await runner.close()
@@ -477,5 +448,5 @@ def test_two_pi_sessions_on_one_machine_each_get_their_own_answer(tmp_path):
             return await ask("one", target, "first"), await ask("two", target, "second")
 
     first, second = asyncio.run(both())
-    assert "first" in first["content"][0]["text"]
-    assert "second" in second["content"][0]["text"]
+    assert "first" in text_of(first)
+    assert "second" in text_of(second)

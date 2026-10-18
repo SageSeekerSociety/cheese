@@ -49,7 +49,7 @@ covers:
 
 ## 能力矩阵：一格都不许空 {#matrix}
 
-每个骨架的适配层带一份 `Declaration`（词汇表在 `backend/app/domain/agent/capability/__init__.py`）：`pinned_version`（引用适配层那一个常量，不写第二遍字面量）、`built_ins`、`how_disabled`（每个概念一格）、`verified_against`（人手写的「对着哪个 build 读出来的」）。矩阵由 `capability/matrix.py` 汇总，**校验就在生成里**：一张画得出来、只是有几格空着的表会被当成一张填过的表读。
+每个骨架的适配层带一份 `Declaration`（词汇表在 `backend/app/domain/agent/declaration.py`）：`pinned_version`（引用适配层那一个常量，不写第二遍字面量）、`built_ins`、`how_disabled`（每个概念一格）、`verified_against`（人手写的「对着哪个 build 读出来的」）。矩阵由 `capability/matrix.py` 汇总，**校验就在生成里**：一张画得出来、只是有几格空着的表会被当成一张填过的表读。
 
 一格只有三种可能：一句「怎么关的」（那就是「有」）、`Difference` 里的一条码、或一个带 issue 和到期 pin 的 `Missing`。`Difference` 的名单是封闭的，所以「这一格我说不清」也得选一个已经存在的说法。`Missing` 到期即红：`pinned_version != until_pin` 时 `matrix()` 直接报，逼人按 issue 对着新 build 重核。
 
@@ -69,6 +69,8 @@ covers:
 Codex 和 pi 的驱动方式一样：会话机上一个 runner 拥有 agent 进程、说它的协议、把它产出的东西按稳定序号记进本地 journal，并且**每个输入至多接受一次**；后端从一个游标镜像那份 journal（`driven/subscription.py`），会话核心的 `read` 把镜像到的东西交给听它的那一方。它一读完就接着读；runner 收到读，要等到游标之后有了新记录、或者 agent 正在写的内容变了才回答，最长等 `READ_WAIT_S`（25 秒），所以安静的会话每 25 秒才读一次，写下的东西又当场就到。agent 正在写的内容是它此刻生成的那一块：一段文字，或者一个工具调用和流到这里的参数原文（Claude Code 靠 `--include-partial-messages` 的 `stream_event`，pi 靠 `message_update`），只在 runner 内存里，不进 journal；跟着读的回答到后端，作为一帧 `live` 发到房间，不落库，那一块写完、它的记录进 journal 时清空（`driven/runner.py`、`live_frames.py`）。runner 在 `ping` 里声明 `long_poll`（和 `live`），后端在接上 runner 时核对；不声明 `long_poll` 的 runner 不受支持，接上时就被拒绝。一轮结束时 runner 还替会话要一次 checkpoint（`turn_ended`，见 [每轮的检查点](/dev/tasks#checkpoint)），Claude Code 那边是 Stop 钩子要的同一个动作。只有协议不同，所以只有协议住在 `codex/`、`pi/` 和核心里各自的驱动里；journal、runner 的 socket 和输入账、drain 循环、镜像都在 `harness/driven/`。它是**共用的一层**，不是第四个骨架。
 
 三种骨架的会话都在中心会话机上，手在房间的执行机上，用到才领（`CentralChannel`）。pi 的工具是 pi 自己的 read、write、edit、bash、ls、find、grep，平台的扩展换掉的只是它们底下的文件与进程操作（pi 的 `Operations` 注入点），经 runner（`pi/machine.py`）、走另外两个骨架同一个 `RemoteClient` 到执行机：一个文件操作是执行器自己答的一次调用（`control` 的 `files`，`remote_execution/machine_files.py`，路径不限于工作区，和 Claude Code 的 Read、Write 一样），bash 是一条命令，和 Codex 的一样在用户的 shell 里、先载入 profile 的快照。grep 的搜索本身不经注入的操作（pi 在自己那台机器上起 ripgrep），扩展把它整个换成执行器上的一次搜索（用平台装在执行机上的 ripgrep，见 `agent/toolchain.py`；还没装好时用机器自己 PATH 上的，都没有才按 git 不忽略的文件自己找），输出照 pi 的格式。执行器在 ping 里声明 `machine_files`；还没升级的旧执行器上，这些操作明说执行服务是旧版本，等它空闲升级。后台任务在执行机上有自己的终端（`pi/relay.py`），runner 把它的输出抄回中心机（`pi/jobs.py`）。仓库自己的说明和技能在会话到了机器上时读（`pi/repository.py`、`pi/project_skills.py`）；会话还在占位工作区时第一次领到机器，那次操作不执行，先把仓库的说明交给它，和另外两个骨架一样。
+
+Codex 和 pi 没有 Claude Code 的 `Monitor`，平台照 Claude Code 2.1.282 的语义补了一个同名工具（`driven/monitor.py`，工具定义也在那里）：命令在执行机上、用 Bash 同一个 shell 后台跑，调用当场返回任务 id；它每打一行 stdout，runner 就对会话说一次（200 ms 内的几行并成一条，令牌桶 10 条、每 2 秒补一条，压了 30 秒还在刷就停掉）；命令退出、到 `timeout_ms`（默认 5 分钟，最多 30 分钟）或被 `TaskStop` 停下时结束。会话正在干活时这句话插进当前这一轮（Codex 的 `turn/steer`，pi 的 `steer`），闲着时它自己开一轮（`unsolicited`，和 pi 的分身在后台结束时一样）。命令照项目对 Bash 的 `permissions.deny` 判，和 Claude Code 房间里的 Monitor 一样；分身没有它，它打的字只说给会话本身。
 
 镜像里的记录只在两小时之内落进房间（`driven/subscription.py` 的 `STALE_S`，按 journal 记下的时间算：Claude Code 和 Codex 用会话机记录的时间，pi 用后端镜像到它的时间）。更老还没落的，只可能是这期间没人在读：后端或机器不在，或者每次 drain 都卡在同一条记录上。那时房间早已不等它了，这一轮已经结束，消息也重发过或告诉过人，所以游标直接越过它，房间不会再收到这些记录。
 

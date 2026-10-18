@@ -113,6 +113,12 @@ async def execute(
         "is_resume": is_resume,
         "status": "running",
         "started_at": time.time(),
+        # The last frame this turn published: what it was, and when on this
+        # process's monotonic clock. Both None until the first frame — the
+        # readout (`/run-records/turns`) reports "unknown", never 0, for a
+        # turn this process has not seen a frame from.
+        "last_frame_kind": None,
+        "last_frame_at": None,
         "first_output_s": None,
         "tools": 0,
         "duration_s": None,
@@ -232,6 +238,21 @@ async def execute(
             turn_frames = frames if frames is not None else frame_factory()
             async for frame in turn_frames:
                 kind = frame.get("type")
+                # Proof of life for the silence check in sweep_orphans and the
+                # frame the turn readout reports, taken before the `continue`s
+                # below so EVERY frame counts — a `session_lifecycle` frame is
+                # still a frame this turn's session published. A tool call
+                # persists no Block, so without this a turn legitimately
+                # grinding through tools looks identical to a wedged one.
+                #
+                # Only the watchdog and the record are touched here: the
+                # cold-start fuse keeps its own deadline and is retired solely
+                # by `assistant_block` below, so no other frame can clear it.
+                label = frame.get("subtype") if kind == "system" else kind
+                rec["last_frame_kind"] = str(label) if label else None
+                rec["last_frame_at"] = state.last_frame_at[str(turn_id)] = (
+                    time.monotonic()
+                )
                 if kind == "session_lifecycle":
                     # Interactive providers hand lifecycle to the live
                     # subscription. Their request returns after injection;
@@ -239,11 +260,6 @@ async def execute(
                     lifecycle["session_owned"] = True
                     turn_deadline.reschedule(None)
                     continue
-                # Proof of life for the silence check in sweep_orphans, taken
-                # before the `continue`s below so EVERY frame counts. A tool
-                # call persists no Block, so without this a turn legitimately
-                # grinding through tools looks identical to a wedged one.
-                state.last_frame_at[str(turn_id)] = time.monotonic()
                 # Measured from `turn_start` when the backend told us when
                 # the turn began, and from `loop_start` when it did not: a
                 # recorded fact must not depend on an optional frame.

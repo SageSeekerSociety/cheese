@@ -17,6 +17,7 @@ from app.api.task_deps import (
     get_task_submission_service,
     get_team_service,
 )
+from app.api.write_access import ROUTE_DECIDES
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
@@ -126,6 +127,7 @@ async def get_task_submissions(
 @router.post(
     "/{taskId}/participants/{participantId}/submissions",
     summary="Create Submission",
+    dependencies=[ROUTE_DECIDES],
 )
 async def post_task_submission(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -196,6 +198,7 @@ async def post_task_submission(
 @router.patch(
     "/{taskId}/participants/{participantId}/submissions/{version}",
     summary="Update Submission",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_task_submission(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -254,6 +257,7 @@ async def patch_task_submission(
 @router.post(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Create Submission Review",
+    dependencies=[ROUTE_DECIDES],
 )
 async def post_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -336,6 +340,7 @@ async def get_task_submission_review(
 @router.patch(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Re-Review Submission",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -369,6 +374,7 @@ async def patch_task_submission_review(
 @router.put(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Update Submission Review (Full Replace)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def put_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -402,6 +408,7 @@ async def put_task_submission_review(
 @router.delete(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Delete Submission Review",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],

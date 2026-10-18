@@ -466,7 +466,7 @@ test("teams: shared and personal", async ({ page }) => {
     { name: "pending requests", path: "/teams/pending" },
     { name: "shared team", path: "/teams/team-1" },
     { name: "team members", path: "/teams/team-1/members" },
-    { name: "team knowledge", path: "/teams/team-1/knowledge" },
+    { name: "team documents", path: "/teams/team-1/docs" },
     { name: "team compute", path: "/teams/team-1/compute" },
     { name: "team credits", path: "/teams/team-1/credits" },
     { name: "personal team", path: "/teams/alice" },

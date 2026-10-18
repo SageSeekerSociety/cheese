@@ -291,10 +291,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 两半没关系——两条读的 repository 都还在门面里（`__init__` 建它们）。
         (
             "app.domain.topic_membership.services.__init__",
-            "app.domain.project.repositories",
-        ),
-        (
-            "app.domain.topic_membership.services.__init__",
             "app.domain.topic.repositories",
         ),
         # --- webhook / workspace ---
@@ -552,6 +548,24 @@ def _stale_exemptions(
     return sorted(
         (src, dst) for src, dst in exempt - actual if _module_exists(tree, src)
     )
+
+
+def test_scanned_trees_are_present_and_nonempty() -> None:
+    """真树的两棵扫描目录都要在，且扫描结果各自包含已知模块。
+
+    `_scan` 仍允许假树缺半棵；真树不能因此把缺目录、空扫描当成通过。
+    """
+    entry_modules = {
+        "app/domain": "app.domain.project.services",
+        "app/api/routes": "app.api.routes.answers",
+    }
+    assert set(_SCANNED) == set(entry_modules), "领域和路由两棵树都必须扫描"
+    for scanned in _SCANNED:
+        assert (BACKEND_ROOT / scanned).is_dir(), f"扫描目录不存在：{scanned}"
+
+    sources = {src for src, _, _ in _scan()}
+    for scanned, entry in entry_modules.items():
+        assert entry in sources, f"扫描目录 {scanned} 未产出已知模块：{entry}"
 
 
 def test_no_cross_domain_repository_imports() -> None:

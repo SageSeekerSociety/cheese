@@ -25,9 +25,8 @@ from app.domain.project.forge import (
     default_branch,
     repository_data,
 )
-from app.domain.repository import merge3
+from app.domain.repository import merge3, task_rows
 from app.domain.repository.ports import CompareStatus, ExecutorCall
-from app.domain.room_task.models import Task, TaskStatus
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
     compare_bytes,
@@ -65,14 +64,14 @@ def clean_path(path: str) -> str:
     return path
 
 
-def _landed_head(task: Task) -> str | None:
+def _landed_head(task: Any) -> str | None:
     """The head the task's landed delivery left, while that is still the task's
     code: the task closed on it, or is being written up after its last step.
 
     A task that goes on after a step lands works on a new branch from the latest
     code (`TaskService.next_step`), so the landed head is the step before it,
     already on the default branch, and its files are not the open step's."""
-    if task.status != TaskStatus.open or task.closing_since is not None:
+    if not task_rows.is_open(task) or task.closing_since is not None:
         return task.delivered_head
     return None
 
@@ -130,14 +129,21 @@ class ProjectFiles:
             await release_read_session(self.session)
 
     async def task(self):
-        task = await self.session.get(Task, self.task_id) if self.task_id else None
-        if self.task_id and (task is None or task.project_id != self.project_id):
+        """The task's row, or None when this view is not about one task.
+
+        Read as columns of the `tasks` table (`task_rows`): `room_task` is a
+        layer above this package.
+        """
+        if not self.task_id:
+            return None
+        task = await task_rows.one(self.session, self.task_id)
+        if task is None or task.project_id != self.project_id:
             raise NotFoundError(say("projectTaskNotFound"))
         return task
 
     async def source(self, requested: str):
         task = await self.task()
-        if requested != "live" or task is None or task.status != TaskStatus.open:
+        if requested != "live" or task is None or not task_rows.is_open(task):
             return "committed"
         if await self._working_copy(task) is None and await self._pushed(task):
             # No machine holds a working copy of it, and the next one starts
@@ -146,7 +152,7 @@ class ProjectFiles:
             return "committed"
         return "live"
 
-    async def _working_copy(self, task: Task):
+    async def _working_copy(self, task: Any):
         room = await self.session.get(Topic, task.room_id)
         if room is None:
             return None
@@ -154,7 +160,7 @@ class ProjectFiles:
             task.id, str(room.resource_id or room.id)
         )
 
-    async def _pushed(self, task: Task) -> bool:
+    async def _pushed(self, task: Any) -> bool:
         """Whether the task has a version on the forge to start a copy from."""
         return bool(
             _landed_head(task)
@@ -164,7 +170,7 @@ class ProjectFiles:
             )
         )
 
-    async def _without_working_copy(self, task: Task, operation: str) -> dict[str, Any]:
+    async def _without_working_copy(self, task: Any, operation: str) -> dict[str, Any]:
         """The task's files and changes while no machine holds them: what a new
         working copy would start from, its branch. A task that has pushed
         nothing yet has no files and no changes of its own."""
@@ -677,7 +683,7 @@ class ProjectFiles:
 
     async def write(self, path: str, content: str, version: str | None):
         task = await self.task()
-        if task is None or task.status != TaskStatus.open:
+        if task is None or not task_rows.is_open(task):
             raise ValidationError(say("taskFinishedFilesReadOnly"))
         if not version:
             raise ConflictError(say("taskFileReadBeforeSave"))
@@ -724,7 +730,7 @@ class ProjectFiles:
 
     async def write_bytes(self, path: str, data: bytes, version: str):
         task = await self.task()
-        if task is None or task.status != TaskStatus.open:
+        if task is None or not task_rows.is_open(task):
             raise ValidationError(say("taskFinishedFilesReadOnly"))
         return await self.live(
             "write_bytes",

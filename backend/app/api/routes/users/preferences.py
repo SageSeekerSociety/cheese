@@ -11,6 +11,7 @@ from fastapi import (
 )
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import (
@@ -117,15 +118,16 @@ async def get_user_favorite_answers(
     # 被写上全局默认那一行，直接回它会让所有没挑过的人共用一张脸。判据只有一处
     # （``UserProfileRepository.chosen_avatar_ids``），没挑过的人不在映射里，回 null，
     # 由前端的 UserAvatar 画彩色首字母。
-    chosen_ids = await profile_repo.chosen_avatar_ids(
-        [row.created_by_id for row in rows if row.created_by_id is not None]
-    )
+    author_ids = [row.created_by_id for row in rows if row.created_by_id is not None]
+    chosen_ids = await profile_repo.chosen_avatar_ids(author_ids)
+    # 作者档案一次取完，循环里查表：一页多少条回答都只多一次往返。
+    profiles_by_user_id = await profile_repo.get_profiles_by_user_ids(author_ids)
 
     answers = []
     for row in rows:
         created_at_ms = int(row.created_at.timestamp() * 1000) if row.created_at else 0
         updated_at_ms = int(row.updated_at.timestamp() * 1000) if row.updated_at else 0
-        profile = await profile_repo.get_profile_by_user_id(row.created_by_id)
+        profile = profiles_by_user_id.get(row.created_by_id)
         sender = None
         if profile:
             sender = {
@@ -182,8 +184,7 @@ async def get_user_settings(
 
 
 @router.patch(
-    "/{userId}/settings",
-    summary="Update User Settings",
+    "/{userId}/settings", summary="Update User Settings", dependencies=[ROUTE_DECIDES]
 )
 async def update_user_settings(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
@@ -223,11 +224,13 @@ async def list_users(
 
     offset = page_start or 0
     profiles = await profile_repo.list_profiles(limit=page_size, offset=offset)
+    # 一页的账号一次取完；下面的搜索和组装都查这张表，页大小不该决定往返次数。
+    users_by_id = await user_repo.get_by_ids([profile.user_id for profile in profiles])
 
     if q:
         filtered_profiles = []
         for profile in profiles:
-            user = await user_repo.get_by_id(profile.user_id)
+            user = users_by_id.get(profile.user_id)
             if user and (
                 q.lower() in user.username.lower()
                 or q.lower() in profile.nickname.lower()
@@ -243,7 +246,7 @@ async def list_users(
 
     users = []
     for profile in profiles:
-        user = await user_repo.get_by_id(profile.user_id)
+        user = users_by_id.get(profile.user_id)
         if user:
             dto = await auth_service.build_user_dto(
                 user=user,

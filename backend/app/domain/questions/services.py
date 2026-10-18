@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.questions.models import Question, QuestionInvitation, VoteType
 from app.domain.questions.repositories import (
@@ -8,6 +9,7 @@ from app.domain.questions.repositories import (
     QuestionRepository,
     QuestionTopicRepository,
 )
+from app.domain.user.author_dto import profile_to_author
 from app.domain.user.repositories import UserProfileRepository
 
 
@@ -94,7 +96,7 @@ class QuestionsService:
             valid_topic_ids = await self._topic_repo.validate_topic_ids(list(topic_ids))
             for tid in topic_ids:
                 if tid not in valid_topic_ids:
-                    raise NotFoundError("Topic not found", data={"id": tid})
+                    raise NotFoundError(say("resourceNotFound"), data={"id": tid})
         question = await self._repo.create_question(
             created_by_id=user_id,
             title=title.strip(),
@@ -140,7 +142,7 @@ class QuestionsService:
             dto = _question_to_dto(row, include_content=False)
             dto["topicIds"] = topic_id_map.get(row.id, [])
             dto["topics"] = topic_obj_map.get(row.id, [])
-            dto["author"] = _profile_to_user(
+            dto["author"] = profile_to_author(
                 profiles_by_id.get(row.created_by_id),
                 chosen_by_id.get(row.created_by_id),
             ) or {"id": row.created_by_id}
@@ -166,7 +168,7 @@ class QuestionsService:
             if self._profile_repo
             else {}
         )
-        dto["author"] = _profile_to_user(
+        dto["author"] = profile_to_author(
             author_profile, author_chosen.get(question.created_by_id)
         ) or {"id": question.created_by_id}
 
@@ -230,7 +232,7 @@ class QuestionsService:
                     "id": accepted.id,
                     "question_id": accepted.question_id,
                     "content": accepted.content,
-                    "author": _profile_to_user(
+                    "author": profile_to_author(
                         accepted_author, accepted_chosen.get(accepted.created_by_id)
                     )
                     or {"id": accepted.created_by_id},
@@ -505,7 +507,7 @@ class QuestionInvitationService:
         for row in rows:
             profile = profiles.get(row.user_id)
             user_dto = (
-                _profile_to_user(profile, chosen_by_id.get(row.user_id))
+                profile_to_author(profile, chosen_by_id.get(row.user_id))
                 if profile
                 else None
             )
@@ -543,7 +545,7 @@ class QuestionInvitationService:
             user_id=invitee_id,
         )
         chosen = await self._profile_repo.chosen_avatar_ids([invitee_id])
-        user_dto = _profile_to_user(profile, chosen.get(invitee_id))
+        user_dto = profile_to_author(profile, chosen.get(invitee_id))
         return {
             "invitation_id": invitation.id,
             "invitation": _invitation_to_dto(invitation, user=user_dto),
@@ -554,7 +556,7 @@ class QuestionInvitationService:
         profile = await self._profile_repo.get_profile_by_user_id(invitation.user_id)
         chosen = await self._profile_repo.chosen_avatar_ids([invitation.user_id])
         user_dto = (
-            _profile_to_user(profile, chosen.get(invitation.user_id))
+            profile_to_author(profile, chosen.get(invitation.user_id))
             if profile
             else None
         )
@@ -617,7 +619,7 @@ class QuestionInvitationService:
         )
         result = []
         for profile in all_profiles:
-            result.append(_profile_to_user(profile, chosen_by_id.get(profile.user_id)))
+            result.append(profile_to_author(profile, chosen_by_id.get(profile.user_id)))
         return result
 
     async def _ensure_question_exists(self, question_id: int) -> None:
@@ -632,19 +634,3 @@ class QuestionInvitationService:
             return {}
         answered = await self._answer_repo.get_answerer_user_ids(question_id, user_ids)
         return {uid: uid in answered for uid in user_ids}
-
-
-def _profile_to_user(profile, chosen_avatar_id: int | None = None) -> dict | None:
-    """把档案拼成作者 dto。``chosen_avatar_id`` 由调用方从
-    ``UserProfileRepository.chosen_avatar_ids`` 取：档案上的 ``avatar_id`` 含注册时
-    写死的全局默认头像，直接回它会让所有没挑过的人共用同一张脸（契约 §3.14）。
-    没挑过就是 ``None``，前端画彩色首字母。
-    """
-    if profile is None:
-        return None
-    return {
-        "id": profile.user_id,
-        "nickname": profile.nickname,
-        "avatarId": chosen_avatar_id,
-        "intro": profile.intro,
-    }

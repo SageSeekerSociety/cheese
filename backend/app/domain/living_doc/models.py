@@ -1,7 +1,9 @@
 """Documents: what they say now, their collaborative state, their history,
 their write receipts and the comments written on them.
 
-A document belongs to a project. A task's living document and the project's
+A document belongs to a team — a person's own documents to their personal team
+— and to at most one of that team's projects (#3774): one with no project is
+read and written by the team's members. A task's living document and the project's
 overview are documents of the project that the task (``tasks.document_id``)
 and the project (``projects.overview_document_id``) point at. One 芝士 writes
 in a conversation belongs to that conversation's channel or private chat
@@ -14,6 +16,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     CheckConstraint,
     DateTime,
     Float,
@@ -36,8 +39,16 @@ class Document(UuidPk, Base):
         UniqueConstraint("project_id", "number", name="uq_documents_project_number"),
     )
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    #: The team it belongs to; a person's own documents are their personal team's.
+    team_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("team.id", ondelete="CASCADE", name="fk_documents_team_id_team"),
+        index=True,
+    )
+    #: The project of that team it belongs to; None for a document of the team's
+    #: (or the person's) own.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
     )
     #: What kind of document: only "doc" (Markdown and blocks) so far.
     kind: Mapped[str] = mapped_column(String(16), default="doc", server_default="doc")
@@ -257,5 +268,55 @@ class DocumentMention(Base):
     #: Whose save told them.
     notified_by: Mapped[str] = mapped_column(String(128))
     notified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class DocumentLink(Base):
+    """One document's text referencing another of the same project
+    (``<#id>``), as of its last stored version (#3827). Kept so a document can
+    list what links to it; rewritten on every store (``links.sync``)."""
+
+    __tablename__ = "document_links"
+
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "documents.id",
+            ondelete="CASCADE",
+            name="fk_document_links_source_id_documents",
+        ),
+        primary_key=True,
+    )
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "documents.id",
+            ondelete="CASCADE",
+            name="fk_document_links_target_id_documents",
+        ),
+        primary_key=True,
+        index=True,
+    )
+
+
+class DocumentShare(Base):
+    """A document's read-only link for people outside it (#3774): whoever holds
+    the token reads its current version, without signing in. One per document;
+    taking it back deletes the row, and sharing again makes a new token."""
+
+    __tablename__ = "document_shares"
+    __table_args__ = (UniqueConstraint("token", name="uq_document_shares_token"),)
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "documents.id",
+            ondelete="CASCADE",
+            name="fk_document_shares_document_id_documents",
+        ),
+        primary_key=True,
+    )
+    token: Mapped[str] = mapped_column(String(64))
+    #: Who made the link.
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

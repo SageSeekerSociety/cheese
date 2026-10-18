@@ -18,6 +18,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -116,6 +117,45 @@ def native_binary(name):
     return str(target)
 
 
+# How long one probe of the forge's API decides how the next invocations reach
+# it. A wrong "not directly" only sends them through the platform's tunnel,
+# which works, so that answer is kept longer; a wrong "directly" fails them, so
+# that one is asked again sooner.
+REACH_KEPT_S = {True: 120, False: 600}
+
+
+def _kept(name):
+    """A file under this machine's forge state, private to its user."""
+    root = Path.home() / ".cheese" / "forge-auth"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return root / name
+
+
+def _keep(path, value):
+    """Best effort: a write that loses to another invocation (on Windows, a
+    file another process has open cannot be replaced) only means the next
+    invocation asks again, never that this one fails."""
+    partial = path.with_name(f"{path.name}.{os.getpid()}.part")
+    try:
+        with open(
+            partial, "w", opener=lambda p, flags: os.open(p, flags, 0o600)
+        ) as output:
+            json.dump(value, output)
+        partial.replace(path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            partial.unlink()
+
+
+def _recall(path):
+    """What `_keep` left at ``path`` while it is still good, else None."""
+    with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
+        kept = json.loads(path.read_text())
+        if kept["until"] > time.time():
+            return kept["value"]
+    return None
+
+
 def credentials():
     api = os.environ["CHEESE_API"].rstrip("/")
     request = urllib.request.Request(
@@ -126,13 +166,32 @@ def credentials():
         return json.load(response)["data"]
 
 
+def reaches(url):
+    """Whether this machine reaches ``url`` without the platform, as one probe
+    answered within ``REACH_KEPT_S``. An HTTP error over TLS is a route:
+    GitHub's API answers an anonymous caller over its rate limit 403, and
+    that is the forge talking, not a network that cannot reach it. Over plain
+    HTTP the answer may be a proxy's in between, so there it is not."""
+    path = _kept("reach-" + hashlib.sha256(url.encode()).hexdigest()[:32] + ".json")
+    kept = _recall(path)
+    if isinstance(kept, bool):
+        return kept
+    try:
+        with urllib.request.urlopen(url, timeout=5):
+            pass
+        reached = True
+    except urllib.error.HTTPError:
+        reached = urllib.parse.urlsplit(url).scheme == "https"
+    except (OSError, urllib.error.URLError):
+        reached = False
+    _keep(path, {"until": time.time() + REACH_KEPT_S[reached], "value": reached})
+    return reached
+
+
 @contextlib.contextmanager
 def github_transport(data, env):
     """Choose a route before invoking the CLI, never replay a native mutation."""
-    try:
-        with urllib.request.urlopen(data["api_url"], timeout=5):
-            pass
-    except (OSError, urllib.error.URLError):
+    if not reaches(data["api_url"]):
         helper = runpy.run_path(str(Path.home() / ".cheese/cheese-tunnel.py"))
         api = urllib.parse.urlsplit(os.environ["CHEESE_API"].rstrip("/"))
         tunnel = urllib.parse.urlunsplit(

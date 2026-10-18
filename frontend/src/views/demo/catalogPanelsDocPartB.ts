@@ -25,8 +25,10 @@ import {
   docThreadStateEmpty,
 } from './catalogPanelsDocFixtures'
 
+import DocMoveDialog from '@/components/library/DocMoveDialog.vue'
 import DocAgentBox from '@/components/panels/doc/DocAgentBox.vue'
 import DocAgentResult from '@/components/panels/doc/DocAgentResult.vue'
+import DocBacklinks from '@/components/panels/doc/DocBacklinks.vue'
 import DocCommentPanel from '@/components/panels/doc/DocCommentPanel.vue'
 import DocComments from '@/components/panels/doc/DocComments.vue'
 import DocProse from '@/components/panels/doc/DocProse.vue'
@@ -643,6 +645,82 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         },
         props: { editor: demoProseEditor(DOC_MARKDOWN), loading: false, keyFocus: true, placeholder: '' },
         expectSelector: '.doc-editor--keyfocus',
+      },
+    ],
+  },
+  {
+    id: 'panel-doc-backlinks',
+    title: 'DocBacklinks · 被引用',
+    about:
+      '文档末尾的「被引用」（#3827）：引用了这份文档的文档在前，对话每个一行，写最近一条引用它的消息和条数。没有被引用时整段不画，所以这里只有一格。',
+    file: 'src/components/panels/doc/DocBacklinks.vue',
+    component: DocBacklinks,
+    needs: UI,
+    args: { names: { alice: '张华', liming: '李明', wangyue: '王悦' } },
+    states: [
+      {
+        name: '文档和对话',
+        note: '点一行打开那份文档，或那个对话里的那条消息。',
+        props: {
+          items: [
+            {
+              kind: 'conversation',
+              conversation: { kind: 'room', id: 'c1', title: '课题组周会', room_id: 'c1', project_id: 'p1' },
+              message_id: 'b1',
+              excerpt: '第二批 400 段清洗完了，字段和说明里写的一致',
+              author: 'wangyue',
+              at: '2026-10-17T08:00:00.000Z',
+              count: 3,
+            },
+            {
+              kind: 'document',
+              id: 'd1',
+              project_id: 'p1',
+              title: '标注规范 v2',
+              updated_by: 'alice',
+              updated_at: '2026-10-17T07:00:00.000Z',
+            },
+          ],
+        },
+        expect: '被引用',
+      },
+    ],
+  },
+  {
+    id: 'library-doc-move-dialog',
+    title: 'DocMoveDialog · 移动到…',
+    about:
+      '文档「⋯」里的「移动到…」（#3774）：能去的地方摆成一列，自己名下、每个团队和它的项目；点一行选中，底下一句说明挪过去以后谁能读。',
+    file: 'src/components/library/DocMoveDialog.vue',
+    component: DocMoveDialog,
+    needs: UI,
+    teleport: true,
+    args: {
+      modelValue: true,
+      title: '标注规范 v2',
+      places: [
+        { teamId: 1, name: '张华', personal: true, projects: [] },
+        {
+          teamId: 2,
+          name: '视觉课题组',
+          personal: false,
+          projects: [
+            { id: 'p1', name: '标注工具选型' },
+            { id: 'p2', name: '课堂提问分析' },
+          ],
+        },
+        { teamId: 3, name: '深度学习研究组', personal: false, projects: [{ id: 'p3', name: '论文复现' }] },
+      ],
+      current: { teamId: 2, projectId: 'p1' },
+      saving: false,
+      error: '',
+    },
+    states: [
+      {
+        name: '刚打开',
+        note: '现在所在的项目写着「当前位置」，还没选时「移动」是灰的。',
+        props: {},
+        expect: '当前位置',
       },
     ],
   },

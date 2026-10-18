@@ -467,8 +467,9 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 
 ## CI runner pool (cheese-ci)
 
-Every suite Required CI selects runs on GitHub-hosted Ubuntu runners, including
-the CLI boot e2e and remote-execution acceptance. The organisation is on the
+Every suite Required CI selects runs on GitHub-hosted runners, including
+the CLI boot e2e and remote-execution acceptance; only the serial aggregation
+jobs listed in the bullet below take the pool. The organisation is on the
 Free plan, whose documented limit is 20 concurrent hosted jobs; this repository
 is not held to it. Historical measurements from 2026-09-30/10-01 observed up to
 61 hosted jobs running concurrently and a 0.1-minute p90 runner wait for
@@ -481,6 +482,19 @@ keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
 heartbeat, backup checks) — its single slot used to serialize every heavy job
 (measured: 61% of CI time was queueing).
 
+- **Serial aggregation jobs run here too** (2026-10-17): `scope`, `CI required`
+  and `CI required (draft quick)` take `[self-hosted, cheese-ci]` for same-repo
+  PRs and the merge queue, and stay on `ubuntu-latest` for fork PRs. Required
+  CI's backend suite runs no `Backend coverage complete` job: `CI required`
+  runs that shard-coverage check itself, one hop fewer. They run seconds of work and used to wait 3-20
+  min (#4101) in the shared hosted queue. The boxes have python3, git and curl but no
+  gh, jq or node on PATH (JS actions use the runner's bundled node), so those
+  jobs' `run:` steps must not call them. deploy-prod's x86 run of `test.yml`
+  keeps its own `Backend coverage complete` job, on hosted machines. #2257 did this on 09-30 and
+  #2439 reverted it because two slots on one box shared the `ci` user's
+  pre-commit cache ("database is locked"); these jobs never run
+  `uvx pre-commit` (`guards` does, and stays hosted). Anything someone adds to them
+  that writes under `~/.cache` must point its cache at `$RUNNER_TEMP`.
 - **Memory**: 8G per box, shared by its two runner slots, plus 4G of swap
   (`/swapfile`, in `/etc/fstab`, applied by `runner-swap.yml`). Without the swap
   two jobs that together want more than 8G did not slow down — the kernel killed

@@ -3,11 +3,12 @@
 import type { SuggestionProps } from '@tiptap/suggestion'
 import type { Topic } from '../cx_types'
 import type { RefItem, RefTrigger } from '../lib/docMentionMenu'
+import type { LinkableDocument } from '../lib/docMentionMenu'
 import type { MentionPoolEntry } from './useRoomMentionPicker'
 
 import { ref } from 'vue'
 
-import { createRefMenu, peopleItems, topicItems } from '../lib/docMentionMenu'
+import { createRefMenu, documentItems, hashItems, peopleItems, topicItems } from '../lib/docMentionMenu'
 
 /** 浮层贴着光标放：坐标相对 `.doc-editor-wrap`，和文档里别的浮层一样跟着内容滚。
  *  下面放不下就翻到光标上方。给了宽度的，最宽不超过编辑区，靠右时往左收：外层会
@@ -41,7 +42,14 @@ export interface RefMenuState {
   width: number
 }
 
-export function useDocRefMenu(source: { people: () => MentionPoolEntry[]; topics: () => Topic[] }) {
+export function useDocRefMenu(source: {
+  people: () => MentionPoolEntry[]
+  topics: () => Topic[]
+  /** 能引用的文档；不给就只有频道。 */
+  documents?: () => LinkableDocument[]
+  /** 正在写的这一份：不引用自己。 */
+  self?: () => string | null
+}) {
   const menu = ref<RefMenuState | null>(null)
   // 最近一次建议插件给的 props：鼠标和键盘挑中都走它的 command()，「@查询」那段字才删得一致。
   let current: SuggestionProps<RefItem, RefItem> | null = null
@@ -49,7 +57,7 @@ export function useDocRefMenu(source: { people: () => MentionPoolEntry[]; topics
   function show(p: SuggestionProps<RefItem, RefItem>) {
     current = p
     // 没有候选就不开：# 在正文里很常见（#2423、C#），打一个编号不该弹出一块「暂无匹配」。
-    const pos = p.items.length ? caretMenuPos(p.clientRect, Math.min(p.items.length, 7) * 36 + 10, MENU_WIDTH) : null
+    const pos = p.items.length ? caretMenuPos(p.clientRect, Math.min(p.items.length, 9) * 36 + 58, MENU_WIDTH) : null
     menu.value = pos ? { items: p.items, index: 0, ...pos } : null
   }
 
@@ -77,7 +85,12 @@ export function useDocRefMenu(source: { people: () => MentionPoolEntry[]; topics
 
   const extension = createRefMenu({
     items: (trigger: RefTrigger, query) =>
-      trigger === '@' ? peopleItems(source.people(), query) : topicItems(source.topics(), query),
+      trigger === '@'
+        ? peopleItems(source.people(), query)
+        : hashItems(
+            topicItems(source.topics(), query),
+            documentItems(source.documents?.() ?? [], query, source.self?.() ?? null)
+          ),
     onStart: show,
     onUpdate: show,
     onExit: () => {

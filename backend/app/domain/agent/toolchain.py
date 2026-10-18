@@ -43,6 +43,9 @@ FJ_VERSION = "0.6.0-cheese.2"
 GH_VERSION = "2.62.0"
 RIPGREP_VERSION = "15.2.0"
 AGENT_BROWSER_VERSION = "0.38.1"
+#: The Node a project's local MCP servers run on (`npx`), for machines without
+#: one of their own: the 24 LTS line.
+NODE_VERSION = "24.21.0"
 #: The runtime a Windows machine's connector provisions for itself, so that the
 #: `python3` and `sh` the platform runs everywhere exist there too.
 PYTHON_VERSION = "3.13.13"
@@ -70,6 +73,7 @@ _RG_BASE = (
     f"{RIPGREP_VERSION}/ripgrep-{RIPGREP_VERSION}"
 )
 _AB_BASE = f"https://github.com/vercel-labs/agent-browser/releases/download/v{AGENT_BROWSER_VERSION}"
+_NODE_BASE = f"https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}"
 _PYTHON_BASE = f"https://www.python.org/ftp/python/{PYTHON_VERSION}"
 _GIT_BASE = f"https://github.com/git-for-windows/git/releases/download/v{GIT_VERSION}"
 _PBS_BASE = (
@@ -335,6 +339,38 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         17868288,
         ".exe",
     ),
+    # Digests and sizes checked against nodejs.org's SHASUMS256.txt for the
+    # release on 2026-10-17.
+    ("node", "linux-x64"): Artifact(
+        f"{_NODE_BASE}-linux-x64.tar.xz",
+        "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6",
+        31890184,
+        ".tar.xz",
+    ),
+    ("node", "linux-arm64"): Artifact(
+        f"{_NODE_BASE}-linux-arm64.tar.xz",
+        "6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2",
+        30843004,
+        ".tar.xz",
+    ),
+    ("node", "darwin-x64"): Artifact(
+        f"{_NODE_BASE}-darwin-x64.tar.gz",
+        "1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097",
+        54203979,
+        ".tar.gz",
+    ),
+    ("node", "darwin-arm64"): Artifact(
+        f"{_NODE_BASE}-darwin-arm64.tar.gz",
+        "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057",
+        52909993,
+        ".tar.gz",
+    ),
+    ("node", "windows-x64"): Artifact(
+        f"{_NODE_BASE}-win-x64.zip",
+        "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+        37618919,
+        ".zip",
+    ),
     # The connector's own runtime on Windows (see PYTHON_VERSION). The embeddable
     # distribution is the interpreter and its standard library, nothing else.
     ("python", "windows-x64"): Artifact(
@@ -407,13 +443,18 @@ def fonts_pin() -> str:
 
 #: What the launcher places on a machine: (tool, version, kind, filename).
 #: `kind` is what the machine does with the artifact — unpack and find an
-#: executable of that name, or drop the file into the font directory. The
+#: executable of that name, keep the whole unpacked directory (`tree`: node's
+#: npm and npx find their modules by a path relative to themselves, so they
+#: cannot be lifted out), or drop the file into the font directory. The
 #: version is the directory name on the machine, which is what makes a bump land
 #: beside the old copy rather than over it.
 PLACEMENTS: tuple[tuple[str, str, str, str], ...] = (
     ("typst", TYPST_VERSION, "bin", "typst"),
     ("pandoc", PANDOC_VERSION, "bin", "pandoc"),
     ("uv", UV_VERSION, "bin", "uv"),
+    # The same archive's other binary: `uvx` is how a Python MCP server is run.
+    ("uv", UV_VERSION, "bin", "uvx"),
+    ("node", NODE_VERSION, "tree", "node"),
     ("ripgrep", RIPGREP_VERSION, "bin", "rg"),
     # Browser automation for rooms that operate websites; useless without the
     # Chrome `agent-browser install` fetches on first use, which stays on demand.
@@ -434,3 +475,10 @@ def resolve(tool: str, platform: str) -> tuple[str, Artifact] | None:
     key = _ANY if tool in PLATFORM_FREE else platform
     artifact = ARTIFACTS.get((tool, key))
     return (key, artifact) if artifact else None
+
+
+def node_path() -> str:
+    """Where the placed Node's programs are, as the launcher's PATH writes it:
+    `bin/` on Linux and macOS, the directory itself in the Windows zip."""
+    tree = f"$CHEESE_TOOLCHAIN/node/{NODE_VERSION}"
+    return f"{tree}/bin:{tree}"

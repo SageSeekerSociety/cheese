@@ -46,8 +46,8 @@ class RatchetSnapshot(UuidPk, Base):
     # repository without a shape change; the ratchet page reads the configured one.
     repo: Mapped[str] = mapped_column(String(200))
     # The CI run this came from. The identity of a point: the same commit can be
-    # collected twice (a push, then the weekly schedule), and a re-poll of the
-    # same run must not append a second row.
+    # collected twice (a scheduled run, then a manual dispatch), and a re-poll of
+    # the same run must not append a second row.
     workflow_run_id: Mapped[int] = mapped_column(BigInteger)
     commit_sha: Mapped[str] = mapped_column(String(64))
     commit_date: Mapped[datetime | None] = mapped_column(

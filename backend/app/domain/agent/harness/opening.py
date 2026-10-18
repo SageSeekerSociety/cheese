@@ -75,16 +75,13 @@ def teaching_section(context: TeachingContext) -> str | None:
             "### 本周课件\n"
             + "\n".join(f"- 《{m['name']}》{m['url']}" for m in context.materials)
         )
-    if context.knowledge:
-        # 只给名字和描述，正文留在知识库里按 id 取：一份上传可以有多大，不是这门
-        # 课说了算的，prompt 不跟着别人的文件长。
+    if context.documents:
+        # 只给标题，正文按 id 读：一份文档可以有多长，不是这门课说了算的，prompt
+        # 不跟着别人写的东西长。
         parts.append(
-            "### 本周知识材料（要正文用 id 自己去取）\n"
+            "### 本周的阅读材料（要正文用 cheese_doc_get(document=id) 去读）\n"
             + "\n".join(
-                f"- 《{k['name']}》"
-                + (f"（id={k['id']}）" if k.get("id") else "")
-                + (f" {k['description']}" if k.get("description") else "")
-                for k in context.knowledge
+                f"- 《{d['title']}》（id={d['id']}）" for d in context.documents
             )
         )
     return "\n\n".join(parts)
@@ -305,9 +302,10 @@ def build_session_opening(
             '`platform_request(method="GET", '
             'path="/topics?project_id=<本项目 id>")`\n'
             "拿到 id 后用 `<#id>` 就能精确引用任何一个频道（包括没列在下面的）。"
-            "任务和支线也这样引用：`<#任务的 id>`、`<#支线的 id>`，读的人看到的是"
-            "能点开的「#任务名」「#支线：开头那句」。别的 id 写进去，读的人只看到"
-            "一个打不开的引用。\n" + lines
+            "任务、支线和文档也这样引用：`<#任务的 id>`、`<#支线的 id>`、"
+            "`<#文档的 id>`，读的人看到的是能点开的「#任务名」「#支线：开头那句」"
+            "和带图标的文档标题。别的 id 写进去，读的人只看到一个打不开的引用。\n"
+            + lines
         )
     if artifacts is not None:
         # 产物清单进开场，是为了让下一次交付点得准名字。怎么点名、about 怎么写，

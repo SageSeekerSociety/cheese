@@ -105,6 +105,20 @@ checked for package-qualified targets. The convention `tests replace this name
 on <module>` is compared with the adjacent import's source, not interpreted as
 an arbitrary natural-language claim about what tests actually do.
 
+WHOLE-FILE READS. A caller can depend on a module without naming anything in
+it: `Path(module.__file__).read_text()` ships the source of a module that runs
+on another machine. It keeps working after `a/b.py` becomes `a/b/__init__.py`
+and then answers with the package's `__init__.py` instead of the module — a
+silent wrong file rather than an ImportError. The same holds for
+`module.__spec__.origin`, and for `spec_from_file_location(name, location)`
+when the location comes from either. A literal location, by contrast, still
+loads the same file: the location argument, not the module name, decides what
+is loaded, and the name only labels the spec. `--check-moves` scans the whole
+repository for these shapes against every module the change turned into a
+package, following `import a.b`, `from a import b`, `import a.b as c` and
+`x = importlib.import_module("a.b")` to the module each names. A write to
+`__file__` is not a read and is left alone.
+
 This is an explicit CLI check, not an automatic CI gate. Dynamic patch
 targets, external object attributes and arbitrary prose are outside its static
 coverage. No application module is imported by the consumer check.
@@ -134,10 +148,6 @@ from pathlib import Path
 EXIT_OK, EXIT_DIFFERENT, EXIT_CANNOT_JUDGE = 0, 1, 2
 
 DEFAULT_BASE_REF = "origin/main"
-
-#: The module that owns the deferred-import rule; the self-test cross-checks
-#: against it when it is present.
-DEFERRED_RULE_SOURCE = Path("backend/scripts/check_deferred_imports.py")
 
 
 def _public(name: str) -> bool:
@@ -373,11 +383,6 @@ def _collect_statements(
                 _collect_statements(handler.body, facts, package_name)
             _collect_statements(node.orelse, facts, package_name)
             _collect_statements(node.finalbody, facts, package_name)
-
-
-def _literal_all(tree: ast.Module) -> list[str] | None:
-    """`__all__` when it is a literal list or tuple of strings, else None."""
-    return _read_all(tree)[0]
 
 
 def _read_all(tree: ast.Module) -> tuple[list[str] | None, bool]:
@@ -1176,10 +1181,8 @@ class ConsumerChecks(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def check_consumers(
-    repo: Path, old: ModuleFacts, package: Package, dotted: str, findings: Findings
-) -> None:
-    """Read tracked and new Python callers across the repo; never import their code."""
+def _repository_python_files(repo: Path) -> list[str]:
+    """Every tracked or new, unignored `.py` file in the repository."""
     proc = subprocess.run(
         [
             "git",
@@ -1196,6 +1199,13 @@ def check_consumers(
         text=True,
         check=True,
     )
+    return sorted(set(proc.stdout.split("\0")) - {""})
+
+
+def check_consumers(
+    repo: Path, old: ModuleFacts, package: Package, dotted: str, findings: Findings
+) -> None:
+    """Read tracked and new Python callers across the repo; never import their code."""
     logger_names: set[str] = set()
     # The table can be a whole package, so a module in it is named from the
     # package rather than from the module this check is about.
@@ -1209,7 +1219,7 @@ def check_consumers(
                 elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     logger_names.add(arg.value)
     scanned = 0
-    for relative in sorted(set(proc.stdout.split("\0")) - {""}):
+    for relative in _repository_python_files(repo):
         path = repo / relative
         if not path.is_file():
             continue  # a tracked pre-split file was removed in the working tree
@@ -1363,6 +1373,295 @@ def module_package(
     )
 
 
+class ModuleFileReads(ast.NodeVisitor):
+    """Callers that locate a module's file instead of naming something in it.
+
+    `Path(module.__file__).read_text()` ships or loads the module's source as
+    one piece, and `Path(module.__file__).parent` finds the directory the
+    module's resources sit beside. After `a/b.py` becomes `a/b/__init__.py`
+    neither call fails: `__file__` is still a path that exists, and it now
+    names the package's `__init__.py` — often nearly empty — or the directory
+    `a/b` instead of `a`. Nothing in the export, signature or import checks
+    sees either, because no name stopped resolving.
+
+    Every read of the attribute is reported, not only `.read_text()`: the path
+    itself is what changed meaning, and a caller doing `.parent` on it is as
+    wrong as one reading the file. A *write* (`module.__file__ = ...`) is not a
+    read and is left alone.
+
+    `spec_from_file_location(name, location)` is caught through its location
+    argument, which is checked as an ordinary read: the location, not the
+    name, is what decides which file is loaded — the name only ends up on the
+    spec's `name` — so a literal location, or no location at all, does not
+    turn a split into a wrong read, and matching on the name alone would
+    report a caller that still loads exactly what it meant to.
+
+    The read is matched syntactically: a path carried through `getattr(mod,
+    "__file__")`, `mod.__dict__`, a function parameter or `sys.modules` is
+    outside what this sees, as with any other static check here.
+    """
+
+    def __init__(
+        self,
+        split: dict[str, str],
+        path: str,
+        module: str,
+        findings: Findings,
+    ) -> None:
+        self.split = split
+        self.path = path
+        self.module = module
+        self.findings = findings
+        self.aliases: dict[str, str] = {}
+        self.reported: set[int] = set()
+
+    def resolved(self, node: ast.AST) -> str:
+        """The dotted module an expression denotes, or "" when it names none."""
+        if isinstance(node, ast.Name):
+            return self.aliases.get(node.id, "")
+        if isinstance(node, ast.Attribute):
+            parent = self.resolved(node.value)
+            return f"{parent}.{node.attr}" if parent else ""
+        return ""
+
+    def hit(self, node: ast.AST, dotted: str, detail: str) -> None:
+        line = getattr(node, "lineno", 0)
+        if line in self.reported:
+            return
+        self.reported.add(line)
+        self.findings.block(
+            f"{self.path}:{line}: 模块文件路径已改指: {dotted}（{detail}）"
+        )
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            head = alias.name.split(".")[0]
+            self.aliases[alias.asname or head] = alias.name if alias.asname else head
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module = _absolute_module(self.module, node.level, node.module)
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            target = f"{module}.{alias.name}" if module else alias.name
+            self.aliases[alias.asname or alias.name] = target
+
+    def _alias_value(self, node: ast.AST) -> str:
+        """What `x = ...` binds, when the value names a module this can follow.
+
+        `x = importlib.import_module("a.b")` binds the module the string names,
+        which is how a spec reader gets its argument without importing `a.b`
+        at the top of the file.
+        """
+        if isinstance(node, ast.Call) and node.args:
+            if self.resolved(node.func).rsplit(".", 1)[-1] == "import_module":
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    return first.value
+        return self.resolved(node)
+
+    def visit_Assign(self, node: ast.Assign | ast.AnnAssign) -> None:
+        self.generic_visit(node)
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        value = (
+            self._alias_value(node.value)
+            if node.value and not isinstance(node.value, ast.Constant)
+            else ""
+        )
+        for target in targets:
+            for name in _target_names(target):
+                self.aliases[name] = value if isinstance(target, ast.Name) else ""
+
+    visit_AnnAssign = visit_Assign
+
+    def _shadow(self, names: list[str]) -> dict[str, str]:
+        """Bind `names` to something other than a module; returns the old map.
+
+        A local of the same name is not the module: `from app import foo` next
+        to `def read(foo): return foo.__file__` reads the argument. Missing
+        that would fail a split on a caller the split cannot have broken.
+        """
+        previous = self.aliases
+        self.aliases = self.aliases.copy()
+        for name in names:
+            self.aliases.pop(name, None)
+        return previous
+
+    @staticmethod
+    def _argument_names(arguments: ast.arguments) -> list[str]:
+        names = [
+            argument.arg
+            for argument in arguments.posonlyargs + arguments.args + arguments.kwonlyargs
+        ]
+        for argument in (arguments.vararg, arguments.kwarg):
+            if argument is not None:
+                names.append(argument.arg)
+        return names
+
+    @staticmethod
+    def _defaults(arguments: ast.arguments) -> list[ast.AST]:
+        return list(arguments.defaults) + [
+            default for default in arguments.kw_defaults if default is not None
+        ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        # Decorators, defaults and annotations are evaluated where the `def`
+        # is, not in the function's own scope.
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for default in self._defaults(node.args):
+            self.visit(default)
+        for argument in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
+            if argument.annotation is not None:
+                self.visit(argument.annotation)
+        if node.returns is not None:
+            self.visit(node.returns)
+        previous = self._shadow(self._argument_names(node.args))
+        for statement in node.body:
+            self.visit(statement)
+        self.aliases = previous
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        for default in self._defaults(node.args):
+            self.visit(default)
+        previous = self._shadow(self._argument_names(node.args))
+        self.visit(node.body)
+        self.aliases = previous
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        previous, self.aliases = self.aliases, self.aliases.copy()
+        self.generic_visit(node)
+        self.aliases = previous
+
+    # `for`, `with` and `except` do not open a scope of their own: a binding
+    # made in the body stays bound afterwards, and an import there is visible
+    # below. So these shadow the target and do not put the whole map back.
+    # The target itself is not restored either: a name a statement bound is
+    # not the module again. When such a statement sits under an `if` and does
+    # not run, the module is still bound and a read of it is missed — the
+    # direction this check errs in, since a false report fails a split that
+    # broke nothing, while a miss leaves the reader as it was before.
+    def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
+        # The target holds an item, or whatever the body last bound it to.
+        # Neither can be told from the module statically, so the name stops
+        # being treated as the module: a loop over the module itself, or over
+        # an empty iterable, has a read below missed rather than guessed at.
+        # Everything else bound in the body stays bound, and `else` runs in
+        # that same environment.
+        self.visit(node.iter)
+        self._shadow(_target_names(node.target))
+        for statement in node.body + node.orelse:
+            self.visit(statement)
+
+    visit_AsyncFor = visit_For
+
+    def visit_With(self, node: ast.With | ast.AsyncWith) -> None:
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                # The target holds whatever the manager returned, always.
+                self._shadow(_target_names(item.optional_vars))
+        for statement in node.body:
+            self.visit(statement)
+
+    visit_AsyncWith = visit_With
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.type is not None:
+            self.visit(node.type)
+        if node.name:
+            # Python deletes the exception name when the handler ends.
+            self._shadow([node.name])
+        for statement in node.body:
+            self.visit(statement)
+
+    def _visit_comprehension(self, generators: list[ast.comprehension]) -> None:
+        """Bind each generator's target before the expressions it guards."""
+        for generator in generators:
+            self.visit(generator.iter)
+            self._shadow(_target_names(generator.target))
+            for condition in generator.ifs:
+                self.visit(condition)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        previous = self.aliases
+        self._visit_comprehension(node.generators)
+        self.visit(node.elt)
+        self.aliases = previous
+
+    visit_SetComp = visit_ListComp
+    visit_GeneratorExp = visit_ListComp
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        previous = self.aliases
+        self._visit_comprehension(node.generators)
+        self.visit(node.key)
+        self.visit(node.value)
+        self.aliases = previous
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        # A write (`module.__file__ = ...`) sets the attribute and still works
+        # after the split; only a read sees the new path.
+        if not isinstance(node.ctx, ast.Load):
+            self.generic_visit(node)
+            return
+        dotted = self.resolved(node.value)
+        detail = ""
+        if node.attr == "__file__":
+            detail = "__file__ 现在指向 __init__.py"
+        elif node.attr == "origin" and dotted.endswith(".__spec__"):
+            # `mod.__spec__.origin` is the same answer as `mod.__file__`, and
+            # it is what a `spec_from_file_location` call is given as its
+            # location — the name argument only labels the spec.
+            dotted = dotted[: -len(".__spec__")]
+            detail = "__spec__.origin 现在是包的 __init__.py"
+        if detail and dotted in self.split:
+            self.hit(node, dotted, detail)
+        self.generic_visit(node)
+
+
+def check_split_readers(
+    repo: Path, split: dict[str, str], findings: Findings
+) -> None:
+    """Scan every repository caller for a whole-file read of a now-package module.
+
+    The reader did not change and cannot have: the split is what turned its
+    `__file__` or its spec name into a different file. So this scans the whole
+    repository rather than the files the change touched, and it is the one
+    check here whose finding is about the split side, not about a name.
+    """
+    leaves = {dotted.rsplit(".", 1)[-1] for dotted in split}
+    scanned = 0
+    found = 0
+    for relative in _repository_python_files(repo):
+        path = repo / relative
+        if not path.is_file():
+            continue  # a tracked pre-split file was removed in the working tree
+        source = path.read_text(encoding="utf-8")
+        # Cheap sieve: a caller that names the module (or aliases it) and asks
+        # for the file. Relative imports need not spell the package at all, so
+        # the leaf name is what is looked for.
+        if not any(leaf in source for leaf in leaves):
+            continue
+        try:
+            tree = ast.parse(source, filename=relative)
+        except SyntaxError as exc:
+            raise ValueError(f"{relative}:{exc.lineno}: {exc.msg}") from exc
+        root = repo / "backend" if relative.startswith("backend/") else repo
+        module = _dotted_name(path, root)
+        if path.name == "__init__.py":
+            module += ".__init__"  # _absolute_module expects a file, not a package
+        before = len(findings.blockers)
+        ModuleFileReads(split, relative, module, findings).visit(tree)
+        found += len(findings.blockers) - before
+        scanned += 1
+    findings.summary.append(
+        f"整份读取: 拆分 {len(split)} 个模块, 检查 {scanned} 个文件, 命中 {found} 处"
+    )
+
+
 def check_moves(
     repo_root: Path, directory: Path, base_ref: str, findings: Findings
 ) -> None:
@@ -1380,13 +1679,20 @@ def check_moves(
     where: dict[str, Path] = {}
     roots: dict[str, Path] = {}
     packages: dict[Path, Package] = {}
+    squashed: dict[str, str] = {}  # module -> the package's __init__.py path
     for relative in changed_module_paths(repo_root, base_ref, str(directory)):
         on_disk = repo_root / relative
-        if not on_disk.is_file() and (
-            repo_root / relative[: -len(".py")] / "__init__.py"
-        ).is_file():
+        init = repo_root / relative[: -len(".py")] / "__init__.py"
+        if not on_disk.is_file() and init.is_file():
             # A package stands where the file did: that is the facade check's
             # question, and a second answer here would read as a second break.
+            # The one thing that is this check's question is the caller that
+            # reads the file whole, because there is no name to go missing.
+            root = _import_root(on_disk.parent)
+            try:
+                squashed[_dotted_name(on_disk, root)] = str(init)
+            except ValueError:
+                pass
             continue
         # Per file, not per directory: `--check-moves backend` has to name the
         # same modules `app.foo` that `--check-moves backend/app` does, or a
@@ -1445,6 +1751,9 @@ def check_moves(
             findings,
         )
         checked += 1
+
+    if squashed:
+        check_split_readers(repo_root, squashed, findings)
 
     findings.summary.append(
         f"包内搬移: 对比 {len(before)} 个改动模块, 搬移 {moved} 个符号, "

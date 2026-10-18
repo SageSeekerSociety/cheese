@@ -234,6 +234,8 @@ RUN_RECORDS_DESCRIPTION = (
     "给 `turns` 读另一个问题：这一窗口里一共起了多少轮、其中多少轮留下了终态失败事件"
     "——一种事一行的读法答不出「一共跑了多少轮」。没有失败事件的轮次读成空，那是平台"
     "没为它记过，不是记了成功。只读。"
+    "给 `turn_id`（完整轮次号）就读这一轮：它怎么了、落下了哪些运行记录；还没结束的"
+    "轮次还会说会话最近一帧是什么、多久以前 —— 不知道就是不知道，不是 0。"
     "只有做这个平台本身的项目读得到，别的项目会被拒。"
 )
 
@@ -609,7 +611,7 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_close_task",
             "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
-            "替别人解冲突让他自己推、只给提需求的人这一次用的文件），写明结论关闭；"
+            "替别人解冲突让他自己推、界面原型或 demo、只给提需求的人这一次用的文件），写明结论关闭；"
             "最后一步的交付采纳后，平台会让你写一次总结，那一轮结束后任务自动关闭，不用调这个。",
             {
                 "conclusion": _text("关闭原因或最终说明"),
@@ -621,9 +623,10 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_accept_request",
             "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
-            "递卡交的是要并进主干的改动，或产物清单上一项的新一版；结果不进主干的任务"
-            "用 cheese_close_task 结束，不递卡。任务分支上要有改动了文件的提交，"
-            "空提交会被打回。"
+            "递卡交的是要并进主干的改动，或产物清单上一项的新一版；界面原型、demo 或一次性文件"
+            "不进主干也不上产物清单，用 cheese show 摆出预览后等反馈（cheese_ask）或用 "
+            "cheese_close_task 结束，不提交进 git、不递卡。交合并时任务分支上要有改动了文件的提交，"
+            "空提交会被打回；交独立文件（deliver）或地址（deliver_url）且没有仓库改动时直接留快照或记指针，不开 PR。"
             "任务可以分几步交付：completes_task 说这次是不是最后一步。递之前对照实况文档，"
             "任务目标还有没做完的就不是最后一步。最后一步采纳后，平台让你更新实况文档、"
             "发一条总结，那一轮结束后任务关闭；不是最后一步，采纳后任务还开着，"
@@ -735,11 +738,19 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_fetch",
-            "让平台读一个网页：先找站点发布的 markdown，再依次普通抓取、换浏览器指纹、"
-            "浏览器渲染，覆盖面比 WebFetch 广，出口也不在你的机器上。"
-            "带 prompt 返回答案，不带返回整页 markdown，尽量带上。"
-            "读不到时逐级说明怎么失败的。",
-            {"url": _text("网址"), "prompt": _text("想从这一页知道什么")},
+            "让平台读一个网页：先普通抓取（站点发布了 markdown 就直接用），读不出正文再试"
+            "同名 .md、换浏览器指纹、浏览器渲染，出口也不在你的机器上；同一网址 15 分钟内"
+            "直接用读过的那份。带 prompt 返回答案，不带返回整页 markdown，尽量带上。"
+            "读不到时逐级说明怎么失败的。它读一个网址，不是搜索引擎。",
+            {
+                "url": _text("网址"),
+                "prompt": _text("想从这一页知道什么"),
+                "render": {
+                    "type": "boolean",
+                    "description": "读回来的只是页面框架、正文要脚本才出来时设 true，"
+                    "直接用浏览器渲染",
+                },
+            },
             ["url"],
         ),
         _tool(
@@ -915,6 +926,10 @@ PLATFORM_TOOLS = ToolTable(
                     "description": "一轮一行：这一窗口里跑过的轮次、各自留下什么终态"
                     "失败事件（空 = 平台没记过，不是成功）、这一轮的提示被投了几次",
                 },
+                "turn_id": _text(
+                    "完整的一轮号；给了就读这一轮（它怎么了、落下了哪些运行记录、"
+                    "还没结束时最近一帧是什么），忽略 window"
+                ),
                 "limit": {
                     "type": "integer",
                     "description": "只跟 turns 一起用：最多回几行，默认 200，最多 500",
@@ -1546,6 +1561,8 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         body = {"url": args["url"], "topic": topic, "project": project}
         if args.get("prompt"):
             body["prompt"] = args["prompt"]
+        if args.get("render"):
+            body["render"] = True
         return {"method": "POST", "path": "/fetch", "body": body}
     if tool == "cheese_ask":
         return {
@@ -1620,6 +1637,13 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {"method": "GET", "path": "/feedback?" + urllib.parse.urlencode(params)}
     if tool == "cheese_run_records":
         params = {"topic": topic, **_given(args, "window")}
+        if args.get("turn_id"):
+            ref = urllib.parse.quote(str(args["turn_id"]).strip(), safe="")
+            return {
+                "method": "GET",
+                "path": f"/run-records/turns/{ref}?"
+                + urllib.parse.urlencode({"topic": topic}),
+            }
         if args.get("turns"):
             params.update(_given(args, "limit"))
             return {
@@ -1998,7 +2022,7 @@ def _doc_get(args: dict, host) -> str:
     host.doc_versions[document["CHEESE_DOCUMENT"]] = version
     if not doc.get("content"):
         return "这份文档还是空的；cheese_doc_set 会写下第一版。"
-    lines = [doc["content"]]
+    lines = _doc_links(document["CHEESE_DOCUMENT"], host) + [doc["content"]]
     pending = doc.get("pending_suggestions") or []
     if pending:
         # 建议还不是正文：上面读到的是没有它们的文本。列出来，免得再提一遍。
@@ -2098,6 +2122,54 @@ def _made_canvases(answer: dict) -> list[str]:
 #: How much of one canvas `cheese_doc_get` shows after the document; the rest
 #: is a `cheese_canvas_get` away.
 _DOC_CANVAS_CHARS = 6000
+
+
+def _doc_links(document: str, host) -> list[str]:
+    """Which documents this one links to and which documents and conversations
+    link to it, by title, ahead of its text: what is around it, for reading
+    only the one that matters. Nothing when there are none, or when the
+    platform could not say."""
+    try:
+        found = host.request({"method": "GET", "path": f"/documents/{document}/links"})
+    except Exception:  # noqa: BLE001 — the document reads without its links
+        return []
+    data = found.get("data") or {}
+
+    def doc_name(row: dict) -> str:
+        title = row.get("title") or "无标题"
+        if row.get("number"):
+            return f"文档 {row['number']}《{title}》"
+        return f"《{title}》（<#{row['id']}>）"
+
+    def place_name(row: dict) -> str:
+        where = row["conversation"]
+        if where["kind"] == "room":
+            name = f"#{where['title']}"
+        elif where["kind"] == "task":
+            name = f"任务「{where['title']}」"
+        else:
+            name = f"支线「{where['title']}」"
+        return f"{name}（{row.get('count', 1)} 条）"
+
+    to = [doc_name(r) for r in data.get("links_to") or []]
+    by_docs = [
+        doc_name(r) for r in data.get("linked_from") or [] if r["kind"] == "document"
+    ]
+    by_talk = [
+        place_name(r)
+        for r in data.get("linked_from") or []
+        if r["kind"] == "conversation"
+    ]
+    if not (to or by_docs or by_talk):
+        return []
+    lines = ["--- 链接（只有标题；要读哪份用 cheese_doc_get(document=编号)）"]
+    if to:
+        lines.append("它引用的文档：" + "、".join(to))
+    if by_docs:
+        lines.append("引用它的文档：" + "、".join(by_docs))
+    if by_talk:
+        lines.append("引用它的对话：" + "、".join(by_talk))
+    return [*lines, "---", ""]
 
 
 def _doc_canvases(document: str, host) -> list[str]:
@@ -2632,6 +2704,8 @@ def _run_records(args: dict, host) -> str:
             raise PlatformToolError(f"没读到：{why.rstrip('。')}。") from exc
         raise
     body = data.get("data") or {}
+    if args.get("turn_id"):
+        return _turn_lines(body)
     if args.get("turns"):
         return _turns_lines(body)
     if args.get("key") and args.get("kind"):
@@ -2692,8 +2766,55 @@ def _turns_lines(body: dict) -> str:
         )
         if turn.get("prompt_attempts") is not None:
             line += f"  投喂 {turn['prompt_attempts']} 次"
+        line += _frame_suffix(turn)
         lines.append(line)
     lines.append("没有失败事件的轮次是平台没为它记过，不是记了成功。")
+    return "\n".join(lines)
+
+
+def _frame_suffix(turn: dict) -> str:
+    """最近一帧的种类和年龄；不知道就说不知道，不说 0。
+
+    只补在还没结束的轮次上：一个已经关掉的轮次最近有没有帧是历史，不是活着的
+    证据（`api/routes/run_records.py` 的 `_add_frames`）。
+    """
+    kind = turn.get("last_frame_kind")
+    age = turn.get("last_frame_age_s")
+    if kind is None or age is None:
+        return "  最近帧 未知"
+    return f"  最近帧 {kind}，{age}s 前"
+
+
+def _turn_lines(turn: dict) -> str:
+    """一轮的下钻：它怎么了，最近一帧，和它落下的运行记录。"""
+    if turn.get("failure_event"):
+        became = f"失败 {turn['failure_event']}"
+    elif turn.get("status") == "unfinished":
+        became = "没记过失败（不等于成功）"
+    else:
+        became = turn.get("status") or "未知"
+    lines = [
+        f"{turn.get('turn_id')}  起 {turn.get('started_at')}  "
+        f"止 {turn.get('stopped_at') or '—'}  {became}",
+        f"对话 {turn.get('conversation_id') or '—'}",
+        "投喂 "
+        + (
+            f"{turn['prompt_attempts']} 次"
+            if turn.get("prompt_attempts") is not None
+            else "未知"
+        ),
+    ]
+    lines[0] += _frame_suffix(turn)
+    records = turn.get("records") or []
+    if not records:
+        lines.append("这一轮没有落下运行记录。")
+        return "\n".join(lines)
+    lines.append(f"运行记录 {len(records)} 条：")
+    for record in records:
+        lines.append(
+            f"  [{record.get('kind')}] {record.get('content')}"
+            f"  {record.get('at')}"
+        )
     return "\n".join(lines)
 
 
@@ -3836,7 +3957,7 @@ def _checkout() -> Path:
     return target
 
 
-def _task_worktree(task_id: str) -> Path:
+def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
     task_id = str(uuid.UUID(task_id))
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("POST", f"/projects/{project}/git/tasks/{task_id}")["data"]
@@ -3851,47 +3972,14 @@ def _task_worktree(task_id: str) -> Path:
     # so an interrupted clone cannot be mistaken for a complete repository.
     with (cache / f"{project}.lock").open("a") as lock:
         _lock(lock)
-        _prepare_repository(repo, data)
-        # The commits, not every version of every file. A project's repo is
-        # mostly old blobs — measured on cheese's own: 195 MB whole, 9.6 MB
-        # this way — and all of that crossed the platform's backend on the way
-        # here, where one 169 MB fetch froze every other request for 3.7 s
-        # (2026-09-20). The whole history is still here, so `git log` and a
-        # diff against the base still work; a file's older contents are fetched
-        # if something actually reads them.
-        exists_on_forge = bool(
-            _git_task(repo, "ls-remote", "--heads", "origin", data["branch"])
-        )
-        refs = [data["base"]] + ([data["branch"]] if exists_on_forge else [])
-        for ref in refs:
-            _git_task(
-                repo,
-                "fetch",
-                "--filter=blob:none",
-                "origin",
-                f"refs/heads/{ref}:refs/remotes/origin/{ref}",
-            )
-        if not (task_dir / ".git").exists():
-            existing = _git_task(repo, "branch", "--list", data["branch"])
-            create = [] if existing else ["-b", data["branch"]]
-            remote_start = data["branch"] if exists_on_forge else data["base"]
-            start = (
-                data["branch"] if existing else f"refs/remotes/origin/{remote_start}"
-            )
-            _git_task(repo, "worktree", "prune")
-            _git_task(
-                repo,
-                "worktree",
-                "add",
-                *create,
-                str(task_dir),
-                start,
-            )
-            # A checkout made here for the first time: this environment is new,
-            # and what the task had not pushed when its last one went away is
-            # in the platform's snapshot (`_restore_snapshot`).
-            admin = Path(_git_task(task_dir, "rev-parse", "--absolute-git-dir"))
-            (admin / _RESTORE_PENDING).write_text("")
+        # A checkout already on the task's branch and wired to its forge is
+        # used as it is: the forge round trips below were most of what opening
+        # it again cost (dev, 2026-10-12..17: a reopen within ten minutes took
+        # 16 s at the median, 76 s at p90, and changed nothing). Its remote
+        # branches are as this checkout last fetched or pushed them; `git
+        # fetch` brings them up to date.
+        if not _opened_as_left(task_dir, data):
+            _open_from_forge(repo, task_dir, data)
         marker = Path(
             _git_task(task_dir, "rev-parse", "--git-path", "cheese-task.json")
         )
@@ -3948,8 +4036,10 @@ def _task_worktree(task_id: str) -> Path:
         # it installs.
         _restore_snapshot(task_dir, data)
     # The room has no checkout. Branch dependencies belong to this task and
-    # must be prepared on every open, including after local branch changes.
-    if (Path.home() / ".cheese-environment/config.json").exists():
+    # are prepared on every open whose dependency files or environment differ
+    # from what was last prepared here, local branch changes included.
+    config = Path.home() / ".cheese-environment/config.json"
+    if config.exists():
         # That config is the runner's own output, so a place that has one had a
         # runner: it going missing is a broken place, not an unprepared one, and
         # silently skipping would hand back a task directory whose dependencies
@@ -3957,10 +4047,223 @@ def _task_worktree(task_id: str) -> Path:
         runner = _environment_runner()
         if runner is None:
             raise SystemExit("[cheese] 这台机器的环境准备脚本不见了，任务目录没法准备")
-        result = subprocess.run([sys.executable, str(runner), "task", str(task_dir)])
-        if result.returncode:
-            raise SystemExit(result.returncode)
+        admin = Path(_git_task(task_dir, "rev-parse", "--absolute-git-dir"))
+        stamp = admin / _PREPARED_STAMP
+        # Read before the run: a dependency file changed while it installs is
+        # one this preparation may have missed, so the next open prepares again.
+        wanted = _prepared_from(task_dir, config)
+        if reinstall or not _still_prepared(task_dir, stamp, wanted):
+            stamp.unlink(missing_ok=True)
+            result = subprocess.run(
+                [sys.executable, str(runner), "task", str(task_dir)]
+            )
+            if result.returncode:
+                # Again: another open's run may have finished in between.
+                stamp.unlink(missing_ok=True)
+                raise SystemExit(result.returncode)
+            stamp.write_text(
+                json.dumps({"from": wanted, "made": _installed_dirs(task_dir)})
+            )
     return task_dir
+
+
+# In a task checkout's git directory, after the environment runner last
+# prepared the checkout and succeeded: `_prepared_from` as it was before that
+# run, and the installed directories there after it (`_installed_dirs`).
+_PREPARED_STAMP = "cheese-environment-prepared"
+
+
+#: What an install leaves behind, by directory name. Caches (`__pycache__`,
+#: `.pytest_cache`) are not: removing one is no reason to install again.
+_INSTALLED_DIRS = frozenset({"node_modules", ".venv", "venv", "vendor"})
+
+
+def _installed_dirs(task_dir: Path) -> list[str]:
+    """The installed directories the checkout does not track (`node_modules/`,
+    `backend/.venv/`), each named once at its top."""
+    listed = _git_task(
+        task_dir,
+        "ls-files",
+        "-z",
+        # Ignored or not: no exclude rules, so nothing is told apart.
+        "--others",
+        "--directory",
+        raw=True,
+    )
+    return sorted(
+        name
+        for name in listed.split("\0")
+        if name.endswith("/")
+        and name.rstrip("/").rsplit("/", 1)[-1] in _INSTALLED_DIRS
+    )
+
+
+def _still_prepared(task_dir: Path, stamp: Path, wanted: str) -> bool:
+    """Whether the last successful preparation was from `wanted`, and what it
+    left behind is all still there: a `rm -rf node_modules` or a `git clean
+    -xdf` since then prepares the checkout again."""
+    try:
+        last = json.loads(stamp.read_text())
+        return last["from"] == wanted and all(
+            (task_dir / name).is_dir() for name in last["made"]
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+# The files a project's dependencies are installed from, by name, wherever in
+# the tree they sit. Which of them a project's startup script reads is the
+# project's to know; a change to any one prepares the checkout again.
+_DEPENDENCY_FILES = (
+    # Python
+    "uv.lock",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "poetry.lock",
+    "pdm.lock",
+    "Pipfile",
+    "Pipfile.lock",
+    "requirements*.txt",
+    "requirements*.in",
+    "requirements/**",
+    "constraints*.txt",
+    "environment.yml",
+    "environment.yaml",
+    "conda-lock.yml",
+    "pixi.toml",
+    "pixi.lock",
+    ".python-version",
+    # JavaScript
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    ".yarnrc.yml",
+    "bun.lock",
+    "bun.lockb",
+    "deno.json",
+    "deno.jsonc",
+    "deno.lock",
+    ".npmrc",
+    ".nvmrc",
+    ".node-version",
+    # Other ecosystems
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "go.mod",
+    "go.sum",
+    "go.work",
+    "Gemfile",
+    "Gemfile.lock",
+    "composer.json",
+    "composer.lock",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+    "gradle.properties",
+    "*.csproj",
+    "Directory.Packages.props",
+    "packages.lock.json",
+    "flake.nix",
+    "flake.lock",
+    ".tool-versions",
+    "mise.toml",
+    ".mise.toml",
+    "*.patch",
+)
+
+
+def _prepared_from(task_dir: Path, config: Path) -> str:
+    """What a checkout's dependencies are prepared from: the environment the
+    room pinned (its scripts and variables), and each dependency file as it is
+    on disk, committed or not."""
+    digest = hashlib.sha256(config.read_bytes())
+    listed = _git_task(
+        task_dir,
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        *(f":(glob)**/{name}" for name in _DEPENDENCY_FILES),
+        raw=True,
+    )
+    for name in sorted(set(filter(None, listed.split("\0")))):
+        path = task_dir / name
+        digest.update(b"\0" + name.encode("utf-8", "surrogateescape") + b"\0")
+        digest.update(path.read_bytes() if path.is_file() else b"\0deleted")
+    return digest.hexdigest()
+
+
+def _opened_as_left(task_dir: Path, data: dict) -> bool:
+    """Whether opening the checkout from the forge would leave it as it is:
+    there, on the task's current branch, wired to the task's forge, and with
+    no platform snapshot waiting to come back into it."""
+    if not (task_dir / ".git").exists():
+        return False
+    try:
+        admin = Path(_git_task(task_dir, "rev-parse", "--absolute-git-dir"))
+        branch = _git_task(task_dir, "symbolic-ref", "--short", "HEAD")
+        remote = _git_task(task_dir, "config", "--get", "remote.origin.url")
+        _git_task(
+            task_dir,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"refs/remotes/origin/{data['base']}",
+        )
+    except RuntimeError:
+        return False
+    return (
+        branch == data["branch"]
+        and remote == data["remote"]
+        and not (admin / _RESTORE_PENDING).exists()
+    )
+
+
+def _open_from_forge(repo: Path, task_dir: Path, data: dict) -> None:
+    """Fetch the task's branches into `repo`, and make the task's checkout if
+    there is none. Its caller holds `<project>.lock`."""
+    _prepare_repository(repo, data)
+    # The commits, not every version of every file. A project's repo is
+    # mostly old blobs — measured on cheese's own: 195 MB whole, 9.6 MB
+    # this way — and all of that crossed the platform's backend on the way
+    # here, where one 169 MB fetch froze every other request for 3.7 s
+    # (2026-09-20). The whole history is still here, so `git log` and a
+    # diff against the base still work; a file's older contents are fetched
+    # if something actually reads them.
+    exists_on_forge = bool(
+        _git_task(repo, "ls-remote", "--heads", "origin", data["branch"])
+    )
+    refs = [data["base"]] + ([data["branch"]] if exists_on_forge else [])
+    for ref in refs:
+        _git_task(
+            repo,
+            "fetch",
+            "--filter=blob:none",
+            "origin",
+            f"refs/heads/{ref}:refs/remotes/origin/{ref}",
+        )
+    if (task_dir / ".git").exists():
+        return
+    existing = _git_task(repo, "branch", "--list", data["branch"])
+    create = [] if existing else ["-b", data["branch"]]
+    remote_start = data["branch"] if exists_on_forge else data["base"]
+    start = data["branch"] if existing else f"refs/remotes/origin/{remote_start}"
+    _git_task(repo, "worktree", "prune")
+    _git_task(repo, "worktree", "add", *create, str(task_dir), start)
+    # A checkout made here for the first time: this environment is new, and
+    # what the task had not pushed when its last one went away is in the
+    # platform's snapshot (`_restore_snapshot`).
+    admin = Path(_git_task(task_dir, "rev-parse", "--absolute-git-dir"))
+    (admin / _RESTORE_PENDING).write_text("")
 
 
 def _follow_task_branch(worktree: Path, data: dict) -> None:
@@ -4835,6 +5138,29 @@ def _has_work_to_sync(worktree: Path) -> bool:
         return True
 
 
+def _synced_already(task_id: str) -> bool:
+    """Whether the task's checkout here has nothing a sync would deliver or
+    back up (`_has_work_to_sync`), no platform snapshot still waiting to come
+    back into it, and is on the task's current branch.
+
+    The branch is the platform's to say: once a step lands the task moves on
+    to a new one, and the full sync carries the checkout over to it
+    (`_task_worktree`) and delivers there. One call, and no forge probe."""
+    worktree = _task_root() / task_id
+    if not (worktree / ".git").exists() or _has_work_to_sync(worktree):
+        return False
+    try:
+        admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
+        if (admin / _RESTORE_PENDING).exists():
+            return False
+        branch = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+    except RuntimeError:
+        return False
+    project = _need("CHEESE_PROJECT", PROJECT)
+    data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
+    return data["closed"] or data["branch"] == branch
+
+
 def _sync_all_tasks() -> None:
     root = _task_root()
     if not root.exists():
@@ -5204,6 +5530,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     pwork.add_argument("task_id", help="任务 UUID")
+    pwork.add_argument(
+        "--prepare",
+        action="store_true",
+        help="依赖文件没变也重新跑一遍项目的启动脚本",
+    )
     sub.add_parser(
         "checkout",
         help="准备项目默认分支的代码并输出路径",
@@ -5507,7 +5838,7 @@ def main() -> None:
     a = parser.parse_args()
 
     if a.cmd == "worktree":
-        print(_task_worktree(a.task_id))
+        print(_task_worktree(a.task_id, reinstall=a.prepare))
     elif a.cmd == "checkout":
         print(_checkout())
     elif a.cmd == "recover":
@@ -5517,7 +5848,13 @@ def main() -> None:
             _sync_all_tasks()
         else:
             task = _task_id(a.task)
-            _print_left_out(task, _sync_task(task))
+            # Run by hand right after a commit, whose own hook has just synced
+            # it, this used to ask the platform and probe the forge again to
+            # find nothing to do (dev, 10-12..10-17: 169 such calls, 5.2 s at
+            # the median). A checkout on the task's branch with nothing to
+            # deliver or back up is done after asking only for that branch.
+            if not _synced_already(task):
+                _print_left_out(task, _sync_task(task))
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)

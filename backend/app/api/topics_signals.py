@@ -66,6 +66,9 @@ async def live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> Sequence[Ca
     「还没结算」不在这里数——那张表是 `review/archive.py` 维护的，抄第二份就是
     让它们走散。
 
+    已关任务名下的卡也不在这一批里：活结束了，它的卡不再说明「此刻在走」，
+    挡在查询那一头（`review.repositories.list_recent_for_places`）——读的地方
+    不止一处，判据放一处。
     """
     if not room_ids:
         return []

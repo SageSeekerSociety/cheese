@@ -77,12 +77,14 @@ from app.domain.agent_instance.adapters import (
 )
 from app.domain.agent_instance.own import may_work_for
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.delivery.ledger import settle_card
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.machine import session_work
 from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
 from app.domain.project_permissions import Permission
+from app.domain.review.archive import close_cards_for_closed_task
 from app.domain.review.task_landing import tell_origin
 from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import dispatch as task_dispatch
@@ -174,7 +176,7 @@ async def list_room_tasks(
         branch=branch,
         latest=latest,
     )
-    return conditional_json(ok(page(items, len(items))), if_none_match)
+    return await conditional_json(ok(page(items, len(items))), if_none_match)
 
 
 @router.get("/{topic_id}/task")
@@ -201,7 +203,7 @@ async def task_related(
     return ok(await related_of(db, task))
 
 
-@router.post("/{topic_id}/opening")
+@router.post("/{topic_id}/opening", dependencies=[ROUTE_DECIDES])
 async def retry_opening(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -223,7 +225,7 @@ async def retry_opening(
     return ok({"opening": "drafting"})
 
 
-@router.post("/{topic_id}/close")
+@router.post("/{topic_id}/close", dependencies=[ROUTE_DECIDES])
 async def conclude_task(
     topic_id: uuid.UUID,
     body: ConclusionIn,
@@ -282,6 +284,12 @@ async def conclude_task(
         machines=checkout_sweep.sweep,
     )
     close_pr_after_commit(db, task)
+    # 活关掉了，它还没结算的卡跟着作废：卡不能比它挂着的活活得久。判据和归档
+    # 那条路共用（`review.archive`）；PR 怎么处置是上面 `task_pr` 的事，这里
+    # 只让审阅停下来。
+    await close_cards_for_closed_task(
+        db, task_id=task.id, by=actor.handle, settle_card=settle_card
+    )
     # The task's own conversation hears how it ended, and so does the
     # discussion it came from; the channel's card for it updates in place.
     ended = (
@@ -343,7 +351,7 @@ class TaskUpdateIn(BaseModel):
     contributor_handles: list[str] | None = Field(default=None, max_length=50)
 
 
-@router.post("/{topic_id}/tasks")
+@router.post("/{topic_id}/tasks", dependencies=[ROUTE_DECIDES])
 async def create_task(
     topic_id: uuid.UUID,
     body: TaskCreateIn,
@@ -376,7 +384,7 @@ async def create_task(
     return ok(out)
 
 
-@router.patch("/{topic_id}/task")
+@router.patch("/{topic_id}/task", dependencies=[ROUTE_DECIDES])
 async def update_task(
     topic_id: uuid.UUID,
     body: TaskUpdateIn,

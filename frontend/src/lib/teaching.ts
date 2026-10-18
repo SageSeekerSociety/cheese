@@ -15,7 +15,7 @@ export type TeachingDraft = {
   allowedTopics: string
   avoidInCode: string
   materialIds: string
-  knowledgeIds: string
+  documentIds: string
 }
 
 export function emptyTeachingDraft(): TeachingDraft {
@@ -25,7 +25,7 @@ export function emptyTeachingDraft(): TeachingDraft {
     allowedTopics: '',
     avoidInCode: '',
     materialIds: '',
-    knowledgeIds: '',
+    documentIds: '',
   }
 }
 
@@ -37,7 +37,7 @@ export function draftFromConfig(config?: SpaceTeaching | null): TeachingDraft {
     allowedTopics: (config?.allowedTopics ?? []).join(', '),
     avoidInCode: (config?.avoidInCode ?? []).join(', '),
     materialIds: (config?.materialIds ?? []).join(', '),
-    knowledgeIds: (config?.knowledgeIds ?? []).join(', '),
+    documentIds: (config?.documentIds ?? []).join(', '),
   }
 }
 
@@ -65,7 +65,7 @@ export function buildTeaching(draft: TeachingDraft): SpaceTeaching {
     allowedTopics: splitList(draft.allowedTopics),
     avoidInCode: splitList(draft.avoidInCode),
     materialIds: splitIds(draft.materialIds),
-    knowledgeIds: splitIds(draft.knowledgeIds),
+    documentIds: splitList(draft.documentIds),
   }
 }
 
@@ -83,6 +83,6 @@ export function isTeachingBlank(teaching?: SpaceTeaching | null): boolean {
     (teaching.allowedTopics?.length ?? 0) === 0 &&
     (teaching.avoidInCode?.length ?? 0) === 0 &&
     (teaching.materialIds?.length ?? 0) === 0 &&
-    (teaching.knowledgeIds?.length ?? 0) === 0
+    (teaching.documentIds?.length ?? 0) === 0
   )
 }

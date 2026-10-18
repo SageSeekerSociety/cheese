@@ -42,8 +42,6 @@ MISMATCH = "mismatch"
 UNCERTAIN = "uncertain"
 INSUFFICIENT = "insufficient"
 
-_RANK = {MATCH: 0, INSUFFICIENT: 1, UNCERTAIN: 2, MISMATCH: 3}
-
 
 def _admission_conflict(
     admission: AdmissionReading | None,

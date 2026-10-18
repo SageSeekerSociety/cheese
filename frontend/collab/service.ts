@@ -48,10 +48,13 @@ import {
 import { deriveKey, verifyBearer, verifyTicket } from './auth'
 import { Backend, BackendError } from './backend'
 import { applyEdits, type Edit, type EditMode, writeNode } from './edit'
+import { suggestOnlyProblem } from './suggestGuard'
 import { checkMarkdownWrite } from './writeCheck'
 
 export interface CollabConfig {
   port: number
+  /** The address to listen on; every interface when not given. */
+  address?: string
   /** The backend's base URL, as this service reaches it. */
   backendUrl: string
   /** Shared with the backend's COLLAB_SECRET. */
@@ -71,7 +74,13 @@ export interface CollabConfig {
 interface Context {
   handle: string
   agent: boolean
+  /** Writes only suggestions of their own (./suggestGuard.ts). */
+  suggestOnly: boolean
 }
+
+// y-protocols/sync message types that carry an update.
+const SYNC_STEP_2 = 1
+const SYNC_UPDATE = 2
 
 export function createCollabServer(config: CollabConfig): Server {
   const ticketKey = deriveKey(config.secret, 'ticket')
@@ -143,7 +152,7 @@ export function createCollabServer(config: CollabConfig): Server {
       const ticket = verifyTicket(token, ticketKey)
       if (ticket.doc !== documentName) throw new Error('the ticket opens another document')
       connectionConfig.readOnly = ticket.ro
-      const context: Context = { handle: ticket.sub, agent: ticket.agent }
+      const context: Context = { handle: ticket.sub, agent: ticket.agent, suggestOnly: !ticket.ro && !!ticket.sg }
       return context
     },
 
@@ -155,6 +164,15 @@ export function createCollabServer(config: CollabConfig): Server {
       for (const state of states.values()) {
         state.user = { ...(state.user ?? {}), handle: who.handle, agent: who.agent }
       }
+    },
+
+    // A suggest-only connection's update is applied only when it is nothing but
+    // the sender's own suggestions; otherwise the server acknowledges it as
+    // refused, the way it does a read-only connection's.
+    async beforeSync({ type, payload, document, connection, context }) {
+      const who = context as Context | undefined
+      if (!who?.suggestOnly || (type !== SYNC_STEP_2 && type !== SYNC_UPDATE)) return
+      connection.readOnly = suggestOnlyProblem(document, payload, who.handle) !== null
     },
 
     async onLoadDocument({ document, documentName }) {
@@ -347,6 +365,8 @@ export function createCollabServer(config: CollabConfig): Server {
 
   return new Server({
     port: config.port,
+    // Absent rather than undefined, which would replace Hocuspocus's own default.
+    ...(config.address ? { address: config.address } : {}),
     quiet: config.quiet ?? false,
     debounce: config.debounceMs ?? 3000,
     maxDebounce: config.maxDebounceMs ?? 30000,

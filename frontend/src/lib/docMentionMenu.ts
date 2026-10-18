@@ -1,4 +1,4 @@
-// 文档里的 @ 和 #：打 @ 挑一个人，打 # 挑一个话题。写进正文的是引用本身
+// 文档里的 @ 和 #：打 @ 挑一个人，打 # 挑一个频道或一份文档。写进正文的是引用本身
 // （`<@账号>`、`<#话题编号>`，lib/refChip.ts），画出来是带名字的标签
 // （lib/tokenChips.ts 的 createTokenChips）。
 //
@@ -59,6 +59,40 @@ export function topicItems(topics: Topic[], query: string): RefItem[] {
       agent: false,
       token: `<#${tp.id}>`,
     }))
+}
+
+/** 一份能被引用的文档：编号、标题和最近改动的时间（文档本身的 id 写进引用）。 */
+export interface LinkableDocument {
+  id: string
+  title: string | null
+  updated_at?: string | null
+}
+
+/** 打 # 时的文档候选，按标题搜。只列读的人能读的（宿主给进来的就是）。 */
+export function documentItems(docs: LinkableDocument[], query: string, exclude?: string | null): RefItem[] {
+  const q = query.toLowerCase()
+  return docs
+    .filter((d) => d.id !== exclude && (d.title || t('work.room.doc.untitled')).toLowerCase().includes(q))
+    .slice(0, LIMIT)
+    .map((d) => ({
+      label: d.title || t('work.room.doc.untitled'),
+      kind: 'document',
+      insert: d.id,
+      sub: '',
+      agent: false,
+      token: `<#${d.id}>`,
+    }))
+}
+
+/** 打 # 时的全部候选：频道一组、文档一组。两组都有时才写组名。 */
+export function hashItems<T extends MentionItem>(topics: T[], docs: T[]): T[] {
+  if (!topics.length || !docs.length) return [...topics, ...docs]
+  const channel = t('work.room.mention.channelGroup')
+  const doc = t('work.room.mention.docGroup')
+  return [
+    ...topics.slice(0, 4).map((i) => ({ ...i, group: channel })),
+    ...docs.slice(0, 5).map((i) => ({ ...i, group: doc })),
+  ]
 }
 
 export interface RefMenuHandlers {

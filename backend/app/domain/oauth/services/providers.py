@@ -30,6 +30,7 @@ from urllib.parse import urlencode
 import httpx
 
 from app.core.errors import BadRequestError
+from app.core.github_headers import github_headers
 
 
 @dataclass
@@ -119,10 +120,7 @@ class GitHubProvider(OAuthProvider):
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/vnd.github+json",
-                },
+                headers=github_headers(access_token),
             )
             resp.raise_for_status()
             data = resp.json()
@@ -133,10 +131,7 @@ class GitHubProvider(OAuthProvider):
             email = None
             email_resp = await client.get(
                 "https://api.github.com/user/emails",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/vnd.github+json",
-                },
+                headers=github_headers(access_token),
             )
             if email_resp.status_code == 200:
                 primary = next(

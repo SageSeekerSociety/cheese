@@ -36,7 +36,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent import model_connections
-from app.domain.agent.device_hub import DeviceOffline, device_hub
+from app.domain.agent.device_hub import DeviceOffline, HubScreen, device_hub
 from app.domain.agent.harness.claude_code import executor_launch, owner_login
 from app.domain.agent_instance import account_connections
 from app.domain.agent_instance.own import rename_for_connection
@@ -59,14 +59,25 @@ async def _require_user(resolver: ActorResolverDep) -> int:
     return actor.user_id
 
 
-async def _device_screens(db: AsyncSession, device_id: str) -> list[dict[str, Any]]:
-    """The device's currently-open screens (agents), for the UI to open their 现场,
-    each with the name its agent goes by."""
+def _screens_by_device() -> dict[str, list[HubScreen]]:
+    """Every online screen on the platform, grouped by its device: one pass over
+    the hub per request, so a list of N devices does not scan it N times."""
+
+    by_device: dict[str, list[HubScreen]] = {}
+    for screen in device_hub.all_online_screens():
+        by_device.setdefault(screen.device_id, []).append(screen)
+    return by_device
+
+
+async def _device_screens(
+    db: AsyncSession, screens: list[HubScreen]
+) -> list[dict[str, Any]]:
+    """One device's currently-open screens (agents), already picked out by
+    ``_screens_by_device``, for the UI to open their 现场, each with the name its
+    agent goes by."""
 
     out: list[dict[str, Any]] = []
-    for screen in device_hub.all_online_screens():
-        if screen.device_id != device_id:
-            continue
+    for screen in screens:
         out.append(
             {
                 "sid": screen.sid,
@@ -82,7 +93,9 @@ async def _device_screens(db: AsyncSession, device_id: str) -> list[dict[str, An
     return out
 
 
-async def _device_view(db: AsyncSession, device: Device) -> dict[str, Any]:
+async def _device_view(
+    db: AsyncSession, device: Device, screens: list[HubScreen]
+) -> dict[str, Any]:
     # A device is pure compute — no ``agent_handle`` here. The agents actually running
     # on it are the per-screen entries (each carries its own agent), surfaced below.
     return {
@@ -96,7 +109,7 @@ async def _device_view(db: AsyncSession, device: Device) -> dict[str, Any]:
         "last_seen_at": device.last_seen_at.isoformat()
         if device.last_seen_at
         else None,
-        "screens": await _device_screens(db, device.device_id),
+        "screens": await _device_screens(db, screens),
     }
 
 
@@ -107,9 +120,10 @@ async def my_devices(
     """List the devices the logged-in human owns, with liveness + their open agents."""
     user_id = await _require_user(resolver)
     devices = await service.list_owned(user_id)
+    by_device = _screens_by_device()
     views = []
     for device in devices:
-        view = await _device_view(db, device)
+        view = await _device_view(db, device, by_device.get(device.device_id, []))
         # Whether its owner's own Claude Code is logged in there for the
         # platform (#2991): the owner's to see, not the team's. Only a machine
         # they enrolled themselves runs it; a cloud machine says nothing.
@@ -239,7 +253,7 @@ async def remove_account_connection(
     return removed
 
 
-@router.post("/my/devices/{device_id}/claude-code")
+@router.post("/my/devices/{device_id}/claude-code", dependencies=[ROUTE_DECIDES])
 async def check_my_claude_code(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
 ) -> dict[str, Any] | None:
@@ -355,7 +369,7 @@ async def check_my_sandbox(
     return sandbox.status(await service.sandbox_check(device_id))
 
 
-@router.patch("/my/devices/{device_id}")
+@router.patch("/my/devices/{device_id}", dependencies=[ROUTE_DECIDES])
 async def rename_my_device(
     device_id: str,
     body: RenameDeviceRequest,
@@ -366,10 +380,10 @@ async def rename_my_device(
     """Rename a device the caller owns (the service enforces ownership)."""
     user_id = await _require_user(resolver)
     device = await service.rename_owned(device_id, body.name, actor_user_id=user_id)
-    return await _device_view(db, device)
+    return await _device_view(db, device, _screens_by_device().get(device_id, []))
 
 
-@router.delete("/my/devices/{device_id}")
+@router.delete("/my/devices/{device_id}", dependencies=[ROUTE_DECIDES])
 async def unbind_my_device(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep
 ) -> dict[str, Any]:
@@ -379,7 +393,7 @@ async def unbind_my_device(
     return {"deleted": True, "device_id": device_id}
 
 
-@router.post("/my/devices/{device_id}/teams")
+@router.post("/my/devices/{device_id}/teams", dependencies=[ROUTE_DECIDES])
 async def register_device_for_team(
     device_id: str,
     body: BindTeamRequest,
@@ -398,7 +412,11 @@ async def register_device_for_team(
         raise ForbiddenError(say("deviceTeamMemberOnly"))
     await service.assign_to_team(device_id, body.team_id, actor_user_id=user_id)
     device = await service.get_hosted_device(device_id)
-    return await _device_view(db, device)  # type: ignore[arg-type]
+    return await _device_view(
+        db,
+        device,  # type: ignore[arg-type]
+        _screens_by_device().get(device_id, []),
+    )
 
 
 @router.get("/teams/{team_id}/devices")
@@ -429,10 +447,11 @@ async def team_devices(
     users = await device_users(
         db, [d.device_id for d in devices if d.owner_user_id == user_id]
     )
+    by_device = _screens_by_device()
     return {
         "devices": [
             {
-                **await _device_view(db, d),
+                **await _device_view(db, d, by_device.get(d.device_id, [])),
                 "attached_projects": [
                     {"id": str(p), "name": names[p]}
                     for p in d.project_ids
@@ -445,7 +464,7 @@ async def team_devices(
     }
 
 
-@router.delete("/my/devices/{device_id}/teams/{team_id}")
+@router.delete("/my/devices/{device_id}/teams/{team_id}", dependencies=[ROUTE_DECIDES])
 async def unregister_device_from_team(
     device_id: str,
     team_id: int,
@@ -459,4 +478,4 @@ async def unregister_device_from_team(
     device = await service.get_hosted_device(device_id)
     if device is None:
         raise NotFoundError(say("deviceNotFound"))
-    return await _device_view(db, device)
+    return await _device_view(db, device, _screens_by_device().get(device_id, []))

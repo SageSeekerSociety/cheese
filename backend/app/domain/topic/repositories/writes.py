@@ -14,10 +14,13 @@ from typing import TYPE_CHECKING
 from sqlalchemy import case, func, select
 from sqlalchemy.sql import Select
 
-from app.domain.project.address import Numbered, take_number
-from app.domain.project.environment import project_environment
-from app.domain.project.models import Project
-from app.domain.topic.models import Topic, TopicKind, TopicMembership
+from app.domain.topic.models import (
+    Topic,
+    TopicKind,
+    TopicMembership,
+    new_private_chat,
+    private_chat,
+)
 
 if TYPE_CHECKING:
     from app.domain.topic import repositories as pkg
@@ -27,17 +30,21 @@ async def add(
     repo: pkg.TopicRepository,
     *,
     project_id: uuid.UUID,
+    number: int,
+    environment: dict,
     title: str,
     parent_id: uuid.UUID | None = None,
     kind: TopicKind = TopicKind.topic,
     created_by: str | None = None,
     upgraded_from_block_id: uuid.UUID | None = None,
 ) -> Topic:
-    project = await repo._session.get(Project, project_id)
+    """``number`` and ``environment`` are the project's to hand out: the counter
+    row and the settings snapshot belong to `project`, and reading them from
+    here made the two packages a cycle."""
     topic = Topic(
         project_id=project_id,
-        number=await take_number(repo._session, project_id, Numbered.channel),
-        environment=project_environment(project.settings if project else None),
+        number=number,
+        environment=environment,
         title=title,
         parent_id=parent_id,
         kind=kind,
@@ -88,6 +95,7 @@ async def get_or_create_private(
     owner: str,
     peer: str,
     title: str,
+    environment: dict,
 ) -> Topic:
     """The 1:1 private conversation between ``owner`` and ``peer`` in this
     project, created with ``title`` if it does not exist yet.
@@ -129,7 +137,7 @@ async def get_or_create_private(
         select(Topic)
         .where(
             Topic.project_id == project_id,
-            Topic.is_private.is_(True),
+            private_chat(),
             Topic.id.in_(seats(owner)),
             Topic.id.in_(seats(peer)),
         )
@@ -138,14 +146,12 @@ async def get_or_create_private(
     existing = (await repo._session.scalars(stmt)).first()
     if existing is not None:
         return existing
-    project = await repo._session.get(Project, project_id)
-    topic = Topic(
+    topic = new_private_chat(
         project_id=project_id,
-        environment=project_environment(project.settings if project else None),
+        environment=environment,
         title=title,
         kind=TopicKind.topic,
         created_by=owner,
-        is_private=True,
     )
     repo._session.add(topic)
     await repo._session.flush()

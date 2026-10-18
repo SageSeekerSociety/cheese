@@ -58,10 +58,20 @@ def _forget_misses_between_tests():
     pr_poll._transient_misses.clear()
 
 
+class _Rows:
+    """The tick's one query before it fans out: no closed task holds a card."""
+
+    def all(self) -> list:
+        return []
+
+
 class _Session:
     async def commit(self) -> None: ...
 
     async def rollback(self) -> None: ...
+
+    async def scalars(self, _statement: object) -> _Rows:
+        return _Rows()
 
 
 def _poller(monkeypatch, failure: Exception) -> tuple[SimpleNamespace, dict]:

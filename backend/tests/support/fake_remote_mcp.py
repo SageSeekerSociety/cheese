@@ -100,6 +100,8 @@ class Fake:
                 "revocation_endpoint": f"{self.base}/revoke",
                 "code_challenge_methods_supported": ["S256"],
                 "grant_types_supported": ["authorization_code", "refresh_token"],
+                # RFC 9207: every authorization response names this server.
+                "authorization_response_iss_parameter_supported": True,
             }
         )
 

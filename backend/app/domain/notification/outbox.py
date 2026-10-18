@@ -121,7 +121,15 @@ class ChannelIntentHandler:
             )
 
 
-async def drain_channel(sessions, *, channel, batch_size, max_attempts):
+async def drain_channel(sessions, *, channel, sender, batch_size, max_attempts):
+    """Claim rows of one channel and hand each to that channel's ``sender``.
+
+    ``sender`` is ``async (sessions, item) -> int``: the count it answers is the
+    ones this delivery retired for good (a push row whose subscriptions are all
+    gone), which lands in ``expired``. The outbox sits below ``maintenance`` and
+    ``push_delivery``; taking the driver as an argument is what lets it stay
+    there instead of importing the two senders back.
+    """
     if channel not in ("email", "push"):
         raise ValueError("Unknown notification channel")
     counts = {"processed": 0, "retried": 0, "dead_lettered": 0, "expired": 0}
@@ -185,16 +193,7 @@ async def drain_channel(sessions, *, channel, batch_size, max_attempts):
         heartbeat = asyncio.create_task(renew())
         failure = None
         try:
-            if channel == "email":
-                # deferred-import: cycle notification.maintenance -> notification.outbox
-                from app.domain.notification.maintenance import send_email
-
-                await send_email(sessions, payload)
-            else:
-                # deferred-import: tests patch app.domain.notification.push_delivery
-                from app.domain.notification.push_delivery import send_push
-
-                counts["expired"] += await send_push(sessions, payload)
+            counts["expired"] += await sender(sessions, payload)
         except Exception as exc:
             failure = f"{type(exc).__name__}: {exc}"[:1000]
         finally:

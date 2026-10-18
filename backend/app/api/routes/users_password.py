@@ -35,7 +35,6 @@ APIRouter(prefix="/users", tags=["Users"]) is all it takes.
 """
 
 import logging
-import re
 import uuid
 from typing import Annotated
 
@@ -47,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_user_auth_service
 from app.api.response import ok
 from app.api.users_deps import _spend_sudo_ticket
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose, get_current_session_id
@@ -54,6 +54,7 @@ from app.core import email as core_email
 from app.core.background import spawn
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
+from app.core.email import EMAIL_FORMAT
 from app.core.errors import ForbiddenError, UnprocessableEntityError
 from app.db.session import get_db
 from app.domain.user.login_security import PasswordResetService
@@ -140,6 +141,7 @@ async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
 @router.post(
     "/recover/password/request",
     summary="Request password recovery",
+    dependencies=[ROUTE_DECIDES],
 )
 async def recover_password_request(
     payload: ForgotPasswordRequest,
@@ -148,8 +150,7 @@ async def recover_password_request(
 ) -> dict:
     email = payload.email.strip()
 
-    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    if not re.match(email_regex, email):
+    if not EMAIL_FORMAT.match(email):
         raise UnprocessableEntityError("Invalid email address format")
 
     # The quota is spent before the account is looked up, so it counts unknown
@@ -177,6 +178,7 @@ async def recover_password_request(
 @router.post(
     "/recover/password/verify",
     summary="Verify password recovery token",
+    dependencies=[ROUTE_DECIDES],
 )
 async def recover_password_verify(
     payload: ResetPasswordRequest,
@@ -208,8 +210,7 @@ async def recover_password_verify(
 
 
 @router.patch(
-    "/{userId}/password",
-    summary="Change password",
+    "/{userId}/password", summary="Change password", dependencies=[ROUTE_DECIDES]
 )
 async def change_password(
     user_id: Annotated[int, Path(ge=0, alias="userId")],

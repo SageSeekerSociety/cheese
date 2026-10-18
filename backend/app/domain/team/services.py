@@ -344,6 +344,10 @@ class TeamService:
         """Return raw membership records for a team."""
         return await self._repo.list_members_of_team(team_id=team_id)
 
+    async def list_teams_of_user(self, user_id: int) -> list[Team]:
+        """Every team ``user_id`` is in, their personal team included."""
+        return list(await self._repo.list_teams_of_user(user_id=user_id))
+
     async def is_team_member(self, team_id: int, user_id: int) -> bool:
         return await self._repo.is_team_member(team_id, user_id)
 

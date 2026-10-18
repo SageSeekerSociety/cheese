@@ -31,6 +31,7 @@ import { refusalText } from '../lib/noticeText'
 import { myHandle } from '../me'
 
 import { useDocCollab } from './useDocCollab'
+import { useDocLinks } from './useDocLinks'
 import { useMentionOutside } from './useMentionOutside'
 
 import { t } from '@/i18n'
@@ -153,6 +154,13 @@ export function usePanelDoc(props: PanelDocProps) {
   function toggleEditable() {
     if (collab.readOnly.value) return
     wantsEditable.value = !wantsEditable.value
+  }
+
+  // 建议模式（修订）：自己切的；只能提建议的人（导师）一直在里面。
+  const wantsSuggesting = ref(false)
+  const suggesting = computed(() => collab.suggestOnly.value || wantsSuggesting.value)
+  function setSuggesting(on: boolean) {
+    wantsSuggesting.value = on
   }
 
   /** 文档的节点树：正文里那些段落在服务端那一侧的身份（id、出自哪一次活）。 */
@@ -318,11 +326,19 @@ export function usePanelDoc(props: PanelDocProps) {
     if (id && reasonsWanted) void loadSuggestionReasons(id).catch(() => {})
   })
 
+  const links = useDocLinks({
+    projectId: () => props.document?.projectId ?? props.topic?.project_id ?? null,
+    documentId: () => documentId.value,
+  })
+
   onBeforeUnmount(() => {
     disposed = true
   })
 
   return {
+    // 文档之间的链接：打 # 能引用的，和引用了它的地方
+    linkable: links.linkable,
+    backlinks: links.backlinks,
     // 协同文档
     session: collab.session,
     connection: collab.connection,
@@ -331,6 +347,8 @@ export function usePanelDoc(props: PanelDocProps) {
     renames: collab.renames,
     peers: collab.peers,
     readOnly: collab.readOnly,
+    suggestOnly: collab.suggestOnly,
+    suggesting,
     // 这一篇现在是什么状态
     editable,
     loading,
@@ -370,6 +388,7 @@ export function usePanelDoc(props: PanelDocProps) {
       return did ? (await getDocumentAbout(did)).title ?? '' : null
     },
     toggleEditable,
+    setSuggesting,
     setError,
     fetchDocNodes,
     imageSrc,

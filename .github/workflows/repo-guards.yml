@@ -67,10 +67,12 @@ jobs:
           python3 .claude/scripts/check-migration-safety.py --self-test
           python3 .claude/scripts/check-file-sizes.py --self-test
           python3 .claude/scripts/check-doc-references.py --self-test
+          python3 backend/tests/unit/test_check_review_artifacts.py
           python3 .claude/scripts/check-manual-anchors.py --self-test
           python3 .claude/scripts/scene-ratchet.py --self-test
           python3 .claude/scripts/frontend_grade.py --self-test
           python3 .claude/scripts/catalog-ratchet.py --self-test
+          python3 .claude/scripts/verify-guard-self-tests.py --self-test
           python3 .claude/scripts/check-guard-wired.py --self-test
 
       # Two tree guards the pre-commit list does not carry. A hook in
@@ -87,13 +89,11 @@ jobs:
       # to its peers, and a later edit that drops either line still leaves the
       # question asked.
       #
-      # check-seam-tests.py is deliberately NOT here, and neither is its
-      # self-test in the collection below: the guard is red on the tree at
-      # origin/main — two split tests use the shape its hint would have them
-      # rewrite away, and one of them walks into a ClassDef on purpose — so a
-      # step here would fail on every commit until those tests are rewritten.
-      # check-guard-wired.py names it in ON_DEMAND with that reason, and that
-      # entry goes red the moment this line comes back.
+      # check-seam-tests.py is deliberately NOT given a step of its own: #4082
+      # rewrote the two split tests it used to reject, so the guard is green and
+      # out of ON_DEMAND, and its self-test is now collected by the CI helper
+      # tests step below — a lane that asserts the tree is clean, which is the
+      # same question a step here would ask, minus a second process.
       - name: i18n lists and every guard is wired
         run: |
           python3 .claude/scripts/check-i18n-lists.py
@@ -167,9 +167,10 @@ jobs:
       #     in Guards self-test;
       #   * the self-test of every guard check-guard-wired.py excuses, read from
       #     that guard rather than written out here: a guard with no lane to run
-      #     in has no lane for its self-test either, and test_check_seam_tests.py
-      #     asserts the repository is clean, so collecting it would report the
-      #     exemption as a failure of this step. One list, both sides;
+      #     in has no lane for its self-test either. One list, both sides. An
+      #     entry deleted from ON_DEMAND takes its self-test out of this skip
+      #     along with it, which is how check-seam-tests.py's came back when
+      #     #4082 made that guard green;
       #   * the two that need an install this job does not have, both of them
       #     found red by the first full run of this step. test_scene_debt_ratchet.py
       #     shells out to a node scan and needs frontend/node_modules; its lane
@@ -247,6 +248,18 @@ jobs:
           raise SystemExit(0 if result.wasSuccessful() else 1)
           PYEOF
 
+      # The step above runs each guard's --self-test and trusts the result.
+      # This one checks that trust: a guard whose self-test always prints PASS
+      # is green on every tree, and that is the failure mode the guards exist
+      # to prevent. It silences a copy of each guard and requires its self-test
+      # to go red. It runs through pre-commit like the tree guards below, so a
+      # developer's commit and this job run the same hook with the same
+      # allowance (scene-debt-ratchet.py: its self-test judges the guard in
+      # another process, and needs frontend/node_modules, which this job does
+      # not install — frontend.yml runs that self-test where the install is).
+      - name: Guard self-tests bite
+        run: uvx pre-commit run --all-files guard-self-tests
+
       # Run through pre-commit rather than calling the scripts directly, so
       # this job and a developer's commit are the same list by construction.
       # The guards' own --self-test above still calls them directly: that step
@@ -270,6 +283,13 @@ jobs:
       # no network — 21 documents, paths matched in them, under a second.
       - name: Agent docs name paths and sections that exist
         run: uvx pre-commit run --all-files doc-references
+
+      # Same reason as the step above: no product suite reads the review
+      # artifacts, so without a named step here the hook would only guard a
+      # developer's commit. Reads a handful of Markdown notes and a directory
+      # listing — no database, no network, well under a second.
+      - name: Review artifacts are cited by a review note
+        run: uvx pre-commit run --all-files review-artifacts
 
       # The remote-tracking ref has to exist for the comparison; a PR checkout
       # does not create it. So does the HISTORY behind it, and that is the part

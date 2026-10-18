@@ -13,7 +13,8 @@
       "decide": "Awaiting your decision",
       "read": "Change alert",
       "invited": "Awaiting your reply",
-      "joinRequest": "Awaiting your approval"
+      "joinRequest": "Awaiting your approval",
+      "allow": "Needs your permission"
     },
     "markRead": "Mark as read",
     "answerLabel": "Write your decision",
@@ -35,12 +36,19 @@
       "ADMIN": "admin",
       "OWNER": "owner",
       "mentor": "mentor"
+    },
+    "mcpRun": {
+      "title": "Run the MCP server {server} on your device {device}",
+      "from": "From the project's {file}, last changed by {name}",
+      "once": "Once allowed, this command is not asked about again; you are asked again if it changes",
+      "allow": "Allow",
+      "refuse": "Don't allow",
+      "added": "Added by {name} in project settings"
     }
   },
   "nav": {
     "teamProjects": "Projects",
     "teamMembers": "Members",
-    "teamKnowledge": "Knowledge base",
     "teamCompute": "Devices",
     "newTeam": "Create or join a team",
     "teamActions": "Team actions",
@@ -65,6 +73,7 @@
     "disbandTeamBody": "Every member leaves the team and this can't be undone. Archive all of the team's projects first; after the team is disbanded, only their owners and external members can still see them.",
     "disbandTeamDone": "Disbanded “{name}”",
     "disbandTeamFailed": "Couldn't disband the team",
-    "disbandTeamTypeName": "Type the team name “{name}” to confirm"
+    "disbandTeamTypeName": "Type the team name “{name}” to confirm",
+    "teamDocs": "Documents"
   }
 }

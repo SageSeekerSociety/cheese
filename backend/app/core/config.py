@@ -775,17 +775,19 @@ class Settings(BaseSettings, SandboxSettings):
     cloud_sandbox_background_cap_s: int = Field(default=3600, ge=0, le=7 * 86400)
     # Pre-scale: when the free slots of the pool's live hosts fall below this,
     # the pool sweep claims (or creates) the next host before anyone waits on it.
-    cloud_pool_min_free_slots: int = Field(default=2, ge=0, le=64)
+    # The default host (four cores, 16 GiB, 40 GB) runs four sandboxes, so the
+    # floor is one host's worth: the next host is under way once fewer than four
+    # slots are free, instead of only once the pool is full. A deployment that
+    # creates a different host size sets this to that host's capacity.
+    cloud_pool_min_free_slots: int = Field(default=4, ge=0, le=64)
     # How long a host that has no sandbox on it is kept before it is released.
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
-    # The most hosts the pool holds at once. It
-    # protects the MicroCloud cluster; a session that finds the pool full is told
-    # capacity is tight and to try later. Thirty hosts are a hundred and twenty
-    # sandbox slots, and their disks written full are 1.2 TB: the cluster's
-    # shared thin pool is what has to hold them, so this rises only with the
-    # storage behind it. (At ten, whose 400 GB did fit, the pool had 464 GB
-    # free — 2026-10-06.)
-    cloud_pool_max_hosts: int = Field(default=30, ge=1, le=500)
+    # The most hosts the pool holds at once. It protects the MicroCloud cluster;
+    # a session that finds the pool full is told capacity is tight and to try
+    # later. The current cluster supports ten hosts, forty standard sandbox
+    # slots, within its 400 GB shared thin pool. Raise this only when the
+    # storage behind it grows.
+    cloud_pool_max_hosts: int = Field(default=10, ge=1, le=500)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
@@ -1068,10 +1070,10 @@ class Settings(BaseSettings, SandboxSettings):
     # there. Configurable so a fork or a second deployment is not a code change.
     ratchet_repository: str = "SageSeekerSociety/cheese"
     #: How often the backend pulls new `ratchet-snapshot` artifacts. The page
-    #: reads the table and never GitHub, so this clock is what makes a merge
-    #: visible there; 0 disables the pull and leaves the table as it stands.
-    #: 15 minutes is the design's interval — one listing call per tick, and a
-    #: merge does not need to appear faster than a person can read the page.
+    #: reads the table and never GitHub, so this clock is what makes a new
+    #: collection visible there; 0 disables the pull and leaves the table as it
+    #: stands. 15 minutes is the design's interval — one listing call per tick,
+    #: and a collection does not need to appear faster than a person reads.
     ratchet_ingest_interval_s: int = 900
     #: How many points the page draws. A bound on one response, and the window
     #: the direction is computed over; the archive keeps everything.

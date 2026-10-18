@@ -23,8 +23,8 @@ from app.api.place import (
 )
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
-from app.api.room_task_rows import project_task_rows
-from app.api.write_access import CHEESE_ONLY_IN_PROJECT
+from app.api.room_task_rows import incomplete_tasks, project_task_rows
+from app.api.write_access import CHEESE_ONLY_IN_PROJECT, ROUTE_DECIDES
 from app.auth.project_access import may_read_project
 from app.auth.project_roles import Standing, is_owner, may, standing, standings_in
 from app.core.config import settings
@@ -225,7 +225,7 @@ async def resource_limits() -> dict:
     return ok({"max_concurrent_turns": settings.max_concurrent_turns})
 
 
-@router.post("")
+@router.post("", dependencies=[ROUTE_DECIDES])
 async def create_project(
     body: ProjectCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -533,9 +533,14 @@ async def list_project_tasks(
             me=actor.handle or "",
             accepted=accepted,
         )
-        items = await project_task_rows(db, chat, actor.handle or "", tasks)
+        incomplete = await incomplete_tasks(
+            db, [t.id for t in tasks if t.status == "open"]
+        )
+        items = await project_task_rows(
+            db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
+        )
         last = page_rows[-1] if page_rows and has_more else None
-        return conditional_json(
+        return await conditional_json(
             ok(
                 {
                     **page(items, len(items)),
@@ -549,8 +554,11 @@ async def list_project_tasks(
     tasks = await TaskService(db).list_in_project(
         project_id, accepted=accepted, rooms=seen, status=status
     )
-    items = await project_task_rows(db, chat, actor.handle or "", tasks)
-    return conditional_json(ok(page(items, len(items))), if_none_match)
+    incomplete = await incomplete_tasks(db, [t.id for t in tasks if t.status == "open"])
+    items = await project_task_rows(
+        db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
+    )
+    return await conditional_json(ok(page(items, len(items))), if_none_match)
 
 
 def _task_cursor(before: str | None) -> tuple[datetime, uuid.UUID] | None:
@@ -739,7 +747,7 @@ async def get_forge_attribution(
     )
 
 
-@router.put("/{project_id}/forge-attribution")
+@router.put("/{project_id}/forge-attribution", dependencies=[ROUTE_DECIDES])
 async def save_forge_attribution(
     project_id: uuid.UUID,
     body: ForgeAttributionUpdate,
@@ -780,7 +788,7 @@ async def get_task_naming(
     )
 
 
-@router.put("/{project_id}/task-naming")
+@router.put("/{project_id}/task-naming", dependencies=[ROUTE_DECIDES])
 async def set_task_naming(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -848,7 +856,7 @@ async def _project_owner(
     raise NotFoundError("Project not found")
 
 
-@router.post("/{project_id}/archive")
+@router.post("/{project_id}/archive", dependencies=[ROUTE_DECIDES])
 async def archive_project(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -876,7 +884,7 @@ async def archive_project(
     return ok(await _project_payload(db, project))
 
 
-@router.post("/{project_id}/unarchive")
+@router.post("/{project_id}/unarchive", dependencies=[ROUTE_DECIDES])
 async def unarchive_project(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -964,7 +972,7 @@ _BRANCH_PROTECTION_KEYS = (
 
 @router.put(
     "/{project_id}/branch-protection",
-    dependencies=[Depends(require_project_settings)],
+    dependencies=[ROUTE_DECIDES, Depends(require_project_settings)],
 )
 async def set_branch_protection(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
@@ -1019,7 +1027,7 @@ async def get_project_upstream(
     return ok({"url": (project.settings or {}).get("github_repository_url")})
 
 
-@router.put("/{project_id}/upstream")
+@router.put("/{project_id}/upstream", dependencies=[ROUTE_DECIDES])
 async def set_project_upstream(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

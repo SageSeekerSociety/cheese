@@ -137,7 +137,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = "frontend/src"
 ROUTER_DIR = "frontend/src/router"
 VIEWS_DIR = "frontend/src/views/"
-PANELS_DIR = "frontend/src/components/panels"
 
 #: Where the frozen set is read from: the merge base with this ref.
 DEFAULT_BASE = "origin/main"
@@ -508,8 +507,8 @@ def key_of(scene: str) -> str:
     """`frontend/src/views/404.vue` -> `src/views/404.vue`.
 
     Baseline keys are relative to `frontend/`, like every other baseline in
-    that directory (`import-boundary-baseline.json`): a path relative to the
-    repository root only reads correctly from here.
+    that directory (`a11y-baseline.json`): a path relative to the repository
+    root only reads correctly from here.
     """
     if not scene.startswith("frontend/"):
         raise ValueError(f"not under frontend/: {scene}")

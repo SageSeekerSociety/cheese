@@ -1,12 +1,10 @@
-// The rendered-contrast rule and its ratchet arithmetic, for the public pages
-// in contrast-baseline.json. Pure logic — no I/O, no process — so it can be
-// tested directly (`node --test`, see contrast-ratchet-core.test.mjs).
+// The rendered-contrast rule and its verdict, for the public pages. Pure logic —
+// no I/O, no process — so it can be tested directly (`node --test`, see
+// contrast-ratchet-core.test.mjs).
 //
 // The driver is e2e/tests/contrast-ratchet.spec.ts, which is where it has to be:
 // the measurement needs a real browser, and Playwright lives under e2e/. The
-// rule and the baseline it is judged against stay here, next to the other
-// ratchets, so `fe-contrast` is the same shape as `fe-storage` and the
-// import-boundary, palette, a11y, stylelint and tsc ratchets beside it.
+// rule stays here, next to the other frontend checks.
 //
 // WHY A RENDERED CHECK. Every other colour gate in this repo reads source: the
 // palette ratchet reads template attributes, stylelint reads CSS, and the a11y
@@ -27,13 +25,11 @@
 // here. That also makes this check and a11y-ratchet.mjs complements rather than
 // duplicates.
 //
-// WHY A RATCHET. The pages started with real sub-floor runs — the amber CTA
-// labels at 2.65:1 among them, since the brand colour is frozen and only the
-// label colour can move — so blocking on zero would have meant restyling first
-// or leaving the check off. Freeze what is there, block what is new; those
-// labels have since been paid off (the door pages put dark ink on the amber,
-// LandingShell.vue), which is what the ratchet exists to let a page do one run
-// at a time.
+// EVERY RUN, NO ALLOWANCE. Every run on the three pages must clear its floor,
+// and every run must be one the walker can measure; there is no baseline of
+// accepted debt. The amber CTA labels that once sat at 2.65:1 — the brand colour
+// is fixed, so only the label colour can move — were paid off by putting dark
+// ink on the amber (LandingShell.vue).
 //
 // WHY THE RUNGS HAVE NAMES, AND ONE TOKEN HAS ONE. The floors are WCAG's, and
 // they are reached by the run's size, weight and font — never by the colour it
@@ -115,10 +111,7 @@ export function keyOf({ path, theme, selector, pseudo }) {
   return [path, theme, selector, pseudo || ''].join('|')
 }
 
-/**
- * Ratios are reported and frozen at two decimals, so re-measuring the same
- * pixels cannot churn the baseline file.
- */
+/** Ratios are reported at two decimals. */
 export function roundRatio(ratio) {
   return Math.round(ratio * 100) / 100
 }
@@ -132,21 +125,9 @@ export const PAGES = ['/', '/solutions', '/download']
 export const THEMES = ['light', 'dark']
 
 /**
- * A re-measure of unchanged pixels moves a ratio by a hundredth at most. The
- * tolerance is what separates that from a real change, so the check does not
- * alternate between "regressed" and "improved" on a run that sits a hair from
- * its floor — `span.scene-avatar`'s "周" at 4.44:1 against a 4.5 floor is one.
- * It cannot hide new debt: this only widens the band around a value that is
- * already frozen, and anything not yet frozen is judged against the floor
- * itself.
- */
-export const TOLERANCE = 0.05
-
-/**
  * One recorded run per key — the worst instance of it, since a key that
  * appears nine times on a page is usually the same element repeated, and it is
- * the instance closest to unreadable that the baseline has to answer for. If a
- * worse instance appears later, this is what moves.
+ * the instance closest to unreadable that the verdict has to answer for.
  *
  * A key is a selector, and a selector is not always one element. `/solutions`
  * has plain paragraphs on a wash and plain paragraphs on a picture, and only the
@@ -154,8 +135,8 @@ export const TOLERANCE = 0.05
  * second kind would leave the check blind exactly where a page would hide text
  * from it. So the readable instance is kept for its ratio and the ones the
  * walker could not read are counted on it as `unreadable` — one entry, both
- * answers, and the reader of the baseline can see that the ratio does not speak
- * for the whole key.
+ * answers, and a report can say that the ratio does not speak for the whole
+ * key.
  * @param {object[]} runs records from collectRuns(), each already carrying
  *                      `path` and `theme`
  * @returns {Map<string, object>}
@@ -178,151 +159,29 @@ export function worstOf(runs) {
   return kept
 }
 
-/** The baseline record for a run: what it measured, and what it was, in the
- * page, so a reader of the JSON knows what the key is without a browser. */
-export function entryFor(run) {
-  return {
-    ratio: run.unjudged ? null : roundRatio(run.ratio),
-    need: run.need,
-    // The part of the key the ratio above does not answer for: `unreadable`
-    // instances of it sit on a ground the walker could not read. Zero for an
-    // element that is on every page once.
-    unreadable: run.unreadable || 0,
-    unjudged: run.unjudged || '',
-    sample: run.text,
-  }
-}
-
 /**
- * Compare a run against the baseline.
- *
- * Three ways to fail, all of them new information:
- *   added    a run below its floor that the baseline has never seen;
- *   worse    a frozen run that got further below its floor, and a run frozen as
- *            unmeasurable that the walker can now read and that turns out to be
- *            below its floor by more than the tolerance — the check just
- *            learned something bad;
- *   unjudged a run the walker cannot measure that was not already frozen as
- *            unmeasurable, or a key with more instances the walker cannot read
- *            than the baseline froze. Hiding text behind a picture is worth
- *            reporting wherever it happens, not only where it happens to every
- *            instance of that selector. A check that quietly ignores what it
- *            cannot measure is worse than no check, so this is reported rather
- *            than dropped;
- *   (a frozen run that was measured and is now unmeasurable lands here too —
- *    the ground behind it became a picture.)
- *
- * Anything that improved is reported but does not fail: a baseline that keeps
- * freezing runs that no longer need it stops being able to show a regression,
- * so `improved` has to be paid off with an update, not just noted.
- * @param {Record<string, object>} baseline
+ * The verdict on one walk. Two ways to fail:
+ *   below     a run whose readable instances fall below its floor;
+ *   unjudged  a key the walker cannot measure, wholly or in part — a picture or
+ *             a gradient between some instance of it and its ground. A page
+ *             that puts text behind a picture would otherwise pass this check
+ *             by hiding the text from it, so that is a failure, not a note.
+ * A key can be in both lists: its readable instance is below its floor and a
+ * sibling of the same selector sits on a picture.
  * @param {Map<string, object>} worst from worstOf()
  */
-export function compare(baseline, worst) {
-  const added = []
-  const worse = []
+export function judge(worst) {
+  const below = []
   const unjudged = []
-  const improved = []
-  const passes = (run) => !run.unjudged && run.ratio >= run.need
   for (const [key, run] of [...worst].sort(([a], [b]) => a.localeCompare(b))) {
-    const frozen = baseline[key]
-    // How much of this key the ratio below does not answer for: instances the
-    // walker could not read at all. On a key the baseline froze measured — or on
-    // one it has never seen — that count ratchets on its own, because the ratio
-    // answers for the instances it could read and a page can hide text behind a
-    // picture wherever a sibling of the same selector stays readable. A key
-    // frozen unmeasurable needs no such count: being unmeasurable is already the
-    // whole of what the baseline accepted for it.
-    const blind = run.unreadable || 0
-    const frozeBlind = (frozen && frozen.unreadable) || 0
-    if (run.unjudged) {
-      if (!frozen || !frozen.unjudged) unjudged.push({ key, run })
-      continue
-    }
-    if (blind > frozeBlind && !(frozen && frozen.unjudged)) unjudged.push({ key, run })
-    if (!frozen) {
-      if (run.ratio < run.need) added.push({ key, run })
-      continue
-    }
-    if (frozen.unjudged) {
-      // Frozen as unmeasurable, and the walker can read it now. There is no
-      // frozen number to compare against, so the floor is the reference — and
-      // the same tolerance, or a run sitting one part in a hundred either side
-      // of its floor would turn the gate red and green on alternate runs, which
-      // is the flapping `TOLERANCE` exists to stop. Clearing the floor is an
-      // improvement; below it by more than the tolerance is a failure like any
-      // other, which `tightenedBaseline` then freezes as a number; in between is
-      // neither, exactly as it is for a frozen number.
-      if (passes(run)) improved.push({ key, was: frozen, run })
-      else if (run.ratio < run.need - TOLERANCE) worse.push({ key, was: frozen, run })
-      continue
-    }
-    // A key is settled only when the whole of it is readable: a ratio that
-    // clears the floor still owes the instances it does not speak for, so it
-    // stays frozen until there are none.
-    if (passes(run) && !blind) {
-      improved.push({ key, was: frozen, run })
-      continue
-    }
-    // Otherwise either the ratio moved, or fewer of the key's instances are on a
-    // picture now. Both are the baseline holding debt the page no longer has.
-    if (run.ratio < frozen.ratio - TOLERANCE) worse.push({ key, was: frozen, run })
-    else if (run.ratio > frozen.ratio + TOLERANCE || blind < frozeBlind) improved.push({ key, was: frozen, run })
+    if (run.unjudged || run.unreadable) unjudged.push({ key, run })
+    if (!run.unjudged && run.ratio < run.need) below.push({ key, run })
   }
-  for (const key of Object.keys(baseline).sort()) {
-    if (!worst.has(key)) improved.push({ key, was: baseline[key], run: null })
-  }
-  return {
-    added,
-    worse,
-    unjudged,
-    improved,
-    belowFloor: [...worst.values()].filter((run) => !run.unjudged && run.ratio < run.need).length,
-    ok: !added.length && !worse.length && !unjudged.length,
-  }
+  return { below, unjudged, ok: !below.length && !unjudged.length }
 }
 
 /**
- * The baseline the repo should now record. Never looser than reality, so an
- * update after a genuine regression cannot be used to launder it in: a frozen
- * run keeps the worse of the two ratios, and a key that is not in the baseline
- * is only added when `freezeNew` — a person deciding, in the commit, that this
- * is debt the project accepts. That holds for a run the walker cannot measure
- * too: an unfrozen unmeasurable run is new debt, not a free pass. A run that
- * now passes — and has no instance left that the walker could not read — is
- * dropped.
- * @param {Record<string, object>} baseline
- * @param {Map<string, object>} worst from worstOf()
- * @param {{ freezeNew?: boolean }} [options]
- */
-export function tightenedBaseline(baseline, worst, { freezeNew = false } = {}) {
-  const next = {}
-  const keys = new Set([...Object.keys(baseline), ...worst.keys()])
-  for (const key of [...keys].sort()) {
-    const run = worst.get(key)
-    const frozen = baseline[key]
-    if (!run) continue // gone from the page — the debt is gone with it
-    if (!frozen && !freezeNew) continue // new debt needs --freeze-new, measurable or not
-    if (run.unjudged) {
-      next[key] = entryFor(run)
-      continue
-    }
-    const entry = entryFor(run)
-    // Settled only when the whole key is: one that clears its floor but still
-    // carries instances the walker could not read stays recorded, with the count
-    // that says why.
-    if (run.ratio >= run.need && !entry.unreadable) continue
-    const ratio =
-      run.ratio >= run.need || !(frozen && typeof frozen.ratio === 'number')
-        ? roundRatio(run.ratio)
-        : Math.min(frozen.ratio, roundRatio(run.ratio))
-    next[key] = { ...entry, ratio }
-  }
-  return next
-}
-
-/**
- * The fix for the one token the ratchet knows by name, printed under a failing
+ * The fix for the one token the rule knows by name, printed under a failing
  * run painted with it. Not "make it darker": `--faint` is the decorative rung —
  * a deliberate 3:1 for icons, dividers and placeholder shapes — and it sits one
  * step off `--muted` in the neutral ramp, so darkening it far enough for words
@@ -341,30 +200,25 @@ const FAINT_FIX = [
 /**
  * The human half: what went wrong, where, which rung it is on, and which of the
  * named colour rules it is.
- * @param {ReturnType<typeof compare>} result
+ * @param {ReturnType<typeof judge>} result
  */
 export function formatContrastReport(result) {
   const lines = []
-  const detail = ({ key, was, run }, answerable) => {
-    const sample = run ? run.text : was && was.sample
-    const where = run ? `${run.selector}${run.pseudo || ''} "${sample}"` : key
-    const measured = run
-      ? run.unjudged
-        ? ` — ${run.unjudged}`
-        : ` — ${run.fg} on ${run.bg} at ${run.size}px/${run.weight}, ${run.ratio}:1, needs ${run.need}:1 (the ${tierOf(run)} rung)`
-      : ''
-    const from = was && typeof was.ratio === 'number' ? ` (baseline froze ${was.ratio}:1)` : ''
-    const blind = run && run.unreadable ? `, and ${run.unreadable} instance(s) of it the walker cannot read` : ''
+  const detail = ({ key, run }, answerable) => {
+    const where = `${run.selector}${run.pseudo || ''} "${run.text}"`
+    const measured = run.unjudged
+      ? ` — ${run.unjudged}`
+      : ` — ${run.fg} on ${run.bg} at ${run.size}px/${run.weight}, ${run.ratio}:1, needs ${run.need}:1 (the ${tierOf(run)} rung)`
+    const blind = run.unreadable ? `, and ${run.unreadable} instance(s) of it the walker cannot read` : ''
     // Only where the run is reported for its own ratio. Under "the check cannot
     // measure" a tagged run is there for the instances the ratio does not speak
     // for — the run itself, or a sibling of the same selector on a picture — and
     // repainting the text is not the answer to that: it leaves the gate red.
-    const faint = answerable && run && run.faint && !run.unjudged && run.ratio < run.need ? FAINT_FIX : ''
-    return `  ${key}\n    ${where}${measured}${blind}${from}${faint}`
+    const faint = answerable && run.faint && !run.unjudged && run.ratio < run.need ? FAINT_FIX : ''
+    return `  ${key}\n    ${where}${measured}${blind}${faint}`
   }
   for (const [title, rows, answerable] of [
-    ['New runs below their contrast floor:', result.added, true],
-    ['Frozen runs that are below their floor:', result.worse, true],
+    ['Runs below their contrast floor:', result.below, true],
     ['Runs the check cannot measure:', result.unjudged, false],
   ]) {
     if (!rows.length) continue
@@ -377,23 +231,9 @@ export function formatContrastReport(result) {
     lines.push('from weight 700) and for icon glyphs. The two usual causes have names')
     lines.push('here: --accent is a fill and not a text colour (write with --accent-ink),')
     lines.push('and --faint is decoration (write with --muted). See docs/design-system.md.')
-    lines.push('A run that is deliberately below its floor goes in')
-    lines.push('frontend/contrast-baseline.json as accepted debt — not around the check.')
-  }
-  if (result.improved.length) {
-    lines.push(result.ok ? 'Runs that no longer need freezing — tighten the baseline:' : 'Also improved:')
-    for (const { key, run } of result.improved) {
-      lines.push(`  ${key}${run && typeof run.ratio === 'number' ? ` (now ${run.ratio}:1)` : ' (gone from the page)'}`)
-    }
-    if (result.ok) {
-      lines.push('')
-      lines.push('Run: CONTRAST_UPDATE=1 pnpm --dir e2e exec playwright test contrast-ratchet')
-      lines.push('Then commit frontend/contrast-baseline.json. It will not add a run the')
-      lines.push('baseline has never seen unless CONTRAST_FREEZE_NEW=1 is set too.')
-    }
   }
   if (!lines.length) lines.push('every run clears its floor')
-  lines.push(`total: ${result.belowFloor} run(s) below floor`)
+  lines.push(`total: ${result.below.length} run(s) below floor`)
   return lines.join('\n')
 }
 
@@ -539,7 +379,7 @@ export function collectRuns() {
       selector: selectorOf(el),
       pseudo,
       // An icon glyph is a private-use character, so it says nothing a reader of
-      // the baseline could use — the selector already names it. Generated
+      // the report could use — the selector already names it. Generated
       // content arrives quoted, and the quotes are not part of it.
       text: icon && pseudo ? '' : String(text).replace(/\s+/g, ' ').trim().slice(0, 24),
       fg: show(fg),

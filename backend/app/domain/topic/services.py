@@ -174,7 +174,7 @@ class TopicService:
     async def lock_for_execution(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.lock(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if topic.status == TopicStatus.archived:
             raise ConflictError(say("roomArchivedUnarchiveFirst"))
         return topic
@@ -213,8 +213,11 @@ class TopicService:
             # 的地方。跨项目的父子关系没有第二种解释，按「这个父不存在」回答。
             if parent.project_id != project_id:
                 raise NotFoundError("Parent topic not found")
+        number, environment = await self._projects.channel_start(project)
         topic = await self._repo.add(
             project_id=project_id,
+            number=number,
+            environment=environment,
             title=title,
             parent_id=parent_id,
             kind=kind,
@@ -283,7 +286,11 @@ class TopicService:
             owner = user_handle
             title = f"与{name}私聊 · {owner}"
         topic = await self._repo.get_or_create_private(
-            project_id=project_id, owner=owner, peer=peer, title=title
+            project_id=project_id,
+            owner=owner,
+            peer=peer,
+            title=title,
+            environment=self._projects.room_environment(project),
         )
         await TopicMemberService(self._session).seed_private(
             topic.id, owner_handle=owner, peer_handle=peer
@@ -315,7 +322,7 @@ class TopicService:
     async def get_or_404(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.get(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         return topic
 
     async def list_for_project(
@@ -424,8 +431,11 @@ class TopicService:
         fail, which is what keeps it from crying wolf over slow work:
 
         1. **No heartbeat.** `live_turn` is what the runner is really executing
-           for this room (frames, tool calls included — activity the DB never
-           sees). Present and recently framed ⇒ alive, full stop.
+           for this room. `silent_for_s` is since the newer of two signs: a
+           frame the turn published, or the runner answering a read — the latter
+           arrives every `READ_WAIT_S` even through a long think or a long tool
+           call, activity the DB never sees. Present and recently heard ⇒ alive,
+           full stop.
         2. **The timeline stops mid-action.** The newest block is a tool action
            by 芝士 — the shape a turn leaves when it is cut off between doing
            something and reporting it. A turn that ends properly leaves a
@@ -483,11 +493,15 @@ class TopicService:
     async def private_unread_counts(
         self, project_id: uuid.UUID, user_handle: str, *, seat_handles: SeatHandles
     ) -> dict[str, int]:
-        if await self._projects.get(project_id) is None:
+        project = await self._projects.get(project_id)
+        if project is None:
             raise NotFoundError("Project not found")
         seats = await seat_handles(self._session, project_id)
         return await self._repo.private_unread_counts(
-            project_id, user_handle, seats=seats
+            project_id,
+            user_handle,
+            seats=seats,
+            default_agent_instance_id=project.default_agent_instance_id,
         )
 
     # ---- 有人回复了我、我还没处理（侧栏那盏黄灯） -----------------------
@@ -559,7 +573,7 @@ class TopicService:
         综合 is never archived."""
         topic = await self._repo.lock(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if topic.kind == TopicKind.root:
             raise ValidationError(say("projectRootCannotArchive"))
         if topic.status == TopicStatus.archived:
@@ -729,7 +743,7 @@ class TopicService:
         会话在第 5 层，本包在第 2 层。"""
         topic = await self._repo.lock(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if topic.deleted_at is not None:
             raise UnprocessableEntityError(say("channelDeletedCannotUnarchive"))
         if topic.status != TopicStatus.archived:

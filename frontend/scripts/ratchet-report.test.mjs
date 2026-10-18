@@ -1,4 +1,4 @@
-// Tests for the --json contract the three frontend ratchets share. Run by
+// Tests for the --json contract the frontend checks share. Run by
 // `pnpm run test:ratchet` (node --test scripts/*.test.mjs), locally and in
 // frontend.yml.
 //
@@ -152,11 +152,11 @@ function agreedRecord(script, id, ...args) {
 }
 
 describe('--json on the real checkers', () => {
-  // The plant, judged by the real ratchet against a scratch baseline: both modes
-  // must reach the same verdict on a component that imports the API layer.
+  // The plant, judged by the real check: both modes must reach the same verdict
+  // on a component that imports the API layer.
   it('agrees with the default mode on a planted boundary violation', () => {
     const probe = resolve(ROOT, 'src/components/__ratchetReportProbe.vue')
-    const args = ['--files', 'src/components/__ratchetReportProbe.vue', '--baseline', join(sandbox, 'planted.json')]
+    const args = ['--files', 'src/components/__ratchetReportProbe.vue']
     try {
       writeFileSync(
         probe,
@@ -172,7 +172,7 @@ describe('--json on the real checkers', () => {
       // --json is what ci:fast calls: stdout stays the one record line, and the
       // human report with the line and the fix rides on stderr instead.
       assert.equal(json.stdout.trim().split('\n').length, 1, json.stdout)
-      assert.match(json.stderr, /__ratchetReportProbe\.vue: 0 -> 1/)
+      assert.match(json.stderr, /__ratchetReportProbe\.vue:\d+:\d+ {2}boundary\/no-api-or-router/)
       assert.match(json.stderr, /architecture\.md/)
     } finally {
       rmSync(probe, { force: true })
@@ -185,14 +185,13 @@ describe('--json on the real checkers', () => {
 
   it('fe-storage: the record is the run, passing and failing', () => {
     const probe = resolve(ROOT, 'src/__ratchetReportStorageProbe.ts')
-    const args = ['--files', 'src/__ratchetReportStorageProbe.ts', '--baseline', emptyBaseline]
+    const args = ['--files', 'src/__ratchetReportStorageProbe.ts']
     try {
       // A file that reaches storage through a parameter, not the global: clean.
       writeFileSync(probe, 'export const read = (s: Storage): string | null => s.getItem("k")\n')
       assert.equal(agreedRecord('browser-storage-ratchet.mjs', 'fe-storage', ...args).status, 'pass')
 
-      // The same file touching the global directly is a new reference against an
-      // empty baseline.
+      // The same file touching the global directly fails.
       writeFileSync(probe, 'export const read = (): string | null => localStorage.getItem("k")\n')
       assert.equal(agreedRecord('browser-storage-ratchet.mjs', 'fe-storage', ...args).status, 'fail')
 
@@ -200,7 +199,7 @@ describe('--json on the real checkers', () => {
       // record line; the human report with the line and the fix rides on stderr.
       const json = runChecker('browser-storage-ratchet.mjs', '--json', ...args)
       assert.equal(json.stdout.trim().split('\n').length, 1, json.stdout)
-      assert.match(json.stderr, /__ratchetReportStorageProbe\.ts: 0 -> 1/)
+      assert.match(json.stderr, /__ratchetReportStorageProbe\.ts:\d+:\d+ {2}storage\/no-direct-browser-storage/)
       assert.match(json.stderr, /@\/lib\/browserStorage/)
     } finally {
       rmSync(probe, { force: true })
@@ -226,7 +225,7 @@ describe('--json on the real checkers', () => {
       '{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true,"types":[]},"files":["planted.ts"]}\n'
     )
     writeFileSync(join(project, 'planted.ts'), "export const n: number = 'not a number'\n")
-    const args = ['--project', join(project, 'tsconfig.json'), '--baseline', emptyBaseline]
+    const args = ['--project', join(project, 'tsconfig.json')]
 
     assert.equal(agreedRecord('tsc-ratchet.mjs', 'vue-tsc', ...args).status, 'fail')
 

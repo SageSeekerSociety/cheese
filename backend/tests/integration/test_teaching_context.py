@@ -14,14 +14,14 @@ from datetime import UTC, datetime
 
 from sqlalchemy import event
 
-from app.domain.knowledge.models import Knowledge
+from app.domain.living_doc.services import Documents
 from app.domain.materials.models import Material
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.models import SpaceCategory
 from app.domain.task import teaching as teaching_context
 from app.domain.task.models import Task
 from tests.conftest import seed_claim, seed_task_with_protocol
-from tests.integration.conftest import post_project
+from tests.integration.conftest import a_team, post_project
 
 OWNER = "owner-1"
 WEEK_THREE = {
@@ -40,9 +40,9 @@ def _project(client, *, external_task_id: int | None = None, name: str = "团队
     return post_project(client, json=body, owner=OWNER).json()["data"]["id"]
 
 
-def _seed_reference_rows(client, *, material: str, knowledge: str) -> tuple[int, int]:
-    """A 课件 and a 知识 material — the two things a teaching config points at."""
-    ids: dict[str, int] = {}
+def _seed_reference_rows(client, *, material: str, document: str) -> tuple[int, str]:
+    """A 课件 and a team document — the two things a teaching config points at."""
+    ids: dict[str, int | str] = {}
 
     async def _seed() -> None:
         async with client.test_factory() as session:
@@ -58,23 +58,19 @@ def _seed_reference_rows(client, *, material: str, knowledge: str) -> tuple[int,
             session.add(row)
             await session.flush()
             ids["material"] = row.id
-            entry = Knowledge(
-                name=knowledge,
-                description="讲次 L08",
-                type="TEXT",
-                content={"text": "循环讲了什么"},
-                team_id=1,
-                created_by=1,
-                created_at=now,
-                updated_at=now,
+            doc = await Documents(session).create(
+                project_id=None,
+                team_id=await a_team(session),
+                title=document,
+                author="owner",
             )
-            session.add(entry)
+            doc.content = "循环讲了什么"
             await session.flush()
-            ids["knowledge"] = entry.id
+            ids["document"] = str(doc.id)
             await session.commit()
 
     asyncio.run(_seed())
-    return ids["material"], ids["knowledge"]
+    return int(ids["material"]), str(ids["document"])
 
 
 def _set_teaching(client, *, task_id: int, teaching: dict) -> None:
@@ -118,15 +114,15 @@ def _for_project(client, project_id: int):
 
 
 def test_a_course_project_starts_inside_this_weeks_scope(client):
-    material_id, knowledge_id = _seed_reference_rows(
-        client, material="L08 讲义", knowledge="循环与数组"
+    material_id, document_id = _seed_reference_rows(
+        client, material="L08 讲义", document="循环与数组"
     )
     task_id = seed_task_with_protocol(
         client,
         teaching={
             **WEEK_THREE,
             "material_ids": [material_id],
-            "knowledge_ids": [knowledge_id],
+            "document_ids": [document_id],
         },
     )
     project_id = _project(client, external_task_id=task_id)
@@ -139,9 +135,9 @@ def test_a_course_project_starts_inside_this_weeks_scope(client):
     assert context.teaching.avoid_in_code == ["递归"]
     assert [m["name"] for m in context.materials] == ["L08 讲义"]
     assert context.materials[0]["url"] == "https://example.invalid/l08.pdf"
-    assert [k["name"] for k in context.knowledge] == ["循环与数组"]
-    # 名字与描述进 prompt，正文留在知识库里按 id 取
-    assert "content" not in context.knowledge[0]
+    assert [d["title"] for d in context.documents] == ["循环与数组"]
+    # 标题进 prompt，正文按 id 读
+    assert "content" not in context.documents[0]
 
 
 def test_a_project_that_is_not_a_course_asks_the_database_nothing(client):
