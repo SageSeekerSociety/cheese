@@ -175,7 +175,7 @@ async def moving_topics(
     if threads is None:
         found_threads, cached_threads = recall(db, ("threads_in_rooms", tuple(ids)))
         threads = (
-            cached_threads[0]
+            dict(cached_threads[0])
             if found_threads
             else {
                 thread_id: room_id

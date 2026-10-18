@@ -166,10 +166,12 @@ async def replied_to_me(
         return set()
     # 语句按看的人建一次留着，两份清单每次当参数给（`_replied_to_me_statement`）。
     rooms = list(room_ids)
-    found_threads, cached_threads = recall(
-        repo._session, ("threads_in_rooms", tuple(rooms))
+    found_threads, cached_threads = (
+        recall(repo._session, ("threads_in_rooms", tuple(rooms)))
+        if hasattr(repo._session, "info")
+        else (False, None)
     )
-    if found_threads:
+    if found_threads and cached_threads is not None:
         thread_ids = list(cached_threads[0])
     else:
         # 这些房间的支线 id 先单独读一趟（`ix_threads_room_id`，0.018 ms），主查询

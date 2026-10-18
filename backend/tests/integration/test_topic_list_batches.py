@@ -139,6 +139,10 @@ _UNDERWAY_TASKS_SELECT = re.compile(
     r"^\s*SELECT\b[^;]*?\bFROM tasks\s+WHERE tasks\.room_id IN\b[^;]*?\btasks\.closing_since IS NULL",
     re.IGNORECASE,
 )
+_ALL_TASKS_SELECT = re.compile(
+    r"^\s*SELECT tasks\.[^;]*?\bFROM tasks\b",
+    re.IGNORECASE,
+)
 
 
 def _count(statements: list[str], pattern: re.Pattern[str]) -> int:
@@ -301,9 +305,13 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client):
     ]
 
     # 5. Underway `tasks` (tasks_of_rooms, underway_counts, underway_with,
-    #    underway_others, last_block_at_for_tasks) is read once.
+    #    underway_others, last_block_at_for_tasks, moving_topics) is read once,
+    #    and total `FROM tasks` queries are only 2 (_underway_for_rooms + unseen_deliveries).
     assert _count(seen, _UNDERWAY_TASKS_SELECT) == 1, [
         s for s in seen if _UNDERWAY_TASKS_SELECT.search(s)
+    ]
+    assert _count(seen, _ALL_TASKS_SELECT) == 2, [
+        s for s in seen if _ALL_TASKS_SELECT.search(s)
     ]
 
 
@@ -325,7 +333,7 @@ def test_session_cached_batches_invalidate_on_write(client):
     assert r.status_code == 200, r.text
     room_id = uuid.UUID(r.json()["data"]["id"])
 
-    async def _exercise() -> tuple[int, int, int, int, int]:
+    async def _exercise() -> tuple[int, int, int, int, int, int]:
         async with client.test_factory() as s:
             sent: list[str] = []
 
@@ -358,23 +366,26 @@ def test_session_cached_batches_invalidate_on_write(client):
                     created_by="alice",
                 )
                 tasks_after = await TaskService(s).tasks_of_rooms([room_id])
+                after_repopulate = len(sent)
                 counts_after = await TaskService(s).underway_counts([room_id])
                 mine_after = await TaskService(s).underway_with([room_id], "alice")
                 others_after = await TaskService(s).underway_others([room_id], "alice")
                 last_after = await TaskService(s).last_block_at_for_tasks([task.id])
+                extra_after_repopulate = len(sent) - after_repopulate
                 assert last_after == {}
             finally:
                 event.remove(engine, "before_cursor_execute", _record)
             await s.rollback()
             return (
                 extra_before_write,
+                extra_after_repopulate,
                 len(tasks_after),
                 counts_after.get(room_id, 0),
                 len(mine_after),
                 len(others_after),
             )
 
-    assert client.portal.call(_exercise) == (0, 1, 1, 1, 0)
+    assert client.portal.call(_exercise) == (0, 0, 1, 1, 1, 0)
 
 
 def test_topic_names_list_defers_sandbox_environment_columns(client):
