@@ -16,11 +16,13 @@ Three reads, nothing written:
   The REST timeline has no merge-queue events; GraphQL is the only source. The
   search caps at 1000 results the same way and is split the same way.
 
-Every call goes through `forge_client`, so GitHub's quota report on each answer
-reaches `forge_quota` and an unchanged listing page is answered from
-`forge_etags` without spending quota. A quota refusal raises `CiQuotaRefused`
-so the sweep stops at once instead of spending the next call on hearing the same
-refusal.
+Every call goes through `forge_client`, so GitHub's report of the REST quota on
+each answer reaches `forge_quota` (GraphQL has a quota of its own, which it does
+not track). The sweep never asks for the same page twice, so `forge_etags` earns
+it nothing; the jobs reads are streamed past it so their large answers do not
+crowd out the pollers' (see `run_jobs`). A quota refusal, REST or GraphQL,
+raises `CiQuotaRefused` so the sweep stops at once instead of spending the next
+call on hearing the same refusal.
 """
 
 from __future__ import annotations
@@ -248,9 +250,14 @@ class GitHubCi:
             )
             _raise_for(resp)
             body = resp.json()
-            if body.get("errors"):
+            if errors := body.get("errors"):
+                spent = any(
+                    isinstance(e, dict) and e.get("type") == "RATE_LIMITED"
+                    for e in errors
+                )
                 # i18n-exempt: GitHub's own words, for the admin sweep report
-                raise CiGitHubError(f"GraphQL errors: {str(body['errors'])[:300]}")
+                said = f"GraphQL errors: {str(errors)[:300]}"
+                raise CiQuotaRefused(said) if spent else CiGitHubError(said)
             out.requests += 1
             search = (body.get("data") or {}).get("search") or {}
             if (
