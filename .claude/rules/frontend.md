@@ -10,13 +10,8 @@ any non-trivial styling work. This file is only the part that bites on turn one 
 where it names a section of that spec, the spec is the authority, this is the
 reminder.
 
-The gates pass on a tree that still holds violations: the existing ones are
-frozen in a baseline and only NEW ones are blocked. So a green gate does not
-mean the file open in front of you is clean — it may well be one of the frozen
-ones. `frontend/stylelint-baseline.json` says which files have an allowance;
-check there before copying a neighbour. After
-a change, `frontend-design` (a skill) walks the whole checklist including the
-parts no gate can see.
+Run `lint:style` for the three colour rules; any violation fails. After a
+change, `frontend-design` walks the checklist for the parts no gate can see.
 
 ## 沙箱里不要跑全树检查
 
@@ -196,14 +191,12 @@ Full rules: [`docs/i18n.md`](../../docs/i18n.md). What bites on turn one:
 
 ## The colour gates
 
-`frontend/stylelint-baseline.json` freezes the pre-existing violations and the
-gate blocks only NEW ones: a rule that goes red on hundreds of existing sites
-gets switched off.
+The three colour rules gate with zero tolerance. Formatting, ordering and
+naming stay outside the gate; `lint:style:fix` keeps their autofixes.
 
 ```bash
 cd frontend
 pnpm run lint:style          # check (what CI runs — read-only)
-pnpm run lint:style:update   # after fixing some, ratchet the baseline DOWN
 ```
 
 Palette NAMES are a **separate** gate, because stylelint parses CSS and can
@@ -215,10 +208,6 @@ none), and runs in `task check` and in CI's Repo Guards:
 bash .claude/scripts/check-repo-rules.sh              # check
 bash .claude/scripts/check-repo-rules.sh --self-test  # prove it still fires
 ```
-
-`lint:style:update` clamps every count with `Math.min` against the baseline it
-already holds, so it cannot be used to launder a regression in. Do not raise a
-baseline to make a gate green; baselines only go down.
 
 **Never add `--fix` to a gate script.** It rewrites the checkout and can exit 0
 on a violation it silently repaired — the writing forms are `lint:style:fix` and
