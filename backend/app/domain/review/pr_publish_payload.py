@@ -131,7 +131,6 @@ async def owner_token(session: AsyncSession, topic, task_id) -> str | None:
 
 async def pr_body_for(
     session: AsyncSession,
-    client: GitHubPRClient | ForgejoPRClient,
     topic,
     *,
     card=None,
@@ -141,11 +140,8 @@ async def pr_body_for(
     """The PR body credited for a PR opened by `opened_by`. No approver yet:
     `Reviewed-by` is written onto the squash commit at merge time, by whoever
     actually clicks."""
-    token = None
-    if opened_by and isinstance(client, GitHubPRClient):
-        token, _ = await client.tokens.installation_token()
     who = await credit.attribution(
-        session, topic, card=card, task_id=task_id, opened_by=opened_by, token=token
+        session, topic, card=card, task_id=task_id, opened_by=opened_by
     )
     return pr_text.pr_body(topic, "", card, who)
 

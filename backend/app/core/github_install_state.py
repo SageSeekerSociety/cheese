@@ -89,7 +89,7 @@ def verify_install_state(state: str) -> InstallClaims | None:
 
 
 # Same shape, distinct `type`, for the OTHER GitHub App flow: a logged-in
-# human linking their own GitHub identity (#192 "连接 GitHub 账号",
+# human linking their own GitHub identity (#192 "关联 GitHub",
 # user-to-server auth) rather than a project connecting a repo. The distinct
 # `type` claim keeps the two — and the unrelated access token in
 # app.common.auth — from ever validating as each other despite sharing
@@ -102,10 +102,10 @@ ACCOUNT_LINK_TTL_S = _TTL_S
 
 class AccountLinkClaims(NamedTuple):
     user_id: int
-    # Which project's settings page to bounce back to (the button lives on
-    # ProjectSettingsView, not a standalone account page) — None falls back
-    # to the app root.
-    return_project_id: uuid.UUID | None
+    # The page to land back on — 关联 GitHub starts on the security page, a
+    # project's settings or a task. A path inside the app (`safe_return_path`);
+    # None falls back to the app root.
+    return_path: str | None
     # This state's one-shot identity. The signature says the platform minted
     # it; only this says nobody has spent it yet — see core.single_use_state
     # and #222.
@@ -119,10 +119,20 @@ class MintedAccountLinkState(NamedTuple):
     jti: str
 
 
+def safe_return_path(path: str | None) -> str | None:
+    """`path` when it is a path inside the frontend, else None. A link that
+    could land the browser on another host would be an open redirect."""
+    if not path or len(path) > 512 or not path.startswith("/"):
+        return None
+    if path.startswith("//") or any(c in path for c in "\\?#\r\n"):
+        return None
+    return path
+
+
 def mint_account_link_state(
     user_id: int,
     *,
-    return_project_id: uuid.UUID | None = None,
+    return_path: str | None = None,
     in_app: bool = False,
     ttl_s: int = _TTL_S,
 ) -> MintedAccountLinkState:
@@ -136,7 +146,7 @@ def mint_account_link_state(
     jti = uuid.uuid4().hex
     payload = {
         "uid": user_id,
-        "rpid": str(return_project_id) if return_project_id else None,
+        "rp": safe_return_path(return_path),
         "jti": jti,
         "app": in_app,
         "type": _ACCOUNT_LINK_TYPE,
@@ -169,14 +179,10 @@ def verify_account_link_state(state: str) -> AccountLinkClaims | None:
         user_id = int(decoded["uid"])
     except (TypeError, ValueError):
         return None
-    rpid = decoded.get("rpid")
-    try:
-        return_project_id = uuid.UUID(str(rpid)) if rpid else None
-    except ValueError:
-        return_project_id = None
+    rp = decoded.get("rp")
     return AccountLinkClaims(
         user_id=user_id,
-        return_project_id=return_project_id,
+        return_path=safe_return_path(rp) if isinstance(rp, str) else None,
         jti=jti,
         in_app=decoded.get("app") is True,
     )

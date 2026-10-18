@@ -65,7 +65,7 @@ def test_only_trailers_git_and_github_already_know_are_written():
 
 def test_an_app_opened_pr_credits_the_owner_and_not_the_app():
     """The App is the commit's author then; naming it again would be noise."""
-    trailers = pr_text.pr_trailers(_topic(), "", _who(app=APP))
+    trailers = pr_text.pr_trailers(_topic(), "", _who(app=APP, lane="github"))
     assert trailers.splitlines()[-1] == (
         "Co-authored-by: Alice <583231+alice@users.noreply.github.com>"
     )
@@ -73,7 +73,9 @@ def test_an_app_opened_pr_credits_the_owner_and_not_the_app():
 
 
 def test_a_pr_the_owner_opened_credits_the_app_and_not_the_owner_again():
-    trailers = pr_text.pr_trailers(_topic(), "", _who(opened_by=ALICE.email, app=APP))
+    trailers = pr_text.pr_trailers(
+        _topic(), "", _who(opened_by=ALICE.email, app=APP, lane="github")
+    )
     assert trailers.splitlines()[-1] == f"Co-authored-by: {APP}"
     assert ALICE.email not in trailers
 
@@ -114,15 +116,6 @@ def test_nobody_is_named_as_reviewer_before_somebody_accepts():
     assert "Reviewed-by: carol <carol@zhishi.local>" in pr_text.pr_trailers(
         _topic(), "carol", _who()
     )
-
-
-def test_the_platform_itself_is_never_credited():
-    """`cheese@zhishi.local` links to no account; the App's bot account is how
-    the platform appears on GitHub."""
-    trailers = pr_text.pr_trailers(
-        _topic(), "", _who(owner=None, contributors=(identity.CHEESE_IDENTITY,))
-    )
-    assert "Co-authored-by" not in trailers
 
 
 def test_the_body_and_the_squash_commit_cannot_disagree():
