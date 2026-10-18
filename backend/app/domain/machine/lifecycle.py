@@ -299,10 +299,13 @@ class SandboxLifecycle:
         free slot."""
         waiting = await self._session.scalar(
             select(SandboxHome.id)
+            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
             .where(
-                # A session waiting on a pool host; one waiting on a person's
-                # computer takes no pool slot and presses nothing.
-                SandboxHome.host_id.is_not(None),
+                # A session waiting on a shared host's slot. One waiting on a
+                # person's computer takes no pool slot, and one waiting on a
+                # whole VM it has to itself presses nothing either: freeing a
+                # shared slot does not bring that machine up.
+                CloudHost.whole_machine.is_(False),
                 SandboxHome.waiting_since.is_not(None),
                 SandboxHome.stopped_at.is_(None),
             )
