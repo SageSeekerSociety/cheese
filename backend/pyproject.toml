@@ -173,11 +173,12 @@ markers = [
     "pure: no Postgres, no ASGI app — runs on a machine with nothing but Python",
     "contract: one side of a seam real and the other a double",
     "integration: real Postgres, real alembic, real ASGI app",
-    # Not a layer: the tests that assert on how many SQL statements a request
-    # issues (one name for a family that used to have twelve). Added by
-    # `pytest_collection_modifyitems` from the file's name or its code, never
-    # written by hand — `pytest -m reads_once` is the way to list them.
-    "reads_once: asserts on the number of SQL round trips a request makes",
+    # Not a layer: the tests that assert something is read — or happens —
+    # exactly once: a request's SQL round trips, a batch that must not go per
+    # row, a one-shot effect. Added by `pytest_collection_modifyitems` from the
+    # file's name or its code, never written by hand; `pytest -m reads_once` is
+    # the way to list them.
+    "reads_once: asserts that a thing is read or happens exactly once, not once per row",
 ]
 addopts = ["--strict-markers"]
 # A wedged test must name itself. Without this, one test that never returns

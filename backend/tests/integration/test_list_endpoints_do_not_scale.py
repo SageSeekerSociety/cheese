@@ -25,7 +25,12 @@ import pytest
 from sqlalchemy import text
 
 from tests.integration.conftest import create_approved_space, unique_int
-from tests.support.counting_session import assert_does_not_scale, count_sql
+from tests.support.counting_session import (
+    QueryGrowth,
+    assert_does_not_scale,
+    assert_growth_within,
+    count_sql,
+)
 
 OWNER = "scale-owner"
 SUBMITTER = "scale-submitter"
@@ -79,6 +84,7 @@ def test_the_tag_list_does_not_scale(client) -> None:
 
 @pytest.mark.xfail(
     strict=True,
+    raises=QueryGrowth,
     reason=(
         "known N+1, measured 13 -> 121 statements for 3 -> 30 teams: the route "
         "reads each team's members and their user maps in turn. Batch both "
@@ -118,6 +124,7 @@ def test_the_team_list_does_not_scale(client) -> None:
 
 @pytest.mark.xfail(
     strict=True,
+    raises=QueryGrowth,
     reason=(
         "known N+1, measured 15 -> 123 statements for 3 -> 30 spaces: the route "
         "asks for each space's admins, then each admin's user and profile. "
@@ -238,6 +245,7 @@ def _participant(client, owner: dict, submitter: dict, task_id: int) -> int:
 
 @pytest.mark.xfail(
     strict=True,
+    raises=QueryGrowth,
     reason=(
         "known N+1, measured 9 -> 36 statements for 3 -> 30 submissions: one "
         "statement per row in the list's hydration. Batch it; when that lands "
@@ -285,11 +293,8 @@ def test_the_submission_list_does_not_scale(client) -> None:
     assert large_response.status_code == 200, large_response.text
     assert _rows(large_response, "submissions") >= large
 
-    grew = large_count - small_count
-    assert grew <= 2, (
-        f"submissions grew from {small} to {large} rows and the statement count "
-        f"went {small_count} -> {large_count} (+{grew}); something is querying "
-        "per row."
+    assert_growth_within(
+        small, large, small_count, large_count, what="the submission list"
     )
 
 

@@ -30,7 +30,13 @@ from typing import Any
 
 from sqlalchemy import event
 
-#: A file name saying "this reads once" is one way to join the family.
+#: A file name saying "this reads once" is one way to join the family. The bare
+#: ``once`` is deliberately broad: ten of its matches are the family proper
+#: (``test_channel_directory_reads_owners_once``, ``test_live_inputs_reads_once``
+#: …) and only a handful are idempotency tests ("the beat is remembered once").
+#: Narrowing it to ``reads_once``/``read_once`` would drop those ten from
+#: ``-m reads_once``, which is the roster the marker exists to publish. The
+#: marker's description says "read or happen exactly once" for that reason.
 NAME_HINTS = ("reads_once", "read_once", "once")
 
 #: Saying it in the code is the other, and the one that actually scales: a new
@@ -67,6 +73,16 @@ def counting_sql(client: Any) -> Iterator[list[str]]:
         yield seen
     finally:
         event.remove(engine, "after_cursor_execute", _record)
+
+
+class QueryGrowth(AssertionError):
+    """A list's statement count grew with the number of rows it listed.
+
+    Its own type so a caller can say "this endpoint is known to scale" without
+    also excusing a seed that failed, a 500, or a response shape that moved:
+    ``pytest.mark.xfail(raises=QueryGrowth)`` swallows exactly this defect and
+    nothing else.
+    """
 
 
 def count_sql(client: Any, request: Callable[[], Any]) -> tuple[int, Any]:
@@ -106,12 +122,35 @@ def assert_does_not_scale(
     large_count, large_response = count_sql(client, request)
     assert large_response.status_code == 200, large_response.text
 
-    grew = large_count - small_count
-    assert grew <= allow_growth, (
-        f"{what} grew from {small} to {large} rows and the statement count went "
-        f"{small_count} -> {large_count} (+{grew}); something is querying per row."
+    assert_growth_within(
+        small, large, small_count, large_count, allow_growth=allow_growth, what=what
     )
     return small_count, large_count
+
+
+def assert_growth_within(
+    small: int,
+    large: int,
+    small_count: int,
+    large_count: int,
+    *,
+    allow_growth: int = 2,
+    what: str = "the listed collection",
+) -> None:
+    """The same judgement on two counts someone measured themselves.
+
+    :func:`assert_does_not_scale` seeds and measures; a test that has to build
+    two differently-sized fixtures by hand (a task per submission count, say)
+    measures its own and calls this, so both raise the same :class:`QueryGrowth`
+    and an ``xfail`` can excuse exactly that defect.
+    """
+    grew = large_count - small_count
+    if grew > allow_growth:
+        raise QueryGrowth(
+            f"{what} grew from {small} to {large} rows and the statement count "
+            f"went {small_count} -> {large_count} (+{grew}); something is "
+            "querying per row."
+        )
 
 
 def _source(path: str) -> str:
