@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.block.models import Block, BlockKind
 from app.domain.project.address import Numbered, take_number
 from app.domain.room_task.models import (
@@ -194,12 +195,64 @@ class TaskRepository:
             for row in (await self._session.execute(stmt)).all()
         ]
 
+    async def _underway_for_rooms(
+        self, room_ids: list[uuid.UUID]
+    ) -> list[tuple[Task, datetime | None]]:
+        """Every underway task in ``room_ids``, paired with its newest block's
+        timestamp, most recently moved first — one query per request for the
+        whole room batch.
+
+        ``GET /topics`` and ``GET /topics/{id}`` ask five questions about the
+        same set of underway tasks: which tasks exist per room
+        (:meth:`tasks_of_rooms`, twice), how many per room
+        (:meth:`underway_counts`), which ones the viewer takes part in
+        (:meth:`underway_with`), which ones belong to others ordered by when
+        they last moved (:meth:`underway_others`), and when each shown task last
+        spoke (:meth:`last_block_at_for_tasks`). Answered from this one read,
+        remembered in ``request_facts`` until the session writes.
+        """
+        if not room_ids:
+            return []
+        key = ("underway_for_rooms", tuple(room_ids))
+        found, cached = recall(self._session, key)
+        if found:
+            return cached
+        said = (
+            select(func.max(Block.created_at))
+            .where(Block.conversation_id == Task.id)
+            .correlate(Task)
+            .scalar_subquery()
+        )
+        stmt = (
+            select(Task, said)
+            .where(
+                Task.room_id.in_(room_ids),
+                Task.status == TaskStatus.open,
+                Task.closing_since.is_(None),
+            )
+            .order_by(TaskRepository._moved().desc())
+        )
+        rows = [(task, at) for task, at in (await self._session.execute(stmt)).all()]
+        remember(self._session, key, rows)
+        found_last, last_map = recall(self._session, "task_last_block_at")
+        merged_last = dict(last_map) if found_last else {}
+        for task, at in rows:
+            merged_last[task.id] = at
+        remember(self._session, "task_last_block_at", merged_last)
+        return rows
+
     async def underway_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         """How many tasks each of these rooms has underway: open and not in the
         window where a merged task is being written up before it closes. A room
         with none is absent."""
         if not room_ids:
             return {}
+        found, rows = recall(self._session, ("underway_for_rooms", tuple(room_ids)))
+        if found:
+            counts: dict[uuid.UUID, int] = {}
+            for task, _ in rows:
+                counts[task.room_id] = counts.get(task.room_id, 0) + 1
+            return counts
         stmt = (
             select(Task.room_id, func.count(Task.id))
             .where(
@@ -213,15 +266,12 @@ class TaskRepository:
 
     async def underway_with(self, room_ids: list[uuid.UUID], person: str) -> list[Task]:
         """The tasks underway in these rooms that ``person`` owns or helps on."""
-        if not room_ids:
-            return []
-        stmt = select(Task).where(
-            Task.room_id.in_(room_ids),
-            Task.status == TaskStatus.open,
-            Task.closing_since.is_(None),
-            or_(Task.owner_handle == person, self._whose("helping", person)),
-        )
-        return list((await self._session.execute(stmt)).scalars().all())
+        rows = await self._underway_for_rooms(room_ids)
+        return [
+            task
+            for task, _ in rows
+            if task.owner_handle == person or person in (task.contributor_handles or [])
+        ]
 
     async def underway_others(
         self, room_ids: list[uuid.UUID], person: str
@@ -233,19 +283,13 @@ class TaskRepository:
         Ordered here rather than left to the caller: 一个项目里这样的活能有几百条，
         调用方按房间各取前几条，排序在库里做才不用把它们都读出来再排。
         """
-        if not room_ids:
-            return []
-        stmt = (
-            select(Task)
-            .where(
-                Task.room_id.in_(room_ids),
-                Task.status == TaskStatus.open,
-                Task.closing_since.is_(None),
-                TaskRepository.not_taking_part(person),
-            )
-            .order_by(TaskRepository._moved().desc())
-        )
-        return list((await self._session.execute(stmt)).scalars().all())
+        rows = await self._underway_for_rooms(room_ids)
+        return [
+            task
+            for task, _ in rows
+            if task.owner_handle != person
+            and person not in (task.contributor_handles or [])
+        ]
 
     async def tasks_of_rooms(
         self, room_ids: list[uuid.UUID]
@@ -256,16 +300,8 @@ class TaskRepository:
         支线一起算），所以调用方要的是「这些房间里有哪些活」，不是活本身。「还有事」
         取的是和 `underway_counts` 同一个判据：开着、且还没进收尾窗口。
         """
-        if not room_ids:
-            return {}
-        rows = await self._session.execute(
-            select(Task.id, Task.room_id).where(
-                Task.room_id.in_(room_ids),
-                Task.status == TaskStatus.open,
-                Task.closing_since.is_(None),
-            )
-        )
-        return {task_id: room_id for task_id, room_id in rows}
+        rows = await self._underway_for_rooms(room_ids)
+        return {task.id: task.room_id for task, _ in rows}
 
     async def list_for_room(
         self,
@@ -561,14 +597,25 @@ class TaskRepository:
         """
         if not task_ids:
             return {}
-        last = (
-            select(func.max(Block.created_at))
-            .where(Block.conversation_id == Task.id)
-            .scalar_subquery()
-        )
-        stmt = select(Task.id, last).where(Task.id.in_(task_ids))
-        rows = (await self._session.execute(stmt)).all()
-        return {task_id: at for task_id, at in rows if at is not None}
+        found_last, cached_last = recall(self._session, "task_last_block_at")
+        known: dict[uuid.UUID, datetime | None] = cached_last if found_last else {}
+        missing = [tid for tid in task_ids if tid not in known]
+        if missing:
+            last = (
+                select(func.max(Block.created_at))
+                .where(Block.conversation_id == Task.id)
+                .scalar_subquery()
+            )
+            stmt = select(Task.id, last).where(Task.id.in_(missing))
+            known = dict(known)
+            for task_id, at in (await self._session.execute(stmt)).all():
+                known[task_id] = at
+            remember(self._session, "task_last_block_at", known)
+        return {
+            task_id: at
+            for task_id in task_ids
+            if (at := known.get(task_id)) is not None
+        }
 
     async def conversations_for_tasks(
         self, task_ids: list[uuid.UUID], *, limit: int | None = None
