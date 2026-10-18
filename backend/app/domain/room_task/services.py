@@ -355,7 +355,7 @@ class TaskService:
 
         Ordered by the table and not by the argument, so that a set of ids
         always renders in one fixed order however it was assembled — the caller
-        is `Cheese-Task:`, and trailer order that depended on the order someone
+        is `Link:`, and trailer order that depended on the order someone
         typed `--task` would make two identical declarations produce two
         different commit messages.
         """

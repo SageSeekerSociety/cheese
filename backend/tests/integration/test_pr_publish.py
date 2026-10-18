@@ -83,6 +83,7 @@ class _FakeClient:
         title: str,
         body: str,
         draft: bool = False,
+        as_user_token: str | None = None,
     ) -> OpenedPR:
         record = {
             "head": head,
@@ -508,7 +509,9 @@ class _GitHub(_FakeClient):
             "node_id": f"PR_node_{number}",
         }
 
-    async def open_pr(self, *, head, base, title, body, draft=False) -> OpenedPR:
+    async def open_pr(
+        self, *, head, base, title, body, draft=False, as_user_token=None
+    ) -> OpenedPR:
         for pr in self.prs.values():
             if (pr["head"]["ref"], pr["base"]["ref"], pr["state"]) == (
                 head,
