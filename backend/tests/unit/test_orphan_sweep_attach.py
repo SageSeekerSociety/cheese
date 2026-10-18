@@ -110,6 +110,27 @@ async def test_replay_protects_only_its_own_conversation_from_the_orphan_sweep(
 
 
 @pytest.mark.anyio
+async def test_exact_terminal_evidence_is_consumed_while_the_room_replays(db_factory):
+    topic = await a_topic(db_factory)
+    await open_turn(db_factory, topic, delivered=True, session_id="gone")
+    unknown = await open_turn(
+        db_factory, topic, delivered=True, session_id="unanswered"
+    )
+    chat = _Chat(db_factory)
+    replay = asyncio.create_task(asyncio.Event().wait())
+    chat.replaying = lambda room: replay
+    chat.row_is_dead = lambda room, agent, sid: sid == "gone"
+    runner = AgentWorkRunner(InProcessBroker())
+    try:
+        await runner.resume_orphans(chat)
+        assert await open_turn_ids(db_factory) == {unknown}
+        assert not chat.converse_calls
+    finally:
+        replay.cancel()
+        await asyncio.gather(replay, return_exceptions=True)
+
+
+@pytest.mark.anyio
 async def test_overlapping_sweeps_resend_an_unheard_prompt_only_once(
     db_factory, monkeypatch
 ):

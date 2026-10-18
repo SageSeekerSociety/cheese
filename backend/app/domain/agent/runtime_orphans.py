@@ -213,7 +213,14 @@ async def sweep_orphans(
         tid: record
         for tid, record in open_turns.items()
         if record.age_s(now) >= min_age_s
-        and chat_service.replaying(record.topic_id) is None
+        and (
+            chat_service.replaying(record.topic_id) is None
+            # Another seat can still replay after this exact session ended.
+            or (
+                record.delivered
+                and not death_evidence.unknown_row(chat_service, record)
+            )
+        )
     }
     wedged = await self._wedged_turns(old_enough, last_activity, silence_s, now)
     # A row the process cannot judge is not a dead row (FB-56 legacy③):
