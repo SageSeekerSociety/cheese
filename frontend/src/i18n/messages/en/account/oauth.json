@@ -24,12 +24,14 @@
     "unavailable": "Cannot continue signing in"
   },
   "error": {
+    "accountMismatch": "This GitHub account is not linked to the Cheese account that started authorization. Switch GitHub accounts, then start again from Cheese.",
     "alreadyLinked": "This account is already linked to another user",
     "bindingFailed": "Couldn't link the account. Please try again.",
     "consentRequired": "Read and agree to the Terms of Service and Privacy Policy before creating the account",
     "creationFailed": "Couldn't create the account. Please try again.",
     "emailTaken": "This email is already registered",
     "emailUnverified": "Verify your email address first",
+    "githubPasswordVerificationFailed": "This account could not be verified with a password. If you have not set one, sign in to Cheese, set a password in Account Security, then sign in with GitHub again.",
     "invalidCredentials": "Wrong username or password",
     "invalidInviteCode": "This invitation code is invalid or no longer active",
     "invalidNickname": "This display name is not allowed",
@@ -37,6 +39,7 @@
     "inviteCodeRequired": "Invitation code is required",
     "retry": "Try {provider} again",
     "sessionExpired": "The sign-in session expired. Please start again.",
+    "startFailed": "Could not start GitHub sign-in. Please try again.",
     "title": "Couldn't sign in",
     "tooManyAttempts": "Too many attempts. Please try again later.",
     "usernameReserved": "This username is reserved. Please choose another.",

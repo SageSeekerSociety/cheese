@@ -33,6 +33,8 @@ const providerName = computed(() => (providerId.value ? oauthProviderName(provid
 // it, so the page shows only what the error code maps to.
 const errorDescription = computed(() => {
   switch (queryText(route.query.error_code)) {
+    case 'ACCOUNT_MISMATCH':
+      return t('account.oauth.error.accountMismatch')
     case 'ALREADY_LINKED':
       return t('account.oauth.error.alreadyLinked')
     case 'BINDING_FAILED':
@@ -45,6 +47,8 @@ const errorDescription = computed(() => {
       return t('account.oauth.error.emailTaken')
     case 'EMAIL_UNVERIFIED':
       return t('account.oauth.error.emailUnverified')
+    case 'GITHUB_PASSWORD_VERIFICATION_FAILED':
+      return t('account.oauth.error.githubPasswordVerificationFailed')
     case 'INVALID_CREDENTIALS':
       return t('account.oauth.error.invalidCredentials')
     case 'INVALID_INVITE_CODE':

@@ -15,6 +15,7 @@ import { listOAuthConnections } from '@/api'
 import { UserAuthApi } from '@/api/userAuth'
 import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
+import { goAuthorize } from '@/lib/desktopApp'
 
 const CHROME_ON_WINDOWS =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
@@ -48,7 +49,14 @@ vi.mock('@/api', () => ({
   deleteOAuthConnection: vi.fn(),
 }))
 vi.mock('@/api/userAuth', () => ({
-  UserAuthApi: { redirectToOAuthLogin: vi.fn() },
+  UserAuthApi: {
+    getGithubReauthIntent: vi.fn(),
+    oauthLoginUrl: vi.fn(() => 'https://api.example.test/users/auth/oauth/login/github_app'),
+  },
+}))
+vi.mock('@/lib/desktopApp', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/desktopApp')>()),
+  goAuthorize: vi.fn(),
 }))
 vi.mock('@/services/account', () => ({ currentUserId: ref(7) }))
 vi.mock('@/plugins/dialog', () => ({
@@ -143,6 +151,7 @@ function github(over: Record<string, unknown> = {}) {
 
 describe('the linked GitHub account', () => {
   it('asks for GitHub sign-in again when nothing can renew it', async () => {
+    vi.mocked(UserAuthApi.getGithubReauthIntent).mockResolvedValue({ intent: 'account-ticket' })
     vi.mocked(listOAuthConnections).mockResolvedValue({
       connections: [github({ tokenExpires: '2026-01-01T00:00:00Z', hasRefreshToken: false })],
     })
@@ -150,7 +159,11 @@ describe('the linked GitHub account', () => {
 
     await fireEvent.click(await findByRole('button', { name: 'Sign in with GitHub again' }))
 
-    await waitFor(() => expect(UserAuthApi.redirectToOAuthLogin).toHaveBeenCalledWith('github_app'))
+    await waitFor(() =>
+      expect(goAuthorize).toHaveBeenCalledWith(
+        'https://api.example.test/users/auth/oauth/login/github_app?intent=account-ticket'
+      )
+    )
   })
 
   it('asks nothing while a renewal token can still refresh it', async () => {

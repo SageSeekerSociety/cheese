@@ -9,7 +9,9 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
 
+from app.common.auth import create_access_token
 from app.core.config import settings
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import (
@@ -18,6 +20,7 @@ from app.domain.oauth.services import (
     OAuthUserInfo,
     get_github_profile_for_handle,
 )
+from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
 
 _CALLBACK = "http://testserver/users/me/github-account/callback"
@@ -47,8 +50,12 @@ def _q(url: str) -> dict:
     return {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
 
 
-def _sign_in_with_github(client: TestClient):
-    start = client.get("/users/auth/oauth/login/github_app", follow_redirects=False)
+def _sign_in_with_github(client: TestClient, *, intent: str | None = None):
+    start = client.get(
+        "/users/auth/oauth/login/github_app",
+        params={"intent": intent} if intent else None,
+        follow_redirects=False,
+    )
     assert start.status_code == 302, start.text
     state = _q(start.headers["location"])["state"]
     return client.get(
@@ -185,7 +192,17 @@ def test_signing_in_again_renews_the_stored_authorization(
     github["access_token"] = "ghu_second"
     github["refresh_token_expires_in"] = 3600
 
-    again = _sign_in_with_github(api_client)
+    intent_response = api_client.post(
+        "/users/auth/oauth/github-app/intent",
+        headers={
+            "Authorization": "Bearer "
+            + create_access_token(user.user_id, handle=user.username)
+        },
+    )
+    assert intent_response.status_code == 200, intent_response.text
+    again = _sign_in_with_github(
+        api_client, intent=intent_response.json()["data"]["intent"]
+    )
 
     assert (
         urlparse(again.headers["location"]).path == settings.frontend_oauth_success_path
@@ -213,3 +230,131 @@ def test_a_sign_in_state_without_its_cookie_is_refused(
     assert urlparse(back.headers["location"]).path == settings.frontend_oauth_error_path
     found, _token = _github_of(db_session, _portal, user)
     assert found is None
+
+
+def test_existing_account_without_password_gets_github_setup_guidance(
+    api_client: TestClient, user_client, db_session, _portal, github
+):
+    user = user_client.create_user()
+
+    async def drop_password():
+        await db_session.execute(
+            update(User).where(User.id == user.user_id).values(hashed_password=None)
+        )
+        await db_session.flush()
+
+    _portal.call(drop_password)
+    back = _sign_in_with_github(api_client)
+    bound = api_client.post(
+        "/users/oauth/bind",
+        data={
+            "stateToken": _q(back.headers["location"])["stateToken"],
+            "username": user.username,
+            "password": "anything",
+        },
+        follow_redirects=False,
+    )
+    assert _q(bound.headers["location"])["error_code"] == (
+        "GITHUB_PASSWORD_VERIFICATION_FAILED"
+    )
+    assert _github_of(db_session, _portal, user)[0] is None
+
+
+def test_matching_email_without_password_gets_the_same_github_guidance(
+    api_client: TestClient, user_client, db_session, _portal, github, monkeypatch
+):
+    user = user_client.create_user()
+
+    async def drop_password():
+        await db_session.execute(
+            update(User).where(User.id == user.user_id).values(hashed_password=None)
+        )
+        await db_session.flush()
+
+    _portal.call(drop_password)
+
+    async def github_with_same_email(self, access_token):
+        return OAuthUserInfo(id="4242", email=user.email, name="Octo", username="octo")
+
+    monkeypatch.setattr(GitHubProvider, "get_user_info", github_with_same_email)
+    back = _sign_in_with_github(api_client)
+    assert (
+        urlparse(back.headers["location"]).path == settings.frontend_oauth_verify_path
+    )
+    verified = api_client.post(
+        "/users/auth/oauth/verify",
+        json={
+            "sessionId": _q(back.headers["location"])["sessionId"],
+            "password": "anything",
+        },
+        follow_redirects=False,
+    )
+    assert _q(verified.headers["location"])["error_code"] == (
+        "GITHUB_PASSWORD_VERIFICATION_FAILED"
+    )
+    assert _github_of(db_session, _portal, user)[0] is None
+
+
+def test_reauthorization_from_another_cheese_account_cannot_renew_its_github_token(
+    api_client: TestClient, user_client, db_session, _portal, github, monkeypatch
+):
+    account_a = user_client.create_user()
+    account_b = user_client.create_user()
+    back = _sign_in_with_github(api_client)
+    bound = api_client.post(
+        "/users/oauth/bind",
+        data={
+            "stateToken": _q(back.headers["location"])["stateToken"],
+            "username": account_a.username,
+            "password": account_a.password,
+        },
+        follow_redirects=False,
+    )
+    assert _q(bound.headers["location"]).get("bound") == "true"
+
+    async def other_github_identity(self, access_token):
+        return OAuthUserInfo(id="other", email=None, name="Other", username="other")
+
+    monkeypatch.setattr(GitHubProvider, "get_user_info", other_github_identity)
+    api_client.cookies.clear()
+    github["access_token"] = "ghu_b"
+    back = _sign_in_with_github(api_client)
+    bound = api_client.post(
+        "/users/oauth/bind",
+        data={
+            "stateToken": _q(back.headers["location"])["stateToken"],
+            "username": account_b.username,
+            "password": account_b.password,
+        },
+        follow_redirects=False,
+    )
+    assert _q(bound.headers["location"]).get("bound") == "true"
+
+    intent_response = api_client.post(
+        "/users/auth/oauth/github-app/intent",
+        headers={
+            "Authorization": "Bearer "
+            + create_access_token(account_a.user_id, handle=account_a.username)
+        },
+    )
+    assert intent_response.status_code == 200, intent_response.text
+    intent = intent_response.json()["data"]["intent"]
+    assert intent
+
+    # The app belongs to A, but the system browser authorizes B's GitHub.
+    github["access_token"] = "ghu_b_new"
+    start = api_client.get(
+        "/users/auth/oauth/login/github_app",
+        params={"intent": intent},
+        follow_redirects=False,
+    )
+    state = _q(start.headers["location"])["state"]
+    result = api_client.get(
+        "/users/me/github-account/callback",
+        params={"code": "c", "state": state},
+        follow_redirects=False,
+    )
+    assert _q(result.headers["location"])["error_code"] == "ACCOUNT_MISMATCH"
+    assert "cheese_refresh" not in result.headers.get("set-cookie", "")
+    assert _github_of(db_session, _portal, account_b)[1] == "ghu_b"
+    assert _github_of(db_session, _portal, account_a)[1] == "ghu_first"

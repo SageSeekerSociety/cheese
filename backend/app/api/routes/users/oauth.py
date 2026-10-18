@@ -46,6 +46,8 @@ from app.api.users_deps import (
     issue_session,
 )
 from app.api.write_access import ROUTE_DECIDES
+from app.auth.checker import require_auth_user
+from app.auth.core import AuthUserInfo
 from app.core import single_use_state
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
@@ -407,6 +409,46 @@ _OAUTH_LOGIN_STATE_SCOPE = "oauth_login_state"
 _OAUTH_LOGIN_STATE_TTL_S = 10 * 60
 
 
+def _github_reauth_account(token: str) -> int:
+    try:
+        claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        if claims.get("type") == "github_reauth" and type(claims.get("user_id")) is int:
+            return claims["user_id"]
+    except jwt.PyJWTError:
+        pass
+    raise AuthenticationRequiredError("Invalid or expired GitHub authorization")
+
+
+def _github_reauth_state(user_id: int) -> str:
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "type": "github_reauth_state",
+            "user_id": user_id,
+            "iat": now,
+            "exp": now + _OAUTH_LOGIN_STATE_TTL_S,
+            "jti": uuid.uuid4().hex,
+        },
+        settings.jwt_secret,
+        algorithm="HS256",
+    )
+
+
+def _github_reauth_expected_user(state: str) -> int | None:
+    if "." not in state:
+        return None
+    try:
+        claims = jwt.decode(state, settings.jwt_secret, algorithms=["HS256"])
+        if (
+            claims.get("type") == "github_reauth_state"
+            and type(claims.get("user_id")) is int
+        ):
+            return claims["user_id"]
+    except jwt.PyJWTError:
+        pass
+    raise AuthenticationRequiredError("Invalid GitHub authorization state")
+
+
 def _oauth_login_state_scope(provider_id: str) -> str:
     # Per provider, so a state issued for one provider cannot be spent at
     # another provider's callback.
@@ -445,11 +487,21 @@ def _oauth_callback_error_redirect(provider_id: str, message: str) -> RedirectRe
 )
 async def get_oauth_login_url(
     provider_id: Annotated[str, Path(alias="providerId")],
+    intent: str | None = Query(default=None),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> RedirectResponse:
     # The frontend navigates the browser straight to this endpoint, so we
     # 302-redirect to the provider's authorization page.
-    state = secrets.token_urlsafe(32)
+    if intent:
+        if provider_id != GITHUB_APP_PROVIDER:
+            return _oauth_callback_error_redirect(provider_id, "invalid_state")
+        try:
+            expected_user_id = _github_reauth_account(intent)
+        except AuthenticationRequiredError:
+            return _oauth_callback_error_redirect(provider_id, "invalid_state")
+        state = _github_reauth_state(expected_user_id)
+    else:
+        state = secrets.token_urlsafe(32)
     try:
         provider = oauth_service.get_provider(provider_id)
         auth_url = oauth_service.generate_authorization_url(provider_id, state)
@@ -481,6 +533,29 @@ async def get_oauth_login_url(
         path=urlparse(provider.config.redirect_url).path or "/",
     )
     return redirect
+
+
+@router.post("/auth/oauth/github-app/intent", dependencies=[ROUTE_DECIDES])
+async def github_reauth_intent(
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> dict:
+    """Bind a GitHub reauthorization started in the app to its Cheese account."""
+    connections = await oauth_service.list_user_connections(auth_user.user_id)
+    if not any(c["providerId"] == GITHUB_APP_PROVIDER for c in connections):
+        return ok({"intent": None})
+    now = int(time.time())
+    intent = jwt.encode(
+        {
+            "type": "github_reauth",
+            "user_id": auth_user.user_id,
+            "iat": now,
+            "exp": now + _OAUTH_LOGIN_STATE_TTL_S,
+        },
+        settings.jwt_secret,
+        algorithm="HS256",
+    )
+    return ok({"intent": intent})
 
 
 @router.get(
@@ -528,6 +603,7 @@ async def _resolve_oauth_identity(
     provider_id: str,
     user_info,
     tokens: dict | None = None,
+    expected_user_id: int | None = None,
 ) -> RedirectResponse:
     """Sign in the account this provider identity belongs to, or send the
     person to the page that decides which account it becomes.
@@ -546,6 +622,13 @@ async def _resolve_oauth_identity(
             provider_id=provider_id,
             provider_user_id=user_info.id,
         )
+        if expected_user_id is not None and (
+            existing is None or existing["userId"] != expected_user_id
+        ):
+            return _oauth_error_redirect(
+                "ACCOUNT_MISMATCH",
+                "This GitHub account is not linked to the Cheese account that started authorization",
+            )
         if existing:
             if tokens:
                 await oauth_service.update_connection_tokens(
@@ -755,6 +838,11 @@ async def oauth_verify_conflict(
         password = payload.get("password") or ""
         user, _profile = await auth_service.get_user_with_profile(user_id)
         if not await auth_service.verify_password(user, password):
+            if pending["providerId"] == GITHUB_APP_PROVIDER:
+                return _oauth_error_redirect(
+                    "GITHUB_PASSWORD_VERIFICATION_FAILED",
+                    "Password verification failed",
+                )
             return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
 
         await _clear_oauth_password_attempts(pending["username"])
@@ -951,6 +1039,10 @@ async def oauth_bind_user(
     user = await auth_service._user_repo.get_by_username(username)
     # Unknown users and wrong passwords get the same answer.
     if user is None or not await auth_service.verify_password(user, password):
+        if provider_id == GITHUB_APP_PROVIDER:
+            return _oauth_error_redirect(
+                "GITHUB_PASSWORD_VERIFICATION_FAILED", "Password verification failed"
+            )
         return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
     await _clear_oauth_password_attempts(username)
 
@@ -998,6 +1090,10 @@ async def sign_in_with_github(
         logger.info("GitHub sign-in: state rejected")
         return _oauth_callback_error_redirect(provider_id, "invalid_state")
     try:
+        expected_user_id = _github_reauth_expected_user(state)
+    except AuthenticationRequiredError:
+        return _oauth_callback_error_redirect(provider_id, "invalid_state")
+    try:
         provider = oauth_service.get_provider(provider_id)
         token_data = await provider.exchange_code(code)
         access_token = token_data.get("access_token")
@@ -1027,7 +1123,14 @@ async def sign_in_with_github(
         ),
     }
     return await _resolve_oauth_identity(
-        request, session, oauth_service, auth_service, provider_id, user_info, tokens
+        request,
+        session,
+        oauth_service,
+        auth_service,
+        provider_id,
+        user_info,
+        tokens,
+        expected_user_id=expected_user_id,
     )
 
 
