@@ -22,6 +22,11 @@ title is still refused.
 Not checked, because this repo's own history does not follow it: a length
 limit (main's titles routinely run past 72 characters) and a lowercase first
 letter (`fix(oauth): GitHub token refresh fails` is correct).
+
+`--warn-only` reports the same findings as warnings and exits 0. The post-submit
+Required CI run uses it for the commits a main push landed: they are already on
+main, so failing would hold back a validated commit for a formatting mistake
+nobody can retitle.
 """
 
 import json
@@ -147,6 +152,8 @@ PLACEHOLDER_HINT = (
 
 
 def main(argv: list[str]) -> int:
+    warn_only = "--warn-only" in argv
+    argv = [argument for argument in argv if argument != "--warn-only"]
     if argv[:1] == ["--pull-request"]:
         with open(argv[1]) as stream:
             pull = json.load(stream)
@@ -163,16 +170,21 @@ def main(argv: list[str]) -> int:
         return 1
     failed = False
     placeholder = False
+    level = "warning" if warn_only else "error"
     for title in titles:
         found = problems(title)
         if found:
             failed = True
-            print(f"::error::{title!r}: {'; '.join(found)}")
+            print(f"::{level}::{title!r}: {'; '.join(found)}")
             placeholder = placeholder or is_placeholder(title)
     if failed:
         print(CONVENTION)
         if placeholder:
             print(PLACEHOLDER_HINT)
+        if warn_only:
+            print("These titles are already on main, so this run reports them and"
+                  " does not fail the gate.")
+            return 0
         return 1
     print(f"{len(titles)} title(s) follow the convention.")
     return 0

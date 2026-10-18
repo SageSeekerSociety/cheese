@@ -299,10 +299,12 @@ class CandidateCI(unittest.TestCase):
         return self.run_record(**{"event": "merge_group",
                                   "head_branch": f"gh-readonly-queue/main/pr-7-{'b' * 40}", **changes})
 
-    def ready(self, build, ci):
+    def ready(self, build, ci, covered=False):
         def workflow_runs(_repository, workflow, _candidate):
             return build if workflow == "build.yml" else ci
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "workflow_runs", side_effect=workflow_runs):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), \
+                patch.object(GUARD, "workflow_runs", side_effect=workflow_runs), \
+                patch.object(GUARD, "covered_by_green", return_value=covered):
             return GUARD.ci_ready(self.candidate)
 
     def test_workflow_runs_use_authenticated_http_and_read_all_pages(self):
@@ -434,6 +436,76 @@ class CandidateCI(unittest.TestCase):
 
     def gate_run(self, **changes):
         return self.run_record(event="push", head_branch="main", **changes)
+
+    def green(self, *answers):
+        github, reads = self.github(*answers)
+        with patch.dict(os.environ, {"GH_TOKEN": "t"}), github:
+            return GUARD.green_anchor("example/app"), reads
+
+    def test_the_green_anchor_is_read_from_the_branch_endpoint(self):
+        # GET /git/ref/{ref} takes `heads/<branch>`; the `refs/heads/` spelling
+        # is for the create endpoint and 404s here, which would silently read as
+        # "no anchor yet" and disable the batch's coverage.
+        anchor, reads = self.green({"object": {"sha": self.candidate}})
+        self.assertEqual(anchor, self.candidate)
+        self.assertEqual(reads[-1], "https://api.github.com/repos/example/app/git/ref/heads/main-green")
+
+    def test_no_anchor_yet_is_not_an_error(self):
+        missing = GUARD.HTTPError("https://api.github.com/x", 404, "Not Found", {}, io.BytesIO(b""))
+        anchor, _reads = self.green(missing)
+        self.assertEqual(anchor, "")
+
+    def test_a_commit_behind_the_anchor_is_covered(self):
+        # compare/{candidate}...{anchor}: "ahead" means the anchor is ahead of
+        # this commit, i.e. the green run's diff included it.
+        for status, expected in (("ahead", True), ("identical", True),
+                                 ("behind", False), ("diverged", False)):
+            with self.subTest(status=status):
+                github, reads = self.github({"object": {"sha": "b" * 40}}, {"status": status})
+                with patch.dict(os.environ, {"GH_TOKEN": "t"}), github:
+                    self.assertEqual(GUARD.covered_by_green(self.candidate, "example/app"), expected)
+                self.assertIn(f"compare/{self.candidate}...{'b' * 40}", reads[-1])
+
+    def test_no_anchor_covers_nothing(self):
+        missing = GUARD.HTTPError("https://api.github.com/x", 404, "Not Found", {}, io.BytesIO(b""))
+        github, _reads = self.github(missing)
+        with patch.dict(os.environ, {"GH_TOKEN": "t"}), github:
+            self.assertFalse(GUARD.covered_by_green(self.candidate, "example/app"))
+
+    def test_a_batch_run_that_was_replaced_is_proved_by_the_later_green_one(self):
+        # The concurrency group replaced this commit's push run. A later run
+        # covered it and passed, so the commit is validated; its own release
+        # then steps aside for that newer commit (superseded_by).
+        replaced = [self.gate_run(conclusion="cancelled")]
+        self.assertTrue(self.ready([self.run_record()], replaced, covered=True))
+        self.assertFalse(self.ready([self.run_record()], replaced, covered=False))
+
+    def test_a_run_that_failed_is_not_excused_by_a_later_green_batch(self):
+        # Its change did fail here; the later run tested it together with a fix,
+        # which is not the same commit to release.
+        failed = [self.gate_run(conclusion="failure")]
+        self.assertFalse(self.ready([self.run_record()], failed, covered=True))
+
+    def test_a_queue_entry_that_passed_is_not_refused_by_a_later_cancelled_push(self):
+        # main is fast-forwarded to the queue entry's sha, which therefore also
+        # gets a push run; a later push can replace that run in the batch. The
+        # queue run already proved this exact commit.
+        queue_success = self.queue_record()
+        push_cancelled = self.gate_run(conclusion="cancelled", id=11,
+                                       updated_at="2026-09-22T12:05:00Z")
+        self.assertTrue(self.ready([self.run_record()], [queue_success, push_cancelled]))
+
+    def test_a_commit_with_no_run_is_not_proved_by_the_anchor_alone(self):
+        # An ancestor of the anchor need not have been inside the run that set
+        # it: the first push run diffs from the commit before its push.
+        self.assertFalse(self.ready([self.run_record()], [], covered=True))
+
+    def test_a_superseded_queue_entry_is_not_excused_by_the_green_anchor(self):
+        # A queue entry that did not pass was not replaced by a later push in a
+        # batch; it left the queue for a reason, and a green main run later does
+        # not say this commit's own gate passed.
+        replaced = [self.queue_record(conclusion="cancelled")]
+        self.assertFalse(self.ready([self.run_record()], replaced, covered=True))
 
     def waiting(self, runs):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), \
