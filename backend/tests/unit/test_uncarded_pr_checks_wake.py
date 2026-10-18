@@ -15,6 +15,7 @@ import pytest
 
 from app.domain.review import forge_clients, pr_poll
 from app.domain.review.github_pr_status import PullRequestStatus
+from app.domain.room_task.models import TaskStatus
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 
@@ -84,6 +85,7 @@ def said(monkeypatch):
         project_id=uuid.uuid4(),
         room_id=uuid.uuid4(),
         pr_url="https://github.com/acme/widgets/pull/1542",
+        status=TaskStatus.open,
     )
     session = _Session(task)
     said: list[str] = []
@@ -172,6 +174,21 @@ def test_a_pushed_head_starts_over(said):
     assert run(_Client([RUNNING])) == []
     assert run(_Moved([GREEN])) == []
     assert run(_Moved([GREEN])) == []
+
+
+def test_a_closed_task_is_not_told_to_file_a_card(said):
+    """这个轮询的查询刻意留着「已关、PR 还开着」的任务（外面有人把 PR 合了要落
+    账）。叫醒那一句是叫线去递卡，对一条已经关掉的任务是错的话，`record_instruction`
+    写的行也会被投递端以「任务已不再开放」拒掉。"""
+    run, task = said
+    assert run(_Client([RUNNING])) == []
+    task.status = TaskStatus.closed
+    assert run(_Client([GREEN])) == []
+    # 记录照常更新：任务重新打开后，同一个 head 再转绿仍不该说（上一次不是 running）。
+    assert run(_Client([GREEN])) == []
+    task.status = TaskStatus.open
+    assert run(_Client([RUNNING])) == []
+    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，可以递卡了"]
 
 
 @pytest.mark.parametrize(

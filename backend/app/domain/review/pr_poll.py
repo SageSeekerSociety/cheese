@@ -371,9 +371,22 @@ async def _wake_when_checks_pass(
 
     Silent unless this is a transition: the same head was ``running`` last tick
     and this tick is ``green``. Nothing is said for a head never seen before
-    (the first tick of a process, a push), for a PR that is not open, or on a
-    forge whose client has no `check_runs` (Forgejo's does, but the seam is
-    optional and the GitHub shape is what this reads).
+    (the first tick of a process, a push), for a PR that is not open, for a
+    task that is no longer open, or on a forge whose client has no `check_runs`
+    (Forgejo's does, but the seam is optional and the GitHub shape is what this
+    reads).
+
+    The open-task re-read is the whole point of the sentence: it tells a line
+    to file its card, and this poll's query deliberately keeps closed tasks
+    whose PR is still open (`or_(delivered_head IS NULL, status == open)` —
+    that arm is what settles a PR somebody merged on the forge for a task they
+    had already closed). A close whose PR-close call failed, or a room archived
+    and unarchived, leaves exactly that state with the PR still open, and
+    without this check the closed task would be told to file a card nobody
+    will ever file — and `record_instruction` would write a Delivery row that
+    the dispatcher refuses with 「任务已不再开放」. The row is read again
+    rather than carried from the caller for the same reason the merged branch
+    re-reads it: the answer that matters is the one at the write.
 
     GitHub answers a repeated read with 304 (`forge_etags`), which is not
     charged to the installation's quota, so asking every tick costs nothing in
@@ -390,6 +403,10 @@ async def _wake_when_checks_pass(
         return
     content = say("checksPassed", pr=number)
     async with sessions() as session:
+        task = await session.get(Task, task_id)
+        if task is None or task.status is not TaskStatus.open:
+            _uncarded_checks_seen[task_id] = (head, state)
+            return
         await record_instruction(
             session,
             DeliveryEvent(
