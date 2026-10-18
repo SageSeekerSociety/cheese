@@ -107,6 +107,10 @@ from app.domain.review.pr_publish_payload import (
 from app.domain.review.pr_publish_payload import (
     sync_pr_text as sync_pr_text,
 )
+from app.domain.review.ready_rebase import (
+    project_credentials,
+    rebase_behind_before_ready,
+)
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
@@ -260,6 +264,18 @@ async def open_pr_for_card(
     # Not best-effort: a card that says 等验收 while GitHub still says 草稿 is a
     # delivery nobody can review, and nothing else would ever say so.
     if pr.get("draft") and pr.get("node_id"):
+        # The same step `POST /ready` takes: a behind branch is brought onto
+        # its base first, so the full CI the flag starts reads today's
+        # workflows. A conflict does not stop a card — the poller names it.
+        await rebase_behind_before_ready(
+            session=session,
+            client=client,
+            project_id=project_id,
+            base_branch=base,
+            number=int(pr["number"]),
+            credentials=lambda: project_credentials(project_id, session),
+            status_client=lambda: status_client(project_id, session),
+        )
         await client.mark_ready_for_review(str(pr["node_id"]))
         pr["draft"] = False
     logger.info(

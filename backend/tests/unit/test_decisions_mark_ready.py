@@ -211,6 +211,27 @@ async def test_ready_rebases_a_behind_branch_before_it_flips_the_draft():
 
 
 @pytest.mark.anyio
+async def test_ready_answers_with_the_head_after_the_rebase():
+    """换基发生 → 回执里的 head 是新 head，rebased 为 True；线拿它读 CI、推送，
+    拿换基前的 sha 会读到「没跑」、下一次 push 被拒。"""
+    answer, _publisher, _forge, _events = await _ready(statuses=[_status()], lag=True)
+
+    assert answer["head"] == "sha-1-rebased"
+    assert answer["rebased"] is True
+
+
+@pytest.mark.anyio
+async def test_ready_answers_with_the_unchanged_head_when_nothing_moved():
+    """已经最新 → rebased 为 False，head 仍是原 head。"""
+    answer, _publisher, _forge, _events = await _ready(
+        statuses=[_status()], ancestry=("ahead",)
+    )
+
+    assert answer["head"] == "sha-1"
+    assert answer["rebased"] is False
+
+
+@pytest.mark.anyio
 async def test_ready_leaves_an_up_to_date_branch_alone():
     """不落后 → 一次 update_branch 都不打；换基会白改 head，白作废一轮 CI。"""
     answer, _publisher, forge, events = await _ready(
