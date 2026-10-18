@@ -149,6 +149,9 @@ def _bare(name: str, *extra: str):
 
 _tasks = _bare("tasks", "room_id")
 _topics = _bare("topics")
+#: The largest number any of these tables can hold: their `number` columns are
+#: `Integer`. A bigger one names nothing, and binding it would raise.
+_NUMBER_MAX = 2**31 - 1
 _documents = _bare("documents")
 #: Each kind's table, and the channel a row of it is in.
 _TABLES = {
@@ -222,8 +225,12 @@ async def things_by_ref(
     by_id_ref: dict[str, uuid.UUID] = {}
     for ref in dict.fromkeys(refs):
         flat = ref.strip().lstrip("#")
-        if flat.isdigit():
-            by_number_ref[ref] = int(flat)
+        if flat.isdecimal():
+            # A number is an `Integer` column; one this big cannot name a row,
+            # and binding it would fail instead of answering nothing. `①` and
+            # `²` pass `isdigit` but are no number either.
+            if (number := int(flat)) <= _NUMBER_MAX:
+                by_number_ref[ref] = number
             continue
         spelled = looks_like_uuid(flat)
         if spelled is not None:

@@ -24,6 +24,7 @@ from app.domain.room_task.place import PlaceResolver
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
+    new_project,
     open_task,
     post_project,
     room_agent_seat,
@@ -519,3 +520,55 @@ def test_a_card_naming_a_task_the_caller_cannot_point_at_refuses_the_change(clie
         assert refused.status_code == 422, refused.text
         assert ref in refused.text
         assert _board(client, canvas, BOB).json()["data"]["cards"] == []
+
+
+def test_a_task_of_another_project_is_not_a_task_here(client):
+    """A card names a task of this document's project, or none: another
+    project's id is one this canvas may not point at."""
+    pid, _, _, canvas = _task_canvas(client)
+    other = new_project(client, name="Q", owner="dave")
+    join_project_team(client, other["id"], "alice")
+    elsewhere = open_task(client, _channel(client, other["id"]), "别处的事")
+
+    refused = _change(
+        client, canvas, [{"op": "add", "content": "跨项目", "task": elsewhere["id"]}]
+    )
+    assert refused.status_code == 422, refused.text
+    assert elsewhere["id"] in refused.text
+    assert _board(client, canvas).json()["data"]["cards"] == []
+
+
+def test_an_update_sets_and_clears_a_cards_task(client):
+    pid, _, _, canvas = _task_canvas(client)
+    task = open_task(client, _channel(client, pid), "要挂上去的事")
+    _change(client, canvas, [{"op": "add", "content": "一张卡"}])
+
+    linked = _change(
+        client, canvas, [{"op": "update", "card": 1, "task": str(task["number"])}]
+    )
+    assert linked.status_code == 200, linked.text
+    assert _board(client, canvas).json()["data"]["cards"][0]["task"]["id"] == task["id"]
+
+    cleared = _change(client, canvas, [{"op": "update", "card": 1, "task": None}])
+    assert cleared.status_code == 200, cleared.text
+    assert _board(client, canvas).json()["data"]["cards"][0]["task"] is None
+
+
+def test_a_ref_that_names_nothing_is_refused_before_it_can_crash(client):
+    """A ref that is no number and no id is refused, and the change before it
+    is still the one named: resolving every ref at once does not move an
+    earlier change's refusal behind a bad reference."""
+    _, _, _, canvas = _task_canvas(client)
+    _change(client, canvas, [{"op": "add", "content": "第一张"}])
+
+    for ref in ("①", "9999999999"):
+        refused = _change(
+            client,
+            canvas,
+            [
+                {"op": "move", "card": 99, "x": 1, "y": 1},
+                {"op": "add", "content": "越界的引用", "task": ref},
+            ],
+        )
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["error"]["data"]["index"] == 0
