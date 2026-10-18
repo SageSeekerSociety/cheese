@@ -147,7 +147,8 @@ covers:
 |---|---|---|
 | forge event subscriptions | 固定 300s | 对账仓库 webhook 订阅 |
 | forge credential cache cleanup | 固定 3600s | 清过期的托管平台令牌缓存 |
-| pr poll / task pr poll / draft pr sweep | `accept_pr_poll_interval_s` | 镜像 PR 合并态、给没卡的任务补卡、开 draft PR |
+| pr poll / task pr poll | `accept_pr_poll_interval_s` | 镜像 PR 合并态、给没卡的任务补卡 |
+| draft pr sweep | `draft_pr_sweep_interval_s` | 给有提交、还没 PR 的分支开 draft PR；周期这一拍只扫 `draft_pr_sweep_activity_window_s` 内动过的任务，事件和重连的补扫扫全部 |
 | orphan sweep | `orphan_sweep_interval_s` | 扫死了没带进程一起死的轮 |
 | chat progress reminder | `chat_progress_check_interval_s` | 提醒沉默的轮 |
 | gate sweep | `gate_sweep_interval_s` | 收超龄的闸门孤儿卡 |

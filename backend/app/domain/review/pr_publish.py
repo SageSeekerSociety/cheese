@@ -262,6 +262,7 @@ async def sweep_draft_prs(
     *,
     announce: Announce,
     record_instruction: RecordInstruction,
+    quiet_window_s: int | None = None,
 ) -> dict[str, int]:
     """Open draft PRs for task branches with commits and no existing PR.
 
@@ -270,10 +271,15 @@ async def sweep_draft_prs(
     time spent on earlier tasks in this pass. Each task uses its own session
     so a failed write cannot poison the remaining deliveries.
 
-    Only tasks active inside `draft_pr_sweep_activity_window_s` are swept at
-    all: each candidate costs two GitHub requests (`branch_head` +
-    `compare_status`) on every pass, and a task whose branch has said nothing
-    for hours is not being pushed to. Zero or less keeps every open task.
+    ``quiet_window_s`` limits a pass to tasks whose last activity (newest
+    block in their own conversation, or their creation) is inside that many
+    seconds: each candidate costs two GitHub requests (`branch_head` +
+    `compare_status`), and a branch with nothing said for hours is not being
+    pushed to. Only the periodic clock passes it — that is where the cost is.
+    An event-driven or catch-up pass leaves it ``None`` and sweeps every open
+    task, because those passes are exactly how a push missed while the relay
+    was down, or a pass lost to a spent quota, gets made good. Zero or less
+    also keeps every open task.
     """
     # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
@@ -287,8 +293,11 @@ async def sweep_draft_prs(
     )
     if not enabled():
         return counts
-    window = settings.draft_pr_sweep_activity_window_s
-    active_since = datetime.now(UTC) - timedelta(seconds=window) if window > 0 else None
+    active_since = (
+        datetime.now(UTC) - timedelta(seconds=quiet_window_s)
+        if quiet_window_s is not None and quiet_window_s > 0
+        else None
+    )
     async with session_factory() as session:
         wanted = [
             (t.id, t.project_id)

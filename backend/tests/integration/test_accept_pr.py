@@ -3226,6 +3226,8 @@ def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
 
 
 def _sweep(client) -> dict:
+    """每 300 秒那一拍：只扫活动窗口里动过的活。"""
+    from app.core.config import settings
     from app.domain.review import pr_publish
 
     return client.portal.call(
@@ -3233,6 +3235,7 @@ def _sweep(client) -> dict:
             client.test_request_factory,
             announce=announce,
             record_instruction=record_task_instruction,
+            quiet_window_s=settings.draft_pr_sweep_activity_window_s,
         )
     )
 
@@ -3467,6 +3470,61 @@ def test_a_task_that_spoke_recently_is_swept_even_when_it_is_old(client, sweepin
 
     assert counts["opened"] == 1, counts
     assert len({head for _, head in sweeping["fake"].compare_status_calls}) == 1
+
+
+def test_a_catch_up_sweep_still_asks_about_a_quiet_branch(client, sweeping):
+    """掉线重连、丢了事件时的那次补扫不带窗口。
+
+    被漏掉的那次「有提交」只能在这里补上；任务已经安静下来也一样 —— 分支上确实
+    有东西。窗口是给每 300 秒那一拍省请求用的，不是「这条活不用再开 PR 了」。
+    """
+    from app.domain.review import pr_publish
+    from app.domain.room_task.models import Task
+
+    _, tid = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, tid)))
+
+    async def backdate() -> None:
+        async with client.test_factory() as s:
+            task = await s.get(Task, task_id)
+            task.created_at = datetime.now(UTC) - timedelta(days=2)
+            await s.commit()
+
+    asyncio.run(backdate())
+
+    counts = client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+        )
+    )
+
+    assert counts["opened"] == 1, counts
+    [opened] = sweeping["opened"]
+    assert opened["draft"] is True
+
+
+def test_a_zero_activity_window_sweeps_every_open_branch(client, sweeping, monkeypatch):
+    """窗口配成 0 就是不设窗口 —— 顺带钉住扫的是这个设置，不是写死的数。"""
+    from app.core.config import settings
+    from app.domain.room_task.models import Task
+
+    monkeypatch.setattr(settings, "draft_pr_sweep_activity_window_s", 0)
+    _, tid = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, tid)))
+
+    async def backdate() -> None:
+        async with client.test_factory() as s:
+            task = await s.get(Task, task_id)
+            task.created_at = datetime.now(UTC) - timedelta(days=2)
+            await s.commit()
+
+    asyncio.run(backdate())
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
 
 
 def test_push_fix_can_drop_dependency_before_filing_a_card(client, sweeping):

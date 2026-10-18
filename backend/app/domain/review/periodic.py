@@ -81,7 +81,9 @@ def register_periodic_jobs(
     # Drafts and cards watch the same repository state, but not on the same
     # clock: a draft PR nobody is waiting for can appear a few minutes later,
     # and this sweep is the largest single consumer of the installation's
-    # GitHub quota (two requests per candidate branch, every pass).
+    # GitHub quota (two requests per candidate branch, every pass). This is
+    # also the only caller that passes `quiet_window_s`: an event or a
+    # reconnect sweeping every open task is how a missed pass is made good.
     jobs.register(
         "draft pr sweep",
         settings.draft_pr_sweep_interval_s,
@@ -90,6 +92,7 @@ def register_periodic_jobs(
             announce,
             dispatch_pending=dispatch_pending,
             record_instruction=record_instruction,
+            quiet_window_s=settings.draft_pr_sweep_activity_window_s,
         ),
     )
     jobs.register(

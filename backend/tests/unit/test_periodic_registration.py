@@ -34,6 +34,8 @@ _EXPECTED_PORTS = {
     "dispatch_pending": ANY,
     "task_teammate": task_teammate,
     "machines": checkout_sweep.sweep,
+    # 草稿扫描只有周期这一拍带窗口；事件和重连的补扫不带。
+    "quiet_window_s": settings.draft_pr_sweep_activity_window_s,
 }
 _KEYWORD_PORTS = {
     "pr poll": (
@@ -43,7 +45,7 @@ _KEYWORD_PORTS = {
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
     "landing watch": ("record_instruction", "task_teammate", "machines"),
-    "draft pr sweep": ("dispatch_pending", "record_instruction"),
+    "draft pr sweep": ("dispatch_pending", "record_instruction", "quiet_window_s"),
 }
 
 
