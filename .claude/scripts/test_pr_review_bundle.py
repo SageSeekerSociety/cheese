@@ -49,7 +49,9 @@ print(json.dumps({"generalDiagnostics": [
      "rule": "reportAssignmentType", "range": {"start": {"line": 2, "character": 0}}}
     for f in files] + [
     {"file": os.path.abspath(f), "severity": "error", "message": "FAKE OFF THE DIFF",
-     "range": {"start": {"line": 5, "character": 0}}} for f in files]}))
+     "range": {"start": {"line": 5, "character": 0}}} for f in files] + [
+    {"file": os.path.abspath(f), "severity": "warning", "message": "FAKE WARNING",
+     "range": {"start": {"line": 2, "character": 0}}} for f in files]}))
 """
 
 A_BASE = "def compute(x):\n    return x + 1\n\n\ndef unrelated_helper():\n    return 0\n"
@@ -177,6 +179,22 @@ class Bundle(unittest.TestCase):
         self.assertNotIn("## Inherited conclusion", Path(out.stdout.strip()).read_text())
         self.assertIn("blocker/major", out.stderr)
 
+    def test_a_re_preparing_keeps_a_major_already_written_for_this_head(self):
+        # End to end through pr-review.sh: the --kept wiring, not only bundle.inherit.
+        self.first_round("kept")
+        out = self.run_script("kept", self.merged, "prepare", PR, self.merged, "--since", self.reviewed)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        d = Path(out.stdout.strip()).parent
+        major = {"reviewed_sha": self.merged, "summary": "a real major", "candidates_found": 1,
+                 "candidates_refuted": 0, "not_covered": [],
+                 "findings": [{"severity": "major", "kind": "runtime", "file": "a.py", "line": 2, "title": "t",
+                               "failure": "f", "evidence": "e", "rung": 4, "confirm_with": ""}]}
+        (d / "result.json").write_text(json.dumps(major))
+        again = self.run_script("kept", self.merged, "prepare", PR, self.merged, "--since", self.reviewed)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertNotIn("## Inherited conclusion", Path(again.stdout.strip()).read_text())
+        self.assertEqual(json.loads((d / "result.json").read_text())["summary"], "a real major")
+
     def test_a_a_previous_round_of_another_commit_is_not_inherited(self):
         prev = self.tmp / "prev-other.md"
         prev.write_text(f"独立 review：head {self.base[:8]} 结论 无 blocker/major\n")
@@ -261,6 +279,47 @@ class Bundle(unittest.TestCase):
         self.assertIn("### 删除 `compute`", text)
         self.assertIn("`b.py:5`", text)
 
+    def test_b_a_line_deleted_inside_a_function_slices_that_function(self):
+        start = self.commit_on_branch("mid-base", self.base, {
+            "a.py": "def keep(x):\n    x += 1\n    x += 2\n    return x\n"})
+        head = self.commit_on_branch("mid-head", start, {
+            "a.py": "def keep(x):\n    x += 1\n    return x\n"})
+        text = "\n".join(bundle.section_slices(str(self.work), start, head))
+        self.assertIn("### 改动 `keep`（a.py:1）", text)
+
+    def test_b_an_inner_function_is_sliced_once(self):
+        start = self.commit_on_branch("inner-base", self.base, {
+            "a.py": "def outer():\n    def inner():\n        return 1\n    return inner\n"})
+        head = self.commit_on_branch("inner-head", start, {
+            "a.py": "def outer():\n    def inner():\n        return 2\n    return inner\n"})
+        text = "\n".join(bundle.section_slices(str(self.work), start, head))
+        self.assertIn("### 改动 `outer.inner`", text)
+        self.assertNotIn("### 改动 `outer`（", text)
+
+    def test_b_a_typescript_function_is_sliced_with_its_caller(self):
+        work = self.work
+        git(work, "checkout", "-q", "-b", "ts-head", self.base)
+        try:
+            (work / "util.ts").write_text("export function shout(s: string) {\n  return s + '!';\n}\n")
+            (work / "use.ts").write_text("import { shout } from './util';\nconsole.log(shout('hi'));\n")
+            git(work, "add", "util.ts", "use.ts")
+            git(work, "commit", "-qm", "ts")
+            head = git(work, "rev-parse", "HEAD")
+        finally:
+            git(work, "checkout", "-q", "main")
+        text = "\n".join(bundle.section_slices(str(work), self.base, head))
+        self.assertIn("### 改动 `shout`（util.ts:1）", text)
+        self.assertIn("`use.ts:2`", text)
+
+    def test_b_a_deleted_function_nobody_calls_says_so_and_a_failed_grep_does_not(self):
+        start = self.commit_on_branch("lonely-base", self.base, {
+            "a.py": A_BASE + "\n\ndef lonely_function_xyz():\n    return 1\n"})
+        head = self.commit_on_branch("lonely-head", start, {"a.py": A_BASE})
+        text = "\n".join(bundle.section_slices(str(self.work), start, head))
+        self.assertIn("删掉之后已经没人用它", text)
+        with self.assertRaises(RuntimeError):
+            bundle.call_sites(str(self.work), "0" * 40, "compute", "a.py")
+
     # ---------------------------------------------------------------- c) pyright
     def test_c_a_type_error_reaches_review_md(self):
         out = self.run_script("pyright", self.reviewed, "prepare", PR, self.reviewed)
@@ -269,6 +328,7 @@ class Bundle(unittest.TestCase):
         self.assertIn("## B2. 单文件 pyright", text)
         self.assertIn("⚠ `a.py:3` FAKE TYPE ERROR（reportAssignmentType）", text)
         self.assertIn("\n- `a.py:6` FAKE OFF THE DIFF", text, "an error on an unchanged line is not marked")
+        self.assertNotIn("FAKE WARNING", text, "warnings are not listed")
 
     def test_c_real_pyright_reports_the_bad_assignment(self):
         cmd = bundle.find_pyright(str(REPO_ROOT), None)
