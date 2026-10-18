@@ -1,7 +1,11 @@
 """Listing the agent sessions on a device judges every room's readability in
-one batch, not one ``authorize_topic`` per session: the statement count of
-GET …/devices/{id}/sessions does not grow with the number of sessions, and a
-private room stays counted in ``hidden``.
+one batch, not one ``authorize_topic`` per session: the readability part of
+the statements GET …/devices/{id}/sessions issues does not grow with the
+number of sessions, and a private room stays counted in ``hidden``.
+
+The route as a whole still issues a per-session read for each agent's name
+(``session_reports._agent_name``); the test stubs it so the count isolates the
+readability check. Without the stub the count still grows with the sessions.
 """
 
 import uuid
