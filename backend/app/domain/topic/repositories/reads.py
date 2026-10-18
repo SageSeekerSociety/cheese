@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Uuid, any_, bindparam, func, select
 from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.orm import defer
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -256,15 +257,25 @@ async def list_for_project_with_activity(
     Separate from ``list_for_project`` rather than replacing it: that one's
     ``list[Topic]`` is what mentions, the agent's context builders and the
     dashboard want, and none of them look at last activity.
+
+    ``Topic.environment`` and ``Topic.default_environment`` are deferred:
+    the list endpoint (``TopicOut``) and ``readable_rooms`` never read sandbox
+    environment documents, so pulling and deserialising both JSON columns on
+    every row is wasted work. Callers that need those columns must load a
+    full row (``get`` or ``list_for_project``).
     """
-    stmt = _project_topics_stmt(
-        repo,
-        [project_id],
-        sort=sort,
-        order=order,
-        active_since=active_since,
-        seen=seen_by(viewer),
-    ).add_columns(_last_activity())
+    stmt = (
+        _project_topics_stmt(
+            repo,
+            [project_id],
+            sort=sort,
+            order=order,
+            active_since=active_since,
+            seen=seen_by(viewer),
+        )
+        .options(defer(Topic.environment), defer(Topic.default_environment))
+        .add_columns(_last_activity())
+    )
     rows = (await repo._session.execute(stmt)).all()
     return [(topic, last) for topic, last in rows]
 
