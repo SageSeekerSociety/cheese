@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.api.deps import get_consumptions, get_session_host
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
 from app.core.config import settings
@@ -108,7 +109,9 @@ async def list_task_conversations(
     )
 
 
-@router.post("/tasks/{taskId}/conversations", status_code=201)
+@router.post(
+    "/tasks/{taskId}/conversations", status_code=201, dependencies=[ROUTE_DECIDES]
+)
 async def start_task_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")], db: DbSession, auth: AuthUser
 ) -> dict:
@@ -216,7 +219,7 @@ def _refuse(status: int, message: str, retry_after: int = 0) -> JSONResponse:
     return JSONResponse(body, status_code=status, headers=headers)
 
 
-@router.post("/conversations/{conversationId}/ask")
+@router.post("/conversations/{conversationId}/ask", dependencies=[ROUTE_DECIDES])
 async def ask(
     conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
     body: AskIn,
@@ -302,7 +305,7 @@ def _stream(questions: Consumptions, work: str, after: str = "0") -> StreamingRe
     )
 
 
-@router.post("/conversations/{conversationId}/stop")
+@router.post("/conversations/{conversationId}/stop", dependencies=[ROUTE_DECIDES])
 async def stop(
     conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
     db: DbSession,

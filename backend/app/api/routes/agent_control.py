@@ -19,6 +19,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     AuthenticationRequiredError,
     ConflictError,
@@ -102,7 +103,11 @@ async def executor_target(db: AsyncSession, topic_id: uuid.UUID) -> dict | None:
     return None
 
 
-@router.post("/topics/{topic_id}/agent/control", operation_id="agent-control")
+@router.post(
+    "/topics/{topic_id}/agent/control",
+    operation_id="agent-control",
+    dependencies=[ROUTE_DECIDES],
+)
 async def control(
     topic_id: uuid.UUID,
     data: ControlIn,

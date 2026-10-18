@@ -141,7 +141,7 @@ async def get_default_model(
     return ok(_default_model_state(project.settings, access))
 
 
-@router.put("/{project_id}/default-model")
+@router.put("/{project_id}/default-model", dependencies=[ROUTE_DECIDES])
 async def save_default_model(
     project_id: uuid.UUID,
     body: ProjectDefaultModelUpdate,
@@ -370,7 +370,7 @@ async def get_tier_policy(
     )
 
 
-@router.put("/{project_id}/tier-policy")
+@router.put("/{project_id}/tier-policy", dependencies=[ROUTE_DECIDES])
 async def set_tier_policy(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

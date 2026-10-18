@@ -202,7 +202,7 @@ async def project_documents(
     return ok({"data": rows, "next": rows[-1]["rank"] if len(docs) > limit else None})
 
 
-@projects.post("/{project_id}/documents")
+@projects.post("/{project_id}/documents", dependencies=[ROUTE_DECIDES])
 async def create_document(
     project_id: uuid.UUID,
     body: DocumentIn,
@@ -436,7 +436,7 @@ async def room_documents(
     return ok(page([document_row(doc) for doc in docs], len(docs)))
 
 
-@router.patch("/{document_id}")
+@router.patch("/{document_id}", dependencies=[ROUTE_DECIDES])
 async def rename_document(
     document_id: uuid.UUID,
     body: DocumentRenameIn,
@@ -451,7 +451,7 @@ async def rename_document(
     return ok(document_row(doc))
 
 
-@router.delete("/{document_id}")
+@router.delete("/{document_id}", dependencies=[ROUTE_DECIDES])
 async def delete_document(
     document_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -558,7 +558,7 @@ def _answering_agent(resolver: ActorResolver) -> str | None:
     return delegation.agent
 
 
-@router.put("/{document_id}")
+@router.put("/{document_id}", dependencies=[ROUTE_DECIDES])
 async def replace_document(
     document_id: uuid.UUID,
     body: DocEditIn,
@@ -628,7 +628,7 @@ async def replace_document(
     return await _with_ref_warnings(db, doc, _with_canvases(stored, [settled]))
 
 
-@router.post("/{document_id}/edits")
+@router.post("/{document_id}/edits", dependencies=[ROUTE_DECIDES])
 async def edit_doc_passages(
     document_id: uuid.UUID,
     body: PassageEditsIn,
@@ -782,7 +782,7 @@ async def document_receipt(
     return receipt
 
 
-@router.post("/{document_id}/restore")
+@router.post("/{document_id}/restore", dependencies=[ROUTE_DECIDES])
 async def restore_document(
     document_id: uuid.UUID,
     body: RestoreIn,
@@ -874,7 +874,7 @@ class StoreIn(BaseModel):
     reason: str | None = None
 
 
-@internal.put("/documents/{name}")
+@internal.put("/documents/{name}", dependencies=[ROUTE_DECIDES])
 async def store_document(
     name: str,
     body: StoreIn,

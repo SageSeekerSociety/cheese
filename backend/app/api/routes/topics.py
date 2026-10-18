@@ -26,7 +26,7 @@ from app.api.response import ok, page
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
 from app.api.topics_deps import _actor_in_place, _parse_moment
 from app.api.topics_rows import CardRow, TopicRow
-from app.api.write_access import CHEESE_ONLY_IN_ROOM
+from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
@@ -104,7 +104,7 @@ from app.domain.webhook import service as webhook_service
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("")
+@router.post("", dependencies=[ROUTE_DECIDES])
 async def create_topic(
     body: TopicCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -1138,7 +1138,7 @@ class ProgressIn(BaseModel):
     ) = None
 
 
-@router.put("/{topic_id}/progress")
+@router.put("/{topic_id}/progress", dependencies=[ROUTE_DECIDES])
 async def write_topic_progress(
     topic_id: uuid.UUID,
     body: ProgressIn,
@@ -1252,7 +1252,7 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
-@router.post("/{topic_id}/summon")
+@router.post("/{topic_id}/summon", dependencies=[ROUTE_DECIDES])
 async def summon_agent(
     topic_id: uuid.UUID,
     body: dict,
@@ -1364,7 +1364,7 @@ def _weekly_window(body: dict) -> tuple[datetime, datetime]:
     return since, until
 
 
-@router.post("/{topic_id}/weekly")
+@router.post("/{topic_id}/weekly", dependencies=[ROUTE_DECIDES])
 async def record_weekly(
     topic_id: uuid.UUID,
     body: dict,
@@ -1424,7 +1424,7 @@ async def record_weekly(
     return ok(out)
 
 
-@router.post("/{topic_id}/check-result")
+@router.post("/{topic_id}/check-result", dependencies=[ROUTE_DECIDES])
 async def record_check_result(
     topic_id: uuid.UUID,
     body: CheckResultIn,
@@ -1453,7 +1453,7 @@ async def record_check_result(
     return ok({"recorded": True, "task_id": str(task.id)})
 
 
-@router.post("/{topic_id}/clone-from")
+@router.post("/{topic_id}/clone-from", dependencies=[ROUTE_DECIDES])
 async def clone_topic_from(
     topic_id: uuid.UUID,
     body: dict,

@@ -150,15 +150,14 @@ repos:
         always_run: true
 
       # The API surface the frontend's types are generated from. This builds
-      # the document and holds the two one-line files beside it: the digest,
-      # which is how a change is routed into the frontend types suite, and the
-      # untyped ratchet, which only shrinks. CI runs it as a step of the
+      # the document and holds the untyped ratchet beside it, which only
+      # shrinks. CI runs it as a step of the
       # `backend / static` job (test.yml) rather than through pre-commit, since
       # that job has the venv already synced — the pre-push entry point is what
       # reads this id. `stages: [manual]` for the reason the heavy hooks above
       # carry it: 23s on a work machine is too much for a commit gate.
       - id: openapi-document
-        name: OpenAPI document builds, digest and untyped ratchet hold
+        name: OpenAPI document builds and untyped ratchet holds
         entry: bash -c 'cd backend && uv run python -m scripts.export_openapi --check'
         language: system
         pass_filenames: false

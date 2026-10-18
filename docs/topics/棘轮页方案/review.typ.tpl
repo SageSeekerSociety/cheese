@@ -53,7 +53,6 @@
   [② 边界], [C2 路由不碰别域 models], [*%%V:check.be-contracts.routes-touch-no-models.actual%%*], [*%%V:check.be-contracts.routes-touch-no-models.frozen%%*], [%%V:stale.be-contracts.routes-touch-no-models%% 条豁免已失效（\#2153 删了接口） #real], [只存冻结数],
   [② 边界], [C3 同级领域无环], [%%V:check.be-contracts.domains-acyclic.actual%%], [%%V:check.be-contracts.domains-acyclic.frozen%%], [%%V:stale.be-contracts.domains-acyclic%% 条失效豁免 #real], [%%V:history%% 次],
   [② 边界], [领域不直连别域 repository（pytest 账本）], [%%V:check.domain-import-guard.actual%%], [%%V:check.domain-import-guard.frozen%%], [通过即相等；数从测试模块自带的登记表读 #real], [#miss],
-  [② 边界], [Claude Code 适配器跨界账本（pytest）], [%%V:check.harness-boundary.actual%%], [%%V:check.harness-boundary.frozen%%], [通过即相等 #real], [#miss],
   [② 边界], [`is_private` 读点登记（pytest）], [%%V:check.is-private-read-points.actual%%], [%%V:check.is-private-read-points.frozen%%], [数的是读点、不是文件 #real], [#miss],
   [③ 规模], [单文件行数上限（`check-file-sizes.py`）], [%%V:check.file-sizes.actual%%], [无冻结表], [这道闸门只判改动文件，在 main 上通常是 0；树的全量数由看板给：%%V:board.size.offenders%% 个文件、超 %%V:board.size.excess_lines%% 行 #real], [%%V:history%% 次],
   [④ 样式], [vue-tsc 类型错误（`typecheck`）], [%%V:check.vue-tsc.actual%%], [%%V:check.vue-tsc.frozen%%], [#real], [#miss],

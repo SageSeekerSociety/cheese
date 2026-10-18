@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -100,9 +101,15 @@ class ExecutionRequest(BaseModel):
     timeout: float = Field(default=660, gt=0, le=660)
 
 
-@router.post("/topics/{topic_id}/execution/{resource_id}", include_in_schema=False)
 @router.post(
-    "/topics/{topic_id}/execution/session-{resource_id}", include_in_schema=False
+    "/topics/{topic_id}/execution/{resource_id}",
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
+)
+@router.post(
+    "/topics/{topic_id}/execution/session-{resource_id}",
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
 )
 async def execute(
     topic_id: uuid.UUID,

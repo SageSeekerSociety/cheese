@@ -388,6 +388,9 @@ class RequiredCITest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "skipped"},
+            # A backend change the paths do not send to the frontend: the api
+            # job answers whether the surface moved, and here it did not.
+            "api": {"result": "success", "outputs": {"moved": "false"}},
             **{
                 k: {"result": "success" if v else "skipped"}
                 for k, v in selected.items()
@@ -407,6 +410,7 @@ class RequiredCITest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "success"},
+            "api": {"result": "skipped"},
             **{k: {"result": "skipped"} for k in selected},
         }
 
@@ -544,6 +548,9 @@ class AggregationTierTest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "skipped"},
+            # A backend change the paths do not send to the frontend: the api
+            # job answers whether the surface moved, and here it did not.
+            "api": {"result": "success", "outputs": {"moved": "false"}},
             **{
                 k: {"result": "success" if v else "skipped"}
                 for k, v in selected.items()
@@ -557,6 +564,7 @@ class AggregationTierTest(unittest.TestCase):
         return {
             "scope": {"result": "success", "outputs": outputs},
             "fast": {"result": "success"},
+            "api": {"result": "skipped"},
             **{k: {"result": "skipped"} for k in selected},
         }
 
@@ -612,6 +620,209 @@ class AggregationTierTest(unittest.TestCase):
         needs = self.needs()
         del needs["scope"]["outputs"]["tier"]
         self.assertTrue(gate.failures(needs, "full"))
+
+
+class ApiSurfaceTest(unittest.TestCase):
+    """A backend change that moves the OpenAPI document runs the frontend suite.
+
+    The frontend compiles against types generated from that document, so a
+    change that moves it and lands without the frontend suite has shipped an
+    API surface nobody compiled the frontend against. No path says when the
+    document moved; the ``api`` job says it, and the required check must hold
+    the frontend suite to that answer.
+    """
+
+    def needs(self, paths=("backend/app/api/rooms.py",), api=None, frontend=None):
+        selected = gate.select(list(paths))
+        outputs = {k: str(v).lower() for k, v in selected.items()}
+        outputs["tier"] = "full"
+        needs = {
+            "scope": {"result": "success", "outputs": outputs},
+            "fast": {"result": "skipped"},
+            **{k: {"result": "success" if v else "skipped"} for k, v in selected.items()},
+        }
+        if api is not None:
+            needs["api"] = api
+        if frontend is not None:
+            needs["frontend"] = {"result": frontend}
+        return needs
+
+    def test_a_moved_surface_without_the_frontend_suite_is_red(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="skipped")
+        self.assertTrue(gate.failures(needs, "full"))
+
+    def test_a_moved_surface_with_the_frontend_suite_green_passes(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="success")
+        self.assertEqual(gate.failures(needs, "full"), [])
+
+    def test_a_moved_surface_with_a_red_frontend_suite_is_red(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}},
+                           frontend="failure")
+        self.assertTrue(gate.failures(needs, "full"))
+
+    def test_an_unmoved_surface_leaves_the_frontend_suite_out(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "false"}},
+                           frontend="skipped")
+        self.assertEqual(gate.failures(needs, "full"), [])
+
+    def test_a_backend_change_with_no_answer_from_api_is_red(self):
+        # A job that did not report whether the surface moved has not excused
+        # the frontend suite it would have started.
+        for api in ({"result": "failure"}, {"result": "cancelled"}, {"result": "skipped"},
+                    None, {"result": "success"},
+                    {"result": "success", "outputs": {"moved": ""}},
+                    {"result": "success", "outputs": {"moved": "maybe"}}):
+            with self.subTest(api=api):
+                self.assertTrue(gate.failures(self.needs(api=api, frontend="skipped"), "full"))
+
+    def test_api_runs_only_where_the_paths_left_the_question_open(self):
+        # A frontend change already runs the suite, and a change outside the
+        # backend cannot move the document: neither asks api.
+        for paths in (("frontend/src/main.ts",),
+                      ("backend/app/api/rooms.py", "frontend/src/main.ts"),
+                      ("docs/workflows.md",)):
+            with self.subTest(paths=paths):
+                ran = self.needs(paths, api={"result": "success", "outputs": {"moved": "false"}})
+                self.assertTrue(gate.failures(ran, "full"))
+                skipped = self.needs(paths, api={"result": "skipped"})
+                self.assertEqual(gate.failures(skipped, "full"), [])
+
+    def test_a_draft_never_asks_api(self):
+        needs = self.needs(api={"result": "success", "outputs": {"moved": "true"}})
+        needs["scope"]["outputs"]["tier"] = "quick"
+        needs["fast"]["result"] = "success"
+        for suite in gate.PATHS:
+            needs[suite] = {"result": "skipped"}
+        self.assertTrue(gate.failures(needs, "quick"))
+        needs["api"] = {"result": "skipped"}
+        self.assertEqual(gate.failures(needs, "quick"), [])
+
+    @staticmethod
+    def _holds(expression, outputs, moved, needs_succeeded):
+        """Whether an ``if:`` over scope outputs and ``needs.api.outputs.moved``
+        holds, given whether every job it needs succeeded.
+
+        A condition with no status function gets GitHub's implicit
+        ``success()``: a skipped or failed need skips the job whatever the rest
+        says. Only the operators these two conditions use are read; anything
+        else raises, so a rewritten condition fails here instead of passing."""
+        expr = expression.strip()
+        match = re.fullmatch(r"\$\{\{(.*)\}\}", expr, re.S)
+        expr = (match.group(1) if match else expr).strip()
+        if not re.search(r"\b(?:success|failure|always|cancelled)\(\)", expr):
+            expr = f"{needs_succeeded!r} && ({expr})"
+        expr = re.sub(r"needs\.scope\.outputs\.(\w+)",
+                      lambda m: repr(outputs.get(m.group(1), "")), expr)
+        expr = expr.replace("needs.api.outputs.moved", repr(moved))
+        expr = expr.replace("!cancelled()", "True")
+        expr = expr.replace("&&", " and ").replace("||", " or ")
+        if re.search(r"[&|]|![^=]|needs\.", expr):
+            raise AssertionError(f"unsupported condition: {expression!r} -> {expr}")
+        return bool(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307
+
+    def test_the_workflow_conditions_produce_what_the_judge_requires(self):
+        # Run every combination through the two `if:`s exactly as written in
+        # required-ci.yml, give each job the result GitHub would, and ask the
+        # judge. A condition that drifted from the judge — api asked when the
+        # paths already chose the frontend, or the frontend left out when api
+        # saw the surface move — leaves a combination the judge refuses.
+        jobs = jobs_of(WORKFLOW.read_text())
+        api_if, frontend_if = jobs["api"]["if"], jobs["frontend"]["if"]
+        for tier in ("full", "quick"):
+            for backend in ("true", "false"):
+                for frontend in ("true", "false"):
+                    for moved in ("true", "false"):
+                        with self.subTest(tier=tier, backend=backend,
+                                          frontend=frontend, moved=moved):
+                            outputs = {suite: "false" for suite in gate.PATHS}
+                            outputs.update(tier=tier, backend=backend, frontend=frontend)
+                            api_runs = self._holds(api_if, outputs, "", True)
+                            self.assertEqual(api_runs, gate.api_selected(outputs, tier))
+                            # A skipped job's outputs are empty strings.
+                            api_moved = moved if api_runs else ""
+                            # frontend needs scope (succeeded) and api, which
+                            # succeeded only if it ran.
+                            frontend_runs = self._holds(frontend_if, outputs, api_moved,
+                                                        api_runs)
+                            needs = {
+                                "scope": {"result": "success", "outputs": outputs},
+                                "fast": {"result": "success" if tier == "quick" else "skipped"},
+                                "api": ({"result": "success", "outputs": {"moved": moved}}
+                                        if api_runs else {"result": "skipped"}),
+                            }
+                            for suite in gate.PATHS:
+                                runs = (frontend_runs if suite == "frontend"
+                                        else tier == "full" and outputs[suite] == "true")
+                                needs[suite] = {"result": "success" if runs else "skipped"}
+                            self.assertEqual(gate.failures(needs, tier), [])
+
+    def test_the_api_output_is_the_one_the_compare_step_writes(self):
+        # The frontend's `if:` reads `needs.api.outputs.moved`; the job maps it
+        # from a step's output. A renamed step id or output key leaves it empty,
+        # and an empty `moved` is a judge-red run on every backend change.
+        text = jobs_of(WORKFLOW.read_text())["api"]["text"]
+        mapped = re.search(r"^      moved: \$\{\{ steps\.([\w-]+)\.outputs\.(\w+) \}\}$",
+                           text, re.M)
+        self.assertIsNotNone(mapped, "the api job does not map `moved` from a step output")
+        step_id, key = mapped.groups()
+        self.assertEqual(key, "moved")
+        self.assertRegex(text, rf"(?m)^        id: {re.escape(step_id)}$")
+        step = text[text.index(f"id: {step_id}"):]
+        self.assertIn("export_openapi --stdout", step.split("\n      - ")[0])
+
+    def run_compare(self, head_doc, base_doc, base_exit=0):
+        """Run the api job's real comparison shell against stub git and uv.
+
+        The stub uv prints ``head_doc`` from the change's backend/ and
+        ``base_doc`` from the base worktree's, and exits ``base_exit`` there.
+        Returns the process and what the step wrote to $GITHUB_OUTPUT.
+        """
+        body = run_body_containing(WORKFLOW.read_text(), "export_openapi --stdout")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "repo" / "backend").mkdir(parents=True)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "git",
+                  'if [ "$1" = worktree ]; then mkdir -p "${@: -2:1}/backend"; fi\n')
+            # Prints only from the two backend/ directories the step must run
+            # it in; anywhere else is a step that changed directory wrongly.
+            _stub(bindir, "uv",
+                  'case "$PWD" in\n'
+                  '  "$RUNNER_TEMP/base/backend") printf "%s" "$BASE_DOC"; exit "$BASE_EXIT";;\n'
+                  '  */repo/backend) printf "%s" "$HEAD_DOC";;\n'
+                  '  *) echo "uv run from $PWD" >&2; exit 3;;\n'
+                  'esac\n')
+            output = tmp / "github_output"
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "RUNNER_TEMP": str(tmp / "runner"), "GITHUB_OUTPUT": str(output),
+                   "BASE_SHA": "0" * 40, "HEAD_DOC": head_doc, "BASE_DOC": base_doc,
+                   "BASE_EXIT": str(base_exit)}
+            (tmp / "runner").mkdir()
+            # `bash -e`: the shell GitHub gives a Linux `run:` step.
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp / "repo",
+                                  capture_output=True, text=True)
+            written = output.read_text() if output.exists() else ""
+        return proc, written
+
+    def test_the_compare_step_reports_a_moved_document(self):
+        proc, written = self.run_compare('{"paths": {"/a": {}}}\n', '{"paths": {}}\n')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(written.splitlines(), ["moved=true"])
+
+    def test_the_compare_step_reports_an_unmoved_document(self):
+        proc, written = self.run_compare('{"paths": {}}\n', '{"paths": {}}\n')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(written.splitlines(), ["moved=false"])
+
+    def test_a_base_that_cannot_print_its_document_fails_the_step(self):
+        # No document at the base is no answer: the step must fail (which the
+        # judge reads as red) rather than call an empty file "moved" or not.
+        proc, written = self.run_compare('{"paths": {}}\n', "", base_exit=1)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("moved=", written)
 
 
 def run_bodies(text):
@@ -1279,7 +1490,11 @@ class MainCliTest(unittest.TestCase):
             self.assertEqual(written["remote"], "false")
             self.assertEqual(written["cifast"], "false")
             self.assertIn("e2e/remote 留给合并队列", proc.stdout)
-            self.assertTrue(all(v in ("true", "false") for k, v in written.items() if k != "tier"))
+            # The api job compares the document against the commit this diff
+            # was taken from, so the two cannot be answering different questions.
+            self.assertEqual(written["base"], base)
+            self.assertTrue(all(v in ("true", "false") for k, v in written.items()
+                                if k not in ("tier", "base")))
 
     def test_pull_request_defers_e2e_and_remote_while_merge_group_requires_them(self):
         scripts = WORKFLOW.parent.parent / "scripts"
@@ -1330,6 +1545,7 @@ class MainCliTest(unittest.TestCase):
             pr_needs = {
                 "scope": {"result": "success", "outputs": pr_written},
                 "fast": {"result": "skipped"},
+                "api": {"result": "success", "outputs": {"moved": "false"}},
                 **{
                     k: {"result": "success" if pr_written[k] == "true" else "skipped"}
                     for k in gate.PATHS
@@ -1362,6 +1578,7 @@ class MainCliTest(unittest.TestCase):
             mg_needs_skipped = {
                 "scope": {"result": "success", "outputs": mg_written},
                 "fast": {"result": "skipped"},
+                "api": {"result": "success", "outputs": {"moved": "false"}},
                 **{
                     k: {"result": "success" if mg_written[k] == "true" else "skipped"}
                     for k in gate.PATHS

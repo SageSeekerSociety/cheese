@@ -420,8 +420,11 @@ function ciSource() {
     // gate is `needs.scope.outputs.tier == 'full' && needs.scope.outputs.<suite>
     // == 'true'` — the tier guard makes a `true` suite still skip on a draft —
     // so the suite key leads the second clause and the tier guard is optional
-    // here (a bare `<suite> == 'true'` gate is still read).
-    const gate = /^ {4}if: (?:needs\.scope\.outputs\.tier == 'full' && )?needs\.scope\.outputs\.([a-z0-9_]+) == 'true'$/m.exec(body)
+    // here (a bare `<suite> == 'true'` gate is still read). The frontend's gate
+    // goes on — `|| needs.api.outputs.moved == 'true'`, inside `${{ !cancelled()
+    // && … }}` — because a backend change that moves the API document runs it
+    // too, so the suite key is read where it leads and the rest is left alone.
+    const gate = /^ {4}if: (?:\$\{\{ !cancelled\(\) && )?(?:needs\.scope\.outputs\.tier == 'full' && )?\(?needs\.scope\.outputs\.([a-z0-9_]+) == 'true'/m.exec(body)
     const uses = /^ {4}uses: \.\/\.github\/workflows\/([\w.-]+)$/m.exec(body)
     if (gate && uses) runs[gate[1]] = uses[1]
   }
