@@ -46,7 +46,8 @@ function tone(task: ChannelTask, mine: boolean): TaskTone {
   const { column, phrase } = task.presentation
   if (column === 'done' || column === 'archived') return phrase === 'closed' ? 'closed' : 'done'
   if (mine) return 'mine'
-  if (phrase === 'checks_failed') return 'stuck'
+  // 检查红了、交付被退回了：都不是「有事等你」，是这件事出了问题、要队友去改。
+  if (phrase === 'checks_failed' || phrase === 'bounced') return 'stuck'
   if (column === 'needs_you' || task.waiting_on) return 'waiting'
   if (phrase === 'running' || phrase === 'fixing_checks' || phrase === 'resolving_conflict') return 'running'
   return 'idle'

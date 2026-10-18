@@ -1077,11 +1077,10 @@ class TestGetGithubUserToken:
         with patch.object(
             svc, "_refresh_and_persist_token", new=AsyncMock(return_value="fresh-token")
         ) as mock_refresh:
-            token, reason = await svc.get_github_user_token_with_reason(42)
+            token = await svc.get_github_user_token(42)
 
         mock_refresh.assert_awaited_once_with(7, "github_app")
         assert token == "fresh-token"
-        assert reason is None
 
     @pytest.mark.anyio
     async def test_soon_to_expire_token_also_delegates_to_refresh(self):
@@ -1103,7 +1102,7 @@ class TestGetGithubUserToken:
         assert result == "fresh-token"
 
     @pytest.mark.anyio
-    async def test_refresh_failure_is_forwarded_as_none_with_reason(self):
+    async def test_refresh_failure_is_forwarded_as_none(self):
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
             id=7,
@@ -1115,10 +1114,7 @@ class TestGetGithubUserToken:
         with patch.object(
             svc, "_refresh_and_persist_token", new=AsyncMock(return_value=None)
         ):
-            token, reason = await svc.get_github_user_token_with_reason(42)
-
-        assert token is None
-        assert reason == "refresh_failed"
+            assert await svc.get_github_user_token(42) is None
 
     @pytest.mark.anyio
     async def test_undecryptable_access_token_degrades_to_none_and_logs(self, caplog):
@@ -1160,7 +1156,7 @@ class TestGetGithubUserToken:
     @pytest.mark.anyio
     async def test_expiring_token_with_unconfigured_provider_returns_none(self):
         """github_app not in oauth_enabled_providers → get_provider() raises
-        NotFoundError. That must not escape into the accept flow."""
+        NotFoundError. That must not escape into the caller."""
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
             id=7,
@@ -1280,7 +1276,7 @@ class TestListUserConnections:
             id=1,
             raw_profile={"login": "octocat", "id": 583231},
             token_expires=NOW,
-            refresh_token="rt-secret",
+            refresh_token=_sealed("rt-secret", "refresh_token"),
             access_token="at-secret",
         )
         repo.list_by_user.return_value = [conn]

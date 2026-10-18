@@ -1,7 +1,4 @@
 {
-  "statusCell": {
-    "step": "{label} · 已走到第 {step}/{total} 步"
-  },
   "assignee": {
     "label": "指派给",
     "searching": "搜索中…",

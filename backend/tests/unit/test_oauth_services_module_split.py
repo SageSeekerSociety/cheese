@@ -5,10 +5,9 @@
 
 - ``providers.py`` —— ``OAuthProvider`` 协议、三家实现、``PROVIDER_CLASSES`` /
   ``LINK_ONLY_PROVIDERS``；
-- ``tokens.py`` —— ``seal_oauth_token`` / ``open_oauth_token``、
-  ``TOKEN_UNAVAILABLE_*``，以及 ``_decrypt_stored_token`` /
-  ``get_github_user_token*`` / ``_refresh_and_persist_token`` /
-  ``_current_token_if_fresh``；
+- ``tokens.py`` —— ``seal_oauth_token`` / ``open_oauth_token``，以及
+  ``_decrypt_stored_token`` / ``get_github_user_token`` /
+  ``_refresh_and_persist_token`` / ``_current_token_if_fresh``；
 - ``connections.py`` —— 连接的查、建、改 token、列、删，加 ``_connection_to_dict``。
 
 它们是同一个包里的子模块，不是三个同级模块：同级模块互相 import 会在 C3
@@ -24,7 +23,7 @@
 这道测试不连数据库，钉住四件事：
 
 1. 旧路径仍答得出原来那一组名字，而且是**同一批对象**（``GitHubProvider``、
-   ``seal_oauth_token``、``TOKEN_UNAVAILABLE_*``），不是各留一份；
+   ``seal_oauth_token``），不是各留一份；
 2. 每个名字现在住在哪个模块里，一个不差，而且**没有哪个实现写了两份** —— 这是
    「谁的职责归谁」的可执行版；
 3. ``__init__`` 没动；
@@ -65,7 +64,6 @@ OAUTH_SERVICE_METHODS = [
     "update_connection_tokens",
     "_decrypt_stored_token",
     "get_github_user_token",
-    "get_github_user_token_with_reason",
     "_refresh_and_persist_token",
     "_current_token_if_fresh",
     "list_user_connections",
@@ -102,18 +100,11 @@ HOME = {
     tokens: [
         "seal_oauth_token",
         "open_oauth_token",
-        "TOKEN_UNAVAILABLE_NOT_CONNECTED",
-        "TOKEN_UNAVAILABLE_UNDECRYPTABLE",
-        "TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH",
-        "TOKEN_UNAVAILABLE_REFRESH_FAILED",
-        "TOKEN_UNAVAILABLE_PROVIDER_NOT_CONFIGURED",
     ],
     oauth_services: [
         "OAuthService",
         "OAuthConnectionRepository",
-        "get_github_user_token_for_handle",
         "get_github_profile_for_handle",
-        "get_github_user_token_for_handle_with_reason",
     ],
 }
 
@@ -142,11 +133,6 @@ REEXPORTED_FROM_PROVIDERS = [
 REEXPORTED_FROM_TOKENS = [
     "seal_oauth_token",
     "open_oauth_token",
-    "TOKEN_UNAVAILABLE_NOT_CONNECTED",
-    "TOKEN_UNAVAILABLE_UNDECRYPTABLE",
-    "TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH",
-    "TOKEN_UNAVAILABLE_REFRESH_FAILED",
-    "TOKEN_UNAVAILABLE_PROVIDER_NOT_CONFIGURED",
 ]
 
 
@@ -160,15 +146,8 @@ def test_the_old_path_answers_the_provider_names_with_the_same_objects(
 
 @pytest.mark.parametrize("name", REEXPORTED_FROM_TOKENS)
 def test_the_old_path_answers_the_token_names_with_the_same_objects(name: str) -> None:
-    """`seal_oauth_token` / `open_oauth_token` / `TOKEN_UNAVAILABLE_*` 同理。
-
-    `TOKEN_UNAVAILABLE_*` 这组字符串是给调用方比对的（两阶段采纳要说明降级原因），
-    所以要的是**同一个对象**，不是各留一份相等的字面量。
-
-    这条挡不住的是「抄一份、文本碰巧一字不差」：CPython 会把这种短字符串驻留，两份同
-    文本的字面量恰好也是同一个对象。它挡得住的是抄一份、文本改过的那种 —— 那才会让
-    两个导入路径给出两个答案，也正是拆分最容易留下的分叉。
-    """
+    """`seal_oauth_token` / `open_oauth_token` 同理：两个导入路径给出同一个函数，
+    不是拆分时留下的两份。"""
     assert getattr(oauth_services, name) is getattr(tokens, name)
 
 
@@ -246,9 +225,9 @@ def test_no_module_level_function_is_defined_twice() -> None:
     assert len(defined) > 10, f"只数到 {len(defined)} 个模块级函数，这四个文件不对"
 
 
-def test_the_service_keeps_all_18_methods() -> None:
-    """18 个方法一个不少，而且都是类自己定义的（不是 `__getattr__` 转发）。"""
-    assert len(OAUTH_SERVICE_METHODS) == 18
+def test_the_service_keeps_all_17_methods() -> None:
+    """17 个方法一个不少，而且都是类自己定义的（不是 `__getattr__` 转发）。"""
+    assert len(OAUTH_SERVICE_METHODS) == 17
     assert len(KEPT_IN_THE_CLASS) == 7
     own = set(vars(oauth_services.OAuthService))
     assert [n for n in OAUTH_SERVICE_METHODS if n not in own] == []
