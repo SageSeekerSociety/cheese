@@ -8,12 +8,15 @@ face value would drop half a busy day and the page would read it as a quiet one.
 """
 
 import json
+import time
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 
+from app.core import forge_etags, forge_quota
 from app.domain.ci_activity.github import CiGitHubError, CiQuotaRefused, GitHubCi
 
 SINCE = datetime(2026, 10, 17, 0, 0, tzinfo=UTC)
@@ -177,3 +180,22 @@ async def test_a_graphql_quota_refusal_is_raised_as_one():
         await _reader(handler).queue_events(
             owner="o", repo="r", token="t", since=SINCE, until=UNTIL
         )
+
+
+async def test_a_runs_jobs_do_not_take_room_in_the_shared_answer_cache(monkeypatch):
+    # The cache holds the pollers' small, re-read answers (each 304 is a free
+    # request). A run's jobs are read once per attempt and run to ~140 KB, so
+    # keeping them would only push those out.
+    monkeypatch.setattr(forge_etags, "_kept", OrderedDict())
+    forge_quota.own("minted-token", 4242, time.time() + 3600)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"etag": '"jobs"'},
+            json={"total_count": 1, "jobs": [{"id": 1}]},
+        )
+
+    await _reader(handler).run_jobs(owner="o", repo="r", token="minted-token", run_id=1)
+
+    assert len(forge_etags._kept) == 0
