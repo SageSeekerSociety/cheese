@@ -603,20 +603,34 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Point main-green at this commit
-        # A plain push, not a force: this ref only moves forward along main, and
-        # a push the server refuses (a rewritten main) leaves the anchor where
-        # it was — a wider diff, never a hidden commit.
+        # The REST call, not a `git push`: this job checks out at depth 1, so the
+        # client cannot see that the anchor's tip is an ancestor of this commit
+        # and rejects the push as non-fast-forward even though it fast-forwards
+        # (2026-10-18: two green batches in a row left the anchor behind). The
+        # server can see the ancestry; force=false keeps that judgement there,
+        # so a rewritten main is still refused.
+        #
+        # curl, not gh: the cheese-ci boxes have no gh (same reason the title
+        # step below spells its calls out in curl).
         #
         # A refusal here must not fail the run. The deploy gate reads this run's
-        # conclusion, so a network error on this one push would hold a commit
+        # conclusion, so a network error on this one call would hold a commit
         # off dev — while an anchor that did not move is safe by construction:
         # the next run diffs from the older commit, which covers more, never
         # less. It is loud instead, so a stuck anchor gets noticed.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if git push origin "HEAD:refs/heads/main-green"; then
+          if code="$(curl -sS --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
+              -X PATCH -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              --data "{\"sha\":\"$GITHUB_SHA\",\"force\":false}" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/heads/main-green")" \
+             && [ "${code:0:1}" = 2 ]; then
+            echo "Main green anchor moved to $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          echo "::warning::could not move refs/heads/main-green to $GITHUB_SHA; it still points at the previous anchor, so the next main run diffs from there and covers this batch too."
+          echo "::warning::could not move refs/heads/main-green to $GITHUB_SHA (HTTP ${code:-none}); it still points at the previous anchor, so the next main run diffs from there and covers this batch too."
           echo "Main green anchor not moved: the next run covers this batch as well." >> "$GITHUB_STEP_SUMMARY"
 
   # Merge queue only: fails `CI required` on the entry's sha as soon as any job
