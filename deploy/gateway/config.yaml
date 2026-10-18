@@ -161,6 +161,21 @@ model_list:
       # first user message, which every upstream of the group then receives.
       supports_mid_conversation_system: false
 
+  # Speech to text for the composer's voice input. Not a menu item: the
+  # backend's voice service calls it with a service key. DashScope serves it
+  # only on its native API, so `qwen-asr/` is our handler (`qwen_asr.py`),
+  # which reports the audio length as 25 prompt tokens a second.
+  # RMB 0.00022 per second (Beijing), 2026-10-18:
+  # https://help.aliyun.com/zh/model-studio/model-pricing
+  # ÷ 25 tokens ÷ 7.1 RMB/USD = $1.2394e-6 per token.
+  - model_name: qwen-audio-asr
+    litellm_params:
+      model: qwen-asr/qwen-audio-3.0-asr-flash
+      api_base: https://dashscope.aliyuncs.com
+      api_key: os.environ/DASHSCOPE_API_KEY
+      input_cost_per_token: 0.0000012394
+      output_cost_per_token: 0
+
   # The official alias serves DeepSeek-V4.1-Flash-1017 as of 2026-10-17.
   # Self-hosted copies without a verified checkpoint cannot serve this alias.
   # https://api-docs.deepseek.com/updates/
@@ -371,5 +386,10 @@ litellm_settings:
     - cheese_upstream_headers.handler
     - cheese_no_explicit_cache.handler
     - cheese_spend_cap.handler
+  # Providers LiteLLM has no route for, served by a handler of ours behind the
+  # chat API (`qwen_asr.py`).
+  custom_provider_map:
+    - provider: qwen-asr
+      custom_handler: cheese_qwen_asr.handler
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true
