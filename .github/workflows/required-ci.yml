@@ -70,6 +70,7 @@ jobs:
       cifast: ${{ steps.scope.outputs.cifast }}
       tier: ${{ steps.scope.outputs.tier }}
       branch_heavy: ${{ steps.scope.outputs.branch_heavy }}
+      base: ${{ steps.scope.outputs.base }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Only the cheap selection/aggregation self-test runs here: every product
@@ -82,7 +83,17 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          # Every selected suite waits on this fetch, so one transient network
+          # error here reddens the whole run. Retry it; the selection below is
+          # unchanged.
+          for attempt in 1 2 3; do
+            if git fetch --no-tags --depth=1 origin "$BASE_SHA"; then break; fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::git fetch of $BASE_SHA failed on all $attempt attempts" >&2
+              exit 1
+            fi
+            sleep 2
+          done
           python3 .github/scripts/required-ci.py scope "$BASE_SHA"
 
   # The DRAFT tier: a bounded local-evidence run, inline so a draft adds no
@@ -296,6 +307,7 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       integration: ${{ needs.scope.outputs.branch_heavy == 'true' }}
+      coverage-job: false
 
   # ci-fast's black-box tests are their own suite: they used to run inside
   # scope, which put their ~65–121s on the serial path of every Required run.
@@ -306,9 +318,69 @@ jobs:
     if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.cifast == 'true'
     uses: ./.github/workflows/ci-fast.yml
 
-  frontend:
+  # Whether a backend change moved the API surface the frontend compiles
+  # against: the OpenAPI document printed at the diff's base and at this commit,
+  # compared. The frontend's types are generated from that document
+  # (frontend/scripts/gen-api-types.mjs), so a backend change that moves it runs
+  # the frontend suite below. The path map cannot answer this — the document is
+  # a function of the app, and no file says when it moved. Until 2026-10-17 one
+  # did: the committed digest backend/openapi.sha256, which every API change
+  # rewrote and any two of them collided on, in the merge queue above all (all
+  # three ejections that day, one PR three times over). This asks the question
+  # the digest stood for, with no file to collide on.
+  #
+  # Only for a backend change the paths have not already sent to the frontend
+  # suite (required-ci.py: api_selected); the judge holds it to that, and holds
+  # the frontend suite to its answer. Each `uv run --frozen` syncs the one
+  # environment to its own tree's lock, so a change that moves a dependency
+  # prints each document with its own dependencies.
+  api:
     needs: scope
-    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.frontend == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.backend == 'true' && needs.scope.outputs.frontend != 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    outputs:
+      moved: ${{ steps.compare.outputs.moved }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
+      - name: Compare the OpenAPI document with the base's
+        id: compare
+        env:
+          BASE_SHA: ${{ needs.scope.outputs.base }}
+        run: |
+          export UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/venv"
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+          (cd backend && uv run --frozen --no-dev python -m scripts.export_openapi --stdout) > "$RUNNER_TEMP/head.json"
+          (cd "$RUNNER_TEMP/base/backend" && uv run --frozen --no-dev python -m scripts.export_openapi --stdout) > "$RUNNER_TEMP/base.json"
+          if cmp -s "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json"; then
+            echo "The OpenAPI document is the same at $BASE_SHA and here."
+            echo "moved=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "The OpenAPI document moved since $BASE_SHA, so the frontend suite runs:"
+            diff -u "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json" | head -n 200 || true
+            echo "moved=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Selected by the paths, or by the `api` job seeing the API surface move.
+  # `!cancelled()` is what lets it start when `api` was skipped: a skipped need
+  # otherwise skips every job after it.
+  frontend:
+    needs: [scope, api]
+    if: ${{ !cancelled() && needs.scope.outputs.tier == 'full' && (needs.scope.outputs.frontend == 'true' || needs.api.outputs.moved == 'true') }}
     uses: ./.github/workflows/frontend.yml
 
   e2e:
@@ -379,7 +451,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
+    needs: [scope, api, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
     # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.
@@ -391,6 +463,21 @@ jobs:
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: python3 .github/scripts/required-ci.py check
+      # test.yml's `Backend coverage complete`, run here instead of as a job of
+      # its own (the backend job passes coverage-job: false): every case the
+      # independent collection names ran on exactly one shard. One runner hop
+      # fewer on the critical path. `needs.backend.result == 'success'` already
+      # says no shard failed, and an integration layer skipped when it was due
+      # leaves its cases missing from the shards, which this step fails on.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.backend.result == 'success'
+        with:
+          pattern: backend-*
+          path: ${{ runner.temp }}/backend-artifacts
+      - name: Backend coverage complete
+        if: needs.backend.result == 'success'
+        working-directory: backend
+        run: python3 -m scripts.assert_shards_complete "$RUNNER_TEMP/backend-artifacts" --plan backend-expected
       # This repo's own commit convention (docs/workflows.md §5); the platform
       # leaves a hosted repo's titles to that repo. In the merge queue it reads
       # the squash commits about to land, which is what main will say. On a PR
@@ -409,27 +496,74 @@ jobs:
           HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         # curl + python3, not gh + jq: the cheese-ci boxes have neither gh nor jq
         # (python3, git and curl only), and both calls are plain GETs.
+        #
+        # A TLS reset on one of those GETs reddened a merge-queue entry (#4144:
+        # curl 35 and a JSONDecodeError), so retry transient network errors and,
+        # when the read really fails, name the status instead of handing python
+        # an empty string to parse. -f is what makes an HTTP error a failed
+        # transfer at all, so --retry covers 5xx too.
         run: |
           set -o pipefail
           api() {
-            curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/$1"
+            local out code rc
+            out="$(mktemp)"
+            code="$(curl -fsS --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
+              -o "$out" -w '%{http_code}' \
+              -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/$1")" && rc=0 || rc=$?
+            if [ "$rc" -ne 0 ] || [ "${code:0:1}" != 2 ]; then
+              echo "::error::GitHub API GET $1 failed: curl exit $rc, HTTP ${code:-none}" >&2
+              rm -f "$out"
+              return 1
+            fi
+            cat "$out"
+            rm -f "$out"
           }
           if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
-            api "compare/$BASE_SHA...$HEAD_SHA" \
-              | python3 -c 'import json,sys; [print(c["commit"]["message"].split("\n")[0]) for c in json.load(sys.stdin)["commits"]]' \
+            # Read the response into a file first: a failed read exits here (the
+            # runner's shell runs with errexit) instead of feeding python "".
+            api "compare/$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/compare.json"
+            python3 -c 'import json,sys; [print(c["commit"]["message"].split("\n")[0]) for c in json.load(sys.stdin)["commits"]]' \
+              < "$RUNNER_TEMP/compare.json" \
               | python3 .github/scripts/check-commit-title.py
           else
             api "pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
             python3 .github/scripts/check-commit-title.py --pull-request "$RUNNER_TEMP/pull.json"
           fi
 
+  # Merge queue only: fails `CI required` on the entry's sha as soon as any job
+  # of this run fails, instead of after the slowest suite, so the queue drops
+  # the entry and rebuilds the ones behind it right away (2026-10-17: 3-50
+  # minutes saved per failed entry). What it posts, and why it never fails the
+  # run, is .github/scripts/merge-group-fail-fast.py. Not in `required`'s
+  # needs: the aggregator must not wait for it. A hosted runner, not the
+  # cheese-ci pool: it is alive for the whole run, and four queue entries would
+  # hold four of the pool's six slots the aggregators need.
+  fail-fast:
+    name: Fail fast
+    if: github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Fail CI required on this run's first failed job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: python3 .github/scripts/merge-group-fail-fast.py
+
   required-draft:
     name: CI required (draft quick)
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.draft }}
     permissions:
       contents: read
-    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
+    needs: [scope, api, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
     # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.

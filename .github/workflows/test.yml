@@ -29,6 +29,14 @@ on:
       integration:
         type: boolean
         default: true
+      # Whether `test-complete` runs here. required-ci.yml passes false and runs
+      # the same shard-coverage check inside its own `CI required` job, which
+      # takes the merge queue's critical path one runner hop shorter (each hop
+      # waited ~14 min at p90 on 2026-10-17); deploy-prod's x86 run has no
+      # aggregator of its own and keeps the default.
+      coverage-job:
+        type: boolean
+        default: true
 # Least privilege: none of these jobs write anything back to GitHub, so the
 # token they run with should not be able to.
 permissions:
@@ -150,14 +158,13 @@ jobs:
       # Building the document is also the smoke test that the app can produce
       # one at all: the frontend no longer finds a committed copy, it asks for
       # the document just before type-checking (frontend/scripts/typecheck.mjs).
-      # Two one-line files beside it stay committed and this run holds both —
-      # the digest, because it is the path the frontend suite is selected by and
-      # a commit that moved the API surface without moving it would ship
-      # unjudged; and the ratchet, backend/openapi-untyped.json, which only
-      # shrinks, so a new route declares what it returns. A step, not a test:
+      # It also holds the ratchet beside it, backend/openapi-untyped.json, which
+      # only shrinks, so a new route declares what it returns. Whether the
+      # document moved, which decides whether the frontend suite runs, is the
+      # `api` job's question in required-ci.yml, not this one's. A step, not a test:
       # building takes about 25 s, longer than the pure layer's per-test
       # ceiling. See scripts/export_openapi.py.
-      - name: OpenAPI document builds, digest and untyped ratchet hold
+      - name: OpenAPI document builds and untyped ratchet holds
         run: uv run python -m scripts.export_openapi --check
 
       - name: Independently collect every required backend case
@@ -825,7 +832,7 @@ jobs:
   test-complete:
     name: Backend coverage complete
     needs: [static, test, integration]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.coverage-job }}
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
     # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
     # cheese-ci pool (docs/infrastructure.md); fork PRs, a deleted fork and every

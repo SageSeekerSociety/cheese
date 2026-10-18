@@ -60,7 +60,7 @@ def _invitations(db: DbSession) -> InvitationService:
     return InvitationService(db, deliver=deliver, settle=settle, team=project_team)
 
 
-@router.post("/projects/{project_id}/members")
+@router.post("/projects/{project_id}/members", dependencies=[ROUTE_DECIDES])
 async def add_member(
     project_id: uuid.UUID,
     body: MemberCreate,
@@ -114,7 +114,9 @@ async def list_members(
     return ok(page(items, len(items)))
 
 
-@router.delete("/projects/{project_id}/members/{user_handle}")
+@router.delete(
+    "/projects/{project_id}/members/{user_handle}", dependencies=[ROUTE_DECIDES]
+)
 async def remove_member(
     project_id: uuid.UUID,
     user_handle: str,
@@ -128,7 +130,7 @@ async def remove_member(
     return ok({"deleted": True})
 
 
-@router.delete("/projects/{project_id}/membership")
+@router.delete("/projects/{project_id}/membership", dependencies=[ROUTE_DECIDES])
 async def leave_project(
     project_id: uuid.UUID,
     db: DbSession,

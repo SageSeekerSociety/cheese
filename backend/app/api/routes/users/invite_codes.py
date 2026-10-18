@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 from app.api.response import ok
 from app.api.routes.users._common import CreateInviteCodeRequest
+from app.api.write_access import ROUTE_DECIDES
 from app.domain.invite.services import InviteCodeService
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -75,8 +76,7 @@ async def list_invite_codes(
 
 
 @router.post(
-    "/invite-codes",
-    summary="Create invite code (admin)",
+    "/invite-codes", summary="Create invite code (admin)", dependencies=[ROUTE_DECIDES]
 )
 async def create_invite_code(
     payload: CreateInviteCodeRequest,

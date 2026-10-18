@@ -17,6 +17,7 @@ from app.api.task_deps import (
 from app.api.task_serialization import (
     _task_attachment_to_api,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
@@ -68,6 +69,7 @@ async def list_task_attachments(
     "/{taskId}/attachments",
     summary="Upload Task Attachment",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def upload_task_attachment(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -133,6 +135,7 @@ async def download_task_attachment(
     "/{taskId}/attachments/{attachmentId}",
     summary="Remove Task Attachment",
     status_code=204,
+    dependencies=[ROUTE_DECIDES],
 )
 async def remove_task_attachment(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
