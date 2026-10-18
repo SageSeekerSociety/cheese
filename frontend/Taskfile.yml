@@ -64,22 +64,18 @@ tasks:
   # Components take props and emit events. Nothing under src/components/** may
   # import the network layer (@/api, @/services/*, @/network/*) or vue-router —
   # a component that fetches cannot be tested or reused without a server.
-  # Ratcheted: 59 violations across 47 components
-  # (import-boundary-baseline.json) are frozen, so only NEW ones fail.
-  # Writer: `pnpm run lint:boundary:update`. Read-only, like `lint:style`.
+  # Any violation fails; there is no baseline. Read-only, like `lint:style`.
   lint:boundary:
-    desc: Check component import boundaries (eslint + ratchet, check only)
+    desc: Check component import boundaries (eslint, check only)
     deps: [install]
     cmds:
       - pnpm run lint:boundary
   # Nothing under src/ may reference localStorage or sessionStorage directly:
   # src/lib/browserStorage.ts is the one place that accepts their failure modes
   # (private mode, a full quota, no storage at all) and never throws.
-  # Ratcheted: the references already in the tree are frozen per file in
-  # browser-storage-baseline.json, so only NEW ones fail. Writer: `pnpm run
-  # lint:storage:update`, which only lowers counts. Read-only, like `lint:style`.
+  # Any reference fails; there is no baseline. Read-only, like `lint:style`.
   lint:storage:
-    desc: Check for direct Web Storage access (eslint + ratchet, check only)
+    desc: Check for direct Web Storage access (eslint, check only)
     deps: [install]
     cmds:
       - pnpm run lint:storage
@@ -124,7 +120,7 @@ tasks:
     cmds:
       - pnpm run lint:scene-debt
   typecheck:
-    desc: Run the ratcheted vue-tsc check (the API types are generated first)
+    desc: Run the vue-tsc check, failing on any error (the API types are generated first)
     deps: [install]
     # Not `vue-tsc --noEmit`: the types it compiles against are generated
     # rather than committed, so a bare run on a checkout that has not run the
@@ -142,12 +138,11 @@ tasks:
       # "up to date" on the old hash.
       - src/**/*.json
       - tsconfig*.json
-      # The type check reads more than the sources it compiles: the ratchet reads
-      # its own baseline and scripts, and the API types are generated from a
+      # The type check reads more than the sources it compiles: its own
+      # scripts, and the API types, which are generated from a
       # document the backend builds out of its own app — so the backend's source
       # tree is an input, not one committed file standing in for it. Changing any
       # of them changes the verdict.
-      - tsc-baseline.json
       - scripts/typecheck.mjs
       - scripts/gen-api-types.mjs
       - scripts/tsc-ratchet.mjs

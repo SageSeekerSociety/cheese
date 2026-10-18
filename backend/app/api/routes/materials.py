@@ -17,6 +17,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -46,9 +47,7 @@ async def get_material_service(db=Depends(get_db)) -> MaterialService:
 
 
 @router.post(
-    "",
-    summary="Upload Material",
-    status_code=201,
+    "", summary="Upload Material", status_code=201, dependencies=[ROUTE_DECIDES]
 )
 async def upload_material(
     file: UploadFile = File(...),
@@ -136,6 +135,7 @@ async def get_material_detail(
     "/{material_id}",
     summary="Delete Material",
     status_code=204,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_material(
     material_id: Annotated[int, Path(ge=0)],

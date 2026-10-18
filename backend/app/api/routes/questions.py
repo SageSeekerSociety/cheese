@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
@@ -128,9 +129,7 @@ async def search_questions(
 
 
 @router.post(
-    "",
-    summary="Create Question",
-    status_code=201,
+    "", summary="Create Question", status_code=201, dependencies=[ROUTE_DECIDES]
 )
 async def add_question(
     payload: dict = Body(...),
@@ -209,6 +208,7 @@ async def get_question(
     "/{question_id}/followers",
     summary="Follow Question",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def follow_question(
     question_id: Annotated[int, Path(ge=0)],
@@ -227,6 +227,7 @@ async def follow_question(
 @router.delete(
     "/{question_id}/followers",
     summary="Unfollow Question",
+    dependencies=[ROUTE_DECIDES],
 )
 async def unfollow_question(
     question_id: Annotated[int, Path(ge=0)],
@@ -242,8 +243,7 @@ async def unfollow_question(
 
 
 @router.put(
-    "/{question_id}/acceptance",
-    summary="Accept Answer",
+    "/{question_id}/acceptance", summary="Accept Answer", dependencies=[ROUTE_DECIDES]
 )
 async def accept_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -258,8 +258,7 @@ async def accept_answer(
 
 
 @router.delete(
-    "/{question_id}/accept",
-    summary="Unaccept Answer",
+    "/{question_id}/accept", summary="Unaccept Answer", dependencies=[ROUTE_DECIDES]
 )
 async def unaccept_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -275,8 +274,7 @@ async def unaccept_answer(
 
 
 @router.post(
-    "/{question_id}/vote",
-    summary="Vote on Question",
+    "/{question_id}/vote", summary="Vote on Question", dependencies=[ROUTE_DECIDES]
 )
 async def vote_question(
     question_id: Annotated[int, Path(ge=0)],
@@ -294,6 +292,7 @@ async def vote_question(
 @router.delete(
     "/{question_id}/vote",
     summary="Remove Vote from Question",
+    dependencies=[ROUTE_DECIDES],
 )
 async def remove_question_vote(
     question_id: Annotated[int, Path(ge=0)],
@@ -353,6 +352,7 @@ async def list_question_comments(
     "/{question_id}/comments",
     summary="Create Question Comment",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_question_comment(
     question_id: Annotated[int, Path(ge=0)],
@@ -377,6 +377,7 @@ async def create_question_comment(
 @router.delete(
     "/{question_id}/comments/{comment_id}",
     summary="Delete Question Comment",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_question_comment(
     question_id: Annotated[int, Path(ge=0)],
@@ -402,10 +403,7 @@ async def delete_question_comment(
     return ok({"deleted": True})
 
 
-@router.put(
-    "/{question_id}",
-    summary="Update Question",
-)
+@router.put("/{question_id}", summary="Update Question", dependencies=[ROUTE_DECIDES])
 async def update_question(
     question_id: Annotated[int, Path()],
     payload: dict = Body(...),
@@ -476,6 +474,7 @@ async def list_question_followers(
 @router.put(
     "/{question_id}/followers",
     summary="Follow Question (PUT)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def follow_question_put(
     question_id: Annotated[int, Path(ge=0)],
@@ -488,8 +487,7 @@ async def follow_question_put(
 
 
 @router.put(
-    "/{question_id}/bounty",
-    summary="Set Question Bounty",
+    "/{question_id}/bounty", summary="Set Question Bounty", dependencies=[ROUTE_DECIDES]
 )
 async def set_question_bounty(
     question_id: Annotated[int, Path(ge=0)],
@@ -509,6 +507,7 @@ async def set_question_bounty(
 @router.post(
     "/{question_id}/attitudes",
     summary="Attitude on Question (Vote)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def attitude_question(
     question_id: Annotated[int, Path(ge=0)],
@@ -580,6 +579,7 @@ async def list_question_invitations(
     "/{question_id}/invitations",
     summary="Invite User to Answer",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def invite_user_to_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -642,6 +642,7 @@ async def get_invitation_detail(
 @router.delete(
     "/{question_id}/invitations/{invitation_id}",
     summary="Delete Invitation",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_invitation(
     question_id: Annotated[int, Path(ge=0)],

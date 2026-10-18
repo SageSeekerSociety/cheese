@@ -1,46 +1,30 @@
 #!/usr/bin/env node
-// Runs `vue-tsc --noEmit` and compares the result against tsc-baseline.json.
+// Runs `vue-tsc --noEmit` and fails on any error it reports.
 //
-//   node scripts/tsc-ratchet.mjs            check (exit 1 on any new error)
-//   node scripts/tsc-ratchet.mjs --update   rewrite the baseline downward
+//   node scripts/tsc-ratchet.mjs            check (exit 1 on any type error)
 //   node scripts/tsc-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
-// Failures print full diagnostics for regressed files (to stderr with --json).
+// Failures print every diagnostic in full (to stderr with --json).
 //
-// `--project <tsconfig>` and `--baseline <file>` judge another project against
-// another baseline. They exist so ratchet-report.test.mjs can run this script
-// on a one-file fixture instead of type-checking the whole tree a second time.
+// `--project <tsconfig>` judges another project: the fast tier's changed-files
+// project (.github/scripts/ci_fast_checks.py), and the one-file fixtures the
+// tests run instead of type-checking the whole tree a second time.
 //
-// The comparison logic lives in tsc-ratchet-core.mjs and is unit-tested; this
-// file is only the I/O around it.
+// The parsing lives in tsc-ratchet-core.mjs and is unit-tested; this file is
+// only the I/O around it.
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
-import {
-  compareTsc,
-  formatReport,
-  parseTscDiagnostics,
-  parseTscOutput,
-  tightenedBaseline,
-} from './tsc-ratchet-core.mjs'
+import { asJson, cannotJudge, emit, plainResult, verdict } from './ratchet-report.mjs'
+import { formatReport, parseTscDiagnostics } from './tsc-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
 
-function options(name) {
-  return process.argv.flatMap((arg, i) => (arg === name ? [process.argv[i + 1]] : []))
-}
-
-function option(name, fallback) {
-  return options(name)[0] ?? fallback
-}
-
-const BASELINE = resolve(ROOT, option('--baseline', 'tsc-baseline.json'))
-const project = option('--project')
-const update = process.argv.includes('--update')
+const at = process.argv.indexOf('--project')
+const project = at === -1 ? undefined : process.argv[at + 1]
 const ID = 'vue-tsc'
 
 // Resolve the binary explicitly rather than trusting PATH: `pnpm run` puts
@@ -53,6 +37,7 @@ const run = spawnSync(BIN, ['--noEmit', '--pretty', 'false', ...(project ? ['-p'
   cwd: ROOT,
   encoding: 'utf8',
   shell: process.platform === 'win32',
+  maxBuffer: 64 * 1024 * 1024,
 })
 
 if (run.error) {
@@ -62,15 +47,12 @@ if (run.error) {
 }
 
 const output = `${run.stdout ?? ''}${run.stderr ?? ''}`
-const current = parseTscOutput(output)
 const diagnostics = parseTscDiagnostics(output)
-const currentTotal = Object.values(current).reduce((a, b) => a + b, 0)
 
-// vue-tsc exits non-zero when it reports errors — expected while the baseline is
-// non-empty. A non-zero exit with NO parsed diagnostics is something else
-// entirely (bad tsconfig, missing dependency, a crash) and must not be read as
-// "clean": that is exactly how a broken type check passes for free.
-if (run.status !== 0 && currentTotal === 0) {
+// A non-zero exit with NO parsed diagnostic is not a type error: a bad
+// tsconfig, a missing dependency, a crash. It must not read as "clean" either,
+// which is how a broken type check passes for free.
+if (run.status !== 0 && diagnostics.length === 0) {
   console.error('vue-tsc failed without reporting any diagnostic:')
   console.error(output.trim() || '(no output)')
   if (run.signal) {
@@ -82,48 +64,19 @@ if (run.status !== 0 && currentTotal === 0) {
   cannotJudge({ id: ID }, 'vue-tsc failed without reporting any diagnostic')
 }
 
-const frozen = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, 'utf8')) : {}
-const baseline = frozen.files ?? {}
-const result = compareTsc(baseline, current, diagnostics, frozen.missingNames)
-
-if (update) {
-  // Updating must not bless a missing import using an unrelated error's budget.
-  if (result.missingNameRegressions.length) {
-    console.error(formatReport(result, diagnostics))
-    process.exit(1)
-  }
-  const next = tightenedBaseline(baseline, current)
-  writeFileSync(
-    BASELINE,
-    `${JSON.stringify(
-      {
-        _comment:
-          'Frozen vue-tsc errors. The ratchet blocks any NEW error; these are ' +
-          'pre-existing and may only go down. Regenerate with `pnpm run typecheck:update`.',
-        files: next,
-        missingNames: result.nextMissingNames,
-      },
-      null,
-      2
-    )}\n`
-  )
-  const total = Object.values(next).reduce((a, b) => a + b, 0)
-  console.log(`baseline updated: ${total} error(s) across ${Object.keys(next).length} file(s)`)
-  process.exit(0)
-}
+const counts = {}
+for (const { file } of diagnostics) counts[file] = (counts[file] ?? 0) + 1
+const result = plainResult(counts)
 
 if (asJson) {
-  // Per-file counts, the shape the board groups by. The human report is not on
-  // stdout here — the collector parses stdout, and a report interleaved with
-  // the record is not a record — but on failure it goes to stderr, so a --json
-  // run (which is what ci:fast calls) still prints where and how to fix it.
-  const details = Object.entries(current)
-    .filter(([, count]) => count > 0)
-    .map(([file, count]) => ({ file, count }))
+  // The human report is not on stdout here — the collector parses stdout — but
+  // on failure it goes to stderr, so a --json run (which is what ci:fast calls)
+  // still prints where and how to fix it.
+  const details = Object.entries(counts).map(([file, count]) => ({ file, count }))
   emit(verdict({ id: ID, result, details }))
-  if (!result.ok) console.error(formatReport(result, diagnostics))
+  if (!result.ok) console.error(formatReport(diagnostics))
   process.exit(result.ok ? 0 : 1)
 }
 
-console.log(formatReport(result, diagnostics))
+console.log(formatReport(diagnostics))
 process.exit(result.ok ? 0 : 1)
