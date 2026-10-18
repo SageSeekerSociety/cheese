@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
+from app.domain.agent.harness import CODEX
 from app.domain.agent.harness.codex.app_server import AppServer
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.codex.session import Session
@@ -177,7 +178,7 @@ class Runner(runner.Runner[Journal]):
             "owner",
             json.dumps(
                 {
-                    "harness": "codex",
+                    "harness": CODEX,
                     "agent_handle": opening.agent_handle,
                 }
             ),

@@ -82,7 +82,6 @@
     "beContracts": "后端契约",
     "beDeferredImports": "后端函数内导入",
     "domainImportGuard": "领域导入守卫",
-    "harnessBoundary": "测试骨架边界",
     "fileSizes": "文件规模",
     "fileSizesScope": "只判这次改过的文件",
     "vueTsc": "Vue 类型检查",
