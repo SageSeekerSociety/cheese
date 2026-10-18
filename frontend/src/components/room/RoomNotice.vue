@@ -725,7 +725,7 @@ details[open]::details-content {
   content-visibility: visible;
 }
 /* 居中的淡行（置顶、归档、加入、改设置……）里的频道、文件：淡字、不垫底，悬停加下划线。
-   提到的人照常是浅色 chip（.name-ref），叫醒了谁的那一颗照常是实心 @chip——这一行和
+   提到的人照常是不给底的一颗（.name-ref），叫醒了谁的那一颗照常是实心 @chip——这一行和
    别处同一条规则。 */
 .room-happening :deep(.mention:is(.file-ref, .topic-ref)) {
   color: var(--muted);
