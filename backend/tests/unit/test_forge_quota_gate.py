@@ -21,18 +21,29 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from app.core import forge_quota
 from app.core.forge_http import forge_client
-from app.domain.project.forge import installation_serves_background
+from app.domain.project.forge import (
+    background_interval_seconds,
+    background_resume_after,
+    installation_serves_background,
+)
 from app.domain.project.github_app import GitHubAppTokens
 
 INSTALLATION = 152342238
+OTHER_INSTALLATION = INSTALLATION + 1
 
 
 @pytest.fixture
 def clock(monkeypatch):
     """The quota memory's clock, starting now and moved by hand."""
     now = [time.time()]
+    for installation in (INSTALLATION, OTHER_INSTALLATION):
+        forge_quota._readings.pop(installation, None)
+        forge_quota._refused_until.pop(installation, None)
     monkeypatch.setattr(forge_quota, "time", SimpleNamespace(time=lambda: now[0]))
-    return now
+    yield now
+    for installation in (INSTALLATION, OTHER_INSTALLATION):
+        forge_quota._readings.pop(installation, None)
+        forge_quota._refused_until.pop(installation, None)
 
 
 @pytest.fixture
@@ -112,6 +123,45 @@ async def _read_repository(tokens: GitHubAppTokens, github: FakeGitHub) -> int:
             headers={"Authorization": f"Bearer {token}"},
         )
     return response.status_code
+
+
+@pytest.mark.parametrize(
+    ("remaining", "expected_interval"),
+    [
+        (3000, 60.0),
+        (2500, 180.0),
+        (2000, 180.0),
+        (1250, 300.0),
+        (1100, 300.0),
+        (1000, 300.0),
+        (999, None),
+        (750, None),
+    ],
+)
+def test_background_wait_tracks_the_lowest_known_quota(
+    clock, remaining, expected_interval
+):
+    reset = clock[0] + 600
+    forge_quota.record(INSTALLATION, remaining, 5000, reset)
+
+    assert background_interval_seconds(60.0) == expected_interval
+    if expected_interval is None:
+        assert background_resume_after() == reset - clock[0]
+
+
+def test_background_wait_uses_the_lowest_installation_reading(clock):
+    reset = clock[0] + 600
+    forge_quota.record(INSTALLATION, 2000, 5000, reset)
+    forge_quota.record(OTHER_INSTALLATION, 1100, 5000, reset)
+
+    assert background_interval_seconds(60.0) == 300.0
+
+
+def test_a_quota_refusal_pauses_periodic_jobs_until_its_reset(clock):
+    forge_quota.refuse(INSTALLATION, 300)
+
+    assert background_interval_seconds(60.0) is None
+    assert background_resume_after() == 300.0
 
 
 @pytest.mark.anyio

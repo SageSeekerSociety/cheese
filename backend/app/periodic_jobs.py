@@ -33,6 +33,10 @@ from app.domain.docs_site import periodic as docs_periodic
 from app.domain.machine import periodic as machine_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
+from app.domain.project.forge import (
+    background_interval_seconds,
+    background_resume_after,
+)
 from app.domain.ratchet import periodic as ratchet_periodic
 from app.domain.review import periodic as review_periodic
 from app.domain.routine import periodic as routine_periodic
@@ -131,7 +135,10 @@ def periodic_jobs(
     get_runner: Callable[[], AgentWorkRunner],
 ) -> list[PeriodicRunner]:
     """Build one checked, ordered set without importing domains from core."""
-    jobs = PeriodicJobs()
+    jobs = PeriodicJobs(
+        interval_policy=background_interval_seconds,
+        pause_wait=background_resume_after,
+    )
     gate_nudges = gate_nudge_factory(
         chat=chat, sessions=chat.session_factory, get_runner=get_runner
     )

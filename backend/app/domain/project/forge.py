@@ -211,7 +211,7 @@ async def tokens_for_project(project_id: uuid.UUID, session: AsyncSession):
 # person delivering or merging a card. Background work stops while less than
 # this share is left, so a burst of polling cannot use up what a person's
 # request needs; it resumes on a later tick, after the hourly reset at worst.
-KEPT_FOR_PEOPLE = 0.2
+KEPT_FOR_PEOPLE = forge_quota.BACKGROUND_STOP_QUOTA
 
 
 async def background_quota(
@@ -235,6 +235,16 @@ async def quota_serves_background(quota: GitHubAppTokens | None) -> bool:
     """Whether background work may spend `quota` now; True when there is no
     shared quota to protect."""
     return quota is None or await installation_serves_background(quota)
+
+
+def background_interval_seconds(base_interval_s: float) -> float | None:
+    """The periodic interval for the currently known shared quota level."""
+    return forge_quota.background_interval_seconds(base_interval_s)
+
+
+def background_resume_after() -> float:
+    """How long periodic jobs wait before rechecking a stopped quota."""
+    return forge_quota.background_resume_after()
 
 
 def installation_known_closed(tokens: GitHubAppTokens) -> bool:

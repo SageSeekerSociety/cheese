@@ -28,12 +28,14 @@ class _Runs:
     def __init__(self, *, wins: bool = True) -> None:
         self.last: dict[str, datetime] = {}
         self.claims: list[str] = []
+        self.intervals: list[float] = []
         self._wins = wins
 
     async def claim(
         self, name: str, *, interval_s: float, who: str, now: datetime
     ) -> bool:
         self.claims.append(name)
+        self.intervals.append(interval_s)
         if self._wins:
             self.last[name] = now
         return self._wins
@@ -72,6 +74,96 @@ async def test_a_restart_does_not_run_a_job_before_it_is_due():
 
 async def test_a_job_without_a_recorded_run_waits_one_interval():
     assert not await _runs_within(0.2, 3600, None, _Runs())
+
+
+async def test_interval_policy_controls_tick_spacing_and_lease():
+    ran_twice = asyncio.Event()
+    started = []
+
+    async def job():
+        started.append(asyncio.get_running_loop().time())
+        if len(started) >= 2:
+            ran_twice.set()
+
+    runs = _Runs()
+    runner = PeriodicRunner(
+        "throttled job",
+        0.01,
+        job,
+        interval_policy=lambda _base: 0.07,
+        pause_wait=lambda: 0.07,
+    )
+    runner.start(runs)
+    try:
+        await asyncio.wait_for(ran_twice.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+    assert started[1] - started[0] >= 0.06
+    assert runs.intervals[:2] == [0.07, 0.07]
+
+
+async def test_a_paused_job_does_not_run_again_before_quota_recovers():
+    loop = asyncio.get_running_loop()
+    resume_at = [0.0]
+    ran_twice = asyncio.Event()
+    started = []
+
+    def interval_policy(base):
+        return None if loop.time() < resume_at[0] else base
+
+    async def job():
+        started.append(loop.time())
+        if len(started) == 1:
+            resume_at[0] = loop.time() + 0.12
+        else:
+            ran_twice.set()
+
+    runner = PeriodicRunner(
+        "paused job",
+        0.01,
+        job,
+        interval_policy=interval_policy,
+        pause_wait=lambda: max(0.001, resume_at[0] - loop.time()),
+    )
+    runner.start(_Runs())
+    try:
+        await asyncio.wait_for(ran_twice.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+    assert started[1] >= resume_at[0]
+
+
+async def test_starting_while_paused_waits_for_reset_even_when_overdue():
+    loop = asyncio.get_running_loop()
+    resume_at = loop.time() + 0.12
+    ran = asyncio.Event()
+    started = []
+
+    def interval_policy(base):
+        return base if loop.time() >= resume_at else None
+
+    async def job():
+        started.append(loop.time())
+        ran.set()
+
+    runs = _Runs()
+    runner = PeriodicRunner(
+        "paused on startup",
+        0.01,
+        job,
+        interval_policy=interval_policy,
+        pause_wait=lambda: max(0.001, resume_at - loop.time()),
+    )
+    runner.start(runs, datetime.now(UTC) - timedelta(seconds=200))
+    try:
+        await asyncio.wait_for(ran.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+    assert started[0] >= resume_at
+    assert runs.intervals == [0.01]
 
 
 async def test_a_job_keeps_running_on_its_interval():
@@ -319,6 +411,19 @@ def test_cloud_compute_is_metered_and_charged_on_a_clock():
 
 def test_forge_accounts_left_by_failed_creations_are_swept():
     assert any(job.name == "forge orphan account sweep" for job in _jobs())
+
+
+def test_every_periodic_job_uses_the_shared_quota_interval_policy():
+    from app.domain.project.forge import (
+        background_interval_seconds,
+        background_resume_after,
+    )
+
+    assert all(
+        job._interval_policy is background_interval_seconds
+        and job._pause_wait is background_resume_after
+        for job in _jobs()
+    )
 
 
 def test_every_job_is_named_once():
