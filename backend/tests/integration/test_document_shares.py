@@ -164,6 +164,8 @@ def test_a_teams_document_stays_its_creators_when_someone_else_edits_it(client):
 
     assert _share(client, doc, other).status_code == 403
     assert _share(client, doc, member).status_code == 200
+    about = client.get(f"/documents/{doc}/about", headers=member).json()["data"]
+    assert (about["created_by"], about["drafted_by"]) == ("member", None)
 
 
 def test_a_document_ai_wrote_is_the_person_who_asked_for_it(client):
@@ -201,6 +203,9 @@ def test_a_document_ai_wrote_is_the_person_who_asked_for_it(client):
     )
     assert written.status_code == 200, written.text
     doc = written.json()["data"]["id"]
+    # Its authors are alice and the teammate who wrote it, side by side.
+    about = client.get(f"/documents/{doc}/about", headers=alice).json()["data"]
+    assert (about["created_by"], about["drafted_by"]) == ("alice", seat)
     assert client.post(f"/documents/{doc}/keep", headers=alice).status_code == 200
     moved = client.put(
         f"/documents/{doc}/place", json={"team_id": team_id}, headers=alice

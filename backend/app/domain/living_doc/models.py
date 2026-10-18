@@ -69,6 +69,10 @@ class Document(UuidPk, Base):
     #: when no person did: the platform made it (a task's, the project's goals),
     #: or another agent or the platform asked 芝士 for it.
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: The AI teammate that wrote it when it was made, beside ``created_by``:
+    #: the two are its authors, and later edits change neither. None when a
+    #: person made it.
+    drafted_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     #: The channel or private chat 芝士 wrote it in. Until it is saved to the
     #: library only the people who can read that conversation can read it, and
     #: it goes when the conversation does. None for one made in the library.

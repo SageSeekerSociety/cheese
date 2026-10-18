@@ -117,6 +117,8 @@ def document_snapshot(doc: Document) -> dict:
         "doc_version": doc.version,
         "content_hash": content_hash(doc.content),
         "author": doc.author,
+        "created_by": doc.created_by,
+        "drafted_by": doc.drafted_by,
         "created_at": doc.created_at.isoformat(),
         "updated_at": doc.updated_at.isoformat(),
         # Whether the library lists it: one a conversation keeps is not there
@@ -137,7 +139,12 @@ class DocumentRowOut(BaseModel):
     kind: str
     title: str | None
     doc_version: int
+    #: Who made its latest version.
     author: str
+    #: Its authors, fixed when it was made: the person it is theirs, and the AI
+    #: teammate that wrote it when one did. Either may be None.
+    created_by: str | None
+    drafted_by: str | None
     created_at: str
     updated_at: str
     #: Whether the library lists it: one a conversation keeps is not there
@@ -156,6 +163,8 @@ def document_row(doc: Document) -> dict:
         "title": doc.title,
         "doc_version": doc.version,
         "author": doc.author,
+        "created_by": doc.created_by,
+        "drafted_by": doc.drafted_by,
         "created_at": doc.created_at.isoformat(),
         "updated_at": doc.updated_at.isoformat(),
         "in_library": doc.room_id is None or doc.kept_at is not None,

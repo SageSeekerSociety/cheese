@@ -173,18 +173,21 @@ def _origin(resolver: ActorResolver, reached_actor) -> uuid.UUID | None:
     return resolver.credential_conversation() if reached_actor.via == "cheese" else None
 
 
-async def _asked_for_by(
+async def _authors(
     db, project_id: uuid.UUID, actor, origin: uuid.UUID | None
-) -> str | None:
-    """Whose the new document is: the person making it, or — when 芝士 makes
-    it — the person whose message opened the turn it writes in."""
-    if actor.via == "cheese":
-        if origin is None:
-            return None
-        return await who_started_the_open_turn(db, project_id, origin, actor.handle)
-    if await IdentityService(db).is_agent(actor.handle):
-        return None
-    return actor.handle
+) -> tuple[str | None, str | None]:
+    """The new document's authors, fixed from now on: the person it is theirs
+    and the AI teammate writing it. A person making it is the one; 芝士 making
+    it is the other, beside the person whose message opened the turn it
+    writes in."""
+    if actor.via != "cheese" and not await IdentityService(db).is_agent(actor.handle):
+        return actor.handle, None
+    asker = (
+        await who_started_the_open_turn(db, project_id, origin, actor.handle)
+        if origin is not None
+        else None
+    )
+    return asker, actor.handle
 
 
 @projects.get("/{project_id}/documents")
@@ -247,11 +250,13 @@ async def create_document(
             task = await TaskService(db).of_document(source.id)
             title = source.title or (task.title if task is not None else "")
     origin = _origin(resolver, actor)
+    created_by, drafted_by = await _authors(db, project_id, actor, origin)
     doc = await Documents(db).create(
         project_id=project_id,
         title=title,
         author=actor.handle,
-        created_by=await _asked_for_by(db, project_id, actor, origin),
+        created_by=created_by,
+        drafted_by=drafted_by,
         number=await take_number(db, project_id, Numbered.document),
         room_id=await conversations.room_of(db, origin) if origin else None,
     )

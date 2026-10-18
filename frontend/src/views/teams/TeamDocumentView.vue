@@ -5,6 +5,7 @@
 import type { MovePlace } from '@/components/library/DocMoveDialog.vue'
 import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { PanelDocWiring } from '@/composables/usePanelDocWiring'
+import type { DocAuthor } from '@/lib/docAuthors'
 import type { NavTarget } from '@/lib/navTarget'
 
 import { useDisplay } from 'vuetify'
@@ -18,6 +19,8 @@ import { t } from '@/i18n'
 defineProps<{
   /** 还在读的时候是 null。 */
   document: PanelDocument | null
+  /** 文档的作者，画在大标题下面。 */
+  authors: DocAuthor[]
   wiring: PanelDocWiring
   error: string
   parent: { label: string; to: NavTarget }
@@ -77,6 +80,7 @@ const { mdAndUp } = useDisplay()
       :topic-list="[]"
       agent-name=""
       :agent-handle="null"
+      :authors="authors"
       :bar-to="mdAndUp ? '#team-doc-bar' : undefined"
       @delete="emit('delete')"
       @move="emit('ask-move')"

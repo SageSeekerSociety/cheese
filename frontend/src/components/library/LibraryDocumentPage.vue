@@ -7,13 +7,14 @@ import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { ProjectMemberRow, Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import PanelDocHost from '../work/PanelDocHost.vue'
 
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
+import { docAuthors } from '@/lib/docAuthors'
 
 const props = defineProps<{
   projectId: string
@@ -39,6 +40,8 @@ const emit = defineEmits<{
   /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
   (e: 'open-topic', topicId: string, blockId?: string): void
 }>()
+
+const authors = computed(() => (props.document ? docAuthors(props.document, props.members, props.agentName) : []))
 
 const { mdAndUp } = useDisplay()
 const docRef = ref<InstanceType<typeof PanelDocHost> | null>(null)
@@ -76,6 +79,7 @@ watch(
       :agent-name="agentName"
       :agent-handle="agentHandle"
       :members="members"
+      :authors="authors"
       :topic-list="topicList"
       @titled="emit('titled', $event)"
       @delete="emit('delete')"
