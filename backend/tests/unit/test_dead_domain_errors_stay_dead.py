@@ -101,15 +101,15 @@ class _RetiredNameScan(ast.NodeVisitor):
         if name in self.names:
             self.hits.append(f"{getattr(node, 'lineno', '?')}: {kind} {name}")
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+    def _definition(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    ) -> None:
         self._record(node, node.name, "definition")
         self.generic_visit(node)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._record(node, node.name, "definition")
-        self.generic_visit(node)
-
-    visit_AsyncFunctionDef = visit_FunctionDef
+    visit_FunctionDef = _definition
+    visit_AsyncFunctionDef = _definition
+    visit_ClassDef = _definition
 
     def visit_Name(self, node: ast.Name) -> None:
         self._record(node, node.id, "reference")
@@ -128,11 +128,12 @@ class _RetiredNameScan(ast.NodeVisitor):
         if node.asname:
             self._record(node, node.asname, "import")
 
-    def visit_Global(self, node: ast.Global) -> None:
+    def _binding(self, node: ast.Global | ast.Nonlocal) -> None:
         for name in node.names:
             self._record(node, name, "binding")
 
-    visit_Nonlocal = visit_Global
+    visit_Global = _binding
+    visit_Nonlocal = _binding
 
     def visit_Constant(self, node: ast.Constant) -> None:
         if isinstance(node.value, str):
@@ -172,6 +173,7 @@ def test_the_neighbours_that_are_still_used_stay() -> None:
         TeamSizeNotEnoughError,
         TeamSizeTooLargeError,
     )
+    from app.core.errors import BaseError
 
     kept = (
         TaskParticipantsReachedLimitError,
@@ -179,7 +181,7 @@ def test_the_neighbours_that_are_still_used_stay() -> None:
         TeamSizeNotEnoughError,
         TeamSizeTooLargeError,
     )
-    assert all(isinstance(name, type) for name in kept)
+    assert all(issubclass(error, BaseError) for error in kept)
 
 
 def test_the_scan_sees_every_way_a_retired_name_could_come_back(tmp_path: Path) -> None:
