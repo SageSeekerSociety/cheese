@@ -11,15 +11,18 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.config import settings
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.queries import turn_starts
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.models import Conversation
 from app.domain.event_author import AuthorType
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 from app.domain.usage import pricing
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.usage.models import IngestCheckpoint, ResourceUsage
@@ -82,13 +85,16 @@ def _row(
     model=None,
     split: tuple[int, int] | None = None,
     ts: float = 1786000000.0,
+    work_id: uuid.UUID | None = None,
 ):
     """One proxy log line; ``split`` is its (5-minute, 1-hour) cache writes,
     absent on lines the proxy wrote before it logged the split."""
     total = inp + out + cache_read + cache_write
     extra = {}
+    if work_id is not None:
+        extra["work_id"] = str(work_id)
     if split is not None:
-        extra = {
+        extra |= {
             "cache_creation_5m_input_tokens": split[0],
             "cache_creation_1h_input_tokens": split[1],
         }
@@ -522,6 +528,54 @@ async def test_a_call_made_during_a_tasks_turn_records_that_turn(
         (r.conversation_id, r.turn_id, r.total_tokens)
         for r in await _rows(business_db_factory, pid)
     ] == [(task_id, first, 15), (task_id, second, 25)]
+
+
+@pytest.mark.anyio
+async def test_delayed_task_receipts_keep_their_owner_after_task_deletion(
+    business_db_factory, tmp_path, monkeypatch
+):
+    _price(monkeypatch, {"claude-opus-5": OPUS})
+    pid, tid = await _seed(business_db_factory)
+    started_at = datetime.now(UTC)
+    work_id = uuid.uuid4()
+    async with business_db_factory() as session:
+        task = await TaskService(session).open_thread(
+            project_id=pid, room_id=tid, title="t", owner_handle="u", created_by="u"
+        )
+        task_id = task.id
+        await AgentTurnRepository(session).open(
+            turn_id=work_id,
+            conversation_id=task_id,
+            continuation_id=work_id,
+            author="u",
+            content="go",
+            is_resume=False,
+            resendable=True,
+            started_at=started_at,
+        )
+        await session.commit()
+        await session.execute(delete(Conversation).where(Conversation.id == task_id))
+        await session.commit()
+    log = tmp_path / "usage.jsonl"
+    log.write_text(
+        _row(
+            pid,
+            task_id,
+            ts=(started_at + timedelta(seconds=1)).timestamp(),
+            work_id=work_id,
+        )
+    )
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 1,
+        "skipped": 0,
+    }
+    [row] = await _rows(business_db_factory, pid)
+    assert row.conversation_id is None
+    assert row.turn_id == work_id
+    assert row.credit_owner_handle == "u"
+    async with business_db_factory() as session:
+        report = await CreditBudgets(session).report(pid)
+    assert report["members"]["u"]["credits_used"] == pytest.approx(row.credits)
 
 
 @pytest.mark.anyio

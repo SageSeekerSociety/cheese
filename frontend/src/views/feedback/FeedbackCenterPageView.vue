@@ -7,6 +7,7 @@ import { computed, ref, watch } from 'vue'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import FeedbackErrorBanner from '@/components/feedback/FeedbackErrorBanner.vue'
 import { kindLabel, statusLabel } from '@/components/feedback/feedbackLabels'
@@ -288,6 +289,11 @@ function clearFilters() {
         {{ t('feedback.center.submit') }}
       </BaseButton>
     </template>
+
+    <p class="fb-rewards">
+      {{ t('usage.offers.feedbackBody', { n: 100 }) }}
+      <NavLink to="/users/settings/usage">{{ t('usage.viewUsage') }}</NavLink>
+    </p>
 
     <!-- 栏位切换走一个 action，不直接改那一格：栏位是**服务端**的筛选，改了的
          下一件事必然是重新拉一页，绑赋值就把那一步留在模板外面了。 -->

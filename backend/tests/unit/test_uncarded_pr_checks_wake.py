@@ -22,6 +22,8 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 RUNNING = [{"name": "CI required", "status": "in_progress", "conclusion": None}]
 GREEN = [{"name": "CI required", "status": "completed", "conclusion": "success"}]
 RED = [{"name": "CI required", "status": "completed", "conclusion": "failure"}]
+CANCELLED = [{"name": "CI required", "status": "completed", "conclusion": "cancelled"}]
+STALE = [{"name": "CI required", "status": "completed", "conclusion": "stale"}]
 
 
 class _Sessions:
@@ -161,6 +163,21 @@ def test_green_after_red_is_not_the_step_this_says(said):
     assert run(client) == []
 
 
+def test_a_cancelled_run_is_not_a_verdict(said):
+    """被顶替或被人工取消的那次运行不是裁决：同一 head 上一轮还在跑、这一轮以
+    cancelled 收场，不能说「全绿」。把 cancelled 折回 green，下面第一条断言就红。"""
+    run, _task = said
+    assert run(_Client([RUNNING])) == []
+    # running → cancelled：这次运行没给出结论，不叫。
+    assert run(_Client([CANCELLED])) == []
+    # 再读到 running 也不叫：上一次不是 running，这次也不是 green。
+    assert run(_Client([RUNNING])) == []
+    # 真跑到绿才叫一次。
+    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，可以递卡了"]
+    # 之后再来一次 cancelled 也不叫（上一轮已是 green，不是 running）。
+    assert run(_Client([CANCELLED])) == []
+
+
 def test_a_pushed_head_starts_over(said):
     """换了 head 只更新记录：旧 head 的 running 不能给新 head 的全绿作保。"""
     run, _task = said
@@ -201,7 +218,12 @@ def test_a_closed_task_is_not_told_to_file_a_card(said):
         (GREEN + RUNNING, "running"),
         (GREEN + RED, "red"),
         (GREEN + [{"name": "b", "status": "completed", "conclusion": "skipped"}], "green"),
-        (GREEN + [{"name": "c", "status": "completed", "conclusion": "cancelled"}], "green"),
+        # 没有裁决的 run 不是绿：被顶替的那次以 cancelled 收场，读成全绿就会对着
+        # 一个还没人跑完的 head 说「可以递卡了」。
+        (GREEN + [{"name": "c", "status": "completed", "conclusion": "cancelled"}], "running"),
+        (CANCELLED, "running"),
+        (STALE, "running"),
+        (GREEN + STALE, "running"),
     ],
 )
 def test_the_fold_into_three_words(runs, expected):

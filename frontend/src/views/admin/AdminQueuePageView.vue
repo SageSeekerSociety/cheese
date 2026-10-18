@@ -94,6 +94,7 @@ const emit = defineEmits<{
   priority: [id: string, priority: FeedbackPriority]
   security: [id: string, security: boolean]
   note: [id: string, body: string]
+  reward: [id: string]
   search: [v: string]
   'mark-read': []
   refresh: []
@@ -150,6 +151,7 @@ defineExpose({ focusSearch: () => toolbarRef.value?.focusSearch(), focusAssignee
       :candidates="props.candidates"
       :search="props.search"
       :searching="props.searching"
+      @reward="emit('reward', $event)"
       @close="emit('close-detail')"
       @update:triage-open="emit('update:triageOpen', $event)"
       @triage="emit('triage', $event)"
@@ -279,6 +281,7 @@ defineExpose({ focusSearch: () => toolbarRef.value?.focusSearch(), focusAssignee
           :candidates="props.candidates"
           :search="props.search"
           :searching="props.searching"
+          @reward="emit('reward', $event)"
           @close="emit('update:detailOpen', false)"
           @update:triage-open="emit('update:triageOpen', $event)"
           @triage="emit('triage', $event)"
