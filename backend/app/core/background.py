@@ -41,7 +41,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from app.core import forge_quota
+from app.core import forge_http, forge_quota
 
 logger = logging.getLogger("cheesex.background")
 
@@ -305,7 +305,12 @@ class PeriodicRunner:
                 continue
             try:
                 try:
-                    result = await self._job()
+                    # Tag only the job's own forge requests. The context is
+                    # reset by the context manager on every exit path, so a
+                    # failed or cancelled cycle cannot leak "job" into later
+                    # work; scheduling and pause behaviour are untouched.
+                    with forge_http.background_job():
+                        result = await self._job()
                 except asyncio.CancelledError:
                     # `stop()` cancels this task, and THAT has to end the loop.
                     # But a job can raise the same exception with nobody having
