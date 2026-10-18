@@ -37,7 +37,7 @@ from app.domain.room_task.models import (
 )
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService, said_title
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic, TopicStatus, is_private_chat
 from app.domain.topic.owner import resolve_owner
 from app.domain.topic.ports import ProjectTeam, RoomThread, SeatProject
 from app.domain.topic.services import TopicService
@@ -172,10 +172,10 @@ async def _card_block(
 def _in_private(room: Topic) -> bool:
     """这间房是不是名册两席的私聊（结论 19）。
 
-    整个文件只在这里读 ``is_private``：任务和支线都不是两个人之间的事，两处
+    整个文件只在这里问 ``is_private_chat``：任务和支线都不是两个人之间的事，两处
     拒绝问的是同一句，就问一次。
     """
-    return room.is_private
+    return is_private_chat(room)
 
 
 def refuse_tasks_in_private(room: Topic) -> None:

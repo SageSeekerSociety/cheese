@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.project.models import Project
-from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.models import Topic, TopicKind, TopicStatus, not_a_private_chat
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +81,7 @@ async def load_environment_room(
     statement = select(Topic).where(
         Topic.id == topic_id,
         Topic.project_id == project_id,
-        Topic.is_private.is_(False),
+        not_a_private_chat(),
     )
     if lock:
         # The session keeps objects across commit; a locked re-read must refresh.
@@ -101,7 +101,7 @@ async def rooms_with_environment(
         select(Topic)
         .where(
             Topic.project_id == project_id,
-            Topic.is_private.is_(False),
+            not_a_private_chat(),
             Topic.kind != TopicKind.root,
             Topic.status != TopicStatus.archived,
         )
