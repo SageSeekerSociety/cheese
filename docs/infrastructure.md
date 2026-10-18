@@ -435,8 +435,9 @@ was queued. The push runs join one fixed concurrency group with
 waiting. The deploy gate (`deploy/check-auto-deploy.py`) accepts that push run,
 and still accepts a `merge_group` run for the same commit. The full-tier job
 checks this repo's commit titles with `.github/scripts/check-commit-title.py`:
-the PR title on a pull request, the commits in the batch on a main push, and
-every squash commit about to land in a merge queue. Remote execution acceptance
+the PR title on a pull request, the commits in the batch on a main push (reported
+as warnings with `--warn-only` — they are already on main and nobody can retitle
+them), and every squash commit about to land in a merge queue. Remote execution acceptance
 remains advisory pending the stability target in #1279; the MCP latest-version
 canary runs on schedule or manual dispatch.
 
