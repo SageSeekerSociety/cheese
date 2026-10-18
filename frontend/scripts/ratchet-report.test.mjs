@@ -59,9 +59,7 @@ describe('verdict', () => {
     })
   })
 
-  // The counters are numbers, not objects: the snapshot's shape is fixed in
-  // docs/topics/棘轮页方案 (3.1), and a page that has to guess which of two
-  // shapes it is reading is how "0" and "missing" start to look alike.
+  // Counters are numbers, not objects, so "0" and "missing" stay distinct.
   it('judges a tree with no regression as pass', () => {
     const record = verdict({ id: 'x', result: { ...COMPARED, ok: true } })
     assert.equal(record.status, 'pass')
