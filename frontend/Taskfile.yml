@@ -47,12 +47,10 @@ tasks:
     deps: [install]
     cmds:
       - pnpm run lint:fix
-  # Design-system gate: no hardcoded colours, radii on the 6/8/12/999 ladder.
-  # Ratcheted against stylelint-baseline.json (537 pre-existing violations are
-  # frozen; only NEW ones fail) — see docs/design-system.md. Read-only, like
-  # `lint:check` above and for the same reason; `lint:style:fix` is the writer.
+  # Design-system gate: any hardcoded colour fails. Read-only; lint:style:fix
+  # keeps the existing autofix entry for style rules. See docs/design-system.md.
   lint:style:
-    desc: Run stylelint design-token ratchet (check only, never writes)
+    desc: Check stylelint design tokens (check only, never writes)
     deps: [install]
     cmds:
       - pnpm run lint:style

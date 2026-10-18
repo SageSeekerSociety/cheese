@@ -123,12 +123,12 @@ round_input() {
 
 head_of() { gh api "repos/$REPO/pulls/$1" -q .head.sha; }
 
-# The --tier flag, but only for a render.py that knows the field. main's copy predates it
-# until this branch merges: handed --tier it answers with its usage and exits 2, so the
-# review of a change would fail to be written because of the change itself — the shape
-# e6abb7cb fixed for tiers.py, and the two call sites below hand it the flag on every
-# review. A copy that does not know the field is asked without it and the conclusion line
-# carries no 档位, the way a card written before the tiers existed reads.
+# The --tier flag, but only for a render.py that knows the field. Handed --tier, a copy
+# that predates the 档位 answers with its usage and exits 2, so the review of a change
+# would fail to be written because of the change itself — the shape e6abb7cb fixed for
+# tiers.py, and the two call sites below hand it the flag on every review. A copy that
+# does not know the field is asked without it and the conclusion line carries no 档位,
+# the way a card written before the tiers existed reads.
 tier_args() {
   [ -n "$2" ] || return 0
   if grep -q -- "--tier" "$1" 2>/dev/null; then
@@ -211,12 +211,12 @@ prepare() {
     git -C "$ROOT" show "origin/main:$METHOD/prompt.md" > "$dir/REVIEW.md"
     git -C "$ROOT" show "origin/main:$METHOD/schema.json" > "$dir/schema.json"
     git -C "$ROOT" show "origin/main:$METHOD/render.py" > "$dir/render.py"
-    # render.py is on main but the 档位 it prints is not, until this branch merges. The
-    # two copies differ in that field and run the same three checks; a review that cannot
+    # A render.py on main that predates the 档位 cannot be handed the flag. The two
+    # copies differ in that field and run the same three checks; a review that cannot
     # print it still gets written, but its line is the one the board reads with no tier.
-    # Use this checkout's copy in that window, the same way tiers.py falls back below, and
-    # only when it is the copy that knows the field. After the merge, main's copy is the
-    # one used and the PR under review cannot loosen its own result check.
+    # Use this checkout's copy when only it knows the field, the same way tiers.py falls
+    # back below. When main's copy knows the field it is the one used, and the PR under
+    # review cannot loosen its own result check.
     if ! grep -q -- "--tier" "$dir/render.py" 2>/dev/null \
       && grep -q -- "--tier" "$ROOT/$METHOD/render.py" 2>/dev/null; then
       echo "pr-review: origin/main's render.py predates the 档位; using this checkout's copy" >&2
@@ -301,14 +301,13 @@ prepare() {
     [ "$spec_from" = "$dir/spec.md" ] || cp "$spec_from" "$dir/spec.md"
     spec_txt=$dir/spec.md
   fi
-  # Step 5b and the contract section are newer than the rest of the method: main's
-  # prompt.md has no 5b until this branch merges, and a section naming a step the method
-  # above it does not contain is one nobody can follow. The contract is left out in that
-  # window the way the 档位 is, with the review told there is none rather than handed a
-  # dangling one. `REVIEW.md` holds the method alone at this point. The bullet says which
-  # of the two it is whether or not a contract was offered: pointing a review at step 5b
-  # when the method it was just handed has none sends it looking for a step that is not
-  # there.
+  # Step 5b and the contract section depend on the method carrying step 5b: a section
+  # naming a step the method above it does not contain is one nobody can follow. The
+  # contract is left out when the method has no 5b the way the 档位 is, with the review
+  # told there is none rather than handed a dangling one. `REVIEW.md` holds the method
+  # alone at this point. The bullet says which of the two it is whether or not a contract
+  # was offered: pointing a review at step 5b when the method it was just handed has none
+  # sends it looking for a step that is not there.
   has_5b=""
   grep -q "^## 5b" "$dir/REVIEW.md" 2>/dev/null && has_5b=yes
   if [ -n "$has_5b" ]; then

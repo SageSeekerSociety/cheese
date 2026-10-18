@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Follow a PR into the merge queue and on to the dev deploy that releases it, against a fake GitHub."""
+"""Follow a reviewed head through a direct merge, main CI and its dev deployment."""
 
 import json
 import os
@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 WATCH = ROOT / ".claude/scripts/pr-watch.sh"
 
 # Commits on main, oldest first. The PR merged as MERGE.
-EARLIER, MIDDLE, MERGE, LATER = ("1" * 40, "2" * 40, "3" * 40, "4" * 40)
-ORDER = [EARLIER, MIDDLE, MERGE, LATER]
+EARLIER, MIDDLE, MERGE, LATER, LATEST = ("1" * 40, "2" * 40, "3" * 40, "4" * 40, "5" * 40)
+ORDER = [EARLIER, MIDDLE, MERGE, LATER, LATEST]
 
 FAKE_GH = r"""#!/usr/bin/env bash
 # Answers the calls pr-watch.sh makes, from files in $FAKE.
@@ -37,8 +37,18 @@ case "$1 $2" in
       cat "$FAKE/pr.json"
     fi ;;
   "pr checks") printf 'CI required\tpass\t1m\thttps://example.invalid\n' ;;
-  "pr merge") touch "$FAKE/merge-called" ;;
+  "pr merge")
+    printf '%s\n' "$*" >> "$FAKE/merge-called"
+    [ ! -f "$FAKE/reject-merge" ] ;;
   "run list")
+    if [[ "$*" == *required-ci.yml* ]]; then
+      if [ -f "$FAKE/ci-first.json" ] && [ ! -f "$FAKE/ci-listed" ]; then
+        touch "$FAKE/ci-listed"; jq -r "$query" "$FAKE/ci-first.json"
+      else
+        jq -r "$query" "$FAKE/ci-runs.json"
+      fi
+      exit
+    fi
     # The first listing may come from runs-first.json; later ones from runs.json.
     if [ -f "$FAKE/runs-first.json" ] && [ ! -f "$FAKE/listed" ]; then
       touch "$FAKE/listed"; jq -r "$query" "$FAKE/runs-first.json"
@@ -62,7 +72,7 @@ def run(run_id, status, conclusion, title, deploy="success"):
 
 
 class DeployRunForAMergedPR(unittest.TestCase):
-    def watch(self, runs, live, first=None):
+    def watch(self, runs, live, first=None, ci=None, ci_first=None):
         with tempfile.TemporaryDirectory() as directory:
             fake = Path(directory)
             (fake / "gh").write_text(FAKE_GH)
@@ -73,6 +83,10 @@ class DeployRunForAMergedPR(unittest.TestCase):
                 "state": "MERGED", "mergeCommit": {"oid": MERGE}, "mergeQueueEntry": None,
                 "timelineItems": {"nodes": []}}}}}))
             (fake / "runs.json").write_text(json.dumps(runs))
+            (fake / "ci-runs.json").write_text(json.dumps(ci if ci is not None else [
+                {"databaseId": 100, "status": "completed", "conclusion": "success", "headSha": MERGE}]))
+            if ci_first is not None:
+                (fake / "ci-first.json").write_text(json.dumps(ci_first))
             if first is not None:
                 (fake / "runs-first.json").write_text(json.dumps(first))
             for entry in runs:
@@ -102,8 +116,8 @@ class DeployRunForAMergedPR(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("dev deploy run 3: completed success", result.stdout)
         self.assertIn(f"live on dev at {MERGE[:9]}", result.stdout)
-        self.assertNotIn("run 1", result.stdout)
-        self.assertNotIn("run 2", result.stdout)
+        self.assertNotIn("dev deploy run 1:", result.stdout)
+        self.assertNotIn("dev deploy run 2:", result.stdout)
 
     def test_a_later_commits_deploy_counts_because_it_contains_the_merge(self):
         runs = [run(5, "completed", "success", f"Deploy {LATER}"),
@@ -145,28 +159,65 @@ class DeployRunForAMergedPR(unittest.TestCase):
         candidate = check["env"]["CANDIDATE_SHA"]
         self.assertEqual(workflow["run-name"], f"Deploy {candidate}")
 
+    def test_a_red_main_is_reported_even_when_a_deploy_run_succeeded(self):
+        result = self.watch([run(9, "completed", "success", f"Deploy {MERGE}")], live=MERGE,
+                            ci=[{"databaseId": 101, "status": "completed", "conclusion": "failure",
+                                 "headSha": MERGE}])
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("main Required CI run 101: completed failure", result.stdout)
+        self.assertNotIn("live on dev", result.stdout)
+
+    def test_main_ci_is_followed_until_it_finishes(self):
+        result = self.watch([run(9, "completed", "success", f"Deploy {MERGE}")], live=MERGE,
+                            ci_first=[{"databaseId": 100, "status": "in_progress", "conclusion": "",
+                                       "headSha": MERGE}])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("main Required CI run 100: in_progress none", result.stdout)
+        self.assertIn("main Required CI run 100: completed success", result.stdout)
+
+    def test_a_superseding_main_batch_covers_a_cancelled_merge_run(self):
+        result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER,
+                            ci=[{"databaseId": 102, "status": "completed", "conclusion": "success",
+                                 "headSha": LATER},
+                                {"databaseId": 100, "status": "completed", "conclusion": "cancelled",
+                                 "headSha": MERGE}])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("main Required CI run 102: completed success", result.stdout)
+
+    def test_a_later_red_batch_does_not_revoke_an_earlier_green_containing_batch(self):
+        result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER,
+                            ci=[{"databaseId": 103, "status": "completed", "conclusion": "failure",
+                                 "headSha": LATEST},
+                                {"databaseId": 102, "status": "completed", "conclusion": "success",
+                                 "headSha": LATER},
+                                {"databaseId": 100, "status": "completed", "conclusion": "cancelled",
+                                 "headSha": MERGE}])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("main Required CI run 102: completed success", result.stdout)
+        self.assertIn(f"live on dev at {LATER[:9]}", result.stdout)
+
+    def test_a_cancelled_deploy_waits_for_the_next_converging_release(self):
+        result = self.watch([run(10, "completed", "success", f"Deploy {LATER}")], live=LATER,
+                            first=[run(9, "completed", "cancelled", f"Deploy {MERGE}", deploy="cancelled")])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("dev deploy run 10: completed success", result.stdout)
+
 
 HEAD, PUSHED = "a" * 40, "b" * 40
-QUEUED = {"state": "AWAITING_CHECKS", "position": 1}
-
-
-def removal(remover, reason):
-    """The PR's latest removal from the merge queue, made after the watch started."""
-    return {"createdAt": "2999-01-01T00:00:00Z", "reason": reason, "actor": {"login": remover}}
-
-
-def open_pr(mergeable="MERGEABLE", auto=False, queue=None, removed=None, head=HEAD):
+def open_pr(mergeable="MERGEABLE", auto=False, head=HEAD):
     """An open PR as the watcher's GraphQL query returns it."""
     return {"data": {"repository": {"pullRequest": {
         "state": "OPEN", "headRefOid": head, "mergeable": mergeable, "mergeStateStatus": "BLOCKED",
         "autoMergeRequest": {"enabledAt": "2026-10-12T06:15:50Z"} if auto else None,
-        "mergeCommit": None, "mergeQueueEntry": queue,
-        "timelineItems": {"nodes": [removed] if removed else []}}}}}
+        "mergeCommit": None}}}}
 
 
 CLOSED = {"data": {"repository": {"pullRequest": {
     "state": "CLOSED", "mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN", "autoMergeRequest": None,
-    "mergeCommit": None, "mergeQueueEntry": None, "timelineItems": {"nodes": []}}}}}
+    "mergeCommit": None}}}}
+
+MERGED = {"data": {"repository": {"pullRequest": {
+    "state": "MERGED", "headRefOid": HEAD, "mergeCommit": {"oid": MERGE}}}}}
 
 
 # `pr-review.sh ready <PR>`, answering in turn from review-<n>.txt/.exit in $FAKE.
@@ -178,8 +229,9 @@ cat "$FAKE/review-$n.txt"; exit "$(cat "$FAKE/review-$n.exit")"
 """
 
 
-class AnOpenPRWaitingForTheQueue(unittest.TestCase):
-    def watch(self, polls, quiet="3600", reviews=(("可递：head aaaaaaaa", True),)):
+class AnOpenPRWaitingToMerge(unittest.TestCase):
+    def watch(self, polls, quiet="3600", reviews=(("可递：head aaaaaaaa｜CI required success", True),),
+              reject=False):
         """Run the watcher with --enqueue over successive GitHub answers; return it and whether it merged.
 
         `reviews` are what successive `pr-review.sh ready 3426` calls print and whether each says
@@ -197,90 +249,66 @@ class AnOpenPRWaitingForTheQueue(unittest.TestCase):
             (fake / "pr-review.sh").chmod(0o755)
             for n, answer in enumerate(polls):
                 (fake / f"pr-{n}.json").write_text(json.dumps(answer))
+            (fake / "ci-runs.json").write_text(json.dumps([
+                {"databaseId": 100, "status": "completed", "conclusion": "success", "headSha": MERGE}]))
+            if reject:
+                (fake / "reject-merge").touch()
             result = subprocess.run(
                 ["bash", str(fake / "pr-watch.sh"), "--enqueue", "3426"], capture_output=True, text=True, timeout=20,
                 env={**os.environ, "PATH": f"{fake}:{os.environ['PATH']}", "FAKE": str(fake),
                      "PR_WATCH_INTERVAL": "0", "PR_WATCH_QUIET": quiet})
-            return result, (fake / "merge-called").exists()
+            calls = (fake / "merge-called").read_text() if (fake / "merge-called").exists() else ""
+            return result, calls
 
     def test_a_pr_that_conflicts_with_main_ends_the_watch_and_says_so(self):
         result, _ = self.watch([open_pr(mergeable="CONFLICTING")])
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("conflicts with its base branch", result.stdout)
 
-    def test_armed_auto_merge_is_not_reported_as_a_place_in_the_queue(self):
-        # The enqueue only armed auto-merge; main then moved and the PR conflicts.
-        result, merged = self.watch([open_pr(), open_pr(auto=True), open_pr(auto=True, mergeable="CONFLICTING")])
-        self.assertTrue(merged)
-        self.assertNotIn("queue: ", result.stdout)
-        self.assertIn("not in the queue; auto-merge on", result.stdout)
-        self.assertIn("conflicts with its base branch", result.stdout)
+    def test_existing_auto_merge_is_reported_as_unguarded(self):
+        result, calls = self.watch([open_pr(auto=True)])
+        self.assertFalse(calls)
+        self.assertIn("existing auto-merge is not guarded by ready", result.stdout)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
-    def test_a_pr_the_queue_removed_for_a_conflict_is_not_enqueued_again(self):
-        # GitHub spells the reason in lower case.
-        result, merged = self.watch([open_pr(queue=QUEUED),
-                                     open_pr(removed=removal("github-merge-queue", "merge_conflict")), CLOSED])
-        self.assertFalse(merged, result.stdout)
-        self.assertIn("removed from the merge queue by github-merge-queue: merge_conflict", result.stdout)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-
-    def test_a_pr_a_person_or_bot_took_out_of_the_queue_stays_out(self):
-        for remover in ("andylizf", "cheesex-app"):
-            with self.subTest(remover=remover):
-                result, merged = self.watch([open_pr(queue=QUEUED),
-                                             open_pr(removed=removal(remover, "manual")), CLOSED])
-                self.assertFalse(merged, result.stdout)
-                self.assertIn(f"removed from the merge queue by {remover}: manual", result.stdout)
-
-    def test_a_pr_the_queue_dropped_for_no_fault_of_its_own_is_put_back_once(self):
-        result, merged = self.watch([open_pr(queue=QUEUED),
-                                     open_pr(removed=removal("github-merge-queue", "timed_out")), CLOSED])
-        self.assertTrue(merged, result.stdout)
-        self.assertIn("re-enqueue requested once", result.stdout)
-
-    def test_a_pr_whose_head_moved_since_it_was_queued_is_not_put_back(self):
-        result, merged = self.watch([open_pr(queue=QUEUED),
-                                     open_pr(removed=removal("github-merge-queue", "timed_out"), head=PUSHED),
-                                     CLOSED])
-        self.assertFalse(merged, result.stdout)
-
-    def test_a_green_pr_whose_review_is_not_done_is_not_enqueued_and_says_what_is_missing(self):
+    def test_a_green_pr_whose_review_is_not_done_is_not_merged_and_says_what_is_missing(self):
         result, merged = self.watch([open_pr(), open_pr(), CLOSED], quiet="0",
                                     reviews=[("还不能递\n缺增量审查", False)])
         self.assertFalse(merged, result.stdout)
-        self.assertIn("not enqueued, review is not done: 还不能递; 缺增量审查", result.stdout)
-        self.assertIn("not in the queue, review not done", result.stdout)
+        self.assertIn("not merged, review is not done: 还不能递; 缺增量审查", result.stdout)
+        self.assertIn("not ready: 还不能递; 缺增量审查", result.stdout)
 
-    def test_a_pr_is_enqueued_once_its_review_is_done_with_nothing_else_changed(self):
+    def test_a_pr_is_merged_once_its_review_is_done_with_nothing_else_changed(self):
         waiting = open_pr()
-        result, merged = self.watch([waiting, waiting, waiting, waiting, CLOSED],
-                                    reviews=[("还不能递", False), ("还不能递", False), ("可递", True)])
+        result, merged = self.watch([waiting, waiting, waiting, waiting, MERGED],
+                                    reviews=[("还不能递", False), ("还不能递", False),
+                                             ("可递：head aaaaaaaa｜CI required success", True)])
         self.assertTrue(merged, result.stdout)
-        self.assertIn("enqueue requested", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("squash merge requested", result.stdout)
+        self.assertIn("--squash", merged)
+        self.assertIn(f"--match-head-commit {HEAD}", merged)
+        self.assertNotIn("--auto", merged)
 
-    def test_a_pr_the_queue_dropped_is_not_put_back_while_its_review_is_not_done(self):
-        result, merged = self.watch([open_pr(queue=QUEUED),
-                                     open_pr(removed=removal("github-merge-queue", "timed_out")), CLOSED],
-                                    reviews=[("还不能递", False)])
-        self.assertFalse(merged, result.stdout)
+    def test_a_push_between_ready_and_merge_prevents_the_merge(self):
+        result, calls = self.watch([open_pr(), open_pr(head=PUSHED), CLOSED])
+        self.assertFalse(calls, result.stdout)
+        self.assertIn("head or mergeability changed after ready", result.stdout)
 
-    def test_a_pr_the_queue_dropped_before_any_poll_saw_it_queued_is_put_back(self):
-        # The watcher enqueued it, and the queue let it go within the minute.
-        result, _ = self.watch([open_pr(), open_pr(removed=removal("github-merge-queue", "manual")), CLOSED])
-        self.assertIn("re-enqueue requested once", result.stdout)
+    def test_ready_for_a_different_head_never_merges(self):
+        result, calls = self.watch([open_pr(head=PUSHED), CLOSED])
+        self.assertFalse(calls, result.stdout)
+        self.assertIn("not merged", result.stdout)
 
-    def test_a_pr_the_queue_dropped_for_a_failing_rule_is_not_put_back(self):
-        for reason in ("failed_checks", "branch_protection_failure"):
-            with self.subTest(reason=reason):
-                result, merged = self.watch([open_pr(queue=QUEUED),
-                                             open_pr(removed=removal("github-merge-queue", reason)), CLOSED])
-                self.assertFalse(merged, result.stdout)
+    def test_exit_zero_without_a_ready_line_never_merges(self):
+        result, calls = self.watch([open_pr(), CLOSED], reviews=[("unknown", True)])
+        self.assertFalse(calls, result.stdout)
 
-    def test_a_pr_stuck_in_one_state_is_still_reported(self):
-        stuck = open_pr(auto=True)
-        result, _ = self.watch([stuck, stuck, stuck, CLOSED], quiet="0")
-        self.assertIn("no change in 0 min: CI required: pass; not in the queue, auto-merge on", result.stdout)
+    def test_a_push_after_the_last_read_is_guarded_by_the_server(self):
+        result, calls = self.watch([open_pr(), open_pr(), CLOSED], reject=True)
+        self.assertIn(f"--match-head-commit {HEAD}", calls)
+        self.assertIn("merge refused", result.stdout)
+        self.assertEqual(result.returncode, 1)
 
 
 if __name__ == "__main__":
