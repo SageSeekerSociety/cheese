@@ -112,8 +112,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
           REBUILT: ${{ inputs.rebuilt }}
+          REF_INPUT: ${{ inputs.ref }}
+          ACTOR: ${{ github.actor }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ -z "${REBUILT:-}" ]; then
+          # A manual release is a person naming a commit to release: the
+          # workflow_dispatch `ref` input. The drift convergence dispatches
+          # this workflow as github-actions[bot] with a ref, and on 2026-10-18
+          # that was read as "an operator said so" and released a commit whose
+          # main batch had not run — so the actor is part of the test, and a
+          # bare dispatch with no ref is not a manual release either. A
+          # `rebuilt` dispatch keeps taking the guard: desktop.yml's rebuild
+          # says the images are fresh, not that Required CI may be skipped.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] \
+             && [ "${ACTOR:-}" != "github-actions[bot]" ] \
+             && [ -n "${REF_INPUT:-}" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
@@ -238,12 +250,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
           REBUILT: ${{ inputs.rebuilt }}
+          REF_INPUT: ${{ inputs.ref }}
+          ACTOR: ${{ github.actor }}
         run: |
-          # A manual dispatch is an explicit release or rollback, including a
-          # commit that predates the automatic guard itself. desktop.yml's,
-          # which names a rebuilt commit, takes the guard like any automatic
-          # release.
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ -z "${REBUILT:-}" ]; then
+          # A manual release is a person naming a commit in `ref`; a commit
+          # before the automatic guard itself is released the same way.
+          # Everything else — a bare dispatch, a `rebuilt` dispatch, or any
+          # dispatch from the drift convergence (github-actions[bot]) — takes
+          # the guard like any automatic release.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] \
+             && [ "${ACTOR:-}" != "github-actions[bot]" ] \
+             && [ -n "${REF_INPUT:-}" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

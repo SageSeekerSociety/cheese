@@ -27,6 +27,9 @@
 #
 # Env:
 #   GITHUB_REPOSITORY    owner/repo, as the workflow provides
+#   TARGET_SHA           the green anchor (refs/heads/main-green) to release;
+#                        required. Drift is measured against it, not main's tip,
+#                        so a batch still under test is never released.
 #   PROJECT              compose project (default cheese)
 #   MAIN_DEPLOY_SCRIPT   the file whose contents say whether main's release has
 #                        the slots (default deploy/deploy-docker.sh, relative to
@@ -34,6 +37,7 @@
 #                        default branch, so that copy is main's)
 set -euo pipefail
 
+TARGET_SHA="${TARGET_SHA:?the green anchor sha to release}"
 PROJECT="${PROJECT:-cheese}"
 MAIN_DEPLOY_SCRIPT="${MAIN_DEPLOY_SCRIPT:-deploy/deploy-docker.sh}"
 # The compose service of the second backend slot. A tree that names it has the
@@ -46,8 +50,8 @@ SLOTS_MARKER="backend-b"
 COMMITS_TO_SEARCH=10
 
 dispatch_main() {
-  echo "images for main exist but the box runs something else — re-dispatching deploy-dev"
-  gh workflow run deploy-dev.yml --ref main
+  echo "images for the green anchor exist but the box runs something else — re-dispatching deploy-dev at ${TARGET_SHA}"
+  gh workflow run deploy-dev.yml --ref main -f "ref=${TARGET_SHA}"
 }
 
 if grep -q "$SLOTS_MARKER" "$MAIN_DEPLOY_SCRIPT" 2>/dev/null; then

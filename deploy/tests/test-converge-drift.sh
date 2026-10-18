@@ -56,6 +56,10 @@ printf '%s\n' "${FAKE_BACKEND_SERVICES:-}"
 EOF
 chmod +x "$FAKE_BIN/docker"
 
+# The green anchor the workflow passes in: drift is measured against it, so a
+# batch still under test is never released.
+ANCHOR="cccccccccccccccccccccccccccccccccccccccc"
+
 SLOTS_TREE="$FIXTURES/main-with-slots"
 printf 'backend_services() { printf "backend backend-b\\n"; }\n' > "$SLOTS_TREE"
 BEFORE_SLOTS_TREE="$FIXTURES/main-before-slots"
@@ -68,6 +72,7 @@ run_converge() {
   : > "$DOCKER_CALLS"
   MAIN_DEPLOY_SCRIPT="$MAIN_SCRIPT" \
   GITHUB_REPOSITORY="example/app" \
+  TARGET_SHA="$ANCHOR" \
     PATH="$FAKE_BIN:$PATH" \
     FAKE_GH_CALLS="$GH_CALLS" \
     FAKE_DOCKER_CALLS="$DOCKER_CALLS" \
@@ -85,8 +90,8 @@ dispatched() {
 # change. The box's slots do not even have to be asked about.
 cp "$SLOTS_TREE" "$MAIN_SCRIPT"
 FAKE_BACKEND_SERVICES=backend-b run_converge
-[ "$(dispatched)" = "workflow run deploy-dev.yml --ref main" ] \
-  || fail "main with the slots did not re-dispatch plain main: $(dispatched)"
+[ "$(dispatched)" = "workflow run deploy-dev.yml --ref main -f ref=$ANCHOR" ] \
+  || fail "main with the slots did not re-dispatch the anchor: $(dispatched)"
 
 # main's tree predates the slots and the -b slot serves: firing main refuses.
 # Fire the newest commit that still has the slots instead — it is the parent of
@@ -113,14 +118,14 @@ grep -q 'keep refusing' "$RUN_DIR/out" || fail "the refusal did not say why"
 # is the ordinary path and must not be turned into the slot-bearing release.
 FAKE_BACKEND_SERVICES=backend FAKE_COMMITS="aaaaaaa bbbbbbb" run_converge \
   || { cat "$RUN_DIR/out"; fail "the first-slot case failed"; }
-[ "$(dispatched)" = "workflow run deploy-dev.yml --ref main" ] \
-  || fail "the first slots did not re-dispatch plain main: $(dispatched)"
+[ "$(dispatched)" = "workflow run deploy-dev.yml --ref main -f ref=$ANCHOR" ] \
+  || fail "the first slots did not re-dispatch the anchor: $(dispatched)"
 
 # No backend at all: bootstrap, which is main's own release like any other.
 FAKE_BACKEND_SERVICES= FAKE_COMMITS="aaaaaaa bbbbbbb" run_converge \
   || { cat "$RUN_DIR/out"; fail "the bootstrap case failed"; }
-[ "$(dispatched)" = "workflow run deploy-dev.yml --ref main" ] \
-  || fail "no running backend did not re-dispatch plain main: $(dispatched)"
+[ "$(dispatched)" = "workflow run deploy-dev.yml --ref main -f ref=$ANCHOR" ] \
+  || fail "no running backend did not re-dispatch the anchor: $(dispatched)"
 
 # Both backends running: a release is in flight, and a decision taken against
 # a half-switched box would act on a slot that is about to stop.
@@ -129,4 +134,4 @@ FAKE_BACKEND_SERVICES=$'backend\nbackend-b' FAKE_COMMITS="aaaaaaa bbbbbbb" run_c
 [ -z "$(dispatched)" ] || fail "acted while a release was in flight: $(dispatched)"
 grep -q 'in flight' "$RUN_DIR/out" || fail "did not say a release was in flight"
 
-echo "PASS: deploy drift fires main, or the newest slot-bearing commit across the two-slot boundary, and never re-dispatches a release that would refuse"
+echo "PASS: deploy drift fires the green anchor, or the newest slot-bearing commit across the two-slot boundary, and never re-dispatches a release that would refuse"
