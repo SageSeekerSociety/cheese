@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
 from app.core.errors import ForbiddenError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository, RoleRepository
@@ -174,9 +175,31 @@ async def role_grants(
 async def standing(
     session: AsyncSession, project_id: uuid.UUID, handle: str | None
 ) -> Standing | None:
-    """Where ``handle`` sits in the project, or None when they are not in it."""
+    """Where ``handle`` sits in the project, or None when they are not in it.
+
+    One request asks this several times with the same arguments — room
+    admission, the role gate and the route's own permission — and each answer
+    costs five statements. The first is remembered on the session
+    (`core.request_facts`); a write in that session forgets it, so an answer
+    never outlives the rows it was read from. ``None`` is remembered too:
+    "not in this project" is asked as often as the positive answer, and adding
+    someone is a write, which forgets it.
+    """
     if not handle:
         return None
+    key = ("standing", project_id, handle)
+    found, answer = recall(session, key)
+    if found:
+        return answer
+    answer = await _standing(session, project_id, handle)
+    remember(session, key, answer)
+    return answer
+
+
+async def _standing(
+    session: AsyncSession, project_id: uuid.UUID, handle: str
+) -> Standing | None:
+    """Read where ``handle`` sits, from the rows."""
     project = await ProjectRepository(session).get(project_id)
     if project is None:
         return None
