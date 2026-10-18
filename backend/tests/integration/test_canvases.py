@@ -8,6 +8,7 @@ the document's readers see.
 """
 
 import importlib.util
+import re
 import uuid
 from collections import Counter
 from importlib.machinery import SourceFileLoader
@@ -23,6 +24,7 @@ from app.domain.room_task.place import PlaceResolver
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
+    new_project,
     open_task,
     post_project,
     room_agent_seat,
@@ -432,3 +434,143 @@ def test_settle_queries_canvas_rows_once_regardless_of_block_count(client):
     three = client.portal.call(query_count, 3)
     twelve = client.portal.call(query_count, 12)
     assert three == twelve
+
+
+def _task_reads(statements: list[str]) -> list[str]:
+    """The statements that looked a task up by the number a card names: one
+    for a change however many cards it names, when it reads them at once."""
+    return [
+        statement
+        for statement in statements
+        if re.search(r"tasks\.number\s*(?:=|IN\b)", statement)
+        and "FROM tasks" in statement
+    ]
+
+
+def test_a_change_naming_thirty_tasks_reads_them_once(client):
+    pid, _, _, canvas = _task_canvas(client)
+    room = _channel(client, pid)
+    tasks = [open_task(client, room, f"第 {i:02d} 件") for i in range(30)]
+
+    def change(cards: int) -> tuple[list[str], dict]:
+        statements: list[str] = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(" ".join(statement.split()))
+
+        engine = client.test_app_engine.sync_engine
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            response = _change(
+                client,
+                canvas,
+                [
+                    {
+                        "op": "add",
+                        "content": f"第 {i:02d} 张",
+                        # A number, and the same number written as an address.
+                        "task": f"#{tasks[i]['number']}"
+                        if i % 2
+                        else str(tasks[i]["number"]),
+                    }
+                    for i in range(cards)
+                ],
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+        assert response.status_code == 200, response.text
+        return statements, response.json()["data"]
+
+    three, _ = change(3)
+    thirty, state = change(30)
+
+    # One read of the tasks table whether three cards name tasks or thirty —
+    # and the request as a whole does not grow with the board either.
+    assert len(_task_reads(thirty)) == 1, _task_reads(thirty)
+    assert len(_task_reads(three)) == 1, _task_reads(three)
+    assert len(three) == len(thirty)
+
+    # Every card points at the task it named.
+    assert [card["task"]["id"] for card in state["cards"]] == [
+        task["id"] for task in tasks[:3]
+    ] + [task["id"] for task in tasks]
+
+
+def test_a_card_naming_a_task_the_caller_cannot_point_at_refuses_the_change(client):
+    """No such task, and a task in a channel the reader is not in: either one
+    refuses the whole change list, naming the ref, as it did when each card
+    was resolved on its own."""
+    pid, _, _, _ = _task_canvas(client)
+    hidden = open_task(client, _channel(client, pid, private=True), "私密的事")
+    mine = open_task(client, _channel(client, pid), "我的事", owner="bob")
+    doc = document_of(client, mine["id"], headers=BOB)
+    [made] = _write(client, doc, BLOCK, headers=BOB)["canvases"]
+    canvas = made["id"]
+
+    for ref in ("9999", hidden["id"], "不是任务"):
+        refused = _change(
+            client,
+            canvas,
+            [
+                {"op": "add", "content": "看得见", "task": str(mine["number"])},
+                {"op": "add", "content": "看不见", "task": ref},
+            ],
+            BOB,
+        )
+        assert refused.status_code == 422, refused.text
+        assert ref in refused.text
+        assert _board(client, canvas, BOB).json()["data"]["cards"] == []
+
+
+def test_a_task_of_another_project_is_not_a_task_here(client):
+    """A card names a task of this document's project, or none: another
+    project's id is one this canvas may not point at."""
+    pid, _, _, canvas = _task_canvas(client)
+    other = new_project(client, name="Q", owner="dave")
+    join_project_team(client, other["id"], "alice")
+    elsewhere = open_task(client, _channel(client, other["id"]), "别处的事")
+
+    refused = _change(
+        client, canvas, [{"op": "add", "content": "跨项目", "task": elsewhere["id"]}]
+    )
+    assert refused.status_code == 422, refused.text
+    assert elsewhere["id"] in refused.text
+    assert _board(client, canvas).json()["data"]["cards"] == []
+
+
+def test_an_update_sets_and_clears_a_cards_task(client):
+    pid, _, _, canvas = _task_canvas(client)
+    task = open_task(client, _channel(client, pid), "要挂上去的事")
+    _change(client, canvas, [{"op": "add", "content": "一张卡"}])
+
+    linked = _change(
+        client, canvas, [{"op": "update", "card": 1, "task": str(task["number"])}]
+    )
+    assert linked.status_code == 200, linked.text
+    assert _board(client, canvas).json()["data"]["cards"][0]["task"]["id"] == task["id"]
+
+    cleared = _change(client, canvas, [{"op": "update", "card": 1, "task": None}])
+    assert cleared.status_code == 200, cleared.text
+    assert _board(client, canvas).json()["data"]["cards"][0]["task"] is None
+
+
+def test_a_ref_that_names_nothing_is_refused_before_it_can_crash(client):
+    """A ref that is no number and no id is refused, and the change before it
+    is still the one named: resolving every ref at once does not move an
+    earlier change's refusal behind a bad reference."""
+    _, _, _, canvas = _task_canvas(client)
+    _change(client, canvas, [{"op": "add", "content": "第一张"}])
+
+    # "①" passes isdigit but no int(); 2**31 is one past what the number
+    # column holds — the smallest ref a wrong bound would let through.
+    for ref in ("①", str(2**31), "9999999999"):
+        refused = _change(
+            client,
+            canvas,
+            [
+                {"op": "move", "card": 99, "x": 1, "y": 1},
+                {"op": "add", "content": "越界的引用", "task": ref},
+            ],
+        )
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["error"]["data"]["index"] == 0
