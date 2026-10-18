@@ -1893,7 +1893,7 @@ class _RecheckFixture:
                 status="completed", attempt=1, listed_attempt=None,
                 same_digest=False, newer=False, pull_changes=None,
                 source_changes=None, snapshot_title=None, snapshot_pr=None,
-                legacy_steps=False):
+                fast_snapshot=None, required_snapshot=None, legacy_steps=False):
         head = "a" * 40
         pull = {"number": 7, "state": "open", "draft": False,
                 "title": 'fix: corrected title $(touch pwned)',
@@ -1905,26 +1905,31 @@ class _RecheckFixture:
         # step read, which an edit since then may have left behind.
         consumed = pull["title"] if same_digest else (
             snapshot_title if snapshot_title is not None else "bad title")
+        fast_consumed = fast_snapshot if fast_snapshot is not None else consumed
+        required_consumed = required_snapshot if required_snapshot is not None else consumed
         source = {"id": 99, "head_sha": head, "event": "pull_request",
                   "conclusion": "failure", "run_attempt": attempt,
                   "head_repository": {"full_name": "owner/repo"},
                   "display_title": pull["title"] if same_digest else "bad title"}
         source.update(source_changes or {})
-        step_id = "fast-pull" if fast == "failure" else "title-pull"
         number = snapshot_pr if snapshot_pr is not None else pull.get("number", 7)
         snap_pull = {"number": number, "state": "open", "draft": False,
-                     "title": consumed,
                      "head": {"sha": head, "repo": {"full_name": "owner/repo"}},
                      "base": {"ref": "main"}}
-        with tempfile.TemporaryDirectory() as snap:
-            digest = snapshot_digest(step_id, json.dumps(snap_pull), snap)
-        # Both snapshot steps hash the same field the same way, so one real
-        # digest serves both names (TitleSnapshotContractTest pins that).
+        # Each job's digest is a real run of its own snapshot step, so the two
+        # jobs can have consumed different titles on the same attempt.
+        digests = {}
+        for step_id, consumed_title in (("fast-pull", fast_consumed),
+                                        ("title-pull", required_consumed)):
+            with tempfile.TemporaryDirectory() as snap:
+                digests[step_id] = snapshot_digest(
+                    step_id, json.dumps({**snap_pull, "title": consumed_title}), snap)
         fast_name = "ci:fast quick tier" if legacy_steps else \
-            consumed_step_name("ci:fast quick tier", "fast-pull", number, digest)
+            consumed_step_name("ci:fast quick tier", "fast-pull", number,
+                               digests["fast-pull"])
         required_name = "Commit titles follow the convention" if legacy_steps else \
             consumed_step_name("Commit titles follow the convention", "title-pull",
-                               number, digest)
+                               number, digests["title-pull"])
         event = {"pull_request": event_pull, "workflow_run": source}
         data = {"pull": pull,
                 "runs": [{"databaseId": 100 if newer else 99, "status": status,
@@ -1952,9 +1957,12 @@ class _RecheckFixture:
                 with open(os.environ["STUB_CALLS"], "a") as log:
                     print(json.dumps(args), file=log)
                 if args[:2] == ["run", "list"]:
-                    answer = data["runs"]
+                    wanted = args[args.index("--json") + 1].split(",")
+                    answer = [{k: item[k] for k in wanted if k in item}
+                              for item in data["runs"]]
                 elif args[:2] == ["run", "view"]:
-                    answer = {"jobs": data["jobs"]}
+                    wanted = args[args.index("--json") + 1].split(",")
+                    answer = {k: data[k] for k in wanted if k in data}
                 elif args[0] == "api":
                     answer = [data["pull"]] if "/commits/" in args[1] else data["pull"]
                 elif args[:2] == ["run", "rerun"]:
@@ -2189,6 +2197,27 @@ class TitleRecoverySequenceTest(_RecheckFixture, unittest.TestCase):
                                       snapshot_title=BAD_TITLE,
                                       source_changes={"display_title": GOOD_TITLE}),
                          ["101"])
+
+    def test_the_failed_fast_snapshot_decides_not_the_aggregator_s_later_read(self):
+        # fast consumed BAD while required later read GOOD: the failed job is
+        # fast, so its own snapshot names the stale title and fast reruns.
+        self.assertEqual(self.recheck(completed=True,
+                                      pull_changes={"title": GOOD_TITLE},
+                                      fast_snapshot=BAD_TITLE,
+                                      required_snapshot=GOOD_TITLE), ["101"])
+
+    def test_a_green_fast_leaves_only_the_required_snapshot_to_recover(self):
+        # fast already passed on GOOD; required consumed BAD and the PR reads
+        # GOOD now, so only required reruns — and once its rerun has consumed
+        # GOOD, no snapshot differs and the loop stops.
+        self.assertEqual(self.recheck(completed=True, fast="success", required="failure",
+                                      pull_changes={"title": GOOD_TITLE},
+                                      fast_snapshot=GOOD_TITLE,
+                                      required_snapshot=BAD_TITLE), ["202"])
+        self.assertEqual(self.recheck(completed=True, fast="success", required="failure",
+                                      pull_changes={"title": GOOD_TITLE},
+                                      fast_snapshot=GOOD_TITLE,
+                                      required_snapshot=GOOD_TITLE), [])
 
     def test_recovery_ignores_evidence_it_cannot_trust(self):
         # A run from before the snapshot existed publishes no digest, so no
