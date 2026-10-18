@@ -48,7 +48,3 @@ const VIEWS: Record<string, FeatureView> = {
 export function findFeatureView(id: string): FeatureView | undefined {
   return VIEWS[id]
 }
-
-export function knownFeatureIds(): string[] {
-  return Object.keys(VIEWS)
-}
