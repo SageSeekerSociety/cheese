@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
@@ -22,7 +23,7 @@ from app.domain.site.services import get_current_release, require_site_access
 router = APIRouter(prefix="/projects", tags=["sites"])
 
 
-@router.post("/{project_id}/site-session")
+@router.post("/{project_id}/site-session", dependencies=[ROUTE_DECIDES])
 async def site_session(
     project_id: uuid.UUID,
     resolver: ActorResolverDep,
