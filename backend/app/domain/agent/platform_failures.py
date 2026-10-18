@@ -287,7 +287,7 @@ TURN_TIMEOUT_MESSAGE = say("turnTimeoutShort")
 # route to host") — that also fires on an unreachable *model gateway*, which is
 # not a property of the machine and must never quarantine it.
 DEVICE_OFFLINE_MESSAGE = (
-    "话题绑定的设备已离线，重新连接后再继续（不会换到其他设备，以免工作目录和会话错乱）"
+    "频道绑定的设备已离线，重新连接后再继续（不会换到其他设备，以免工作目录和会话错乱）"
 )
 
 

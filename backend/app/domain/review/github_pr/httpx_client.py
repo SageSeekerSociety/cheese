@@ -9,6 +9,7 @@ bookkeeping on `self` that outlives a poll.
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 import httpx
 
@@ -533,6 +534,36 @@ class HttpxGitHubPrClient:
                 client, self._api_base, self._headers(token), owner, repo, number
             )
         return bool(pr.get("mergeQueueEntry"))
+
+    async def merge_group_run_started(
+        self, *, owner, repo, number, token, since: datetime
+    ) -> bool:
+        """Has a `merge_group` workflow run been created for PR `number` since
+        `since` (the moment it entered the queue)? Older runs of the same PR belong
+        to an earlier entry and do not count.
+
+        GitHub names the queue's temporary branch
+        `gh-readonly-queue/<base>/pr-<n>-<sha>`, and the runs it triggers carry
+        that name as `head_branch`. Read-only: the newest 100 runs of the event
+        are enough, a stalled entry's run is either among them or not yet there."""
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/actions/runs",
+                headers=self._headers(token),
+                params={
+                    "event": "merge_group",
+                    "per_page": 100,
+                    "created": f">={since.astimezone(UTC):%Y-%m-%dT%H:%M:%SZ}",
+                },
+            )
+        if resp.status_code != 200:
+            raise _refused("githubRefusedCheckRuns", resp)
+        marker = f"/pr-{number}-"
+        return any(
+            marker in str(run.get("head_branch") or "")
+            for run in resp.json().get("workflow_runs") or []
+            if isinstance(run, dict)
+        )
 
     async def dequeue_pull_request(self, *, owner, repo, number, token) -> None:
         async with forge_client(transport=self._transport, timeout=30.0) as client:

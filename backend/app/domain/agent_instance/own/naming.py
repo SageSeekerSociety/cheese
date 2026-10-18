@@ -12,7 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.models import AgentInstance, OwnAgent, OwnCallers
-from app.domain.agent_instance.own.connections import _connection_key, label, logins
+from app.domain.agent_instance.own.connections import (
+    Login,
+    _connection_key,
+    label,
+    logins,
+)
 from app.domain.agent_instance.own.ownership import _nickname_of
 
 
@@ -71,18 +76,27 @@ async def rename_for_connection(
         .where(on, AgentInstance.is_active.is_(True))
         .distinct()
     )
+    names: dict[int, tuple[str, dict[str, Login]]] = {}
     for project_id, owner_user_id in rows.all():
-        await _name_owners_agents(db, project_id, owner_user_id)
+        await _name_owners_agents(db, project_id, owner_user_id, names)
 
 
 async def _name_owners_agents(
-    db: AsyncSession, project_id: uuid.UUID, owner_user_id: int
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    owner_user_id: int,
+    names: dict[int, tuple[str, dict[str, Login]]] | None = None,
 ) -> None:
     """Name one owner's own agents in a project after their connections, in
     the order they were added. Two on the same plan or model are told apart by
     a number (「（Max 2）」). One whose connection is gone keeps its name."""
-    nickname = await _nickname_of(db, owner_user_id)
-    by_id = {c.id: c for c in await logins(db, owner_user_id)}
+    if names is not None and owner_user_id in names:
+        nickname, by_id = names[owner_user_id]
+    else:
+        nickname = await _nickname_of(db, owner_user_id)
+        by_id = {c.id: c for c in await logins(db, owner_user_id)}
+        if names is not None:
+            names[owner_user_id] = (nickname, by_id)
     rows = await db.execute(
         select(
             AgentInstance,
