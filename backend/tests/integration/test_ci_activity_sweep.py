@@ -823,11 +823,13 @@ def test_reporting_yields_at_35_percent_without_advancing_coverage(
             runs_listed_from=NOW - ingest.WINDOW,
             runs_listed_to=NOW - timedelta(minutes=5),
             queue_read_to=NOW - timedelta(minutes=5),
-            report={"error": ""},
+            report={"error": "", "installation_id": 9917},
         )
         report = await _sweep(db_session, remote.reader(), backfill_slices=0)
         assert remote.requests == []
         assert report["error"]
+        # No token this round: the id it already knew is carried, not invented.
+        assert report["installation_id"] == 9917
         latest = await CiActivityStore(db_session).last_sweep(REPO)
         assert latest.runs_listed_to == NOW - timedelta(minutes=5)
         status = await board._sweep_status(
@@ -915,6 +917,27 @@ def test_failed_requests_and_304s_are_in_each_sweeps_own_counts(
         )
         assert second["requests"] == len(remote.requests) - before
         assert second["request_counts"]["not_modified"] > 0
+
+    _portal.call(run)
+
+
+def test_the_sweep_names_the_installation_its_requests_were_counted_against(
+    db_session, _portal, tokens
+):
+    remote = _NativeGitHub()
+    remote.runs = {81: _run(81, age=timedelta(hours=1))}
+
+    async def run():
+        await _connect(db_session)
+        report = await _sweep(db_session, remote.reader(), backfill_slices=0)
+        assert report["installation_id"] == 9917
+        # Reading the id back off the token in hand sends nothing: the reader's
+        # own request count and the transport's still agree.
+        assert report["requests"] == len(remote.requests)
+        status = await board._sweep_status(
+            db_session, REPO, board.Window(NOW - ingest.WINDOW, NOW, [NOW.date()])
+        )
+        assert status["installation_id"] == 9917
 
     _portal.call(run)
 

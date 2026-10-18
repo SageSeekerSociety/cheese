@@ -22,6 +22,7 @@ import httpx
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import forge_quota
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.ci_activity.github import CiGitHubError, GitHubCi, Listed
@@ -105,6 +106,10 @@ async def sweep_once(
     before = reader.request_counts
     report: dict[str, Any] = {
         "repo": repo,
+        # Which installation's quota this sweep's requests were counted against.
+        # The public forge connection names a repo, never this id, so a sampler
+        # could not otherwise tell which installation to read from /metrics.
+        "installation_id": None,
         "requests": 0,
         "request_counts": _request_delta(before, before),
         "request_scope": "reader",
@@ -133,6 +138,9 @@ async def sweep_once(
     queue_read_to = last.queue_read_to if last else None
     credential = await github_read_token_for_repo(repo, session, background=True)
     if credential.token is None:
+        # No token this round; carry the last sweep's id when it had one rather
+        # than inventing one. None means "not known", never a guessed id.
+        report["installation_id"] = last.report.get("installation_id") if last else None
         report["error"] = credential.reason
         await store.record_sweep(
             repo,
@@ -144,6 +152,16 @@ async def sweep_once(
         )
         return report
     token = credential.token
+    # The token is already registered with its owner; reading it back through a
+    # constructed (never sent) request tells us the installation without a call
+    # and without storing the token itself.
+    report["installation_id"] = forge_quota.installation_of(
+        httpx.Request(
+            "GET",
+            "https://api.github.com/",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    )
 
     def complete(listed: Listed, what: str) -> None:
         if listed.truncated:

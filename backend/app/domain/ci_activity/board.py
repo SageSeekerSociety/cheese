@@ -616,6 +616,8 @@ async def _sweep_status(session, repo, w: Window) -> dict[str, Any] | None:
         "at": last.finished_at.isoformat(),
         "error": str(last.report.get("error") or ""),
         "jobs_owed": int(last.report.get("jobs_owed") or 0),
+        # Which installation's counters a sampler should read for this repo.
+        "installation_id": last.report.get("installation_id"),
         "request_counts": last.report.get("request_counts", {}),
         "request_scope": last.report.get("request_scope"),
         "covered_from": last.runs_listed_from.isoformat()
