@@ -43,11 +43,12 @@ its spec's idle time (``cloud_vm``), on the same clock
 (``runner.SandboxSweeper``).
 
 When the pool is pressed — no host that may take a sandbox has a free slot,
-or a session is waiting on its sandbox — an idle sandbox on a platform host
-is destroyed after ``cloud_sandbox_idle_stop_pressed_s`` instead, so the slot
-goes to whoever is waiting on it. A sandbox on a person's own computer keeps
-its spec's idle time whatever the pool's state, and a whole cloud VM is not
-this sweep's (``cloud_vm``).
+or a session is waiting on a shared host's slot — an idle sandbox on a
+platform host is destroyed after ``cloud_sandbox_idle_stop_pressed_s``
+instead, so the slot goes to whoever is waiting on it. A sandbox on a
+person's own computer keeps its spec's idle time whatever the pool's state;
+a whole cloud VM is neither this sweep's nor a user of the shared slots
+(``cloud_vm``), so waiting on one presses nothing.
 """
 
 import json
@@ -295,8 +296,9 @@ class SandboxLifecycle:
 
     async def _pressed(self) -> bool:
         """Whether the pool has no place for another sandbox right now: a
-        session is waiting on its sandbox, or no host that may take one has a
-        free slot."""
+        session is waiting on a shared host's slot, or no host that may take
+        one has a free slot. A wait on a person's computer or on a whole VM
+        presses nothing: neither takes one of the shared slots."""
         waiting = await self._session.scalar(
             select(SandboxHome.id)
             .join(CloudHost, CloudHost.id == SandboxHome.host_id)
