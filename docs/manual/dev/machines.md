@@ -79,6 +79,8 @@ blocks: tool/probe, tool/quarantine, tool/unknown
 
 执行环境是沙箱时（没人选时的默认），每条会话的执行器跑在自己的 bubblewrap 沙箱里，平台的机器和 Linux 自有设备都是：只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目的缓存和机器主人自己的文件（连接器的凭据就在那里；自有设备上还有主人装在用户目录里的工具，以及 `/mnt`、`/media` 下的盘），也用不了 sudo 和 Docker。云机器上的沙箱有自己的网络：公网全放行，内网地址段、机器本身和别的沙箱都连不上；内存、CPU、进程数各有上限，超了只杀这一条会话的进程。自有设备上没有 root 来设这两样，沙箱和机器共用网络、不设上限。不进沙箱、直接跑在一台自有设备上（`self_hosted`）只有那台设备的主人本人能选，AI 队友不能。Windows 设备还没有沙箱，不放任何沙箱，只能这样用；说过自己给不了沙箱的设备也不放。要 sudo、Docker、KVM 或内核模块的活，用 `vm` 规格的沙箱：每条会话一台虚拟机，那台虚拟机就是它的沙箱，执行器直接跑在上面。
 
+标准沙箱也不能通过 rootless Docker 或 rootless Podman 运行容器，因为 seccomp 禁止创建嵌套 user namespace；需要 Docker 或 `docker compose` 时改用 `vm`。
+
 ## 模型流量 {#llm}
 
 远端机器没有 root，没法改域名解析，只能靠 `HTTPS_PROXY`。它把 CONNECT 流量通过模型隧道带回主机上的计量代理，机器上只有自己的短期令牌，见[模型调用流程](/dev/llm#others)。
