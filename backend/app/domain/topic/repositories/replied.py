@@ -25,6 +25,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import aliased
 
+from app.core.request_facts import recall
 from app.domain.event_author import AuthorType
 from app.domain.topic.models import TopicReadState
 from app.domain.topic.repositories.statements import (
@@ -165,11 +166,19 @@ async def replied_to_me(
         return set()
     # 语句按看的人建一次留着，两份清单每次当参数给（`_replied_to_me_statement`）。
     rooms = list(room_ids)
-    # 这些房间的支线 id 先单独读一趟（`ix_threads_room_id`，0.018 ms），主查询
-    # 才能拿它去收窄 `blocks`。多这一条查询，换掉一次 48 万行的整表扫。
-    thread_ids = list(
-        (await repo._session.scalars(_room_thread_ids, {"replied_rooms": rooms})).all()
+    found_threads, cached_threads = recall(
+        repo._session, ("threads_in_rooms", tuple(rooms))
     )
+    if found_threads:
+        thread_ids = list(cached_threads[0])
+    else:
+        # 这些房间的支线 id 先单独读一趟（`ix_threads_room_id`，0.018 ms），主查询
+        # 才能拿它去收窄 `blocks`。多这一条查询，换掉一次 48 万行的整表扫。
+        thread_ids = list(
+            (
+                await repo._session.scalars(_room_thread_ids, {"replied_rooms": rooms})
+            ).all()
+        )
     return {
         room or conversation
         for conversation, room in (

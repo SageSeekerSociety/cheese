@@ -379,6 +379,11 @@ async def list_topics(
         order=order,
         active_since=active_since,
     )
+    # 这一页的房间支线，下面四处都要（见 `get_topic` 同一行），问一次。
+    room_threads = await threads_of_rooms(db, [t.id for t in topics])
+    # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
+    asked = await _awaiting_an_answer(db, [t.id for t in topics], threads=room_threads)
+    asks_me = _asks_me(asked, _viewer(actor))
     # 这一页里哪几个话题**自己那条线**上有一轮在跑 —— `presentation` 那一格读的
     # 是它：看板一格是房间自己的格子，它名下的活有它们自己的格子
     # （`test_a_rooms_board_cell_does_not_follow_a_task_running_under_it`）。
@@ -402,11 +407,6 @@ async def list_topics(
         if actor.authenticated
         else set()
     )
-    # 这一页的房间支线，下面三处都要（见 `get_topic` 同一行），问一次。
-    room_threads = await threads_of_rooms(db, [t.id for t in topics])
-    # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
-    asked = await _awaiting_an_answer(db, [t.id for t in topics], threads=room_threads)
-    asks_me = _asks_me(asked, _viewer(actor))
     # 一次，给整页用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
     # 每个房间在等哪几位成员，一次查完。
