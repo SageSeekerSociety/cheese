@@ -62,10 +62,9 @@ SIGNATURES = (
     {
         "id": "setup-uv-timeout",
         "title": "setup-uv 下载超时",
-        "pattern": (
-            r"(?:Failed to download[^\n]*\buv\b"
-            r"|\buv\b[^\n]*(?:timed out|timeout))"
-        ),
+        # The timeout is part of the signature: a 404, a checksum mismatch or
+        # a permission error while downloading uv will not cure on a retry.
+        "pattern": r"\buv\b[^\n]*(?:timed out|timeout)",
         "action": "uv 下载超时，重跑失败 job",
     },
 )

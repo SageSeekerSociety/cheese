@@ -298,24 +298,23 @@ class PushToMainTest(unittest.TestCase):
 class LogSignatureTest(unittest.TestCase):
     """flake_log_signatures.py: what it recognises, and what it must not."""
 
+    # One sample per alternative, so deleting any alternation reddens a test.
     SAMPLES = (
-        ("econnreset", "  read ECONNRESET\n"),
+        ("econnreset", "read ECONNRESET"),
+        ("econnreset", "write ECONNRESET"),
+        ("econnreset", "connect ECONNRESET"),
         (
             "tls-connect-error",
-            "curl: (35) TLS connect error: error:0A000126:SSL routines\n",
+            "curl: (35) TLS connect error: error:0A000126:SSL routines",
         ),
-        (
-            "http-403-rate-limit",
-            "HTTP 403: API rate limit exceeded for installation\n",
-        ),
-        (
-            "runner-lost",
-            "The self-hosted runner lost communication with the server.\n",
-        ),
-        (
-            "setup-uv-timeout",
-            "Failed to download uv-0.5.0: operation timed out\n",
-        ),
+        ("http-403-rate-limit", "HTTP 403: API rate limit exceeded for installation"),
+        ("http-403-rate-limit", "gh: API rate limit exceeded (HTTP 403)"),
+        ("http-403-rate-limit", "API rate limit exceeded - HTTP 403"),
+        ("runner-lost", "runner lost communication with the host"),
+        ("runner-lost", "lost communication with the server"),
+        ("runner-lost", "The runner has received a shutdown signal."),
+        ("setup-uv-timeout", "Failed to download uv-0.5.0: operation timed out"),
+        ("setup-uv-timeout", "uv install hit a timeout"),
     )
 
     def test_every_signature_matches_its_own_sample(self):
@@ -366,7 +365,13 @@ class LogSignatureTest(unittest.TestCase):
             "AssertionError: 'open' != 'closed'",
             "E   assert 3 == 4",
             "FAILED tests/unit/test_rate_limit.py::test_the_limiter_counts",
+            # Bare tokens outside a report must not match: these are the two
+            # strings the narrowed signatures deliberately stopped accepting.
+            "API Error: Connection dropped (ECONNRESET)（server_error）",
+            "API rate limit exceeded for installation ID 1.",
             '        json={"message": "API rate limit exceeded for installation ID 1."},',
+            "Failed to download uv: HTTP 404 Not Found",
+            "uv: checksum mismatch",
             self.PYTEST_REPORT,
             "",
         ):
@@ -379,6 +384,57 @@ class LogSignatureTest(unittest.TestCase):
                 "backend\tInstall dependencies\t2026-10-18T09:06:04.3675847Z"
                 " Error: read ECONNRESET",
                 self.PYTEST_REPORT,
+            )
+        )
+        self.assertEqual(rerun.flake_log_signature(log)["id"], "econnreset")
+
+    def test_every_pytest_report_shape_is_skipped(self):
+        """Each shape is a separate row so deleting one branch reddens a test."""
+        flake = "read ECONNRESET"
+        blocks = {
+            "failures banner": f"=================== FAILURES ===================\n{flake}",
+            "errors banner": f"=================== ERRORS ===================\n{flake}",
+            "test header": f"__________________ test_x[{flake}] __________________\n{flake}",
+            "short summary banner": (
+                f"============= short test summary info =============\n{flake}"
+            ),
+            "location line (short)": f"test_x.py:64: in test_x\n{flake}",
+            "location line (auto)": f"test_x.py:64: AssertionError: {flake}",
+            "indented source": f"test_x.py:64: in test_x\n    {flake}",
+            "auto source block": (
+                "__________________ test_x __________________\n"
+                "\n"
+                "    def test_x(self):\n"
+                f'        print("Error: {flake}")\n'
+                f">       assert {flake}\n"
+                f"E       AssertionError: {flake}"
+            ),
+            "assertion detail": f"E       AssertionError: {flake}",
+            "short summary line": f"FAILED tests/unit/test_x.py::test_x - {flake}",
+            "introspected assertion": f"assert {flake}",
+            "captured stdout": (
+                "----------------------------- Captured stdout call "
+                "-----------------------------\n"
+                f"Error: {flake}\n"
+                "----------------------------- Captured stderr call "
+                "-----------------------------\n"
+                f"HTTP 403: rate limit - {flake}\n"
+                "=========================== short test summary info "
+                "===========================\n"
+                "1 failed in 0.05s"
+            ),
+        }
+        for label, block in blocks.items():
+            with self.subTest(shape=label):
+                self.assertIsNone(rerun.flake_log_signature(block))
+
+    def test_a_tool_error_after_the_report_is_still_scanned(self):
+        log = "\n".join(
+            (
+                "=================== FAILURES ===================",
+                "FAILED tests/unit/test_x.py::test_x - AssertionError",
+                "1 failed in 0.05s",
+                "Error: read ECONNRESET",
             )
         )
         self.assertEqual(rerun.flake_log_signature(log)["id"], "econnreset")
@@ -552,6 +608,40 @@ class GhCallTest(unittest.TestCase):
             contextlib.redirect_stderr(io.StringIO()),
         ):
             self.assertIsNone(rerun._gh("run", "view", "1", "--log-failed"))
+
+    def test_the_log_command_names_the_run_and_the_repository(self):
+        completed = subprocess.CompletedProcess([], 0, stdout="x", stderr="")
+        with mock.patch.object(rerun.subprocess, "run", return_value=completed) as run:
+            rerun.fetch_failed_logs("42", "o/r")
+        self.assertEqual(
+            run.call_args.args[0],
+            ["gh", "run", "view", "42", "--repo", "o/r", "--log-failed"],
+        )
+
+    def test_the_rerun_command_only_reruns_failed_jobs(self):
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch.object(rerun.subprocess, "run", return_value=completed) as run:
+            self.assertIsNone(rerun.rerun_failed_jobs("42", "o/r"))
+        self.assertEqual(
+            run.call_args.args[0],
+            ["gh", "run", "rerun", "42", "--failed", "--repo", "o/r"],
+        )
+
+    def test_the_run_is_fetched_from_the_repository_path(self):
+        completed = subprocess.CompletedProcess([], 0, stdout='{"id": 42}', stderr="")
+        with mock.patch.object(rerun.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(rerun.fetch_run("42", "o/r"), {"id": 42})
+        self.assertEqual(
+            run.call_args.args[0], ["gh", "api", "repos/o/r/actions/runs/42"]
+        )
+
+    def test_an_empty_successful_log_is_unreadable_not_clean(self):
+        completed = subprocess.CompletedProcess([], 0, stdout="\n", stderr="")
+        with (
+            mock.patch.object(rerun.subprocess, "run", return_value=completed),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertIsNone(rerun.fetch_failed_logs("42", "o/r"))
 
 
 if __name__ == "__main__":

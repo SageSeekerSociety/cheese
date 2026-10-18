@@ -69,27 +69,27 @@ GH_TIMEOUT = 120
 # line of the job's own output.
 _LOG_PREFIX = re.compile(r"^[^\t\n]*\t[^\t\n]*\t(?:\ufeff)?\S+\s")
 
-# A line pytest wrote about a failing test, rather than a tool reporting its
-# own failure: the assertion detail (`E   `), the FAILURES/ERRORS banner, the
-# `_ test_x[id] _` header, the short summary, and the introspected assertion.
-# Those lines quote whatever the test put in an expected value, including an
-# `ECONNRESET` or a rate-limit message; a signature found there would call a
-# real failure a flake.
-_PYTEST_REPORT = re.compile(
-    r"^(?:FAILED |ERROR |>{1,2}\s|E {2,}|_+ .+ _+$"
-    r"|=+ (?:FAILURES|ERRORS|short test summary info) =+"
-    r"|assert )"
+# pytest prints a failure in blocks, and every block quotes test-owned text:
+# the test source (in `--tb=auto`, which `ci_fast_checks.py` gets by passing no
+# `--tb`), the indented statement under a `file:line:` location (`--tb=short`),
+# the assertion introspection (`E   `), the `_ test_x[id] _` header, the short
+# summary, and the whole `--- Captured stdout call ---` section. A signature
+# found in any of them would call a real failure a flake.
+#
+# So the scan skips from a report banner or a `file:line: ` location to the
+# end of the pytest invocation — the `N failed, M passed ... in Xs` count line
+# that closes the report. Everything a test printed or asserted sits in that
+# region, including `--- Captured stdout call ---` text at column 0. A run
+# that never reaches the count line is skipped to the end of the log, which
+# only means a flake there is left for a person instead of rerun.
+_PYTEST_BANNER = re.compile(
+    r"^(?:=+ (?:FAILURES|ERRORS|short test summary info|warnings summary"
+    r"|slowest \d+ durations|no tests ran) =+"
+    r"|-{3,} Captured .+ -{3,}|_{3,} .+ _{3,})$"
 )
-# `--tb=short`, which every CI invocation here passes, names the frame on one
-# line and then prints the failing statement indented, with no marker on it:
-#
-#     test_x.py:8: in test_a_passing_failure_resumes
-#         assert message == "API Error: ... (ECONNRESET)"
-#
-# The statement can quote any test text, so the line after this one is report
-# too. `--tb=auto` marks the same statement with `>`, which the pattern above
-# already skips.
-_PYTEST_LOCATION = re.compile(r"^\S+:\d+: in \S")
+_PYTEST_LOCATION = re.compile(r"^\S+:\d+: ")
+_PYTEST_END = re.compile(r"^\d+ (?:failed|passed|error|skipped)\b")
+_PYTEST_REPORT = re.compile(r"^(?:FAILED |ERROR |>{1,2}\s|E {2,}|assert )")
 
 
 def load_patterns(path: Path = PATTERNS) -> list[dict]:
@@ -187,15 +187,16 @@ def flake_log_signature(
     """
     if not failed_log:
         return None
-    after_location = False
+    in_report = False
     for line in failed_log.splitlines():
         message = _message(line)
-        if _PYTEST_LOCATION.match(message):
-            after_location = True
+        if _PYTEST_BANNER.match(message) or _PYTEST_LOCATION.match(message):
+            in_report = True
             continue
-        if after_location and message[:1].isspace():
+        if in_report:
+            if _PYTEST_END.match(message):
+                in_report = False
             continue
-        after_location = False
         if _PYTEST_REPORT.match(message):
             continue
         for signature in LOG_SIGNATURES if signatures is None else signatures:
@@ -342,12 +343,18 @@ def fetch_run(run_id: str, repository: str) -> dict | None:
 
 
 def fetch_failed_logs(run_id: str, repository: str) -> str | None:
-    """The failed jobs' log of ``run_id``, or None when it could not be read."""
+    """The failed jobs' log of ``run_id``, or None when it could not be read.
+
+    Empty stdout is "could not be read", not "read and clean": `gh` exits 0
+    with no output when a run's logs are no longer available, and the refusal
+    should name that rather than claim the log matched no signature.
+    """
     result = _gh("run", "view", str(run_id), "--repo", repository, "--log-failed")
-    if result is None or result.returncode != 0:
+    if result is None or result.returncode != 0 or not result.stdout.strip():
         detail = result.stderr.strip() if result is not None else "gh could not run"
         print(
-            f"::warning::could not read the failed job log of run {run_id}: {detail}",
+            f"::warning::could not read the failed job log of run {run_id}:"
+            f" {detail or 'empty output'}",
             file=sys.stderr,
         )
         return None
