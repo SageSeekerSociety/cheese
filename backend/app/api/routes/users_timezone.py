@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
@@ -35,6 +36,7 @@ class TimezoneRequest(BaseModel):
 @router.put(
     "/me/timezone",
     summary="Save the time zone of the signed-in user's browser",
+    dependencies=[ROUTE_DECIDES],
 )
 async def set_my_timezone(
     payload: TimezoneRequest,

@@ -55,6 +55,7 @@ from app.api.task_instructions import (
 from app.api.task_origin import discussion, materials, materials_text
 from app.api.thread_task import turn_into_task, turns_in_place
 from app.api.topics_deps import BlockRepository
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
@@ -141,7 +142,7 @@ async def project_topic_notify_levels(
     )
 
 
-@project_router.post("/{project_id}/read-all")
+@project_router.post("/{project_id}/read-all", dependencies=[ROUTE_DECIDES])
 async def project_mark_all_read(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -196,7 +197,7 @@ async def project_private_unread(
 block_router = APIRouter(prefix="/blocks", tags=["topics"])
 
 
-@block_router.post("/{block_id}/upgrade")
+@block_router.post("/{block_id}/upgrade", dependencies=[ROUTE_DECIDES])
 async def upgrade_block(
     block_id: uuid.UUID,
     db: DbSession,

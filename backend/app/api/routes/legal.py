@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.legal_deps import client_context
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError, UnprocessableEntityError
@@ -102,7 +103,11 @@ class AcceptRequest(BaseModel):
     documents: dict[str, str]
 
 
-@router.post("/users/me/consents", summary="Accept the current legal documents")
+@router.post(
+    "/users/me/consents",
+    summary="Accept the current legal documents",
+    dependencies=[ROUTE_DECIDES],
+)
 async def accept_documents(
     payload: AcceptRequest,
     request: Request,

@@ -29,7 +29,6 @@ from app.domain.admin.services import AdminService
 from app.domain.day_windows import dense_series, utc_day_window
 from app.domain.feedback.models import FeedbackStatus
 from app.domain.feedback.services import FeedbackService
-from app.domain.platform_stats.claude_pool import read_claude_pool, snapshot_path
 from app.domain.platform_stats.gaps import GapRepository
 from app.domain.platform_stats.integrations import IntegrationsRepository
 from app.domain.platform_stats.performance import performance_snapshot
@@ -43,6 +42,7 @@ from app.domain.platform_stats.usage_detail import (
     TOP_USERS,
     UsageDetailRepository,
 )
+from app.domain.usage.claude_pool import read_claude_pool, snapshot_path
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.services import UsageService
 from app.domain.user.services import AccountService

@@ -18,6 +18,7 @@ from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.room_task_rows import task_out
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -36,7 +37,7 @@ from app.domain.topic_membership.services import TopicMemberService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("/{topic_id}/title")
+@router.post("/{topic_id}/title", dependencies=[ROUTE_DECIDES])
 async def set_title(
     topic_id: uuid.UUID,
     body: dict,

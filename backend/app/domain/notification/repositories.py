@@ -432,15 +432,21 @@ class NotificationRepository:
     async def mark_all_read_in_project(
         self, project_id: uuid.UUID, *, recipient_handle: str
     ) -> int:
-        """全部标记已读 —— 返回标了几条。没拍板的决策请求照样留在收件箱里。"""
-        stmt = self._mine_in(select(Notification), project_id, recipient_handle).where(
-            Notification.read.is_(False)
+        """全部标记已读 —— 返回标了几条。没拍板的决策请求照样留在收件箱里。
+
+        一条 UPDATE 改完，不把命中的行读回来：返回值就是这条语句的 `rowcount`。
+        `synchronize_session="fetch"` 在 PostgreSQL 上走 `UPDATE ... RETURNING`，
+        一句话既改完又让会话里的对象跟上，不会先 SELECT 一遍。
+        """
+        stmt = (
+            self._mine_in(update(Notification), project_id, recipient_handle)
+            .where(Notification.read.is_(False))
+            .values(read=True)
+            .execution_options(synchronize_session="fetch")
         )
-        items = list((await self._session.scalars(stmt)).all())
-        for row in items:
-            row.read = True
-        await self._session.flush()
-        return len(items)
+        result = await self._session.execute(stmt)
+        # UPDATE returns a CursorResult which has rowcount at runtime.
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def still_open(
         self, project_ids: list[uuid.UUID], *, recipient_handle: str

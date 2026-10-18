@@ -50,6 +50,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from app.api.awaiting_deps import all_waiting
 from app.api.deps import get_chat_service
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
@@ -79,7 +80,7 @@ SIGNED_OUT = 4401
 ChatDep = Annotated[ChatService, Depends(get_chat_service)]
 
 
-@router.post("/notifications/live-token")
+@router.post("/notifications/live-token", dependencies=[ROUTE_DECIDES])
 async def live_token(
     user: Annotated[AuthUserInfo, Depends(require_auth_user)],
     sid: Annotated[uuid.UUID | None, Depends(get_current_session_id)],

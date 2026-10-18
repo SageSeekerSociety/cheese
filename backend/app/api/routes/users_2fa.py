@@ -54,6 +54,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_user_auth_service
 from app.api.response import ok
 from app.api.users_deps import SudoTicketRequest, _spend_sudo_ticket
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose
@@ -85,6 +86,7 @@ def _qr_data_uri(payload: str) -> str:
 @router.post(
     "/{userId}/2fa/enable",
     summary="Start or confirm 2FA setup for user",
+    dependencies=[ROUTE_DECIDES],
 )
 async def enable_user_2fa(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
@@ -210,6 +212,7 @@ async def _notify_2fa_disabled(email: str | None, username: str) -> None:
 @router.post(
     "/{userId}/2fa/disable",
     summary="Disable 2FA for user",
+    dependencies=[ROUTE_DECIDES],
 )
 async def disable_user_2fa(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
@@ -279,6 +282,7 @@ async def get_user_2fa_status(
 @router.post(
     "/{userId}/2fa/backup-codes",
     summary="Regenerate 2FA backup codes",
+    dependencies=[ROUTE_DECIDES],
 )
 async def regenerate_backup_codes(
     user_id: Annotated[int, Path(ge=0, alias="userId")],

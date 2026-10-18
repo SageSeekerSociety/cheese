@@ -153,10 +153,9 @@ REGISTRY_BASENAME_MARKERS = ("route_index", "baseline")
 #: 2026-10-14): the window this board reads is trailing, and a conflict those two
 #: files took part in before they were removed still cost a rebase, not a re-read
 #: of somebody else's logic. The list describes what the window holds, not what
-#: the tree holds today. The digest that replaced the document is the same kind of
-#: file and goes on the list for the opposite reason: it is in the tree, two
-#: branches that each moved the API surface collide on its one line, and that is
-#: the benign half of the metric.
+#: the tree holds today. The digest that replaced the document,
+#: backend/openapi.sha256, left the same way on 2026-10-17 and stays listed for
+#: the same reason.
 REGISTRY_FILES = (
     "backend/openapi.json",
     "frontend/src/api/openapi.d.ts",
@@ -884,7 +883,7 @@ def render_markdown(board: dict[str, Any], compare: dict[str, Any] | None = None
     # is `frozen` in the ratchet snapshot rather than a count of what somebody
     # wrote down. It used to be read from here, which is why the two disagreed
     # the moment a pull request stopped carrying the list.
-    out.append("| debt behind the nine contracts | per commit, in the ratchet snapshot |")
+    out.append("| debt behind the ten contracts | per commit, in the ratchet snapshot |")
     files = backend["files"]
     out.append(f"| imports inside a function | {backend['deferred_imports']} |")
     out.append(f"| files over 1000 lines (`backend/app`) | {files['files_over_1000']} |")
@@ -1610,7 +1609,7 @@ def self_test() -> int:
         return 1
     print(
         "PASS: arch-metrics self-test (grades A/B/C/D incl. a transitive api reach, "
-        "exceptions written beside the nine contracts, imports inside a function, cap offenders and "
+        "exceptions written beside the ten contracts, imports inside a function, cap offenders and "
         "excess lines, hotspot churn and fix share, same-day parallel edits, "
         "conflicting merges of main split registry-only vs code, a missing or "
         "unvouched PR ref set reported as missing rather than zero, and a compare "
