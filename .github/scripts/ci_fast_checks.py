@@ -64,7 +64,7 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 
-from ci_fast_backend import pinned_harness_gap, select_backend
+from ci_fast_backend import TREE_GUARDS, pinned_harness_gap, select_backend
 
 I18N_SPECS = ("src/i18n/catalog.spec.ts", "src/i18n/english.spec.ts")
 # Specs that judge a frontend file by reading it with `node:fs` — a component's
@@ -430,6 +430,22 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
                      "evidence": {"kind": "junit", "path": str(output), "nodes": str(nodes),
                                   "files": selected, "required": targets, "selection": reason}})
     return plan, omissions
+
+
+def tree_guard_check(root):
+    """The whole-tree guards as one pytest run, for the tier that has no test plan.
+
+    These tests read the source tree instead of importing what they constrain,
+    so they have no database and no pinned harness; ``-m pure`` is still passed
+    so a test that does need one is left out rather than failing on a machine
+    that has none. The same list the quick tier always adds to its selection.
+    """
+    env = {"TEST_PG_BASE": "postgresql://cheese:cheese@127.0.0.1:1/cheese_ci_fast",
+           "DATABASE_URL": "postgresql+asyncpg://cheese:cheese@127.0.0.1:1/cheese_ci_fast"}
+    return {"id": "tree-guards", "cwd": root / "backend", "env": env,
+            "command": ["uv", "run", "--no-sync", "pytest",
+                        *(f"tests/unit/{name}" for name in TREE_GUARDS),
+                        "-m", "pure", "-q", "-p", "no:cacheprovider"]}
 
 
 def _case_file(case):

@@ -45,6 +45,7 @@ from app.domain.agent.turn.intake.messages import RunnerIntake
 from app.domain.agent.turn.intake.status import WorkStatus
 from app.domain.agent.turn.state.execution import ExecutionPolicy, ExecutionState
 from app.domain.agent.turn.steps.execute import ExecutionEffects, execute
+from app.domain.agent.turn.store.human import HumanHandoff
 from app.domain.agent.turn.store.intervals import open_turn
 from app.domain.agent.turn_ledger import (
     fire_on_done,
@@ -448,6 +449,7 @@ class AgentWorkRunner:
         client_id: str | None = None,
         quoted_context: dict | None = None,
         may_summon: bool = True,
+        handoff: HumanHandoff | None = None,
     ) -> uuid.UUID:
         return await self._intake.receive_message(
             chat_service,
@@ -459,6 +461,7 @@ class AgentWorkRunner:
             client_id=client_id,
             quoted_context=quoted_context,
             may_summon=may_summon,
+            handoff=handoff,
         )
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:
