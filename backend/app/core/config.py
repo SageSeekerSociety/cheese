@@ -768,11 +768,11 @@ class Settings(BaseSettings, SandboxSettings):
     # A cloud sandbox is destroyed once its conversation has run no turn and
     # its session has asked for no tool for this long; the next tool call gets
     # a new one (`machine/lifecycle.py`).
-    cloud_sandbox_idle_stop_s: int = Field(default=600, ge=60, le=86400)
+    cloud_sandbox_idle_stop_s: int = Field(default=180, ge=60, le=86400)
     # A command the executor still runs for the session (a Bash call sent to the
     # background) keeps an otherwise idle sandbox up, but no longer than this
     # after the session's last activity.
-    cloud_sandbox_background_cap_s: int = Field(default=3600, ge=0, le=7 * 86400)
+    cloud_sandbox_background_cap_s: int = Field(default=900, ge=0, le=7 * 86400)
     # Pre-scale: when the free slots of the pool's live hosts fall below this,
     # the pool sweep claims (or creates) the next host before anyone waits on it.
     # The default host (four cores, 16 GiB, 40 GB) runs four sandboxes, so the
@@ -791,7 +791,8 @@ class Settings(BaseSettings, SandboxSettings):
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
-    # the choice. Each VM counts against `cloud_pool_max_hosts` like a host.
+    # the choice. A VM holds no sandbox slots, so it does not count against
+    # `cloud_pool_max_hosts`.
     microcloud_vm_offering_id: int = 0
     # The size every whole cloud VM is created with, clamped into the offering's
     # own range. One size: what a session is charged is spec × time, and the
