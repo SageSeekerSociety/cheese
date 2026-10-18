@@ -367,7 +367,9 @@ async def settle(
             continue
         canvas_and_project = canvas_rows.get(block.canvas_id)
         canvas = canvas_and_project[0] if canvas_and_project is not None else None
-        canvas_project = canvas_and_project[1] if canvas_and_project is not None else None
+        canvas_project = (
+            canvas_and_project[1] if canvas_and_project is not None else None
+        )
         if canvas is not None and canvas.document_id == document_id and left[canvas.id]:
             left[canvas.id] -= 1
             refs.append(canvas.id)
