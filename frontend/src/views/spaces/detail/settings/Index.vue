@@ -9,7 +9,7 @@
     @close="close"
   >
     <router-view />
-    <!-- 只有「分类与话题」一栏往这里放东西：话题管理画在分类下面。 -->
+    <!-- 只有「分类与标签」一栏往这里放东西：标签管理画在分类下面。 -->
     <router-view name="topics" />
   </IndexView>
 </template>

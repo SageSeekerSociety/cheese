@@ -211,7 +211,7 @@ export const SCENES_PAGES_ENTRIES: CatalogEntry[] = [
     id: 'ask-view',
     title: 'AskView',
     about:
-      '提问页的画面：一个标题输入、一块正文编辑器、一只话题选择器，下面是「加悬赏」那一行和发布按钮，右手边钉着「提问的艺术」。校验、发布、搜索与新建话题都在容器 `question/Ask.vue` 里 —— 编辑器实例和三个字段的报错都由容器以 props 传进来。',
+      '提问页的画面：一个标题输入、一块正文编辑器、一只标签选择器，下面是「加悬赏」那一行和发布按钮，右手边钉着「提问的艺术」。校验、发布、搜索与新建标签都在容器 `question/Ask.vue` 里 —— 编辑器实例和三个字段的报错都由容器以 props 传进来。',
     file: 'src/views/question/AskView.vue',
     component: AskView,
     needs: UI_T,
@@ -219,7 +219,7 @@ export const SCENES_PAGES_ENTRIES: CatalogEntry[] = [
       titleProps: OK_FIELD,
       editorConfig: {},
       topicsProps: OK_FIELD,
-      // 话题的搜索与新建归容器（那里才认得接口）；这里给一份够用的候选。
+      // 标签的搜索与新建归容器（那里才认得接口）；这里给一份够用的候选。
       searchTopics: async (query: string) => topicCandidates(query),
       createTopic: async () => 99,
       hasBounty: false,
@@ -233,7 +233,7 @@ export const SCENES_PAGES_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '刚进来',
-        note: '空的标题、空的正文、没选话题：发布按钮在这儿，右手边是「提问的艺术」。',
+        note: '空的标题、空的正文、没选标签：发布按钮在这儿，右手边是「提问的艺术」。',
         props: {},
         expect: '发布问题',
       },

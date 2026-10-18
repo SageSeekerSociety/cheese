@@ -631,7 +631,7 @@ async def void(
     reason = say("cardVoidedReason", note=note.strip()) if note.strip() else ""
     headline = (
         f"{VOIDED_PREFIX}：<@{decided_by}> 作废于状态「{was}」。"
-        f"话题可以重新提交审阅。{reason}"
+        f"频道可以重新提交审阅。{reason}"
     )
     if archive.pr_left_open(card):
         # 跟归档收敛同一条产品判断 (review/archive.py 的模块 docstring)：平台

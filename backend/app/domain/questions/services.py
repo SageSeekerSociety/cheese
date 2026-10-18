@@ -96,7 +96,7 @@ class QuestionsService:
             valid_topic_ids = await self._topic_repo.validate_topic_ids(list(topic_ids))
             for tid in topic_ids:
                 if tid not in valid_topic_ids:
-                    raise NotFoundError(say("resourceNotFound"), data={"id": tid})
+                    raise NotFoundError(say("tagNotFound"), data={"id": tid})
         question = await self._repo.create_question(
             created_by_id=user_id,
             title=title.strip(),
