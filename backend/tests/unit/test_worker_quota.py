@@ -10,6 +10,7 @@ quota, so a room's tools keep the default they had.
 
 import sys
 import uuid
+from pathlib import Path
 
 from app.core.config import settings
 from app.domain.agent import worker_quota
@@ -84,6 +85,17 @@ def test_a_quota_one_cgroup_up_is_the_rooms(tmp_path):
     }
 
 
+def test_the_tightest_cgroup_on_the_way_counts(tmp_path):
+    """A budget set closer to the root cannot be exceeded further down, so an
+    inner cgroup naming more than an outer one is the outer one's budget."""
+    cgroup, own = _cgroup(tmp_path, "400000 100000\n")
+    (tmp_path / "cgroup/cpu.max").write_text("200000 100000\n", encoding="utf-8")
+    assert worker_quota.environment({"limits": None}, cgroup=cgroup, own=own) == {
+        "PYTEST_XDIST_AUTO_NUM_WORKERS": "2",
+        "VITEST_MAX_FORKS": "2",
+    }
+
+
 def test_a_fraction_of_a_core_is_never_a_fraction_of_a_worker(tmp_path):
     """Quotas are in microseconds and need not divide evenly; the worker count
     rounds down, and never below one."""
@@ -133,6 +145,24 @@ def test_a_room_that_names_its_own_count_keeps_it(tmp_path, monkeypatch):
     ):
         assert config["env"]["PYTEST_XDIST_AUTO_NUM_WORKERS"] == "8"
         assert config["env"]["VITEST_MAX_FORKS"] == str(settings.cloud_sandbox_cpus)
+
+
+def test_the_vitest_variable_is_the_one_this_repos_config_reads():
+    """The name is a contract, not a choice.
+
+    vitest 5 reads `VITEST_MAX_WORKERS` itself, but applies it after the
+    command line, which would undo `ci:fast`'s `--maxWorkers=1`; this repo's
+    config sizes its pool from `VITEST_MAX_FORKS` instead. An emitted name that
+    the config does not read caps nothing, so the two are held together here:
+    changing the variable without the config (or the other way round) turns
+    this red.
+    """
+    config = (
+        Path(__file__).resolve().parents[3] / "frontend/vite.config.ts"
+    ).read_text(encoding="utf-8")
+    assert "VITEST_MAX_FORKS" in config
+    assert "VITEST_MAX_WORKERS" not in config
+    assert worker_quota.VARIABLES[1] == "VITEST_MAX_FORKS"
 
 
 def test_the_release_carries_the_module_it_needs(tmp_path):

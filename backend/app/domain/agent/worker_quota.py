@@ -71,20 +71,22 @@ def quota(sandbox, cgroup=CGROUP, own=OWN):
 def own_quota(cgroup=CGROUP, own=OWN):
     """The CPU quota this process is under, or None when nothing caps it.
 
-    Its own cgroup first, then each cgroup above it: a leaf that says `max` is
-    a process whose budget is its parent's, and a leaf-only reading would
-    answer "uncapped" for a room that is capped one level up.
+    Every cgroup from its own up to the root, and the smallest quota among
+    them: a leaf that says `max` is a process whose budget is its parent's,
+    and a budget set closer to the root cannot be exceeded further down, so
+    the one that counts is the tightest on the way, not the nearest.
     """
     for line in _read(own).splitlines():
         hierarchy, _, path = line.partition("::")
         if hierarchy != "0":
             continue
         parts = [part for part in path.strip("/").split("/") if part]
-        for depth in range(len(parts), -1, -1):
-            found = cores(_read(cgroup.joinpath(*parts[:depth]) / CPU_MAX))
-            if found is not None:
-                return found
-        return None
+        limits = [
+            cores(_read(cgroup.joinpath(*parts[:depth]) / CPU_MAX))
+            for depth in range(len(parts), -1, -1)
+        ]
+        found = [limit for limit in limits if limit is not None]
+        return min(found) if found else None
     return None
 
 
