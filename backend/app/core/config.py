@@ -857,21 +857,21 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     memory_migration_chunk: int = 60
 
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
-    # How often the background poller checks an open PR's CI / the deploy
-    # workflow it triggers after merge. This is the clock every card's merge
-    # state is mirrored on, so it is also how late a green or merged PR reaches
-    # its card; `review/queries.CHECK_WATCH_TICKS` counts 「还在等 CI」 off three
-    # of these.
+    # How often the poller checks an open PR's CI / its post-merge deploy —
+    # the clock every card's merge state is mirrored on (`CHECK_WATCH_TICKS`).
     accept_pr_poll_interval_s: int = 60
+    # 草稿扫描自己的时钟（卡轮询不跟着慢）：一个候选每遍要问 GitHub 两次，
+    # 2026-10-18 实测 23 个候选每 60 秒 ≈2,760 次/小时。
+    draft_pr_sweep_interval_s: int = 300
+    # 只扫这段时间里动过的活（最后一条消息，没人说过就按建任务时刻）；0＝不过滤。
+    draft_pr_sweep_activity_window_s: int = 7200
     # 卡面上的合并态是快照，而采纳按钮按它亮不亮。读卡这条路也会重算一次陈旧的
-    # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 来读一
-    # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是
-    # 必须的：读卡是热点，不能每个读者都替全平台去问一次 GitHub。
+    # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 读到的
+    # 都是同一份旧快照。读卡是热点，不能让每个读者都替全平台去问一次 GitHub。
     accept_pr_snapshot_floor_s: int = 60
-    # How long one card read waits for those refreshes. They run side by side,
-    # one per card however many readers ask, and finish in the background past
-    # this; the next read gets what they wrote. Each is a few GitHub calls, and
-    # in sequence they once held `GET /topics/{id}/accept-card` for 40 s.
+    # How long one card read waits for those refreshes (one per card, side by
+    # side); each is a few GitHub calls, and in sequence they once held
+    # `GET /topics/{id}/accept-card` for 40 s.
     accept_pr_snapshot_read_wait_s: float = 2.0
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
