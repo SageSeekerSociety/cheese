@@ -77,7 +77,7 @@ async def _watch_queue_stall(
         started = await lookup(
             owner=owner, repo=repo, number=card.pr_number, token=creds.read
         )
-    except Exception:  # noqa: BLE001 — 只读提示，读不到不该拖垮轮询
+    except Exception:  # 只读提示，读不到不该拖垮轮询
         logger.warning("card %s: merge_group run lookup failed", card.id, exc_info=True)
         return
     if started:
