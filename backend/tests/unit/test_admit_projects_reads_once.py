@@ -13,16 +13,29 @@ payer 的预算、额度包、窗口各合成一条查询。
 """
 
 import uuid
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
 from app.domain.usage.ledger import Ledger
 from app.domain.usage.payers import Payer, Terms
+from app.domain.usage.windows import Window
 
 TEAM = 7
 MONTHLY = Terms(key="pro", credits_per_period=10.0)
 UNLIMITED = Terms(key="max", unlimited=True)
 SPENT = uuid.uuid4()
+# 窗口套餐：5 小时窗口最多 5 个额度。FULL_TEAM 这一轮已用满，ROOMY_TEAM 还有余量。
+WINDOWED = Terms(key="plus", windows=(Window(credits=5.0, hours=5.0),))
+FULL_TEAM, ROOMY_TEAM = 8, 9
+WINDOW_ROWS = [
+    SimpleNamespace(
+        team_id=team, window="5h", credits_used=used, started_at=datetime.now(UTC)
+    )
+    for team, used in ((FULL_TEAM, 5.0), (ROOMY_TEAM, 1.0))
+]
+FULL, ROOMY = uuid.uuid4(), uuid.uuid4()
 
 
 class _Rows:
@@ -47,12 +60,14 @@ class _Session:
         self.statements.append(text)
         if "credits_limit" in text:
             return _Rows([(SPENT, 5.0, 5.0)])
+        if "plan_window_use" in text:
+            return _Rows(WINDOW_ROWS)
         return _Rows([])
 
 
 def _payers(n: int) -> dict[uuid.UUID, Payer]:
     ids = [SPENT] + [uuid.uuid4() for _ in range(n - 1)]
-    return {
+    out = {
         pid: Payer(
             team_id=TEAM,
             terms=UNLIMITED if i == 1 else MONTHLY,
@@ -60,6 +75,9 @@ def _payers(n: int) -> dict[uuid.UUID, Payer]:
         )
         for i, pid in enumerate(ids)
     }
+    out[FULL] = Payer(team_id=FULL_TEAM, terms=WINDOWED, project_id=FULL)
+    out[ROOMY] = Payer(team_id=ROOMY_TEAM, terms=WINDOWED, project_id=ROOMY)
+    return out
 
 
 @pytest.mark.anyio
@@ -75,8 +93,10 @@ async def test_a_batch_reads_a_fixed_number_of_times_and_matches_one_by_one():
     single = {pid: await Ledger(_Session()).admit(p) for pid, p in payers.items()}
     assert batch == single
     assert batch[SPENT] is not None
+    assert batch[FULL] is not None, "窗口已满又没有额度包，应该拒"
+    assert batch[ROOMY] is None
     assert [pid for pid, verdict in batch.items() if verdict is None] == [
-        pid for pid in payers if pid != SPENT
+        pid for pid in payers if pid not in (SPENT, FULL)
     ]
 
 
