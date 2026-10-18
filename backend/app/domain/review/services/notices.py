@@ -268,7 +268,7 @@ async def _note_merge_blocked(
             "解决并验证后提交，用 cheese push-fix 更新原 PR。"
             "采纳由人决定；只有人已启用自动合并且项目条件满足时才会自动合并。\n"
             "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
-            "请在话题里说清楚卡在哪、需要谁做什么。"
+            "请在频道里说清楚卡在哪、需要谁做什么。"
         ),
         headline=say("mergeRefused", pr=card.pr_number),
         meta=notice(
