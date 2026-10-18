@@ -106,11 +106,8 @@ def accepting(host: CloudHost) -> bool:
     )
 
 
-def _counts_toward_cap(host: CloudHost, *, for_vm: bool = False) -> bool:
-    """A whole VM holds no sandbox slots (``capacity`` is 0), so it does not
-    take a pool host's place in ``cloud_pool_max_hosts``. Only a request for
-    another whole VM counts the VMs, so they stay capped."""
-    return host.released_at is None and (for_vm or not host.whole_machine)
+def _counts_toward_cap(host: CloudHost) -> bool:
+    return host.released_at is None
 
 
 def _failed_unenrolled(host: CloudHost) -> bool:

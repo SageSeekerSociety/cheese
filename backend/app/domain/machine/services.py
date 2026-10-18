@@ -15,8 +15,7 @@ one, on whichever host has a free slot.
 A session that asks for a whole machine is given a host of its own: a whole
 cloud VM created for it from ``microcloud_vm_offering_id``, which carries no
 other session, is never taken from the warm pool, and is released as soon as
-its home is gone. Another whole-VM request counts it against
-``cloud_pool_max_hosts``; a sandbox request does not.
+its home is gone. It counts against ``cloud_pool_max_hosts`` like any host.
 
 Provisioning is asynchronous on MicroCloud's side, so nothing here blocks on it:
 the pool sweep (``runner.CloudPoolSweeper``) keeps the table in line
@@ -423,8 +422,7 @@ class HostPool(PoolSweep):
         if failures:
             raise CloudKeepsFailing(failures, whole_machine=whole_machine)
         hosts = await self._repo.live()
-        counted = sum(_counts_toward_cap(h, for_vm=whole_machine) for h in hosts)
-        if counted >= settings.cloud_pool_max_hosts:
+        if sum(_counts_toward_cap(h) for h in hosts) >= settings.cloud_pool_max_hosts:
             raise CloudPoolFull(whole_machine=whole_machine)
 
     async def _host_body(self) -> dict:

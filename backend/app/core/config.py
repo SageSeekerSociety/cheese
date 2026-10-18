@@ -766,12 +766,10 @@ class Settings(BaseSettings, SandboxSettings):
     # (`models.capacity`). A sandbox holds its slot for as long as it exists.
     cloud_host_slots_per_core: int = Field(default=2, ge=1, le=16)
     # A cloud sandbox is destroyed once its conversation has run no turn and
-    # its session has asked for no tool for this long; the next tool call gets
-    # a new one (`machine/lifecycle.py`).
+    # its session has asked for no tool for this long (`machine/lifecycle.py`).
     cloud_sandbox_idle_stop_s: int = Field(default=180, ge=60, le=86400)
-    # A command the executor still runs for the session (a Bash call sent to the
-    # background) keeps an otherwise idle sandbox up, but no longer than this
-    # after the session's last activity.
+    # A command the executor still runs for the session keeps an otherwise
+    # idle sandbox up, but no longer than this after the session's last activity.
     cloud_sandbox_background_cap_s: int = Field(default=900, ge=0, le=7 * 86400)
     # Pre-scale: when the free slots of the pool's live hosts fall below this,
     # the pool sweep claims (or creates) the next host before anyone waits on it.
@@ -782,28 +780,30 @@ class Settings(BaseSettings, SandboxSettings):
     cloud_pool_min_free_slots: int = Field(default=4, ge=0, le=64)
     # How long a host that has no sandbox on it is kept before it is released.
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
-    # The most hosts the pool holds at once. It protects the MicroCloud cluster;
-    # a session that finds the pool full is told capacity is tight and to try
-    # later. The current cluster supports ten hosts, forty standard sandbox
-    # slots, within its 400 GB shared thin pool. Raise this only when the
-    # storage behind it grows.
-    cloud_pool_max_hosts: int = Field(default=10, ge=1, le=500)
+    # The most hosts the pool holds at once, whole cloud VMs among them. It
+    # protects the MicroCloud cluster. Ten places give forty sandbox slots, the
+    # current 400 GB thin pool's worth written full; two more are whole VMs,
+    # over-committing it by two disks. Raise this only as that pool grows.
+    cloud_pool_max_hosts: int = Field(default=12, ge=1, le=500)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
-    # the choice. Only another VM request counts VMs against the host cap.
+    # the choice. A VM counts against `cloud_pool_max_hosts` like a host.
     microcloud_vm_offering_id: int = 0
     # The size every whole cloud VM is created with, clamped into the offering's
-    # own range. One size: what a session is charged is spec × time, and the
-    # spec is recorded on the VM's row.
+    # own range; what a session is charged is spec × time, recorded on its row.
     cloud_vm_cores: int = Field(default=4, ge=1)
     cloud_vm_memory_mb: int = Field(default=8192, ge=1024)
     cloud_vm_disk_gb: int = Field(default=40, ge=10)
     # A session's VM is released once its room has run no turn and the session
     # has asked for no tool for this long, after its work is pushed. The next
-    # tool call prepares a new one, which takes minutes, so this is longer
-    # than a sandbox's idle stop.
+    # tool call prepares a new one, which takes minutes: longer than a
+    # sandbox's idle stop.
     cloud_vm_idle_release_s: int = Field(default=1800, ge=60, le=7 * 86400)
+    # A command the executor still runs for the session keeps an idle VM up,
+    # but no longer than this after its last activity — longer than a
+    # sandbox's cap, since a VM's idle release is longer too.
+    cloud_vm_background_cap_s: int = Field(default=3600, ge=0, le=7 * 86400)
     # Credits one cloud sandbox costs per hour it runs, from start to idle stop
     # (usage/compute.py). Unset on purpose: the price is the product owner's to
     # set, and with none set no cloud sandbox starts, so cloud compute never
