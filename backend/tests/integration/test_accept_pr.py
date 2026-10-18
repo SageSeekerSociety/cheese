@@ -3539,8 +3539,8 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
     task_id = delivery_task_id(client, tid)
     original = TaskService.open_without_pr
 
-    async def _list_then_merge(self):
-        trees = await original(self)
+    async def _list_then_merge(self, **kwargs):
+        trees = await original(self, **kwargs)
 
         async def _merge_it() -> None:
             async with client.test_request_factory() as s:
