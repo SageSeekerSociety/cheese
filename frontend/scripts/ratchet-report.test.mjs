@@ -19,7 +19,7 @@
 // returned.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -59,9 +59,7 @@ describe('verdict', () => {
     })
   })
 
-  // The counters are numbers, not objects: the snapshot's shape is fixed in
-  // docs/topics/棘轮页方案 (3.1), and a page that has to guess which of two
-  // shapes it is reading is how "0" and "missing" start to look alike.
+  // Counters are numbers, not objects, so "0" and "missing" stay distinct.
   it('judges a tree with no regression as pass', () => {
     const record = verdict({ id: 'x', result: { ...COMPARED, ok: true } })
     assert.equal(record.status, 'pass')
@@ -179,10 +177,6 @@ describe('--json on the real checkers', () => {
     }
   })
 
-  // A baseline with nothing frozen in it, so any finding in a fixture is new.
-  const emptyBaseline = join(sandbox, 'empty-baseline.json')
-  writeFileSync(emptyBaseline, '{"files":{}}\n')
-
   it('fe-storage: the record is the run, passing and failing', () => {
     const probe = resolve(ROOT, 'src/__ratchetReportStorageProbe.ts')
     const args = ['--files', 'src/__ratchetReportStorageProbe.ts']
@@ -211,10 +205,34 @@ describe('--json on the real checkers', () => {
     const planted = join(sandbox, 'planted.css')
     writeFileSync(clean, 'a { margin: 0; }\n')
     writeFileSync(planted, 'a { color: #123456; }\n')
-    const args = (file) => ['--files', file, '--baseline', emptyBaseline]
+    const args = (file) => ['--files', file]
 
     assert.equal(agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens', ...args(clean)).status, 'pass')
     assert.equal(agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens', ...args(planted)).status, 'fail')
+  })
+
+  it('stylelint-tokens: an update cannot accept a colour violation', () => {
+    const planted = join(sandbox, 'update.css')
+    const baseline = join(sandbox, 'stylelint-baseline.json')
+    writeFileSync(planted, 'a { color: #123456; }\n')
+    const run = runChecker('stylelint-ratchet.mjs', '--json', '--files', planted, '--baseline', baseline, '--update')
+    assert.notEqual(run.status, 0, 'an update must not accept hardcoded colours')
+    assert.equal(existsSync(baseline), false, 'the check must never write an allowance')
+  })
+
+  it('stylelint-tokens: each colour rule blocks a violation, while tokens and pure style pass', () => {
+    const file = join(sandbox, 'colours.css')
+    for (const value of ['#123456', 'white', 'rgb(1 2 3)', 'hsl(20 30% 40%)']) {
+      writeFileSync(file, `a { color: ${value}; }\n`)
+      const record = agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens', '--files', file)
+      assert.equal(record.status, 'fail', value)
+      assert.equal(record.actual, 1, value)
+      assert.equal(record.frozen, 0, value)
+    }
+    writeFileSync(file, '.Bad_Name{color:var(--text);background:rgba(var(--v-theme-primary),0.12)}\n')
+    const record = agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens', '--files', file)
+    assert.equal(record.status, 'pass')
+    assert.equal(record.actual, 0)
   })
 
   it('vue-tsc: the record is the run, on a planted type error', () => {

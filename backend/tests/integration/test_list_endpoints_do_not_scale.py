@@ -18,7 +18,7 @@ absolute number is a property of the endpoint — a route that has to check a
 permission costs one more statement forever — and pinning it would make every
 unrelated change to the session cost a test edit. Growth is the bug.
 
-Three endpoints below are the exception, and say so where they stand: their
+Two endpoints below are the exception, and say so where they stand: their
 N+1 is known and batching it is a separate change, so they assert an absolute
 ceiling measured at 30 rows (:func:`assert_reads_within_ceiling`) instead of
 the difference. The difference cannot record debt that is already there — a
@@ -37,6 +37,7 @@ from sqlalchemy import text
 from tests.integration.conftest import create_approved_space, unique_int
 from tests.support.counting_session import (
     assert_does_not_scale,
+    assert_growth_within,
     assert_reads_within_ceiling,
     count_sql,
 )
@@ -58,7 +59,7 @@ def _rows(response, key: str) -> int:
 
 
 #: A full page. Thirty rows is where a per-row read shows up as a number no
-#: constant can hide, which is why the three ceilings below are measured here.
+#: constant can hide, which is why the two ceilings below are measured here.
 _FULL_PAGE = 30
 
 
@@ -66,7 +67,7 @@ def _count_at_full_page(client, seed, request):
     """What the list costs at a full page.
 
     ``assert_does_not_scale`` takes two counts, at 3 and then at 30, and judges
-    the difference. The three known-N+1 endpoints below pin the second count
+    the difference. The two known-N+1 endpoints below pin the second count
     instead, so it is taken here through the same ``count_sql``: the ceiling is
     the number the difference-based helper would have measured, not a second
     count taken another way.
@@ -305,8 +306,8 @@ def test_the_submission_list_does_not_scale(client) -> None:
         )
 
     # Both sizes are requested — the route builds a task and a participant per
-    # size, and the small one is what makes the debt visible in the failure
-    # message below. Only the full page's count is pinned.
+    # size, so the two counts already contain everything a constant request
+    # costs and only the per-row reads can make them differ.
     small_count, small_response = count_sql(
         client, lambda: up_to(small_task, small_participant)
     )
@@ -317,15 +318,12 @@ def test_the_submission_list_does_not_scale(client) -> None:
     assert large_response.status_code == 200, large_response.text
     assert _rows(large_response, "submissions") >= _FULL_PAGE
 
-    assert_reads_within_ceiling(
+    assert_growth_within(
+        _FULL_PAGE // 10,
+        _FULL_PAGE,
+        small_count,
         large_count,
-        ceiling=36,
-        what=f"the submission list at {_FULL_PAGE} rows ({small_count} at 3)",
-        debt=(
-            "known N+1, measured 9 -> 36 statements for 3 -> 30 submissions: one "
-            "statement per row in the list's hydration. Batch it, then lower this "
-            "ceiling to the constant it settles at"
-        ),
+        what="the submission list",
     )
 
 

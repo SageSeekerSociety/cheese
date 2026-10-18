@@ -582,7 +582,6 @@ def test_only_the_github_jobs_use_the_quota_interval_policy(
         "task pr poll",
         "landing watch",
         "draft pr sweep",
-        "ratchet ingest",
         "ci activity sweep",
     }
     # Enable configured clocks so disabled test settings cannot hide a missing opt-in.

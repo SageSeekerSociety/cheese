@@ -141,10 +141,26 @@ const DocAutolinkCjk: TokenizerExtension = {
   },
 }
 
+// Keep an HTML opener after a file path literal: stripping it can synthesize
+// a valid reference. Leave the rest to Markdown so later code and links survive.
+const DocFileReference: TokenizerExtension = {
+  name: 'docFileReference',
+  level: 'inline',
+  start: (src) => src.indexOf('<&'),
+  tokenizer(src) {
+    const match = /^<&[\w./一-鿿()-]+(?::\d+(?:-\d+)?)?<(?=\/?[A-Za-z][\w-]*[\s/>]|[!?])/.exec(src)
+    if (!match) return undefined
+    const raw = match[0]
+    return { type: 'text', raw, text: raw }
+  },
+}
+
 /** A parser with the document's rules. The chat reads with its own (a single
  *  newline breaks the line there); building it here keeps the rules one list. */
 export function buildDocMarked(): Marked {
-  return new Marked(markedCjkFriendly()).use({ extensions: [DocLiteralTag, DocLiteralTagBlock, DocAutolinkCjk] })
+  return new Marked(markedCjkFriendly()).use({
+    extensions: [DocLiteralTag, DocLiteralTagBlock, DocAutolinkCjk, DocFileReference],
+  })
 }
 
 export const docMarked = buildDocMarked()

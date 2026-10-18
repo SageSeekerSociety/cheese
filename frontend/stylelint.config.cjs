@@ -5,13 +5,8 @@
  * is a defect rather than a style: no hardcoded colours, because a literal cannot
  * follow the dark theme. Layout and ordering are not judged.
  *
- * THESE RULES DO NOT GO RED ON THE EXISTING TREE. There are ~251 hardcoded hex
- * colours across 46 files, and a rule that fails on all of them on day one gets
- * switched off within the week. scripts/stylelint-ratchet.mjs freezes today's
- * count per file in stylelint-baseline.json and blocks only NEW violations.
- *
- * Running `stylelint` directly (rather than through the ratchet) therefore
- * reports the whole backlog. That is intended: it is the paydown list.
+ * The three colour rules gate with zero tolerance. Shared-config style rules
+ * remain available to lint:style:fix; the gate leaves formatting and naming alone.
  */
 
 module.exports = {
@@ -20,7 +15,7 @@ module.exports = {
   rules: {
     /* ---- Design system: colour ---- */
 
-    // Hex literals are the 251-site problem. A literal renders identically in
+    // A hex literal renders identically in
     // both themes, which means it is wrong in one of them.
     'color-no-hex': [
       true,

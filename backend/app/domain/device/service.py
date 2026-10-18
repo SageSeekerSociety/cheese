@@ -159,6 +159,11 @@ class DeviceService:
     async def get_device(self, device_id: str) -> Device | None:
         return await self._repo.get_device(device_id)
 
+    async def get_devices(self, device_ids: Sequence[str]) -> dict[str, Device]:
+        """Several machines at once — what a page showing a dozen of them asks
+        for, instead of ``get_device`` in a loop."""
+        return await self._repo.get_devices(device_ids)
+
     async def get_hosted_device(self, device_id: str) -> Device | None:
         return await self._repo.get_hosted_device(device_id)
 
