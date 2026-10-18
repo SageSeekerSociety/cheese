@@ -193,6 +193,15 @@
      to --ink. */
   --avatar-ink: #fff;
 
+  /* ---- Terminal ground ----
+     DeviceLiveViewer's xterm.js paints its own dark scheme in both themes (its
+     theme.background is this same #1e1e1e), so the ground under it, and the
+     status label that sits on that ground, cannot follow the theme either. The
+     dark block repeats the values deliberately. */
+  --terminal-ground: #1e1e1e;
+  --terminal-status-ink: #9aa0a6;
+  --terminal-status-fill: rgba(0, 0, 0, 0.5);
+
   /* ---- AI teammate avatar ----
      CheeseAvatar's tile and eyes. Warm deep tones, one per teammate, picked by
      handle (agentTone); tone 0 is the warm black of the app icon. Never amber:
@@ -490,6 +499,11 @@
   --inverse-fill: rgba(255, 255, 255, 0.1);
 
   --avatar-ink: #fff; /* same as light, deliberately: the ground does not change */
+
+  /* Same as light, deliberately: xterm.js paints the same dark terminal in both themes. */
+  --terminal-ground: #1e1e1e;
+  --terminal-status-ink: #9aa0a6;
+  --terminal-status-fill: rgba(0, 0, 0, 0.5);
 
   /* Lifted like --inverse-surface: a tile lighter than the page, not a hole in it. */
   --agent-ink: #f6efe4;

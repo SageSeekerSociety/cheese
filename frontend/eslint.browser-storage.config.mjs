@@ -1,17 +1,11 @@
 // The "nothing touches Web Storage directly" rule, as an eslint configuration.
 //
-// WHY THIS IS NOT IN eslint.config.mjs. The rule is not new — the sites it
-// counts are pre-existing and there are more of them than there are files to
-// migrate in one go — so adding it there as `error` would red `pnpm run lint`,
-// the pre-commit hook and frontend.yml's ESLint step for everybody on day one,
-// on files nobody touched. As a `warn` it would be invisible among the existing
-// warnings. So the rule lives here, in a config only the gate that knows about
-// the baseline reads:
+// The rule has its own config, and its own gate, so it is run and reported on
+// by itself (with the could-not-judge guard and the JSON record the gate adds):
 //
-//     pnpm run lint:storage           check (exit 1 on any NEW reference)
-//     pnpm run lint:storage:update    rewrite the baseline downward
+//     pnpm run lint:storage           check (exit 1 on any reference)
 //     pnpm exec eslint --config eslint.browser-storage.config.mjs src
-//                                     every reference, baseline ignored
+//                                     the same rule, eslint's own output
 //
 // `eslint.config.mjs` stays the config every editor and `pnpm run lint` read;
 // this file extends it rather than restating it, so the parser setup, the

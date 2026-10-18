@@ -196,6 +196,7 @@ async def get_own_agents(
 @router.put(
     "/{project_id}/own-agents",
     **typed_response(OwnAgentsOut),
+    dependencies=[ROUTE_DECIDES],
 )
 async def set_own_agents(
     project_id: uuid.UUID,

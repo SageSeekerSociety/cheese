@@ -75,6 +75,7 @@ HOME = {
     ),
     "connections.py": (
         "_require_user",
+        "_screens_by_device",
         "_device_screens",
         "_device_view",
         "my_devices",

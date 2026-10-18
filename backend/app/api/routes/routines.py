@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import notice_keys, say
@@ -320,7 +321,7 @@ async def list_routines(
     return ok(page(items, len(items)))
 
 
-@router.post("/topics/{topic_id}/routines")
+@router.post("/topics/{topic_id}/routines", dependencies=[ROUTE_DECIDES])
 async def create_routine(
     topic_id: uuid.UUID, body: RoutineIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -364,7 +365,7 @@ async def get_routine(
     return ok({**presented, "runs": [_run(r) for r in runs]})
 
 
-@router.patch("/routines/{routine_id}")
+@router.patch("/routines/{routine_id}", dependencies=[ROUTE_DECIDES])
 async def update_routine(
     routine_id: uuid.UUID, body: RoutinePatch, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -385,7 +386,7 @@ async def update_routine(
     return ok(presented)
 
 
-@router.post("/routines/{routine_id}/confirm")
+@router.post("/routines/{routine_id}/confirm", dependencies=[ROUTE_DECIDES])
 async def confirm_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -398,7 +399,7 @@ async def confirm_routine(
     return ok(presented)
 
 
-@router.post("/routines/{routine_id}/pause")
+@router.post("/routines/{routine_id}/pause", dependencies=[ROUTE_DECIDES])
 async def pause_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -413,7 +414,7 @@ async def pause_routine(
     return ok(presented)
 
 
-@router.post("/routines/{routine_id}/resume")
+@router.post("/routines/{routine_id}/resume", dependencies=[ROUTE_DECIDES])
 async def resume_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -426,7 +427,7 @@ async def resume_routine(
     return ok(presented)
 
 
-@router.post("/routines/{routine_id}/run-now")
+@router.post("/routines/{routine_id}/run-now", dependencies=[ROUTE_DECIDES])
 async def run_routine_now(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -449,7 +450,7 @@ async def run_routine_now(
     return ok(_run(run))
 
 
-@router.delete("/routines/{routine_id}")
+@router.delete("/routines/{routine_id}", dependencies=[ROUTE_DECIDES])
 async def delete_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -470,7 +471,7 @@ async def list_runs(
     return ok(page(items, len(items)))
 
 
-@router.post("/routine-runs/{run_id}/report")
+@router.post("/routine-runs/{run_id}/report", dependencies=[ROUTE_DECIDES])
 async def report_run(
     run_id: uuid.UUID, body: ReportIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

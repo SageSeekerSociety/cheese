@@ -21,7 +21,6 @@ the assertions passed; distinguish that from a test failure on a supported host.
 
 Read ratchet debt from its owner rather than another ledger's prose: repository
 cross-domain exemptions are `_EXEMPT` in `unit/test_domain_import_guard.py`,
-harness edges are `_LEDGER` in `unit/test_harness_boundary.py`, and private-read
-points are `BASELINE` in `unit/test_is_private_read_points.py`. Import-linter's
+and private-read points are `BASELINE` in `unit/test_is_private_read_points.py`. Import-linter's
 separate contract exceptions live in `../.importlinter`; dropping one kind of
 debt does not automatically lower the other ledgers.

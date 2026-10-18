@@ -134,7 +134,7 @@ class TurnAdmission:
                     return instance.handle
             place = await PlaceResolver(session).conversation(topic_id)
             if place is None:
-                raise NotFoundError("Topic not found")
+                raise NotFoundError(say("topicNotFound"))
             agent = await _agent_at(session, place)
             return agent.handle
 
@@ -225,7 +225,7 @@ class TurnAdmission:
                     topic_id, nudge_event, turn_id, meta=nudge_meta
                 )
                 if payload is None:
-                    raise NotFoundError("Topic not found")
+                    raise NotFoundError(say("topicNotFound"))
                 yield {"type": "event_block", "block": payload}
             if not summon:
                 yield {"type": "done"}

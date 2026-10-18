@@ -59,7 +59,7 @@ def _thread_out(thread) -> ThreadOut:
     )
 
 
-@block_router.post("/{block_id}/thread")
+@block_router.post("/{block_id}/thread", dependencies=[ROUTE_DECIDES])
 async def open_block_thread(
     block_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

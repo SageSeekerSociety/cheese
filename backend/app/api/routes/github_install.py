@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
@@ -182,7 +183,7 @@ async def get_github_connection(
     )
 
 
-@router.post("/projects/{project_id}/github/connect")
+@router.post("/projects/{project_id}/github/connect", dependencies=[ROUTE_DECIDES])
 async def connect_github_repo(
     project_id: uuid.UUID,
     request: Request,

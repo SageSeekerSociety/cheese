@@ -342,13 +342,10 @@ async def test_creator_retains_channel_ownership_when_no_owner_seat_remains(
     svc = services.TopicMemberService.__new__(services.TopicMemberService)
     svc._session = SimpleNamespace(flush=AsyncMock())
     svc._topics = SimpleNamespace(get=AsyncMock(return_value=topic))
-    svc._members = SimpleNamespace(
-        manages=AsyncMock(return_value=False),
-        on_project=AsyncMock(return_value=True),
-    )
-    monkeypatch.setattr(
-        "app.domain.membership.services.MemberService", lambda session: svc._members
-    )
+    # 「这个人管得着这个项目吗」现在直接问 `may`（它自己读库的那一步在这里用
+    # 不了），不再经 `MemberService.manages` 兜一层：打桩打在代码真正用到的那
+    # 个名字上。这条用例问的是频道自己的归属兜底，项目权限一律答「不」。
+    monkeypatch.setattr(services, "may", AsyncMock(return_value=False))
     svc._repo = SimpleNamespace(
         list_for_topic=AsyncMock(
             return_value=[

@@ -30,6 +30,7 @@ from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 from fastapi.responses import Response
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -88,9 +89,7 @@ async def _ensure_may_read(
 
 
 @router.post(
-    "",
-    summary="Upload Attachment",
-    status_code=201,
+    "", summary="Upload Attachment", status_code=201, dependencies=[ROUTE_DECIDES]
 )
 async def upload_attachment(
     file: UploadFile = File(...),
@@ -205,6 +204,7 @@ async def download_attachment(
     "/{attachmentId}",
     summary="Delete Attachment",
     status_code=204,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_attachment(
     attachmentId: int = Path(..., ge=0),

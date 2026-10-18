@@ -39,6 +39,8 @@ class TopicRepository:
         self,
         *,
         project_id: uuid.UUID,
+        number: int,
+        environment: dict,
         title: str,
         parent_id: uuid.UUID | None = None,
         kind: TopicKind = TopicKind.topic,
@@ -48,6 +50,8 @@ class TopicRepository:
         return await writes.add(
             self,
             project_id=project_id,
+            number=number,
+            environment=environment,
             title=title,
             parent_id=parent_id,
             kind=kind,
@@ -68,9 +72,15 @@ class TopicRepository:
         owner: str,
         peer: str,
         title: str,
+        environment: dict,
     ) -> Topic:
         return await writes.get_or_create_private(
-            self, project_id=project_id, owner=owner, peer=peer, title=title
+            self,
+            project_id=project_id,
+            owner=owner,
+            peer=peer,
+            title=title,
+            environment=environment,
         )
 
     # --- 读（整行 / 投影 / 计数） -----------------------------------------------
@@ -222,9 +232,14 @@ class TopicRepository:
         user_handle: str,
         *,
         seats: dict[str, str],
+        default_agent_instance_id: uuid.UUID | None,
     ) -> dict[str, int]:
         return await unread.private_unread_counts(
-            self, project_id=project_id, user_handle=user_handle, seats=seats
+            self,
+            project_id=project_id,
+            user_handle=user_handle,
+            seats=seats,
+            default_agent_instance_id=default_agent_instance_id,
         )
 
     async def notify_levels(

@@ -23,6 +23,7 @@ from app.api.deps import get_broker, get_chat_service
 from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_roles import may
 from app.core.config import settings
 from app.core.errors import (
@@ -222,7 +223,10 @@ async def file_revision_raw(
     return _bytes_response(data, name, row.sha256[:16])
 
 
-@router.post("/topics/{topic_id}/files/revisions/{revision_id}/restore")
+@router.post(
+    "/topics/{topic_id}/files/revisions/{revision_id}/restore",
+    dependencies=[ROUTE_DECIDES],
+)
 async def restore_file_revision(
     topic_id: uuid.UUID,
     revision_id: uuid.UUID,
@@ -245,7 +249,7 @@ async def restore_file_revision(
     return ok(room_files.revision_out(made))
 
 
-@router.post("/topics/{topic_id}/files/copy")
+@router.post("/topics/{topic_id}/files/copy", dependencies=[ROUTE_DECIDES])
 async def copy_into_room(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -312,7 +316,7 @@ async def list_templates(
     return ok(page(items, len(items)))
 
 
-@router.post("/topics/{topic_id}/files/new")
+@router.post("/topics/{topic_id}/files/new", dependencies=[ROUTE_DECIDES])
 async def new_from_template(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -437,7 +441,7 @@ _MUST_SAVE = (2, 6)
 _SAVE_FAILED = (3, 7)
 
 
-@router.post("/office-editor/callback/{link}")
+@router.post("/office-editor/callback/{link}", dependencies=[ROUTE_DECIDES])
 async def editor_saves_file(
     link: str,
     request: Request,

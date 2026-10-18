@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
@@ -60,11 +61,12 @@ async def list_channels(
             actor.handle,
             team=project_team,
             counts=TaskService(db),
+            members=TopicMemberService(db),
         )
     )
 
 
-@router.post("/{project_id}/channels/{topic_id}/step-in")
+@router.post("/{project_id}/channels/{topic_id}/step-in", dependencies=[ROUTE_DECIDES])
 async def step_into_channel(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
@@ -87,7 +89,7 @@ async def step_into_channel(
     return ok({"topic_id": str(topic.id), "joined": True})
 
 
-@router.put("/{project_id}/channels/{topic_id}/manager")
+@router.put("/{project_id}/channels/{topic_id}/manager", dependencies=[ROUTE_DECIDES])
 async def hand_over_channel(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
