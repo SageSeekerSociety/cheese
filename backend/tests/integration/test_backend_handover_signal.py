@@ -14,6 +14,7 @@ import asyncio
 import os
 import signal
 import uuid
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -27,6 +28,43 @@ from app.core.ws_handover import EndBusinessSocketsAtHandover
 from app.domain import backend_log
 from app.domain.run_record.models import RunRecord
 from app.main import app
+
+
+@pytest.mark.anyio
+async def test_a_pending_replay_does_not_prevent_machine_maintenance(monkeypatch):
+    from app import main
+    from app.api.deps import get_chat_service
+    from app.core.background import PeriodicRunner
+
+    maintained = asyncio.Event()
+    replay = None
+    chat = get_chat_service()
+
+    async def recover():
+        nonlocal replay
+        conversation = uuid.uuid4()
+        replay = asyncio.create_task(asyncio.Event().wait())
+        chat.live.replays[conversation] = replay
+        replay.add_done_callback(chat._replayed)
+        return 1
+
+    async def maintain():
+        maintained.set()
+
+    monkeypatch.setattr(chat, "recover_sessions", recover)
+    monkeypatch.setattr(
+        main,
+        "sweep_abandoned_gates",
+        AsyncMock(return_value={"condemned": [], "errors": []}),
+    )
+    monkeypatch.setattr(
+        main,
+        "periodic_jobs",
+        lambda **kwargs: [PeriodicRunner("cloud host pool sweep", 0.01, maintain)],
+    )
+    async with app.router.lifespan_context(app):
+        await asyncio.wait_for(maintained.wait(), 5)
+        assert replay is not None and not replay.done()
 
 
 async def _owner_lock_holders() -> int:

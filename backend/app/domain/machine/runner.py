@@ -18,6 +18,8 @@ destroyed sandbox is seen within one sweep only if nothing slow is in the way.
 """
 
 import logging
+import uuid
+from collections.abc import Callable
 
 from app.core.db import SessionFactory
 from app.domain.machine import cloud_vm, metering, retained_archives
@@ -57,15 +59,21 @@ class CloudPoolSweeper:
 
 
 class SandboxSweeper:
-    def __init__(self, session_factory: SessionFactory) -> None:
+    def __init__(
+        self,
+        session_factory: SessionFactory,
+        *,
+        recovering: Callable[[uuid.UUID], bool] | None = None,
+    ) -> None:
         self._sessions = session_factory
+        self._recovering = recovering
 
     async def sweep(self) -> dict[str, int]:
 
         if not MicroCloudClient().configured:
             return {"destroyed": 0, "vms_released": 0}
         async with self._sessions() as session:
-            lifecycle = SandboxLifecycle(session)
+            lifecycle = SandboxLifecycle(session, recovering=self._recovering)
             result = await lifecycle.sweep()
             # A session's whole cloud VM is released by the same idle measure.
             result["vms_released"] = await cloud_vm.release_idle(session, lifecycle)

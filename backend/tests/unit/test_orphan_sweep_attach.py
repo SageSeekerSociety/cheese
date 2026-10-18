@@ -88,6 +88,26 @@ class _Chat(WorkChat):
         yield {"type": "done"}
 
 
+@pytest.mark.anyio
+async def test_replay_protects_only_its_own_conversation_from_the_orphan_sweep(
+    db_factory,
+):
+    pending_room = await a_topic(db_factory)
+    ready_room = await a_topic(db_factory)
+    pending_turn = await open_turn(db_factory, pending_room)
+    ready_turn = await open_turn(db_factory, ready_room)
+    chat = _Chat(db_factory, delivered=[pending_turn, ready_turn])
+    replay = asyncio.create_task(asyncio.Event().wait())
+    chat.replaying = lambda room: replay if room == pending_room else None
+    runner = AgentWorkRunner(InProcessBroker())
+    try:
+        await runner.resume_orphans(chat)
+        assert await open_turn_ids(db_factory) == {pending_turn}
+    finally:
+        replay.cancel()
+        await asyncio.gather(replay, return_exceptions=True)
+
+
 # Captured before any test patches `asyncio.sleep` away. `_drain` has to wait on
 # real time now: the path it is waiting for opens a turn interval in the
 # database, and a loop spun with sleep(0) never gives that round-trip a chance.

@@ -33,6 +33,7 @@ from app.api.deps import get_consumptions, get_llm_gateway, get_ownership
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
+from app.core.health import set_periodic_health
 from app.core.db import async_session_factory
 from app.core.errors import register_exception_handlers
 from app.core.forge_http import reuse_forge_connections
@@ -195,12 +196,25 @@ async def lifespan(application: FastAPI):
     jobs[:] = periodic_jobs(
         chat=get_chat_service(),
         machines=CloudPoolSweeper(async_session_factory).sweep,
-        sandboxes=SandboxSweeper(async_session_factory).sweep,
+        sandboxes=SandboxSweeper(
+            async_session_factory,
+            recovering=lambda conversation: (
+                get_chat_service().replaying(conversation) is not None
+            ),
+        ).sweep,
         compute=ComputeMeterSweeper(async_session_factory).sweep,
         sessions=async_session_factory,
         get_runner=get_work_runner,
     )
     runs = JobRuns(async_session_factory)
+
+    def job_health() -> dict:
+        return background.periodic_health(jobs, owns_work=ownership.held)
+
+    set_periodic_health(job_health)
+    watching_jobs = asyncio.create_task(
+        background.watch_periodic_jobs(job_health), name="periodic job health"
+    )
 
     async def start_jobs(*, owner_only: bool) -> None:
         """Start this process's share of the jobs, each with the time it last ran
@@ -269,9 +283,10 @@ async def lifespan(application: FastAPI):
         # its backlog goes on meanwhile, and only that room's next turn waits
         # for it (`AgentWorkRunner._wait_for_replay`).
         get_work_runner().start_turns()
-        # The sweeps below read what the replays land: a turn whose result is
-        # still in a backlog looks like one nobody finished.
-        await get_chat_service().replays_settled()
+        # Recovery protects only the conversations still replaying. Maintenance
+        # starts even when one runner cannot be reached; the orphan and idle
+        # sweeps leave that conversation alone until its history is read.
+        await start_jobs(owner_only=True)
 
         try:
             n = await get_work_runner().resume_orphans(get_chat_service())
@@ -289,13 +304,9 @@ async def lifespan(application: FastAPI):
         except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("lost message sweep failed")
 
-        # 闸门孤儿卡扫底 (2026-08-11): the gate runner is an in-memory asyncio task,
-        # so a redeploy kills every check in flight and nobody ever calls
-        # finish_gate — the card sits in `pending_gate` forever AND blocks its topic
-        # from ever filing another card (create_card's mutex). This runs BEFORE the
-        # periodic loop starts, and does the whole point of the startup path: no
-        # gate can be running in this process yet, so everything past the deadline
-        # is provably abandoned by the process that died, not by this one.
+        # Check past-deadline gates at takeover as well as on the periodic
+        # clock: a redeploy loses the in-memory runner, and a pending card
+        # otherwise keeps its topic from filing another card.
         try:
             chat = get_chat_service()
             swept = await sweep_abandoned_gates(
@@ -315,10 +326,6 @@ async def lifespan(application: FastAPI):
         except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("startup gate sweep failed")
 
-        # The jobs the lock still guards start here, now that this process holds
-        # it. The ones that have left it started at boot (`start_jobs` above), so
-        # a handover neither stops them nor waits for them.
-        await start_jobs(owner_only=True)
         background.spawn(
             sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
             name="cleanup startup recovery",
@@ -494,6 +501,9 @@ async def lifespan(application: FastAPI):
         try:
             yield
         finally:
+            watching_jobs.cancel()
+            await asyncio.gather(watching_jobs, return_exceptions=True)
+            set_periodic_health(None)
             reading_questions.cancel()
             await asyncio.gather(reading_questions, return_exceptions=True)
             await get_consumptions().let_go()
