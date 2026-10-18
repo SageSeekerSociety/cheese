@@ -27,6 +27,13 @@
 #       reviewer runs, prepare writes a result.json that says so, and post can
 #       be run straight away.
 #       Also appends PRECOMPUTED.md (.claude/pr-review/precompute.py): ci:fast pass/not_run, symbol refs, trial merges.
+#       Then BUNDLE.md (.claude/pr-review/bundle.py): the source of every function the diff
+#       touched, its call sites in other files, and single-file pyright errors (PYRIGHT
+#       overrides the command), so the finders do not open the files themselves.
+#       A --since round whose increment §4 does not re-review (only a merge of the base
+#       branch, or only tests, docs or copy) and whose last round on this machine had no
+#       blocker/major inherits that conclusion: result.json is written, no reviewer runs,
+#       and post prints the line with 增量自.
 #       The round — REVIEW-RESULT.md, meta and the review tree — is left under
 #       $HOME/.cheese/review-cache (PR_REVIEW_DIR overrides), not /tmp, so a
 #       machine change does not take it away; the old
@@ -143,7 +150,7 @@ resolve_sha() {
 prepare() {
   local pr=$1 want=${2:-} since_want=${3:-} spec_want=${4:-}
   local sha since="" base tree dir method_rev prev prev_round merge_base tier tier_txt
-  local rules_rev rules_txt rules_line spec_from="" spec_txt="" spec_note tiers_file
+  local rules_rev rules_txt rules_line spec_from="" spec_txt="" spec_note tiers_file inherited=""
   sha=$(resolve_sha "$pr" "$want") || exit 1
   [ -z "$since_want" ] || since=$(resolve_sha "$pr" "$since_want") || exit 1
   base=$(gh api "repos/$REPO/pulls/$pr" -q .base.ref) || exit 1
@@ -358,6 +365,16 @@ PY
       prev=$prev_round/REVIEW-RESULT.md
     fi
     if [ -n "$prev" ]; then cp "$prev" "$dir/previous.md"; else rm -f "$dir/previous.md"; fi
+    # An increment §4 does not re-review inherits the last round's conclusion here, with no
+    # subagent: bundle.py writes result.json the way tier G does, and post renders the line
+    # with 增量自. It runs from this checkout, the way `ready` does: the decision is the
+    # deliverer's own §4 check, and nothing in the PR under review can reach it.
+    if [ -f "$ROOT/$METHOD/bundle.py" ] \
+      && python3 "$ROOT/$METHOD/bundle.py" inherit --repo "$ROOT" --base "$base" --since "$since" \
+           --head "$sha" --previous "$dir/previous.md" --kept "$dir/result.json" \
+           --out "$dir/result.json"; then
+      inherited=yes
+    fi
     cat >> "$dir/REVIEW.md" <<EOF
 
 ## Incremental review
@@ -437,7 +454,25 @@ EOF
 - Result: $dir/result.json
 - Post: \`$HERE/pr-review.sh post $dir\`
 EOF
+  if [ -n "$inherited" ]; then
+    cat >> "$dir/REVIEW.md" <<EOF
+
+## Inherited conclusion
+
+The increment since ${since:0:12} is one §4 does not re-review, and the last round had no
+blocker or major: its conclusion is inherited and result.json is already written. Do not
+start any subagent. Run post now: \`$HERE/pr-review.sh post $dir\`
+EOF
+    echo "$dir/REVIEW.md"
+    return 0
+  fi
   python3 "$HERE/../pr-review/precompute.py" --repo "$ROOT" --tree "$tree" --base "$merge_base" --head "$sha" --pr "$pr" --pr-body "$dir/pr.md" --scripts "$HERE" --out "$dir/PRECOMPUTED.md" >&2 && { printf '\n' ; cat "$dir/PRECOMPUTED.md"; } >> "$dir/REVIEW.md" || echo "pr-review: precompute failed; REVIEW.md carries no PRECOMPUTED section" >&2
+  # Call slices and single-file pyright, so the finders read the bundle instead of the
+  # files. A delta round slices only the increment.
+  python3 "$HERE/../pr-review/bundle.py" facts --repo "$ROOT" --tree "$tree" --base "${since:-$merge_base}" \
+      --head "$sha" ${PYRIGHT:+--pyright "$PYRIGHT"} --out "$dir/BUNDLE.md" >&2 \
+    && { printf '\n'; cat "$dir/BUNDLE.md"; } >> "$dir/REVIEW.md" \
+    || echo "pr-review: bundle failed; REVIEW.md carries no Bundle section" >&2
   echo "$dir/REVIEW.md"
 }
 
