@@ -90,13 +90,11 @@ STRUCTURED_ACTION_LABEL = (
     r"(?:read|write|admin|export|create|update|delete|manage|execute|list|view|invite|approve|"
     r"download|upload|deploy|access|run|edit|review|import|share)"
 )
-STRUCTURED_RESOURCE_LABEL = (
-    r"(?:actions|attestations|checks|contents|deployments|discussions|id-token|issues|models|packages|"
-    r"pages|pull-requests|pull_requests|repository-projects|repository_projects|security-events|statuses|workflows)"
-)
+STRUCTURED_PERMISSION_LEVEL = r"(?:read|write|admin|none)"
 STRUCTURED_LABEL_LIST_RE = re.compile(
     rf"^(?:{STRUCTURED_ACTION_LABEL}:\s*[^,:]+(?:,\s*{STRUCTURED_ACTION_LABEL}:\s*[^,:]+)+|"
-    rf"{STRUCTURED_RESOURCE_LABEL}:\s*{STRUCTURED_ACTION_LABEL}(?:,\s*{STRUCTURED_RESOURCE_LABEL}:\s*{STRUCTURED_ACTION_LABEL})+)$",
+    rf"[\w-]+:\s*{STRUCTURED_PERMISSION_LEVEL}"
+    rf"(?:,\s*[\w-]+:\s*{STRUCTURED_PERMISSION_LEVEL})+)$",
     re.IGNORECASE,
 )
 IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
