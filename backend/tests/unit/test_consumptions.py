@@ -29,9 +29,10 @@ from redis.asyncio import from_url
 from app.core.config import settings
 from app.domain.agent import admission
 from app.domain.agent.device_hub import DeviceCallError
+from app.domain.agent.document import box, question, thread
 from app.domain.agent.session_host import consumptions as consumptions_module
 from app.domain.agent.session_host.answer import Words
-from app.domain.agent.session_host.consumptions import Consumptions
+from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import Prompt
 from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
@@ -478,3 +479,41 @@ async def test_a_question_whose_runner_is_gone_ends_instead_of_being_taken_up_ag
     assert len(after.ends) == 1 and after.ends[0]["failure"] is not None
     assert await gone.sweep() == 0
     release.set()
+
+
+class _StopFlags:
+    """The one thing ``question.stopped`` asks a redis: is the stop key set."""
+
+    def __init__(self, keys: set[str]) -> None:
+        self._keys = keys
+
+    async def exists(self, key: str) -> int:
+        return int(key in self._keys)
+
+
+def test_the_box_and_the_thread_ask_whether_a_question_was_stopped_the_same_way():
+    # Mutation: paste a local ``stopped`` back into either class and this goes red.
+    assert box.Answers.__dict__["stopped"].__func__ is question.is_stopped
+    assert thread.Replies.__dict__["stopped"].__func__ is question.is_stopped
+
+
+@pytest.mark.anyio
+async def test_a_stopped_question_is_stopped_for_both_consumers(monkeypatch):
+    key = uuid.uuid4()
+    consumption = Consumption(
+        work_id="w", kind="k", key=str(key), harness="h", home="h", host=None
+    )
+    answers = box.Answers(None, None)
+    replies = thread.Replies(None, None)
+
+    monkeypatch.setattr(question, "get_redis_client", lambda: None)
+    assert await answers.stopped(consumption) is False
+    assert await replies.stopped(consumption) is False
+
+    flags = set()
+    monkeypatch.setattr(question, "get_redis_client", lambda: _StopFlags(flags))
+    assert await answers.stopped(consumption) is False
+    assert await replies.stopped(consumption) is False
+    flags.add(question._stop_key(key))
+    assert await answers.stopped(consumption) is True
+    assert await replies.stopped(consumption) is True
