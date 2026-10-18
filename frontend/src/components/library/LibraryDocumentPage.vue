@@ -7,13 +7,14 @@ import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { ProjectMemberRow, Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import PanelDocHost from '../work/PanelDocHost.vue'
 
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
+import { docAuthors } from '@/lib/docAuthors'
 
 const props = defineProps<{
   projectId: string
@@ -39,6 +40,8 @@ const emit = defineEmits<{
   /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
   (e: 'open-topic', topicId: string, blockId?: string): void
 }>()
+
+const authors = computed(() => (props.document ? docAuthors(props.document, props.members, props.agentName) : []))
 
 const { mdAndUp } = useDisplay()
 const docRef = ref<InstanceType<typeof PanelDocHost> | null>(null)
@@ -76,6 +79,7 @@ watch(
       :agent-name="agentName"
       :agent-handle="agentHandle"
       :members="members"
+      :authors="authors"
       :topic-list="topicList"
       @titled="emit('titled', $event)"
       @delete="emit('delete')"
@@ -94,6 +98,12 @@ watch(
   display: flex;
   justify-content: flex-end;
   min-width: 0;
+}
+/* 顶栏在页头这一格里由按钮撑开：这一格本身按内容定宽，顶栏若按自己的宽度量（它的
+   `container-type`），两边都等对方给宽度，量出来是 0，整排按钮看不见。这里只在宽屏上
+   放顶栏，按钮上的字不必收起。 */
+.library-doc__bar :deep(.doc-top-bar) {
+  container-type: normal;
 }
 .library-doc {
   flex: 1 1 auto;
