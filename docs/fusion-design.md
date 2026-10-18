@@ -154,7 +154,8 @@ block_ref）、改文档=下指令、人验收才算数——同源 spec。
   手在哪台机器）。订阅、活跃度、收据全在缝的上面写一次，第二个 harness 是 M+N 不是 M×N。
 - **池子按 (机器, harness)**：`ComputePool` 里机器选不到会退回默认，harness 选不到**直接拒绝**
   （跑成别的 agent 比不跑更糟）。崩溃恢复和补录由 runtime 交出拼好的 `AgentEvent`，chat.py
-  落库发帧，翻译不是它的活；`test_harness_boundary` 守这条缝。
+  落库发帧，翻译不是它的活。`backend/.importlinter` 的 H1 不许平台侧（它列出的 chat、room、runtime、turn
+  各模块）直接 import 适配器，`test_harness_boundary` 不许任何人越过适配器的包门口。
 
 **本地 transport：已删除（2026-08-28，#630）。** 平台不再自带机器，一轮活只跑在别人的机器上
 （device / cloud），所以「本地容器 vs 远程机器」这一对 transport 不再存在，也就没有「拆不拆
