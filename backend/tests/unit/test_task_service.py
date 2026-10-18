@@ -1440,6 +1440,77 @@ class TestTaskMembershipServiceAdditional:
         assert rank_reason["details"]["teamId"] == 99
 
     @pytest.mark.anyio
+    async def test_eligibility_team_rank_rule_reads_space_once(self, monkeypatch):
+        """The team path reuses one rank rule and reads the task's space once.
+
+        The space belongs to the task, so three candidate teams must not turn
+        into three ``space_repo.get_by_id`` calls, and every team must fail for
+        the same rank reason. Reverting to an inline copy plus an in-loop read
+        makes both the helper-call record and the read count red.
+        """
+        from app.core import config as config_mod
+
+        monkeypatch.setattr(config_mod.settings, "rank_check_enforced", True)
+        monkeypatch.setattr(config_mod.settings, "rank_jump", 1)
+
+        repo = AsyncMock()
+        repo.list_team_memberships_for_user.return_value = [
+            _make_membership(id=60 + i, member_id=99 - i, approved=2, is_team=True)
+            for i in range(3)
+        ]
+        repo.count_team_members.return_value = 3
+        repo.count_approved_for_task.return_value = 0
+
+        space_repo = AsyncMock()
+        space_repo.get_by_id.return_value = SimpleNamespace(id=100, enable_rank=True)
+        space_rank_repo = AsyncMock()
+        space_rank_repo.get_rank.return_value = 0
+
+        svc, _ = self._build_service(
+            repo=repo,
+            space_repo=space_repo,
+            space_rank_repo=space_rank_repo,
+        )
+        task = _make_task(submitter_type=1, approved=0, rank=5, space_id=100)
+
+        seen_team_ids: list[int | None] = []
+        original = svc._rank_reasons
+
+        async def record_rank_reasons(*args, **kwargs):
+            seen_team_ids.append(kwargs.get("team_id"))
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(svc, "_rank_reasons", record_rank_reasons)
+
+        result = await svc.get_participation_eligibility(task=task, user_id=42)
+
+        assert len(result["teams"]) == 3
+        rank_reasons = [
+            next(
+                r
+                for r in team["eligibility"]["reasons"]
+                if r["code"] == "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH"
+            )
+            for team in result["teams"]
+        ]
+
+        def without_team(reason):
+            return {
+                **reason,
+                "details": {
+                    key: value
+                    for key, value in reason["details"].items()
+                    if key != "teamId"
+                },
+            }
+
+        assert [without_team(reason) for reason in rank_reasons] == [
+            without_team(rank_reasons[0])
+        ] * 3
+        assert seen_team_ids == [99, 98, 97]
+        space_repo.get_by_id.assert_awaited_once_with(100)
+
+    @pytest.mark.anyio
     async def test_eligibility_team_no_memberships(self):
         """TEAM eligibility returns empty teams list when user has no team memberships."""
         repo = AsyncMock()

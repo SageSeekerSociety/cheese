@@ -385,17 +385,24 @@ jobs:
       # The path is absolute under $HOME because the run that saves it and the
       # run that restores it are different machines.
       #
-      # The hash names every pin whose build is inside the directory, pi's
-      # included: `pi/launch.py` is where `VERSION` is written and nowhere else
-      # (`test_capability_matrix.py` holds that), and a key without it would
-      # keep serving the old build after a pi bump — the shards only restore,
-      # so nothing in them could refresh it.
+      # Launcher code changes do not change the verified vendor builds.
+      # Key by versions so a refactor does not force every shard back upstream.
+      - name: Resolve pinned harness versions
+        id: harness-pins
+        if: matrix.layer != 'contract'
+        run: |
+          uv run python - <<'PY' >> "$GITHUB_OUTPUT"
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+          pins = written()
+          print("key=" + "-".join(pins[name].pinned_version for name in (CLAUDE_CODE, CODEX, PI)))
+          PY
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: harness-bins
         if: matrix.layer != 'contract'
         with:
           path: ~/.cache/cheese-harness-bins
-          key: harness-bins-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**', 'backend/app/domain/agent/harness/pi/launch.py') }}
+          key: harness-bins-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.harness-pins.outputs.key }}
       - name: Install pinned harness binaries
         if: matrix.layer != 'contract' && steps.harness-bins.outputs.cache-hit != 'true'
         run: |
@@ -680,11 +687,20 @@ jobs:
         with:
           path: ~/.npm
           key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
+      - name: Resolve pinned harness versions
+        id: harness-pins
+        run: |
+          uv run python - <<'PY' >> "$GITHUB_OUTPUT"
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+          pins = written()
+          print("key=" + "-".join(pins[name].pinned_version for name in (CLAUDE_CODE, CODEX, PI)))
+          PY
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: harness-bins
         with:
           path: ~/.cache/cheese-harness-bins
-          key: harness-bins-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**', 'backend/app/domain/agent/harness/pi/launch.py') }}
+          key: harness-bins-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.harness-pins.outputs.key }}
       - name: Install pinned harness binaries
         if: steps.harness-bins.outputs.cache-hit != 'true'
         run: |
