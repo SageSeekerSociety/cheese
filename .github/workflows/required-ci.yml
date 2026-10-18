@@ -228,11 +228,11 @@ jobs:
       # GitHub has no third conclusion to report; the honest one is available
       # only to a human reading the summary, which is why the summary is not
       # optional here.
-      - name: ci:fast quick tier
+      - name: Read the PR consumed by quick checks
+        id: fast-pull
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          CI_FAST_PRECOMMIT: uvx pre-commit
         run: |
           # Read the PR live from the API — NOT `gh pr view`, which needs a
           # branch and is unreliable on this detached merge ref, and not the
@@ -250,6 +250,23 @@ jobs:
           if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"; then
             echo "gh api could not read PR #$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
           fi
+          # Step names survive in the jobs API, unlike job outputs. Publish only
+          # a digest; the next step consumes this exact file, with no second GET.
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          try:
+              pull = json.loads((Path(os.environ["RUNNER_TEMP"]) / "pull.json").read_text())
+          except (OSError, ValueError):
+              pull = {}
+          if isinstance(pull.get("title"), str):
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  print("title_hash=" + hashlib.sha256(pull["title"].encode()).hexdigest(), file=out)
+          PY
+      - name: ci:fast quick tier [title=${{ github.event.pull_request.number }}:${{ steps.fast-pull.outputs.title_hash }}]
+        env:
+          CI_FAST_PRECOMMIT: uvx pre-commit
+        run: |
           report="$RUNNER_TEMP/ci-fast-report.json"
           status=0
           python3 .github/scripts/ci-fast.py --tier quick --budget 1200 --memory-mib 9216 \
@@ -500,7 +517,25 @@ jobs:
       # retitled — which is why the draft job below has no title step: a draft's
       # title is the platform's placeholder, nothing to check, and
       # `ready_for_review` starts this job.
-      - name: Commit titles follow the convention
+      - name: Read the PR consumed by the title check
+        id: title-pull
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          curl -fsS --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" \
+            > "$RUNNER_TEMP/pull.json"
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          pull = json.loads((Path(os.environ["RUNNER_TEMP"]) / "pull.json").read_text())
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              print("title_hash=" + hashlib.sha256(pull["title"].encode()).hexdigest(), file=out)
+          PY
+      - name: Commit titles follow the convention [title=${{ github.event.pull_request.number }}:${{ steps.title-pull.outputs.title_hash }}]
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -557,7 +592,8 @@ jobs:
             python3 -c 'import json,os; e=json.load(open(os.environ["GITHUB_EVENT_PATH"])); [print(c["message"].split("\n")[0]) for c in e.get("commits") or []]' \
               | python3 .github/scripts/check-commit-title.py --warn-only
           else
-            api "pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
+            # Consume the snapshot named in this step; a second GET could check
+            # a different title and make completion's recovery decision wrong.
             python3 .github/scripts/check-commit-title.py --pull-request "$RUNNER_TEMP/pull.json"
           fi
 

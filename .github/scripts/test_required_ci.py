@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import os
@@ -942,16 +943,25 @@ def _stub(bindir, name, script):
     return path
 
 
-def run_draft_step(text, tmp, ci_fast_exit=0, report=None, gh_exit=0, jq=None):
+def run_draft_step(text, tmp, ci_fast_exit=0, report=None, gh_exit=0, jq=None,
+                   pull_payload='{"title": "feat: x", "draft": true}'):
     """Run the draft job's real shell against stub commands, and return the process.
+
+    The job's PR read is two steps now: the snapshot step that captures the PR
+    and publishes its title digest, and the quick step that consumes the same
+    file. Both run here as their real shells — the snapshot first, against the
+    stubbed ``gh`` answering ``pull_payload``, so a wiring change that stops
+    handing the quick step the snapshot's own pull.json shows up as a red
+    rather than as a test that quietly never ran the snapshot.
 
     ``ci_fast_exit`` is the status the stubbed ci-fast leaves behind, and
     ``report`` the report it writes to the file its own ``--report`` argument
     names (absent means it reached no verdict at all, which is what a bad
     argument or a killed process looks like). ``jq``, when given, replaces the
-    report renderer. The stubbed ``python3`` delegates ``-c`` to the real
-    interpreter, because the step reads the report's own status with one line
-    of Python and that read is part of what is under test.
+    report renderer. The stubbed ``python3`` delegates ``-c`` and the snapshot
+    step's heredoc ``-`` to the real interpreter, because the step reads the
+    report's own status with one line of Python and the snapshot hashes the
+    PR it captured, and both reads are part of what is under test.
 
     The stub writes to the path it is handed and nowhere else, because that is
     what ci-fast does and the two halves are only wired together if they agree
@@ -964,10 +974,12 @@ def run_draft_step(text, tmp, ci_fast_exit=0, report=None, gh_exit=0, jq=None):
     tmp = Path(tmp)
     bindir = tmp / "bin"
     bindir.mkdir()
+    stub_pull = tmp / "stub-pull.json"
+    stub_pull.write_text(pull_payload)
     _stub(bindir, "gh",
-          f'printf "%s" \'{{"title": "feat: x", "draft": true}}\'\nexit {gh_exit}\n')
+          f'cat "$STUB_PULL"\nexit {gh_exit}\n')
     _stub(bindir, "python3",
-          f'if [ "$1" = "-c" ]; then exec "{sys.executable}" "$@"; fi\n'
+          f'if [ "$1" = "-c" ] || [ "$1" = "-" ]; then exec "{sys.executable}" "$@"; fi\n'
           f'printf "%s\\0" "$@" >> "$STUB_ARGV"\n'
           f'prev=""; for a in "$@"; do\n'
           f'  if [ "$prev" = "--report" ] && [ -n "$STUB_REPORT" ]; then\n'
@@ -981,14 +993,116 @@ def run_draft_step(text, tmp, ci_fast_exit=0, report=None, gh_exit=0, jq=None):
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
            "RUNNER_TEMP": str(tmp), "GITHUB_REPOSITORY": "owner/repo", "PR_NUMBER": "1",
            "GH_TOKEN": "x", "STUB_ARGV": str(tmp / "argv"),
+           "STUB_PULL": str(stub_pull),
+           "GITHUB_OUTPUT": str(tmp / "github-output"),
            "STUB_REPORT": "" if report is None else json.dumps(report),
            "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+    snapshot = subprocess.run(
+        ["bash", "-e", "-c",
+         textwrap.dedent(run_body_containing(jobs_of(text)["fast"]["text"], "title_hash"))],
+        env=env, cwd=tmp, capture_output=True, text=True)
+    assert snapshot.returncode == 0, f"snapshot step failed: {snapshot.stdout}{snapshot.stderr}"
     # `-e` is the shell the runner gives a `run:` step (GitHub's implicit
     # default for a Linux job is `bash -e`), and two of the ways this step can
     # redden a draft are unguarded commands failing under it. Without it here
     # the guards for those are invisible to the test.
-    return subprocess.run(["bash", "-e", "-c", run_body_containing(text, "ci-fast.py")],
+    return subprocess.run(["bash", "-e", "-c", run_body_containing(text, "ci-fast.py --tier")],
                           env=env, cwd=tmp, capture_output=True, text=True)
+
+
+#: The two titles the recovery sequences move between. Whether they follow the
+#: convention is not asserted by writing them down here: the sequences ask the
+#: real check-commit-title.py (title_follows) before using them.
+GOOD_TITLE = "fix(chat): the pane keeps following when the rows above it shrink"
+BAD_TITLE = "update stuff"
+
+CHECKER = WORKFLOW.parent.parent / "scripts" / "check-commit-title.py"
+
+
+def title_follows(title):
+    """Whether the real check-commit-title.py accepts this title."""
+    return subprocess.run([sys.executable, str(CHECKER), title],
+                          capture_output=True, text=True).returncode == 0
+
+
+def _snapshot_step_body(step_id):
+    """The real snapshot step shell that publishes the digest a step name carries."""
+    job = "fast" if step_id == "fast-pull" else "required"
+    return run_body_containing(jobs_of(WORKFLOW.read_text())[job]["text"], "title_hash")
+
+
+def snapshot_digest(step_id, payload, tmp):
+    """Run the real snapshot step; return the digest it publishes.
+
+    The digest lands in $GITHUB_OUTPUT and, through the consuming step's name,
+    in the jobs API — the only place a later completion event can read it back.
+    Tests never invent one: every digest handed to the recheck below was
+    produced by this real shell reading the payload under test. ``tmp`` keeps
+    the captured pull.json and a tool-call counter, so a test can also assert
+    that the consuming half added no second API read of its own.
+    """
+    tmp = Path(tmp)
+    bindir = tmp / "bin"
+    bindir.mkdir(exist_ok=True)
+    stub_pull = tmp / "stub-pull.json"
+    stub_pull.write_text(payload)
+    calls = tmp / "tool-calls"
+    if step_id == "fast-pull":
+        _stub(bindir, "gh", 'printf 1 >> "$TOOL_CALLS"\ncat "$STUB_PULL"\n')
+    else:
+        _stub(bindir, "curl", 'printf 1 >> "$TOOL_CALLS"\ncat "$STUB_PULL"\n')
+    out = tmp / "github-output"
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+           "RUNNER_TEMP": str(tmp), "GITHUB_OUTPUT": str(out),
+           "GITHUB_REPOSITORY": "owner/repo", "PR_NUMBER": "7", "GH_TOKEN": "x",
+           "STUB_PULL": str(stub_pull), "TOOL_CALLS": str(calls)}
+    proc = subprocess.run(["bash", "-e", "-c", textwrap.dedent(_snapshot_step_body(step_id))],
+                          cwd=tmp, env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, f"snapshot step failed: {proc.stdout}{proc.stderr}"
+    match = re.fullmatch(r"title_hash=([0-9a-f]{64})\n?", out.read_text())
+    assert match, f"the snapshot step published no digest: {out.read_text()!r}"
+    assert calls.read_text() == "1", "the snapshot step read the pull more than once"
+    assert (tmp / "pull.json").read_text() == payload, "the capture did not land in pull.json"
+    return match.group(1)
+
+
+def consumed_step_name(prefix, step_id, number, digest):
+    """The consuming step's name, expanded from the workflow's own template.
+
+    The template line is read out of required-ci.yml (its two `${{ }}` holes
+    are the PR number and the snapshot digest), so a rename there fails here
+    instead of leaving the tests asserting a name the workflow no longer has.
+    """
+    template = next((line.strip()[len("- name: "):] for line in WORKFLOW.read_text().splitlines()
+                     if line.strip().startswith(f"- name: {prefix} [title=")), None)
+    assert template is not None, f"no step name template starts with {prefix!r} [title="
+    assert f"steps.{step_id}.outputs.title_hash" in template, \
+        f"the {prefix!r} step name does not read {step_id}'s digest: {template!r}"
+    parts = re.split(r"\$\{\{[^}]*\}\}", template)
+    assert len(parts) == 3, f"unexpected digest template: {template!r}"
+    return f"{parts[0]}{number}{parts[1]}{digest}{parts[2]}"
+
+
+def quick_needs(fast_result="success"):
+    """The aggregating job's needs for a quick-tier run (every suite skipped)."""
+    selected = gate.select(["backend/app/api/rooms.py"])
+    outputs = {k: str(v).lower() for k, v in selected.items()}
+    outputs["tier"] = "quick"
+    return {"scope": {"result": "success", "outputs": outputs},
+            "fast": {"result": fast_result},
+            "api": {"result": "skipped"},
+            **{k: {"result": "skipped"} for k in selected}}
+
+
+def full_needs():
+    """The needs of a green full-tier run, for the tier-mismatch guard."""
+    selected = gate.select(["backend/app/api/rooms.py"])
+    outputs = {k: str(v).lower() for k, v in selected.items()}
+    outputs["tier"] = "full"
+    return {"scope": {"result": "success", "outputs": outputs},
+            "fast": {"result": "skipped"},
+            "api": {"result": "success", "outputs": {"moved": "false"}},
+            **{k: {"result": "success" if v else "skipped"} for k, v in selected.items()}}
 
 
 
@@ -1020,36 +1134,28 @@ class WorkflowTextTest(unittest.TestCase):
             )
 
     def test_the_draft_job_hands_ci_fast_the_pr_payload_verbatim(self):
-        # A PR title is untrusted data. Run the step's real shell against a `gh`
-        # stub that returns a hostile title and a `python3` stub that records the
-        # argv it received, and check the API payload reached the script intact.
-        body = run_body_containing(self.text, "ci-fast.py")
+        # A PR title is untrusted data. Run the job's real two steps — the
+        # snapshot against a `gh` stub returning a hostile title, then the
+        # quick step with a `python3` stub that records the argv it received —
+        # and check the API payload reached ci-fast as the same file the
+        # snapshot wrote, intact.
         title = 'He said "hi"\n$(touch pwned)\nline three'
         with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            bindir = tmp / "bin"
-            bindir.mkdir()
-            argv_log = tmp / "argv"
-            _stub(bindir, "gh", "printf '%s' \"$STUB_TITLE\"\n")
-            _stub(bindir, "python3",
-                  'for a in "$@"; do printf "%s\\0" "$a" >> "$ARGV_LOG"; done\n')
-            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
-                   "STUB_TITLE": title, "ARGV_LOG": str(argv_log), "RUNNER_TEMP": str(tmp),
-                   "GITHUB_REPOSITORY": "owner/repo", "PR_NUMBER": "1", "GH_TOKEN": "x"}
-            subprocess.run(["bash", "-c", body], env=env, cwd=tmp, check=True,
-                           capture_output=True, text=True)
-            argv = argv_log.read_text().split("\0")[:-1]
-            # The title is not an argument at all: ci-fast reads the title and
-            # the draft flag out of the API payload, which the step writes to a
-            # file. Nothing a title contains can word-split an argument, and
-            # nothing multiline goes into argv.
-            self.assertNotIn(title, argv, f"the title was passed as an argument: {argv}")
-            self.assertNotIn("--title", argv, f"argv: {argv}")
-            self.assertEqual(argv.count("--pull-request"), 1, f"argv: {argv}")
-            at = argv.index("--pull-request")
-            self.assertEqual(Path(argv[at + 1]).read_text(), title,
-                             "the API payload did not reach ci-fast verbatim")
-            self.assertFalse((tmp / "pwned").exists(), "title reached the shell as code")
+            proc = run_draft_step(self.text, tmp, pull_payload=title)
+            argv = (Path(tmp) / "argv").read_text().split("\0")[:-1]
+            captured = Path(argv[argv.index("--pull-request") + 1]).read_text()
+            pwned = (Path(tmp) / "pwned").exists()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(pwned, "title reached the shell as code")
+        # The title is not an argument at all: ci-fast reads the title and
+        # the draft flag out of the API payload, which the snapshot step
+        # writes to a file. Nothing a title contains can word-split an
+        # argument, and nothing multiline goes into argv.
+        self.assertNotIn(title, argv, f"the title was passed as an argument: {argv}")
+        self.assertNotIn("--title", argv, f"argv: {argv}")
+        self.assertEqual(argv.count("--pull-request"), 1, f"argv: {argv}")
+        self.assertEqual(captured, title,
+                         "the API payload did not reach ci-fast verbatim")
 
     def test_the_draft_job_states_the_runner_bounds(self):
         # ci-fast's defaults (180s, a 3072 MiB sampled ceiling) are the WORK
@@ -1061,7 +1167,7 @@ class WorkflowTextTest(unittest.TestCase):
         # sized for the runner: above the local defaults, still quick tier (a
         # draft must not be trimmed to the static hooks), and within what
         # ci-fast will accept.
-        body = run_body_containing(self.text, "ci-fast.py")
+        body = run_body_containing(self.text, "ci-fast.py --tier")
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             bindir = tmp / "bin"
@@ -1129,6 +1235,8 @@ class WorkflowTextTest(unittest.TestCase):
             summary = (Path(tmp) / "summary").read_text()
             payload = Path(argv[argv.index("--pull-request") + 1])
             unread = payload.read_text()
+            out_file = Path(tmp) / "github-output"
+            digest = out_file.read_text() if out_file.exists() else ""
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("--pull-request", argv, f"ci-fast was not handed the payload: {argv}")
         self.assertIn("what it could not judge", summary)
@@ -1145,6 +1253,10 @@ class WorkflowTextTest(unittest.TestCase):
         with self.assertRaises(json.JSONDecodeError,
                                msg=f"the unread payload parses as a PR: {unread}"):
             json.loads(unread)
+        # A PR nobody could read has no title to publish: no digest may land in
+        # the step name, or the recheck would compare one against a guess.
+        self.assertNotIn("title_hash=", digest,
+                         f"a digest was published for an unreadable PR: {digest!r}")
 
     def test_the_draft_job_says_what_the_green_does_not_cover(self):
         # The green of this check is honest only next to the list of what was
@@ -1473,7 +1585,9 @@ class WorkflowTextTest(unittest.TestCase):
         # shell cannot retry the request itself, so it asks curl for a retry
         # budget; run the step's real shell against a curl stub that records its
         # arguments and succeeds, and the request must arrive with that budget
-        # and the body must still reach the checker verbatim.
+        # and the body must still reach the checker verbatim. The merge_group
+        # branch is where the title step still GETs: on a pull request it
+        # consumes the snapshot step's file (TitleSnapshotContractTest below).
         body = run_body_containing(self.text, "api()")
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -1485,15 +1599,15 @@ class WorkflowTextTest(unittest.TestCase):
                 'prev=""\n'
                 'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
                 'printf "%s\\n" "$*" >> "$CURL_ARGS"\n'
-                'printf "%s" \'{"number":7}\' > "$out"\n'
+                'printf "%s" \'{"commits": []}\' > "$out"\n'
                 'printf 200\n'
             ))
             _stub(bindir, "python3", 'printf "%s\\n" "$*" >> "$PY_ARGS"\n')
             env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
                    "RUNNER_TEMP": str(tmp), "CURL_ARGS": str(curl_args),
                    "PY_ARGS": str(tmp / "py_args"), "GITHUB_REPOSITORY": "owner/repo",
-                   "PR_NUMBER": "7", "GH_TOKEN": "x",
-                   "GITHUB_EVENT_NAME": "pull_request"}
+                   "BASE_SHA": "b" * 40, "HEAD_SHA": "h" * 40, "GH_TOKEN": "x",
+                   "GITHUB_EVENT_NAME": "merge_group"}
             subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp, check=True,
                            capture_output=True, text=True)
             args = curl_args.read_text()
@@ -1503,7 +1617,8 @@ class WorkflowTextTest(unittest.TestCase):
                              f"no retry count, so nothing is retried: {args}")
             self.assertIn("--retry-all-errors", args, f"no all-errors switch: {args}")
             self.assertIn("--max-time", args, f"no bound on a hung read: {args}")
-            self.assertEqual((tmp / "pull.json").read_text(), '{"number":7}',
+            self.assertIn(f"compare/{'b' * 40}...{'h' * 40}", args, args)
+            self.assertEqual((tmp / "compare.json").read_text(), '{"commits": []}',
                              "the response did not reach the checker verbatim")
 
     def test_the_title_step_does_not_hand_python_an_empty_body(self):
@@ -1677,12 +1792,21 @@ class WorkflowTextTest(unittest.TestCase):
                 )
 
 
-class TitleRecheckTest(unittest.TestCase):
-    """Run the real recheck shell; only GitHub responses are substituted."""
+class _RecheckFixture:
+    """The recheck shell of pr-title.yml, run for real; only GitHub is stubbed.
+
+    Every digest the job data carries was produced by the workflow's real
+    snapshot step reading the PR payload under test (snapshot_digest), and
+    every consumed step name is expanded from required-ci.yml's own template
+    (consumed_step_name), so the fixture cannot quietly drift from what the
+    workflows actually publish — or invent a digest the pipeline never made.
+    """
 
     def recheck(self, *, completed=False, fast="failure", required="failure",
-                status="completed", attempt=1, same_title=False, newer=False,
-                pull_changes=None, source_changes=None):
+                status="completed", attempt=1, listed_attempt=None,
+                same_digest=False, newer=False, pull_changes=None,
+                source_changes=None, snapshot_title=None, snapshot_pr=None,
+                legacy_steps=False):
         head = "a" * 40
         pull = {"number": 7, "state": "open", "draft": False,
                 "title": 'fix: corrected title $(touch pwned)',
@@ -1690,15 +1814,42 @@ class TitleRecheckTest(unittest.TestCase):
                 "base": {"ref": "main"}}
         event_pull = json.loads(json.dumps(pull))
         pull.update(pull_changes or {})
+        # The title the failed attempt actually consumed: what its snapshot
+        # step read, which an edit since then may have left behind.
+        consumed = pull["title"] if same_digest else (
+            snapshot_title if snapshot_title is not None else "bad title")
         source = {"id": 99, "head_sha": head, "event": "pull_request",
                   "conclusion": "failure", "run_attempt": attempt,
                   "head_repository": {"full_name": "owner/repo"},
-                  "display_title": pull["title"] if same_title else "bad title"}
+                  "display_title": pull["title"] if same_digest else "bad title"}
         source.update(source_changes or {})
+        step_id = "fast-pull" if fast == "failure" else "title-pull"
+        number = snapshot_pr if snapshot_pr is not None else pull.get("number", 7)
+        snap_pull = {"number": number, "state": "open", "draft": False,
+                     "title": consumed,
+                     "head": {"sha": head, "repo": {"full_name": "owner/repo"}},
+                     "base": {"ref": "main"}}
+        with tempfile.TemporaryDirectory() as snap:
+            digest = snapshot_digest(step_id, json.dumps(snap_pull), snap)
+        # Both snapshot steps hash the same field the same way, so one real
+        # digest serves both names (TitleSnapshotContractTest pins that).
+        fast_name = "ci:fast quick tier" if legacy_steps else \
+            consumed_step_name("ci:fast quick tier", "fast-pull", number, digest)
+        required_name = "Commit titles follow the convention" if legacy_steps else \
+            consumed_step_name("Commit titles follow the convention", "title-pull",
+                               number, digest)
         event = {"pull_request": event_pull, "workflow_run": source}
-        data = {"pull": pull, "runs": [{"databaseId": 100 if newer else 99, "status": status}],
-                "jobs": [{"name": "fast", "databaseId": 101, "conclusion": fast},
-                         {"name": "CI required", "databaseId": 202, "conclusion": required}]}
+        data = {"pull": pull,
+                "runs": [{"databaseId": 100 if newer else 99, "status": status,
+                          "attempt": attempt if listed_attempt is None else listed_attempt}],
+                "jobs": [{"name": "fast", "databaseId": 101, "conclusion": fast,
+                          "steps": [{"name": "Read the PR consumed by quick checks",
+                                     "conclusion": "success"},
+                                    {"name": fast_name, "conclusion": fast}]},
+                         {"name": "CI required", "databaseId": 202, "conclusion": required,
+                          "steps": [{"name": "Read the PR consumed by the title check",
+                                     "conclusion": "success"},
+                                    {"name": required_name, "conclusion": required}]}]}
         text = WORKFLOW.with_name("pr-title.yml").read_text()
         body = textwrap.dedent(run_body_containing(text, "gh"))
         with tempfile.TemporaryDirectory() as tmp:
@@ -1746,7 +1897,11 @@ class TitleRecheckTest(unittest.TestCase):
             calls = [json.loads(line) for line in (tmp / "calls").read_text().splitlines()] if (tmp / "calls").exists() else []
             return [call[call.index("--job") + 1] for call in calls if call[:2] == ["run", "rerun"]]
 
-    def test_recheck_job_accepts_title_edits_and_one_failed_pr_completion(self):
+
+class TitleRecheckTest(_RecheckFixture, unittest.TestCase):
+    """Run the real recheck shell; only GitHub responses are substituted."""
+
+    def test_recheck_job_accepts_title_edits_and_failed_pr_completions_on_any_attempt(self):
         condition = jobs_of(WORKFLOW.with_name("pr-title.yml").read_text())["recheck"]["if"]
         for event_name, draft, fork, action, title_changed, conclusion, attempt, expected in (
             ("pull_request", False, False, "edited", True, "", 1, True),
@@ -1755,7 +1910,8 @@ class TitleRecheckTest(unittest.TestCase):
             ("pull_request", False, True, "edited", True, "", 1, False),
             ("pull_request", False, False, "ready_for_review", False, "", 1, True),
             ("workflow_run", False, False, "completed", False, "failure", 1, True),
-            ("workflow_run", False, False, "completed", False, "failure", 2, False),
+            ("workflow_run", False, False, "completed", False, "failure", 2, True),
+            ("workflow_run", False, False, "completed", False, "failure", 3, True),
             ("workflow_run", False, False, "completed", False, "success", 1, False),
             ("workflow_run", False, True, "completed", False, "failure", 1, False),
         ):
@@ -1785,12 +1941,19 @@ class TitleRecheckTest(unittest.TestCase):
             with self.subTest(fast=fast):
                 self.assertEqual(self.recheck(fast=fast), ["202"])
 
-    def test_title_edit_during_run_is_recovered_on_its_completion_once(self):
+    def test_title_edit_during_run_is_recovered_on_its_completion(self):
         self.assertEqual(self.recheck(status="in_progress"), [])
         self.assertEqual(self.recheck(completed=True), ["101"])
-        self.assertEqual(self.recheck(completed=True, attempt=2), [])
-        self.assertEqual(self.recheck(completed=True, same_title=True), [])
+        # A re-run attempt gets the same second chance: what it consumed is
+        # what its snapshot published, whatever attempt number it ran under.
+        self.assertEqual(self.recheck(completed=True, attempt=2), ["101"])
+        self.assertEqual(self.recheck(completed=True, attempt=3), ["101"])
+        # But only while the consumed title actually changed: an unchanged one
+        # cannot loop on a remaining product failure, and a newer run or a
+        # newer attempt supersedes this completion event.
+        self.assertEqual(self.recheck(completed=True, same_digest=True), [])
         self.assertEqual(self.recheck(completed=True, newer=True), [])
+        self.assertEqual(self.recheck(completed=True, listed_attempt=2), [])
 
     def test_completion_cannot_restart_main_or_other_repositories(self):
         for changes in ({"event": "push"}, {"conclusion": "success"},
@@ -1808,6 +1971,147 @@ class TitleRecheckTest(unittest.TestCase):
         for required in ("skipped", "cancelled"):
             with self.subTest(required=required):
                 self.assertEqual(self.recheck(required=required), [])
+
+
+class TitleSnapshotContractTest(unittest.TestCase):
+    """The snapshot step and the step that consumes it are one read, one file.
+
+    The consumed step's name carries the digest a completion event later reads
+    back through the jobs API, so both halves run here as their real workflow
+    shells: every digest a test hands to the recheck is one this pipeline
+    produced, and the consuming step adds no second API read of its own.
+    """
+
+    def test_both_snapshots_hash_the_same_title_the_same_way(self):
+        payload = json.dumps({"number": 7, "title": GOOD_TITLE, "draft": False})
+        with tempfile.TemporaryDirectory() as tmp_fast, \
+                tempfile.TemporaryDirectory() as tmp_title:
+            fast = snapshot_digest("fast-pull", payload, tmp_fast)
+            title = snapshot_digest("title-pull", payload, tmp_title)
+        self.assertEqual(fast, title)
+        self.assertEqual(fast, hashlib.sha256(GOOD_TITLE.encode()).hexdigest())
+
+    def test_the_title_check_consumes_the_snapshot_without_a_second_read(self):
+        # On a pull request the title step must judge the snapshot's own file:
+        # a second GET there could read a different title than the one the
+        # step name published, and the completion's recovery decision would
+        # then be about a title nobody checked. The checker is the real one,
+        # so what counts as illegal here is the convention's own verdict.
+        repo_root = WORKFLOW.parent.parent.parent
+        body = run_body_containing(jobs_of(WORKFLOW.read_text())["required"]["text"], "api()")
+        for title, expected in ((BAD_TITLE, 1), (GOOD_TITLE, 0)):
+            with self.subTest(title=title):
+                with tempfile.TemporaryDirectory() as tmp:
+                    tmp = Path(tmp)
+                    payload = json.dumps({"number": 7, "title": title, "draft": False})
+                    digest = snapshot_digest("title-pull", payload, tmp)
+                    self.assertEqual((tmp / "pull.json").read_text(), payload,
+                                     "the capture is not the file the consumer is pointed at")
+                    name = consumed_step_name("Commit titles follow the convention",
+                                              "title-pull", 7, digest)
+                    self.assertRegex(
+                        name, r"^Commit titles follow the convention"
+                              r" \[title=7:[0-9a-f]{64}\]$",
+                        f"the expanded name is not the shape the recheck matches: {name!r}")
+                    env = {**os.environ,
+                           "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}",
+                           "RUNNER_TEMP": str(tmp), "GITHUB_REPOSITORY": "owner/repo",
+                           "PR_NUMBER": "7", "GH_TOKEN": "x",
+                           "GITHUB_EVENT_NAME": "pull_request"}
+                    proc = subprocess.run(["bash", "-e", "-c", body],
+                                          cwd=repo_root, env=env,
+                                          capture_output=True, text=True)
+                    self.assertEqual(proc.returncode, expected,
+                                     f"{title!r}: {proc.stdout}{proc.stderr}")
+                    if expected:
+                        self.assertIn("::error::", proc.stdout)
+                    # One read in the snapshot, none added by the consumer.
+                    self.assertEqual((tmp / "tool-calls").read_text(), "1",
+                                     "the title step added a second API read")
+
+    def test_the_quick_tier_consumes_the_fast_snapshot_file(self):
+        # The quick step is handed the snapshot's pull.json by path; its own
+        # shell has no PR read at all, so the title ci-fast judges is the one
+        # the step name digested. The judgement here is the real checker's,
+        # reading the captured file exactly as ci-fast would.
+        body = run_body_containing(jobs_of(WORKFLOW.read_text())["fast"]["text"],
+                                   "ci-fast.py --tier")
+        self.assertIn('--pull-request "$RUNNER_TEMP/pull.json"', body,
+                      "the quick step does not consume the snapshot's own file")
+        for title, expected in ((BAD_TITLE, 1), (GOOD_TITLE, 0)):
+            with self.subTest(title=title):
+                with tempfile.TemporaryDirectory() as tmp:
+                    payload = json.dumps({"number": 7, "title": title, "draft": False})
+                    snapshot_digest("fast-pull", payload, tmp)
+                    judged = subprocess.run(
+                        [sys.executable, str(CHECKER),
+                         "--pull-request", str(Path(tmp) / "pull.json")],
+                        capture_output=True, text=True)
+                    self.assertEqual(judged.returncode, expected,
+                                     f"{title!r}: {judged.stdout}{judged.stderr}")
+
+
+class TitleRecoverySequenceTest(_RecheckFixture, unittest.TestCase):
+    """Whole-event sequences across attempts, edits and completions.
+
+    Each sequence runs the real recheck shell against job data whose digests
+    the real snapshot step produced, and asks the real aggregator what the
+    run those jobs belong to would have concluded.
+    """
+
+    def test_a_later_attempt_with_a_stale_title_is_recovered_and_then_stops(self):
+        # The titles the sequence moves between are what the real checker says
+        # they are, not what the test's names claim.
+        self.assertTrue(title_follows(GOOD_TITLE))
+        self.assertFalse(title_follows(BAD_TITLE))
+        # Attempt 2 fails having consumed the old, illegal title (the PR was
+        # edited while it ran): its snapshot says so, so the completion reruns
+        # the failed fast job whatever attempt it ran under.
+        self.assertEqual(self.recheck(completed=True, attempt=2,
+                                      pull_changes={"title": GOOD_TITLE},
+                                      snapshot_title=BAD_TITLE), ["101"])
+        # The rerun (attempt 3) consumes the new title and the product still
+        # fails: the snapshot now matches the PR, and the loop stops.
+        self.assertEqual(self.recheck(completed=True, attempt=3,
+                                      pull_changes={"title": GOOD_TITLE},
+                                      snapshot_title=GOOD_TITLE), [])
+        # What the aggregator would have said about each of those runs: a fast
+        # that failed is red however its title read, a green quick tier is
+        # green, and full-tier evidence never satisfies a quick event.
+        self.assertTrue(gate.failures(quick_needs("failure"), "quick"))
+        self.assertEqual(gate.failures(quick_needs("success"), "quick"), [])
+        self.assertTrue(gate.failures(full_needs(), "quick"))
+
+    def test_an_edit_while_the_run_runs_waits_for_the_completion(self):
+        # The edit arrives with Required CI still running: nothing to rerun
+        # yet, and the completion of that attempt is the second chance.
+        self.assertEqual(self.recheck(status="in_progress",
+                                      pull_changes={"title": GOOD_TITLE},
+                                      snapshot_title=BAD_TITLE), [])
+        self.assertEqual(self.recheck(completed=True, attempt=3,
+                                      pull_changes={"title": GOOD_TITLE},
+                                      snapshot_title=BAD_TITLE), ["101"])
+
+    def test_a_b_a_round_trip_recovers_despite_the_display_title_matching(self):
+        # The run was created under GOOD, its fast attempt actually consumed
+        # BAD (an edit while it ran), and the PR is back to GOOD: the run's
+        # display title matches the PR again, but the snapshot does not, and
+        # it is the snapshot that names what was checked.
+        self.assertEqual(self.recheck(completed=True, attempt=1,
+                                      pull_changes={"title": GOOD_TITLE},
+                                      snapshot_title=BAD_TITLE,
+                                      source_changes={"display_title": GOOD_TITLE}),
+                         ["101"])
+
+    def test_recovery_ignores_evidence_it_cannot_trust(self):
+        # A run from before the snapshot existed publishes no digest, so no
+        # consumed title can be named: nothing to compare, nothing to rerun.
+        self.assertEqual(self.recheck(completed=True, legacy_steps=True), [])
+        # A snapshot naming another PR's number is not this PR's consumed
+        # title, whatever its digest says.
+        self.assertEqual(self.recheck(completed=True, snapshot_pr=8), [])
+        # A completion superseded by a newer attempt of the same run.
+        self.assertEqual(self.recheck(completed=True, listed_attempt=2), [])
 
 
 class MainCliTest(unittest.TestCase):
