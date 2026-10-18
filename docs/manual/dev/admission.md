@@ -7,7 +7,7 @@ covers:
   - backend/app/domain/agent/supply.py
   - backend/app/domain/agent/profiles.py
   - backend/app/domain/room_task/binding.py
-  - backend/app/domain/agent_instance/configuration.py
+  - backend/app/domain/agent/model_catalog.py
 ---
 
 # 准入与供给 {#admission}
@@ -87,7 +87,7 @@ covers:
 | `api/routes/llm_proxy.py` | `/llm/admission` 本身，以及给 Codex / Pi 这类走 base URL 的 harness 用的 catch-all 转发 |
 | `domain/agent/supply.py` | `SUBSCRIPTION` / `GATEWAY` 两个池的名字与 `resolve_pool`，池的定义只有这一处 |
 | `room_task/binding.py` | `WorkBinding(model, supply, effort)`、`wire_model`、`catalog()`、`resolve()` |
-| `agent_instance/configuration.py` | `project_pool()` 与 `model_choices()`：订阅的清单加网关目录里可上架的（tier 取网关上的 `cheese_tier`，缺省 included），按 harness 过滤掉跑不起来的模型；项目的 harness 没注册时是空列表 |
+| `agent/model_catalog.py` | `project_pool()` 与 `model_choices()`：订阅的清单加网关目录里可上架的（tier 取网关上的 `cheese_tier`，缺省 included），按 harness 过滤掉跑不起来的模型；项目的 harness 没注册时是空列表。目录在这里而不是在 `agent_instance`：它答的是部署和项目的事实，`agent_instance` 读它会把 `agent_instance -> agent` 那条环加回去 |
 | `domain/agent/profiles.py` | 执行 profile：一个项目跑哪个模型、带哪套供应商环境；`full_env()` 显式把 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` 清成空串，免得从后端 `os.environ` 漏进来的别的供应商配置把路由劫走 |
 
 ## 反过来那半：不能改 base URL 的 harness {#catch-all}

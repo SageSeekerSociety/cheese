@@ -55,6 +55,9 @@ class Permission(enum.StrEnum):
     tasks = "tasks"
     #: Create, change and delete documents and files, and save them to the library.
     edit_content = "edit_content"
+    #: Make and take back a document's read-only link, which anyone holding it
+    #: reads without being in the project.
+    share_documents = "share_documents"
     #: Comment on documents and suggest changes to their text.
     comment = "comment"
     #: Add and retire AI teammates; their skills, MCP servers and shared memory.
@@ -89,6 +92,7 @@ DEFAULT_GRANTS: dict[Role, frozenset[Permission]] = {
             Permission.ask_agent,
             Permission.tasks,
             Permission.edit_content,
+            Permission.share_documents,
             Permission.comment,
             Permission.configure_agents,
         }

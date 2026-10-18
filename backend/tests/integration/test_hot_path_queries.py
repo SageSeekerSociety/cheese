@@ -13,13 +13,19 @@ They are only visible as a count of round trips, and as whether the database
 can answer without reading the table, so that is what these assert.
 """
 
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 import pytest
 from sqlalchemy import event, text
 
-from tests.integration.conftest import a_team, join_project_team, post_project
+from tests.integration.conftest import (
+    a_team,
+    join_project_team,
+    post_message,
+    post_project,
+)
 
 OWNER = "roster-owner"
 PROJECT = "00000000-0000-0000-0000-0000000000aa"
@@ -232,6 +238,61 @@ def test_talking_in_a_room_moves_it_to_the_top(client, bearer):
 
     rows = _seeded_rooms(client, project_id, headers)
     assert rows[0]["id"] == oldest
+
+
+# --------------------------------------------------------------------------
+# POST /topics/{id}/messages
+# --------------------------------------------------------------------------
+
+#: The write that used to follow the INSERT: a participant's message patched
+#: its own `turn_id` after the flush, so SQLAlchemy sent an UPDATE and then had
+#: to read the row back.
+_SELF_REFERENCE_UPDATE = re.compile(
+    r"^\s*UPDATE blocks\s+SET\s+turn_id\s*=", re.IGNORECASE
+)
+
+#: Whole-row reads of one block by id: the route re-reads the anchor it just
+#: wrote to answer the POST, and the repository used to read it once more
+#: after the flush. A send may cost the route's read, not two.
+_BLOCK_BY_ID = re.compile(r"\bFROM blocks WHERE blocks\.id = ")
+
+
+def test_a_sent_message_groups_under_itself_without_a_second_write(client, bearer):
+    """A message block is written once, its self-reference included.
+
+    Where a block groups is a rule a reader can state without the code: one
+    send is one group, and a person's message is its own. *How many statements*
+    it takes to store that is what this pins — patching `turn_id` after the
+    insert changed nothing visible, so only the statements show whether the
+    value was written with the row or fixed up afterwards.
+    """
+    project_id = _create_project(client, "Sends")
+    headers = bearer(OWNER)
+    r = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "发送"},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    topic_id = r.json()["data"]["id"]
+
+    with counting_sql(client) as statements:
+        sent = post_message(client, topic_id, OWNER, {"content": "一条消息"})
+
+    patched = [s for s in statements if _SELF_REFERENCE_UPDATE.match(s)]
+    assert not patched, (
+        "the message's self-reference was written as a second statement:\n"
+        + "\n".join(patched)
+    )
+    reads = [s for s in statements if _BLOCK_BY_ID.search(s)]
+    assert len(reads) == 1, (
+        "the write re-read its own row; only the route's read of the anchor "
+        "it returns should ask for it by id:\n" + "\n".join(reads)
+    )
+    # The caller still gets the whole row back from that one INSERT.
+    assert sent["seq"] > 0
+    assert sent["turn_id"] == sent["id"]
+    assert sent["created_at"]
 
 
 # --------------------------------------------------------------------------

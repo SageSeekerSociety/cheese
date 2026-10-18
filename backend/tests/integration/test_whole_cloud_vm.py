@@ -563,6 +563,29 @@ def test_an_idle_vm_is_pushed_and_released(cloud):
     assert _host(case, seat).machine_id not in (None, machine)
 
 
+def test_a_background_command_keeps_a_vm_past_its_idle_release(cloud, monkeypatch):
+    """A VM's keep-alive is its own and longer than a sandbox's. A command the
+    executor still runs for the session holds the VM past the idle release that
+    would otherwise let it go — the shared sandbox cap is shorter than that
+    release, so reading it here would release the VM under the command."""
+    case = cloud
+    seat = _room(case, WHOLE_VM)
+    _working(case, seat)
+    monkeypatch.setattr(
+        execution,
+        "call",
+        AsyncMock(
+            side_effect=lambda lease, method, *a, **k: (
+                {**running(), "running_commands": 1} if method == "ping" else PUSHED
+            )
+        ),
+    )
+    _idle_for(case, seat, timedelta(seconds=settings.cloud_vm_idle_release_s + 60))
+
+    assert _release_idle(case) == 0
+    assert _host(case, seat) is not None
+
+
 def test_a_vm_is_kept_while_its_session_or_room_is_at_work(cloud):
     case = cloud
     seat = _room(case, WHOLE_VM)
