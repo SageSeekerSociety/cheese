@@ -19,6 +19,16 @@ from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.pr_signals import ReviewSignal
 
 
+def _has_review_comments(row: dict) -> bool:
+    """这条评审是否值得再问一次它的行内评论。
+
+    Forgejo 的评审列表里，每条评审自带 `comments_count`（按评审 id 数的代码
+    评论条数），0 必然对应空列表。字段缺席说明对面不报这个数，那就照旧去取 ——
+    少一次请求不值得用「静默丢意见」来换。
+    """
+    return row.get("comments_count") != 0
+
+
 class ForgejoClient:
     def __init__(self, api_base: str, *, transport=None):
         self.api_base = api_base.rstrip("/")
@@ -265,7 +275,10 @@ class ForgejoClient:
                         body=row["body"],
                     )
                 )
-            if with_comments:
+            # 上面那个判断说的是这条评审自己的信号，与它的行内评论无关：空正文
+            # 的评审行内评论照旧要取。这里省掉的是另一件事 —— 列表已经报了这条
+            # 评审没有行内评论，再问一次只会拿回空列表。
+            if with_comments and _has_review_comments(row):
                 comments = await self.pages(
                     prefix + f"/reviews/{row['id']}/comments", token=token
                 )

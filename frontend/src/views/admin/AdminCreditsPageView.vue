@@ -10,11 +10,13 @@ import type {
   PlanInput,
   TeamKind,
 } from '@/lib/adminCredits'
+import type { CreditRequest } from '@/types/creditOffers'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminPage from '@/components/admin/AdminPage.vue'
+import AdminCreditRequests from '@/components/admin/credits/AdminCreditRequests.vue'
 import AdminCreditTeamPanel from '@/components/admin/credits/AdminCreditTeamPanel.vue'
 import AdminCreditTeamsTable from '@/components/admin/credits/AdminCreditTeamsTable.vue'
 import AdminGrantDialog from '@/components/admin/credits/AdminGrantDialog.vue'
@@ -28,6 +30,9 @@ import { teamTitle } from '@/lib/adminCredits'
 defineOptions({ name: 'AdminCreditsPageView' })
 
 const props = defineProps<{
+  requests?: CreditRequest[]
+  requestsBusy?: boolean
+  requestsError?: string | null
   plans: Plan[] | null
   plansLoading: boolean
   plansError: string | null
@@ -59,6 +64,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  'handle-request': [id: string, approve: boolean, paymentConfirmed: boolean, planKey?: string]
+  'retry-requests': []
   'retry-plans': []
   'open-plan': [plan: Plan | null]
   'update:planDialogOpen': [open: boolean]
@@ -98,6 +105,14 @@ const kindOptions = computed(() => [
 <template>
   <AdminPage :title="t('navigation.admin.credits')">
     <div class="acr__body admin-page__body">
+      <AdminCreditRequests
+        :requests="requests ?? []"
+        :plans="plans ?? []"
+        :busy="requestsBusy ?? false"
+        :error="requestsError ?? null"
+        @handle="(id, approve, confirmed, plan) => emit('handle-request', id, approve, confirmed, plan)"
+        @retry="emit('retry-requests')"
+      />
       <section class="acr__section">
         <div class="acr__sectionhead">
           <h2 class="acr__h t-title">{{ t('credits.plans.title') }}</h2>
