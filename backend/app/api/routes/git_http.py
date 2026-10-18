@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_seated_agent
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -65,7 +66,10 @@ async def _task_for(db, project_id, task_id, token, *, opening: bool = False):
     return task
 
 
-@router.put("/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_sha}")
+@router.put(
+    "/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_sha}",
+    dependencies=[ROUTE_DECIDES],
+)
 async def save_task_snapshot(
     project_id: uuid.UUID,
     task_id: uuid.UUID,
@@ -139,7 +143,7 @@ async def download_task_snapshot(
     )
 
 
-@router.post("/{project_id}/git/tasks/{task_id}")
+@router.post("/{project_id}/git/tasks/{task_id}", dependencies=[ROUTE_DECIDES])
 async def open_task_workspace(
     project_id: uuid.UUID,
     task_id: uuid.UUID,

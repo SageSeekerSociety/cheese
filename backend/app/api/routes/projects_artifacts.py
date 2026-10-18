@@ -293,7 +293,7 @@ async def _artifact_seen(
     return row
 
 
-@router.patch("/{project_id}/artifacts/{artifact_id}")
+@router.patch("/{project_id}/artifacts/{artifact_id}", dependencies=[ROUTE_DECIDES])
 async def rename_artifact(
     project_id: uuid.UUID,
     artifact_id: uuid.UUID,

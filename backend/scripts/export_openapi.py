@@ -1,40 +1,36 @@
-"""The API's OpenAPI document, printed to whoever asks for it, its digest, and the
+"""The API's OpenAPI document, printed to whoever asks for it, and the
 untyped-route ratchet.
 
     uv run python -m scripts.export_openapi --stdout   print the document
-    uv run python -m scripts.export_openapi            refresh digest and ratchet
-    uv run python -m scripts.export_openapi --check    exit 1 if either is stale
+    uv run python -m scripts.export_openapi            refresh the ratchet
+    uv run python -m scripts.export_openapi --check    exit 1 if it is stale
 
-The document is ``app.openapi()`` as the running app serves it, and it is NOT
-committed — it used to be ``backend/openapi.json``. A route change rewrote 1.8 MB
-of it, so every PR that touched a route carried that rewrite (44 in the sixty days
-to 2026-10-14) and any two of them collided in a file neither had a decision in.
-Its one reader is the frontend, which needs the types it compiles against
-(``frontend/scripts/gen-api-types.mjs``), and that reader asks for the document
-here — ``--stdout``, at the moment it judges the frontend.
+The document is ``app.openapi()`` as the running app serves it, and nothing derived
+from it is committed. It used to be ``backend/openapi.json``, and then a one-line
+digest of it, ``backend/openapi.sha256``: either way every PR that moved the API
+surface rewrote a file nobody had a decision in, and any two of them collided there
+— on 2026-10-17 all three merge-queue ejections involved the digest, and one PR was
+ejected three times for that file alone. Its readers ask for the document here,
+``--stdout``, when they need it:
 
-Two one-line files beside it stay committed, because changing either is a decision
-somebody makes:
+- the frontend, which needs the types it compiles against
+  (``frontend/scripts/gen-api-types.mjs``);
+- the ``api`` job of Required CI (.github/workflows/required-ci.yml), which prints
+  the document at the merge base and at the change and runs the frontend suite
+  when the two differ. That is what the digest was committed for: the path map
+  watches files, not the app, so it needed a file that moved exactly when the
+  document did. Comparing the two documents asks the question directly.
 
-``backend/openapi.sha256``
-    the digest of the document as ``--stdout`` prints it. CI needs a path to watch:
-    the frontend suite has to run when the API surface it compiles against moved,
-    and the path map watches files, not the app. So the table that watched the 1.8 MB
-    file watches this line instead — the changed set is the same, both move exactly
-    when the document moves, and one line collides with nothing. ``--check`` fails
-    when the document and the digest disagree, which means a commit changed the API
-    surface without refreshing it; the fix is to run the generator above and commit
-    what it writes. The comparison is worth making for its own sake too: a digest can
-    only be stable if ``app.openapi()`` is a function of the tree, and that is what
-    ``canonicalize`` is for.
+Two runs over the same tree must print the same bytes, or that comparison would
+call every change an API change: ``canonicalize`` is what makes the document a
+function of the tree alone.
 
-``backend/openapi-untyped.json``
-    every operation whose success response has no schema (``ok(...)`` returns ``dict``,
-    which OpenAPI can only call "some object"). An operation may leave the list, none
-    may join it. A new route declares what it returns (``**typed_response(Model)``, see
-    ``app/api/response.py``) or this fails.
-
-Both are checked by the backend lint job (.github/workflows/test.yml).
+``backend/openapi-untyped.json`` stays committed, because changing it is a
+decision: every operation whose success response has no schema (``ok(...)`` returns
+``dict``, which OpenAPI can only call "some object"). An operation may leave the
+list, none may join it. A new route declares what it returns
+(``**typed_response(Model)``, see ``app/api/response.py``) or ``--check`` fails. The
+backend lint job runs that check (.github/workflows/test.yml).
 
 The document is built without starting the server or touching a database:
 importing the app and asking for the schema is all ``app.openapi()`` does. Measured
@@ -44,7 +40,6 @@ on the work machine 2026-10-14: 23 s from a warm venv, nearly all of it the impo
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import warnings
@@ -53,7 +48,6 @@ from typing import Any
 
 BACKEND = Path(__file__).resolve().parents[1]
 UNTYPED_PATH = BACKEND / "openapi-untyped.json"
-DIGEST_PATH = BACKEND / "openapi.sha256"
 
 _METHODS = ("get", "put", "post", "delete", "patch", "head", "options")
 #: What FastAPI writes for a route annotated ``-> dict`` (or nothing at all):
@@ -70,7 +64,9 @@ def canonicalize(spec: dict[str, Any]) -> dict[str, Any]:
     print the same operations in a different order, which makes the document a
     function of the process as well as of the code. It did not matter while one
     committed copy was the only thing anybody read; it matters now that every
-    caller builds its own, because the same tree would print two documents.
+    caller builds its own, because the same tree would print two documents — and
+    the ``api`` job, which compares the document at two commits, would read the
+    reshuffle as an API change.
     """
     paths = spec.get("paths", {})
     for path, item in paths.items():
@@ -99,16 +95,6 @@ def build_spec() -> dict[str, Any]:
 
 def render(data: Any) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-
-
-def document_digest(spec: dict[str, Any]) -> str:
-    """The digest of the document as ``--stdout`` prints it.
-
-    Over the rendered text, not over ``json.dumps(spec, sort_keys=True)``: the
-    reader compiles against the bytes ``--stdout`` writes, so those are the bytes
-    whose identity this asserts.
-    """
-    return hashlib.sha256(render(spec).encode("utf-8")).hexdigest()
 
 
 def _success_schema(operation: dict[str, Any]) -> dict[str, Any] | None:
@@ -143,13 +129,6 @@ def read_untyped_baseline() -> list[str]:
     return json.loads(UNTYPED_PATH.read_text(encoding="utf-8"))["operations"]
 
 
-def read_digest() -> str:
-    """The digest recorded in the tree, or "" when there is none to compare."""
-    if not DIGEST_PATH.exists():
-        return ""
-    return DIGEST_PATH.read_text(encoding="utf-8").strip()
-
-
 def render_untyped(operations: list[str]) -> str:
     return render(
         {
@@ -164,25 +143,21 @@ def render_untyped(operations: list[str]) -> str:
     )
 
 
-def render_digest(digest: str) -> str:
-    return f"{digest}\n"
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--stdout",
         action="store_true",
-        help="print the document and exit — how the frontend asks for it",
+        help="print the document and exit — how its readers ask for it",
     )
     parser.add_argument("--check", action="store_true", help="fail when stale")
     args = parser.parse_args(argv)
 
     spec = build_spec()
     if args.stdout:
-        # Before the ratchet and the digest: this is the reader's whole request,
-        # and a route that would widen the untyped list must still be generated
-        # for — the caller judges the frontend against it either way.
+        # Before the ratchet: this is the reader's whole request, and a route
+        # that would widen the untyped list must still be generated for — the
+        # caller judges the frontend against it either way.
         sys.stdout.write(render(spec))
         return 0
 
@@ -200,7 +175,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {op}", file=sys.stderr)
         return 1
 
-    digest = document_digest(spec)
     if args.check:
         if not UNTYPED_PATH.exists() or UNTYPED_PATH.read_text(
             encoding="utf-8"
@@ -211,21 +185,9 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        if read_digest() != digest:
-            print(
-                f"{DIGEST_PATH.name} and the document disagree: this commit changed "
-                "the API surface the frontend compiles against without refreshing "
-                "the digest. Run `uv run python -m scripts.export_openapi` in "
-                f"backend/ and commit {DIGEST_PATH.name} — the frontend CI suite is "
-                "selected by that file, so leaving it stale means the surface ships "
-                "unjudged.",
-                file=sys.stderr,
-            )
-            return 1
         return 0
 
     UNTYPED_PATH.write_text(render_untyped(untyped), encoding="utf-8")
-    DIGEST_PATH.write_text(render_digest(digest), encoding="utf-8")
     return 0
 
 
