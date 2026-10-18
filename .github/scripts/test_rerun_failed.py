@@ -340,6 +340,11 @@ class LogSignatureTest(unittest.TestCase):
             " ______ test_a_passing_failure_resumes[API Error: Connection"
             " dropped (ECONNRESET)（server_error）-unreachable] ______",
             "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
+            " tests/unit/test_resumable_failures.py:64: in"
+            " test_a_passing_failure_resumes",
+            "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
+            '     assert classify(message) == "API Error: read ECONNRESET"',
+            "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
             " >       assert classify(message) == expected",
             "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
             " E       AssertionError: assert 'transient' == 'unreachable'",

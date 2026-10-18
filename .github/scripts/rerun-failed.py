@@ -70,16 +70,26 @@ GH_TIMEOUT = 120
 _LOG_PREFIX = re.compile(r"^[^\t\n]*\t[^\t\n]*\t(?:\ufeff)?\S+\s")
 
 # A line pytest wrote about a failing test, rather than a tool reporting its
-# own failure: the failing source line (`>`), the assertion detail (`E   `),
-# the FAILURES/ERRORS banner, the `_ test_x[id] _` header, the short summary,
-# and the introspected assertion. Those lines quote whatever the test put in
-# an expected value, including an `ECONNRESET` or a rate-limit message; a
-# signature found there would call a real failure a flake.
+# own failure: the assertion detail (`E   `), the FAILURES/ERRORS banner, the
+# `_ test_x[id] _` header, the short summary, and the introspected assertion.
+# Those lines quote whatever the test put in an expected value, including an
+# `ECONNRESET` or a rate-limit message; a signature found there would call a
+# real failure a flake.
 _PYTEST_REPORT = re.compile(
-    r"^(?:FAILED |ERROR |>{1,2}\s|E {2,}|_{3,} .* _{3,}$"
+    r"^(?:FAILED |ERROR |>{1,2}\s|E {2,}|_+ .+ _+$"
     r"|=+ (?:FAILURES|ERRORS|short test summary info) =+"
     r"|assert )"
 )
+# `--tb=short`, which every CI invocation here passes, names the frame on one
+# line and then prints the failing statement indented, with no marker on it:
+#
+#     test_x.py:8: in test_a_passing_failure_resumes
+#         assert message == "API Error: ... (ECONNRESET)"
+#
+# The statement can quote any test text, so the line after this one is report
+# too. `--tb=auto` marks the same statement with `>`, which the pattern above
+# already skips.
+_PYTEST_LOCATION = re.compile(r"^\S+:\d+: in \S")
 
 
 def load_patterns(path: Path = PATTERNS) -> list[dict]:
@@ -177,8 +187,15 @@ def flake_log_signature(
     """
     if not failed_log:
         return None
+    after_location = False
     for line in failed_log.splitlines():
         message = _message(line)
+        if _PYTEST_LOCATION.match(message):
+            after_location = True
+            continue
+        if after_location and message[:1].isspace():
+            continue
+        after_location = False
         if _PYTEST_REPORT.match(message):
             continue
         for signature in LOG_SIGNATURES if signatures is None else signatures:
