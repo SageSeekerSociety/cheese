@@ -329,7 +329,9 @@ ci.yml 的 `Desktop Core` job 另跑 `just desktop-check`（biome + file-sizes +
    串接 <&.github/workflows/build.yml>——那是一条**靠 workflow 显示名字符串匹配**的隐式契约，
    改 build.yml 的 `name:` 会静默断掉 dev 自动部署。这条契约已经拆掉：Deploy 只由 Required CI 的完成事件触发，
    镜像就绪与否由 eligibility 读 run 列表判断（构建还在跑就等它，见 <&deploy/check-auto-deploy.py>），
-   不再认任何 workflow 的显示名。以后这类跨 workflow 契约再多一条，这个模式就该回头看。
+   不再看 build.yml 的显示名。触发本身仍按 `"Required CI"` 这个显示名匹配，改
+   <&.github/workflows/required-ci.yml> 的 `name:` 仍会静默断掉 dev 自动部署。
+   以后这类跨 workflow 契约再多一条，这个模式就该回头看。
 
 ---
 

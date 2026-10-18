@@ -113,14 +113,15 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' ||
       github.event.workflow_run.conclusion == 'cancelled'))
     runs-on: ubuntu-latest
-    # Room for an image build still running when the gate finishes
-    # (deploy/check-auto-deploy.py, BUILD_WAIT_SECONDS) plus the two-minute
-    # settle wait around each read of the run lists.
-    timeout-minutes: 12
+    # Room for the initial two-minute settle plus an image build still running
+    # when the gate finishes (deploy/check-auto-deploy.py, BUILD_WAIT_SECONDS,
+    # whose own settle is capped at that wait's deadline).
+    timeout-minutes: 15
     outputs:
       ready: ${{ steps.check.outputs.ready }}
       superseded: ${{ steps.check.outputs.superseded }}
       waiting: ${{ steps.check.outputs.waiting }}
+      build_pending: ${{ steps.check.outputs.build_pending }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -178,11 +179,20 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
           UNCOVERED: ${{ steps.check.outputs.uncovered }}
+          BUILD_PENDING: ${{ steps.check.outputs.build_pending }}
         run: |
           live="$(curl -fsS --max-time 10 https://okcheese.com/api/version | jq -r '.data.sha // empty')" || true
           reason="its image build or Required CI has no successful latest attempt"
+          # The build outlasted the wait. The reason above reads as a permanent
+          # refusal minutes later, when the build's latest attempt is successful;
+          # say what actually happened and what cures it.
+          if [ "$BUILD_PENDING" = true ]; then
+            reason="its image build was still running when the wait ended; re-run this workflow once it finishes (the next merge also releases it)"
+          fi
           # A cancelled gate run with nothing newer on main is its own case: no
           # later batch will cover it, so this needs a person, not another wait.
+          # It wins over the build message: the gate, not the build, is what
+          # will never arrive.
           if [ "$UNCOVERED" = true ]; then
             reason="its Required CI run was cancelled and no newer commit on main covers it"
           fi
