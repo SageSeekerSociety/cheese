@@ -38,7 +38,7 @@
   "pendingBy": "Invited by {inviter} · no answer yet",
   "pendingTransfer": "Waiting for {name} to accept the transfer",
   "remove": "Remove from project",
-  "removeBody": "They will no longer see this project's topics. What they posted and did stays; they can come back if invited again",
+  "removeBody": "They will no longer see this project's channels. What they posted and did stays; they can come back if invited again",
   "removeTitle": "Remove {name} from the project?",
   "revoke": "Withdraw",
   "revokeFailed": "Could not withdraw the invitation",
