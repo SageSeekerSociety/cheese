@@ -756,15 +756,47 @@ class CandidateCI(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, "a bot recovery skipped the CI check")
             self.assertIn("check-auto-deploy.py", result.stderr)
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "output"
+            work = Path(directory)
+            (work / "deploy").mkdir()
+            (work / "deploy" / "check-auto-deploy.py").write_text("")
+            output = work / "output"
             result = subprocess.run(
-                ["bash", "-eu", "-c", release["run"]], cwd=ROOT, capture_output=True, text=True,
+                ["bash", "-eu", "-c", release["run"]], cwd=work, capture_output=True, text=True,
                 env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
                      "ACTOR": "github-actions[bot]", "REF_INPUT": "a" * 40,
                      "RECOVERY": "true", "REBUILT": "", "CANDIDATE_SHA": "a" * 40,
                      "GITHUB_OUTPUT": str(output)})
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(output.read_text(), "skip=false\n")
+            self.assertIn("skip=false", output.read_text())
+
+    def test_a_recovery_dispatch_clears_superseded_so_the_job_runs(self):
+        # Without this the eligibility job answers superseded=<newer main tip>,
+        # and the deploy job's `superseded == ''` skips the whole release —
+        # the slot recovery would be dead code (2026-10-18 review).
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        check = next(step for step in workflow["jobs"]["eligibility"]["steps"]
+                     if step.get("id") == "check")
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            stub = work / "deploy"
+            stub.mkdir()
+            script = stub / "check-auto-deploy.py"
+            script.write_text(
+                "import os\n"
+                "with open(os.environ['GITHUB_OUTPUT'],'a') as f:\n"
+                "    f.write('ready=true\\nsuperseded=' + 'd'*40 + '\\nwaiting=false\\nuncovered=false\\n')\n")
+            output = work / "output"
+            result = subprocess.run(
+                ["bash", "-eu", "-c", check["run"]], cwd=work, capture_output=True, text=True,
+                env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                     "ACTOR": "github-actions[bot]", "REF_INPUT": "a" * 40,
+                     "RECOVERY": "true", "REBUILT": "", "CANDIDATE_SHA": "a" * 40,
+                     "GITHUB_OUTPUT": str(output)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            text = output.read_text()
+            self.assertIn("ready=true", text)
+            self.assertIn("superseded=\n", text, text)
+            self.assertNotIn("superseded=" + "d" * 40, text)
 
     def test_a_bare_dispatch_is_not_a_manual_release_either(self):
         # No ref names nothing a person chose; releasing the dispatch ref's

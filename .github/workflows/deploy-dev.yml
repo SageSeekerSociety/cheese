@@ -145,6 +145,16 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
+            # The slot recovery releases a commit older than main's tip by
+            # design; "a newer commit on main will release this" is true but
+            # useless here (that newer commit is exactly what cannot release
+            # while the -b slots serve), and it would let the job-level
+            # `superseded == ''` skip the whole deploy. CI was still checked.
+            if [ "${RECOVERY:-}" = "true" ] && [ -f "$GITHUB_OUTPUT" ]; then
+              grep -v '^superseded=' "$GITHUB_OUTPUT" > "$GITHUB_OUTPUT.tmp" || true
+              mv "$GITHUB_OUTPUT.tmp" "$GITHUB_OUTPUT"
+              echo "superseded=" >> "$GITHUB_OUTPUT"
+            fi
           fi
       # Required CI on main runs after the commit lands, so for a few minutes
       # the honest answer is "not yet" rather than a refusal: this workflow is
@@ -285,6 +295,11 @@ jobs:
           # was already checked by the eligibility job. Only the backwards
           # guard (which would skip an older commit) is passed over here.
           if [ "${RECOVERY:-}" = "true" ]; then
+            # Re-check CI here rather than trusting the eligibility job: this
+            # one waited in the deploy-dev concurrency group, and a rerun in
+            # between must still stop the release. Only the backwards guard is
+            # passed over — a recovery names an older commit on purpose.
+            python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
