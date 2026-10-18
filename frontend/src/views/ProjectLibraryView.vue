@@ -336,6 +336,7 @@ function read(file: LibraryFile) {
     @open-topic="(id: string, block?: string) => router.push(refRoute(projectId, id, block))"
   />
   <AppPage v-else :title="selected && !mdAndUp ? selected.path : t('navigation.project.library')" width="full">
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drop target for files dragged in; the upload action is the keyboard's way -->
     <div
       class="library"
       :class="{ 'library--dragging': dragging }"
@@ -343,8 +344,14 @@ function read(file: LibraryFile) {
       @dragleave.self="dragging = false"
       @drop.prevent="onDrop"
     >
-      <input ref="picker" type="file" multiple hidden @change="onPicked" />
-      <input ref="replacePicker" type="file" hidden @change="onReplacementPicked" />
+      <input ref="picker" type="file" multiple hidden :aria-label="t('work.library.upload')" @change="onPicked" />
+      <input
+        ref="replacePicker"
+        type="file"
+        hidden
+        :aria-label="t('work.library.replace')"
+        @change="onReplacementPicked"
+      />
 
       <!-- 列表：手机上看着一份文件时让出整页。 -->
       <section v-if="mdAndUp || !selected" ref="listEl" class="library__list">

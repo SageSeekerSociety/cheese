@@ -45,6 +45,7 @@ function submit() {
     @primary="submit"
   >
     <p class="t-body c-muted mb-3">{{ t('work.joinBody') }}</p>
+    <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to enter an invite code; focus moves into the one field it holds -->
     <v-text-field
       v-model="code"
       :label="t('work.joinLabel')"
@@ -54,5 +55,6 @@ function submit() {
       hide-details="auto"
       @keyup.enter="submit"
     />
+    <!-- eslint-enable vuejs-accessibility/no-autofocus -->
   </AdaptiveDialog>
 </template>

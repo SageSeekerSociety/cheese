@@ -140,6 +140,7 @@ watch([() => props.enabled, () => props.identity, () => props.image], reset, { f
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the focusable surface for marking a region; Escape cancels a region half drawn -->
   <div
     v-if="enabled"
     class="raster-region"

@@ -4,7 +4,7 @@
 //
 // The type check itself is a plain gate: any error vue-tsc reports fails it
 // (scripts/tsc-ratchet.mjs). `compare` and `tightenedBaseline` below are not
-// used by it; they stay here because the a11y, stylelint, i18n-comment and
+// used by it; they stay here because the stylelint, i18n-comment and
 // global-fallback checks import them from this file.
 
 const ERROR_LINE = /^(\S[^(]*)\((\d+),(\d+)\): error (TS\d+):/

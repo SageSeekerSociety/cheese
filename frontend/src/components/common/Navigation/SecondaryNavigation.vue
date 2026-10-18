@@ -11,6 +11,7 @@
     v-bind="$attrs"
   >
     <!-- 右边缘拖动改宽度。宽度是四处侧栏共用的一个数（useSidebarWidth）。 -->
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drag handle for the pointer; without it the sidebar keeps its width -->
     <div v-if="isDesktop" class="sidebar-resizer" :title="t('navigation.sidebar.resize')" @mousedown="startResize" />
     <slot></slot>
   </v-navigation-drawer>

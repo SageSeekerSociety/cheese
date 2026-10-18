@@ -128,6 +128,7 @@ defineExpose({
 <template>
   <!-- 全屏时挪到 body 下：页面里的祖先可能自带层叠和裁切，fixed 铺不满窗口。 -->
   <Teleport to="body" :disabled="!fullscreen">
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- Escape bubbles here from the toolbar or the text to leave full screen; the toolbar's button does the same -->
     <div class="rt-editor" :class="{ 'is-fullscreen': fullscreen }" @keydown="onKeydown">
       <RichTextToolbar
         v-if="!hideToolbar"
@@ -139,10 +140,18 @@ defineExpose({
         @insert-image="fileInput?.click()"
         @toggle-fullscreen="fullscreen = !fullscreen"
       />
+      <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- a click on the padding around the text puts the caret in it; Tab reaches the text itself -->
       <div class="rt-editor__body" :style="bodyStyle" @click="focusBody">
         <RichTextContent :editor="editor" :placeholder="placeholder ?? t('editor.placeholder')" />
       </div>
-      <input ref="fileInput" type="file" accept="image/*" hidden @change="insertImage" />
+      <input
+        ref="fileInput"
+        type="file"
+        accept="image/*"
+        hidden
+        :aria-label="t('editor.toolbar.image')"
+        @change="insertImage"
+      />
     </div>
   </Teleport>
 </template>

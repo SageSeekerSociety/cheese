@@ -479,11 +479,14 @@ useCommands(() => [
           variant="outlined"
           @contextmenu="removable(m) && rowMenu.open(m.user_handle, $event)"
         >
+          <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- a click anywhere on the row opens the profile; the name button does the same for the keyboard -->
           <div class="d-flex align-center pa-3" @click="openProfile(m)">
             <UserAvatar :name="memberName(m) || m.user_handle" :avatar="faceUrl(m)" :size="36" class="mr-3" />
             <div class="min-w-0">
               <div class="d-flex align-center ga-2">
-                <span class="t-title text-truncate">{{ memberName(m) || m.user_handle }}</span>
+                <button type="button" class="t-title text-truncate member-name" @click.stop="openProfile(m)">
+                  {{ memberName(m) || m.user_handle }}
+                </button>
                 <span
                   v-if="m.remark && memberOriginalName(m) && memberOriginalName(m) !== m.remark"
                   class="t-meta c-muted text-truncate"
@@ -649,6 +652,7 @@ useCommands(() => [
           size="md"
         />
       </BaseField>
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to look someone up; focus moves into the search field -->
       <v-text-field
         v-model="inviteQuery"
         autocomplete="off"
@@ -662,6 +666,7 @@ useCommands(() => [
         class="mb-2"
         @keyup.enter="submitInvite"
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
       <div v-if="found" class="found-user mb-2" data-testid="found-user">
         <UserAvatar
           :name="found.name || found.handle"
@@ -705,6 +710,18 @@ useCommands(() => [
 <style scoped>
 .member-row {
   cursor: pointer;
+}
+
+/* The name is a plain-text button (the keyboard's way to the profile). The raw-button
+   reset in style.css (`button:not(.v-btn)`, font and colour inherit) outranks `.t-title`,
+   so the title's size, weight and ink are restated here, where the scoped selector wins. */
+.member-name {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+  color: var(--ink);
+  text-align: start;
 }
 
 .member-row:hover {

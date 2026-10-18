@@ -47,6 +47,7 @@ function submit() {
     @primary="submit"
   >
     <form class="new-channel" data-testid="new-channel" @submit.prevent="submit">
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to name a channel; focus moves into the name field -->
       <v-text-field
         v-model="title"
         :label="t('work.projectSettings.channels.nameLabel')"
@@ -58,6 +59,7 @@ function submit() {
         autocomplete="off"
         autofocus
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
       <v-textarea
         v-model="description"
         :label="t('work.projectSettings.channels.descriptionLabel')"
