@@ -470,7 +470,6 @@ _BASELINE: dict[str, int] = {
     "app/domain/oauth/services/connections.py": 2,
     "app/domain/oauth/services/providers.py": 1,
     "app/domain/passkey/services.py": 5,
-    # Includes the three unchanged refusals moved out of the environment route.
     "app/domain/project/environment.py": 2,
     "app/domain/project/forge_migration.py": 20,
     "app/domain/project/forgejo_tokens.py": 7,
