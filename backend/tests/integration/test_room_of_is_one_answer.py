@@ -111,9 +111,11 @@ def test_a_room_a_task_and_a_thread_get_the_same_answer(db_session, _portal):
                 await owner_reads.room_of(db_session, conversation_id),
                 await conversations.room_of(db_session, conversation_id),
             )
-        return room, answers
+        return room, {room, task, thread}, answers
 
-    room, answers = _portal.call(ask)
+    room, asked, answers = _portal.call(ask)
+    # All three were asked: an empty loop would leave nothing to check below.
+    assert set(answers) == asked
     for answer in answers.values():
         assert answer == (room, room)
 
@@ -125,6 +127,7 @@ def test_a_conversation_only_the_register_knows_is_not_given_a_room(
 
     ``conversations`` 是触发器维护的登记表（没有 room 列），两张旧表才是房间的
     出处。所以这个形状问不出房间，两份答案只能都说「它自己」——谁都不替它猜一个。
+    这不是两份实现在分歧：问的是「找不到时谁编造房间」，两边都不许编。
     """
 
     async def ask():
@@ -137,21 +140,33 @@ def test_a_conversation_only_the_register_knows_is_not_given_a_room(
             ),
             {"id": stranger, "project": project_id},
         )
-        return stranger, (
-            await owner_reads.room_of(db_session, stranger),
-            await conversations.room_of(db_session, stranger),
+        known = await db_session.scalar(
+            text(
+                "SELECT"
+                " (SELECT count(*) FROM tasks WHERE id = :id)"
+                " + (SELECT count(*) FROM threads WHERE id = :id)"
+            ).bindparams(id=stranger)
+        )
+        return (
+            stranger,
+            known,
+            (
+                await owner_reads.room_of(db_session, stranger),
+                await conversations.room_of(db_session, stranger),
+            ),
         )
 
-    stranger, answer = _portal.call(ask)
+    stranger, known, answer = _portal.call(ask)
+    assert known == 0
     assert answer == (stranger, stranger)
 
 
 def test_the_device_answer_asks_one_statement(db_session, _portal):
     """同一件事问一次。
 
-    旧实现按 ``tasks``、``threads`` 的顺序各发一条：房间和登记表里的陌生会话在
-    两张表里都查不到，问一次就是两条往返。改成和 ``_inside`` 相同的 union 之后，
-    每种形状都只有一条。
+    旧实现按 ``tasks``、``threads`` 的顺序各发一条：房间和两张表都不认识的会话
+    都要问两遍，一次就是两条往返。改成和 ``_inside`` 相同的 union 之后，每种形状
+    都只有一条。
     """
 
     async def ask():
@@ -159,6 +174,14 @@ def test_the_device_answer_asks_one_statement(db_session, _portal):
         room = await _room(db_session, project_id)
         task = await _task(db_session, project_id, room)
         thread = await _thread(db_session, project_id, room)
+        stranger = uuid.uuid4()
+        await db_session.execute(
+            text(
+                "INSERT INTO conversations (id, project_id, kind)"
+                " VALUES (:id, :project, 'thread')"
+            ),
+            {"id": stranger, "project": project_id},
+        )
 
         seen: list[str] = []
 
@@ -173,6 +196,7 @@ def test_the_device_answer_asks_one_statement(db_session, _portal):
                 ("room", room),
                 ("task", task),
                 ("thread", thread),
+                ("stranger", stranger),
             ):
                 before = len(seen)
                 await owner_reads.room_of(db_session, conversation_id)
@@ -181,4 +205,9 @@ def test_the_device_answer_asks_one_statement(db_session, _portal):
             event.remove(engine, "before_cursor_execute", record)
         return counts
 
-    assert _portal.call(ask) == {"room": 1, "task": 1, "thread": 1}
+    assert _portal.call(ask) == {
+        "room": 1,
+        "task": 1,
+        "thread": 1,
+        "stranger": 1,
+    }
