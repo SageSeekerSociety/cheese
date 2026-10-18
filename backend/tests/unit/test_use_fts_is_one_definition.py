@@ -20,7 +20,8 @@ def _definitions(root: Path) -> list[str]:
     for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         if any(
-            isinstance(n, ast.FunctionDef) and n.name == "_use_fts"
+            isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+            and n.name == "_use_fts"
             for n in ast.walk(tree)
         ):
             found.append(path.relative_to(root).as_posix())
