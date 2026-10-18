@@ -111,6 +111,18 @@ describe('芝士 replies', () => {
     const html = renderMarkdown('<script>alert(1)</script>hi', MAPS)
     expect(html).not.toContain('<script')
   })
+
+  it('keeps neighboring Markdown and code distinct from file references', () => {
+    const host = document.createElement('div')
+    host.innerHTML = renderMarkdown('**Before** <&src/a.ts> **between** <&src/b.ts> `<&src/code.ts>`', MAPS)
+
+    expect(Array.from(host.querySelectorAll<HTMLElement>('[data-file]'), (chip) => chip.dataset.file)).toEqual([
+      'src/a.ts',
+      'src/b.ts',
+    ])
+    expect(Array.from(host.querySelectorAll('strong'), (strong) => strong.textContent)).toEqual(['Before', 'between'])
+    expect(host.querySelector('code')?.textContent).toBe('<&src/code.ts>')
+  })
 })
 
 describe('renderPlain (human messages)', () => {

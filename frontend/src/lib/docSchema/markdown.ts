@@ -141,10 +141,34 @@ const DocAutolinkCjk: TokenizerExtension = {
   },
 }
 
+// Keep the complete file token literal: stripping HTML inside an invalid one
+// can turn the remaining text into a different, valid file reference.
+const DocFileReference: TokenizerExtension = {
+  name: 'docFileReference',
+  level: 'inline',
+  start: (src) => src.indexOf('<&'),
+  tokenizer(src) {
+    if (!src.startsWith('<&')) return undefined
+    let depth = 0
+    for (let i = 0; i < src.length && src[i] !== '\n'; i++) {
+      if (src[i] === '<') depth++
+      if (src[i] === '>' && --depth === 0) {
+        const raw = src.slice(0, i + 1)
+        return { type: 'text', raw, text: raw }
+      }
+    }
+    // Consume an unfinished reference once instead of rescanning its nested prefixes.
+    const raw = src.split('\n', 1)[0]
+    return { type: 'text', raw, text: raw }
+  },
+}
+
 /** A parser with the document's rules. The chat reads with its own (a single
  *  newline breaks the line there); building it here keeps the rules one list. */
 export function buildDocMarked(): Marked {
-  return new Marked(markedCjkFriendly()).use({ extensions: [DocLiteralTag, DocLiteralTagBlock, DocAutolinkCjk] })
+  return new Marked(markedCjkFriendly()).use({
+    extensions: [DocLiteralTag, DocLiteralTagBlock, DocAutolinkCjk, DocFileReference],
+  })
 }
 
 export const docMarked = buildDocMarked()

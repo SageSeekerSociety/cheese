@@ -91,7 +91,7 @@
     "i18next": "^23.16.8",
     "jwt-decode": "^4.0.0",
     "katex": "^0.16.22",
-    "lodash-es": "4.18.0",
+    "lodash-es": "4.18.1",
     "lowlight": "3.3.0",
     "marked": "^17.0.6",
     "marked-cjk-friendly": "^0.1.1",
