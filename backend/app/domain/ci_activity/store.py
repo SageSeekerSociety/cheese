@@ -22,6 +22,7 @@ from app.domain.ci_activity.models import (
     CiActivitySweep,
     CiJob,
     CiJobStep,
+    CiMergedPullRequest,
     CiMergeQueueEvent,
     CiWorkflowRun,
 )
@@ -96,6 +97,42 @@ def runner_kind(job: dict[str, Any]) -> str | None:
 class CiActivityStore:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def upsert_merged_pull_requests(
+        self, repo: str, pulls: list[dict[str, Any]]
+    ) -> int:
+        """Keep merge facts from the same PR search that supplies queue events."""
+        rows = {}
+        for pull in pulls:
+            number = pull.get("number")
+            created = parse_time(pull.get("createdAt"))
+            merged = parse_time(pull.get("mergedAt"))
+            if not isinstance(number, int) or created is None or merged is None:
+                continue
+            branch = pull.get("headRefName")
+            rows[number] = {
+                "repo": repo,
+                "pr_number": number,
+                "head_branch": str(branch)[:300] if branch else None,
+                "created_at": created,
+                "merged_at": merged,
+            }
+        values = list(rows.values())
+        for start in range(0, len(values), UPSERT_BATCH):
+            stmt = insert(CiMergedPullRequest).values(
+                values[start : start + UPSERT_BATCH]
+            )
+            await self._session.execute(
+                stmt.on_conflict_do_update(
+                    constraint="uq_ci_merged_pull_requests_repo_pr_number",
+                    set_={
+                        c: stmt.excluded[c]
+                        for c in ("head_branch", "created_at", "merged_at")
+                    },
+                )
+            )
+        await self._session.commit()
+        return len(rows)
 
     async def upsert_runs(self, repo: str, runs: list[dict[str, Any]]) -> int:
         """Insert new runs and refresh known ones; return how many rows changed.
@@ -315,6 +352,11 @@ class CiActivityStore:
         await self._session.execute(
             delete(CiMergeQueueEvent).where(
                 CiMergeQueueEvent.repo == repo, CiMergeQueueEvent.at < before
+            )
+        )
+        await self._session.execute(
+            delete(CiMergedPullRequest).where(
+                CiMergedPullRequest.repo == repo, CiMergedPullRequest.merged_at < before
             )
         )
         await self._session.execute(

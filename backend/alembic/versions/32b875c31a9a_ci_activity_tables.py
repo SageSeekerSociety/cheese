@@ -5,7 +5,7 @@ Revises: 569e06806d03
 
 The CI activity page's data (`app.domain.ci_activity`): the platform's own
 repository's Actions runs, their jobs, the jobs' steps, merge-queue events, and
-the sweeps that copy them out of GitHub. Five new tables, nothing existing
+merged pull requests, and the sweeps that copy them out of GitHub. New tables, nothing existing
 touched, so no lock on a table the live backend uses.
 
 The unique constraints are the sweep's idempotency: runs are upserted on
@@ -133,6 +133,24 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "ci_merged_pull_requests",
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("repo", sa.String(200), nullable=False),
+        sa.Column("pr_number", sa.Integer(), nullable=False),
+        sa.Column("head_branch", sa.String(300), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("merged_at", sa.DateTime(timezone=True), nullable=False),
+        sa.UniqueConstraint(
+            "repo", "pr_number", name="uq_ci_merged_pull_requests_repo_pr_number"
+        ),
+    )
+    op.create_index(
+        "ix_ci_merged_pull_requests_repo_merged_at",
+        "ci_merged_pull_requests",
+        ["repo", "merged_at"],
+    )
+
+    op.create_table(
         "ci_activity_sweeps",
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("repo", sa.String(200), nullable=False),
@@ -152,6 +170,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("ci_activity_sweeps")
+    op.drop_table("ci_merged_pull_requests")
     op.drop_table("ci_merge_queue_events")
     op.drop_table("ci_job_steps")
     op.drop_table("ci_jobs")
