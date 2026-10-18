@@ -325,8 +325,14 @@ def test_a_person_whose_role_changes_no_files_shows_none_into_the_room(client):
     assert "output/导师.md" not in [f["path"] for f in listed]
 
 
+#: Ways of naming the same file: what it was sent as, and spellings that land
+#: on it all the same.
+SPELLINGS = ["{}", "./{}", ".//{}"]
+
+
+@pytest.mark.parametrize("spelling", SPELLINGS)
 def test_a_person_showing_a_file_does_not_overwrite_one_sent_in_the_conversation(
-    client,
+    client, spelling
 ):
     """发进对话的那一份是原件，经由摆出来这条路也一样：消息指着的字节不变。"""
     project, room = _room(client)
@@ -340,7 +346,7 @@ def test_a_person_showing_a_file_does_not_overwrite_one_sent_in_the_conversation
     shown = client.post(
         f"/topics/{room}/shown",
         headers=session_auth_headers("owner"),
-        json={"path": path, "content": "replaced"},
+        json={"path": spelling.format(path), "content": "replaced"},
     )
 
     assert shown.status_code == 422, shown.text
@@ -348,8 +354,9 @@ def test_a_person_showing_a_file_does_not_overwrite_one_sent_in_the_conversation
     assert raw.content == b"the sent original"
 
 
+@pytest.mark.parametrize("spelling", SPELLINGS)
 def test_a_page_a_person_shows_brings_no_file_over_one_sent_in_the_conversation(
-    client,
+    client, spelling
 ):
     """A page's own files are written too, on the same terms as the page."""
     project, room = _room(client)
@@ -367,7 +374,10 @@ def test_a_page_a_person_shows_brings_no_file_over_one_sent_in_the_conversation(
             "path": "index.html",
             "content": "<html></html>",
             "assets": [
-                {"path": path, "content_b64": base64.b64encode(b"replaced").decode()}
+                {
+                    "path": spelling.format(path),
+                    "content_b64": base64.b64encode(b"replaced").decode(),
+                }
             ],
         },
     )
