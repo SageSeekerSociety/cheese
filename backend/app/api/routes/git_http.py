@@ -30,7 +30,7 @@ from app.domain.delivery.agent import (
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
-from app.domain.repository import identity
+from app.domain.review import credit
 from app.domain.review.services import AcceptService
 from app.domain.room_task import snapshots
 from app.domain.topic.services import TopicService
@@ -192,13 +192,16 @@ async def task_workspace(
         raise NotFoundError(say("projectHasNoRepo"))
 
     room = await TopicService(db).get_or_404(task.room_id)
-    who = await identity.attribution(db, room, task_id=task.id)
+    # Who the task's commits are by, and who they credit: the same rule the
+    # squash that lands them follows (`identity.Attribution`).
+    who = await credit.attribution(db, room, task_id=task.id)
+    author = who.commit_author
 
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
 
-    if who.author:
-        await ensure_author_email(project_id, db, who.author.email)
+    if author and binding.kind == "forgejo":
+        await ensure_author_email(project_id, db, author.email)
 
     # A queued PR's branch is locked by the forge until the queue merges or
     # drops it; a machine that pushes to it is refused. It is told here so it
@@ -225,7 +228,7 @@ async def task_workspace(
             "remote": binding.url,
             "forge_kind": binding.kind,
             "forge_repo": binding.repo,
-            "author": str(who.author) if who.author else None,
-            "coauthors": [str(person) for person in who.coauthors],
+            "author": str(author) if author else None,
+            "coauthors": [str(person) for person in who.commit_coauthors],
         }
     )

@@ -1,5 +1,5 @@
 {
-  "accountFailed": "Couldn't connect the GitHub account: {reason}",
+  "accountFailed": "Couldn't link your GitHub account: {reason}",
   "repoFailed": "Couldn't connect the GitHub repository: {reason}",
   "taken": "{repo} is already connected to {where}; a repository can be connected to only one project. {next}",
   "takenHidden": "another project you can't see",
