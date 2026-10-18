@@ -77,8 +77,16 @@ class StartStepsOut(BaseModel):
     learned: bool
 
 
-class ForgeAttributionUpdate(BaseModel):
-    requester_coauthor: bool | None
+class CommitCredit(BaseModel):
+    """Who a project's deliveries are credited to, as `credit_mode` reads it."""
+
+    mode: str
+
+
+class CommitCreditUpdate(BaseModel):
+    """Who a project's deliveries are credited to (`identity.CREDIT_MODES`)."""
+
+    mode: Literal["owner", "agent"]
 
 
 class ProjectDefaultModelUpdate(BaseModel):

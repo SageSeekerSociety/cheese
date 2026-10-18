@@ -93,13 +93,25 @@ def work_interval_is_over():
     )
 
 
-async def instance_for_seat(session, project_id, seat):
+async def instances_for_seats(session, project_id, seats) -> dict[str, AgentInstance]:
+    """``seats`` 里每个在这个项目里找得到的席位对应的实例，按 handle 分；只读一次
+    实例表。找不到的席位不在结果里。"""
+    wanted = set(seats)
+    if not wanted:
+        return {}
     instances = await session.scalars(
         select(AgentInstance).where(AgentInstance.project_id == project_id)
     )
-    return next(
-        (row for row in instances if agent_instance_handle(row.id) == seat), None
-    )
+    found: dict[str, AgentInstance] = {}
+    for row in instances:
+        handle = agent_instance_handle(row.id)
+        if handle in wanted:
+            found.setdefault(handle, row)
+    return found
+
+
+async def instance_for_seat(session, project_id, seat):
+    return (await instances_for_seats(session, project_id, [seat])).get(seat)
 
 
 async def active_seat_instance_id(session, project_id, seat) -> uuid.UUID | None:

@@ -4,7 +4,7 @@
   "connectedAt": " (connected {when})",
   "disconnect": "Disconnect",
   "expired": "The GitHub authorization has expired. If connecting a repository fails, choose Reconnect to renew it",
-  "hint": "Confirms your write access when you connect a repository, and credits you in commits and PRs that mention you. PRs are created by the platform's GitHub App. It is separate from the GitHub sign-in and can be a different account",
+  "hint": "Used to confirm you can write to a repository you connect, and to credit you on commits. When commits are credited to the task owner, PRs for your tasks are opened with this account. It is separate from the GitHub sign-in and can be a different account",
   "loadFailed": "Couldn't load the connection",
   "loading": "Loading connection…",
   "none": "No account linked",
