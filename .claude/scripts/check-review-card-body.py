@@ -59,9 +59,11 @@ def pr_review_dir() -> Path:
 
     Not simply `SCRIPTS_DIR.parent`: a copy of this script (a mutation probe, an
     installed tool) sits somewhere else, and it still has to find the review
-    method of the repository it is judging. `PR_REVIEW_DIR` names it outright;
+    method of the repository it is judging. `PR_REVIEW_METHOD_DIR` names it
+    outright — not `PR_REVIEW_DIR`, which pr-review.sh already uses for the
+    directory a round is written to, and which a seat may have exported;
     otherwise look beside this file and up from the working directory."""
-    named = os.environ.get("PR_REVIEW_DIR")
+    named = os.environ.get("PR_REVIEW_METHOD_DIR")
     if named:
         return Path(named)
     for base in (SCRIPTS_DIR, Path.cwd()):
@@ -72,12 +74,12 @@ def pr_review_dir() -> Path:
     return SCRIPTS_DIR.parent / "pr-review"
 
 
-PR_REVIEW_DIR = pr_review_dir()
+METHOD_DIR = pr_review_dir()
 
 from orchestrator_autoaccept import REVIEW_LINE  # noqa: E402
 
 #: The text `--fix` removes from a first-round line that wrongly carries it.
-SINCE_SUFFIX = re.compile(r"[（(]增量自 [0-9a-f]{7,40}[）)]\s*")
+SINCE_SUFFIX = re.compile(r"\s*[（(]增量自 [0-9a-f]{7,40}[）)]")
 
 
 def _review_render():
@@ -85,8 +87,8 @@ def _review_render():
 
     Imported lazily: a plain check must keep working with nothing but this
     directory on the path."""
-    if str(PR_REVIEW_DIR) not in sys.path:
-        sys.path.insert(0, str(PR_REVIEW_DIR))
+    if str(METHOD_DIR) not in sys.path:
+        sys.path.insert(0, str(METHOD_DIR))
     import render  # noqa: PLC0415 — lazy on purpose, see above
 
     return render
@@ -187,8 +189,8 @@ def exempt_increment(root: str, base: str, since: str, head: str) -> tuple[bool,
 
     The rule has one owner, `ready.increment` in `.claude/pr-review`; this asks it
     instead of growing a second copy that can drift."""
-    if str(PR_REVIEW_DIR) not in sys.path:
-        sys.path.insert(0, str(PR_REVIEW_DIR))
+    if str(METHOD_DIR) not in sys.path:
+        sys.path.insert(0, str(METHOD_DIR))
     import ready  # noqa: PLC0415 — lazy on purpose
 
     result = ready.increment(root, base, since, head)
@@ -230,7 +232,7 @@ def body_with_line(text: str, new_line: str) -> str:
 
     first = next(i for i, line in enumerate(lines) if REVIEW_LINE.search(line))
     if REVIEW_LINE.search(lines[first]).group(2) is not None:  # type: ignore[union-attr]
-        lines[first] = SINCE_SUFFIX.sub("", lines[first], count=1)
+        lines[first] = SINCE_SUFFIX.sub(" ", lines[first], count=1)
     return "\n".join(lines) + "\n"
 
 
@@ -480,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
                 body, source, head, args.root or ".", args.base, args.since, args.tier
             )
         else:
-            head = args.head or git_head(args.root) or source["head"]
+            head = args.head or source["head"]
             fixed = fix_body(body, source, head, args.since, args.tier)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)

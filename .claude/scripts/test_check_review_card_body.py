@@ -297,7 +297,7 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
 
     def test_fixing_to_an_old_head_makes_the_check_red(self) -> None:
         """Deliberate violation: pin the old sha instead of the delivery head."""
-        target = 'head = args.head or git_head(args.root) or source["head"]'
+        target = 'head = args.head or source["head"]'
         source = REAL_SCRIPT.read_text(encoding="utf-8")
         self.assertIn(target, source)
         mutant = self.root / "check-review-card-body-old-head.py"
