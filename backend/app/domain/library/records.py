@@ -68,11 +68,16 @@ def _like_prefix(prefix: str) -> str:
     return f"{escaped}%"
 
 
-def _current(project_id: uuid.UUID):
-    return select(LibraryFileRecord).where(
+def _current_where(project_id: uuid.UUID) -> tuple:
+    """「现在这一份」的判据，给只挑几列、不取整行的查询共用。"""
+    return (
         LibraryFileRecord.project_id == project_id,
         LibraryFileRecord.superseded_at.is_(None),
     )
+
+
+def _current(project_id: uuid.UUID):
+    return select(LibraryFileRecord).where(*_current_where(project_id))
 
 
 async def _current_row(
@@ -152,6 +157,96 @@ async def attachment_exists(
     if name is not None:
         return await exists(session, project_id, name)
     return await asyncio.to_thread(service.room_file_exists, project_id, room_id, path)
+
+
+def _split_attachment_paths(paths: list[str]) -> tuple[dict[str, str], list[str]]:
+    """把一批地址分成资料库的名字和房间自己的路径：前者 name -> 地址,后者原样。"""
+    names: dict[str, str] = {}
+    room: list[str] = []
+    for path in dict.fromkeys(paths):
+        name = service.library_name(path)
+        if name is None:
+            room.append(path)
+        else:
+            names[name] = path
+    return names, room
+
+
+def _room_files_present(
+    project_id: uuid.UUID, room_id: uuid.UUID, paths: list[str]
+) -> set[str]:
+    return {
+        path for path in paths if service.room_file_exists(project_id, room_id, path)
+    }
+
+
+async def attachments_present(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    paths: list[str],
+) -> set[str]:
+    """这批地址里今天还读得到的那些。
+
+    资料库那半边一条查询问完；房间那半边一次线程池调用问完所有路径。一条待发
+    消息可以带着好几个附件，逐个问会变成一串来回。
+    """
+    names, room = _split_attachment_paths(paths)
+    present: set[str] = set()
+    if names:
+        rows = await session.execute(
+            select(LibraryFileRecord.name).where(
+                *_current_where(project_id),
+                LibraryFileRecord.name.in_(list(names)),
+            )
+        )
+        present.update(names[name] for name in rows.scalars())
+    if room:
+        present.update(
+            await asyncio.to_thread(_room_files_present, project_id, room_id, room)
+        )
+    return present
+
+
+def _read_attachment_bytes(
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    library: list[tuple[str, str, str]],
+    room_paths: list[str],
+) -> dict[str, bytes]:
+    """一次线程池调用读完这批附件的字节(资料库的行先查好，这里只取字节)。"""
+    found: dict[str, bytes] = {}
+    for path, location, blob_key in library:
+        found[path] = blobs.store(location).get(blob_key)
+    for path in room_paths:
+        found[path] = service.read_room_file(project_id, room_id, path)
+    return found
+
+
+async def read_attachments(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    paths: list[str],
+) -> dict[str, bytes]:
+    """一批地址的字节：资料库一条查询拿所有行，存储读取和房间文件放同一个
+    线程池调用里。缺一个就照单条读那样拒——调用方应当先问 `attachments_present`。"""
+    names, room = _split_attachment_paths(paths)
+    library: list[tuple[str, str, str]] = []
+    if names:
+        rows = await session.execute(
+            _current(project_id).where(LibraryFileRecord.name.in_(list(names)))
+        )
+        for row in rows.scalars():
+            library.append((names[row.name], row.location, row.blob_key))
+        if len(library) != len(names):
+            # 和单条读一样：这个地址没错，是东西不在了。
+            raise NotFoundError(say("libraryFileNotFound"))
+    if not library and not room:
+        return {}
+    return await asyncio.to_thread(
+        _read_attachment_bytes, project_id, room_id, library, room
+    )
 
 
 async def read_attachment_text(
