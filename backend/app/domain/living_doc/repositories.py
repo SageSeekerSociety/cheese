@@ -118,6 +118,8 @@ class DocumentRepository:
         team_id: int | None = None,
         title: str | None = None,
         author: str = "system",
+        created_by: str | None = None,
+        drafted_by: str | None = None,
         number: int | None = None,
         room_id: uuid.UUID | None = None,
     ) -> Document:
@@ -137,6 +139,8 @@ class DocumentRepository:
             project_id=project_id,
             title=title,
             author=author,
+            created_by=created_by,
+            drafted_by=drafted_by,
             number=number,
             room_id=room_id,
         )

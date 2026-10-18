@@ -24,6 +24,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'ask_agent', group: 'conversation' },
   { key: 'tasks', group: 'conversation' },
   { key: 'edit_content', group: 'content' },
+  { key: 'share_documents', group: 'content' },
   { key: 'comment', group: 'content' },
   { key: 'configure_agents', group: 'agents' },
 ]
