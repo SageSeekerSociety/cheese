@@ -315,6 +315,12 @@ class LogSignatureTest(unittest.TestCase):
         ("runner-lost", "The runner has received a shutdown signal."),
         ("setup-uv-timeout", "Failed to download uv-0.5.0: operation timed out"),
         ("setup-uv-timeout", "uv install hit a timeout"),
+        (
+            "setup-uv-timeout",
+            "Request timeout: /astral-sh/uv/releases/download/0.5.0/uv.tar.gz",
+        ),
+        ("setup-uv-timeout", "connect ETIMEDOUT /astral-sh/uv/releases/0.5.0"),
+        ("setup-uv-timeout", "uv: ETIMEDOUT"),
     )
 
     def test_every_signature_matches_its_own_sample(self):
@@ -423,21 +429,64 @@ class LogSignatureTest(unittest.TestCase):
                 "===========================\n"
                 "1 failed in 0.05s"
             ),
+            "captured block with an inner count line": (
+                "----------------------------- Captured stdout call "
+                "-----------------------------\n"
+                "1 passed in 0.01s\n"
+                f"upstream said: {flake} while uploading\n"
+                "=========================== short test summary info "
+                "===========================\n"
+                "1 failed in 0.05s"
+            ),
+            "unittest traceback": (
+                "FAIL: test_x (__main__.TestX)\n"
+                "----------------------------------------------------------------------\n"
+                "Traceback (most recent call last):\n"
+                '  File "test_x.py", line 25, in test_x\n'
+                f'    rerun.flake_log_signature("{flake}")["id"]\n'
+                f"AssertionError: {flake}\n"
+                "\n"
+                "Ran 1 test in 0.001s\n"
+                "FAILED (failures=1)"
+            ),
+            "error summary line": f"ERROR tests/unit/test_x.py::test_x - {flake}",
+            "auto marker without a banner": f">       assert {flake}",
         }
         for label, block in blocks.items():
             with self.subTest(shape=label):
                 self.assertIsNone(rerun.flake_log_signature(block))
 
-    def test_a_tool_error_after_the_report_is_still_scanned(self):
+    def test_a_tool_error_after_a_unittest_traceback_is_still_scanned(self):
         log = "\n".join(
             (
-                "=================== FAILURES ===================",
-                "FAILED tests/unit/test_x.py::test_x - AssertionError",
-                "1 failed in 0.05s",
+                "FAIL: test_x (__main__.TestX)",
+                "Traceback (most recent call last):",
+                '  File "test_x.py", line 25, in test_x',
+                '    rerun.flake_log_signature("read econnreset")["id"]',
+                "Ran 1 test in 0.001s",
+                "FAILED (failures=1)",
                 "Error: read ECONNRESET",
             )
         )
         self.assertEqual(rerun.flake_log_signature(log)["id"], "econnreset")
+
+    def test_a_tool_error_after_the_report_is_still_scanned(self):
+        """Both closing shapes end the skip: with `-q` and the decorated one."""
+        for closing in (
+            "1 failed in 0.05s",
+            "============================== 1 failed in 0.05s ==============================",
+            "============================ no tests ran in 0.02s ============================",
+        ):
+            with self.subTest(closing=closing):
+                log = "\n".join(
+                    (
+                        "=================== FAILURES ===================",
+                        "FAILED tests/unit/test_x.py::test_x - AssertionError",
+                        closing,
+                        "Error: read ECONNRESET",
+                    )
+                )
+                self.assertEqual(rerun.flake_log_signature(log)["id"], "econnreset")
 
     def test_the_signatures_argument_is_honoured(self):
         custom = (
@@ -559,6 +608,12 @@ class RunIdEntryTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(calls, [])
 
+    def test_extra_arguments_are_a_usage_error(self):
+        code, _, calls, fetches = self.call(["--run", "42", REPO, "extra"], run())
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [])
+        self.assertEqual(fetches, [])
+
     def test_the_rerun_command_failing_is_an_error(self):
         code, out, _, _ = self.call(
             ["--run", "42", REPO],
@@ -642,6 +697,17 @@ class GhCallTest(unittest.TestCase):
             contextlib.redirect_stderr(io.StringIO()),
         ):
             self.assertIsNone(rerun.fetch_failed_logs("42", "o/r"))
+
+    def test_a_hung_gh_is_a_refusal_not_a_traceback(self):
+        with (
+            mock.patch.object(
+                rerun.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(["gh"], 120),
+            ),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertIsNone(rerun._gh("api", "repos/o/r/actions/runs/42"))
 
 
 if __name__ == "__main__":

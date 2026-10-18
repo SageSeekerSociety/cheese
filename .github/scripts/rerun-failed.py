@@ -84,11 +84,21 @@ _LOG_PREFIX = re.compile(r"^[^\t\n]*\t[^\t\n]*\t(?:\ufeff)?\S+\s")
 # only means a flake there is left for a person instead of rerun.
 _PYTEST_BANNER = re.compile(
     r"^(?:=+ (?:FAILURES|ERRORS|short test summary info|warnings summary"
-    r"|slowest \d+ durations|no tests ran) =+"
+    r"|slowest \d+ durations) =+"
     r"|-{3,} Captured .+ -{3,}|_{3,} .+ _{3,})$"
 )
+_PYTEST_CAPTURED = re.compile(r"^-{3,} Captured .+ -{3,}$")
 _PYTEST_LOCATION = re.compile(r"^\S+:\d+: ")
-_PYTEST_END = re.compile(r"^\d+ (?:failed|passed|error|skipped)\b")
+# Without `-q`, pytest decorates the closing count: `===== 1 failed in 0.04s
+# =====`. `no tests ran` closes a run the same way.
+_PYTEST_END = re.compile(
+    r"^=*\s*(?:\d+ (?:failed|passed|error|skipped)\b|no tests ran\b)"
+)
+# unittest, which repo-guards runs over these helper tests, prints a traceback
+# instead of a pytest report: a `File "...", line N` frame followed by the
+# indented source line. That source is test text too.
+_UNITTEST_LOCATION = re.compile(r'^\s+File ".*", line \d+')
+_UNITTEST_END = re.compile(r"^(?:Ran \d+ tests?\b|FAILED \()")
 _PYTEST_REPORT = re.compile(r"^(?:FAILED |ERROR |>{1,2}\s|E {2,}|assert )")
 
 
@@ -188,13 +198,29 @@ def flake_log_signature(
     if not failed_log:
         return None
     in_report = False
+    in_captured = False
     for line in failed_log.splitlines():
         message = _message(line)
-        if _PYTEST_BANNER.match(message) or _PYTEST_LOCATION.match(message):
+        if _PYTEST_CAPTURED.match(message):
+            in_captured = True
+            in_report = True
+            continue
+        if in_captured:
+            # Only a banner ends a captured block: its text can itself contain
+            # a count line (`1 passed in 0.01s` from a nested pytest).
+            if _PYTEST_BANNER.match(message):
+                in_captured = False
+            else:
+                continue
+        if (
+            _PYTEST_BANNER.match(message)
+            or _PYTEST_LOCATION.match(message)
+            or _UNITTEST_LOCATION.match(message)
+        ):
             in_report = True
             continue
         if in_report:
-            if _PYTEST_END.match(message):
+            if _PYTEST_END.match(message) or _UNITTEST_END.match(message):
                 in_report = False
             continue
         if _PYTEST_REPORT.match(message):

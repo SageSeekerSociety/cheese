@@ -64,7 +64,13 @@ SIGNATURES = (
         "title": "setup-uv 下载超时",
         # The timeout is part of the signature: a 404, a checksum mismatch or
         # a permission error while downloading uv will not cure on a retry.
-        "pattern": r"\buv\b[^\n]*(?:timed out|timeout)",
+        # setup-uv's tool-cache client words it either way round: a socket
+        # timeout is `Request timeout: /astral-sh/uv/...`, a connect timeout is
+        # `connect ETIMEDOUT`.
+        "pattern": (
+            r"(?:\buv\b[^\n]*(?:timed out|timeout|ETIMEDOUT)"
+            r"|(?:Request timeout|connect ETIMEDOUT)[^\n]*\buv\b)"
+        ),
         "action": "uv 下载超时，重跑失败 job",
     },
 )
