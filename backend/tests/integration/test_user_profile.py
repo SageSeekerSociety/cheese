@@ -210,3 +210,61 @@ class TestUserProfileIntegration:
             headers=self.headers,
         )
         assert "😂" in get_resp.json()["data"]["user"]["intro"]
+
+    def test_patch_and_put_user_profile_agree(self):
+        """PATCH and PUT are two spellings of one update.
+
+        Each body below gets one answer from PATCH and one from PUT, and the
+        two must match in status and in body. A rule or a normalization added
+        to only one verb shows up here as a disagreement, whatever the rule is.
+        """
+        bodies = [
+            {
+                "nickname": f"{self.profile_prefix}_agreed",
+                "intro": f"{self.profile_prefix} agreed intro",
+            },
+            {"nickname": "   "},
+            {"intro": "很长的介绍" * 100},
+        ]
+
+        for body in bodies:
+            patch_resp = self.client.patch(
+                f"/users/{self.user.user_id}",
+                headers=self.headers,
+                json=body,
+            )
+            put_resp = self.client.put(
+                f"/users/{self.user.user_id}",
+                headers=self.headers,
+                json=body,
+            )
+
+            assert patch_resp.status_code == put_resp.status_code, body
+            assert patch_resp.json() == put_resp.json(), body
+
+        get_resp = self.client.get(
+            f"/users/{self.user.user_id}",
+            headers=self.headers,
+        )
+        user_data = get_resp.json()["data"]["user"]
+        assert user_data["nickname"] == bodies[0]["nickname"]
+        assert user_data["intro"] == bodies[2]["intro"]
+
+    @pytest.mark.parametrize("verb", ["patch", "put"])
+    def test_update_user_profile_rejects_invalid_nickname_on_both_verbs(self, verb):
+        response = getattr(self.client, verb)(
+            f"/users/{self.user.user_id}",
+            headers=self.headers,
+            json={"nickname": "   "},
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize("verb", ["patch", "put"])
+    def test_update_user_profile_rejects_non_owner_on_both_verbs(self, verb):
+        _aux_user, aux_headers = self._create_aux_user()
+        response = getattr(self.client, verb)(
+            f"/users/{self.user.user_id}",
+            headers=aux_headers,
+            json={"nickname": "hacked"},
+        )
+        assert response.status_code == 403
