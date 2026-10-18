@@ -177,6 +177,7 @@ class OAuthService:
         access_token: str | None = None,
         refresh_token: str | None = None,
         token_expires: datetime | None = None,
+        refresh_token_expires: datetime | None = None,
     ) -> dict:
         return await connections.create_connection(
             self,
@@ -187,6 +188,7 @@ class OAuthService:
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires=token_expires,
+            refresh_token_expires=refresh_token_expires,
         )
 
     async def update_connection_tokens(
@@ -197,6 +199,7 @@ class OAuthService:
         refresh_token: str | None,
         token_expires: datetime | None,
         raw_profile: dict | None = None,
+        refresh_token_expires: datetime | None = None,
     ) -> None:
         return await connections.update_connection_tokens(
             self,
@@ -205,6 +208,7 @@ class OAuthService:
             refresh_token=refresh_token,
             token_expires=token_expires,
             raw_profile=raw_profile,
+            refresh_token_expires=refresh_token_expires,
         )
 
     def _decrypt_stored_token(

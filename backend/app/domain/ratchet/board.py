@@ -28,6 +28,8 @@ area needs no change here and cannot drift.
 from datetime import UTC, datetime
 from typing import Any
 
+from app.domain.ratchet.registry import CHECKS
+
 _DIRECTIONS = {"down", "up"}
 _NOT_COLLECTED = "not_collected"
 
@@ -208,6 +210,7 @@ def build_board(
     previous: dict[str, dict[str, Any]] = {}
     latest_stale: dict[str, list[Any]] = {}
     known_ids: list[str] = []
+    active_ids = {check.id for check in CHECKS}
 
     for row in ordered:
         collections.append(
@@ -224,7 +227,7 @@ def build_board(
         if records:
             # The registry's own order, and the ids the series is drawn with.
             for record in records:
-                if record["id"] not in known_ids:
+                if record["id"] in active_ids and record["id"] not in known_ids:
                     known_ids.append(record["id"])
         for check_id in known_ids:
             record = by_id.get(check_id)
