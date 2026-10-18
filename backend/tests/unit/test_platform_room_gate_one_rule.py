@@ -108,9 +108,10 @@ async def test_unknown_topic_raises_404_before_resolving_actor() -> None:
     db = _FakeDb()
     resolver = _FakeResolver()
 
-    with pytest.raises(NotFoundError, match="Topic not found"):
+    with pytest.raises(NotFoundError) as exc_info:
         await platform_room.require_platform_room(db, resolver, missing_topic)
 
+    assert exc_info.value.message == say("topicNotFound")
     assert resolver.resolved == []
     assert resolver.authorized == []
 
