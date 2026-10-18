@@ -18,7 +18,6 @@ says so. Exit 0 whenever PRECOMPUTED.md was written.
 
     python3 .claude/pr-review/precompute.py --repo R --tree T --base B --head H \\
         --pr N --pr-body pr.md --scripts .claude/scripts --out PRECOMPUTED.md
-    python3 .claude/pr-review/precompute.py --self-test   # see test_pr_review_precompute.py
 """
 
 from __future__ import annotations
@@ -36,11 +35,12 @@ from pathlib import Path
 
 MAX_SYMBOLS = 300
 MAX_LOCS = 8
+COMMON_HITS = 200
 TS_EXPORT = re.compile(
     r"^export\s+(?:declare\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?"
     r"(?:type|interface|const|let|function\*?|class|enum)\s+(\w+)", re.M)
 TEST_PATH = re.compile(r"(^|/)(tests?/|test_[^/]*$|[^/]*\.(test|spec)\.[jt]sx?$)")
-GUARD_WORDS = re.compile(r"_KNOWN|KNOWN_|_BASELINE|BASELINE_|\bBASELINE\b|\bKNOWN\b")
+GUARD_WORDS = re.compile(r"^\s*[A-Z0-9_]*(?:KNOWN|BASELINE)[A-Z0-9_]*\s*(?::[^=\n]*)?=", re.M)
 PATCHERS = re.compile(r"setattr|monkeypatch|mocker\.|\bpatch(?:\.object)?\(|vi\.(?:mock|spyOn)|jest\.(?:mock|spyOn)")
 PR_MENTION = re.compile(r"(?<![\w/])#(\d{3,6})\b")
 
@@ -58,7 +58,7 @@ def show(repo, rev, path):
 
 
 # ---------------------------------------------------------------- 1. ci:fast
-def section_ci(repo, tree, report):
+def section_ci(repo, tree, report, head=None):
     out = ["## 1. ci:fast 报告"]
     cands = [Path(report)] if report else []
     for d in (tree, repo):
@@ -74,6 +74,10 @@ def section_ci(repo, tree, report):
         rep = json.loads(path.read_text())
     except (OSError, ValueError) as exc:
         return out + [f"{path} 读不出来（{exc}），按没跑过对待。"]
+    rep_head = str(rep.get("head") or "")
+    if head and not (rep_head and (head.startswith(rep_head) or rep_head.startswith(head))):
+        return out + [f"`{path}` 是别的提交（{rep_head[:12] or '没写'}）的报告，不是钉住的 {head[:12]}，不采信。"
+                      "所有检查都按没跑过对待。"]
     ran = rep.get("ran") or []
     passed = [r["id"] for r in ran if r.get("result") == "pass"]
     other = [r for r in ran if r.get("result") not in ("pass", "not_applicable")]
@@ -136,6 +140,22 @@ def refs(repo, rev, name):
     return [(l[len(pre):] if l.startswith(pre) else l) for l in p.stdout.splitlines()]
 
 
+DEFINITION = re.compile(r"^\s*(?:export\s+)?(?:async\s+)?(?:def|class|function|const|let|type|interface|enum)\s|^\s*[A-Za-z_]\w*\s*(?::[^=]+)?=")
+
+
+def removed_identifiers(repo, base, head):
+    try:
+        diff = git(repo, "diff", "-U0", "--no-renames", base, head)
+    except RuntimeError:
+        return []
+    names = {}
+    for line in diff.splitlines():
+        if line.startswith("-") and not line.startswith("---"):
+            for w in re.findall(r"[A-Za-z_]\w{3,}", line):
+                names[w] = None
+    return list(names)
+
+
 def section_symbols(repo, base, head):
     out = ["## 2. 公开符号与引用"]
     try:
@@ -161,6 +181,9 @@ def section_symbols(repo, base, head):
             hits = refs(repo, rev, n)
             others = [h for h in hits if not h.startswith(path + ":")]
             patches = [h for h in hits if PATCHERS.search(h)]
+            if len(hits) > COMMON_HITS:
+                sym_lines.append(f"- {label} `{n}`（{path}）：名字太常见（{len(hits)} 处命中），不列位置和打桩点。")
+                continue
             row = f"- {label} `{n}`（{path}）：{rev[:8]} 上全仓 {len(hits)} 处命中，文件外 {len(others)} 处"
             if others:
                 row += "：" + "; ".join(h.split(":", 2)[0] + ":" + h.split(":", 2)[1] for h in others[:MAX_LOCS])
@@ -169,18 +192,24 @@ def section_symbols(repo, base, head):
                 row += "。**打桩点**：" + "; ".join(h[:120] for h in patches[:MAX_LOCS])
             sym_lines.append(row)
     out += sym_lines or ["没有公开符号变化。"]
-    # Orphans: stayed in a touched file, had a user at base, and only its own definition is left.
+    # Orphans: a name that had a user at base and now has only its own definition. Candidates
+    # are the public names of touched files and every identifier on a deleted line, so a
+    # definition in an untouched file whose last user the diff removed is found too.
     orphans = []
-    if removed or changed:
-        for path, n in (kept + list(changed_set))[:MAX_SYMBOLS]:
-            if (path, n) in set(added):
-                continue
-            now = refs(repo, head, n)
-            if len(now) != 1:
-                continue
-            before = refs(repo, base, n)
-            if len(before) > 1:
-                orphans.append((path, n, len(before), now[0][:120]))
+    added_set = set(added)
+    cands = [(path, n) for path, n in kept + list(changed_set) if (path, n) not in added_set]
+    cands += [(None, n) for n in removed_identifiers(repo, base, head)]
+    seen = set()
+    for path, n in cands:
+        if n in seen or len(seen) >= MAX_SYMBOLS:
+            continue
+        seen.add(n)
+        now = refs(repo, head, n)
+        if len(now) != 1 or (path is None and not DEFINITION.search(now[0].split(":", 2)[-1])):
+            continue
+        before = refs(repo, base, n)
+        if len(before) > 1:
+            orphans.append((path or now[0].split(":", 1)[0], n, len(before), now[0][:120]))
     out.append("")
     out.append("### 孤立符号（本次改动后只剩定义本身一处引用，改动前不止一处）")
     out += ([f"- ⚠ `{n}`（{p}）：改动前 {b} 处，现在只剩 `{where}`" for p, n, b, where in orphans]
@@ -216,12 +245,17 @@ def run_tests(wt, files, test_cmd):
         if all(f.startswith("backend/") for f in py):
             cwd = wt / "backend"
             py = [f[len("backend/"):] for f in py]
-        cmd = [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *py]
+        venv_py = wt / "backend" / ".venv" / "bin" / "python"
+        cmd = [str(venv_py) if venv_py.exists() else sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *py]
     try:
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=600)
     except subprocess.TimeoutExpired:
         return None, "测试超过 600 秒，已停"
+    except OSError as exc:
+        return None, f"测试命令起不来：{exc}"
     tail = "\n".join((p.stdout + p.stderr).strip().splitlines()[-12:])
+    if p.returncode and re.search(r"No module named pytest|command not found|Failed to spawn", tail):
+        return None, "跑测试的环境缺 pytest，没跑成（不是测试失败）：" + tail.splitlines()[-1]
     return p.returncode, tail
 
 
@@ -248,7 +282,7 @@ def trial(repo, main_ref, merge_refs, head, test_files, test_cmd):
         if code is None:
             return "未跑", tail
         return ("通过" if code == 0 else "失败"), tail
-    except RuntimeError as exc:
+    except (RuntimeError, OSError) as exc:
         return "未跑", str(exc)
     finally:
         subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(wt)], capture_output=True)
@@ -266,7 +300,7 @@ def section_trial(repo, base, head, pr, body, main_ref, others, test_cmd):
     for n in mentioned:
         ref = f"refs/precompute/pr-{n}"
         p = subprocess.run(["git", "-C", str(repo), "fetch", "-q", "origin", f"+refs/pull/{n}/head:{ref}"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=60)
         if p.returncode == 0:
             merge_refs.append((f"#{n}", ref))
         else:
@@ -283,6 +317,8 @@ def section_trial(repo, base, head, pr, body, main_ref, others, test_cmd):
         out.append(f"- {label}：**{status}**")
         if status != "通过" and detail:
             out.append("  ```\n  " + detail.replace("\n", "\n  ") + "\n  ```")
+    for n in mentioned:
+        subprocess.run(["git", "-C", str(repo), "update-ref", "-d", f"refs/precompute/pr-{n}"], capture_output=True)
     return out
 
 
@@ -299,6 +335,10 @@ def run_helper(cmd, cwd, timeout):
 def section_helpers(tree, repo, base, head, pr_body, scripts, skip_prove, skip_claims):
     out = ["## 4. 回归证明与正文数字复算"]
     scripts = Path(scripts)
+    for rel in ("backend/.venv", "frontend/node_modules", "node_modules", ".venv"):
+        src, dst = Path(repo) / rel, Path(tree) / rel
+        if src.exists() and dst.parent.is_dir() and not dst.exists() and not dst.is_symlink():
+            dst.symlink_to(src)
     if skip_prove:
         out.append("- prove-regression --auto：本次跳过。")
     else:
@@ -338,7 +378,7 @@ def main(argv=None):
     body = Path(a.pr_body).read_text(errors="replace") if a.pr_body and Path(a.pr_body).is_file() else ""
     others = [tuple(o.split("=", 1)) for o in a.other]
     secs = []
-    for fn in (lambda: section_ci(a.repo, tree, a.report),
+    for fn in (lambda: section_ci(a.repo, tree, a.report, a.head),
                lambda: section_symbols(a.repo, a.base, a.head),
                lambda: section_trial(a.repo, a.base, a.head, a.pr, body, a.main_ref, others, a.test_cmd),
                lambda: section_helpers(tree, a.repo, a.base, a.head, a.pr_body, a.scripts, a.no_prove, a.no_claims)):

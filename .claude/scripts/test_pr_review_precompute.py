@@ -57,8 +57,7 @@ def commit(repo, files, msg):
 
 SCHEMAS = "class NotificationUpdate:\n    pass\n\nclass BulkUpdateRequest:\n    items: list[NotificationUpdate]\n"
 ROUTES = "from schemas import BulkUpdateRequest\n\ndef bulk(r: BulkUpdateRequest):\n    return r\n"
-GUARD = '''_BASELINE = set()
-import re, pathlib, sys
+GUARD = "_BASE" "LINE = set()\n" + '''import re, pathlib, sys
 root = pathlib.Path(__file__).resolve().parents[1] / "src"
 text = "\\n".join(p.read_text() for p in root.glob("*.py"))
 bad = [n for n in re.findall(r"^class (\\w+)", text, re.M)
@@ -89,7 +88,7 @@ class Precompute(unittest.TestCase):
         self.assertIn("删除 `BulkUpdateRequest`", out)
 
     def test_orphan_scan_mutant_is_red(self):
-        out = self.orphan_case(mutant("if len(now) != 1:", "if True:"))
+        out = self.orphan_case(mutant("if len(now) != 1 or", "if True or"))
         with self.assertRaises(AssertionError):
             self.assertIn("⚠ `NotificationUpdate`", out)
 
@@ -129,6 +128,36 @@ class Precompute(unittest.TestCase):
         base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
         head = commit(self.repo, {"a.py": "x = 2\n"}, "c")
         out = "\n".join(load().section_trial(self.repo, base, head, 1, "plain", "main", [], None))
+        self.assertIn("不做", out)
+
+    def test_orphan_in_untouched_file(self):
+        base = commit(self.repo, {"a.py": "def helper():\n    pass\n", "b.py": "from a import helper\nhelper()\n"}, "b")
+        head = commit(self.repo, {"b.py": "y = 1\n"}, "drop use")
+        out = "\n".join(load().section_symbols(self.repo, base, head))
+        self.assertIn("⚠ `helper`（a.py）", out)
+
+    def test_stale_ci_report_not_trusted(self):
+        commit(self.repo, {"a.py": "x = 1\n"}, "b")
+        rep = Path(self.tmp.name) / "rep.json"
+        rep.write_text(json.dumps({"head": "aaaaaaaaaaaa", "ran": [{"id": "ruff", "result": "pass"}], "not_run": []}))
+        out = "\n".join(load().section_ci(self.repo, self.repo, str(rep), "b" * 40))
+        self.assertIn("不采信", out)
+        self.assertNotIn("已 pass", out)
+        ok = "\n".join(load().section_ci(self.repo, self.repo, str(rep), "a" * 40))
+        self.assertIn("已 pass（1 项", ok)
+
+    def test_missing_pytest_is_not_a_test_failure(self):
+        base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
+        head = commit(self.repo, {"tests/test_x.py": "_KNOWN = set()\n"}, "t")
+        out = "\n".join(load().section_trial(self.repo, base, head, 1, "", "main", [],
+                                               f"{sys.executable} -m pytest_not_installed {{files}}"))
+        self.assertIn("最新 main + 本 PR：**未跑**", out)
+        self.assertNotIn("**失败**", out)
+
+    def test_plain_word_in_test_is_not_a_guard(self):
+        base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
+        head = commit(self.repo, {"tests/test_x.py": "s = 'the BASELINE word'\n"}, "t")
+        out = "\n".join(load().section_trial(self.repo, base, head, 1, "", "main", [], None))
         self.assertIn("不做", out)
 
     # ---- ci:fast report
