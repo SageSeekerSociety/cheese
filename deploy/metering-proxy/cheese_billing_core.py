@@ -487,7 +487,7 @@ class AdmissionGate:
     token cap stays as the deployment-wide backstop, and a brake that can take
     the platform down is worse than the overspend it prevents.
 
-    A cached public verdict within ``stale_s`` retains its pool, key and model
+    A cached routing answer within ``stale_s`` retains its pool, key and model
     during backend outages. Sending a gateway model to the subscription instead
     causes a non-retryable 404 model_not_found. Without a cached answer, fail-open
     routes to the subscription: it has no gateway credential to use.
@@ -540,7 +540,7 @@ class AdmissionGate:
         now = time.time()
         with self._lock:
             hit = self._cache.get(key)
-            if hit and now - hit[0] < self._cache_s:
+            if hit and hit[1].work_id is None and now - hit[0] < self._cache_s:
                 return hit[1]
         try:
             asked = (
@@ -566,17 +566,15 @@ class AdmissionGate:
                 )
             return Verdict(True, "admission unreachable (fail-open)")
         with self._lock:
-            # Drop what is too old to route by instead of letting it pile up.
-            # Keyed by project alone this was one entry per project and
-            # effectively bounded; keyed by topic it is one per topic ever
-            # served, which on a box carrying hundreds of them is a slow leak —
-            # in a process that has already been OOM-killed once (#654). The
-            # sweep is O(entries still inside the horizon) and only runs on a
-            # miss.
+            # Topic-scoped entries accumulate on busy proxies. Keep routing
+            # answers only within the stale horizon to bound the cache (#654).
             cutoff = now - self._stale_s
             self._cache = {k: v for k, v in self._cache.items() if v[0] >= cutoff}
-            if verdict.work_id is None:
-                self._cache[key] = (now, verdict)
+            # Task routing can survive an outage; an execution ID cannot.
+            cached = (
+                replace(verdict, work_id="") if verdict.work_id is not None else verdict
+            )
+            self._cache[key] = (now, cached)
         return verdict
 
 

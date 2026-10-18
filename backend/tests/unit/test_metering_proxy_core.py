@@ -54,6 +54,33 @@ def test_admission_reads_execution_from_backend_supply():
         )
 
 
+def test_task_gateway_outage_keeps_supply_without_reusing_execution(tmp_path):
+    calls = []
+
+    def admit(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise core.urllib.error.URLError("backend restart")
+        return core.Verdict(
+            True,
+            "",
+            pool="gateway",
+            key="task-key",
+            model="kimi-k3",
+            work_id=f"work-{len(calls)}",
+        )
+
+    gate = core.AdmissionGate("http://fixture/admission", post=admit)
+    assert gate.check("p", "t", "token").work_id == "work-1"
+    outage = gate.check("p", "t", "token")
+    assert (outage.pool, outage.key, outage.model) == ("gateway", "task-key", "kimi-k3")
+    assert outage.work_id == ""
+    assert gate.check("p", "t", "token").work_id == "work-3"
+    meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
+    meter.record("p", "t", {"input_tokens": 1}, "m", work_id=outage.work_id)
+    assert "work_id" not in json.loads((tmp_path / "usage.jsonl").read_text())
+
+
 def test_native_child_admission_does_not_reuse_its_parents_cached_supply():
     calls = []
 
