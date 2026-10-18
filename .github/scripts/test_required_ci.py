@@ -1343,6 +1343,11 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertIn("--max-time", args)
             self.assertIn("30", args[args.index("--max-time") + 1])
             self.assertIn("2", args[args.index("--retry") + 1])
+            # Retry-After is served by the server and is not transport, so
+            # --max-time does not bound a retry wait; only --retry-max-time
+            # does. Without it a 429 that says "wait a minute" sleeps twice.
+            self.assertIn("--retry-max-time", args)
+            self.assertIn("60", args[args.index("--retry-max-time") + 1])
             self.assertNotIn("--max-time\n60", payload)
 
     def test_a_missing_anchor_is_created_rather_than_left_missing(self):
@@ -1397,8 +1402,10 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertNotIn("::warning::", proc.stdout)
             self.assertIn("a" * 40, (tmp / "summary").read_text())
-            # And the read-back really happened: a GET, not a third write.
-            self.assertIn("refs/heads/main-green", (tmp / "args").read_text())
+            # And the read-back really happened: a GET at the documented
+            # single-ref endpoint, not a third write.
+            self.assertIn("https://api.github.com/repos/owner/repo/git/ref/heads/main-green",
+                          (tmp / "args").read_text())
             self.assertNotIn("-X\nPUT", (tmp / "args").read_text())
             calls = (tmp / "args").read_text()
             call_args = calls.splitlines()
