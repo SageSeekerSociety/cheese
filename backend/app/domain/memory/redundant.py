@@ -148,7 +148,7 @@ def agent_checkout_search(
             # 记一条记忆等不起一台慢机器：查不成就存下来，见 docstring。
             async with asyncio.timeout(_SEARCH_TIMEOUT_S):
                 result = await call(target, "repo_search", {"terms": terms})
-        except Exception as exc:  # noqa: BLE001 — 查不成是一种答案，不是失败的写入
+        except Exception as exc:  # 查不成是一种答案，不是失败的写入
             logger.warning(
                 "repo_search did not run for room=%s agent=%s: %s",
                 room.id,

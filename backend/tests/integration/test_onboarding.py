@@ -133,7 +133,7 @@ def _account_lookups(api_client, db_session, user_client, invite: int) -> int:
 
     statements: list[str] = []
 
-    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    def record(conn, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
     engine = db_session.bind.sync_engine

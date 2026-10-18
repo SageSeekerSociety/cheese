@@ -44,15 +44,9 @@ fine where a reactive, cross-tab value is what you want.
 component, one stage per state, no backend/login/environment. To add one:
 `node scripts/catalog-scaffold.mjs <src/...vue>` prints the entry skeleton (every
 sentence a person owes is `TODO(catalog)`); paste it into a `catalog*.ts` volume
-that `catalog.ts` imports and spreads; run
-`pnpm exec vitest run src/views/demo/catalog.spec.ts`; then
-`pnpm run lint:catalog:update`. Steps in Chinese:
+that `catalog.ts` imports and spreads; and run
+`pnpm exec vitest run src/views/demo/catalog.spec.ts`. Steps in Chinese:
 [`../docs/manual/dev/frontend.md#catalog`](../docs/manual/dev/frontend.md#catalog).
-
-**Every grade-A component must be catalogued or pending.** `pnpm run lint:catalog`
-fails on a grade-A component in neither `catalog.ts` and its volumes nor the
-`pending` list in `catalog-baseline.json`, and that list may only shrink. A
-layout or a shell is not a candidate.
 
 ## A new scene runs standalone from day one
 
@@ -111,9 +105,6 @@ Metric-page merge handling:
 
 ## Caps and conventions
 
-- Files under `src/` over **1000 lines** may not grow.
-  `.claude/scripts/check-file-sizes.py` judges each changed file against its size
-  at the merge base with `origin/main`.
 - `pnpm run lint` is the read-only ESLint (`lint:fix` writes); never gate on the
   writing form. Design tokens and the two themes:
   [`../.claude/rules/frontend.md`](../.claude/rules/frontend.md).

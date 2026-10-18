@@ -1,4 +1,3 @@
-# ruff: noqa: E501 — the materials and the rubric are prose a model reads, kept one line per sentence.
 """Score how 芝士 writes documents with the writing guide, so a change to the
 guide or a new model can be checked against the last run.
 

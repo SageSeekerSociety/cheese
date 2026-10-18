@@ -45,28 +45,28 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import httpx  # noqa: E402
+import httpx
 
-from scripts.model_identity_probe import battery, report  # noqa: E402
-from scripts.model_identity_probe import binding as binding_mod  # noqa: E402
+from scripts.model_identity_probe import battery, report
+from scripts.model_identity_probe import binding as binding_mod
 from scripts.model_identity_probe import reference as reference_mod
-from scripts.model_identity_probe.binding import (  # noqa: E402
+from scripts.model_identity_probe.binding import (
     DeclaredBinding,
     SeatCheck,
     check_seat,
 )
-from scripts.model_identity_probe.collect import collect  # noqa: E402
-from scripts.model_identity_probe.stats import (  # noqa: E402
+from scripts.model_identity_probe.collect import collect
+from scripts.model_identity_probe.stats import (
     DEFAULT_CONCURRENCY,
     DEFAULT_SAMPLES_PER_CELL,
     PROBE_PROTOCOL,
     PROBE_TEMPERATURE,
 )
-from scripts.model_identity_probe.tokenizer_fp import (  # noqa: E402
+from scripts.model_identity_probe.tokenizer_fp import (
     measure,
     to_reference,
 )
-from scripts.model_identity_probe.transport import (  # noqa: E402
+from scripts.model_identity_probe.transport import (
     Endpoint,
     detect_adapter,
 )

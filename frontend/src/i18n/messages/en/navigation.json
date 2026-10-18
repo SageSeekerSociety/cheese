@@ -40,6 +40,7 @@
     "integrations": "Feishu app",
     "featureStats": "Feature data",
     "ratchet": "Ratchet",
+    "ciActivity": "CI and merge queue",
     "credits": "Plans & credits",
     "runRecords": "Run records",
     "machines": "Machines",

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 // 文档的顶栏。左边是这篇现在的状态：平常是谁多久之前编辑的（点开是修改记录），断了网
-// 说改动会在连上后同步，只读时说只读。右边是在线的人、待处理的建议、评论、对整篇问
-// AI 队友，和「⋯」。
+// 说改动会在连上后同步，没有编辑权限时说只读。右边是在线的人、编辑方式（编辑 / 建议 /
+// 只读）、待处理的建议、评论、对整篇问 AI 队友，和「⋯」。
 //
 // 格式不在这里：选中文字时浮条上有，块的样式在「/」和左边的 ＋ 里。
 import type { DocAgentController } from '../../../composables/useDocAgent'
 import type { DocConnection, DocPeer } from '../../../composables/useDocCollab'
 import type { OutlineHeading } from '../../../lib/docOutline'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { relTime } from '../../../lib/relTime'
 import CheeseAvatar from '../../CheeseAvatar.vue'
@@ -24,9 +24,9 @@ const props = defineProps<{
   loading: boolean
   connection: DocConnection
   peers: DocPeer[]
-  /** 能不能改；不能改时左边说只读。 */
+  /** 现在能不能改：自己切到只读、或者没有编辑权限时是 false。 */
   editable: boolean
-  /** 没有编辑权限：只读回不去，「⋯」里也没有切换。 */
+  /** 没有编辑权限：左边说只读，没有编辑方式可切。 */
   readOnly: boolean
   /** 最近一次编辑：谁（已经读成名字）、什么时候。 */
   lastEdit: { name: string; at: string } | null
@@ -45,7 +45,7 @@ const props = defineProps<{
   findOpen: boolean
   /** 「⋯」里给不给「删除文档」：只有项目资料库里的文档能单独删。 */
   deletable?: boolean
-  /** 只能提修改建议（导师）：固定在「建议」，没有切换。 */
+  /** 只能提修改建议（导师）：编辑方式里只有「建议」和「只读」。 */
   suggestOnly?: boolean
   /** 打的字记成修订（建议），还是直接改正文（编辑）。 */
   suggesting?: boolean
@@ -53,6 +53,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'toggle-suggestions'): void
   (e: 'toggle-comments'): void
+  /** 在只读和能改之间切。 */
   (e: 'toggle-editable'): void
   (e: 'history'): void
   (e: 'export'): void
@@ -80,6 +81,23 @@ async function toComment() {
   if (thread) emit('open-thread', thread)
 }
 
+// 编辑方式：三个里挑一个。只读是「能不能改」那个开关，编辑和建议是能改时打的字记成什么。
+type Mode = 'edit' | 'suggest' | 'read'
+const modeName = computed(() =>
+  !props.editable
+    ? t('work.room.doc.mode.read')
+    : props.suggesting
+      ? t('work.room.doc.mode.suggest')
+      : t('work.room.doc.mode.edit')
+)
+const modeIcon = computed(() =>
+  !props.editable ? 'mdi-eye-outline' : props.suggesting ? 'mdi-file-document-edit-outline' : 'mdi-pencil-outline'
+)
+function pickMode(mode: Mode) {
+  if ((mode === 'read') === props.editable) emit('toggle-editable')
+  if (mode !== 'read' && !props.suggestOnly) emit('set-suggesting', mode === 'suggest')
+}
+
 // 大纲下拉：点了某一节，先收起菜单再往上发（滚到那一节是面板的事）。
 const outlineOpen = ref(false)
 function pickHeading(pos: number) {
@@ -103,12 +121,11 @@ function pickHeading(pos: number) {
       </span>
       <template v-else>
         <button
-          v-if="!editable"
+          v-if="readOnly"
           type="button"
           class="doc-top-bar__btn doc-top-bar__btn--chip"
-          :disabled="readOnly"
-          :title="readOnly ? t('work.room.doc.noEditAccess') : t('work.room.doc.backToEdit')"
-          @click="emit('toggle-editable')"
+          disabled
+          :title="t('work.room.doc.noEditAccess')"
         >
           {{ t('work.room.doc.readOnly') }}
         </button>
@@ -157,33 +174,46 @@ function pickHeading(pos: number) {
       >
         <v-icon size="17">mdi-magnify</v-icon>
       </button>
-      <span v-if="editable && suggestOnly" class="doc-top-bar__mode" :title="t('work.room.doc.mode.suggestOnly')">
-        <v-icon size="16">mdi-file-document-edit-outline</v-icon>{{ t('work.room.doc.mode.suggest') }}
-      </span>
-      <v-menu v-else-if="editable" location="bottom end" offset="6">
+      <v-menu v-if="!readOnly && !loading" location="bottom end" offset="6">
         <template #activator="{ props: menuProps }">
-          <button v-bind="menuProps" type="button" class="doc-top-bar__btn" data-testid="doc-mode">
-            <v-icon size="16">{{ suggesting ? 'mdi-file-document-edit-outline' : 'mdi-pencil-outline' }}</v-icon>
-            {{ suggesting ? t('work.room.doc.mode.suggest') : t('work.room.doc.mode.edit') }}
+          <button
+            v-bind="menuProps"
+            type="button"
+            class="doc-top-bar__btn"
+            data-testid="doc-mode"
+            :aria-label="modeName"
+            :title="modeName"
+          >
+            <v-icon size="16">{{ modeIcon }}</v-icon>
+            <span class="doc-top-bar__label">{{ modeName }}</span>
             <v-icon size="14">mdi-chevron-down</v-icon>
           </button>
         </template>
         <v-list density="compact" role="menu" :aria-label="t('work.room.doc.mode.label')">
           <v-list-item
+            v-if="!suggestOnly"
             role="menuitemradio"
-            :aria-checked="!suggesting"
+            :aria-checked="editable && !suggesting"
             :title="t('work.room.doc.mode.edit')"
             :subtitle="t('work.room.doc.mode.editHint')"
             prepend-icon="mdi-pencil-outline"
-            @click="emit('set-suggesting', false)"
+            @click="pickMode('edit')"
           />
           <v-list-item
             role="menuitemradio"
-            :aria-checked="!!suggesting"
+            :aria-checked="editable && !!suggesting"
             :title="t('work.room.doc.mode.suggest')"
-            :subtitle="t('work.room.doc.mode.suggestHint')"
+            :subtitle="suggestOnly ? t('work.room.doc.mode.suggestOnly') : t('work.room.doc.mode.suggestHint')"
             prepend-icon="mdi-file-document-edit-outline"
-            @click="emit('set-suggesting', true)"
+            @click="pickMode('suggest')"
+          />
+          <v-list-item
+            role="menuitemradio"
+            :aria-checked="!editable"
+            :title="t('work.room.doc.mode.read')"
+            :subtitle="t('work.room.doc.mode.readHint')"
+            prepend-icon="mdi-eye-outline"
+            @click="pickMode('read')"
           />
         </v-list>
       </v-menu>
@@ -209,8 +239,15 @@ function pickHeading(pos: number) {
       </button>
       <v-menu v-if="agent" v-model="agentOpen" location="bottom end" :close-on-content-click="false" offset="6">
         <template #activator="{ props: menuProps }">
-          <button v-bind="menuProps" type="button" class="doc-top-bar__btn doc-top-bar__btn--agent">
-            <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />{{ agentName }}
+          <button
+            v-bind="menuProps"
+            type="button"
+            class="doc-top-bar__btn doc-top-bar__btn--agent"
+            :aria-label="agentName"
+            :title="agentName"
+          >
+            <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />
+            <span class="doc-top-bar__label">{{ agentName }}</span>
           </button>
         </template>
         <div class="doc-top-bar__agent">
@@ -258,14 +295,6 @@ function pickHeading(pos: number) {
         <v-list density="compact" role="menu" :aria-label="t('work.room.doc.options')">
           <v-list-item role="menuitem" :title="t('work.room.doc.history')" @click="emit('history')" />
           <v-list-item role="menuitem" :title="t('work.room.doc.exportMarkdown')" @click="emit('export')" />
-          <template v-if="!readOnly">
-            <v-divider class="my-1" />
-            <v-list-item
-              role="menuitem"
-              :title="editable ? t('work.room.doc.setReadOnly') : t('work.room.doc.backToEdit')"
-              @click="emit('toggle-editable')"
-            />
-          </template>
           <template v-if="deletable">
             <v-divider class="my-1" />
             <v-list-item role="menuitem" :title="t('work.room.doc.share')" @click="emit('share')" />
@@ -284,16 +313,9 @@ function pickHeading(pos: number) {
 </template>
 
 <style scoped>
-.doc-top-bar__mode {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 8px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .doc-top-bar {
+  /* 窄的时候按钮上的字收起来（见文件末尾）：量的是这一条自己多宽，不是窗口。 */
+  container-type: inline-size;
   display: flex;
   min-width: 0;
   min-height: 44px;
@@ -436,6 +458,14 @@ function pickHeading(pos: number) {
     height: max(100%, 44px);
     content: '';
     transform: translate(-50%, -50%);
+  }
+}
+
+/* 右边那一排不让位（`flex: 0 0 auto`），放不下时最右边的「⋯」被挤出这一条。窄的时候
+   编辑方式和 AI 队友只留图标，名字还在 aria-label 和 title 里。 */
+@container (max-width: 479px) {
+  .doc-top-bar__label {
+    display: none;
   }
 }
 </style>

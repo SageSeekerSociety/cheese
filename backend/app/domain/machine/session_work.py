@@ -313,7 +313,7 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
             timeout=PUSH_WAIT_S,
         )
     # Any failure at all, the machine's or ours: the caller does not wait on it.
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning(
             "checkpoint before leaving device %s failed: %s", lease["device_id"], exc
         )
@@ -355,7 +355,7 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
             continue
         try:
             starts.append((lease, await restart_executor(session, row, lease)))
-        except Exception:  # noqa: BLE001 — best effort; the cleanup goes on
+        except Exception:  # best effort; the cleanup goes on
             logger.warning("no checkpoint for session %s", row.id, exc_info=True)
     # No transaction is held while the machines run it.
     await session.commit()

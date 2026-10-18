@@ -134,7 +134,7 @@ async def test_card_poll_in_queue_runs_the_stall_watch(monkeypatch):
             return True
 
     class Svc(_Svc):
-        class _session:  # noqa: N801 - minimal stand-in for the db session
+        class _session:  # minimal stand-in for the db session
             @staticmethod
             async def flush():
                 return None

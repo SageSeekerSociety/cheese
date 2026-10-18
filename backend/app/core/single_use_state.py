@@ -56,7 +56,7 @@ async def reserve(scope: str, jti: str, *, ttl_s: int) -> None:
         raise SingleUseUnavailableError(f"redis not configured (scope={scope})")
     try:
         await client.set(_key(scope, jti), b"1", ex=ttl_s, nx=True)
-    except Exception as exc:  # noqa: BLE001 — any transport failure is a refusal
+    except Exception as exc:  # any transport failure is a refusal
         raise SingleUseUnavailableError(f"redis unreachable (scope={scope})") from exc
 
 
@@ -71,6 +71,6 @@ async def claim(scope: str, jti: str) -> bool:
         raise SingleUseUnavailableError(f"redis not configured (scope={scope})")
     try:
         removed = await client.delete(_key(scope, jti))
-    except Exception as exc:  # noqa: BLE001 — any transport failure is a refusal
+    except Exception as exc:  # any transport failure is a refusal
         raise SingleUseUnavailableError(f"redis unreachable (scope={scope})") from exc
     return bool(removed)

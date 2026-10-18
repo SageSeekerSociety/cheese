@@ -531,7 +531,7 @@ class DeviceHub:
 from app.core.config import settings  # noqa: E402
 
 if settings.device_connection_url:
-    from app.domain.agent.device_hub_rpc import RemoteDeviceHub  # noqa: E402
+    from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 
     device_hub = RemoteDeviceHub(
         settings.device_connection_url, settings.device_connection_auth_secret

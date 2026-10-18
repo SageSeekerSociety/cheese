@@ -356,5 +356,5 @@ async def github_repo_snapshot(
                 f"GitHub 没有回答（protection HTTP {prot.status_code}，"
                 f"rules HTTP {rules.status_code}）",
             )
-    except Exception as e:  # noqa: BLE001 — display-only: degrade, never 500
+    except Exception as e:  # display-only: degrade, never 500
         return merge_method, GitHubProtection("unknown", f"查询 GitHub 失败：{e}")

@@ -201,11 +201,10 @@ class RequiredCITest(unittest.TestCase):
                 self.assertFalse(selected["backend"])
 
     def test_frontend_ratchet_scripts_run_the_frontend_suite(self):
-        # lint:catalog and lint:scenes run these scripts against the real tree
+        # lint:scenes and lint:scene-debt run these scripts against the real tree
         # only in the frontend suite; guards alone never runs them there.
         for path in (
             ".claude/scripts/frontend_grade.py",
-            ".claude/scripts/catalog-ratchet.py",
             ".claude/scripts/scene-ratchet.py",
             ".claude/scripts/scene-debt-ratchet.py",
             ".claude/scripts/test_scene_debt_ratchet.py",

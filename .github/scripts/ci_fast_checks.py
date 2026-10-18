@@ -103,11 +103,6 @@ OFF_DISK_SPECS = (
     "src/views/demo/demoTransitions.spec.ts",
     "src/views/feedback/scroll.spec.ts",
     "src/views/home/Landing.spec.ts",
-    # Reads TopicView.vue and walks topicView/ off disk to hold the split
-    # boundary, the per-file budgets and the route entry in place. Added in
-    # #3899 (befe4ab9, 2026-10-16 07:34) without a tuple entry; that PR's
-    # cifast check was skipped, so this list's own test was the first to notice.
-    "src/views/workspace/TopicView.splitBoundary.spec.ts",
     # Asserts four deleted modules are not back. It reads the tree with
     # existsSync rather than importing what it judges, so no changed root can
     # seed it; without an entry here a change that restored one of the four
@@ -590,7 +585,7 @@ def resolve(process, evidence):
             return {**process, **detail}
         if rc == 1:
             return {**process, "result": "fail",
-                    "reason": "new type errors over the ratchet baseline", **detail}
+                    "reason": "type errors", **detail}
         if rc == TSC_CANNOT_JUDGE:
             return {**process, "result": "blocked", "reason": "vue-tsc could not judge (exit 2)", **detail}
         return {**process, "result": "unknown", "reason": f"type check exited {rc}", **detail}

@@ -1,9 +1,10 @@
 """Decide whether a Required CI run may have its failed jobs rerun.
 
-The platform's GitHub App cannot rerun a job itself (it has no actions:write),
-so a red run used to mean an empty commit and all 25-35 jobs queued again.
-rerun-failed.yml holds actions:write instead and reruns only what failed, when
-the App asks with a repository_dispatch; this is the check it runs first.
+A red run used to mean an empty commit and all 25-35 jobs queued again.
+rerun-failed.yml reruns only what failed, with its own actions:write, when the
+App asks with a repository_dispatch; this is the check it runs first. It goes
+through here rather than a direct rerun because these conditions (the attempt
+limit in particular) are what keep a real failure from being retried into green.
 
 Reads the run as `GET /repos/{owner}/{repo}/actions/runs/{id}` returns it and
 exits non-zero, naming the reason, unless every condition holds.

@@ -66,7 +66,7 @@ async def unconnected_mcp(
                     },
                 )
             await session.commit()
-    except Exception:  # noqa: BLE001 — a notice must never fail a turn
+    except Exception:  # a notice must never fail a turn
         logger.exception("remote MCP check failed for room %s", room_id)
         return ()
     return unusable

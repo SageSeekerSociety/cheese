@@ -788,7 +788,7 @@ def run(session, names):
     for name in names:
         try:
             status, reason = CHECKS[name](session)
-        except Exception as error:  # noqa: BLE001 — any failure is this check's result
+        except Exception as error:  # any failure is this check's result
             status, reason = "fail", describe(error)
         label = session.model.name
         if session.model.deployment:
@@ -958,7 +958,7 @@ def main(argv=None):
 
     try:
         rows = catalog(base, key)
-    except Exception as error:  # noqa: BLE001 — reported, not raised
+    except Exception as error:  # reported, not raised
         print(f"cannot read /model/info: {describe(error)}", file=sys.stderr)
         return 1
     if args.list:

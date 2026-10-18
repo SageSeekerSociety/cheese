@@ -149,6 +149,7 @@ def _world():
             "sessions",
         ),
         ("ratchet ingest", "ratchet.ingest.ingest_snapshots", "sessions"),
+        ("ci activity sweep", "ci_activity.ingest.sweep", "sessions"),
     ],
 )
 async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
@@ -438,6 +439,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "wake_watch_interval_s",
         "sandbox_disk_check_s",
         "draft_pr_sweep_interval_s",
+        "ci_activity_sweep_interval_s",
     )
     for value, field in enumerate(fields, start=101):
         monkeypatch.setattr(settings, field, value)
@@ -478,6 +480,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("task deadline sweep", 116),
         ("memory dream", 117),
         ("ratchet ingest", 118),
+        ("ci activity sweep", 122),
         ("wake watch", 119),
     ]
     assert all(job.owner_only for job in world.jobs.values())

@@ -156,7 +156,7 @@ async def _mark_step_failed(
             )
             await session.commit()
         return payload
-    except Exception:  # noqa: BLE001 — a step's verdict is not worth a turn
+    except Exception:  # a step's verdict is not worth a turn
         logger.warning("could not mark step %s failed", block_id)
         return None
 
@@ -176,7 +176,7 @@ async def _record_step_output(
             )
             await session.commit()
         return payload
-    except Exception:  # noqa: BLE001 — a step's output is not worth a turn
+    except Exception:  # a step's output is not worth a turn
         logger.warning("could not record the output of step %s", block_id)
         return None
 
@@ -199,6 +199,6 @@ async def _record_step_calls(
             )
             await session.commit()
         return payload
-    except Exception:  # noqa: BLE001 — a step's calls are not worth a turn
+    except Exception:  # a step's calls are not worth a turn
         logger.warning("could not record the calls of step %s", block_id)
         return None
