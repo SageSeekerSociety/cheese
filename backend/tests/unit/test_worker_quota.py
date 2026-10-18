@@ -16,7 +16,7 @@ from app.domain.agent import worker_quota
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 
-_NAMES = ("PYTEST_XDIST_AUTO_NUM_WORKERS", "VITEST_MAX_WORKERS")
+_NAMES = ("PYTEST_XDIST_AUTO_NUM_WORKERS", "VITEST_MAX_FORKS")
 
 
 def _cgroup(tmp_path, cpu_max):
@@ -50,7 +50,7 @@ def test_two_cores_of_quota_is_two_workers(tmp_path):
     variables = worker_quota.environment({"limits": None}, cgroup=cgroup, own=own)
     assert variables == {
         "PYTEST_XDIST_AUTO_NUM_WORKERS": "2",
-        "VITEST_MAX_WORKERS": "2",
+        "VITEST_MAX_FORKS": "2",
     }
 
 
@@ -60,7 +60,7 @@ def test_the_sandboxs_own_limit_is_read_before_any_cgroup(tmp_path):
     cgroup, own = _cgroup(tmp_path, "200000 100000\n")
     variables = worker_quota.environment({"cpus": 3}, cgroup=cgroup, own=own)
     assert variables["PYTEST_XDIST_AUTO_NUM_WORKERS"] == "3"
-    assert variables["VITEST_MAX_WORKERS"] == "3"
+    assert variables["VITEST_MAX_FORKS"] == "3"
 
 
 def test_no_quota_hands_the_tools_nothing(tmp_path):
@@ -72,17 +72,29 @@ def test_no_quota_hands_the_tools_nothing(tmp_path):
     assert worker_quota.cores("max 100000") is None
 
 
+def test_a_quota_one_cgroup_up_is_the_rooms(tmp_path):
+    """A leaf cgroup that says `max` is a process whose budget is its parent's:
+    reading only the leaf would answer "uncapped" for a room that is capped one
+    level up, and keep the oversubscription this exists to prevent."""
+    cgroup, own = _cgroup(tmp_path, "max 100000\n")
+    (tmp_path / "cgroup/cpu.max").write_text("400000 100000\n", encoding="utf-8")
+    assert worker_quota.environment({"limits": None}, cgroup=cgroup, own=own) == {
+        "PYTEST_XDIST_AUTO_NUM_WORKERS": "4",
+        "VITEST_MAX_FORKS": "4",
+    }
+
+
 def test_a_fraction_of_a_core_is_never_a_fraction_of_a_worker(tmp_path):
     """Quotas are in microseconds and need not divide evenly; the worker count
     rounds down, and never below one."""
     cgroup, own = _cgroup(tmp_path, "150000 100000\n")
     assert worker_quota.environment({"limits": None}, cgroup=cgroup, own=own) == {
         "PYTEST_XDIST_AUTO_NUM_WORKERS": "1",
-        "VITEST_MAX_WORKERS": "1",
+        "VITEST_MAX_FORKS": "1",
     }
     assert worker_quota.environment({"cpus": 0.5}, cgroup=cgroup, own=own) == {
         "PYTEST_XDIST_AUTO_NUM_WORKERS": "1",
-        "VITEST_MAX_WORKERS": "1",
+        "VITEST_MAX_FORKS": "1",
     }
 
 
@@ -120,4 +132,28 @@ def test_a_room_that_names_its_own_count_keeps_it(tmp_path, monkeypatch):
         _env,
     ):
         assert config["env"]["PYTEST_XDIST_AUTO_NUM_WORKERS"] == "8"
-        assert config["env"]["VITEST_MAX_WORKERS"] == str(settings.cloud_sandbox_cpus)
+        assert config["env"]["VITEST_MAX_FORKS"] == str(settings.cloud_sandbox_cpus)
+
+
+def test_the_release_carries_the_module_it_needs(tmp_path):
+    """The registration a checkout hides.
+
+    `bootstrap.shipped` falls back to the source tree, so a `worker_quota.py`
+    missing from `runtime.RELEASE_FILES` still answers from a checkout and only
+    fails on the machine — where the release is all there is, and a prepare
+    that cannot read the module is a room that does not start. Dropping the
+    line from `RELEASE_FILES` turns this red.
+    """
+    from app.domain.agent.harness.claude_code.remote_execution import runtime
+
+    assert runtime.RELEASE_FILES["remote-execution/worker_quota.py"] == (
+        "app/domain/agent/worker_quota.py"
+    )
+    # Beside the release first, so what a machine runs is what was staged for
+    # it and not whatever the checkout the tests run in happens to hold.
+    release = tmp_path / "release"
+    (release / "remote-execution").mkdir(parents=True)
+    (release / "remote-execution/worker_quota.py").write_text(
+        'VARIABLES = ("STAGED",)\n', encoding="utf-8"
+    )
+    assert bootstrap.shipped(release, "worker_quota")["VARIABLES"] == ("STAGED",)

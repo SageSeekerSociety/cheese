@@ -8,12 +8,15 @@ between them (measured 2026-10-18, `沙箱池 load1 取证`). So the room is tol
 the number its quota allows, as process environment:
 
 - `PYTEST_XDIST_AUTO_NUM_WORKERS` is what xdist's `auto` reads instead of the
-  processor count.
-- `VITEST_MAX_WORKERS` is vitest's own variable for `maxWorkers`. It has been
-  that name since vitest 4 (`VITEST_MAX_THREADS` before it), and the version
-  this repository pins reads only this one. It also wins over the `maxWorkers`
-  that `frontend/vite.config.ts` sizes from `os.availableParallelism()`, which
-  is the host's core count for the same reason.
+  processor count; an explicit `-n N` still wins.
+- `VITEST_MAX_FORKS` is what `frontend/vite.config.ts` sizes its own worker
+  pool from (and what vitest's fork pool read before 4). Deliberately not
+  `VITEST_MAX_WORKERS`: vitest applies that one AFTER everything else,
+  command-line flags included, so it would undo a harness's own decision —
+  `ci:fast` passes `--maxWorkers=1 --no-file-parallelism` from a memory
+  budget, and two 2 GB forks in a 3 GiB sandbox is the failure this whole
+  change is meant to prevent. Config is a default; a flag is somebody's
+  answer.
 
 WHERE THE QUOTA COMES FROM. A platform sandbox's quota travels in the
 executor payload (`sandbox.cpus`): it is the same number `sandbox_host.limit`
@@ -42,7 +45,7 @@ CPU_MAX = "cpu.max"
 #: hierarchy, and cgroup v2's is the one with an empty controller list.
 OWN = Path("/proc/self/cgroup")
 #: The variables a test runner reads a worker count from, by the name it reads.
-VARIABLES = ("PYTEST_XDIST_AUTO_NUM_WORKERS", "VITEST_MAX_WORKERS")
+VARIABLES = ("PYTEST_XDIST_AUTO_NUM_WORKERS", "VITEST_MAX_FORKS")
 
 
 def environment(sandbox, cgroup=CGROUP, own=OWN):
@@ -66,11 +69,22 @@ def quota(sandbox, cgroup=CGROUP, own=OWN):
 
 
 def own_quota(cgroup=CGROUP, own=OWN):
-    """The CPU quota of the cgroup this process runs in, or None."""
+    """The CPU quota this process is under, or None when nothing caps it.
+
+    Its own cgroup first, then each cgroup above it: a leaf that says `max` is
+    a process whose budget is its parent's, and a leaf-only reading would
+    answer "uncapped" for a room that is capped one level up.
+    """
     for line in _read(own).splitlines():
         hierarchy, _, path = line.partition("::")
-        if hierarchy == "0":
-            return cores(_read(cgroup / path.strip("/") / CPU_MAX))
+        if hierarchy != "0":
+            continue
+        parts = [part for part in path.strip("/").split("/") if part]
+        for depth in range(len(parts), -1, -1):
+            found = cores(_read(cgroup.joinpath(*parts[:depth]) / CPU_MAX))
+            if found is not None:
+                return found
+        return None
     return None
 
 
