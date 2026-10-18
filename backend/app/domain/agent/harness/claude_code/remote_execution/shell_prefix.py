@@ -409,10 +409,11 @@ def run_on_the_machine(target, command):
     client = RemoteClient(target)
     if short_name is not None and not spelled_later:
         if short_name in {DEFERRED_WORKSPACE, target.get("virtual_workspace")}:
-            # The session started before its machine was rented, so its name
-            # was the placeholder: the machine has it now, and the directory it
-            # stands for is the task's checkout, not the project view.
-            short_name = client.working_directory(notice=False)
+            # The session started before its machine was rented, so its name is
+            # the placeholder. It stays one here: the transport spells it after
+            # it takes the hands, where the checkout is known — a machine the
+            # session was moved to holds another one than the target file says.
+            spelled_later = True
         else:
             short_name = outward(short_name)
     merge = _same_file(1, 2)

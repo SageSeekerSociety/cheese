@@ -315,6 +315,10 @@ def prepare(
         working = client.working_directory()
         if working and working != info["workspace"]:
             start = working if local else session_path(working)
+    # Taking the machine's hands (`acquire`) keeps the credential beside the
+    # target when there is no token file yet; it must not travel inside the
+    # target this writes, nor into the plugin built from it.
+    target.pop("execution_token", None)
     carry_conversation(config, extra_args, start)
     target = dict(
         target,

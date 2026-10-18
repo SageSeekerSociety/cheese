@@ -56,22 +56,24 @@ _SEND_MEDIA_TYPE = {
 }
 
 
-def send_user_file_paths(path, config):
+def send_user_file_paths(path, config, anchor=None):
     """`(executor path, room path)` for one file a SendUserFile named.
 
-    The model spells paths the way the session was told to (the executor's
-    workspace); the room wants a workspace-relative pointer because
-    `POST /topics/{id}/shown` refuses absolute ones. A file that lives outside
-    the workspace keeps its name under `uploads/`, the address this room already
-    gives a paste with no name of its own.
+    A relative path is the session's own: it is anchored at where the session
+    started (`anchor`, `RemoteClient.working_directory`), which for a task is
+    its checkout, not the project view. The room wants a workspace-relative
+    pointer because `POST /topics/{id}/shown` refuses absolute ones. A file that
+    lives outside the workspace keeps its name under `uploads/`, the address
+    this room already gives a paste with no name of its own.
     """
     path = (path or "").replace("\\", "/")
     work = session_path(config.get("workspace") or "").rstrip("/")
     machine = path
-    if work and not machine.startswith("/"):
+    here = session_path(anchor).rstrip("/") if anchor else work
+    if here and not machine.startswith("/"):
         # The executor's shell keeps its own cwd across commands; a relative
-        # path is only unambiguous once it is anchored at the workspace.
-        machine = work + "/" + machine
+        # path is only unambiguous once it is anchored where the session is.
+        machine = here + "/" + machine
     name = machine.rsplit("/", 1)[-1] or "file"
     rel = machine
     if work and (machine == work or machine.startswith(work + "/")):
@@ -136,7 +138,9 @@ def deliver_send_user_file(client, config, payload, args, invoke):
         name = str(item.get("name") or "") or (
             path.replace("\\", "/").rsplit("/", 1)[-1] or "file"
         )
-        machine, rel = send_user_file_paths(path, config)
+        machine, rel = send_user_file_paths(
+            path, config, anchor=client.working_directory()
+        )
         preexisting = item.get("upload_error")
         if preexisting:
             attachments.append(
