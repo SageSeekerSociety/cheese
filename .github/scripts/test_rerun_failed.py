@@ -546,6 +546,12 @@ class LogSignatureTest(unittest.TestCase):
             "##[error]The runner has received a shutdown signal. This can happen"
             " when the runner service is stopped.",
             "##[error]The hosted runner lost communication with the server.",
+            # Required CI's push runs share a self-hosted runner; GitHub names
+            # the pool in this message, so the `self-hosted` alternative in
+            # `_RUNNER_ANNOTATION` is what recognises it.
+            "##[error]The self-hosted runner: cheese-ci lost communication with"
+            " the server. Verify the machine is running and has a healthy network"
+            " connection.",
             "::error::The runner has received a shutdown signal.",
         ):
             with self.subTest(text=text):
