@@ -16,7 +16,11 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from app.domain.review.landing_forge import ForgeUnavailable, GitHubLandingReads
+from app.domain.review.landing_forge import (
+    Check,
+    ForgeUnavailable,
+    GitHubLandingReads,
+)
 
 MERGED = "m" * 40
 SINCE = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
@@ -313,3 +317,29 @@ def test_ancestry_is_what_the_compare_says():
     assert asyncio.run(reads.is_ancestor("a", "b"))
     assert not asyncio.run(reads.is_ancestor("b", "a"))
     assert asyncio.run(reads.is_ancestor("a", "a"))
+
+
+def test_a_rerun_that_passed_wins_over_the_red_it_replaced():
+    from app.domain.review.landing_forge import gate_run
+
+    red_then_green = [
+        Check("CI required", "completed", "failure", "", suite=1),
+        Check("CI required", "completed", "success", "", suite=1),
+    ]
+    assert gate_run(red_then_green).conclusion == "success"
+
+
+def test_a_red_gate_beats_a_cancelled_one_whatever_the_order():
+    from app.domain.review.landing_forge import gate_run
+
+    for runs in (
+        [
+            Check("CI required", "completed", "cancelled", "", suite=1),
+            Check("CI required", "completed", "failure", "", suite=1),
+        ],
+        [
+            Check("CI required", "completed", "failure", "", suite=1),
+            Check("CI required", "completed", "cancelled", "", suite=1),
+        ],
+    ):
+        assert gate_run(runs).conclusion == "failure"

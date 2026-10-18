@@ -47,12 +47,13 @@ LINE_TWO = "commit-c"
 HEAD = "commit-d"
 
 
-def _gate(conclusion: str, name: str = "CI required") -> Check:
+def _gate(conclusion: str, name: str = "CI required", suite: int = 1) -> Check:
     return Check(
         name=name,
         status="completed",
         conclusion=conclusion,
         url=f"https://ci.example/{name}/{conclusion}",
+        suite=suite,
     )
 
 
@@ -185,6 +186,9 @@ def test_a_gate_still_queued_says_nothing(client, app_world, forge):
         _gate("success", "scope"),
         Check("CI required", "queued", None, "https://ci.example/gate"),
     ]
+    # A covering answer exists; without the queued rule the look would read
+    # this commit as passed through it.
+    forge.covered[LINE_ONE] = (LINE_ONE, [_gate("success")])
 
     watch(client)
 
@@ -268,7 +272,7 @@ def test_a_red_check_the_batch_does_not_rerun_is_not_withdrawn(
     forge.ran[ANCHOR] = [_gate("success")]
     forge.ran[LINE_ONE] = [
         _gate("success"),
-        _gate("failure", "build-gateway"),
+        _gate("failure", "build-gateway", suite=2),
     ]
     watch(client)
     assert _landing(client, task_id).checks.value == "failed"
@@ -347,3 +351,20 @@ def test_a_green_batch_says_nothing(client, app_world, forge):
     assert _told(client, second) == told_second
     assert _landing(client, first).checks.value == "passed"
     assert _landing(client, second).checks.value == "passed"
+
+
+def test_a_gate_that_was_rerun_green_is_not_red(client, app_world, forge):
+    """A re-run leaves both runs on the commit; the pass is the verdict."""
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    told = _told(client, task_id)
+    forge.ran[LINE_ONE] = [
+        _gate("failure"),
+        _gate("success"),
+        _gate("success", "scope"),
+    ]
+
+    watch(client)
+
+    assert _told(client, task_id) == told
+    assert _landing(client, task_id).checks.value == "passed"

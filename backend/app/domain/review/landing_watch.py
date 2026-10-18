@@ -52,11 +52,11 @@ from app.domain.notice_meta import (
 from app.domain.project.forge import background_quota, quota_serves_background
 from app.domain.review import landing_forge
 from app.domain.review.landing_forge import (
-    BATCH_GATE,
     BatchCommits,
     Check,
     ForgeUnavailable,
     LandingReads,
+    gate_run,
 )
 from app.domain.review.landing_models import ChecksOutcome, DeployOutcome, TaskLanding
 from app.domain.review.ports import (
@@ -411,6 +411,30 @@ def _covered(reads: LandingReads, project_id, sha: str, anchor: str, memo: dict)
     )
 
 
+def _red_checks(runs: list[Check]) -> list[Check]:
+    """The checks that are red, one per name.
+
+    A re-run leaves several runs of one name: as `merge_state._outcome` reads
+    them, any pass wins, a run still going means nothing is decided, and the
+    remaining red is the answer."""
+    by_name: dict[str, list[Check]] = {}
+    for run in runs:
+        by_name.setdefault(run.name, []).append(run)
+    red: list[Check] = []
+    for group in by_name.values():
+        if any(
+            run.status == "completed" and run.conclusion == "success" for run in group
+        ):
+            continue
+        if any(run.status != "completed" for run in group):
+            continue
+        for run in group:
+            if run.conclusion in _FAILED:
+                red.append(run)
+                break
+    return red
+
+
 async def _judge_checks(
     reads: LandingReads, sha: str, *, project_id, memo: dict
 ) -> Judgement | None:
@@ -422,10 +446,8 @@ async def _judge_checks(
     # gate itself, still sit in the queue on the shared pool.
     if any(run.status != "completed" for run in own):
         return None
-    red = [
-        run for run in own if run.status == "completed" and run.conclusion in _FAILED
-    ]
-    gate = _gate(own)
+    red = _red_checks(own)
+    gate = gate_run(own)
     anchor = await _green(reads, project_id, memo)
     if gate is not None and gate.conclusion in _FAILED:
         if anchor and await _covered(reads, project_id, sha, anchor, memo):
@@ -503,7 +525,7 @@ async def _judge_checks(
             )
         return None
     head, head_checks = covering
-    covering_gate = _gate(head_checks)
+    covering_gate = gate_run(head_checks)
     if (
         covering_gate is None
         or covering_gate.conclusion is None
@@ -541,7 +563,7 @@ async def _gate_ran(
     """Whether ``sha`` was checked on its own, rather than in a batch."""
     if not sha:
         return False
-    gate = _gate(await _checks(reads, project_id, sha, memo))
+    gate = gate_run(await _checks(reads, project_id, sha, memo))
     return (
         gate is not None
         and gate.status == "completed"
@@ -588,7 +610,7 @@ async def _judge_batch(
 ) -> Judgement:
     """The batched gate on ``head`` went red: who in the batch it covers may
     have broken it."""
-    red = tuple(run for run in head_checks if run.conclusion in _FAILED)
+    red = tuple(_red_checks(head_checks))
     if not red:
         return Judgement(ChecksOutcome.passed, ())
     anchor = await _green(reads, project_id, memo)
@@ -639,7 +661,7 @@ async def _walk_back(reads: LandingReads, project_id, head: str, memo: dict):
         if not parent:
             complete = True
             break
-        gate = _gate(await _checks(reads, project_id, parent, memo))
+        gate = gate_run(await _checks(reads, project_id, parent, memo))
         if gate is not None and gate.status == "completed":
             if gate.conclusion == "success":
                 complete = True
@@ -708,13 +730,6 @@ def _stem(path: str) -> str:
     name = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
     name = name.removeprefix("test_").removesuffix("_test")
     return name.removesuffix(".test")
-
-
-def _gate(runs: list[Check]) -> Check | None:
-    for run in runs:
-        if run.name == BATCH_GATE:
-            return run
-    return None
 
 
 async def _checks_failed(
@@ -964,18 +979,6 @@ async def _withdraw_passed(
             continue
         try:
             anchor = await reads.main_green()
-            # The names the green batch itself reports as passed: a red check
-            # the batch does not rerun (an image build, say) is not withdrawn
-            # by the batch going green.
-            passed = (
-                {
-                    run.name
-                    for run in await reads.checks(anchor)
-                    if run.status == "completed" and run.conclusion == "success"
-                }
-                if anchor
-                else set()
-            )
         except Exception:  # a forge read that fails withdraws nothing
             logger.warning(
                 "reading main-green failed for %s", project_id, exc_info=True
@@ -990,17 +993,28 @@ async def _withdraw_passed(
                 runs = await reads.checks(merge_sha)
             except Exception:  # a forge read that fails withdraws nothing
                 continue
-            still_red = [
-                run.name
-                for run in runs
-                if run.status == "completed"
-                and run.conclusion in _FAILED
-                and run.name != BATCH_GATE
-                and run.name not in passed
-            ]
-            if still_red:
-                # The blame was that check, and the batch does not rerun it.
-                continue
+            gate = gate_run(runs)
+            red = _red_checks(runs)
+            if gate is None:
+                # No gate of its own was left behind; if something else on the
+                # commit is red, the blame may have been that, and it is not
+                # the batch's to take back.
+                if red:
+                    continue
+            else:
+                # Only a red check in the batch's own workflow run is taken
+                # back: a workflow that runs beside it (an image build, say)
+                # is another suite, and Required CI going green says nothing
+                # about it.
+                still_red = [
+                    run
+                    for run in red
+                    if run.suite is None
+                    or gate.suite is None
+                    or run.suite != gate.suite
+                ]
+                if still_red:
+                    continue
             async with sessions() as session:
                 landing = await session.get(
                     TaskLanding, landing_id, with_for_update=True

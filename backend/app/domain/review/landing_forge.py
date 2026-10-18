@@ -48,6 +48,10 @@ class Check:
     #: success / failure / cancelled / skipped / timed_out / … once completed
     conclusion: str | None
     url: str
+    #: The check suite (one workflow run) the check belongs to. A workflow
+    #: that runs beside the batched gate — an image build, say — is another
+    #: suite, which is how its failure is told apart from the gate's own.
+    suite: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,9 +178,10 @@ _LOOK_AHEAD = 20
 _LOOK_BACK = 20
 #: How many red jobs get their log read for failed test names.
 _RED_LOGS = 3
-#: How far the search goes when `main-green` names nothing: a repository may
-#: not gate main at all, and each candidate costs a call on every tick.
-_LOOK_AHEAD_NO_ANCHOR = 5
+#: How far the search goes when `main-green` names nothing. Before the first
+#: green batch no anchor exists, and a batch can be as long as the attribution
+#: reads: the same bound applies until the mark appears.
+_LOOK_AHEAD_NO_ANCHOR = 20
 
 #: A failed check-run's log names its failing tests in one of these shapes:
 #: pytest `FAILED tests/x.py::test_y - …`, vitest/jest `FAIL  src/x.test.ts > …`.
@@ -191,7 +196,7 @@ _TEST_PATH = re.compile(
 _RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
 
 
-def _gate(runs: list[Check]) -> Check | None:
+def gate_run(runs: list[Check]) -> Check | None:
     """The batched gate's own check run among a commit's checks, if any.
 
     A re-run leaves more than one run of the same name on a commit; as
@@ -205,6 +210,9 @@ def _gate(runs: list[Check]) -> Check | None:
             return run
     for run in gates:
         if run.status != "completed":
+            return run
+    for run in gates:
+        if run.conclusion in _RED_CONCLUSIONS:
             return run
     return gates[0]
 
@@ -272,6 +280,7 @@ class GitHubLandingReads:
                     status=run.get("status") or "",
                     conclusion=run.get("conclusion"),
                     url=run.get("html_url") or "",
+                    suite=(run.get("check_suite") or {}).get("id"),
                 )
                 for run in runs
             ]
@@ -316,7 +325,7 @@ class GitHubLandingReads:
         # never deciding while merges keep landing.
         for commit in reversed(ahead):
             runs = await self.checks(commit)
-            gate = _gate(runs)
+            gate = gate_run(runs)
             if gate is None or gate.status != "completed":
                 continue
             if gate.conclusion != "cancelled":
@@ -347,7 +356,7 @@ class GitHubLandingReads:
         # caps some commits are never looked at, and a commit the forge refused
         # to describe is one whose files are unknown.
         complete = (
-            len(listed) <= total
+            len(listed) >= total
             and len(listed) < _COMPARE_MAX_COMMITS
             and len(listed) <= _LOOK_BACK
         )

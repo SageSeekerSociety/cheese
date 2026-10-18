@@ -113,6 +113,7 @@ def _ran(name: str, conclusion: str | None) -> Check:
         status="completed" if conclusion else "in_progress",
         conclusion=conclusion,
         url=f"https://ci.example/{name}",
+        suite=1,
     )
 
 
