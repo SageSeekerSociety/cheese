@@ -8,7 +8,7 @@ import type { DocAgentController } from '../../../composables/useDocAgent'
 import type { DocConnection, DocPeer } from '../../../composables/useDocCollab'
 import type { OutlineHeading } from '../../../lib/docOutline'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { relTime } from '../../../lib/relTime'
 import CheeseAvatar from '../../CheeseAvatar.vue'
@@ -83,6 +83,16 @@ async function toComment() {
 
 // 编辑方式：三个里挑一个。只读是「能不能改」那个开关，编辑和建议是能改时打的字记成什么。
 type Mode = 'edit' | 'suggest' | 'read'
+const modeName = computed(() =>
+  !props.editable
+    ? t('work.room.doc.mode.read')
+    : props.suggesting
+      ? t('work.room.doc.mode.suggest')
+      : t('work.room.doc.mode.edit')
+)
+const modeIcon = computed(() =>
+  !props.editable ? 'mdi-eye-outline' : props.suggesting ? 'mdi-file-document-edit-outline' : 'mdi-pencil-outline'
+)
 function pickMode(mode: Mode) {
   if ((mode === 'read') === props.editable) emit('toggle-editable')
   if (mode !== 'read' && !props.suggestOnly) emit('set-suggesting', mode === 'suggest')
@@ -166,16 +176,16 @@ function pickHeading(pos: number) {
       </button>
       <v-menu v-if="!readOnly && !loading" location="bottom end" offset="6">
         <template #activator="{ props: menuProps }">
-          <button v-bind="menuProps" type="button" class="doc-top-bar__btn" data-testid="doc-mode">
-            <template v-if="!editable">
-              <v-icon size="16">mdi-eye-outline</v-icon>{{ t('work.room.doc.mode.read') }}
-            </template>
-            <template v-else-if="suggesting">
-              <v-icon size="16">mdi-file-document-edit-outline</v-icon>{{ t('work.room.doc.mode.suggest') }}
-            </template>
-            <template v-else>
-              <v-icon size="16">mdi-pencil-outline</v-icon>{{ t('work.room.doc.mode.edit') }}
-            </template>
+          <button
+            v-bind="menuProps"
+            type="button"
+            class="doc-top-bar__btn"
+            data-testid="doc-mode"
+            :aria-label="modeName"
+            :title="modeName"
+          >
+            <v-icon size="16">{{ modeIcon }}</v-icon>
+            <span class="doc-top-bar__label">{{ modeName }}</span>
             <v-icon size="14">mdi-chevron-down</v-icon>
           </button>
         </template>
@@ -229,8 +239,15 @@ function pickHeading(pos: number) {
       </button>
       <v-menu v-if="agent" v-model="agentOpen" location="bottom end" :close-on-content-click="false" offset="6">
         <template #activator="{ props: menuProps }">
-          <button v-bind="menuProps" type="button" class="doc-top-bar__btn doc-top-bar__btn--agent">
-            <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />{{ agentName }}
+          <button
+            v-bind="menuProps"
+            type="button"
+            class="doc-top-bar__btn doc-top-bar__btn--agent"
+            :aria-label="agentName"
+            :title="agentName"
+          >
+            <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />
+            <span class="doc-top-bar__label">{{ agentName }}</span>
           </button>
         </template>
         <div class="doc-top-bar__agent">
@@ -297,6 +314,8 @@ function pickHeading(pos: number) {
 
 <style scoped>
 .doc-top-bar {
+  /* 窄的时候按钮上的字收起来（见文件末尾）：量的是这一条自己多宽，不是窗口。 */
+  container-type: inline-size;
   display: flex;
   min-width: 0;
   min-height: 44px;
@@ -439,6 +458,14 @@ function pickHeading(pos: number) {
     height: max(100%, 44px);
     content: '';
     transform: translate(-50%, -50%);
+  }
+}
+
+/* 右边那一排不让位（`flex: 0 0 auto`），放不下时最右边的「⋯」被挤出这一条。窄的时候
+   编辑方式和 AI 队友只留图标，名字还在 aria-label 和 title 里。 */
+@container (max-width: 479px) {
+  .doc-top-bar__label {
+    display: none;
   }
 }
 </style>

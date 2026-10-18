@@ -61,13 +61,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 不让出 safe-area-inset-bottom：这一条只在编辑区有焦点时在，那时键盘盖着屏幕底部的
+   横条；而有的手机浏览器键盘弹起后照样报这一截，这一条和键盘之间就空出一道白。 */
 .doc-keyboard-bar {
   position: fixed;
   right: 0;
   left: 0;
   z-index: var(--z-overlay);
   display: flex;
-  padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface);
 }
 </style>
