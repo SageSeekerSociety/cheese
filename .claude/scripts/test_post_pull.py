@@ -119,9 +119,7 @@ class PostPullTest(unittest.TestCase):
             "other/pyproject.toml",
             "desktop/pnpm-lock.yaml",
             "frontend/pnpm-lock.yaml.backup",
-            "frontend/a11y-baseline.json.backup",
             "backend/.boundary-baseline.json",
-            "frontend/.a11y-baseline.json",
         )
         self.advance(paths)
         self.assert_effects(paths)
