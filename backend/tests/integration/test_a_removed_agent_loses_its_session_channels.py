@@ -7,6 +7,7 @@ to the platform's renderer are refused; the turn it had running is stopped
 first. An agent still on the roster is served as before.
 """
 
+import inspect
 import time
 import uuid
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ import httpx
 import pytest
 
 from app.api.routes import llm_proxy
+from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.channel import mint_session_token
 from tests.integration.conftest import (
     new_project,
@@ -69,9 +71,14 @@ def model_pool(monkeypatch):
     ):
         return "sk-project"
 
-    monkeypatch.setattr(
-        "app.domain.agent.chat.ChatService.project_gateway_key", project_key
-    )
+    # The stand-in takes exactly the real method's parameters: when the route
+    # starts passing a new one, this fixture goes red here instead of every
+    # model call 502-ing on a TypeError deep inside the proxy.
+    def shape(fn):
+        return [(p.name, p.kind) for p in inspect.signature(fn).parameters.values()]
+
+    assert shape(project_key) == shape(ChatService.project_gateway_key)
+    monkeypatch.setattr(ChatService, "project_gateway_key", project_key)
 
 
 @pytest.fixture

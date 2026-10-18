@@ -628,13 +628,55 @@ class CandidateCI(unittest.TestCase):
             with self.subTest(stale=stale[0]):
                 self.clock.now = 0.0
                 output, reads = self.eligibility([stale, stale, settled])
-                self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
+                self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
                 self.assertLessEqual(reads[-1], 60)
+
+    def test_the_entry_point_waits_for_an_image_build_still_running(self):
+        # Required CI finishing before the build is the rare ordering; with no
+        # other trigger, giving up would leave the commit unreleased.
+        building = ([self.run_record(status="in_progress", conclusion=None)],
+                    [self.queue_record()])
+        settled = ([self.run_record()], [self.queue_record()])
+        output, reads = self.eligibility([building] * 20 + [settled])
+        self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
+        # It outlasted the two-minute settle wait, i.e. the build wait ran.
+        self.assertGreater(reads[-1], 120)
+        self.assertLessEqual(reads[-1], GUARD.BUILD_WAIT_SECONDS + 180)
+
+    def test_a_failed_build_is_not_waited_for(self):
+        failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
+        output, reads = self.eligibility([failed])
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
+        self.assertLessEqual(reads[-1], 180)
+
+    def test_a_build_that_outlasts_the_wait_is_reported_as_still_building(self):
+        """The refusal must say the build was still running; minutes later the
+        generic "no successful attempt" reason is false and points nowhere."""
+        building = ([self.run_record(status="in_progress", conclusion=None)],
+                    [self.queue_record()])
+        self.clock.now = 0.0
+        output, reads = self.eligibility([building])
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\nbuild_pending=true\n")
+        # The initial settle (120 s) plus the wait, and no more: a settle inside
+        # the wait is capped at the wait's deadline instead of running past it.
+        self.assertGreaterEqual(reads[-1], GUARD.BUILD_WAIT_SECONDS)
+        self.assertLessEqual(reads[-1], GUARD.BUILD_WAIT_SECONDS + GUARD.SETTLE_SECONDS)
+
+    def test_a_build_that_fails_during_the_wait_is_not_reported_as_still_building(self):
+        """`build_pending` is the re-read after the wait, not just "not ready":
+        a build that ends as a failure must get the generic refusal."""
+        building = ([self.run_record(status="in_progress", conclusion=None)],
+                    [self.queue_record()])
+        failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
+        self.clock.now = 0.0
+        output, reads = self.eligibility([building] * 12 + [failed])
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
+        self.assertGreater(reads[-1], GUARD.SETTLE_SECONDS)
 
     def test_a_build_that_really_failed_is_refused_within_a_bounded_wait(self):
         failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
         output, reads = self.eligibility([failed])
-        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\n")
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
         self.assertGreater(len(reads), 1)
         self.assertLessEqual(reads[-1], 180)
 
@@ -645,7 +687,7 @@ class CandidateCI(unittest.TestCase):
         cancelled = ([self.run_record()], [self.gate_run(conclusion="cancelled")])
         output, _reads = self.eligibility([cancelled])
         self.assertEqual(output,
-                         "ready=false\nsuperseded=\nwaiting=false\nuncovered=true\n")
+                         "ready=false\nsuperseded=\nwaiting=false\nuncovered=true\nbuild_pending=false\n")
 
     def test_the_entry_point_reports_waiting_while_the_gate_runs(self):
         # The build's completion is usually the first of the two events and the
@@ -655,11 +697,11 @@ class CandidateCI(unittest.TestCase):
         running = ([self.run_record()],
                    [self.gate_run(status="in_progress", conclusion=None)])
         output, _reads = self.eligibility([running])
-        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=true\nuncovered=false\n")
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=true\nuncovered=false\nbuild_pending=false\n")
         # And a gate that really failed is still a refusal, not a wait.
         refused = ([self.run_record()], [self.gate_run(conclusion="failure")])
         output, _reads = self.eligibility([refused])
-        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\n")
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
 
     def test_the_deploy_job_repairs_a_sparse_workspace_before_checking_out(self):
         # box-diag's dev-box job shares this runner and left the workspace in a
@@ -880,10 +922,31 @@ class CandidateCI(unittest.TestCase):
         self.assertNotIn("concurrency", workflow)
         self.assertEqual(workflow["jobs"]["deploy"]["concurrency"]["group"], "deploy-dev")
         triggers = workflow.get("on", workflow.get(True))
-        # Either can finish last: the build has images, Required CI has the
-        # gate, and on main the gate takes longer.
-        self.assertEqual(set(triggers["workflow_run"]["workflows"]),
-                         {"Build and Push Docker Image", "Required CI"})
+        # One release run per merged commit: Required CI is the event. The
+        # build used to trigger one too, and it almost always arrived first and
+        # refused for want of the gate -- a second run per commit whose
+        # "success" read as "this commit is on dev".
+        self.assertEqual(set(triggers["workflow_run"]["workflows"]), {"Required CI"})
+        # Room for the initial settle plus the wait, with room to spare for the
+        # API calls; 12 minutes equalled the sleep budget alone and the job
+        # could be killed mid-check instead of refusing.
+        self.assertGreaterEqual(
+            workflow["jobs"]["eligibility"]["timeout-minutes"] * 60,
+            GUARD.SETTLE_SECONDS + GUARD.BUILD_WAIT_SECONDS + 120,
+        )
+        self.assertNotIn("build-did-not-produce-images", workflow["jobs"])
+        # The refusal has to pass "the build was still running" on, or it
+        # prints "no successful attempt" minutes after the build succeeded.
+        self.assertIn("build_pending", workflow["jobs"]["eligibility"]["outputs"])
+        reason = next(step for step in workflow["jobs"]["eligibility"]["steps"]
+                      if step.get("name") == "Fail when this commit will not be deployed")
+        self.assertEqual(reason["env"]["BUILD_PENDING"],
+                         "${{ steps.check.outputs.build_pending }}")
+        self.assertIn('"$BUILD_PENDING" = true', reason["run"])
+        self.assertIn("still running", reason["run"])
+        # The manual states the wait in minutes; keep it tied to the constant.
+        manual = (ROOT / "docs/manual/dev/ci.md").read_text()
+        self.assertIn(f"最多 {GUARD.BUILD_WAIT_SECONDS // 60} 分钟", manual)
 
     def test_required_ci_runs_on_the_main_push_and_on_a_queue_entry(self):
         # A commit reaches main as a push (merged directly) or through the merge
@@ -918,7 +981,9 @@ class CandidateCI(unittest.TestCase):
 
         self.assertTrue(holds("workflow_run", "Required CI", "push", "main", "success"))
         self.assertTrue(holds("workflow_run", "Required CI", "push", "main", "cancelled"))
-        self.assertTrue(holds("workflow_run", "Build and Push Docker Image", "push", "main", "success"))
+        # The build no longer triggers this workflow; if it ever does again,
+        # the eligibility job refuses it rather than guessing.
+        self.assertFalse(holds("workflow_run", "Build and Push Docker Image", "push", "main", "success"))
         self.assertTrue(holds("workflow_dispatch"))
         for named in (
             ("Required CI", "push", "main", "failure"),
@@ -1148,27 +1213,27 @@ class SupersededRelease(unittest.TestCase):
     def test_an_older_commit_built_after_a_newer_ready_one_steps_aside(self):
         output, printed = self.eligibility([self.newer], {self.candidate: self.runs(self.candidate),
                                                           self.newer: self.runs(self.newer)})
-        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\nwaiting=false\nuncovered=false\n")
+        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
         self.assertIn(f"Not deploying {self.candidate}: {self.newer}, newer on main", printed)
 
     def test_the_newest_commit_that_is_ready_is_the_one_named(self):
         output, _ = self.eligibility([self.newer, self.newest], {
             self.candidate: self.runs(self.candidate), self.newer: self.runs(self.newer),
             self.newest: self.runs(self.newest, build=None)})
-        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\nwaiting=false\nuncovered=false\n")
+        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
 
     def test_a_newer_commit_that_cannot_be_released_yet_does_not_supersede(self):
         for build, ci in ((None, "success"), ("failure", "success"), ("success", "failure")):
             with self.subTest(build=build, ci=ci):
                 output, printed = self.eligibility([self.newer], {
                     self.candidate: self.runs(self.candidate), self.newer: self.runs(self.newer, build=build, ci=ci)})
-                self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
+                self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
                 # A newer commit's state is not this release's refusal.
                 self.assertNotIn(f"Not deploying {self.newer}", printed)
 
     def test_main_newest_commit_deploys(self):
         output, _ = self.eligibility([], {self.candidate: self.runs(self.candidate)})
-        self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
+        self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
 
     def test_a_superseded_run_does_not_ask_for_the_deploy_group(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())

@@ -19,10 +19,25 @@ from app.domain.block.schemas import BlockOut
 from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.membership.roster import Member
 from app.domain.project.models import Project
 from app.domain.room_task.place import Place, PlaceResolver
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class HumanHandoff:
+    """What the request already read before the writer opens its own session.
+
+    The writer's session is its own on purpose; these rows are what it would
+    otherwise read again. Each field is optional: ``None`` means the request
+    did not read it, and the writer reads it as before. ``roster`` is the
+    :func:`~app.domain.membership.roster.roster` read of the room's project.
+    """
+
+    project: Project | None = None
+    roster: tuple[Member, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
