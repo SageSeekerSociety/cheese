@@ -18,8 +18,9 @@ from tests.turn_log import a_topic
 
 pytestmark = pytest.mark.anyio
 
-#: The tables behind the project row and its roster.
-_HANDED_OVER = re.compile(r"\bFROM (projects|project_members|user_profile)\b", re.I)
+#: The tables behind the project row and its roster, read in any position
+#: (a JOIN reads `user_profile` as much as a FROM does).
+_HANDED_OVER = re.compile(r"\b(projects|project_members|user_profile)\.", re.I)
 
 #: A friendly name the roster turns into a mention token.
 _CONTENT = "@u 看一下这个"
