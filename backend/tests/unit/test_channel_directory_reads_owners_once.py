@@ -1,9 +1,10 @@
 """「全部频道」问频道主人只发一次名册查询，不随频道数增长。
 
-十二个频道的目录请求：名册读一次、兜底那半的频道行读一次，每个频道的 ``manager``
-与逐频道问一遍相同，其余字段一个不少。兜底那一档的两半（``is_private`` 的私聊一律
-没有主人；``members_only`` 的频道看创建者还在不在名册里）都有用例。最后一条把实现
-换回逐频道查，证明「各一次」那条计数断言会红。
+一批十几个频道的目录请求：名册读一次、兜底那半的频道行读一次，每个频道的
+``manager`` 与逐频道问一遍相同，其余字段一个不少。判据的每一档都有用例：显式
+owner 席位、多个 owner 席位取最早那条、``created_by`` 兜底、``is_private`` 的私聊
+一律没有主人、``members_only`` 看创建者还在不在名册里。最后把实现换回逐频道查，
+证明「各一次」那条计数断言会红。
 """
 
 import uuid
@@ -32,6 +33,7 @@ PRIVATE_SEATED = uuid.uuid4()
 PRIVATE_GONE = uuid.uuid4()
 MEMBERS_ONLY_SEATED = uuid.uuid4()
 MEMBERS_ONLY_GONE = uuid.uuid4()
+TWO_OWNERS = uuid.uuid4()
 ALL_IDS = [
     ROOT,
     ALICE_ONE,
@@ -45,6 +47,7 @@ ALL_IDS = [
     PRIVATE_GONE,
     MEMBERS_ONLY_SEATED,
     MEMBERS_ONLY_GONE,
+    TWO_OWNERS,
 ]
 EXPECTED_OWNERS = {
     ROOT: None,
@@ -62,6 +65,8 @@ EXPECTED_OWNERS = {
     # 兜底，但创建者的人还在名册里才回落到他。
     MEMBERS_ONLY_SEATED: "alice",
     MEMBERS_ONLY_GONE: None,
+    # 两个 owner 席位时取 `created_at` 最早的那条。
+    TWO_OWNERS: "bob",
 }
 
 
@@ -98,7 +103,13 @@ class _CountingSession:
         params = stmt.compile().params
         if table == MEMBERS_TABLE:
             wanted = _as_set(params["topic_id_1"])
-            return _Result([m for m in self.memberships if m.topic_id in wanted])
+            rows = [m for m in self.memberships if m.topic_id in wanted]
+            # 语句真的带 `ORDER BY created_at ASC` 时才照它排：有人把这个排序
+            # 从 `list_for_topics` 拿掉，行序变回插入序，「两个 owner 席位取
+            # 最早那条」那条断言就会红。
+            if "ORDER BY topic_memberships.created_at ASC" in str(stmt):
+                rows = sorted(rows, key=lambda m: m.created_at)
+            return _Result(rows)
         assert table == TOPICS_TABLE
         wanted = _as_set(params["id_1"])
         return _Result([t for t in self.topics if t.id in wanted])
@@ -108,12 +119,12 @@ class _CountingSession:
         return next((t for t in self.topics if t.id == ident), None)
 
 
-def _membership(topic_id, handle, role):
+def _membership(topic_id, handle, role, created_at=0):
     return SimpleNamespace(
         topic_id=topic_id,
         member_handle=handle,
         role=role,
-        created_at=None,
+        created_at=created_at,
     )
 
 
@@ -155,6 +166,11 @@ def _fixtures():
     # 同一档但创建者已经不在名册里：不回落。
     topics.append(_topic(MEMBERS_ONLY_GONE, members_only=True))
     memberships.append(_membership(MEMBERS_ONLY_GONE, "bob", TopicRole.member))
+    # 两个 owner 席位（历史数据可能这样）：取 `created_at` 最早的那一条。插入序
+    # 故意与时间序相反，取错一头这条就会红。
+    topics.append(_topic(TWO_OWNERS))
+    memberships.append(_membership(TWO_OWNERS, "alice", TopicRole.owner, created_at=2))
+    memberships.append(_membership(TWO_OWNERS, "bob", TopicRole.owner, created_at=1))
     return memberships, topics
 
 
@@ -172,7 +188,7 @@ def _read_the_foil_once(session: _CountingSession) -> None:
 
 
 @pytest.mark.anyio
-async def test_ten_channels_ask_who_owns_them_once() -> None:
+async def test_every_channel_asks_who_owns_it_once() -> None:
     memberships, topics = _fixtures()
     session = _CountingSession(memberships, topics)
     owners = await _service(session).owners_of(ALL_IDS)
@@ -186,6 +202,30 @@ async def test_one_channel_answers_the_same_as_the_batch() -> None:
     for topic_id, expected in EXPECTED_OWNERS.items():
         svc = _service(_CountingSession(memberships, topics))
         assert await svc.owner_of(topic_id) == expected
+
+
+@pytest.mark.anyio
+async def test_single_channel_goes_through_the_facade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`owner_of` 走门面转发：打在 `owners_of` 上的补丁拦得住这一次调用。
+
+    包里「跨块调用一律走 `svc.<名字>()`」那条约定靠的就是这个 —— 直接调模块函数
+    的话，别人 `patch.object(svc, "owners_of", ...)` 拦不住。
+    """
+    seen: list[list[uuid.UUID]] = []
+
+    async def patched(self, topic_ids):
+        seen.append(list(topic_ids))
+        return {topic_id: "patched" for topic_id in topic_ids}
+
+    monkeypatch.setattr(services.TopicMemberService, "owners_of", patched)
+    memberships, topics = _fixtures()
+    svc = _service(_CountingSession(memberships, topics))
+    assert await svc.owner_of(ALICE_ONE) == "patched"
+    assert seen == [[ALICE_ONE]]
+    # 补丁拦住了，名册一次都没读。
+    assert svc._repo._session.calls == {}
 
 
 def _per_channel(self, topic_ids):
