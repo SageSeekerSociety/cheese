@@ -19,7 +19,7 @@ LEGACY = "Project not found"
 #: How many missing-project refusals each file raises, each said with the key.
 SAYING = {
     "domain/project/environment.py": 3,
-    "domain/agent_credential/services.py": 1,
+    "domain/project/reads.py": 1,
     "api/routes/agent_credential.py": 1,
     "api/routes/projects_run_config.py": 3,
 }

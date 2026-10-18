@@ -137,6 +137,10 @@ class _Source:
 
 
 class _Tokens:
+    # The real GitHubAppTokens exposes this; the read-token helper records it
+    # on the credential. Match the installation the test binds below (77).
+    installation_id = 77
+
     def __init__(self) -> None:
         self.calls = 0
 
@@ -411,6 +415,8 @@ def test_a_mint_github_refuses_is_reported_instead_of_raised(
     """
 
     class _RefusingMint:
+        installation_id = 77
+
         async def installation_token(self) -> tuple[str, str]:
             raise GitHubAppError("GitHub refused to mint (HTTP 403)")
 
@@ -443,6 +449,8 @@ def test_a_mint_that_cannot_reach_github_is_reported_too(
     """
 
     class _UnreachableMint:
+        installation_id = 77
+
         async def installation_token(self) -> tuple[str, str]:
             raise httpx.ConnectError("connection refused")
 

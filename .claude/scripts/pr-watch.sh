@@ -5,27 +5,24 @@
 #
 #   .claude/scripts/pr-watch.sh [--enqueue] [--deploy] PR...
 #
-#   --enqueue  put a PR into the merge queue once `CI required` passes, its
-#              review is done (`pr-review.sh ready` prints 可递; until then each
-#              change in what is missing is printed), and it is in no queue and
-#              has no auto-merge armed. Also re-enqueues, at most once per PR, a
-#              PR the queue itself (github-merge-queue) removed for a reason
-#              other than a merge, a conflict or a failed check, while its head
-#              is the one it was queued at. A PR a person or a bot removed is
-#              never put back: every such removal seen so far was deliberate.
+#   --enqueue  squash-merge once `pr-review.sh ready` prints 可递 for the current
+#              head. Re-read the head before merging and pin the mutation to it.
+#              Never arm auto-merge. Without this flag, observe only.
+#   After merging, follow Required CI's push-to-main run for the merge commit
+#   (or the containing batch when its run was superseded). A red main fails the watch.
 #   --deploy   after a PR merges, follow the dev deploys (deploy-dev.yml) of
 #              main commits that contain it: deployed as soon as any of them
 #              succeeded, otherwise the newest one's result.
 #
-# End states, each printed and then no longer polled: merged (and, with
+# End states, each printed and then no longer polled: main CI passed (and, with
 # --deploy, deployed or deploy failed), closed, CI failed, conflicting with its
-# base branch, removed from the queue without being re-enqueued. The script
+# base branch. The script
 # exits once every PR has ended; its exit status is 0 only if every PR merged
 # (and deployed, with --deploy). A PR whose state has not changed for
 # PR_WATCH_QUIET seconds (default 3600) gets a line saying where it is waiting,
 # so a state this script does not recognise still reaches whoever watches.
 #
-# Lines look like `HH:MM:SSZ #2847 queue: AWAITING_CHECKS (position 3)`. Run it
+# Lines look like `HH:MM:SSZ #2847 main Required CI run 123: completed success`. Run it
 # under a monitor, which turns each line into a notification; with its output
 # going to a file or a background shell, a session hears only when it exits.
 # It never prompts.
@@ -47,47 +44,25 @@ for a in "$@"; do
 done
 [ ${#prs[@]} -gt 0 ] || { echo "usage: $0 [--enqueue] [--deploy] PR..." >&2; exit 2; }
 
-declare -A last ended ok requeued spoke qhead
+declare -A last ended ok spoke main_last
 say() { echo "$(date -u +%H:%M:%SZ) #$1 $2"; spoke[$1]=$(date +%s); }
 quiet() { # $1 PR, $2 where it is waiting; speaks only after QUIET seconds of silence
   [ $(( $(date +%s) - ${spoke[$1]:-0} )) -ge "$QUIET" ] && say "$1" "no change in $((QUIET / 60)) min: $2"
 }
-started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
 query='query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){
-  state headRefOid mergeable mergeStateStatus autoMergeRequest{enabledAt} mergeCommit{oid} mergeQueueEntry{state position}
-  timelineItems(last:1,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{... on RemovedFromMergeQueueEvent{createdAt reason actor{login}}}}}}}'
+  state headRefOid mergeable mergeStateStatus autoMergeRequest{enabledAt} mergeCommit{oid}}}}'
 
 ci_required() { # pass | fail | pending | none
   gh pr checks "$1" -R "$REPO" 2>/dev/null | awk -F'\t' '$1=="CI required"{print $2; f=1} END{if(!f) print "none"}'
 }
 
-# The machine this runs on has no `jq`, and its absence used to cost the script
-# every GraphQL field it polls: a round of `jq: command not found` and seven
-# assignments to the empty string. `state` was then never MERGED or CLOSED, so
-# the poll loop had no way to end and the watcher never printed its closing
-# line; `queue` and `auto` came out empty as well, which pointed the enqueue
-# branch the other way — with `CI required` passing, --enqueue ran `gh pr merge`
-# blind, on a pull request that was already queued. `ci_required()` is not part
-# of this: it reads `gh pr checks`, and never touched jq.
-#
-# `gh` carries a jq of its own, but the reply is in hand already and python3 is
-# on the same machine as the script — so the fields come out of that, one line.
-#
-# `|` and not a tab between them: a tab is IFS whitespace, so bash collapses a
-# run of them and every empty field shifts the ones after it. No field can hold
-# a `|` — they are GitHub's own enums, SHAs, and a removal's ISO timestamp,
-# remover's login and reason.
-pr_fields() { # state, head, merge commit, queue, removal, mergeable, merge state, auto-merge
+# Python is available where the watcher runs; no standalone jq is required.
+# Pipe separators preserve empty fields, unlike tab-delimited bash read.
+pr_fields() { # state, head, merge commit, mergeable, merge state, auto-merge
   python3 -c 'import json,sys
 p=json.load(sys.stdin)["data"]["repository"]["pullRequest"]
-e=p.get("mergeQueueEntry") or {}
-nodes=(p.get("timelineItems") or {}).get("nodes") or []
-r=(nodes[0] if nodes else None) or {}
 mc=p.get("mergeCommit") or {}
-queue=(str(e["state"])+" "+str(e["position"])) if e else ""
-removed=(str(r["createdAt"])+" "+str((r.get("actor") or {}).get("login") or "-")+" "+str(r["reason"])) if r else ""
-print("|".join([p.get("state") or "", p.get("headRefOid") or "", mc.get("oid") or "", queue, removed,
+print("|".join([p.get("state") or "", p.get("headRefOid") or "", mc.get("oid") or "",
                 p.get("mergeable") or "", p.get("mergeStateStatus") or "",
                 "auto-merge on" if p.get("autoMergeRequest") else ""]))'
 }
@@ -100,6 +75,33 @@ except Exception: pass'
 
 review_ready() { # prints what `pr-review.sh ready` says; exit 0 only for 可递
   "$HERE/pr-review.sh" ready "$1" 2>&1
+}
+
+pr_json() {
+  gh api graphql -f query="$query" -F o="${REPO%/*}" -F n="${REPO#*/}" -F p="$1" 2>/dev/null
+}
+
+contains() {
+  gh api "repos/$REPO/compare/$1...$2" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$'
+}
+
+main_ci_of() { # exact merge's run, or a successful containing batch if it was cancelled
+  local merge=$1 id st co sha newest= passed=
+  while read -r id st co sha; do
+    [ "$sha" = "$merge" ] || contains "$merge" "$sha" || continue
+    [ "$co" = cancelled ] && continue
+    [ -n "$newest" ] || newest="$st $co $id"
+    if [ "$sha" = "$merge" ]; then echo "$st $co $id"; return; fi
+    # A later failed batch does not revoke an earlier green batch containing
+    # this merge; keep the newest such success for a watcher that restarts.
+    if [ "$st $co" = "completed success" ] && [ -z "$passed" ]; then
+      passed="$st $co $id"
+    fi
+  done < <(gh run list -R "$REPO" --workflow required-ci.yml --event push --branch main --limit 30 \
+             --json databaseId,status,conclusion,headSha \
+             -q '.[]|"\(.databaseId) \(.status) \(.conclusion // "" | if . == "" then "none" else . end) \(.headSha)"')
+  [ -z "$passed" ] || { echo "$passed"; return; }
+  [ -z "$newest" ] || echo "$newest"
 }
 
 # "<status> <conclusion> <run id>" of the dev deploy of $1: the newest successful
@@ -132,10 +134,24 @@ while :; do
   for p in "${prs[@]}"; do
     [ -n "${ended[$p]:-}" ] && continue
     open=1
-    j=$(gh api graphql -f query="$query" -F o="${REPO%/*}" -F n="${REPO#*/}" -F p="$p" 2>/dev/null) || continue
-    IFS='|' read -r state head merge queue removed mergeable mstate auto <<<"$(printf '%s' "$j" | pr_fields)"
+    j=$(pr_json "$p") || continue
+    fields=$(printf '%s' "$j" | pr_fields) || continue
+    IFS='|' read -r state head merge mergeable mstate auto <<<"$fields"
 
     if [ "$state" = MERGED ]; then
+      c=$(main_ci_of "$merge")
+      if [ "${main_last[$p]:-unseen}" != "$c" ]; then
+        [ -z "$c" ] && say "$p" "merged as ${merge:0:9}; waiting for main Required CI" \
+                    || say "$p" "main Required CI run ${c##* }: ${c% *}"
+        main_last[$p]=$c
+      fi
+      case "$c" in
+        "completed success "*) ;;
+        "completed failure "*|"completed timed_out "*|"completed action_required "*|"completed startup_failure "*|"completed stale "*)
+          say "$p" "stopped watching: main Required CI failed after merge ${merge:0:9}"
+          ended[$p]=1; continue ;;
+        *) quiet "$p" "merged; waiting for main Required CI"; continue ;;
+      esac
       if [ "$deploy" = 0 ]; then
         [ "${last[$p]:-}" != merged ] && say "$p" "merged as ${merge:0:9}"
         ended[$p]=1 ok[$p]=1; continue
@@ -159,6 +175,7 @@ while :; do
           else
             quiet "$p" "merged; dev runs ${live:0:9}, which lacks it"
           fi ;;
+        "completed cancelled "*) quiet "$p" "merged; waiting for a superseding dev deploy" ;;
         completed\ *) ended[$p]=1 ;;
         "") quiet "$p" "merged; no dev deploy contains it yet" ;;
         *) quiet "$p" "merged; dev deploy run ${d##* }: ${d% *}" ;;
@@ -167,55 +184,53 @@ while :; do
     fi
     if [ "$state" = CLOSED ]; then say "$p" "closed without merging"; ended[$p]=1; continue; fi
 
-    # GitHub queues nothing that conflicts with its base, and the PR shows no
-    # other change while it waits for a rebase that only its author can make.
-    if [ "$mergeable" = CONFLICTING ]; then
-      say "$p" "stopped watching: conflicts with its base branch, so it cannot enter the queue"
+    if [ "$mergeable" = CONFLICTING ] || [ "$mstate" = DIRTY ]; then
+      say "$p" "stopped watching: conflicts with its base branch"
       ended[$p]=1; continue
     fi
 
     ci=$(ci_required "$p")
-    # Whether the review is done matters only while the PR waits to be enqueued,
-    # and it can change with nothing else changing, so it joins the key.
     rv=""
-    if [ "$enqueue" = 1 ] && [ "$ci" = pass ] && [ -z "$queue" ] && [ -z "$auto" ]; then
-      rv=$(review_ready "$p") && rv="可递" || rv="not ready: ${rv//$'\n'/; }"
-    fi
-    key="$ci|${queue% *}|$removed|$auto|$rv"   # the position alone changing is not news
-    if [ "${last[$p]:-}" = "$key" ]; then
-      where="not in the queue"; [ -n "$queue" ] && where="queue: ${queue% *}"
-      [ -n "$rv" ] && [ "$rv" != 可递 ] && where="$where, review not done"
-      quiet "$p" "CI required: $ci; $where${auto:+, $auto}; merge state $mstate"
-      continue
-    fi
-    prev=${last[$p]:-}; last[$p]=$key
-    [ "${prev%%|*}" != "$ci" ] && say "$p" "CI required: $ci"
-    if [ -n "$queue" ]; then
-      qhead[$p]=$head
-      say "$p" "queue: ${queue% *} (position ${queue##* })"
-    elif [ -n "$removed" ] && [[ "${removed%% *}" > "$started" ]] && [ "$(cut -d'|' -f3 <<<"$prev")" != "$removed" ]; then
-      read -r _ remover reason <<<"$removed"
-      say "$p" "removed from the merge queue by $remover: $reason"
-      if [ "$enqueue" = 1 ] && [ -z "${requeued[$p]:-}" ] && [ "$rv" = 可递 ] \
-         && [ "$remover" = github-merge-queue ] && [ "$head" = "${qhead[$p]:-}" ] \
-         && ! grep -qiE 'merge|conflict|fail' <<<"$reason"; then
-        requeued[$p]=1
-        gh pr merge "$p" -R "$REPO" >/dev/null 2>&1 && say "$p" "re-enqueue requested once" || say "$p" "re-enqueue failed"
-        continue
+    if [ "$enqueue" = 1 ] && [ "$ci" = pass ] && [ -z "$auto" ]; then
+      if rv=$(review_ready "$p") && [[ "$rv" == "可递：head ${head:0:8}｜"* ]]; then
+        rv="可递"
+      else
+        rv="not ready: ${rv//$'\n'/; }"
       fi
-      ended[$p]=1; continue
+    fi
+    key="$head|$ci|$auto|$rv"
+    if [ "${last[$p]:-}" = "$key" ]; then
+      quiet "$p" "CI required: $ci; ${rv:-waiting for merge}${auto:+, $auto}; merge state $mstate"
+      # A previous merge request may have failed transiently; re-check the head
+      # and retry only after ready was checked again in this round.
+      [ "$rv" = 可递 ] || continue
+    else
+      last[$p]=$key
+      say "$p" "CI required: $ci${auto:+; $auto}"
+      if [ -n "$rv" ] && [ "$rv" != 可递 ]; then
+        say "$p" "not merged, review is not done: ${rv#not ready: }"
+      fi
     fi
     if [ "$ci" = fail ]; then say "$p" "stopped watching: CI required failed"; ended[$p]=1; continue; fi
-    [ -n "$auto" ] && say "$p" "not in the queue; $auto, merge state $mstate"
-    # `gh pr merge` succeeds both when it queues the PR and when it only arms
-    # auto-merge, so what it did is reported from the next poll, not from here.
-    if [ -n "$rv" ] && [ "$rv" != 可递 ]; then
-      say "$p" "not enqueued, review is not done: ${rv#not ready: }"
-    elif [ "$rv" = 可递 ]; then
-      # The queue can drop it again before the next poll sees it there, so the
-      # head it was queued at is recorded now.
-      if gh pr merge "$p" -R "$REPO" >/dev/null 2>&1; then qhead[$p]=$head; say "$p" "enqueue requested"
-      else say "$p" "enqueue failed"; fi
+    if [ "$enqueue" = 1 ] && [ -n "$auto" ]; then
+      say "$p" "stopped watching: existing auto-merge is not guarded by ready; disable it before retrying"
+      ended[$p]=1
+      continue
+    fi
+    if [ "$rv" = 可递 ]; then
+      fresh=$(pr_json "$p") || continue
+      fields=$(printf '%s' "$fresh" | pr_fields) || continue
+      IFS='|' read -r fresh_state fresh_head _ fresh_mergeable fresh_mstate fresh_auto <<<"$fields"
+      if [ "$fresh_state" != OPEN ] || [ "$fresh_head" != "$head" ] || [ -n "$fresh_auto" ] \
+         || [ "$fresh_mergeable" != MERGEABLE ] || [ "$fresh_mstate" = DIRTY ]; then
+        say "$p" "not merged: head or mergeability changed after ready; checking again"
+        continue
+      fi
+      if outcome=$(gh pr merge "$p" -R "$REPO" --squash --match-head-commit "$head" 2>&1); then
+        say "$p" "squash merge requested for ${head:0:9}"
+      else
+        say "$p" "merge refused: ${outcome//$'\n'/; }"
+      fi
     fi
   done
   [ "$open" = 1 ] || break

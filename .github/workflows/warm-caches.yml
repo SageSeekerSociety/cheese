@@ -11,7 +11,7 @@ name: Warm dependency caches
 # Keys, and the suites that restore them:
 #   backend uv (setup-uv inputs)       test.yml, harness-contract.yml, remote-execution.yml
 #   npm-harness-pins-*                 test.yml, harness-contract.yml
-#   harness-bins-v1-*                  test.yml (its arm64 shards)
+#   harness-bins-v2-*                  test.yml (its arm64 shards)
 #   pre-commit uv (setup-uv inputs)    repo-guards.yml
 #   npm-remote-execution-*             mcp-contract.yml, mcp-equivalence.yml
 #   go-*                               cli.yml
@@ -204,6 +204,15 @@ jobs:
           path: ~/.npm
           key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
 
+      - name: Resolve pinned harness versions
+        id: harness-pins
+        run: |
+          uv run python - <<'PY' >> "$GITHUB_OUTPUT"
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+          pins = written()
+          print("key=" + "-".join(pins[name].pinned_version for name in (CLAUDE_CODE, CODEX, PI)))
+          PY
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: harness-bins
         with:
@@ -212,15 +221,8 @@ jobs:
           # here: it names this run's own directory, not a path a later run can
           # ask for.
           path: ~/.cache/cheese-harness-bins
-          # Every pin whose build is in the directory, pi's included: the pi
-          # tarball is fetched under `written()[PI].pinned_version`, and that
-          # version is written only in `pi/launch.py`
-          # (`test_capability_matrix.py` holds it there). Without it a pi bump
-          # would leave this key unchanged, the shards — which only restore —
-          # would keep restoring the old build, and every one of them would go
-          # red on `pinned_claude.pi_binary` with no way to repair itself from
-          # the pull-request side.
-          key: harness-bins-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**', 'backend/app/domain/agent/harness/pi/launch.py') }}
+          # Match the shards by build versions, independent of launcher edits.
+          key: harness-bins-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.harness-pins.outputs.key }}
 
       # The unpacking test.yml does on a miss, so the cache holds exactly what
       # a shard would have produced on its own. It runs only when this key had
