@@ -13,9 +13,8 @@
 - 把扫描换回逐条版，同一条计数断言就红。这条故意违规是本文件存在的理由：没有
   它，计数断言写成多大都照样绿。
 
-席位解析（`agent.queries.conversation_seat`）不在这一条里——它在另一个域，那里
-有一个在途 PR。测试给它一个不碰库的替身，计数只说这一条改动的读；聊天服务的
-`has_running_turn` 同理。
+席位解析（`agent.queries.seats_in_conversations`）由另一条改动批量化；这里的计数
+只说这一条改动的读，所以给它一个不碰库的替身。聊天服务的 `has_running_turn` 同理。
 """
 
 import uuid
@@ -87,14 +86,20 @@ class _Runner:
         self.started.append({"room": room, "block_id": block_id, **kwargs})
 
 
-async def _seated(session, conversation_id, handle):
-    """`conversation_seat`, minus its own reads: not this change's to batch."""
-    return SimpleNamespace(handle=handle, instance_id=INSTANCE), handle
+async def _seated(session, pairs):
+    """`seats_in_conversations`, minus its own reads.
+
+    The seat read is batched in its own change; this test measures the scan's
+    own reads, so the answer is a stand-in for every pair."""
+    return {
+        pair: (SimpleNamespace(handle=pair[1], instance_id=INSTANCE), pair[1])
+        for pair in dict.fromkeys(pairs)
+    }
 
 
 @pytest.fixture
 def no_seat_reads(monkeypatch):
-    monkeypatch.setattr("app.domain.agent.queries.conversation_seat", _seated)
+    monkeypatch.setattr("app.domain.agent.queries.seats_in_conversations", _seated)
 
 
 async def _seed(factory, *, per_conversation: int = 2):

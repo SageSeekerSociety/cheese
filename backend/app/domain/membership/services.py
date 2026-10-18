@@ -57,6 +57,7 @@ from app.domain.project.models import (
     ProjectTransfer,
 )
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project.reads import project_or_404
 from app.domain.project_permissions import (
     DEFAULT_GRANTS,
     MANAGING,
@@ -106,10 +107,7 @@ class MemberService:
         """The project, or 404. Returns the row because the callers read it right
         after (the owner's handle, whether it has a team), and re-reading it to
         get what this already fetched is a second round trip for nothing."""
-        project = await self._projects.get(project_id)
-        if project is None:
-            raise NotFoundError(say("projectNotFound"))
-        return project
+        return await project_or_404(self._projects, project_id)
 
     async def manages(
         self, project_id: uuid.UUID, handle: str, permission: Permission
@@ -290,10 +288,7 @@ class InvitationService:
         self._settle = settle
 
     async def _project_or_404(self, project_id: uuid.UUID):
-        project = await self._projects.get(project_id)
-        if project is None:
-            raise NotFoundError(say("projectNotFound"))
-        return project
+        return await project_or_404(self._projects, project_id)
 
     async def _is_on_project_roster(self, project_id: uuid.UUID, handle: str) -> bool:
         """「已经在项目里」问的是名册，不是 ``project_members`` 那一张表。
@@ -592,10 +587,7 @@ class OwnershipService:
         self._settle = settle
 
     async def _project(self, project_id: uuid.UUID) -> Project:
-        project = await self._projects.get(project_id)
-        if project is None:
-            raise NotFoundError(say("projectNotFound"))
-        return project
+        return await project_or_404(self._projects, project_id)
 
     async def offer(
         self, *, project_id: uuid.UUID, to_handle: str, actor: Actor

@@ -941,33 +941,6 @@
       "note": "The dialog the 'New plan' button pops up: name, applies to, credits and limit, available models all empty awaiting input."
     }
   },
-  "adminRatchetPageView": {
-    "about": "The ratchet screen: where each architecture check stands now, how many are frozen, better or worse than the start. Where the data comes from is on the source line, and the pull result floats on top.",
-    "s1": {
-      "name": "Two collections in the archive",
-      "note": "Default cell: the source line says which commit the data is from, when it was collected and how many collections the archive holds; below, each check's current number and its trend by area."
-    },
-    "s2": {
-      "name": "First load",
-      "note": "No board yet: three fixed-height skeletons, drawing neither an empty table nor an empty state."
-    },
-    "s3": {
-      "name": "Archive unreadable",
-      "note": "This request failed and there's no board in hand: it says 'Archive unreadable', not 'no collections yet' — two things, two lines, retry right beside."
-    },
-    "s4": {
-      "name": "Never collected",
-      "note": "The archive was empty to begin with: it's 'not a single collection yet', offering a 'Pull one now', not drawing it as 'all normal'."
-    },
-    "s5": {
-      "name": "Collected, but no measurement",
-      "note": "The archive has collections yet not one check (a failed collection in the real contract looks like this): it says there's no usable measurement this time, not hiding the failure history."
-    },
-    "s6": {
-      "name": "The failed pull",
-      "note": "Just pressed refresh and CI didn't pull: a red line floats on top; the page keeps the points already stored."
-    }
-  },
   "adminRunRecordsPageView": {
     "about": "The run-records screen: errors the platform hit across projects and the things it handled itself, one kind per row; opening a row shows that kind's most recent full text on the right and which projects and threads it appeared in.",
     "s1": {

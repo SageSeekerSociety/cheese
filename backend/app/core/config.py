@@ -916,20 +916,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # those and produce merge commits in repos that allow several methods.
     accept_pr_merge_method: str = "squash"
 
-    # --- the platform's own repo: 后台「棘轮」页 and 「CI 与合并队列」页 ---
-    # The ratchet reads its `arch-metrics.yml` snapshots; the CI activity sweep
-    # (every N seconds, 0 disables it) its Actions runs and merge queue.
+    # --- the platform's own repo: CI activity ---
     platform_repository: str = "SageSeekerSociety/cheese"
     ci_activity_sweep_interval_s: int = 300
-    #: How often the backend pulls new `ratchet-snapshot` artifacts. The page
-    #: reads the table and never GitHub, so this clock is what makes a new
-    #: collection visible there; 0 disables the pull and leaves the table as it
-    #: stands. 15 minutes is the design's interval — one listing call per tick,
-    #: and a collection does not need to appear faster than a person reads.
-    ratchet_ingest_interval_s: int = 900
-    #: How many points the page draws. A bound on one response, and the window
-    #: the direction is computed over; the archive keeps everything.
-    ratchet_series_points: int = 60
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared

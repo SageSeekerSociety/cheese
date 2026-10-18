@@ -20,16 +20,13 @@ it('出口上只有 adminRoutes 一个值', () => {
 
 it('出口那个 adminRoutes 背后仍是整张后台路由表', () => {
   // 最可能的坏法是「名字重发了、背后没接上」：入口上写着 adminRoutes，点开什么也不认。
-  // 三页各取一条读路由：模型管理、棘轮那块看板、空间申请的列表 —— 分片之间接上了才认得
+  // 两页各取一条读路由：模型管理、空间申请的列表 —— 分片之间接上了才认得
   // 全。每条都钉一个具体的值，不钉「有个数组」：夹具整个空掉也是数组，那样钉不住。
   expect(fixtures.adminRoutes('/admin/gateway/models', 'GET', api('/admin/gateway/models'))).toMatchObject({
     data: {
       models: expect.arrayContaining([expect.objectContaining({ name: 'claude-opus-5-5' })]),
       totals: expect.any(Object),
     },
-  })
-  expect(fixtures.adminRoutes('/admin/ratchet', 'GET', api('/admin/ratchet'))).toMatchObject({
-    data: { repo: 'SageSeekerSociety/cheese', areas: expect.any(Array), points: 12 },
   })
   expect(fixtures.adminRoutes('/admin/spaces', 'GET', api('/admin/spaces?status=APPROVED'))).toMatchObject({
     data: { items: [expect.objectContaining({ id: 38, owner: 'pengwenbo', reviewStatus: 'APPROVED' })] },
