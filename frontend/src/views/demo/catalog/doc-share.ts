@@ -42,9 +42,9 @@ export const DOC_SHARE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '不能分享',
-        note: '项目成员没有发布网站的权限：只写一句谁能分享，没有按钮。',
+        note: '角色没有「分享文档」权限的人：只写一句谁能分享，没有按钮。',
         props: { mayShare: false },
-        expect: '可以分享',
+        expect: '能分享',
       },
     ],
   },
