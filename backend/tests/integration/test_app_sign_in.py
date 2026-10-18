@@ -142,7 +142,7 @@ def _link_github(client, token: str, project: uuid.UUID, *, in_app: bool) -> str
     headers = _bearer(token) | ({"X-Cheese-App": "1"} if in_app else {})
     started = client.get(
         "/users/me/github-account/authorize-url",
-        params={"return_project_id": str(project)},
+        params={"return_path": f"/projects/{project}/settings"},
         headers=headers,
     )
     assert started.status_code == 200, started.text

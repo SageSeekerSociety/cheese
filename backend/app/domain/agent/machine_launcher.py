@@ -473,13 +473,11 @@ def screen_env(
     if place.execution_target is not None:
         env["CHEESE_EXECUTION_TARGET"] = json.dumps(place.execution_target)
     if place.project_id:
-        # Who the turn's commits belong to (workspace/identity.py). Absent, the
-        # launcher falls back to 芝士 — the same default the in-repo snapshot
-        # path uses, so both surfaces agree.
-        env["CHEESE_GIT_AUTHOR_NAME"] = place.agent_handle
-        env["CHEESE_GIT_AUTHOR_EMAIL"] = f"{place.agent_handle}@agent.cheese.local"
-        env["GIT_AUTHOR_NAME"] = place.agent_handle
-        env["GIT_AUTHOR_EMAIL"] = env["CHEESE_GIT_AUTHOR_EMAIL"]
+        # The platform commits; who a commit is BY is not fixed here. A task's
+        # checkout sets its own author (`cheese worktree`, from the git route's
+        # `author`), and an author in the environment would override it. A
+        # commit outside a task's checkout falls back to this address.
+        env["EMAIL"] = f"{place.agent_handle}@agent.cheese.local"
         env["GIT_COMMITTER_NAME"] = "芝士"
         env["GIT_COMMITTER_EMAIL"] = "cheese@zhishi.local"
     return env

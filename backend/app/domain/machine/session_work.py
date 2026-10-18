@@ -379,8 +379,8 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
         "CHEESE_AUTHOR": author,
         "CHEESE_PREVIEW_URL": ws_url(api, "/preview/tunnel"),
         "CHEESE_RESOURCE_ID": work_resource,
-        "GIT_AUTHOR_NAME": author,
-        "GIT_AUTHOR_EMAIL": f"{author}@agent.cheese.local",
+        # No GIT_AUTHOR_*: a task's checkout sets its own author (`cheese
+        # worktree`), and the environment would override it.
         **({"CHEESE_SITE_FORWARD": site} if site else {}),
     }
 
