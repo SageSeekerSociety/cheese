@@ -104,6 +104,19 @@ class CloudHostRepository:
             .execution_options(populate_existing=True)
         )
 
+    async def lock_homes(self, home_ids: list[uuid.UUID]) -> list[SandboxHome]:
+        """The homes, locked in one statement and in id order, so two sweeps
+        locking overlapping batches take them in the same order."""
+        return list(
+            await self._session.scalars(
+                select(SandboxHome)
+                .where(SandboxHome.id.in_(home_ids))
+                .order_by(SandboxHome.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+
     async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         """The home of the session's placement, as the database has it now:
         a sweep may have started destroying it since this session last read
@@ -152,6 +165,12 @@ class CloudHostRepository:
     async def delete_home(self, home: SandboxHome) -> None:
         await self._session.delete(home)
         await self._session.flush()
+
+    async def delete_homes_on(self, host_id: uuid.UUID) -> None:
+        """Every home still recorded on this host, gone in one statement."""
+        await self._session.execute(
+            delete(SandboxHome).where(SandboxHome.host_id == host_id)
+        )
 
     async def delete_device_homes(self, device_id: str, resource_id: str) -> None:
         """The homes in the directory a room's cleanup removed from a machine."""
