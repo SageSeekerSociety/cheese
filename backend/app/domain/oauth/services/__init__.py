@@ -49,11 +49,6 @@ from .providers import (
     RUCProvider,
 )
 from .tokens import (
-    TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH,
-    TOKEN_UNAVAILABLE_NOT_CONNECTED,
-    TOKEN_UNAVAILABLE_PROVIDER_NOT_CONFIGURED,
-    TOKEN_UNAVAILABLE_REFRESH_FAILED,
-    TOKEN_UNAVAILABLE_UNDECRYPTABLE,
     open_oauth_token,
     seal_oauth_token,
 )
@@ -244,13 +239,6 @@ class OAuthService:
             self, user_id, provider_id=provider_id
         )
 
-    async def get_github_user_token_with_reason(
-        self, user_id: int, *, provider_id: str = "github_app"
-    ) -> tuple[str | None, str | None]:
-        return await tokens.get_github_user_token_with_reason(
-            self, user_id, provider_id=provider_id
-        )
-
     async def _refresh_and_persist_token(
         self, connection_id: int, provider_id: str
     ) -> str | None:
@@ -303,7 +291,7 @@ async def get_github_profile_for_handle(
 
 # 兼容门面：`app.domain.oauth.services` 仍是路由、`deps.py`、`identity.py` 和单测
 # 的导入路径。拆开之前这个模块的名字空间里有什么，这里就还导出什么 ——
-# `GitHubProvider`、`seal_oauth_token`、`TOKEN_UNAVAILABLE_*` 这些取的仍是子模块里
+# `GitHubProvider`、`seal_oauth_token` 这些取的仍是子模块里
 # 那一个，不是副本。
 __all__ = [
     "LINK_ONLY_PROVIDERS",
@@ -316,11 +304,6 @@ __all__ = [
     "OAuthService",
     "OAuthUserInfo",
     "RUCProvider",
-    "TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH",
-    "TOKEN_UNAVAILABLE_NOT_CONNECTED",
-    "TOKEN_UNAVAILABLE_PROVIDER_NOT_CONFIGURED",
-    "TOKEN_UNAVAILABLE_REFRESH_FAILED",
-    "TOKEN_UNAVAILABLE_UNDECRYPTABLE",
     "get_github_profile_for_handle",
     "open_oauth_token",
     "seal_oauth_token",

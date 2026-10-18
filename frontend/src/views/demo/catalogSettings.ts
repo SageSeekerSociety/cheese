@@ -247,8 +247,8 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '授权过期了',
-        note: 'user token 过期不等于没连：这里照旧画「已连接」，另加一条说明连接仓库失败时该点哪里。`tokenExpires` 为 null 是「不过期」，不是「已过期」。',
-        props: accountProps({ conn: accountConn({ tokenExpires: '2026-01-01T00:00:00Z' }) }),
+        note: 'user token 过期、也没有能用的续期 token 时才画这一格：照旧画「已连接」，另加一条说明连接仓库失败时该点哪里。有续期 token 时后端自己换新，不提示；`tokenExpires` 为 null 是「不过期」，不是「已过期」。',
+        props: accountProps({ conn: accountConn({ tokenExpires: '2026-01-01T00:00:00Z', hasRefreshToken: false }) }),
         expect: 'GitHub 授权已过期',
       },
       {

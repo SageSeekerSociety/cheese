@@ -4,7 +4,7 @@ import type { OAuthConnectionInfo } from '@/cx_types'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { isGithubAccountTokenExpired } from '@/lib/githubAccount'
+import { githubAccountNeedsReconnect } from '@/lib/githubAccount'
 import { relTime } from '@/lib/relTime'
 
 // 连接 GitHub 账号 (#192)：App 的 user-to-server 授权，独立于登录用的经典 OAuth
@@ -94,7 +94,7 @@ const emit = defineEmits<{
           </BaseButton>
         </div>
         <v-alert
-          v-if="isGithubAccountTokenExpired(conn)"
+          v-if="githubAccountNeedsReconnect(conn)"
           type="warning"
           density="comfortable"
           variant="tonal"
