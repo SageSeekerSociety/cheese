@@ -242,26 +242,32 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
                 token=prepared.token,
             )
         assert captured["CHEESE_AUTHOR"] == "other-teammate"
+        # The session's shell as the launch script leaves it for the agent, on
+        # a machine with no git identity of its own.
+        script = machine_launcher.launch_script(command="true")
+        start = script.index('SEATD="$HOME/.cheese/seats/')
+        end = script.index('cat > "$HOME/.cheese/cheese-environment.py"')
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".gitconfig").write_text("[user]\n\tuseConfigOnly = true\n")
         env = {
             **os.environ,
             **captured,
+            "HOME": str(home),
+            "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_COMMITTER_NAME": "fixture",
             "GIT_COMMITTER_EMAIL": "fixture@example.test",
         }
         subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
         subprocess.run(
             [
-                "git",
-                "-C",
+                "sh",
+                "-c",
+                script[start:end]
+                + 'git -C "$1" -c core.hooksPath=/dev/null -c commit.gpgsign=false '
+                "commit --allow-empty -m Fixture",
+                "sh",
                 str(tmp_path),
-                "-c",
-                "core.hooksPath=/dev/null",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "Fixture",
             ],
             env=env,
             check=True,

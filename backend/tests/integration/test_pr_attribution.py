@@ -139,6 +139,15 @@ _ALICE_ON_GITHUB = {"type": "User", "id": 583231, "login": "alice"}
 _THE_APP = {"type": "Bot", "id": 314883224, "login": "cheesex-app[bot]"}
 
 
+def _app_identity():
+    from app.domain.repository import identity
+
+    return identity.app_identity(_THE_APP["id"])
+
+
+_APP = _app_identity()
+
+
 class _FakeClient:
     """A GitHub where a token opens a PR as its holder, and the App's own
     opens it as the bot. `opened` records each PR's body as it last read."""
@@ -212,6 +221,11 @@ def _github_world(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.domain.oauth.services.get_github_profile_for_handle", _linked
     )
+
+    async def _on_github(_session, _project_id):
+        return "github", _APP
+
+    monkeypatch.setattr("app.domain.review.credit._forge", _on_github)
     monkeypatch.setattr(pr_publish, "proposal_client", _fake_proposal_client)
     monkeypatch.setattr(pr_publish, "branch_head", _fake_branch_head)
     monkeypatch.setattr(forge_files, "branch_head", _fake_branch_head)

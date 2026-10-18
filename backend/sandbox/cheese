@@ -1338,7 +1338,7 @@ def _has_tz_database() -> bool:
     """这台机器上有 tzdata 吗——没有的话「查不到」说明不了任何事。"""
     try:
         ZoneInfo("UTC")
-    except Exception:  # noqa: BLE001 — 判不出来就是判不出来
+    except Exception:
         return False
     return True
 
@@ -2132,7 +2132,7 @@ def _doc_links(document: str, host) -> list[str]:
     platform could not say."""
     try:
         found = host.request({"method": "GET", "path": f"/documents/{document}/links"})
-    except Exception:  # noqa: BLE001 — the document reads without its links
+    except Exception:
         return []
     data = found.get("data") or {}
 
@@ -3453,7 +3453,7 @@ def _call(
             f"[cheese] {method} {path} 失败 HTTP {e.code}: {raw[:400]}", file=sys.stderr
         )
         sys.exit(1)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"[cheese] {method} {path} 出错: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -3672,7 +3672,7 @@ def _flush_pre_push_reports() -> None:
         else:
             # Nobody to tell: a checkout with no room has no author to reach.
             message.tell_stderr()
-    except Exception:  # noqa: BLE001 — the sync's own outcome is what matters
+    except Exception:
         pass
 
 
@@ -3732,6 +3732,38 @@ def _configure_git_transport(repo: Path, data: dict) -> None:
         print("[cheese] 仓库无法直连，本次通过平台访问", file=sys.stderr)
 
 
+def _commit_as(repo: Path, task_dir: Path, data: dict) -> None:
+    """Make the task's commits by the author the platform names for it
+    (`data["author"]`, `Name <address>`): the task owner on GitHub when the
+    project credits owners, otherwise the AI teammate. Per worktree, because
+    every task of the project shares one repository and each has its own
+    author; an author the launch environment fixed would override it. The
+    repository's own default is the teammate, for a worktree with no task of
+    its own and a platform that names nobody."""
+    _git_task(repo, "config", "user.name", AUTHOR)
+    _git_task(repo, "config", "user.email", f"{AUTHOR}@agent.cheese.local")
+    _git_task(repo, "config", "extensions.worktreeConfig", "true")
+    # With per-worktree config on, the common config is every worktree's: the
+    # project repository's `core.bare` there makes each task's checkout bare
+    # too, and git refuses `add` in it. It belongs to the repository's own.
+    bare = _git_task(
+        repo, "config", "--local", "--type=bool", "--default=false", "--get", "core.bare"
+    )
+    if bare.strip() == "true":
+        own = Path(_git_task(repo, "rev-parse", "--absolute-git-dir").strip())
+        _git_task(
+            repo, "config", "--file", str(own / "config.worktree"), "core.bare", "true"
+        )
+        _git_task(repo, "config", "--local", "--unset", "core.bare")
+    author = data.get("author") or ""
+    name, _, rest = author.partition(" <")
+    email = rest.rstrip(">")
+    if not name or not email:
+        return
+    _git_task(task_dir, "config", "--worktree", "user.name", name)
+    _git_task(task_dir, "config", "--worktree", "user.email", email)
+
+
 def _git_attribution(message_file: str) -> None:
     # The hook belongs to the shared repository, so every worktree of it runs
     # it, including one made with `git worktree add` beside a task's. Only a
@@ -3741,6 +3773,11 @@ def _git_attribution(message_file: str) -> None:
         return
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
+    # Too late for this commit, whose author is already fixed; the next one
+    # follows an owner or a credit setting that changed since the checkout.
+    here = Path.cwd()
+    common = Path(_git_task(here, "rev-parse", "--git-common-dir").strip())
+    _commit_as(common if common.is_absolute() else here / common, here, data)
     trailers = []
     for person in data["coauthors"]:
         if "\n" in person or "\r" in person:
@@ -3975,15 +4012,7 @@ def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
         if not marker.is_absolute():
             marker = task_dir / marker
         marker.write_text(json.dumps(data))
-        _git_task(
-            repo, "config", "user.name", os.environ.get("GIT_AUTHOR_NAME", AUTHOR)
-        )
-        _git_task(
-            repo,
-            "config",
-            "user.email",
-            os.environ.get("GIT_AUTHOR_EMAIL", f"{AUTHOR}@agent.cheese.local"),
-        )
+        _commit_as(repo, task_dir, data)
         hooks = repo / "hooks"
         prepare = hooks / "prepare-commit-msg"
         prepare.write_text('#!/bin/sh\nexec cheese git-attribution "$1"\n')
@@ -4373,7 +4402,7 @@ def _tell_room(content: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=30):
             pass
-    except Exception:  # noqa: BLE001 — the sync's own outcome is what matters
+    except Exception:
         return False
     return True
 
@@ -5326,7 +5355,7 @@ def _raw_request(
         # the download succeeded.
         print(e.read().decode(errors="replace"))
         sys.exit(1)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"[cheese] api {method} {path} 出错: {e}", file=sys.stderr)
         sys.exit(1)
     if out:

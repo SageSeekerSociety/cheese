@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Say whether one PR is ready to be delivered, or what is missing (§8 of the workflow).
 
-    ready.py --dir /tmp/pr-review-7-abcdef123456.input [--repo OWNER/NAME] [--self-test]
+    ready.py --dir $HOME/.cheese/review-cache/pr-review-7-abcdef123456.input
+             [--repo OWNER/NAME] [--self-test]
 
 `pr-review.sh ready DIR` runs this. DIR is a `prepare` directory: it holds meta (the PR and
 the commit that was reviewed) and REVIEW-RESULT.md (what the seat pastes into the card).
@@ -11,7 +12,9 @@ Two things gate a delivery, and this checks both:
   2. There is a review conclusion with no blocker/major on that head. A review of an older
      commit still counts when everything after it is an increment §4 does not re-review:
      commits that came in by merging the base branch, and changes that are only tests,
-     copy or docs. Anything else needs an increment review first.
+     copy or docs. Anything else needs an increment review first. A head that only merged
+     `origin/main` is the first of those: the original review's conclusion line is used
+     as it is, and no prepare runs again.
 
 It reads GitHub for the head and the check run; everything else is the local review. It
 does not deliver anything and does not write to the card. Exit 0 for 可递, 1 for 缺, 2 for a
