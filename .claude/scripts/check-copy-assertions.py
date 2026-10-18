@@ -10,7 +10,7 @@ WHY THIS EXISTS. 2026-10-12 审阅 #3498 时提的：「测试别按整句文案
 WHAT IT REJECTS. `frontend/` 下的测试文件（`*.spec.ts(x)`、`*.test.ts(x)`，
 跳过 `node_modules`）里对用户可见文案的整句相等断言：
 
-    expect(note).toBe('本月的芝士额度已用完，11月1日重置。')
+    expect(a.notice.value).toBe('本月的芝士额度已用完，11月1日重置。')
     expect(el?.textContent?.trim()).toBe('Save failed: HTTP 500')
 
 两个条件同时成立才报：
@@ -22,6 +22,10 @@ WHAT IT REJECTS. `frontend/` 下的测试文件（`*.spec.ts(x)`、`*.test.ts(x)
   * 右值是一句话：中文至少 12 个汉字并且带句读（或至少 20 个汉字）；英文
     至少三个词、20 个字符。路径、URL、标识符都不算一句话。
 
+`toBe` / `toEqual` / `toStrictEqual` 都算，`.not.`、`.resolves.`、
+`.rejects.` 也认；引号单双都认，不带 `${}` 的模板字面量同样是整句，也认。
+一行里有多条断言时逐条看。注释里的断言不算：`//` 和 `/* */` 里的不报。
+
 WHAT IT ACCEPTS. 钉部件：
 
     expect(note).toContain('11月1日')
@@ -29,7 +33,8 @@ WHAT IT ACCEPTS. 钉部件：
     expect(label.textContent).toBe('保存')
 
 `toContain` / `toMatch` / `toBeGreaterThan` 之类不是相等断言，不报；短标签
-（几个字、一个词）不是整句，不报。
+（几个字、一个词）不是整句，不报；带 `${}` 的模板字面量本来就从常量取数，
+不报。
 
 EXEMPTION. 这句确实每个字都在断言意图里时（例如「服务器原话要原样透传」），
 在那一行或它上一行写 `copy-assertions: allow — 理由`。理由写给下一个人看。
@@ -43,11 +48,12 @@ LIMITS. 只认单行写法：断言和字面量跨行、或左值嵌了两层以
 BASELINE. 2026-10-18 主干上已有 11 处，冻结在 `BASELINE` 里，一处一行
 （文件、字面量）。集合只许减：树里少了一处而 BASELINE 还留着，是失败而不是
 通过，所以还掉一处不会在别处换来一处新的。要重数就 `--dump`，照着结果改
-`BASELINE`。基线漂出视线时，报告和干净树一模一样，那是守卫唯一赔不起的失败。
+`BASELINE`。基线漂出视线时，报告和干净树一模一样，那是守卫唯一赔不起的失败，
+所以读不了的目录和文件一律退 2，绝不当作「没有命中」。
 
 Usage: check-copy-assertions.py [--root DIR] [--json] [--dump]
                                 [--baseline PATH]
-Exit 0 树与冻结的基线一致，1 有新增或基线过期，2 有文件读不了。
+Exit 0 树与冻结的基线一致，1 有新增或基线过期，2 有目录或文件读不了、判不了。
 """
 
 from __future__ import annotations
@@ -70,9 +76,8 @@ TEST_SUFFIXES = (".spec.ts", ".spec.tsx", ".test.ts", ".test.tsx")
 #: 装了依赖的树、产物目录不是源码；整棵 `node_modules` 不进遍历。
 SKIP_DIRS = frozenset({"node_modules", "dist", "coverage", ".git"})
 
-#: 左值里出现这些词，才认为断言读的是文案而不是数据。按 camelCase /
-#: snake_case 拆词后小写比较，所以 `textContent`、`text_content` 都算，
-#: 而 `plaintext`、`context` 不算。
+#: 左值里出现这些名字，才认为断言读的是文案而不是数据。小写比较，所以
+#: `textContent` 和 `Text` 都算；`plaintext`、`context` 不算。
 COPY_NAMES = frozenset(
     {
         "text",
@@ -97,12 +102,13 @@ COPY_NAMES = frozenset(
 #: 豁免标记。同一行或上一行出现即放行；后面接理由。
 EXEMPT_MARKER = "copy-assertions: allow"
 
-#: 一次相等断言。左值容许一层嵌套括号（`find('.x').text()`），右值只认单引号
-#: 或双引号字符串——模板字面量天然就是钉部件，不在拒绝范围里。
+#: 一次相等断言。左值容许一层嵌套括号（`find('.x').text()`）；右值是单引号、
+#: 双引号或不带 `${}` 的模板字面量。字面量体用惰性量词加反向引用收尾，未闭合
+#: 的引号只会线性退化，不会指数回溯。
 CALL = re.compile(
     r"expect\((?P<subject>(?:[^()\n]|\([^()\n]*\))*)\)\s*\.\s*(?:not\.)?"
-    r"(?:toBe|toEqual|toStrictEqual)\(\s*(?P<quote>['\"])"
-    r"(?P<literal>(?:\\.|(?!(?P=quote)).)*)(?P=quote)\s*\)"
+    r"(?:resolves\.|rejects\.)?(?:toBe|toEqual|toStrictEqual)\(\s*"
+    r"(?P<quote>['\"`])(?P<literal>(?:\\[^\n]|[^\\\n])*?)(?P=quote)\s*\)"
 )
 
 #: 左值里读文案的名词：取属性名（`e.message`、`el?.textContent`），左值只有
@@ -174,6 +180,46 @@ def reads_copy(subject: str) -> bool:
     return bool(read_names(subject) & COPY_NAMES)
 
 
+def mask_comments(line: str, in_block: bool) -> tuple[str, bool]:
+    """把注释换成等长空格，字符串原样保留；返回（遮罩后的行、是否还在块注释里）。"""
+    masked = list(line)
+    index = 0
+    quote: str | None = None
+    while index < len(line):
+        char = line[index]
+        if in_block:
+            if line.startswith("*/", index):
+                masked[index] = masked[index + 1] = " "
+                index += 2
+                in_block = False
+                continue
+            masked[index] = " "
+            index += 1
+            continue
+        if quote is not None:
+            if char == "\\":
+                index += 2
+                continue
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in "'\"`":
+            quote = char
+            index += 1
+            continue
+        if line.startswith("//", index):
+            for rest in range(index, len(masked)):
+                masked[rest] = " "
+            break
+        if line.startswith("/*", index):
+            in_block = True
+            index += 2
+            continue
+        index += 1
+    return "".join(masked), in_block
+
+
 def exempted(lines: list[str], index: int) -> bool:
     """这一行或上一行带豁免标记。"""
     return EXEMPT_MARKER in lines[index] or (
@@ -182,52 +228,62 @@ def exempted(lines: list[str], index: int) -> bool:
 
 
 def scan_file(path: Path, root: Path) -> list[Finding]:
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    text = path.read_bytes().decode("utf-8")
+    lines = text.splitlines()
     relative = path.relative_to(root).as_posix()
     found: list[Finding] = []
+    in_block = False
     for index, line in enumerate(lines):
-        match = CALL.search(line)
-        if match is None:
-            continue
-        if not reads_copy(match.group("subject")):
-            continue
-        if not is_sentence(match.group("literal")):
-            continue
-        if exempted(lines, index):
-            continue
-        found.append(
-            Finding(
-                path=relative,
-                line=index + 1,
-                subject=" ".join(match.group("subject").split()),
-                literal=match.group("literal"),
+        code, in_block = mask_comments(line, in_block)
+        for match in CALL.finditer(code):
+            literal = match.group("literal")
+            if match.group("quote") == "`" and "${" in literal:
+                continue
+            if not reads_copy(match.group("subject")):
+                continue
+            if not is_sentence(literal):
+                continue
+            if exempted(lines, index):
+                continue
+            found.append(
+                Finding(
+                    path=relative,
+                    line=index + 1,
+                    subject=" ".join(match.group("subject").split()),
+                    literal=literal,
+                )
             )
-        )
     return found
 
 
-def test_files(root: Path) -> list[Path]:
+def test_files(root: Path) -> tuple[list[Path], list[str]]:
+    """要扫的文件，以及遍历时读不了的目录。"""
     frontend = root / "frontend"
     if not frontend.is_dir():
         raise CannotJudge(f"{frontend} 不是目录")
     found: list[Path] = []
-    for directory, subdirectories, names in os.walk(frontend):
+    unreadable: list[str] = []
+
+    def remember(error: OSError) -> None:
+        unreadable.append(f"{error.filename}: {error.strerror or error}")
+
+    for directory, subdirectories, names in os.walk(frontend, onerror=remember):
         subdirectories[:] = sorted(
             name for name in subdirectories if name not in SKIP_DIRS
         )
         for name in sorted(names):
             if name.endswith(TEST_SUFFIXES):
                 found.append(Path(directory) / name)
-    return found
+    return found, unreadable
 
 
 def scan(root: Path) -> tuple[list[Finding], list[str]]:
+    paths, unreadable = test_files(root)
     findings: list[Finding] = []
-    unreadable: list[str] = []
-    for path in test_files(root):
+    for path in paths:
         try:
             findings.extend(scan_file(path, root))
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             unreadable.append(f"{path.relative_to(root).as_posix()}: {exc}")
     return findings, unreadable
 
@@ -269,15 +325,18 @@ def compare(
     return new, stale
 
 
+def report_unreadable(unreadable: list[str]) -> None:
+    for line in unreadable:
+        print(f"读不了，判断不了: {line}", file=sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root", type=Path, default=REPO_ROOT, help="要扫的树，默认仓库根"
     )
     parser.add_argument("--json", action="store_true", help="以 JSON 输出")
-    parser.add_argument(
-        "--dump", action="store_true", help="列出全部命中，不看基线"
-    )
+    parser.add_argument("--dump", action="store_true", help="列出全部命中，不看基线")
     parser.add_argument(
         "--baseline",
         type=Path,
@@ -292,7 +351,10 @@ def main() -> int:
             if args.json:
                 print(
                     json.dumps(
-                        [finding.__dict__ for finding in findings],
+                        {
+                            "findings": [finding.__dict__ for finding in findings],
+                            "unreadable": unreadable,
+                        },
                         ensure_ascii=False,
                         indent=2,
                     )
@@ -304,14 +366,14 @@ def main() -> int:
                         f"{finding.literal}"
                     )
                 print(f"共 {len(findings)} 处")
+            report_unreadable(unreadable)
             return 2 if unreadable else 0
         use_baseline = args.baseline is not None or root == REPO_ROOT
         baseline = load_baseline(args.baseline) if use_baseline else ()
     except CannotJudge as exc:
         print(f"文案断言守卫判不了这棵树: {exc}", file=sys.stderr)
         return 2
-    for line in unreadable:
-        print(f"读不了这个测试文件，判断不了: {line}", file=sys.stderr)
+    report_unreadable(unreadable)
 
     new, stale = compare(findings, baseline)
     if args.json:
@@ -340,7 +402,7 @@ def main() -> int:
                 f"{path}: 「{literal}」已经不在树里了，从 BASELINE 删掉这一行",
                 file=sys.stderr,
             )
-        if not new and not stale:
+        if not new and not stale and not unreadable:
             print(f"文案断言守卫通过（冻结 {len(baseline)} 处已记录的整句断言）")
 
     if unreadable:
