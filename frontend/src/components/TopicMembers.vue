@@ -214,6 +214,7 @@ async function onRemove(handle: string) {
         :title="t('work.room.roster.empty')"
       />
       <ul v-else class="roster__list">
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- right-click opens a menu whose one action is the row's × button -->
         <li
           v-for="m in members"
           :key="m.member_handle"

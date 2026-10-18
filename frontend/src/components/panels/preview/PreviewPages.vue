@@ -373,6 +373,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- pointer gestures over the pages: a click drops a pin in pointing mode and a mouse selection is quoted; neither has a keyboard counterpart yet -->
   <div ref="container" class="pv" :class="{ 'pv--pointing': pointing }" @mouseup="onSelect" @click="onPoint">
     <div class="pv__tools">
       <BaseButton

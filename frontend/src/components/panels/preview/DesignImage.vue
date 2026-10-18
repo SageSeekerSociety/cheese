@@ -305,10 +305,11 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
       @clear="clearStrokes"
       @send="sendAnnotated"
     />
-    <output v-if="sendError" class="design-image__error" role="alert">{{ sendError }}</output>
-    <output v-if="selectedRegion" class="t-meta design-image__region" aria-live="polite">{{
-      t('design.selectedRegion', selectedRegion)
-    }}</output>
+    <!-- Status lines, not a form's result: a <p> with the live-region role says so, where <output> would want a label. -->
+    <p v-if="sendError" class="design-image__error" role="alert">{{ sendError }}</p>
+    <p v-if="selectedRegion" class="t-meta design-image__region" role="status">
+      {{ t('design.selectedRegion', selectedRegion) }}
+    </p>
     <div
       ref="viewport"
       class="design-image__viewport"
@@ -319,6 +320,7 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
       @pointercancel.capture="panEnd"
     >
       <div ref="pane" class="design-image__pane" @wheel="wheel">
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- double-clicking a text mark reopens it for editing, part of drawing with the pointer; the image has no keyboard drawing mode -->
         <div
           class="design-image__sheet"
           :style="dimensions"
@@ -399,6 +401,7 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
       </div>
     </div>
     <!-- 要丢没发出去的标注之前先问一句；参考物的文案是「Discard your annotations?」。 -->
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the ARIA modal dialog pattern: Escape answers Keep and Tab stays inside, caught as they bubble from its two buttons -->
     <div
       v-if="discardPrompt"
       class="design-image__discard"
