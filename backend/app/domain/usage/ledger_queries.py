@@ -25,6 +25,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.usage.balance import Balance, Refusal, _balance, _live
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.models import ComputeGrant, PlanWindowUse
 from app.domain.usage.payers import Payer
 from app.domain.usage.windows import WindowUse, _window_use
@@ -100,6 +101,12 @@ class LedgerQueries:
         A windowed plan admits while every window has room. Once one is full,
         only an earmark or bought or granted credits may be spent; with none,
         the call waits for the window to reset."""
+        if payer.project_id is not None:
+            refused = await CreditBudgets(self._session).project_refusal(
+                payer.project_id
+            )
+            if refused is not None:
+                return refused
         if payer.terms.unlimited:
             return None
         balance = await self.balance(payer)

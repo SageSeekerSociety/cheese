@@ -239,3 +239,54 @@ def test_pr_checks_holds_no_database_connection_while_the_forge_answers(
     assert response.status_code == 200, response.text
     assert response.json()["data"]["available"] is True
     assert checked_out == [0, 0]
+
+
+def _make_alice_own_the_task(client, card_id: str) -> None:
+    async def _do() -> None:
+        from app.domain.review.repositories import AcceptCardRepository
+        from app.domain.room_task.models import Task
+
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(uuid.UUID(card_id))
+            assert card is not None and card.task_id is not None
+            task = await session.get(Task, card.task_id)
+            assert task is not None
+            task.owner_handle = "alice"
+            await session.commit()
+
+    asyncio.run(_do())
+
+
+@pytest.mark.parametrize(
+    ("opened_by", "viewer", "expected"),
+    [
+        # The App opened the owner's PR and the owner never linked GitHub.
+        ({"type": "Bot", "login": "cheesex-app[bot]"}, "alice", "none"),
+        # Only the owner is told: nobody else can do anything about it.
+        ({"type": "Bot", "login": "cheesex-app[bot]"}, "bob", None),
+        # Opened in a person's name: nothing to explain.
+        ({"type": "User", "login": "alice-gh", "id": 9}, "alice", None),
+    ],
+)
+def test_pr_checks_tell_the_owner_why_the_app_opened_their_pr(
+    client, monkeypatch, opened_by, viewer, expected
+):
+    from app.api.routes import accept
+
+    pid = _make_project(client)
+    join_project_team(client, pid, "bob")
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid)
+    _make_alice_own_the_task(client, cid)
+    provider = AsyncMock()
+    provider.pr_view.return_value = {"head": {"sha": "abc123"}, "user": opened_by}
+    provider.check_runs.return_value = []
+    monkeypatch.setattr(accept, "proposal_client", AsyncMock(return_value=provider))
+
+    response = client.get(
+        f"/topics/{tid}/pr-checks", headers=session_auth_headers(viewer)
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["owner_credit"] == expected

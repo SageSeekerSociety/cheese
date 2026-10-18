@@ -34,6 +34,7 @@ from pathlib import Path
 if __package__:
     from app.domain.agent.executor_transport import (
         MACHINE_OUT_OF_REACH,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         RemoteClient,
         session_path,
@@ -52,6 +53,7 @@ else:
     sys.path.append(str(Path(__file__).resolve().parents[3]))
     from executor_transport import (
         MACHINE_OUT_OF_REACH,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         RemoteClient,
         session_path,
@@ -71,6 +73,11 @@ else:
 # there — and the build's messaging socket and its token name a process on
 # this host, so they stay too.
 FORWARDED_ENV = (
+    # The session's working directory under its short name: the command runs on
+    # the executor, so the name has to cross with it or `cd "$T"` names nothing
+    # there. How it is spelled on the way is the transport's business, beside
+    # every other path a command names (`executor_transport.WORKING_DIRECTORY`).
+    WORKING_DIRECTORY,
     "AI_AGENT",
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
@@ -361,8 +368,13 @@ def run_on_the_machine(target, command):
             )
         ).decode()
     env = {name: os.environ[name] for name in FORWARDED_ENV if name in os.environ}
-    if "CLAUDE_PROJECT_DIR" in os.environ:
-        env["CLAUDE_PROJECT_DIR"] = outward(os.environ["CLAUDE_PROJECT_DIR"])
+    # Both name a directory of this session's, so both are spelled where the
+    # executor holds it. `T` is the short name the line was told to use; a
+    # session in a directory of its own (`virtual_workspace`) would otherwise
+    # hand the machine a path that exists only here.
+    for name in ("CLAUDE_PROJECT_DIR", WORKING_DIRECTORY):
+        if name in os.environ:
+            env[name] = outward(os.environ[name])
     merge = _same_file(1, 2)
     command_id = "shell-" + uuid.uuid4().hex
     client = RemoteClient(target)

@@ -27,9 +27,11 @@ is preserved.
 
 import re
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import event
 
+from app.domain.agent.models import AgentTurn
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import threads_of_rooms, threads_still_threads
 from app.domain.event_author import AuthorType
@@ -241,11 +243,64 @@ def _seed_populated_project(client) -> tuple[str, list[str]]:
     return pid, client.portal.call(_seed, uuid.UUID(pid))
 
 
-def test_topic_list_batches_threads_cards_tasks_and_questions_once(client):
+def _turn_running_elsewhere(client) -> None:
+    """An open, delivered turn in another project's channel, as other tests (or
+    other projects in production) leave behind: the sidebar reads every open
+    turn site-wide, so this one must not cost the list a `tasks` lookup."""
+    pid = post_project(client, json={"name": "Elsewhere"}, owner="bob").json()["data"][
+        "id"
+    ]
+    r = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "Busy"},
+        headers=session_auth_headers("bob"),
+    )
+    assert r.status_code == 200, r.text
+    room = uuid.UUID(r.json()["data"]["id"])
+
+    async def _insert() -> None:
+        started = datetime.now(UTC) - timedelta(minutes=1)
+        async with client.test_factory() as s:
+            s.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=room,
+                    continuation_id=uuid.uuid4(),
+                    author="bob",
+                    content="在别处跑",
+                    is_resume=False,
+                    resendable=True,
+                    started_at=started,
+                    delivered_at=started,
+                    agent_handle="cheese-seat-elsewhere",
+                )
+            )
+            await s.commit()
+
+    client.portal.call(_insert)
+
+
+def _turn_starting_here(monkeypatch) -> None:
+    """A turn this process has just started in another project's conversation,
+    whose delivered row is not written yet: the in-process half of what the
+    sidebar reads (`AgentWorkRunner.running_topic_ids`), which other tests in
+    the same worker leave behind, so this must not cost the list a `tasks`
+    lookup either."""
+    from app.api.deps import get_work_runner
+
+    runner = get_work_runner()
+    elsewhere = uuid.uuid4()
+    here = runner.running_topic_ids
+    monkeypatch.setattr(runner, "running_topic_ids", lambda: here() | {elsewhere})
+
+
+def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monkeypatch):
     """Across a populated project, `GET /topics?project_id=` reads `topics`,
     `threads`, task `accept_cards`, underway `tasks`, and `awaiting_an_answer`
     `blocks` once each, while preserving the full response field set."""
     pid, room_ids = _seed_populated_project(client)
+    _turn_running_elsewhere(client)
+    _turn_starting_here(monkeypatch)
     headers = session_auth_headers("alice")
 
     with counting_sql(client) as seen:

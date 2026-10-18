@@ -12,15 +12,19 @@ it calls.
 import asyncio
 import logging
 import uuid
+from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import or_, select
 
 from app.core.sentences import say
-from app.domain.delivery_events import SettleCard
+from app.domain.delivery_events import DeliveryEvent, NotificationType, SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE,
+    EVENT_ACCEPT_READY,
     SEVERITY_INFO,
+    WHO_CHEESE,
     WHO_PLATFORM,
     notice,
 )
@@ -30,6 +34,9 @@ from app.domain.project.forge import (
 )
 from app.domain.project.models import ProjectForge
 from app.domain.review import archive, landing_watch, pr_publish
+from app.domain.review.github_pr import _NO_VERDICT_CONCLUSIONS
+from app.domain.review.github_pr_status import PullRequestStatus
+from app.domain.review.merge_state import RED_CONCLUSIONS
 from app.domain.review.models import AcceptCard
 from app.domain.review.ports import (
     Announce,
@@ -63,6 +70,52 @@ _transient_misses: dict[uuid.UUID, int] = {}
 # Keep the one-minute sweep within the forge API quota while covering old tasks.
 UNCARDED_TASKS_PER_TICK = 10
 _uncarded_task_cursor: uuid.UUID | None = None
+
+#: Last check state seen for each uncarded task PR: ``(head_sha, state)``. A
+#: card is filed only after CI is green, and until then no card poller watches
+#: the PR — so the one word 「检查全绿，可以递卡了」 has to come from here. It is
+#: said once per head, on the tick where the state goes running → green; the
+#: module-level dict makes a restart forget the previous tick, so the first
+#: green a new process sees is not a transition and wakes nobody (a wake per
+#: deploy for every open green PR would be noise, not news).
+_uncarded_checks_seen: dict[uuid.UUID, tuple[str, str]] = {}
+
+#: The three words `_checks_state` folds a PR's check runs into.
+CHECKS_RUNNING = "running"
+CHECKS_GREEN = "green"
+CHECKS_RED = "red"
+
+
+def _checks_state(runs: Sequence[dict]) -> str:
+    """这个提交上一批 check run 的净状态：``running`` / ``green`` / ``red``。
+
+    一个还在跑的检查意味着结论还不存在，所以「有在跑的」压过其余两条——包括
+    一条已经红的，重跑会把它变绿。
+
+    ``cancelled`` / ``stale`` 同样按「还没有结论」算，不折成绿：它们不是裁决。
+    被新推送顶掉的那次运行正是以 ``cancelled`` 收场的，把它读成全绿就会对着一个
+    还没人跑完的 head 说「可以递卡了」；`superseded_runs` 和卡面那句「已取消」
+    也是同一套词表（``_NO_VERDICT_CONCLUSIONS``）。``skipped`` 仍然是绿：路径过滤
+    不跑的那几个 job 在这套 CI 里是常态，把它们算成没结论会让这句话永远等不到。
+
+    全部跑完、没有一条是 :data:`~app.domain.review.merge_state.RED_CONCLUSIONS`
+    里的词、也没有一条是「没有裁决」的词，才算全绿。
+
+    一份 run 都没读到按 ``running`` 算：推送后到 workflow 起跑之间正是这个
+    空窗，那个时刻说「全绿」是错的；一直不报检查的仓库只是永远等不到这句话，
+    代价比误报小。
+    """
+    if not runs:
+        return CHECKS_RUNNING
+    if any(run.get("status") != "completed" for run in runs):
+        return CHECKS_RUNNING
+    if any(run.get("conclusion") in RED_CONCLUSIONS for run in runs):
+        return CHECKS_RED
+    if any(run.get("conclusion") in _NO_VERDICT_CONCLUSIONS for run in runs):
+        # 没有裁决的 run 既不是过也不是没过：等它被重跑/被顶替后的那次结论。
+        return CHECKS_RUNNING
+    return CHECKS_GREEN
+
 
 # How many of a tick's PRs are carried at once. No card or task PR depends on
 # another — each opens its own session and talks to the forge on its own — so
@@ -216,6 +269,7 @@ async def poll_uncarded_task_prs(
                     if task is None or task.pr_number is None:
                         return checked, merged, None
                     number, project = task.pr_number, task.project_id
+                    room_id, pr_url = task.room_id, task.pr_url
                     quota = await background_quota(project, session)
                     client = await proposal_client(project, session)
                 # Asked once the session is closed, so no connection waits on it.
@@ -226,6 +280,18 @@ async def poll_uncarded_task_prs(
                 status = await client.pr_status(number)
                 checked = True
                 if not status.merged:
+                    await _wake_when_checks_pass(
+                        task_id,
+                        number,
+                        status,
+                        client,
+                        room_id=room_id,
+                        project_id=project,
+                        pr_url=pr_url,
+                        announce=announce,
+                        record_instruction=record_instruction,
+                        sessions=sessions,
+                    )
                     return checked, merged, None
                 async with sessions() as session:
                     task = await session.get(Task, task_id, with_for_update=True)
@@ -288,6 +354,98 @@ async def poll_uncarded_task_prs(
         "tasks_merged": sum(1 for _, merged, _ in outcomes if merged),
         "errors": [failure for _, _, failure in outcomes if failure is not None],
     }
+
+
+async def _wake_when_checks_pass(
+    task_id: uuid.UUID,
+    number: int,
+    status: PullRequestStatus,
+    client,
+    *,
+    room_id: uuid.UUID,
+    project_id: uuid.UUID,
+    pr_url: str | None,
+    announce: Announce,
+    record_instruction: RecordInstruction,
+    sessions,
+) -> None:
+    """Say 「检查全绿，可以递卡了」 once, on the tick the state turns green.
+
+    `poll_open_prs` walks cards, so a task with a PR but no card is watched by
+    nobody: the line learns its checks passed whenever its own turn comes up,
+    which on a busy seat can be tens of minutes after CI finished (2026-10-18,
+    thirteen lines waited 97 minutes between green and filing their card,
+    measured over two weeks). This is that one word, said in the task's room
+    and recorded for its seat.
+
+    Silent unless this is a transition: the same head was ``running`` last tick
+    and this tick is ``green``. Nothing is said for a head never seen before
+    (the first tick of a process, a push), for a PR that is not open, for a
+    task that is no longer open, or on a forge whose client has no `check_runs`
+    (Forgejo's does, but the seam is optional and the GitHub shape is what this
+    reads).
+
+    The open-task re-read is the whole point of the sentence: it tells a line
+    to file its card, and this poll's query deliberately keeps closed tasks
+    whose PR is still open (`or_(delivered_head IS NULL, status == open)` —
+    that arm is what settles a PR somebody merged on the forge for a task they
+    had already closed). A close whose PR-close call failed, or a room archived
+    and unarchived, leaves exactly that state with the PR still open, and
+    without this check the closed task would be told to file a card nobody
+    will ever file — and `record_instruction` would write a Delivery row that
+    the dispatcher refuses with 「任务已不再开放」. The row is read again
+    rather than carried from the caller for the same reason the merged branch
+    re-reads it: the answer that matters is the one at the write.
+
+    GitHub answers a repeated read with 304 (`forge_etags`), which is not
+    charged to the installation's quota, so asking every tick costs nothing in
+    the steady state.
+    """
+    check_runs = getattr(client, "check_runs", None)
+    if check_runs is None or status.state != "open":
+        return
+    state = _checks_state(await check_runs(status.head_sha))
+    head = status.head_sha
+    previous = _uncarded_checks_seen.get(task_id)
+    if previous != (head, CHECKS_RUNNING) or state != CHECKS_GREEN:
+        _uncarded_checks_seen[task_id] = (head, state)
+        return
+    content = say("checksPassed", pr=number)
+    async with sessions() as session:
+        task = await session.get(Task, task_id)
+        if task is None or task.status is not TaskStatus.open:
+            _uncarded_checks_seen[task_id] = (head, state)
+            return
+        await record_instruction(
+            session,
+            DeliveryEvent(
+                id=uuid.uuid4(),
+                type=NotificationType.ROOM_NOTICE,
+                payload={
+                    "projectId": str(project_id),
+                    "topicId": str(room_id),
+                },
+                occurred_at=datetime.now(UTC),
+            ),
+            task_id=task_id,
+            content=content,
+        )
+        await announce(
+            session,
+            place_id=room_id,
+            task_id=task_id,
+            content=content,
+            meta=notice(
+                EVENT_ACCEPT_READY,
+                severity=SEVERITY_INFO,
+                who=WHO_CHEESE,
+                detail=pr_url or "",
+            ),
+        )
+        await session.commit()
+    # Only after both were written: a failed wake is retried on the next tick
+    # instead of being remembered as «已经说过了».
+    _uncarded_checks_seen[task_id] = (head, state)
 
 
 async def watch_landings(

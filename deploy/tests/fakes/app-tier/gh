@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Stands in for the GitHub CLI in the drift step: the green anchor the workflow
+# measures drift against, and the build runs it decides the lost edge from.
+#
+# The step reads both before it judges the box, so a case that does not answer
+# them never reaches the drift check at all — the step warns that it cannot tell
+# and exits 0, which reads as "the stale frontend was fine". That is the failure
+# this fake exists to make impossible: an unset answer is an error here, not a
+# silent pass.
+#
+# APP_TIER_ANCHOR_SHA      the full sha refs/heads/main-green points at (required)
+# APP_TIER_ANCHOR          absent models a 404 (no batch has passed yet);
+#                          unreadable models a 503
+# APP_TIER_BUILD_IN_FLIGHT how many build runs for the anchor are queued/running
+# APP_TIER_BUILD_OK        how many succeeded
+# APP_TIER_BUILD_FAILED    how many failed
+# APP_TIER_GH_CALLS        every call is appended here, so a case can assert
+#                          which release was fired and against which commit
+set -euo pipefail
+
+[ -z "${APP_TIER_GH_CALLS:-}" ] || printf '%s\n' "$*" >> "$APP_TIER_GH_CALLS"
+
+args="$*"
+case "$args" in
+  api*git/ref/heads/main-green*)
+    case "${APP_TIER_ANCHOR:-present}" in
+      absent) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+      unreadable) echo "gh: Service Unavailable (HTTP 503)" >&2; exit 1 ;;
+    esac
+    printf '%s\n' "${APP_TIER_ANCHOR_SHA:?APP_TIER_ANCHOR_SHA is required}"
+    ;;
+  api*actions/runs*)
+    # The step asks for the counts per head_sha. A short sha silently matches no
+    # run in the real API, so a case that loses the full anchor must fail here
+    # rather than quietly decide from a build list that is always empty.
+    sha="${args#*head_sha=}"
+    sha="${sha%%&*}"
+    [ "$sha" = "${APP_TIER_ANCHOR_SHA:?}" ] \
+      || { echo "fake gh: head_sha '$sha' is not the full anchor — the real API matches no run for it" >&2; exit 1; }
+    case "$args" in
+      *in_progress*) printf '%s\n' "${APP_TIER_BUILD_IN_FLIGHT:-0}" ;;
+      *success*) printf '%s\n' "${APP_TIER_BUILD_OK:-0}" ;;
+      *failure*) printf '%s\n' "${APP_TIER_BUILD_FAILED:-0}" ;;
+      *) echo "fake gh: unhandled runs query: $args" >&2; exit 1 ;;
+    esac
+    ;;
+  workflow\ run*) exit 0 ;;
+  *)
+    echo "fake gh: unhandled arguments: $args" >&2
+    exit 1
+    ;;
+esac
