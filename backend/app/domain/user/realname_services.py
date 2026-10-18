@@ -198,13 +198,9 @@ class UserRealNameService:
         # 画彩色首字母。
         chosen_avatars = await self._profile_repo.chosen_avatar_ids(accessor_ids)
 
-        accessor_users: dict[int, User] = {}
-        for uid in accessor_ids:
-            if uid in accessor_users:
-                continue
-            user = await self._user_repo.get_by_id(uid)
-            if user is not None:
-                accessor_users[uid] = user
+        accessor_users: dict[int, User] = await self._user_repo.get_by_ids(
+            list(dict.fromkeys(accessor_ids))
+        )
 
         # Where each access happened: a board, named, and said to be a course
         # or not, looked up for the whole page at once.
