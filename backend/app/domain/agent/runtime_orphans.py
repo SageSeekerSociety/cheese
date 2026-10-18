@@ -52,7 +52,7 @@ async def _wedged_turns(
         blocks_at = await last_activity(
             {open_turns[tid].topic_id for tid in candidates}
         )
-    except Exception:  # noqa: BLE001 — a failed probe must not cancel turns
+    except Exception:  # a failed probe must not cancel turns
         logger.exception("orphan sweep: last-activity probe failed")
         return set()
     mono = time.monotonic()
@@ -350,7 +350,7 @@ async def _post_orphan_event(
             await self._broker.publish(
                 str(topic_id), {"type": "event_block", "block": block}
             )
-    except Exception:  # noqa: BLE001 — a notice must never break the sweep
+    except Exception:  # a notice must never break the sweep
         logger.exception("orphan event failed for %s", topic_id)
 
 
@@ -366,7 +366,7 @@ async def _recover_silent_turn(
     """Put the room's tools back if they were gone, then re-deliver."""
     try:
         recovered = await chat_service.recover_native_tools(topic_id)
-    except Exception:  # noqa: BLE001 — recovery must never fail a finished turn
+    except Exception:  # recovery must never fail a finished turn
         logger.exception("tool recovery check failed for topic %s", topic_id)
         return
     if not recovered:

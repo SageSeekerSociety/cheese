@@ -228,7 +228,7 @@ async def _ask(
             choice = payload["choices"][0]
             content = choice["message"]["content"] or ""
             truncated = choice.get("finish_reason") == "length"
-    except Exception:  # noqa: BLE001 — see the module docstring
+    except Exception:  # see the module docstring
         logger.warning("topic naming call failed", exc_info=True)
         return Answer(verdict=None)
     return Answer(
@@ -264,7 +264,7 @@ async def _record_usage(factory: SessionFactory, answer: Answer, task: Task) -> 
                 topic_id=task.id,
             )
             await session.commit()
-    except Exception:  # noqa: BLE001 — see the module docstring
+    except Exception:  # see the module docstring
         logger.warning("topic naming usage was not recorded", exc_info=True)
 
 

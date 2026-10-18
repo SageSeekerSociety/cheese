@@ -22,7 +22,7 @@ from app.domain.block.repositories import BlockRepository
 
 # The task a document is the living document of. A bare table: ``room_task``
 # depends on this domain. Shared with `editing.py`, which reads the same row.
-from app.domain.block.task_rows import _tasks  # noqa: F401  (re-exported for tests)
+from app.domain.block.task_rows import _tasks  # re-exported for tests
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import looks_like_agent_handle

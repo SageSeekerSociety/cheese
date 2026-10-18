@@ -134,7 +134,7 @@ async def _keep_run_record(
         try:
             async with sessions() as session:
                 seat = await _turn_seat(session, turn_id)
-        except Exception:  # noqa: BLE001 — the record matters more than its seat
+        except Exception:  # the record matters more than its seat
             logger.exception("could not read whose turn %s is", turn_id)
     await record_now(
         sessions,
@@ -193,7 +193,7 @@ async def _turn_changeset(
 
     try:
         return await _collect()
-    except Exception:  # noqa: BLE001 — never fail a turn over its summary
+    except Exception:  # never fail a turn over its summary
         logger.warning("change summary failed for topic %s", topic_id)
         return None
 
@@ -245,7 +245,7 @@ async def _known_commits(
         for shas in walked:
             commits.update(shas)
         return commits
-    except Exception:  # noqa: BLE001 — no baseline just means no summary
+    except Exception:  # no baseline just means no summary
         logger.warning(
             "commit baseline unreadable for topic %s", topic_id, exc_info=True
         )

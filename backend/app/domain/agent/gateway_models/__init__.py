@@ -150,10 +150,10 @@ from app.domain.agent.gateway_models_helpers import (
 )
 from app.domain.agent.models import GatewayAdminAudit  # noqa: F401
 from app.domain.agent.schemas import (
-    ModelCreate,  # noqa: F401
-    ModelUpdate,  # noqa: F401
-    SourceCreate,  # noqa: F401
-    SourceUpdate,  # noqa: F401
+    ModelCreate,
+    ModelUpdate,
+    SourceCreate,
+    SourceUpdate,
     upstream_string,  # noqa: F401
 )
 from app.domain.project.services import ProjectService  # noqa: F401

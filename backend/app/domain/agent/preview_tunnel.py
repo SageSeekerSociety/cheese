@@ -296,7 +296,7 @@ def open_ws(
         raw = socket.create_connection((host, port), timeout=timeout)
     if secure:
         if insecure:
-            context = ssl._create_unverified_context()  # noqa: S323 — opt-in only
+            context = ssl._create_unverified_context()  # opt-in only
         else:
             context = ssl.create_default_context(cafile=ca_path or None)
         raw = context.wrap_socket(raw, server_hostname=host)
@@ -784,7 +784,7 @@ class Session:
                 if response.length not in (None, 0):
                     raise http.client.IncompleteRead(b"", response.length)
                 self.send(OP_END, stream)
-        except Exception as exc:  # noqa: BLE001 — see below
+        except Exception as exc:  # see below
             # Everything, deliberately. The app is whatever the agent started, so
             # what comes back is not a shape this end can enumerate: a refused
             # connection, a truncated body, a status line that is not one. Every

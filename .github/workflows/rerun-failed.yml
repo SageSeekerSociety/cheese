@@ -4,8 +4,10 @@ name: Rerun failed jobs
 # platform's GitHub App asks with
 #   POST /repos/{owner}/{repo}/dispatches
 #   {"event_type": "rerun-failed", "client_payload": {"run_id": <id>}}
-# The App has contents:write (what a dispatch needs) but not actions:write, so
-# without this a red run meant an empty commit and every job queued again; a
+# A dispatch needs only contents:write, and this workflow holds actions:write
+# itself, so it works whether or not an installation granted the App
+# actions:write. It checks the run first (.github/scripts/rerun-failed.py),
+# so a red run no longer means an empty commit and every job queued again; a
 # backend shard that lost a worker now costs that shard and the jobs that
 # depend on it.
 #

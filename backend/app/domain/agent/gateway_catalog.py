@@ -134,7 +134,7 @@ async def keep_fresh(gateway: LlmGateway | None) -> None:
     while True:
         try:
             await refresh(gateway)
-        except Exception:  # noqa: BLE001 — a refresh must never kill its own loop
+        except Exception:  # a refresh must never kill its own loop
             logger.warning("gateway catalogue refresh failed", exc_info=True)
         answered = _state.models is not None
         await asyncio.sleep(

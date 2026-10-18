@@ -30,8 +30,9 @@ defineProps<{
   level: 'root' | 'library'
   /** 触摸屏上回车是换行，那条「Enter 挑这一项」的提示就不该出现。 */
   enterSends: boolean
-  /** 贴在这个位置（文档里的光标处），而不是浮在输入框上方。 */
-  at?: { top: number; left: number; width?: number } | null
+  /** 贴在这个位置（文档里的光标处），而不是浮在输入框上方：光标下面给 top，翻到
+   *  上面给 bottom；高出 maxHeight 的部分在菜单里滚。 */
+  at?: { top?: number; bottom?: number; left: number; width?: number; maxHeight?: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -64,7 +65,15 @@ defineExpose({ scrollActiveIntoView })
       class="mention-menu"
       :class="{ 'mention-menu--at': at }"
       :style="
-        at ? { top: `${at.top}px`, left: `${at.left}px`, width: at.width ? `${at.width}px` : undefined } : undefined
+        at
+          ? {
+              top: at.top === undefined ? undefined : `${at.top}px`,
+              bottom: at.bottom === undefined ? undefined : `${at.bottom}px`,
+              left: `${at.left}px`,
+              width: at.width ? `${at.width}px` : undefined,
+              '--menu-room': at.maxHeight === undefined ? undefined : `${at.maxHeight}px`,
+            }
+          : undefined
       "
     >
       <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
@@ -180,7 +189,7 @@ defineExpose({ scrollActiveIntoView })
   bottom: auto;
   width: 280px;
   margin-bottom: 0;
-  max-height: 264px;
+  max-height: min(264px, var(--menu-room, 264px));
 }
 .mention-menu-item {
   display: flex;

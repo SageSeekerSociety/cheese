@@ -1,7 +1,7 @@
 # ci:fast — bounded local evidence before push
 
 `ci:fast` runs a scoped, time- and memory-bounded subset of CI on the local
-machine, so obvious problems (lint, oversized files, pure-test regressions in
+machine, so obvious problems (lint, pure-test regressions in
 the module you touched, a missing import, a type error in a changed file)
 surface before a PR. It is **not** a substitute for full CI: green here means
 the selected local checks really ran and passed, nothing more.

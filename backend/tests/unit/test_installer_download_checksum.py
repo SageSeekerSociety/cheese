@@ -34,7 +34,7 @@ class _ServesBinary(http.server.BaseHTTPRequestHandler):
 
     announced: str | None = DIGEST
 
-    def do_GET(self):  # noqa: N802
+    def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Length", str(len(BINARY)))
         if type(self).announced:

@@ -376,3 +376,136 @@ async def test_refresh_that_lands_second_keeps_the_first_writers_tokens(
     conn = await _read_connection(factory, connection_id)
     assert _decrypted(conn, "access_token") == "winner-access-token"
     assert _decrypted(conn, "refresh_token") == "winner-refresh-token"
+
+
+_REJECTED = {
+    "error": "bad_refresh_token",
+    "error_description": "The refresh token passed is incorrect or expired.",
+}
+
+
+async def _renewable(factory: async_sessionmaker, user_id: int) -> bool:
+    """What the settings page is told about this user's GitHub link."""
+    async with factory() as session:
+        svc, _ = _service_with_stub_provider(session)
+        [conn] = await svc.list_user_connections(user_id)
+        return conn["hasRefreshToken"]
+
+
+@pytest.mark.anyio
+async def test_a_renewal_token_github_rejects_is_no_longer_reported(
+    business_db_factory,
+):
+    """GitHub answers a dead refresh token (expired, revoked) with a 200 that
+    carries `bad_refresh_token`. From then on nothing can renew the access
+    token, so the page must hear that there is no renewal token, or it keeps
+    hiding the notice that tells the person to reconnect."""
+    factory = business_db_factory
+    user_id = _next_user_id()
+    await _seed_connection(factory, user_id=user_id)
+    assert await _renewable(factory, user_id)
+
+    async with factory() as session:
+        svc, provider = _service_with_stub_provider(session)
+        provider.refresh_access_token = AsyncMock(return_value=_REJECTED)
+        assert await svc.get_github_user_token(user_id) is None
+
+    assert not await _renewable(factory, user_id)
+
+
+@pytest.mark.anyio
+async def test_a_failed_call_to_github_keeps_the_renewal_token_reported(
+    business_db_factory,
+):
+    """A network error or a 5xx says nothing about the token: it stays."""
+    factory = business_db_factory
+    user_id = _next_user_id()
+    await _seed_connection(factory, user_id=user_id)
+
+    async with factory() as session:
+        svc, provider = _service_with_stub_provider(session)
+        provider.refresh_access_token = AsyncMock(side_effect=Exception("github 500"))
+        assert await svc.get_github_user_token(user_id) is None
+
+    assert await _renewable(factory, user_id)
+
+
+@pytest.mark.anyio
+async def test_a_rejection_that_lands_after_another_refresh_keeps_its_tokens(
+    business_db_factory,
+):
+    """Refresh tokens are one-shot: another process may spend the stored one
+    and commit new tokens while ours is still at GitHub, which then rejects
+    ours. Ours must not throw the other process's new renewal token away."""
+    factory = business_db_factory
+    user_id = _next_user_id()
+    connection_id = await _seed_connection(factory, user_id=user_id)
+
+    async def fake_refresh(refresh_token: str) -> dict:
+        async with factory() as session:
+            other = await OAuthConnectionRepository(session).get(connection_id)
+            assert other is not None
+            other.access_token = _sealed(user_id, "winner-access-token", "access_token")
+            other.refresh_token = _sealed(
+                user_id, "winner-refresh-token", "refresh_token"
+            )
+            other.token_expires = datetime.now(UTC) + timedelta(hours=8)
+            await session.commit()
+        return _REJECTED
+
+    async with factory() as session:
+        svc, provider = _service_with_stub_provider(session)
+        provider.refresh_access_token = fake_refresh
+        assert await svc.get_github_user_token(user_id) == "winner-access-token"
+
+    conn = await _read_connection(factory, connection_id)
+    assert _decrypted(conn, "refresh_token") == "winner-refresh-token"
+
+
+@pytest.mark.anyio
+async def test_a_refresh_that_lands_after_another_was_rejected_is_kept(
+    business_db_factory,
+):
+    """The other order: another process spent the stored token, was rejected
+    because ours won at GitHub first, and forgot the stored token before ours
+    wrote. Ours holds the only live tokens, so they must be stored."""
+    factory = business_db_factory
+    user_id = _next_user_id()
+    connection_id = await _seed_connection(factory, user_id=user_id)
+
+    async def fake_refresh(refresh_token: str) -> dict:
+        async with factory() as session:
+            other = await OAuthConnectionRepository(session).get(connection_id)
+            assert other is not None
+            other.refresh_token = None
+            await session.commit()
+        return {
+            "access_token": "fresh-access-token",
+            "expires_in": 28800,
+            "refresh_token": "fresh-refresh-token",
+        }
+
+    async with factory() as session:
+        svc, provider = _service_with_stub_provider(session)
+        provider.refresh_access_token = fake_refresh
+        assert await svc.get_github_user_token(user_id) == "fresh-access-token"
+
+    conn = await _read_connection(factory, connection_id)
+    assert _decrypted(conn, "refresh_token") == "fresh-refresh-token"
+    assert await _renewable(factory, user_id)
+
+
+@pytest.mark.anyio
+async def test_an_unreadable_renewal_token_is_not_reported(business_db_factory):
+    """A refresh token sealed under a key this deployment no longer has can
+    never be used, so it does not count as one."""
+    factory = business_db_factory
+    user_id = _next_user_id()
+    connection_id = await _seed_connection(factory, user_id=user_id)
+    async with factory() as session:
+        conn = await OAuthConnectionRepository(session).get(connection_id)
+        assert conn is not None
+        conn.refresh_token = "not-a-sealed-value"
+        await session.commit()
+
+    assert not await _renewable(factory, user_id)

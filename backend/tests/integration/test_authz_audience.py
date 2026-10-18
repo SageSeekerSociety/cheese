@@ -89,7 +89,7 @@ def _statements(client):
     """Record every statement the app engine runs until ``stop()``."""
     seen: list[str] = []
 
-    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    def record(conn, cursor, statement, parameters, context, executemany):
         seen.append(statement)
 
     engine = client.test_app_engine.sync_engine  # type: ignore[attr-defined]

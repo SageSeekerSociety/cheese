@@ -147,7 +147,7 @@ async def spend_grant(
     try:
         # Kept past the grant's own expiry, so it cannot outlive its record.
         first = await client.set(f"docs-grant:{jti}", "1", nx=True, ex=GRANT_TTL * 2)
-    except Exception as exc:  # noqa: BLE001 — an unreachable store refuses
+    except Exception as exc:  # an unreachable store refuses
         raise GrantStoreUnavailable from exc
     return (user_id, sid) if first else None
 

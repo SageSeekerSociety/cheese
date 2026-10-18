@@ -84,7 +84,7 @@ def _poller(monkeypatch, failure: Exception) -> tuple[SimpleNamespace, dict]:
         yield _Session()
 
     class _AcceptService:
-        def __init__(self, _session, *, announce=None, **_ports) -> None: ...  # noqa: ARG002
+        def __init__(self, _session, *, announce=None, **_ports) -> None: ...
 
         async def open_pr_card_ids(self, project_id=None) -> list[uuid.UUID]:
             assert project_id is None
@@ -189,7 +189,7 @@ def _many_cards_poller(
         yield _Session()
 
     class _AcceptService:
-        def __init__(self, _session, *, announce=None, **_ports) -> None: ...  # noqa: ARG002
+        def __init__(self, _session, *, announce=None, **_ports) -> None: ...
 
         async def open_pr_card_ids(self, project_id=None) -> list[uuid.UUID]:
             assert project_id is None

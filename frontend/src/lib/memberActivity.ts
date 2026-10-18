@@ -53,7 +53,11 @@ export function activityLines(
     }))
 }
 
-/** 侧栏一行上的一位成员：在干活的（绿点），或房间在等它、等太久了的（红点）。 */
+/** 侧栏一行上的一位成员：此刻在这个房间里干活的队友（绿点）。
+ *
+ *  房间在等一位队友、等太久了不是在这里画的：那是这一行的状态，由行尾那盏红灯说
+ *  （`lib/roomLight.ts` 的 `waiting`）——一行上的点说的是「这一行现在怎么了」，
+ *  和任务行同一个规矩。 */
 export interface RailMemberMark {
   handle: string
   name: string
@@ -63,7 +67,6 @@ export interface RailMemberMark {
    */
   avatar: string | null
   agent: boolean
-  state: 'working' | 'stalled'
-  /** 悬停时说的那一句：谁、在做什么 / 为什么在等它。 */
+  /** 悬停时说的那一句：谁、在做什么。 */
   title: string
 }

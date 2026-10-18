@@ -250,7 +250,7 @@ async def test_gateway_chat_sends_images_as_content_blocks(
 @pytest.mark.anyio
 async def test_generate_payload_from_text_only_builds_content_draft() -> None:
     llm = _FakeChat(
-        '{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}'  # noqa: E501
+        '{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}'
     )
     service = TaskPdfDraftService(chat=llm)  # type: ignore[arg-type]
 

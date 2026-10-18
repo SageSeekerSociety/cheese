@@ -158,7 +158,7 @@ async def watch_books(
             await reconcile(session_factory, broker, channel, conversation_id)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 — the socket outlives a database blip
+        except Exception:  # the socket outlives a database blip
             logger.exception("reconciling turn books failed topic=%s", channel)
 
 

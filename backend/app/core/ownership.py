@@ -99,7 +99,7 @@ class Ownership:
         if connection is not None:
             try:
                 await connection.close()
-            except Exception:  # noqa: BLE001 — it is already gone
+            except Exception:  # it is already gone
                 pass
         if engine is not None:
             await engine.dispose()
@@ -115,7 +115,7 @@ class Ownership:
                     text("SELECT pg_try_advisory_lock(:key)"), {"key": OWNER_LOCK}
                 )
             )
-        except Exception:  # noqa: BLE001 — a database blip is a later retry
+        except Exception:  # a database blip is a later retry
             logger.exception("could not ask for the owner lock")
             await self._drop_connection()
             self.held = False
@@ -143,7 +143,7 @@ class Ownership:
         try:
             await self._connection.execute(text("SELECT 1"))
             return True
-        except Exception:  # noqa: BLE001 — answered below
+        except Exception:  # answered below
             logger.exception("the owner lock's connection is gone")
             await self._drop_connection()
             self.held = False
@@ -158,7 +158,7 @@ class Ownership:
                 await self._connection.execute(
                     text("SELECT pg_advisory_unlock(:key)"), {"key": OWNER_LOCK}
                 )
-            except Exception:  # noqa: BLE001 — closing the connection frees it too
+            except Exception:  # closing the connection frees it too
                 logger.exception("could not unlock the owner lock; closing instead")
         self.held = False
         await self._drop_connection()

@@ -108,7 +108,7 @@ def shell_snapshot(self):
             self.client("native").call(
                 "tools/call", {"name": "Bash", "arguments": {"command": "true"}}
             )
-        except Exception as exc:  # noqa: BLE001 — a command still runs
+        except Exception as exc:  # a command still runs
             self.log("shell-snapshot", "failed", error=str(exc))
             return None
         shell = claude_shell(self.env)

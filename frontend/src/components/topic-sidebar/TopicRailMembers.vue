@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// 侧栏一行右边那几个小头像：此刻在这个房间里干活的队友，和房间在等、等太久了的那
-// 位成员。房间自己没有「在跑」「卡住了」这种状态，有的是某一位成员在做什么、在被
-// 谁等着——所以画的是那位成员，悬停说出是谁、为什么。只凭 props 画。
+// 侧栏一行右边那几个小头像：此刻在这个房间里干活的队友。房间自己不在这一格说状态
+// （那一行行尾的灯才是状态）；画的是那位成员，悬停说出是谁、在做什么。只凭 props 画。
 import type { RailMemberMark } from '@/lib/memberActivity'
 
 import { computed } from 'vue'
@@ -29,10 +28,8 @@ const moreTitle = computed(() =>
   <span v-if="marks.length" class="rail-members">
     <span
       v-for="mark in shown"
-      :key="mark.handle || mark.state"
+      :key="mark.handle || mark.name"
       class="rail-members__one"
-      :class="`rail-members__one--${mark.state}`"
-      :data-state="mark.state"
       :title="mark.title"
       role="img"
       :aria-label="mark.title"
@@ -60,9 +57,8 @@ const moreTitle = computed(() =>
   width: 16px;
   height: 16px;
 }
-/* 右下角一颗小点说这位成员此刻怎么了：绿 = 在干活，红 = 房间在等它、等太久了。
-   红点外面多一圈淡红晕，红绿色觉障碍下靠形状也分得开。描边取 --canvas：侧栏行
-   坐在 --canvas 上，这一圈把点从头像上抠出来。 */
+/* 右下角一颗绿点：这位成员此刻在干活。描边取 --canvas：侧栏行坐在 --canvas 上，
+   这一圈把点从头像上抠出来。 */
 .rail-members__dot {
   position: absolute;
   right: -2px;
@@ -71,13 +67,7 @@ const moreTitle = computed(() =>
   height: 7px;
   border-radius: 50%;
   border: 1.5px solid var(--canvas);
-}
-.rail-members__one--working .rail-members__dot {
   background: var(--ok);
-}
-.rail-members__one--stalled .rail-members__dot {
-  background: var(--danger);
-  box-shadow: 0 0 0 2px var(--danger-wash);
 }
 .rail-members__more {
   font-size: 12px;

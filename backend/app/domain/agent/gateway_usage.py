@@ -553,7 +553,7 @@ async def _gateway_project_env(
                 await repo.merge_settings(project, patch, remove=remove)
                 await session.commit()
         return {"ANTHROPIC_AUTH_TOKEN": key}
-    except Exception:  # noqa: BLE001 — never fail a turn on admin plumbing
+    except Exception:  # never fail a turn on admin plumbing
         logger.exception("gateway project-env failed for %s", project_id)
         return None
 
