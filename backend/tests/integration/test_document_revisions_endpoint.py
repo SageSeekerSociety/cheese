@@ -14,12 +14,13 @@ import pytest
 
 from app.domain.library import service as library
 from tests.delivery import delivery_task
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_file_panel_safety import (
     _put,
     _worktree,
     task_machine,  # noqa: F401
 )
+from tests.integration.test_project_roles import _invite
 
 DECL = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n"
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
@@ -125,6 +126,23 @@ def test_a_decision_carrying_the_current_version_goes_through(client, contract):
     # 处理完文件变了，版本也跟着变——面板拿这一个接着处理下一条。
     assert done["version"] != read["version"]
     assert done["version"] == _listing(client, tid)["version"]
+
+
+def test_a_person_whose_role_changes_no_files_decides_no_revision(client, contract):
+    """Deciding a tracked change writes the file, which a mentor's role does not
+    do: the file stays as it was."""
+    pid, tid = contract
+    _invite(client, str(pid), "teacher", role="mentor")
+    read = _listing(client, tid)
+
+    response = client.post(
+        f"/topics/{tid}/documents/revisions",
+        json={"path": PATH, "version": read["version"], "accept": [1]},
+        headers=session_auth_headers("teacher"),
+    )
+
+    assert response.status_code == 403, response.text
+    assert "<w:ins" in _document_xml(library.read_room_file(pid, tid, PATH))
 
 
 def test_a_decision_with_no_version_is_refused(client, contract):
