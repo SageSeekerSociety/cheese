@@ -158,3 +158,22 @@ async def test_a_runs_jobs_are_read_for_every_attempt_and_every_page():
     # `filter=all`: a re-run's first attempt is the evidence that a job failed
     # and then passed; `latest` would hand back only the second.
     assert all(query["filter"] == ["all"] for query in asked)
+
+
+async def test_a_graphql_quota_refusal_is_raised_as_one():
+    # GraphQL says its quota is spent with HTTP 200 and an error of type
+    # RATE_LIMITED, not with a 403.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "errors": [
+                    {"type": "RATE_LIMITED", "message": "API rate limit exceeded"}
+                ]
+            },
+        )
+
+    with pytest.raises(CiQuotaRefused):
+        await _reader(handler).queue_events(
+            owner="o", repo="r", token="t", since=SINCE, until=UNTIL
+        )
