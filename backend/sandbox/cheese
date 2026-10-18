@@ -3737,7 +3737,11 @@ def _commit_as(repo: Path, task_dir: Path, data: dict) -> None:
     (`data["author"]`, `Name <address>`): the task owner on GitHub when the
     project credits owners, otherwise the AI teammate. Per worktree, because
     every task of the project shares one repository and each has its own
-    author; an author the launch environment fixed would override it."""
+    author; an author the launch environment fixed would override it. The
+    repository's own default is the teammate, for a worktree with no task of
+    its own and a platform that names nobody."""
+    _git_task(repo, "config", "user.name", AUTHOR)
+    _git_task(repo, "config", "user.email", f"{AUTHOR}@agent.cheese.local")
     author = data.get("author") or ""
     name, _, rest = author.partition(" <")
     email = rest.rstrip(">")
