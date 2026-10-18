@@ -216,10 +216,17 @@ async def lifespan(application: FastAPI):
         background.watch_periodic_jobs(job_health), name="periodic job health"
     )
 
-    async def start_jobs(*, owner_only: bool) -> None:
+    async def start_jobs(
+        *, owner_only: bool, include_orphan_sweep: bool = True
+    ) -> None:
         """Start this process's share of the jobs, each with the time it last ran
         so one that is already overdue runs at once (`PeriodicRunner.start`)."""
-        mine = [job for job in jobs if job.owner_only is owner_only]
+        mine = [
+            job
+            for job in jobs
+            if job.owner_only is owner_only
+            and (include_orphan_sweep or job.name != "orphan sweep")
+        ]
         try:
             last_runs = await runs.load(
                 [job.name for job in mine if job.interval_seconds > 0],
@@ -286,7 +293,7 @@ async def lifespan(application: FastAPI):
         # Recovery protects only the conversations still replaying. Maintenance
         # starts even when one runner cannot be reached; the orphan and idle
         # sweeps leave that conversation alone until its history is read.
-        await start_jobs(owner_only=True)
+        await start_jobs(owner_only=True, include_orphan_sweep=False)
 
         try:
             n = await get_work_runner().resume_orphans(get_chat_service())
@@ -294,6 +301,11 @@ async def lifespan(application: FastAPI):
                 get_logger("cheesex.runtime").info("orphan_sweep", resumed=n)
         except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("orphan sweep failed")
+
+        # Startup coalesces every age for a seat; the periodic pass only sees
+        # older turns. It starts after that first pass so it cannot split the
+        # seat's recovery into two prompts. Other maintenance is already up.
+        await start_jobs(owner_only=True)
 
         try:
             n = await get_work_runner().resume_lost_messages(
