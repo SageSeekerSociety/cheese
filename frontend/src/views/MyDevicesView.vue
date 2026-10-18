@@ -381,6 +381,7 @@ function claudePlan(plan: string | null | undefined): string {
           </BaseButton>
         </BaseEmptyState>
 
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused controls, and the keyboard's Menu key fires it too -->
         <div
           v-for="d in devices"
           :key="d.device_id"
@@ -392,6 +393,7 @@ function claudePlan(plan: string | null | undefined): string {
           </AdaptiveMenu>
           <div class="device__line">
             <span class="device__dot" :class="{ 'device__dot--on': d.online }" aria-hidden="true" />
+            <!-- eslint-disable vuejs-accessibility/no-autofocus -- the field replaces the name because the person chose Rename; focus moves into it -->
             <v-text-field
               v-if="renaming === d.device_id"
               v-model="draftName"
@@ -404,6 +406,7 @@ function claudePlan(plan: string | null | undefined): string {
               @keyup.enter="saveRename(d)"
               @blur="saveRename(d)"
             />
+            <!-- eslint-enable vuejs-accessibility/no-autofocus -->
             <template v-else>
               <span class="device__name">{{ d.name }}</span>
               <span v-if="d.device_id === thisDeviceId" class="device__tag">{{ t('account.devices.thisDevice') }}</span>

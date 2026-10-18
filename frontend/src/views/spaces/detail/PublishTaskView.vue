@@ -318,6 +318,7 @@ function discardImport() {
         type="file"
         accept=".pdf,application/pdf"
         hidden
+        :aria-label="t('spaces.detail.publishTask.import')"
         data-testid="publish-import-input"
         @change="onFilePicked"
       />

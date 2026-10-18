@@ -20,7 +20,6 @@ from app.domain.agent.harness.claude_code.events import Assembler, bind
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.driven.backlog import JournalBacklog, age
 from app.domain.agent.harness.driven.journal import PAGE
-from app.domain.agent.service import AgentEvent
 
 FACT = "fact:"
 CONTROL = "control:"
@@ -271,11 +270,6 @@ class ClaudeCodeBacklog(JournalBacklog[Journal]):
             record=record,
             age_s=age(row, now),
         )
-
-    def assemble(self, entry: HarnessEvent) -> list[AgentEvent]:
-        if not isinstance(entry.record, dict):
-            return []
-        return self.assembler.accept(entry.record)
 
     def unfinished(self) -> set[str]:
         # A record is whole when it is written: nothing arrives in pieces.

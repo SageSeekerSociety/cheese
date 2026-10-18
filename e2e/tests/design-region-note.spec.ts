@@ -127,6 +127,9 @@ async function dragImage(page: Page, small = false) {
   await page.mouse.move(image.x + (small ? 60 : 180), image.y + (small ? 24 : 140), { steps: 8 })
   await page.mouse.up()
 }
+// The status line that reads out the selected region in the image's own pixels.
+const regionLine = (page: Page) => page.getByRole('status').filter({ hasText: '原图像素' })
+
 for (const kind of ['file', 'version'] as const) {
   test(`${kind} standalone caller retains its natural-pixel selection and retires it with the resource`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1280, height: 760 })
@@ -135,7 +138,7 @@ for (const kind of ['file', 'version'] as const) {
     await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeEnabled({ timeout: 60_000 })
     await dragImage(page)
     await expect(page.locator('.design-image__selection')).toHaveCount(1)
-    const region = page.locator('.design-image > output')
+    const region = regionLine(page)
     const original = await region.textContent()
     expect(original).toMatch(/原图像素：x=\d+，y=\d+，宽=\d+，高=\d+/)
     await page.getByRole('button', { name: '放大内容', exact: true }).click()
@@ -157,7 +160,7 @@ test('explicit controlled null never displays an unaccepted region and clears ac
   await dragImage(page)
   expect(await page.evaluate(() => (window as unknown as { selections: unknown[] }).selections.length)).toBe(1)
   await expect(page.locator('.design-image__selection')).toHaveCount(0)
-  await expect(page.locator('.design-image > output')).toHaveCount(0)
+  await expect(regionLine(page)).toHaveCount(0)
   await page.evaluate(() => (window as unknown as { fixture: { accept: () => void } }).fixture.accept())
   await expect(page.locator('.design-image__selection')).toHaveCount(1)
   await page.evaluate(() => (window as unknown as { fixture: { clear: () => void } }).fixture.clear())
@@ -258,7 +261,7 @@ test('zoom, scroll and local resize retain the same input, draft and original re
     Object.assign(window, { originalInput: field, focusedAgain: 0 })
     field.addEventListener('focus', () => { (window as unknown as { focusedAgain: number }).focusedAgain++ })
   })
-  const regionText = await page.locator('.design-image > output').textContent()
+  const regionText = await regionLine(page).textContent()
   // Physical toolbar activation may move focus; subsequent layout must not take it back.
   await page.getByRole('button', { name: '放大内容', exact: true }).click()
   await page.getByRole('button', { name: '放大内容', exact: true }).click()
@@ -268,7 +271,7 @@ test('zoom, scroll and local resize retain the same input, draft and original re
   await expect(page.getByRole('status').filter({ hasText: '所选区域在当前视图外' })).toBeVisible()
   await insidePane(page)
   expect(await input.inputValue()).toBe('保留中文草稿')
-  expect(await page.locator('.design-image > output').textContent()).toBe(regionText)
+  expect(await regionLine(page).textContent()).toBe(regionText)
   await page.locator('.design-image__pane').evaluate(element => { element.scrollTop = 0; element.scrollLeft = 0 })
   await expect(page.getByRole('status').filter({ hasText: '所选区域在当前视图外' })).toHaveCount(0)
   for (const width of [240, 320, 860]) {
