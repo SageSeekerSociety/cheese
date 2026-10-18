@@ -33,6 +33,11 @@ _QUEUE_BRANCH = re.compile(r"^gh-readonly-queue/.+/pr-(\d+)-[0-9a-f]+$")
 #: The runner group GitHub's own runners are in.
 HOSTED_GROUP = "GitHub Actions"
 
+#: Runs one INSERT carries. A run row binds 18 values and asyncpg refuses a
+#: statement with more than 32767, so one statement holds at most 1820 runs; a
+#: sweep after a day of downtime lists about 2000.
+UPSERT_BATCH = 500
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
@@ -96,12 +101,22 @@ class CiActivityStore:
 
         ``jobs_attempt`` is never touched here: only a jobs read moves it.
         """
-        rows = {r["run_id"]: r for r in (run_row(repo, run) for run in runs) if r}
-        if not rows:
-            return 0
+        rows = [
+            r
+            for r in {
+                r["run_id"]: r for r in (run_row(repo, run) for run in runs) if r
+            }.values()
+        ]
+        changed = 0
+        for start in range(0, len(rows), UPSERT_BATCH):
+            changed += await self._upsert(rows[start : start + UPSERT_BATCH])
+        await self._session.commit()
+        return changed
+
+    async def _upsert(self, rows: list[dict[str, Any]]) -> int:
         now = _now()
         stmt = insert(CiWorkflowRun).values(
-            [{**row, "ingested_at": now} for row in rows.values()]
+            [{**row, "ingested_at": now} for row in rows]
         )
         refreshed = (
             "workflow_name",
@@ -121,7 +136,6 @@ class CiActivityStore:
             set_={**{c: stmt.excluded[c] for c in refreshed}, "ingested_at": now},
         )
         result = await self._session.execute(stmt)
-        await self._session.commit()
         return int(result.rowcount or 0)
 
     async def oldest_open_run(self, repo: str, since: datetime) -> datetime | None:

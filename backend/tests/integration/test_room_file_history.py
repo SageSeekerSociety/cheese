@@ -23,7 +23,8 @@ from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
 from app.domain.documents import editor
 from app.domain.library import service as library
 from app.domain.textfile import content_version
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.test_project_roles import _invite
 
 SECRET = "test-office-editor-secret"
 # 比默认值小得多，但整 MB：这里量的是那条界线在哪，不是那个数是多少 —— 超限的那几
@@ -305,6 +306,85 @@ def test_a_file_sent_in_the_conversation_is_not_edited_in_place(client):
         client.get(f"/topics/{room}/files/raw", params={"path": path}).content
         == b"the sent original"
     )
+
+
+def test_a_person_whose_role_changes_no_files_shows_none_into_the_room(client):
+    """Showing a file with its bytes writes it into the room, and a mentor's
+    role changes no files: nothing lands."""
+    project, room = _room(client)
+    _invite(client, project, "teacher", role="mentor", by="owner")
+
+    shown = client.post(
+        f"/topics/{room}/shown",
+        headers=session_auth_headers("teacher"),
+        json={"path": "output/导师.md", "content": "导师写的"},
+    )
+
+    assert shown.status_code == 403, shown.text
+    listed = client.get(f"/topics/{room}/files").json()["data"]["data"]
+    assert "output/导师.md" not in [f["path"] for f in listed]
+
+
+#: Ways of naming the same file: what it was sent as, and spellings that land
+#: on it all the same.
+SPELLINGS = ["{}", "./{}", ".//{}"]
+
+
+@pytest.mark.parametrize("spelling", SPELLINGS)
+def test_a_person_showing_a_file_does_not_overwrite_one_sent_in_the_conversation(
+    client, spelling
+):
+    """发进对话的那一份是原件，经由摆出来这条路也一样：消息指着的字节不变。"""
+    project, room = _room(client)
+    sent = client.post(
+        f"/topics/{room}/attachments",
+        files={"file": ("合同.txt", b"the sent original", "text/plain")},
+    )
+    assert sent.status_code == 200, sent.text
+    path = sent.json()["data"]["path"]
+
+    shown = client.post(
+        f"/topics/{room}/shown",
+        headers=session_auth_headers("owner"),
+        json={"path": spelling.format(path), "content": "replaced"},
+    )
+
+    assert shown.status_code == 422, shown.text
+    raw = client.get(f"/topics/{room}/files/raw", params={"path": path})
+    assert raw.content == b"the sent original"
+
+
+@pytest.mark.parametrize("spelling", SPELLINGS)
+def test_a_page_a_person_shows_brings_no_file_over_one_sent_in_the_conversation(
+    client, spelling
+):
+    """A page's own files are written too, on the same terms as the page."""
+    project, room = _room(client)
+    sent = client.post(
+        f"/topics/{room}/attachments",
+        files={"file": ("合同.txt", b"the sent original", "text/plain")},
+    )
+    assert sent.status_code == 200, sent.text
+    path = sent.json()["data"]["path"]
+
+    shown = client.post(
+        f"/topics/{room}/shown",
+        headers=session_auth_headers("owner"),
+        json={
+            "path": "index.html",
+            "content": "<html></html>",
+            "assets": [
+                {
+                    "path": spelling.format(path),
+                    "content_b64": base64.b64encode(b"replaced").decode(),
+                }
+            ],
+        },
+    )
+
+    assert shown.status_code == 422, shown.text
+    raw = client.get(f"/topics/{room}/files/raw", params={"path": path})
+    assert raw.content == b"the sent original"
 
 
 def test_closing_the_editor_after_saving_does_not_leave_a_duplicate(

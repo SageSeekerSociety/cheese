@@ -136,3 +136,25 @@ async def test_queue_events_keep_githubs_reason_and_actor():
         (4186, "added", None, "cheesex-app", "feat/ci-page"),
         (4186, "removed", "failed_checks", "github-merge-queue", "feat/ci-page"),
     ]
+
+
+async def test_a_runs_jobs_are_read_for_every_attempt_and_every_page():
+    jobs = [{"id": n, "run_attempt": 1 + n % 2} for n in range(130)]
+    asked: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = parse_qs(urlparse(str(request.url)).query)
+        asked.append(query)
+        page = int(query["page"][0])
+        return httpx.Response(
+            200,
+            headers={"etag": f'"jobs-{page}"'},
+            json={"total_count": 130, "jobs": jobs[(page - 1) * 100 : page * 100]},
+        )
+
+    listed = await _reader(handler).run_jobs(owner="o", repo="r", token="t", run_id=1)
+
+    assert len(listed.items) == 130
+    # `filter=all`: a re-run's first attempt is the evidence that a job failed
+    # and then passed; `latest` would hand back only the second.
+    assert all(query["filter"] == ["all"] for query in asked)
