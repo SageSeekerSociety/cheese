@@ -41,6 +41,7 @@ if __package__:
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         SESSION_SOCKET,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
@@ -95,6 +96,7 @@ else:
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         SESSION_SOCKET,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
@@ -207,6 +209,14 @@ def cheese_source() -> Path:
     if shipped.is_file():
         return shipped
     return Path(__file__).resolve().parents[6] / "sandbox/cheese"
+
+
+# `WORKING_DIRECTORY` — the fixed name this session's working directory also
+# goes by — is imported from `executor_transport`: the transport is what
+# respells it where the command's other paths are, so the name and its value are
+# one thing to that module and not a second declaration here. The line is told
+# about it in its prompt (`harness.prompt.WORKING_DIRECTORY`) and the shell
+# prefix carries it across (`shell_prefix.FORWARDED_ENV`).
 
 
 def prepare(
@@ -447,6 +457,10 @@ def prepare(
     (directory / "mcp.json").write_text(json.dumps({"mcpServers": servers}))
     env = {
         "HOME": str(home),
+        # The same short name in every session, and this session's own project
+        # under it: what the line can type instead of the path it would
+        # otherwise spell out in every Bash command.
+        WORKING_DIRECTORY: seen,
         "CLAUDE_CONFIG_DIR": str(config),
         "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
         "DISABLE_AUTOUPDATER": "1",

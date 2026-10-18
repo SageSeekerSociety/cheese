@@ -223,10 +223,11 @@ def test_each_task_checkout_commits_as_the_author_the_platform_names(
 
     for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL"):
         monkeypatch.delenv(key, raising=False)
-    repo = tmp_path / "repo"
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    # The project's repository is bare, as `cheese worktree` makes it.
+    seed, repo = tmp_path / "seed", tmp_path / "project.git"
+    subprocess.run(["git", "init", str(seed)], check=True, capture_output=True)
     git(
-        repo,
+        seed,
         "-c",
         "user.name=x",
         "-c",
@@ -235,6 +236,11 @@ def test_each_task_checkout_commits_as_the_author_the_platform_names(
         "--allow-empty",
         "-m",
         "base",
+    )
+    subprocess.run(
+        ["git", "clone", "--bare", str(seed), str(repo)],
+        check=True,
+        capture_output=True,
     )
     first, second = tmp_path / "first", tmp_path / "second"
     git(repo, "worktree", "add", "-b", "task/one", str(first))
@@ -247,7 +253,9 @@ def test_each_task_checkout_commits_as_the_author_the_platform_names(
         {"author": "cheesex-app[bot] <2+cheesex-app[bot]@users.noreply.github.com>"},
     )
     for where in (first, second):
-        git(where, "commit", "--allow-empty", "-m", "work")
+        (where / "work.txt").write_text("work\n")
+        git(where, "add", "work.txt")
+        git(where, "commit", "-m", "work")
 
     assert git(first, "log", "-1", "--format=%an <%ae>") == (
         "Alice <1+alice@users.noreply.github.com>"
@@ -255,3 +263,5 @@ def test_each_task_checkout_commits_as_the_author_the_platform_names(
     assert git(second, "log", "-1", "--format=%an <%ae>") == (
         "cheesex-app[bot] <2+cheesex-app[bot]@users.noreply.github.com>"
     )
+    # The project's repository itself stays bare.
+    assert git(repo, "rev-parse", "--is-bare-repository") == "true"
