@@ -6,6 +6,7 @@ import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
 
 import { useBranchProtection } from '@/composables/useBranchProtection'
+import { linkGithubAccount } from '@/composables/useGithubAccountLink'
 import { useProjectAddress } from '@/composables/useProjectAddress'
 import { useProjectArchive } from '@/composables/useProjectArchive'
 import { useProjectComputeSettings } from '@/composables/useProjectComputeSettings'
@@ -36,7 +37,6 @@ import AttributionSettings from '@/components/settings/AttributionSettings.vue'
 import BranchProtectionSection from '@/components/settings/BranchProtectionSection.vue'
 import CreditsPanel from '@/components/settings/CreditsPanel.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
-import GithubAccountSettings from '@/components/settings/GithubAccountSettings.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import OwnAgentsSettings from '@/components/settings/OwnAgentsSettings.vue'
 import ProjectAddressSection from '@/components/settings/ProjectAddressSection.vue'
@@ -46,6 +46,7 @@ import ProjectRolesSettings from '@/components/settings/ProjectRolesSettings.vue
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 import { t } from '@/i18n'
 import { closeOverlay } from '@/lib/backOut'
+import { ownGithub } from '@/lib/githubAccount'
 import { mayIn } from '@/lib/projectPermissions'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
 import { queryClient } from '@/query/client'
@@ -93,19 +94,13 @@ const {
   attributionError,
   saveAttribution,
   connectingGithubRepo,
-  connectingGithubAccount,
   githubRepoNotice,
-  githubAccountNotice,
   githubAccountLoadState,
-  githubAccountLoadError,
   githubAccountConn,
-  disconnectingGithubAccount,
   loadGithubAccountConnection,
-  disconnectGithubAccount,
   load,
   saveUpstream,
   connectGithubRepo,
-  connectGithubAccount,
   consumeGithubCallbackNotice,
 } = useProjectSettings(() => props.projectId)
 
@@ -204,7 +199,7 @@ const groups = computed(() =>
 // 那条提示在「仓库与署名」里，就落到那一栏。开页那一刻认一次，之后提示读完、地址上
 // 的参数被清掉，也不会跳回第一栏。
 const query = router.currentRoute.value.query
-const landing = query.github_install || query.github_account ? 'repository' : 'agents'
+const landing = query.github_install ? 'repository' : 'agents'
 
 /** 当前这一栏。地址上没写栏时：桌面落到第一栏（GitHub 回来时落到仓库），手机上是目录。 */
 const section = computed(() => {
@@ -459,19 +454,10 @@ function close() {
             :agent-name="agentName"
             :saving="attributionSaving"
             :error="attributionError"
+            :github="ownGithub(githubAccountConn, githubAccountLoadState === 'loaded')"
+            manage-to="/users/settings/security"
             @save="saveAttribution"
-          />
-          <GithubAccountSettings
-            :state="githubAccountLoadState"
-            :load-error="githubAccountLoadError"
-            :conn="githubAccountConn"
-            :connecting="connectingGithubAccount"
-            :disconnecting="disconnectingGithubAccount"
-            :notice="githubAccountNotice"
-            @retry="loadGithubAccountConnection"
-            @connect="connectGithubAccount"
-            @disconnect="disconnectGithubAccount"
-            @clear-notice="githubAccountNotice = null"
+            @link="linkGithubAccount(router.currentRoute.value.path)"
           />
         </template>
 
