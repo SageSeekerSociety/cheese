@@ -122,12 +122,12 @@ MIRRORS = (
     # one is anything but the official source.
     #
     # That strategy is not free, and the price is paid on purpose: it asks the
-    # official index about every package too, measured 2026-10-18 at 14.5 MiB
+    # official index about every package too, measured 2026-10-18 at 13.8 MiB
     # of index responses for a 110-package install. `first-index` would ask the
     # mirror alone, but it stops at the first index that lists the *name*: a
     # mirror that answers for a package without the release being asked for
     # fails the install outright instead of falling back. Availability beats
-    # 14.5 MiB of index responses.
+    # 13.8 MiB of index responses.
     #
     # None of this reaches `uv sync` of a project with a `uv.lock`: it installs
     # the URLs written into the lock and ignores every index above (uv's design,
