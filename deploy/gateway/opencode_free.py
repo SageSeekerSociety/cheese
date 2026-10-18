@@ -3,7 +3,6 @@
 import copy
 import hashlib
 import inspect
-import itertools
 import json
 import secrets
 import string
@@ -15,12 +14,19 @@ from urllib.parse import urlsplit
 import httpx
 
 _sessions = OrderedDict()
-_counter = itertools.count(1)
+_last_timestamp = 0
+_counter = 0
 _alphabet = string.ascii_letters + string.digits
 
 
 def _id(prefix):
-    value = (int(time.time() * 1000) * 4096 + next(_counter) % 4096) & ((1 << 48) - 1)
+    global _last_timestamp, _counter
+    timestamp = int(time.time() * 1000)
+    # Match OpenCode's per-millisecond sequence: the free endpoint rejects
+    # sessions whose sequence has accumulated across earlier requests.
+    _counter = _counter + 1 if timestamp == _last_timestamp else 1
+    _last_timestamp = timestamp
+    value = (timestamp * 4096 + _counter) & ((1 << 48) - 1)
     if prefix == "ses":
         value ^= (1 << 48) - 1
     return f"{prefix}_{value:012x}" + "".join(secrets.choice(_alphabet) for _ in range(14))
@@ -109,7 +115,27 @@ class AgentStream(httpx.AsyncByteStream):
                 if name in self.aliases:
                     function["name"] = self.aliases[name]
         other = [line for line in lines if not line.startswith("data:")]
-        return ("\n".join([*other, "data: " + json.dumps(chunk)]) + "\n\n").encode()
+        parts = [chunk]
+        choices = chunk.get("choices", [])
+        if len(choices) == 1:
+            choice = choices[0]
+            calls = choice.get("delta", {}).get("tool_calls") or []
+            if len(calls) > 1:
+                # The pinned Messages converter concatenates batched calls.
+                # Separate their events while emitting text and usage once.
+                parts = []
+                for index, call in enumerate(calls):
+                    delta = dict(choice["delta"]) if index == 0 else {}
+                    delta["tool_calls"] = [call]
+                    last = index == len(calls) - 1
+                    part = {**chunk, "choices": [{**choice, "delta": delta,
+                             "finish_reason": choice.get("finish_reason") if last else None}]}
+                    if not last:
+                        part.pop("usage", None)
+                    if index:
+                        part["choices"][0].pop("logprobs", None)
+                    parts.append(part)
+        return b"".join(("\n".join([*other, "data: " + json.dumps(part)]) + "\n\n").encode() for part in parts)
 
     async def __aiter__(self):
         lines = []
