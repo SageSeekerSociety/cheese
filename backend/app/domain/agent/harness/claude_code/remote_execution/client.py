@@ -41,6 +41,7 @@ if __package__:
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         SESSION_SOCKET,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
@@ -95,6 +96,7 @@ else:
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         SESSION_SOCKET,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
@@ -209,16 +211,12 @@ def cheese_source() -> Path:
     return Path(__file__).resolve().parents[6] / "sandbox/cheese"
 
 
-#: The session's working directory under a fixed, short name. The shell's
-#: directory is reset between commands, so a line that spells the path out pays
-#: for the platform's own home — UUIDs all the way down — in most of its Bash
-#: calls (36% of them, in the trajectory that asked for this). `T` is the same
-#: name in every session; each session's own value is the project it sees, so
-#: two sessions on one machine never mean each other's directory. The line is
-#: told about it in its prompt (`harness.prompt.WORKING_DIRECTORY`), and the
-#: shell prefix forwards it to the executor with the command
-#: (`shell_prefix.FORWARDED_ENV`).
-WORKING_DIRECTORY = "T"
+# `WORKING_DIRECTORY` — the fixed name this session's working directory also
+# goes by — is imported from `executor_transport`: the transport is what
+# respells it where the command's other paths are, so the name and its value are
+# one thing to that module and not a second declaration here. The line is told
+# about it in its prompt (`harness.prompt.WORKING_DIRECTORY`) and the shell
+# prefix carries it across (`shell_prefix.FORWARDED_ENV`).
 
 
 def prepare(

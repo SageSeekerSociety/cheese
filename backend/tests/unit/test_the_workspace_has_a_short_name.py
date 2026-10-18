@@ -17,6 +17,7 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
 from app.domain.agent.harness.claude_code.remote_execution.shell_prefix import (
     FORWARDED_ENV,
 )
+from app.domain.agent.executor_transport import respell_working_directory
 from app.domain.agent.harness.prompt import WORKING_DIRECTORY as TOLD, build_system_prompt
 
 
@@ -80,6 +81,33 @@ def test_the_line_is_told_the_name(tmp_path):
     assert TOLD in build_system_prompt("base", "", working_directory=True)
     # A harness whose commands are not given the name is not told about it.
     assert TOLD not in build_system_prompt("base", "")
+
+
+def test_the_name_crosses_to_the_machine_spelled_the_machines_way():
+    """A session started before its machine was rented sees the project at a
+    placeholder while its commands already run on the machine. The name is a
+    path like `cwd` and `body` are, so it is respelled the same way — or the
+    command the line was told to write, `cd "$T"`, names nothing there."""
+    placeholder, machine = "/unavailable-project", "/home/user/project"
+    forwarded = respell_working_directory(
+        {WORKING_DIRECTORY: placeholder, "PATH": "/usr/bin"}, placeholder, machine
+    )
+    assert forwarded[WORKING_DIRECTORY] == machine
+    assert forwarded["PATH"] == "/usr/bin"
+
+
+def test_a_name_already_spelled_the_machines_way_is_left_alone():
+    machine = "/home/user/project"
+    unchanged = respell_working_directory(
+        {WORKING_DIRECTORY: machine}, machine, machine
+    )
+    assert unchanged[WORKING_DIRECTORY] == machine
+    # Nothing to reply to, and nothing invented: an environment without the
+    # name, or no environment at all, comes back as it went in.
+    assert respell_working_directory({"PATH": "/usr/bin"}, machine, machine) == {
+        "PATH": "/usr/bin"
+    }
+    assert respell_working_directory(None, machine, machine) is None
 
 
 def test_a_name_missing_or_pointing_elsewhere_is_caught(tmp_path):
