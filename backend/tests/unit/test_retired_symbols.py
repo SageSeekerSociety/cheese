@@ -99,6 +99,11 @@ class _ModuleBindings(ast.NodeVisitor):
             self._add_target(node.target)
         self.generic_visit(node)
 
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        if self._scopes == 0:
+            self._add_target(node.target)
+        self.generic_visit(node)
+
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
         if self._scopes == 0:
             self._add_target(node.target)
@@ -113,6 +118,51 @@ class _ModuleBindings(ast.NodeVisitor):
         if self._scopes == 0:
             for alias in node.names:
                 self.names.add(alias.asname or alias.name)
+
+    def visit_For(self, node: ast.For) -> None:
+        if self._scopes == 0:
+            self._add_target(node.target)
+        self.generic_visit(node)
+
+    visit_AsyncFor = visit_For
+
+    def visit_With(self, node: ast.With) -> None:
+        if self._scopes == 0:
+            for item in node.items:
+                if item.optional_vars is not None:
+                    self._add_target(item.optional_vars)
+        self.generic_visit(node)
+
+    visit_AsyncWith = visit_With
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if self._scopes == 0 and node.name:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        if self._scopes == 0 and node.name:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        if self._scopes == 0 and node.name:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+        if self._scopes == 0 and node.rest:
+            self.names.add(node.rest)
+        self.generic_visit(node)
+
+    def visit_TypeAlias(self, node: ast.AST) -> None:
+        if self._scopes == 0:
+            self._add_target(node.name)  # type: ignore[attr-defined]
+        self.generic_visit(node)
+
+    def visit_Global(self, node: ast.Global) -> None:
+        # 函数里 `global x` 之后给 x 赋值，绑的是模块上的 x。
+        self.names.update(node.names)
 
     def _add_target(self, target: ast.expr) -> None:
         if isinstance(target, ast.Name):
@@ -198,8 +248,27 @@ def test_the_binding_scan_sees_every_way_a_name_could_come_back() -> None:
         "try:\n    SANDBOX_SESSIONS_ROOT = '/sessions'\n"
         "except ImportError:\n    SANDBOX_SESSIONS_ROOT = None\n",
         "with open('x') as handle:\n    _OP_CONT = handle\n",
+        "for sessions_root in []:\n    pass\n",
+        "with open('x') as sessions_root:\n    pass\n",
+        "try:\n    pass\nexcept Exception as sessions_root:\n    pass\n",
+        "match value:\n    case {'k': sessions_root}:\n        pass\n",
+        "def f():\n    global _OP_CONT\n    _OP_CONT = 1\n",
+        "sessions_root += 1\n",
     ):
         assert _module_level_names(source) & RETIRED_NAMES, source
+
+
+def test_the_binding_scan_keeps_a_lambda_and_an_inner_import_out() -> None:
+    """这两个负向用例各自钉住一条作用域守卫；守卫被删掉，它们会误报。
+
+    自测和守卫要一起看：只写「嵌套定义不算」时，删掉 `visit_Lambda` 或
+    `visit_ImportFrom` 里的作用域判断，套件仍然是绿的。
+    """
+    for source in (
+        "f = lambda: (sessions_root := 1)\n",
+        "def f():\n    from app.domain.repository.service import sessions_root\n",
+    ):
+        assert not _module_level_names(source) & RETIRED_NAMES, source
 
 
 def test_the_binding_scan_ignores_a_nested_definition() -> None:
