@@ -49,6 +49,16 @@
 #       says to run an incremental review first. DIR is a prepare directory;
 #       PR picks the newest prepare directory for that PR on this machine.
 #       Prints 可递 or 还不能递 and the reasons. Exit 0 ready, 1 not ready.
+#   .claude/scripts/pr-review.sh stamp DIR BODY|- [--out FILE]
+#       Put the review conclusion on the last line of the card body, so nobody
+#       types the line by hand: the verdict comes from DIR/REVIEW-RESULT.md, the
+#       head is the branch head this card delivers (`git rev-parse HEAD`), and
+#       when the head only merged the base branch (or the increment is one §4
+#       does not re-review) the line says （增量自 <reviewed sha>）. Refuses,
+#       exit 1, when the commits after the review need a review of their own.
+#       BODY is a file (rewritten in place with --out, printed otherwise) or -
+#       for standard input. Runs check-review-card-body.py --stamp, which owns
+#       the line's grammar and the placement check.
 #
 # Exit status: 0 done, 1 failed (the reason is printed), 2 usage.
 set -uo pipefail
@@ -462,7 +472,8 @@ post() {
   # Only the tree goes: REVIEW-RESULT.md and meta stay in $dir for the card, for a later
   # `ready`, and for a delta round that reuses this conclusion.
   git -C "$ROOT" worktree remove --force "$tree" 2>/dev/null || true
-  echo "pr-review: wrote $dir/REVIEW-RESULT.md; paste it into the card body (nothing was posted)" >&2
+  echo "pr-review: wrote $dir/REVIEW-RESULT.md; fill the card body with" >&2
+  echo "pr-review:   $HERE/pr-review.sh stamp $dir <body-file> --out <body-file>" >&2
 }
 
 show() {
@@ -484,6 +495,29 @@ ready() {
   python3 "${READY:-$ROOT/$METHOD/ready.py}" --dir "$dir" --root "$ROOT" --repo "$REPO"
 }
 
+stamp() {
+  local dir=$1 body=$2 out="" pr sha base method_rev tree since tier spec head
+  shift 2
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --out) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -f "$dir/meta" ] || die "$dir has no meta; run prepare first"
+  [ -f "$dir/REVIEW-RESULT.md" ] || die "run post first: $dir/REVIEW-RESULT.md does not exist"
+  # shellcheck disable=SC1091
+  . "$dir/meta"
+  # The card is delivered for this checkout's head; reading it from git keeps the line
+  # honest without a GitHub call (and without the rate limit a poll would spend).
+  head=$(git -C "$ROOT" rev-parse HEAD) || die "cannot read the branch head in $ROOT"
+  local args=(--stamp --review-result "$dir/REVIEW-RESULT.md" --head "$head"
+              --root "$ROOT" --base "$base")
+  [ "$body" = - ] || args+=(--text "$body")
+  [ -z "$out" ] || args+=(--out "$out")
+  python3 "$HERE/check-review-card-body.py" "${args[@]}"
+}
+
 case "${1:-}" in
   prepare)
     [ $# -ge 2 ] && [[ $2 =~ ^[0-9]+$ ]] || usage
@@ -500,5 +534,6 @@ case "${1:-}" in
   post) [ $# -ge 2 ] && [ $# -le 3 ] && { [ $# -eq 2 ] || [ "$3" = --dry-run ]; } || usage; post "$2" "${3:-}" ;;
   show) [ $# -ge 2 ] && [ $# -le 3 ] && { [ $# -eq 2 ] || [ "$3" = --line ]; } || usage; show "$2" "${3:-}" ;;
   ready) [ $# -eq 2 ] || usage; ready "$2" ;;
+  stamp) [ $# -ge 3 ] || usage; stamp "${@:2}" ;;
   *) usage ;;
 esac
