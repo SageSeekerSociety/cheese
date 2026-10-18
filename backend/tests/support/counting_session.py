@@ -50,6 +50,10 @@ CONTENT_HINTS = (
     "count_sql",
     "count_queries",
     "query_count",
+    # A hand-written fake session that tallies statements per table — the same
+    # idea spelled without the SQLAlchemy events, e.g.
+    # tests/unit/test_material_readable_ids_is_batched.py.
+    "_CountingSession",
 )
 
 _SOURCE_CACHE: dict[str, str] = {}
