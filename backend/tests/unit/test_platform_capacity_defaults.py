@@ -1,11 +1,12 @@
 """The platform's own size: how many hosts the cloud pool may hold, how many
-free slots it keeps ahead of demand, and how soon a green or merged PR reaches
-its card.
+free slots it keeps ahead of demand, how soon a green or merged PR reaches its
+card, and how much of the installation's GitHub hour the draft sweep may spend.
 
-All three are deployment defaults — `CLOUD_POOL_MAX_HOSTS`,
-`CLOUD_POOL_MIN_FREE_SLOTS` and `ACCEPT_PR_POLL_INTERVAL_S` override them, and
-deployments are separate — so what is pinned here is the platform's opinion of
-its own size until a deployment says otherwise.
+All of these are deployment defaults — `CLOUD_POOL_MAX_HOSTS`,
+`CLOUD_POOL_MIN_FREE_SLOTS`, `ACCEPT_PR_POLL_INTERVAL_S` and the two
+`DRAFT_PR_SWEEP_*` settings override them, and deployments are separate — so
+what is pinned here is the platform's opinion of its own size until a
+deployment says otherwise.
 
 None is a preference. The cap is what the cluster's shared storage has to
 hold: ten hosts provide forty standard sandbox slots, and their disks written
@@ -44,3 +45,14 @@ def test_the_pool_keeps_a_whole_hosts_slots_free() -> None:
 
 def test_a_pr_reaches_its_card_within_a_minute() -> None:
     assert settings.accept_pr_poll_interval_s == 60
+
+
+def test_the_draft_sweep_does_not_spend_the_card_clock() -> None:
+    """The draft sweep is the largest single consumer of the installation's
+    hourly REST quota: two requests per candidate branch, every pass — 23
+    candidates every 60 s measured 2026-10-18, ≈2,760/hour of 5,600. A draft PR
+    nobody is waiting for may appear minutes later, so it runs on its own
+    slower clock instead of the card poller's, and only for tasks active
+    inside a two-hour window."""
+    assert settings.draft_pr_sweep_interval_s == 300
+    assert settings.draft_pr_sweep_activity_window_s == 7200

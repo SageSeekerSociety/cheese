@@ -393,6 +393,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "ratchet_ingest_interval_s",
         "wake_watch_interval_s",
         "sandbox_disk_check_s",
+        "draft_pr_sweep_interval_s",
     )
     for value, field in enumerate(fields, start=101):
         monkeypatch.setattr(settings, field, value)
@@ -406,7 +407,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("pr poll", 101),
         ("task pr poll", 101),
         ("landing watch", 101),
-        ("draft pr sweep", 101),
+        ("draft pr sweep", 121),
         ("orphan sweep", 102),
         ("closed task stop", 103),
         ("queued message sweep", 104),

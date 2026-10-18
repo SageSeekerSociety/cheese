@@ -78,10 +78,13 @@ def register_periodic_jobs(
             machines=machines,
         ),
     )
-    # Drafts and cards watch the same repository state on the same clock.
+    # Drafts and cards watch the same repository state, but not on the same
+    # clock: a draft PR nobody is waiting for can appear a few minutes later,
+    # and this sweep is the largest single consumer of the installation's
+    # GitHub quota (two requests per candidate branch, every pass).
     jobs.register(
         "draft pr sweep",
-        settings.accept_pr_poll_interval_s,
+        settings.draft_pr_sweep_interval_s,
         lambda: pr_poll.open_draft_prs(
             chat,
             announce,

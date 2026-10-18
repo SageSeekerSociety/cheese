@@ -40,6 +40,7 @@ test_pr_publish_module_split.py` holds both halves to that.
 import asyncio
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -265,9 +266,14 @@ async def sweep_draft_prs(
     """Open draft PRs for task branches with commits and no existing PR.
 
     Commits arrive from different executors through Git; the shared PR poller
-    observes them after synchronization. Delay is one poll interval plus the
+    observes them after synchronization. Delay is one sweep interval plus the
     time spent on earlier tasks in this pass. Each task uses its own session
     so a failed write cannot poison the remaining deliveries.
+
+    Only tasks active inside `draft_pr_sweep_activity_window_s` are swept at
+    all: each candidate costs two GitHub requests (`branch_head` +
+    `compare_status`) on every pass, and a task whose branch has said nothing
+    for hours is not being pushed to. Zero or less keeps every open task.
     """
     # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
@@ -281,10 +287,14 @@ async def sweep_draft_prs(
     )
     if not enabled():
         return counts
+    window = settings.draft_pr_sweep_activity_window_s
+    active_since = datetime.now(UTC) - timedelta(seconds=window) if window > 0 else None
     async with session_factory() as session:
         wanted = [
             (t.id, t.project_id)
-            for t in await TaskService(session).open_without_pr()
+            for t in await TaskService(session).open_without_pr(
+                active_since=active_since
+            )
             if project_id is None or t.project_id == project_id
         ]
     # A project whose forge refused for quota in this pass: every later task of

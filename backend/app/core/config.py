@@ -1010,6 +1010,15 @@ class Settings(BaseSettings, SandboxSettings):
     # its card; `review/queries.CHECK_WATCH_TICKS` counts 「还在等 CI」 off three
     # of these.
     accept_pr_poll_interval_s: int = 60
+    # 草稿扫描的时钟，和卡片轮询分开：它每次扫到一个「有分支、没 PR」的活就要问
+    # GitHub 两次（分支头 + 比较），2026-10-18 实测 23 个候选、每 60 秒一遍，
+    # 约 2,760 次/小时，是全平台最大的一笔。而草稿 PR 晚开几分钟没有人在等 ——
+    # 卡片轮询不能跟着一起慢下来，所以它单独走这一个。
+    draft_pr_sweep_interval_s: int = 300
+    # 草稿扫描只看这段时间里有过活动的活：最后一次说话（没有就按建这条活的时刻）
+    # 早于这个窗口的，当作没人在推它。窗口外的每一个候选，每一遍都要花两次
+    # GitHub 请求。0 或负数＝不过滤，和 2026-10-18 之前一样。
+    draft_pr_sweep_activity_window_s: int = 7200
     # 卡面上的合并态是快照，而采纳按钮按它亮不亮。读卡这条路也会重算一次陈旧的
     # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 来读一
     # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是

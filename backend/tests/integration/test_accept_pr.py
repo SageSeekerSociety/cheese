@@ -3398,6 +3398,77 @@ def test_a_batch_left_open_in_an_archived_room_gets_no_pr(client, sweeping):
     assert sweeping["opened"] == []
 
 
+def test_a_branch_quiet_for_hours_is_not_asked_about(client, sweeping):
+    """草稿扫描只看最近动过的活。
+
+    每个候选每扫一遍要问 GitHub 两次（分支头 + 比较）。一条几小时没人碰过的
+    分支不会有人在往上推：等它再有人说活时再扫，而不是每一拍都花这两次。
+    """
+    from app.domain.room_task.models import Task
+
+    fresh = _room_with_work(client)  # 刚刚建出来 = 10 分钟内动过
+    three_hours = _room_with_work(client)
+    two_days = _room_with_work(client)
+
+    def backdate(room, ago):
+        task_id = _uuid.UUID(str(delivery_task_id(client, room[1])))
+        at = datetime.now(UTC) - ago
+
+        async def _do() -> None:
+            async with client.test_factory() as s:
+                task = await s.get(Task, task_id)
+                task.created_at = at
+                await s.commit()
+
+        asyncio.run(_do())
+
+    backdate(three_hours, timedelta(hours=3))
+    backdate(two_days, timedelta(days=2))
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    [opened] = sweeping["opened"]
+    assert opened["head"] == _disk_branch(client, fresh[1])
+    # 只有那一条被问过：另外两条一次 GitHub 请求都没花。一条被开出来的活
+    # 会被问两次（锁外看一眼、锁内再确认），所以数的是被问过的分支头。
+    assert len({head for _, head in sweeping["fake"].compare_status_calls}) == 1
+
+
+def test_a_task_that_spoke_recently_is_swept_even_when_it_is_old(client, sweeping):
+    """「最近动过」看的是最后一次说话，不是建这条活的时刻：一条开了两天的活，
+    十分钟前还在说，就说明有人在推它的分支。"""
+    from app.domain.block.models import AuthorType, Block, BlockKind
+    from app.domain.room_task.models import Task
+
+    pid, tid = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, tid)))
+
+    async def seed() -> None:
+        async with client.test_factory() as s:
+            task = await s.get(Task, task_id)
+            task.created_at = datetime.now(UTC) - timedelta(days=2)
+            s.add(
+                Block(
+                    project_id=_uuid.UUID(pid),
+                    conversation_id=task_id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.platform,
+                    author="cheese",
+                    content="还在推",
+                    created_at=datetime.now(UTC) - timedelta(minutes=10),
+                )
+            )
+            await s.commit()
+
+    asyncio.run(seed())
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    assert len({head for _, head in sweeping["fake"].compare_status_calls}) == 1
+
+
 def test_push_fix_can_drop_dependency_before_filing_a_card(client, sweeping):
     from app.domain.room_task.models import Task, TaskStatus
 
