@@ -284,7 +284,6 @@ class RepoReadToken:
     for, filled from the objects already in hand rather than a second lookup.
     It is internal metadata for attribution, not a compatibility flag: it is
     None when nothing bound this repo, never the id of some earlier binding.
-    Callers that do not care (the ratchet) leave it unread.
     """
 
     token: str | None

@@ -26,10 +26,9 @@ WHAT IT MEASURES, and how each number is obtained:
                            contract in `backend/.importlinter`. The debt those
                            contracts hold open is measured by the gate against
                            the tree at the merge base, not stored in the file, so
-                           this board reports the written exceptions and points
-                           at the ratchet snapshot for the debt (the board's own
-                           numbers, and what they were a month ago:
-                           `docs/manual/dev/arch-metrics.md`).
+                           this report counts the written exceptions. The
+                           measurement and monthly comparison are described in
+                           `docs/manual/dev/arch-metrics.md`.
   backend.deferred_imports `Import`/`ImportFrom` statements lexically inside a
                            function body under `backend/app`, via `ast`. This is
                            the shape a cycle is dodged with, which is why the
@@ -228,7 +227,7 @@ def parse_importlinter(path: Path) -> dict[str, Any] | None:
     pairs) and now carries only the pairs somebody decided to accept on top of
     the tree at the merge base, so the number here is meant to stay near zero.
     The debt itself is measured by the gate on every run and recorded per commit
-    in the ratchet snapshot (`docs/topics/棘轮页方案`).
+    in the backend boundary checker output.
 
     Not configparser: the list is a multi-line value whose entries look like
     `importer -> imported`, and INI's continuation rules would fold the comments
@@ -878,12 +877,6 @@ def render_markdown(board: dict[str, Any], compare: dict[str, Any] | None = None
         out.append("| exceptions written in `.importlinter` | n/a — no file |")
     else:
         out.append(f"| exceptions written in `.importlinter` | {contracts['total']} |")
-    # The debt those contracts hold open is not in that file: the gate measures
-    # it from the tree at the merge base on every run, so the per-commit number
-    # is `frozen` in the ratchet snapshot rather than a count of what somebody
-    # wrote down. It used to be read from here, which is why the two disagreed
-    # the moment a pull request stopped carrying the list.
-    out.append("| debt behind the ten contracts | per commit, in the ratchet snapshot |")
     files = backend["files"]
     out.append(f"| imports inside a function | {backend['deferred_imports']} |")
     out.append(f"| files over 1000 lines (`backend/app`) | {files['files_over_1000']} |")
