@@ -384,7 +384,7 @@ async def create_task(
     return ok(out)
 
 
-@router.patch("/{topic_id}/task")
+@router.patch("/{topic_id}/task", dependencies=[ROUTE_DECIDES])
 async def update_task(
     topic_id: uuid.UUID,
     body: TaskUpdateIn,

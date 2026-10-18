@@ -224,12 +224,12 @@ class _Week:
 
 
 #: A stand-in for ``task.teaching.TeachingContext``: a resolved week, the two
-#: kinds of material it points at.
+#: kinds of material it points at: 课件 and team documents.
 TEACHING = types.SimpleNamespace(
     course="创研课 2026 秋",
     teaching=_Week(),
     materials=[{"id": 7, "name": "第 6 周讲义", "url": "https://example.com/week6.pdf"}],
-    knowledge=[{"id": 11, "name": "推荐系统入门", "description": "课程上传的参考材料"}],
+    documents=[{"id": "0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e", "title": "推荐系统入门"}],
 )
 
 ROSTER = [

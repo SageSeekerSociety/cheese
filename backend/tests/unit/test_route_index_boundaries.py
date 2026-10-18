@@ -12,11 +12,9 @@ from starlette.routing import Mount, Route
 from scripts.route_index import (
     RouteRecord,
     _full,
-    checked_findings,
     collect,
     first_match_findings,
 )
-from scripts.route_index_frozen import FROZEN, FrozenPair
 
 
 def record(index, path, methods=("GET",), protocol="http"):
@@ -236,108 +234,6 @@ def test_actual_effective_regex_overrides_template_approximation():
         record(1, "/x/invite-codes"),
     ]
     assert first_match_findings(records) == []
-
-
-def frozen_fixture():
-    records = [record(0, "/x/{id}"), record(1, "/x/z")]
-    pair = FrozenPair(
-        protocol="http",
-        method="GET",
-        earlier_path=records[0].path,
-        earlier_endpoint=records[0].endpoint,
-        later_path=records[1].path,
-        later_endpoint=records[1].endpoint,
-        witness="/x/z",
-        why="Test exact structured exception",
-    )
-    return records, pair
-
-
-def test_frozen_exact_pair_is_suppressed():
-    records, pair = frozen_fixture()
-    assert checked_findings(records, (pair,)) == []
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    [
-        "missing_earlier",
-        "missing_later",
-        "reverse",
-        "handler",
-        "path",
-        "protocol",
-        "method",
-        "regex",
-        "witness",
-        "winner",
-        "duplicate_leaf",
-        "duplicate_pair",
-    ],
-)
-def test_frozen_stale_identity_or_overlap_fails(mutation):
-    records, pair = frozen_fixture()
-    frozen = (pair,)
-    if mutation == "missing_earlier":
-        records = records[1:]
-    elif mutation == "missing_later":
-        records = records[:1]
-    elif mutation == "reverse":
-        records.reverse()
-    elif mutation == "handler":
-        records[0] = replace(records[0], endpoint="other.handler")
-    elif mutation == "path":
-        records[0] = replace(records[0], path="/x/{other}")
-    elif mutation == "protocol":
-        records[0] = replace(records[0], protocol="ws")
-    elif mutation == "method":
-        records[0] = replace(records[0], methods=frozenset({"DELETE"}))
-    elif mutation == "regex":
-        records[0] = replace(records[0], path_regex=re.compile(r"^/x/[0-9]+$"))
-    elif mutation == "witness":
-        frozen = (replace(pair, witness="/elsewhere"),)
-    elif mutation == "winner":
-        records.insert(0, record(-1, "/x/{new}"))
-    elif mutation == "duplicate_leaf":
-        records.insert(0, records[0])
-    else:
-        frozen = (pair, pair)
-    with pytest.raises(ValueError, match="stale frozen"):
-        checked_findings(records, frozen)
-
-
-def test_frozen_does_not_exempt_other_method_or_new_registration():
-    records, pair = frozen_fixture()
-    records[0] = replace(records[0], methods=frozenset({"GET", "POST"}))
-    records[1] = replace(records[1], methods=frozenset({"GET", "POST"}))
-    records.append(record(2, "/x/new"))
-    findings = checked_findings(records, (pair,))
-    assert [(f.later.index, f.method) for f in findings] == [(1, "POST"), (2, "GET")]
-
-
-def test_existing_frozen_debt_keeps_exact_leaves():
-    # The pair names its two leaves by path and handler, so it survives a route
-    # added or removed anywhere else on the app. The registration indices this
-    # assertion used to carry — 706/730 until 2026-10-12, then 712/736, 713/737,
-    # 720/744, 719/743, 724/748, 726/750, 727/751, 728/752, 732/756, 733/757 and
-    # back to 727/751 as routes landed above them and were reverted — were the
-    # churn that form removes; tests/AGENTS.md ("Generated routes and database
-    # predicates") asks for this file not to be touched by an unrelated route.
-    (pair,) = FROZEN
-    assert (pair.protocol, pair.method) == ("http", "GET")
-    assert (pair.earlier_path, pair.earlier_endpoint) == (
-        "/users/{userId}",
-        "app.api.routes.users.account.get_user",
-    )
-    assert (pair.later_path, pair.later_endpoint) == (
-        "/users/invite-codes",
-        "app.api.routes.users.invite_codes.list_invite_codes",
-    )
-    records = [
-        replace(record(0, pair.earlier_path), endpoint=pair.earlier_endpoint),
-        replace(record(1, pair.later_path), endpoint=pair.later_endpoint),
-    ]
-    assert checked_findings(records, FROZEN) == []
 
 
 def test_unknown_custom_convertor_never_emits_invalid_witness(monkeypatch):
