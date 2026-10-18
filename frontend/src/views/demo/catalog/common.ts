@@ -22,7 +22,7 @@ export const COMMON_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '有去处',
-        note: '给了 to 才是人可以点的名字：进 Tab 顺序，悬停加深底色，按一下 emit navigate。',
+        note: '给了 to 才是人可以点的名字：进 Tab 顺序，悬停加一道下划线，按一下 emit navigate。',
         props: { handle: 'alice', name: '爱丽丝', to: { path: '/projects/p1/members/alice' } },
         expect: '爱丽丝',
       },
