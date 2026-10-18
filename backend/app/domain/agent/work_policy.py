@@ -11,6 +11,8 @@ from app.core.turn_ceiling import max_concurrent_turns_for
 from app.domain.agent_instance.own import owned_instance
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import PlaceResolver
+from app.domain.room_task.services import TaskService
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.ledger import Ledger, payer_for_project
 
 
@@ -42,6 +44,10 @@ async def work_policy(
                 await payer_for_project(session, topic.project_id)
             )
         )
+        if refused is None and owned is None and place.task is not None:
+            refused = await CreditBudgets(session).member_refusal(
+                topic.project_id, await TaskService(session).credit_owner(place.task)
+            )
     project_settings = project.settings if project else None
     max_concurrent = max_concurrent_turns_for(project_settings)
     # The backend the turn will run on, chosen by the call the turn makes. Every

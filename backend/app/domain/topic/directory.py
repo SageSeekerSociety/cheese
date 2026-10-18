@@ -47,11 +47,14 @@ async def channel_directory(
     managed = await members.managed_topic_ids(
         [t for t in listed if t.id in seen], viewer
     )
+    # 每个频道的主人一次取完：这里逐频道问 `owner_of` 是整页唯一还在随频道数
+    # 增长的读（上面那些全是批量接口），而一个项目几十个频道就是几十次往返。
+    managers = await members.owners_of(ids)
     items = []
     for t in listed:
         general = t.kind == TopicKind.root
         visible = t.id in seen
-        manager = None if general else await members.owner_of(t.id)
+        manager = None if general else managers.get(t.id)
         when = last_activity.get(t.id)
         items.append(
             {

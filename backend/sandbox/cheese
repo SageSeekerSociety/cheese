@@ -3737,13 +3737,29 @@ def _commit_as(repo: Path, task_dir: Path, data: dict) -> None:
     (`data["author"]`, `Name <address>`): the task owner on GitHub when the
     project credits owners, otherwise the AI teammate. Per worktree, because
     every task of the project shares one repository and each has its own
-    author; an author the launch environment fixed would override it."""
+    author; an author the launch environment fixed would override it. The
+    repository's own default is the teammate, for a worktree with no task of
+    its own and a platform that names nobody."""
+    _git_task(repo, "config", "user.name", AUTHOR)
+    _git_task(repo, "config", "user.email", f"{AUTHOR}@agent.cheese.local")
+    _git_task(repo, "config", "extensions.worktreeConfig", "true")
+    # With per-worktree config on, the common config is every worktree's: the
+    # project repository's `core.bare` there makes each task's checkout bare
+    # too, and git refuses `add` in it. It belongs to the repository's own.
+    bare = _git_task(
+        repo, "config", "--local", "--type=bool", "--default=false", "--get", "core.bare"
+    )
+    if bare.strip() == "true":
+        own = Path(_git_task(repo, "rev-parse", "--absolute-git-dir").strip())
+        _git_task(
+            repo, "config", "--file", str(own / "config.worktree"), "core.bare", "true"
+        )
+        _git_task(repo, "config", "--local", "--unset", "core.bare")
     author = data.get("author") or ""
     name, _, rest = author.partition(" <")
     email = rest.rstrip(">")
     if not name or not email:
         return
-    _git_task(repo, "config", "extensions.worktreeConfig", "true")
     _git_task(task_dir, "config", "--worktree", "user.name", name)
     _git_task(task_dir, "config", "--worktree", "user.email", email)
 
