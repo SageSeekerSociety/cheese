@@ -22,8 +22,8 @@ import httpx
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
+from app.domain.agent.model_catalog import catalog
 from app.domain.agent.supply import GATEWAY
-from app.domain.agent_instance.configuration import catalog
 from app.domain.project.models import Project
 from app.domain.project_situation import service as situation_service
 from app.domain.project_situation import writer

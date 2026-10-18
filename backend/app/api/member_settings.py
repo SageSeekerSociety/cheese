@@ -25,7 +25,8 @@ from app.api.auth import ActorResolver
 from app.core.sentences import listing, say
 from app.domain.agent.announce import announce
 from app.domain.agent.environment import default_environment, stored
-from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
+from app.domain.agent.model_catalog import model_choices
+from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.machine.environments import environment_words
