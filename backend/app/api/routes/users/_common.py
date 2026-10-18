@@ -115,10 +115,6 @@ class SudoAuthRequest(BaseModel):
     purpose: SudoPurpose | None = None
 
 
-class TwoFactorCodeRequest(BaseModel):
-    code: str = Field(..., min_length=1)
-
-
 class EmailCodeSignInRequest(BaseModel):
     email: str = Field(..., min_length=1)
 
