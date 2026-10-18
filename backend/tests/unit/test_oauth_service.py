@@ -1160,7 +1160,7 @@ class TestGetGithubUserToken:
     @pytest.mark.anyio
     async def test_expiring_token_with_unconfigured_provider_returns_none(self):
         """github_app not in oauth_enabled_providers → get_provider() raises
-        NotFoundError. That must not escape into the accept flow."""
+        NotFoundError. That must not escape into the caller."""
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
             id=7,

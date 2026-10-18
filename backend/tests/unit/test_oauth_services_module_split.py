@@ -160,8 +160,7 @@ def test_the_old_path_answers_the_provider_names_with_the_same_objects(
 def test_the_old_path_answers_the_token_names_with_the_same_objects(name: str) -> None:
     """`seal_oauth_token` / `open_oauth_token` / `TOKEN_UNAVAILABLE_*` 同理。
 
-    `TOKEN_UNAVAILABLE_*` 这组字符串是给调用方比对的（两阶段采纳要说明降级原因），
-    所以要的是**同一个对象**，不是各留一份相等的字面量。
+    `TOKEN_UNAVAILABLE_*` 这组字符串是给调用方比对的，所以要的是**同一个对象**，不是各留一份相等的字面量。
 
     这条挡不住的是「抄一份、文本碰巧一字不差」：CPython 会把这种短字符串驻留，两份同
     文本的字面量恰好也是同一个对象。它挡得住的是抄一份、文本改过的那种 —— 那才会让

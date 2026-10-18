@@ -62,9 +62,8 @@ _GITHUB_TOKEN_REFRESH_MARGIN = timedelta(minutes=5)
 _refresh_locks: dict[int, asyncio.Lock] = {}
 
 # Machine-readable reasons `get_github_user_token_with_reason` reports
-# alongside a None token, for a caller that has to explain a degrade to a
-# human rather than silently falling back. Never derived from the token/ciphertext
-# itself, so surfacing one can't leak either.
+# alongside a None token (`get_github_user_token` discards them). Never
+# derived from the token/ciphertext itself, so surfacing one can't leak either.
 TOKEN_UNAVAILABLE_NOT_CONNECTED = "not_connected"
 TOKEN_UNAVAILABLE_UNDECRYPTABLE = "undecryptable"
 TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH = "expired_no_refresh"
@@ -79,8 +78,8 @@ def _decrypt_stored_token(
 
     Tokens are encrypted at rest (``app.core.crypto``), so a value sealed
     under a key no longer configured makes decryption raise. That must not blow up
-    the caller (the accept flow degrades on None, it does not handle
-    exceptions from here) — but it must never be silent either: an
+    the caller (the repository-connect route treats None as "link the account
+    first", it does not handle exceptions from here) — but it must never be silent either: an
     unnoticed token problem is exactly how the "returns raw ciphertext" bug
     survived, so this always logs.
     """
@@ -188,7 +187,7 @@ async def _refresh_and_persist_token(
         # Provider not configured on this deployment
         # (oauth_enabled_providers / client id + secret unset).
         # Degrade like any other missing prerequisite — raising here
-        # would escape into the accept flow.
+        # would escape into the caller.
         logger.warning(
             "github account link: provider %r is not configured, "
             "cannot refresh an expiring token",
