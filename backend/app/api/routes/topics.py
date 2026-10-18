@@ -564,9 +564,9 @@ async def get_topic(
         raise NotFoundError(say("topicNotFound"))
     topic = place.room
     actor = await _actor_in_place(resolver, place)
-    # 这三处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
+    # 这几处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
     # 遍（`_awaiting_an_answer`、`MemberWaits.for_rooms`、
-    # `topics_signals.working_in_threads`）。
+    # `topics_signals.working_in_threads`、`moving_topics`）。
     room_threads = await threads_of_rooms(db, [topic.id])
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics(

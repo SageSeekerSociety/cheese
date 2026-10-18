@@ -379,7 +379,10 @@ def test_a_rooms_header_reads_its_threads_no_more_than_three_times(client, n):
         client, lambda: _room_header(client, tid), _THREADS_OF_A_ROOM
     )
 
-    assert reads <= 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"
+    # Both ends: a spelling of the query this pattern does not know would read
+    # as zero and pass the ceiling, which is the one way this guard can go
+    # quiet without anybody noticing.
+    assert 1 <= reads <= 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"
 
 
 def _a_thread_in(client, tid):
