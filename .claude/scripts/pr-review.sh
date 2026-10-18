@@ -27,11 +27,17 @@
 #       reviewer runs, prepare writes a result.json that says so, and post can
 #       be run straight away.
 #       Also appends PRECOMPUTED.md (.claude/pr-review/precompute.py): ci:fast pass/not_run, symbol refs, trial merges.
+#       The round — REVIEW-RESULT.md, meta and the review tree — is left under
+#       $HOME/.cheese/review-cache (PR_REVIEW_DIR overrides), not /tmp, so a
+#       machine change does not take it away; the old
+#       /tmp/pr-review-PR-SHA12.input path stays as a symlink to the round.
 #   .claude/scripts/pr-review.sh post DIR [--dry-run]
 #       Check DIR/result.json against the schema and the pinned commit, write
 #       the rendered result to DIR/REVIEW-RESULT.md, print it, and remove the
-#       review tree. Paste it into the card body; its first line is the one
-#       the patrol sweep reads. Makes no GitHub call. --dry-run only prints.
+#       review tree. DIR keeps its result and meta, for `ready` and for the
+#       next round. Paste the result into the card body; its first line is
+#       the one the patrol sweep reads. Makes no GitHub call. --dry-run only
+#       prints.
 #   .claude/scripts/pr-review.sh show DIR [--line]
 #       Print DIR/REVIEW-RESULT.md (--line: only its first line).
 #   .claude/scripts/pr-review.sh ready DIR|PR
@@ -47,13 +53,56 @@
 # Exit status: 0 done, 1 failed (the reason is printed), 2 usage.
 set -uo pipefail
 
+# GIT_NO_LAZY_FETCH=1 keeps a partial clone from fetching a missing blob on demand. post
+# wants that: its git calls are graph lookups, and a fetch there hangs the seat. prepare
+# must not have it: it fetches the PR and reads files out of origin/main. Strip whatever
+# the caller exported before any git call below — post sets it again for itself. A seat
+# that exports it from its own shell profile used to break prepare; now it cannot.
+unset GIT_NO_LAZY_FETCH
+
 REPO=SageSeekerSociety/cheese
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(git -C "$HERE" rev-parse --show-toplevel) || exit 1
 METHOD=.claude/pr-review
 
+# Where prepare leaves a round. REVIEW-RESULT.md and meta have to outlive the review tree
+# and the machine's /tmp, so they live in the seat's home; PR_REVIEW_DIR still overrides.
+REVIEW_ROOT=${PR_REVIEW_DIR:-${HOME:-/tmp}/.cheese/review-cache}
+# The roots a round may be under. An explicit PR_REVIEW_DIR is isolation: reaching into /tmp
+# as well would hand a caller (or a test) the default directory's round, and a re-prepare
+# would delete a /tmp round it was never asked to touch.
+if [ -n "${PR_REVIEW_DIR:-}" ]; then
+  REVIEW_ROOTS=("$REVIEW_ROOT")
+else
+  REVIEW_ROOTS=("$REVIEW_ROOT" /tmp)
+fi
+
 usage() { sed -n '/^#   \.claude/,/^# Exit status/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "pr-review: $*" >&2; exit 1; }
+
+# The round for PR $1 at $2 (a 12-char prefix; empty for the newest one). The current root
+# is searched first and /tmp only when it has nothing: /tmp is shared with every other seat
+# on the machine (same uid, different HOME), and a newer round of theirs must not answer
+# for this seat's. With a prefix the same order applies: the first root holding that round
+# wins. Newest first within a root, skipping a path that is not a directory — a
+# compatibility symlink whose target is gone is not a round. Prints the .input directory;
+# fails when there is none.
+round_input() {
+  local pr=$1 want=${2:-} root d
+  if [ -n "$want" ]; then
+    for root in "${REVIEW_ROOTS[@]}"; do
+      d=$root/pr-review-$pr-${want:0:12}.input
+      [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
+    done
+    return 1
+  fi
+  for root in "${REVIEW_ROOTS[@]}"; do
+    while IFS= read -r d; do
+      [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
+    done < <(ls -dt "$root"/pr-review-"$pr"-*.input 2>/dev/null)
+  done
+  return 1
+}
 
 head_of() { gh api "repos/$REPO/pulls/$1" -q .head.sha; }
 
@@ -83,7 +132,7 @@ resolve_sha() {
 
 prepare() {
   local pr=$1 want=${2:-} since_want=${3:-} spec_want=${4:-}
-  local sha since="" base tree dir method_rev prev merge_base tier tier_txt
+  local sha since="" base tree dir method_rev prev prev_round merge_base tier tier_txt
   local rules_rev rules_txt rules_line spec_from="" spec_txt="" spec_note tiers_file
   sha=$(resolve_sha "$pr" "$want") || exit 1
   [ -z "$since_want" ] || since=$(resolve_sha "$pr" "$since_want") || exit 1
@@ -96,12 +145,46 @@ prepare() {
     [ "$since" != "$sha" ] || die "${since:0:12} is already the head; nothing to review since"
   fi
 
-  tree=${PR_REVIEW_DIR:-/tmp}/pr-review-$pr-${sha:0:12}
+  tree=$REVIEW_ROOT/pr-review-$pr-${sha:0:12}
   dir=$tree.input
+  # What a second prepare of the same commit must not throw away: the conclusion, the
+  # result behind it, and the requirement contract the review was handed all still belong
+  # to that commit, and losing them is what made a re-prepare after a machine change cost
+  # a whole review. A real /tmp directory from before the default moved holds the same
+  # round for this same commit; read it before the compatibility symlink below replaces it.
+  # Only the default root looks there — an explicit PR_REVIEW_DIR owns its files and must
+  # not read or delete another root's round.
+  local keep="" old_tmp=""
+  keep=$(mktemp -d "${TMPDIR:-/tmp}/pr-review-keep.XXXXXX") || die "could not make a temporary directory"
+  [ -n "${PR_REVIEW_DIR:-}" ] || old_tmp=/tmp/pr-review-$pr-${sha:0:12}.input
+  for cand in "$dir/REVIEW-RESULT.md" "$dir/result.json" "$dir/spec.md"; do
+    [ -f "$cand" ] && cp "$cand" "$keep/"
+  done
+  # A symlink at the old path is another seat's round (a different HOME), not this seat's
+  # old-layout directory: following it would copy that seat's conclusion and contract into
+  # this round. Only a real pre-move directory is migrated.
+  if [ -n "$old_tmp" ] && [ -d "$old_tmp" ] && [ ! -L "$old_tmp" ]; then
+    for cand in "$old_tmp/REVIEW-RESULT.md" "$old_tmp/result.json" "$old_tmp/spec.md"; do
+      [ -f "$cand" ] && [ ! -f "$keep/${cand##*/}" ] && cp "$cand" "$keep/"
+    done
+  fi
   # Unconditionally: a tree whose directory is gone (a reboot cleared /tmp)
   # still holds its registration, and that alone blocks a second add.
   git -C "$ROOT" worktree remove --force "$tree" 2>/dev/null; rm -rf "$tree"
+  if [ -n "$old_tmp" ] && [ -d "$old_tmp" ] && [ ! -L "$old_tmp" ] && [ "$old_tmp" != "$dir" ]; then
+    rm -rf "$old_tmp"
+  fi
   rm -rf "$dir"; mkdir -p "$dir"
+  for f in REVIEW-RESULT.md result.json spec.md; do
+    [ ! -f "$keep/$f" ] || cp "$keep/$f" "$dir/$f"
+  done
+  rm -rf "$keep"
+  # Commands and habits written before the move address a round by its /tmp path. Only the
+  # default root gets the link: an explicit PR_REVIEW_DIR is a caller saying where it wants
+  # its files, and a link into a test's throwaway directory would outlive the test.
+  if [ -n "$old_tmp" ] && [ "$old_tmp" != "$dir" ]; then
+    ln -sfn "$dir" "$old_tmp" 2>/dev/null || true
+  fi
   git -C "$ROOT" worktree add -q --detach "$tree" "$sha" || die "could not check out $sha"
 
   # The method as merged on the default branch; the PR cannot rewrite it.
@@ -189,13 +272,16 @@ prepare() {
   if [ -n "$spec_want" ]; then
     [ -f "$spec_want" ] || die "--spec $spec_want: no such file"
     spec_from=$spec_want
-  elif [ -n "$since" ] \
-    && [ -f "${PR_REVIEW_DIR:-/tmp}/pr-review-$pr-${since:0:12}.input/spec.md" ]; then
-    spec_from=${PR_REVIEW_DIR:-/tmp}/pr-review-$pr-${since:0:12}.input/spec.md
+  elif [ -n "$since" ] && prev_round=$(round_input "$pr" "$since") \
+    && [ -f "$prev_round/spec.md" ]; then
+    spec_from=$prev_round/spec.md
+  elif [ -f "$dir/spec.md" ]; then
+    # A second prepare of this same commit carried its contract over above.
+    spec_from=$dir/spec.md
   fi
   if [ -n "$spec_from" ]; then
     [ -s "$spec_from" ] || die "--spec $spec_from is empty; that is not a contract to check"
-    cp "$spec_from" "$dir/spec.md"
+    [ "$spec_from" = "$dir/spec.md" ] || cp "$spec_from" "$dir/spec.md"
     spec_txt=$dir/spec.md
   fi
   # Step 5b and the contract section are newer than the rest of the method: main's
@@ -257,8 +343,11 @@ PY
   if [ -n "$since" ]; then
     # The last round's own result, when this machine still has it; otherwise
     # its findings are in the PR body (pr.md), where the card body is mirrored.
-    prev=${PR_REVIEW_DIR:-/tmp}/pr-review-$pr-${since:0:12}.input/REVIEW-RESULT.md
-    if [ -f "$prev" ]; then cp "$prev" "$dir/previous.md"; else rm -f "$dir/previous.md"; fi
+    prev=""
+    if prev_round=$(round_input "$pr" "$since") && [ -f "$prev_round/REVIEW-RESULT.md" ]; then
+      prev=$prev_round/REVIEW-RESULT.md
+    fi
+    if [ -n "$prev" ]; then cp "$prev" "$dir/previous.md"; else rm -f "$dir/previous.md"; fi
     cat >> "$dir/REVIEW.md" <<EOF
 
 ## Incremental review
@@ -345,6 +434,9 @@ EOF
 post() {
   local dir=$1 dry=${2:-} pr sha base="" method_rev tree since="" tier="" result
   [ -f "$dir/meta" ] || die "$dir has no meta; run prepare first"
+  # Everything git does here is a graph or tree lookup. On a partial clone an on-demand
+  # fetch for a missing blob can sit for minutes; forbid it (prepare unsets it at the top).
+  export GIT_NO_LAZY_FETCH=1
   # shellcheck disable=SC1091
   . "$dir/meta"
   # The tier is recomputed here, from the classifier that ships with the method — not
@@ -367,6 +459,8 @@ post() {
   printf '%s\n' "$result"
   [ "$dry" = --dry-run ] && return
   printf '%s\n' "$result" > "$dir/REVIEW-RESULT.md"
+  # Only the tree goes: REVIEW-RESULT.md and meta stay in $dir for the card, for a later
+  # `ready`, and for a delta round that reuses this conclusion.
   git -C "$ROOT" worktree remove --force "$tree" 2>/dev/null || true
   echo "pr-review: wrote $dir/REVIEW-RESULT.md; paste it into the card body (nothing was posted)" >&2
 }
@@ -380,8 +474,7 @@ show() {
 ready() {
   local arg=$1 dir
   if [[ $arg =~ ^[0-9]+$ ]]; then
-    dir=$(ls -dt "${PR_REVIEW_DIR:-/tmp}"/pr-review-"$arg"-*.input 2>/dev/null | head -n 1)
-    [ -n "$dir" ] || die "no prepare directory for #$arg on this machine; run prepare first"
+    dir=$(round_input "$arg") || die "no prepare directory for #$arg on this machine; run prepare first"
   else
     dir=$arg
   fi
