@@ -96,7 +96,7 @@ class TurnCompletion:
         """An unknown failed work can cost a replay, never a lost message."""
         try:
             await forget_room_claims(self.sessions, topic_id)
-        except Exception:  # noqa: BLE001 — the failure notice matters more
+        except Exception:  # the failure notice matters more
             logger.exception("could not withdraw delivered claims (topic=%s)", topic_id)
 
     async def close(self, state: HookWorkState, result: AgentResult) -> list[dict]:

@@ -26,13 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
+from app.domain.agent.model_catalog import catalog
 from app.domain.agent.platform_notices import (
     memory_changed_notice,
 )
 from app.domain.agent.proposals import propose
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent_instance.adapters import named_teammate
-from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.block.models import AGENT_NOTICE_META_KEY, BlockKind

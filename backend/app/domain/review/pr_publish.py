@@ -33,8 +33,7 @@ commits and none (`sweep_draft_prs`, `_draft_pr_for_one_task`, `_branch_ahead`,
 about. Tests replace `enabled`, `dispatch`, `branch_head`, `proposal_client`,
 `sweep_draft_prs` and `_branch_ahead` on THIS module object, so every body that
 reads one of them has to live here; in the sibling it would read the sibling's
-own copy and the replacement would quietly stop taking effect. `tests/unit/
-test_pr_publish_module_split.py` holds both halves to that.
+own copy and the replacement would quietly stop taking effect.
 """
 
 import asyncio
@@ -72,6 +71,7 @@ from app.domain.project.forge import (
 from app.domain.repository import identity
 from app.domain.review import archive, pr_text
 from app.domain.review.forge_clients import proposal_client, status_client
+from app.domain.review.github_pr_status import pr_opener
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from app.domain.review.ports import Announce, RecordInstruction
 from app.domain.review.pr_publish_payload import (
@@ -94,6 +94,12 @@ from app.domain.review.pr_publish_payload import (
 )
 from app.domain.review.pr_publish_payload import (
     is_draft_title as is_draft_title,
+)
+from app.domain.review.pr_publish_payload import (
+    owner_token as owner_token,
+)
+from app.domain.review.pr_publish_payload import (
+    pr_body_for as pr_body_for,
 )
 from app.domain.review.pr_publish_payload import (
     record_pr as record_pr,
@@ -154,7 +160,7 @@ async def _run(
             topic_id=topic_id,
             project_id=project_id,
         )
-    except Exception as exc:  # noqa: BLE001 — card stays PR-less, but never silently (#362)
+    except Exception as exc:  # card stays PR-less, but never silently (#362)
         logger.exception("PR publication failed for card %s", card_id)
         await _record_failure(session_factory, card_id=card_id, exc=exc)
         return
@@ -225,7 +231,7 @@ async def open_pr_for_card(
     if base is None:
         raise ValueError("Task has no target branch")
 
-    title, body = await _pr_text(
+    title, token, body = await _pr_text(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
     pr = await _open_pr_of_task(client, task)
@@ -235,8 +241,14 @@ async def open_pr_for_card(
             base=base,
             title=title,
             body=body,
+            as_user_token=token,
         )
         pr = opened.pr
+    place = await PlaceResolver(session).resolve(topic_id)
+    if place is not None:
+        body = await pr_body_for(
+            session, place.room, card=card, opened_by=pr_opener(pr)
+        )
     # The PR very often already exists by now: the task's draft PR was opened
     # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
     # failing on GitHub's "already exists". An adopted PR still carries the
@@ -333,7 +345,7 @@ async def sweep_draft_prs(
                 "draft PRs of project %s wait for the next pass: %s", task_project, exc
             )
             continue
-        except Exception:  # noqa: BLE001 — one bad task must not end the sweep
+        except Exception:  # one bad task must not end the sweep
             counts["failed"] += 1
             logger.warning("draft PR not opened for task %s", task_id, exc_info=True)
             continue
@@ -749,7 +761,7 @@ async def _branch_ahead(session: AsyncSession, task_id: uuid.UUID) -> bool:
     return difference in ("ahead", "diverged")
 
 
-async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # noqa: ANN001
+async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:
     """The draft PR for one task, or None when this task cannot have one yet.
 
     None (not an error) for: a project with no App installation, a non-GitHub
@@ -797,8 +809,15 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
         title=draft_title(task.title or branch),
         body=pr_text.pr_body(room, "", None, who),
         draft=True,
+        as_user_token=await owner_token(session, room, task.id),
     )
     pr = opened.pr
+    await sync_pr_text(
+        client,
+        pr,
+        title=str(pr.get("title") or ""),
+        body=await pr_body_for(session, room, task_id=task.id, opened_by=pr_opener(pr)),
+    )
     logger.info(
         "draft PR #%s opened for task %s (%s)",
         pr.get("number"),

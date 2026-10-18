@@ -75,7 +75,7 @@ class Policy:
         try:
             with opener.open(request, timeout=8) as response:
                 return over_https_answers(json.load(response))
-        except Exception as exc:  # noqa: BLE001 — unknown means refused
+        except Exception as exc:  # unknown means refused
             raise NotPublic(f"{host} could not be resolved to a real address") from exc
 
     def addresses(self, host: str, port: int) -> list[str]:

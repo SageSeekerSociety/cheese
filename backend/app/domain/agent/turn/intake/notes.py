@@ -127,7 +127,7 @@ async def _running_compactions(
     try:
         async with sessions() as session:
             return await run_records.running(session, turn_id, EVENT_CONTEXT_COMPACT)
-    except Exception:  # noqa: BLE001 — a status line is not worth a turn
+    except Exception:  # a status line is not worth a turn
         logger.exception("could not read compaction records of turn %s", turn_id)
         return []
 

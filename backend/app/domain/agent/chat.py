@@ -77,7 +77,7 @@ from app.domain.agent.memory_ledger import (
 
 # 兼容门面：点名解析、通知与 refs 搬去了 `mentions.py`（那里有直接的单测）。
 # 这里重新导出，`app.domain.agent.chat` 仍是既有调用点与测试的导入路径；下面带
-# noqa 的那几个本文件不用，只是给外部（测试）留的导入路径。
+# 的那几个本文件不用，只是给外部（测试）留的导入路径。
 from app.domain.agent.mentions import (
     _MENTION_RE,  # noqa: F401
     _SPECIAL_MENTIONS,  # noqa: F401

@@ -28,17 +28,6 @@ POST `/users/auth/login` 必然失败。
 
 **做法**：用 `authed_client` fixture，它直接签 token，不走登录。
 
-## 症状：`tests/unit/test_no_adhoc_auth_helpers.py` 红了，点名你的文件
-
-**容易误判成**：命名洁癖，改个名字或者塞进 fixture 就能绕过。
-
-**真因**：这条守卫不看名字，只看「不带用户 id 的 `create_access_token` 调用」。测试里
-只带 handle 的 token 只能从 `tests.integration.conftest` 的 `session_token()` /
-`session_auth_headers()` 来；历史原因见守卫文件的 docstring。
-
-**做法**：改用共享 helper。helper 不够用就扩展 helper；实在不行，才在守卫的 `ALLOWED`
-里加一条，并写明理由。
-
 ## 症状：一批你没碰过的测试变红，报 `AttributeError`，或者错误出在离改动很远的地方
 
 **容易误判成**：环境脏了、缓存问题，于是清 `.pytest_cache`、重装依赖。
@@ -86,4 +75,4 @@ POST `/users/auth/login` 必然失败。
 | `tests/integration/`，只按 handle 认人的路由 | `session_auth_headers()` / `session_token()` | `integration/conftest.py` |
 | `tests/contract/` | `authed_client` fixture | `contract/conftest.py` |
 
-不要自己手写这三种机制，原因见上面第一、三条。
+不要自己手写这三种机制，原因见上面第一条。

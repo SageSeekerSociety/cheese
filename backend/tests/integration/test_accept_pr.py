@@ -559,6 +559,7 @@ def app_world(client, monkeypatch):
             title: str,
             body: str,
             draft: bool = False,
+            as_user_token: str | None = None,
         ) -> OpenedPR:
             if head in recorded["prs_by_head"]:
                 adopted = recorded["prs_by_head"][head]
@@ -3315,7 +3316,7 @@ def test_a_quiet_branch_is_asked_about_without_locking_its_task(
                     select(Task.id).where(Task.id == task_id).with_for_update()
                 )
                 locked_elsewhere.append(False)
-            except Exception:  # noqa: BLE001 — the lock wait is the observation
+            except Exception:  # the lock wait is the observation
                 locked_elsewhere.append(True)
             await other.rollback()
         return "identical"  # nothing new on the branch since its base
@@ -3352,7 +3353,7 @@ def test_github_is_asked_about_its_quota_without_the_task_locked(
                     select(Task.id).where(Task.id == task_id).with_for_update()
                 )
                 locked_while_asked.append(False)
-            except Exception:  # noqa: BLE001 — the lock wait is the observation
+            except Exception:  # the lock wait is the observation
                 locked_while_asked.append(True)
             await other.rollback()
         return 5000, 5000

@@ -135,7 +135,7 @@ def _pool(monkeypatch):
 
 @pytest.fixture
 def _project_key(monkeypatch):
-    async def fake_key(self, project_id, *, dream=False):  # noqa: ANN001
+    async def fake_key(self, project_id, *, dream=False):
         return "sk-virtual-for-" + str(project_id)[:8]
 
     monkeypatch.setattr(
@@ -202,7 +202,7 @@ def test_no_pool_configured_is_refused(client, monkeypatch, _project_key):
 def test_no_project_key_refuses_rather_than_using_pool_credentials(
     client, _pool, monkeypatch
 ):
-    async def no_key(self, project_id, *, dream=False):  # noqa: ANN001
+    async def no_key(self, project_id, *, dream=False):
         return None
 
     monkeypatch.setattr("app.domain.agent.chat.ChatService.project_gateway_key", no_key)

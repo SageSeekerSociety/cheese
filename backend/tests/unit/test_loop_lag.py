@@ -65,7 +65,7 @@ async def test_work_that_never_awaits_is_named_with_how_long_it_held(
 
     async def block_once() -> None:
         await asyncio.sleep(0.02)
-        time.sleep(0.3)  # noqa: ASYNC251 — the thing being measured
+        time.sleep(0.3)  # the thing being measured
 
     watching = asyncio.create_task(
         loop_lag.watch_loop_lag(interval_s=0.01, stall_s=0.1, iterations=40)
@@ -171,7 +171,7 @@ async def test_a_loop_that_keeps_stalling_dumps_and_warns_once_a_minute(
     async def block() -> None:
         for _ in range(3):
             await asyncio.sleep(0.02)
-            time.sleep(0.2)  # noqa: ASYNC251 — the thing being measured
+            time.sleep(0.2)  # the thing being measured
 
     watching = asyncio.create_task(
         loop_lag.watch_loop_lag(interval_s=0.01, stall_s=0.1, iterations=80)
@@ -227,9 +227,9 @@ async def test_a_dump_below_the_lag_threshold_consumes_the_rate_limit(
         )
     )
     await asyncio.sleep(0.02)
-    time.sleep(0.2)  # noqa: ASYNC251 — the thing being measured
+    time.sleep(0.2)  # the thing being measured
     await first_cancelled.wait()
-    time.sleep(0.2)  # noqa: ASYNC251 — the second short stall
+    time.sleep(0.2)  # the second short stall
     await watching
 
     assert _stall_count(caplog, capsys) == 1
@@ -280,7 +280,7 @@ async def test_dump_is_armed_again_after_the_report_window(
         )
     )
     await asyncio.sleep(0.02)
-    time.sleep(0.2)  # noqa: ASYNC251 — the thing being measured
+    time.sleep(0.2)  # the thing being measured
     await watching
 
     assert dump_calls == 1

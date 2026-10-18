@@ -21,6 +21,7 @@ login is out of use from the moment it is asked for.
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -220,6 +221,26 @@ async def status(session: AsyncSession, device_id: str) -> dict | None:
     if row is None:
         return None
     return claude_login.view(row)
+
+
+async def statuses(session: AsyncSession, device_ids: Sequence[str]) -> dict[str, dict]:
+    """What each of these machines last said about its owner's Claude Code
+    login, in one query for the whole list (「我的设备」 asks about every
+    self-hosted machine it is about to render). Same shape as ``status``; a
+    machine it has not asked yet is absent, where ``status`` answers None."""
+    ids = list(dict.fromkeys(device_ids))
+    if not ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(DeviceClaudeLoginRow)
+            .where(DeviceClaudeLoginRow.device_id.in_(ids))
+            # Same freshness as ``status``: a row already in the session is
+            # re-read, not answered from the identity map.
+            .execution_options(populate_existing=True)
+        )
+    ).scalars()
+    return {row.device_id: claude_login.view(row) for row in rows}
 
 
 class MachineRefused(Exception):

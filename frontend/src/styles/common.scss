@@ -1,10 +1,21 @@
-html,
-body,
-#app {
-  width: 100%;
-  height: 100%;
+body {
   margin: 0;
   padding: 0;
+}
+
+/* 默认整页滚动。Vuetify 的重置给 html 写了 `overflow-y: scroll`，内容不满一屏也
+   留一条滚动条；:root 比它那条 `html` 更具体，不看样式表的先后。 */
+:root {
+  overflow-y: auto;
+}
+
+/* 应用外框挂着的时候（layouts/AppShell.vue 加上这个类）整页定高、不滚，滚动交给
+   内容区。不进外框的页面不受这一条约束，不用写任何东西。 */
+html.app-shell-open,
+html.app-shell-open body,
+html.app-shell-open #app {
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   scrollbar-gutter: auto;
 }

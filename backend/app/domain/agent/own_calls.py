@@ -17,7 +17,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own import (
     allows_own_agents,
-    callable_by,
+    callable_by_many,
     why_not,
 )
 from app.domain.identity.handles import agent_instance_handle
@@ -48,9 +48,11 @@ async def seat_if_named(
             AgentInstance.is_active.is_(True),
         )
     )
-    for own in owned.all():
-        seat = agent_instance_handle(own)
-        if f"<@{seat}>" in content and await callable_by(session, own, author):
+    handles = {own: agent_instance_handle(own) for own in owned.all()}
+    seats = {own: seat for own, seat in handles.items() if f"<@{seat}>" in content}
+    allowed = await callable_by_many(session, list(seats), author)
+    for own, seat in seats.items():
+        if allowed[own]:
             await TopicMemberService(session).ensure_agent_seat(topic.id, seat)
 
 

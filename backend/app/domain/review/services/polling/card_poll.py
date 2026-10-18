@@ -269,7 +269,7 @@ async def _poll_pr_card(
                 )
                 if ci is not None:
                     pending.append(ci)
-        except Exception as exc:  # noqa: BLE001 — 先发完，再抛
+        except Exception as exc:  # 先发完，再抛
             deferred = exc
     try:
         review = await self._review_nudge(
@@ -282,7 +282,7 @@ async def _poll_pr_card(
         )
         if review is not None:
             pending.append(review)
-    except Exception as exc:  # noqa: BLE001 — 见上：先发完，再抛
+    except Exception as exc:  # 见上：先发完，再抛
         deferred = exc
     if verdict.state == "dirty":
         conflict = self._conflict_nudge(card=card, status=status)
@@ -370,6 +370,7 @@ async def _poll_pr_card(
             protection=protection,
             chat_service=chat_service,
             runner=runner,
+            opened_by=status.opened_by,
         )
         return
     await self._session.flush()

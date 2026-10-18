@@ -48,10 +48,10 @@ PERIODIC_JOB_NAMES = (
     "forge credential cache cleanup",
     "forge orphan account sweep",
     "quiet task reminder",
-    "pr poll",
-    "task pr poll",
-    "landing watch",
-    "draft pr sweep",
+    "pr poll",  # forge_bound: PR status reads
+    "task pr poll",  # forge_bound: task branch/PR reads
+    "landing watch",  # forge_bound: merge, checks and deployment reads
+    "draft pr sweep",  # forge_bound: branch/compare reads and PR creation
     "orphan sweep",
     "closed task stop",
     "queued message sweep",
@@ -77,8 +77,8 @@ PERIODIC_JOB_NAMES = (
     "routines",
     "task deadline sweep",
     "memory dream",
-    "ratchet ingest",
-    "ci activity sweep",
+    "ratchet ingest",  # forge_bound: GitHub Actions artifact reads
+    "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
     "wake watch",
 )
 

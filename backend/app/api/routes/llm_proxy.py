@@ -54,12 +54,12 @@ from app.core.sandbox_auth import (
     scoped_token_claims,
 )
 from app.core.sentences import listing, say
+from app.domain.agent import model_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.queries import TaskCreditContext, task_credit_context
 from app.domain.agent.supply import GATEWAY
-from app.domain.agent_instance import configuration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.memory import dream
@@ -152,7 +152,7 @@ def _offerable_model_ids(project, choices: dict[str, dict]) -> set[str]:
     agent 不可指定：绑上它们请求就得走另一条供给路，而那条路这个项目没有
     凭据 —— 列进可选等于教人吃拒绝。
     """
-    pool = configuration.project_pool(project.settings if project else None)
+    pool = model_catalog.project_pool(project.settings if project else None)
     return {cid for cid, c in choices.items() if c.get("supply") == pool}
 
 
@@ -357,7 +357,7 @@ async def admission(
         agent = await agents.for_seat_handle(project, claims.get("a"))
         if agent is None:
             agent = await agents.for_project(project)
-    choices = configuration.catalog(project.settings if project else None)
+    choices = model_catalog.catalog(project.settings if project else None)
     try:
         if project is not None and is_subagent and requested:
             bound = await _bind_requested_subagent_model(

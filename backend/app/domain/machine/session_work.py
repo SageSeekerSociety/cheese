@@ -313,7 +313,7 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
             timeout=PUSH_WAIT_S,
         )
     # Any failure at all, the machine's or ours: the caller does not wait on it.
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning(
             "checkpoint before leaving device %s failed: %s", lease["device_id"], exc
         )
@@ -355,7 +355,7 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
             continue
         try:
             starts.append((lease, await restart_executor(session, row, lease)))
-        except Exception:  # noqa: BLE001 — best effort; the cleanup goes on
+        except Exception:  # best effort; the cleanup goes on
             logger.warning("no checkpoint for session %s", row.id, exc_info=True)
     # No transaction is held while the machines run it.
     await session.commit()
@@ -379,8 +379,8 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
         "CHEESE_AUTHOR": author,
         "CHEESE_PREVIEW_URL": ws_url(api, "/preview/tunnel"),
         "CHEESE_RESOURCE_ID": work_resource,
-        "GIT_AUTHOR_NAME": author,
-        "GIT_AUTHOR_EMAIL": f"{author}@agent.cheese.local",
+        # No GIT_AUTHOR_*: a task's checkout sets its own author (`cheese
+        # worktree`), and the environment would override it.
         **({"CHEESE_SITE_FORWARD": site} if site else {}),
     }
 

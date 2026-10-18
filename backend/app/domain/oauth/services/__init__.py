@@ -11,12 +11,11 @@
 模块互相引用会凭空多出环来。形状和 `app/domain/feedback/repositories/` 一样。
 
 **这一面的名字和对象一个都没变。** 路由（`app/api/routes/users/oauth.py`、
-`github_account_link.py`、`github_install.py`、`users/connections.py`）、
+`users/github_account.py`、`github_install.py`、`users/connections.py`）、
 `app/api/deps.py`、`app/domain/repository/identity.py` 里的函数内导入、以及单测都按
 `from app.domain.oauth.services import …` 取名字，这里逐个再导出；`settings` 也仍
 从这里读，所以按 `app.domain.oauth.services.settings` 打的补丁照旧生效（读 settings
-的代码本来就在本模块）。`todo` 里那一条——`test_oauth_service.py` 用到的每个名字都
-还取得到——有 `test_oauth_services_module_split.py` 钉着。
+的代码本来就在本模块）。
 
 **类上的方法只转发。** 搬走的方法在类上留一行，把 `self` 和自己的参数原样交给
 `tokens.py` / `connections.py` 里接收者是 `svc` 的同名函数。这样类上不再有任何判断
@@ -30,7 +29,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from app.core.config import settings
@@ -39,7 +38,6 @@ from app.domain.oauth.repositories import OAuthConnectionRepository
 
 from . import connections, tokens
 from .providers import (
-    LINK_ONLY_PROVIDERS,
     PROVIDER_CLASSES,
     GitHubProvider,
     GoogleProvider,
@@ -86,18 +84,7 @@ class OAuthService:
         if not client_id or not client_secret or not redirect_url:
             return None
 
-        if provider_id == "github":
-            return OAuthProviderConfig(
-                id=provider_id,
-                name="GitHub",
-                client_id=client_id,
-                client_secret=client_secret,
-                authorization_url="https://github.com/login/oauth/authorize",
-                token_url="https://github.com/login/oauth/access_token",
-                redirect_url=redirect_url,
-                scope=["read:user", "user:email"],
-            )
-        elif provider_id == "google":
+        if provider_id == "google":
             return OAuthProviderConfig(
                 id=provider_id,
                 name="Google",
@@ -120,14 +107,13 @@ class OAuthService:
                 scope=["profile", "userinfo"],
             )
         elif provider_id == "github_app":
-            # #192: the cheesex-app GitHub App's OWN user-to-server
-            # authorization — a separate credential from the "github" login
-            # provider above, even though it's the identical OAuth 2.0 dance
-            # (GitHub Apps reuse the classic authorize/token endpoints, just
-            # keyed to the App's client_id/secret instead of an OAuth App's).
+            # cheesex-app's own user-to-server authorization, for signing in
+            # and for 关联 GitHub alike. A GitHub App takes no scopes: what the
+            # token may do is the App's permissions on the repositories it is
+            # installed on, intersected with the person's own.
             return OAuthProviderConfig(
                 id=provider_id,
-                name="GitHub (cheesex-app)",
+                name="GitHub",
                 client_id=client_id,
                 client_secret=client_secret,
                 authorization_url="https://github.com/login/oauth/authorize",
@@ -139,11 +125,8 @@ class OAuthService:
         return None
 
     def get_providers_config(self) -> list[dict]:
-        """The providers a person can SIGN IN with.
-
-        Link-only providers are configured through this same service but are
-        never offered here: the sign-in page renders every entry as a button.
-        """
+        """The providers a person can sign in with; the sign-in page renders
+        every entry as a button."""
         self._initialize()
         return [
             {
@@ -151,8 +134,7 @@ class OAuthService:
                 "name": p.config.name,
                 "scope": p.config.scope,
             }
-            for provider_id, p in self._providers.items()
-            if provider_id not in LINK_ONLY_PROVIDERS
+            for p in self._providers.values()
         ]
 
     def get_provider(self, provider_id: str) -> OAuthProvider:
@@ -258,22 +240,14 @@ class OAuthService:
 
 
 async def get_github_profile_for_handle(
-    session: Any,
-    handle: str,
-    *,
-    provider_ids: tuple[str, ...] = ("github_app", "github"),
+    session: Any, handle: str
 ) -> tuple[str, dict] | None:
-    """This handle's connected GitHub account as ``(provider_user_id, profile)``.
+    """This handle's GitHub account as ``(provider_user_id, profile)``: the one
+    it signed in with or 关联 to cheesex-app.
 
     The read behind commit/PR attribution (``repository/identity.py``), which
     needs the numeric GitHub id and the login and has no business reaching into
     this domain's repositories for them.
-
-    `github_app` is tried first because it is the account the person linked
-    for exactly this (「连接 GitHub 账号」, ``api/routes/github_account_link.py``);
-    PRs themselves are opened with the App's installation token, not with any
-    person's. `github` is the plain login connection, present for people who
-    signed in with GitHub but never linked an account.
     """
     # deferred-import: tests replace this name on app.domain.user.repositories
     from app.domain.user.repositories import UserRepository
@@ -281,12 +255,12 @@ async def get_github_profile_for_handle(
     user = await UserRepository(session).get_by_handle(handle)
     if user is None:
         return None
-    repo = OAuthConnectionRepository(session)
-    for provider_id in provider_ids:
-        conn = await repo.get_by_user_and_provider(user.id, provider_id)
-        if conn is not None and conn.provider_user_id:
-            return conn.provider_user_id, dict(conn.raw_profile or {})
-    return None
+    conn = await OAuthConnectionRepository(session).get_by_user_and_provider(
+        user.id, "github_app"
+    )
+    if conn is None or not conn.provider_user_id:
+        return None
+    return conn.provider_user_id, dict(conn.raw_profile or {})
 
 
 # 兼容门面：`app.domain.oauth.services` 仍是路由、`deps.py`、`identity.py` 和单测
@@ -294,7 +268,6 @@ async def get_github_profile_for_handle(
 # `GitHubProvider`、`seal_oauth_token` 这些取的仍是子模块里
 # 那一个，不是副本。
 __all__ = [
-    "LINK_ONLY_PROVIDERS",
     "PROVIDER_CLASSES",
     "GitHubProvider",
     "GoogleProvider",
@@ -308,3 +281,42 @@ __all__ = [
     "open_oauth_token",
     "seal_oauth_token",
 ]
+
+
+async def get_github_user_token_for_handle(session: Any, handle: str) -> str | None:
+    """A usable token of this handle's GitHub account, or None. The credential
+    a task owner's PR is opened with."""
+    # deferred-import: tests replace this name on app.domain.user.repositories
+    from app.domain.user.repositories import UserRepository
+
+    user = await UserRepository(session).get_by_handle(handle)
+    if user is None:
+        return None
+    return await OAuthService(OAuthConnectionRepository(session)).get_github_user_token(
+        user.id
+    )
+
+
+async def github_link_state(session: Any, handle: str) -> str:
+    """Whether this handle's GitHub account can open a PR in its name, read
+    from what is stored and never by asking GitHub: ``"none"`` (not linked),
+    ``"expired"`` (linked, but its token has run out and nothing renews it) or
+    ``"ok"``. Cheap enough for a page that polls."""
+    # deferred-import: tests replace this name on app.domain.user.repositories
+    from app.domain.user.repositories import UserRepository
+
+    user = await UserRepository(session).get_by_handle(handle)
+    if user is None:
+        return "none"
+    conn = await OAuthConnectionRepository(session).get_by_user_and_provider(
+        user.id, "github_app"
+    )
+    if conn is None or not conn.access_token:
+        return "none"
+    if (
+        conn.token_expires is not None
+        and conn.token_expires <= datetime.now(UTC)
+        and not conn.refresh_token
+    ):
+        return "expired"
+    return "ok"

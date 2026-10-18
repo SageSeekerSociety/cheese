@@ -63,7 +63,7 @@ async def _more_sessions(client, p, count: int) -> None:
 def _listing(client, p) -> tuple[int, dict]:
     statements: list[str] = []
 
-    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    def record(conn, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
     engine = client.test_app_engine.sync_engine  # type: ignore[attr-defined]

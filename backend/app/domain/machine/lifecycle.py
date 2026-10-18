@@ -10,7 +10,7 @@ tool call (``SandboxHome.active_at``) and the end of the last turn in the
 conversation its session works in. A command the executor is still running for
 the session — a Bash call sent to the background, a long build or test whose
 result the next turn reads (``running_commands``) — keeps an idle sandbox up
-too, but only until ``cloud_sandbox_background_cap_s`` after that activity. A
+too, but only until the spec's ``background_cap_s`` after that activity. A
 process the agent detached itself (``nohup … &``, a dev server) is not work in
 progress and keeps nothing up. A line that has handed its delivery over and is
 waiting on the checks the platform is watching for its card
@@ -133,6 +133,16 @@ def _idle_for(spec: str) -> timedelta:
     known = spec_of(spec) or spec_of(STANDARD)
     assert known is not None
     return timedelta(seconds=known.idle_s)
+
+
+def _background_cap(spec: str) -> timedelta:
+    """How long a command still running for the session keeps an idle sandbox
+    of ``spec`` up; a spec that no longer exists is held to the standard one's.
+    A whole VM's idle release outlasts a sandbox's, so its cap is longer —
+    a cap shorter than the idle time would hold nothing up."""
+    known = spec_of(spec) or spec_of(STANDARD)
+    assert known is not None
+    return timedelta(seconds=known.background_cap_s)
 
 
 def _pressed_idle() -> timedelta:
@@ -375,7 +385,7 @@ class SandboxLifecycle:
         since = max(home.active_at, turns[1] or home.active_at)
         if now - since < idle_for:
             return None
-        cap = timedelta(seconds=settings.cloud_sandbox_background_cap_s)
+        cap = _background_cap(home.spec)
         if now - since < cap and await self._waiting_on_checks(home):
             # The line has handed its delivery over and is waiting on the
             # checks the platform is watching for its card. The poller wakes

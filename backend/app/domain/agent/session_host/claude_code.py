@@ -164,7 +164,7 @@ class ClaudeCodeDriver:
                 )
             except DeviceOffline:
                 raise
-            except Exception as exc:  # noqa: BLE001 — a ping that does not come back
+            except Exception as exc:  # a ping that does not come back
                 # The hub the backend holds is usually a proxy whose failures
                 # arrive as HTTP errors; whatever shape it takes, a ping that
                 # does not come back means the session cannot be reached yet.
@@ -206,7 +206,7 @@ class ClaudeCodeDriver:
                 ],
                 timeout=15,
             )
-        except Exception:  # noqa: BLE001 — a failed read is not the runner's ending
+        except Exception:  # a failed read is not the runner's ending
             return ""
         said = result.get("stdout") or ""
         if not said.startswith(marker + "\n"):
@@ -223,7 +223,7 @@ class ClaudeCodeDriver:
                 ["sh", "-c", f'tail -c 1200 "{state}/runner.log" 2>/dev/null'],
                 timeout=15,
             )
-        except Exception:  # noqa: BLE001 — a failed read must not replace the failure
+        except Exception:  # a failed read must not replace the failure
             return str(failure)
         return (result.get("stdout") or "").strip() or str(failure)
 

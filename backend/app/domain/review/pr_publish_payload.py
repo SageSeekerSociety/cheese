@@ -25,7 +25,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.repository import identity
-from app.domain.review import notes, pr_text
+from app.domain.review import credit, notes, pr_text
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient
 from app.domain.review.repositories import AcceptCardRepository
@@ -105,30 +105,66 @@ async def sync_pr_text(
     pr.update(updated)
 
 
+async def owner_token(session: AsyncSession, topic, task_id) -> str | None:
+    """The credential the task's PR is opened with when the project credits the
+    task owner: the owner's linked GitHub account. None otherwise, and None
+    whenever anything goes wrong — then the App opens it."""
+    try:
+        # deferred-import: tests replace this name on app.domain.project.services
+        from app.domain.project.services import ProjectService
+
+        project = await ProjectService(session).get(topic.project_id)
+        settings = (project.settings or {}) if project else {}
+        if identity.credit_mode(settings) != identity.CREDIT_OWNER:
+            return None
+        handle = await identity.owner_handle(session, task_id)
+        if not handle:
+            return None
+        # deferred-import: tests replace this name on app.domain.oauth.services
+        from app.domain.oauth.services import get_github_user_token_for_handle
+
+        return await get_github_user_token_for_handle(session, handle)
+    except Exception:  # an attribution nicety, never why a PR fails to open
+        logger.info("no owner token for task %s", task_id, exc_info=True)
+        return None
+
+
+async def pr_body_for(
+    session: AsyncSession,
+    topic,
+    *,
+    card=None,
+    task_id=None,
+    opened_by: str | None,
+) -> str:
+    """The PR body credited for a PR opened by `opened_by`. No approver yet:
+    `Reviewed-by` is written onto the squash commit at merge time, by whoever
+    actually clicks."""
+    who = await credit.attribution(
+        session, topic, card=card, task_id=task_id, opened_by=opened_by
+    )
+    return pr_text.pr_body(topic, "", card, who)
+
+
 async def _pr_text(
     session: AsyncSession,
     *,
     card_id: uuid.UUID,
     topic_id: uuid.UUID,
     branch: str,
-) -> tuple[str, str]:
-    """PR title/body from the card's change summary (`cheese_accept_request
-    --subject/--body`), falling back to the topic title when the card was filed
-    without one.
+) -> tuple[str, str | None, str]:
+    """The card's PR title, the owner's token to open it with, and a first
+    body. The PR's own words come from the card's change summary
+    (`cheese_accept_request --subject/--body`).
 
     Same builders the merge path uses (`review/pr_text.py`), on purpose: the
     PR a reviewer reads and the squash commit that lands on main must not be
-    able to say two different things about the same change.
-
-    The routing bookkeeping the old body carried — 验收人, 路由理由, "采纳这张
-    验收卡即合并本 PR" — is gone. It described the platform's workflow to people
-    who were already inside it, while the reviewer opening the PR on GitHub
-    wanted to know what changed and why."""
+    able to say two different things about the same change."""
 
     place = await PlaceResolver(session).resolve(topic_id)
     card = await AcceptCardRepository(session).get(card_id)
     if place is None:
-        return branch, f"Cheese-Topic: {topic_id}"
+        return branch, None, ""
     topic = place.room
     who = await identity.attribution(session, topic, card=card)
     # deferred-import: tests replace this name on app.domain.project.forge
@@ -136,10 +172,11 @@ async def _pr_text(
 
     if who.author:
         await ensure_author_email(topic.project_id, session, who.author.email)
-    # No approver yet — the PR opens when the card is FILED, and 采纳 is what
-    # merges it. `Reviewed-by` is written onto the squash commit at merge time,
-    # by whoever actually clicks.
-    return pr_text.change_subject(card, topic), pr_text.pr_body(topic, "", card, who)
+    token = await owner_token(session, topic, getattr(card, "task_id", None))
+    # Only for a PR this call creates; the caller rewrites it once GitHub has
+    # said who the PR ended up opened by.
+    body = pr_text.pr_body(topic, "", card, who)
+    return pr_text.change_subject(card, topic), token, body
 
 
 async def record_pr(
@@ -202,5 +239,5 @@ async def _record_failure(
                 return
             notes.record(card, notes.NoteCode.pr_open_failed, note)
             await session.commit()
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("PR publish failure not recorded on card %s", card_id)

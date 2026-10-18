@@ -250,9 +250,11 @@ async def outside(
     return [h for h in dict.fromkeys(handles) if h in people and h not in seated]
 
 
-async def owner_of(svc: pkg.TopicMemberService, topic_id: uuid.UUID) -> str | None:
-    """The human this room belongs to — its ``owner`` member, or None. 综合
-    seats nobody by name, so it has none.
+async def owners_of(
+    svc: pkg.TopicMemberService, topic_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str | None]:
+    """The human each of these rooms belongs to — its ``owner`` member, or
+    None. 综合 seats nobody by name, so it has none.
 
     The roster is checked first so a channel handed over to another manager
     reports that manager. When no ``owner`` row is present (for instance after
@@ -260,30 +262,54 @@ async def owner_of(svc: pkg.TopicMemberService, topic_id: uuid.UUID) -> str | No
     back to ``Topic.created_by`` unless it is a private channel they are no
     longer in.
 
+    One read of the roster and, only for the channels that fell back, one read
+    of their topics: 「全部频道」 asks this of every channel in a project at
+    once, and asking per channel copied the same three columns N times.
+    :func:`owner_of` is this batch's single-topic call.
+
     Cheap and unauthorized on purpose: attribution paths (who a PR and its
     commits belong to) call it on every merge, and they are read-only.
     """
-    members = await svc._repo.list_for_topic(topic_id)
-    member = next(
-        (m for m in members if m.role == TopicRole.owner),
-        None,
-    )
-    if member is not None:
-        return member.member_handle
-    topic = await svc._topics.get(topic_id)
-    if (
-        topic is not None
-        and _public(topic)
-        and topic.kind != TopicKind.root
-        and topic.created_by
-        and not svc._is_agent_handle(topic.created_by)
-        and (
-            not topic.members_only
-            or any(m.member_handle == topic.created_by for m in members)
-        )
-    ):
-        return topic.created_by
-    return None
+    if not topic_ids:
+        return {}
+    owners: dict[uuid.UUID, str] = {}
+    seated: dict[uuid.UUID, set[str]] = {}
+    for member in await svc._repo.list_for_topics(topic_ids):
+        seated.setdefault(member.topic_id, set()).add(member.member_handle)
+        if member.role == TopicRole.owner:
+            owners.setdefault(member.topic_id, member.member_handle)
+    fallback = {
+        topic.id: topic
+        for topic in await svc._topics.get_many(set(topic_ids) - set(owners))
+    }
+    answered: dict[uuid.UUID, str | None] = {}
+    for topic_id in topic_ids:
+        if topic_id in owners:
+            answered[topic_id] = owners[topic_id]
+            continue
+        topic = fallback.get(topic_id)
+        if (
+            topic is not None
+            and _public(topic)
+            and topic.kind != TopicKind.root
+            and topic.created_by
+            and not svc._is_agent_handle(topic.created_by)
+            and (
+                not topic.members_only
+                or topic.created_by in seated.get(topic_id, set())
+            )
+        ):
+            answered[topic_id] = topic.created_by
+        else:
+            answered[topic_id] = None
+    return answered
+
+
+async def owner_of(svc: pkg.TopicMemberService, topic_id: uuid.UUID) -> str | None:
+    """One room's answer from :meth:`TopicMemberService.owners_of`, which
+    states the rule. 走门面而不是模块函数，跨块调用一条路（`patch.object`
+    打在门面上的补丁仍拦得住这一次）。"""
+    return (await svc.owners_of([topic_id])).get(topic_id)
 
 
 async def people_handles(svc: pkg.TopicMemberService, topic_id: uuid.UUID) -> list[str]:

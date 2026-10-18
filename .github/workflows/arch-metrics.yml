@@ -5,7 +5,7 @@ name: Architecture metrics
 # entries behind the nine backend contracts, files over their size cap, and the
 # hotspots of the last 30 and 90 days — and how each number moved against the
 # revision 30 days back. Never in a pull request: the boundary checks
-# (`backend/.importlinter`, `frontend/import-boundary-baseline.json`) are what
+# (`backend/.importlinter`, `frontend/eslint.boundary.config.mjs`) are what
 # block a change, and this exists so that "did the last month help" has an
 # answer that is not an argument.
 #

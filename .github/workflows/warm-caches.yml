@@ -1,9 +1,10 @@
 name: Warm dependency caches
 
-# Required CI runs in pull requests and the merge queue, never on main. A cache
-# saved from a pull-request or merge-queue ref is visible to that ref alone,
-# while one saved on main is visible to every ref, so the suites only restore
-# and this workflow is the one place their dependency caches are saved. Each
+# Required CI's suites run on pull requests, merge-queue entries and main
+# pushes, and in all three they only restore caches. A cache saved from a
+# pull-request or merge-queue ref is visible to that ref alone, while one saved
+# on main is visible to every ref, so this workflow is the one place their
+# dependency caches are saved. Each
 # job installs dependencies the way its suite does, under the suite's exact
 # key, and runs no tests. A key that already exists is left as it is.
 #

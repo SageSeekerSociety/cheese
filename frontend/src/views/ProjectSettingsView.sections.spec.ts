@@ -10,9 +10,9 @@
  *      提示里而不是把整页顶掉；
  *   2. 分支保护：加一条检查（路径按中英文逗号切分去重）、删一条、批准人数的非法
  *      输入一个请求都不发，和两个开关各自 PUT 自己那一项；
- *   3. 两条回跳：`?github_install=` / `?github_account=` 各落在**自己那一块**的
- *      提示里（不是共用一个 ref），且查询串读过就被摘掉；
- *   4. 两个「连接」入口把授权地址交给 `goAuthorize`。
+ *   3. 连接仓库的回跳（`?github_install=`）落在仓库那一块的提示里，且查询串读过就
+ *      被摘掉；
+ *   4. 连接仓库和关联 GitHub 两个入口把授权地址交给 `goAuthorize`。
  *
  * 链子和 `ProjectSettingsView.test.ts` 同一条：mock 掉 `../api`，不 mock store。
  * 绿在拆之前的旧文件上；拆完必须原样绿。
@@ -40,17 +40,13 @@ const router = vi.hoisted(() => ({
   replace: vi.fn(),
   currentRoute: {
     get value() {
-      return { fullPath: '/projects/project/settings', query: route.query }
+      return { fullPath: '/projects/project/settings', path: '/projects/project/settings', query: route.query }
     },
   },
 }))
 const goAuthorize = vi.hoisted(() => vi.fn(() => true))
 
 vi.mock('../api')
-vi.mock('../utils/sudo', () => ({
-  SudoCancelledError: class SudoCancelledError extends Error {},
-  withSudo: vi.fn(),
-}))
 vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
   default: { template: '<section>运行环境</section>' },
 }))
@@ -96,11 +92,7 @@ beforeEach(() => {
     repo: null,
     url: null,
   })
-  vi.mocked(api.getForgeAttribution).mockResolvedValue({
-    requester_coauthor: null,
-    effective: true,
-    deployment_default: true,
-  })
+  vi.mocked(api.getCommitCredit).mockResolvedValue({ mode: 'owner' })
   vi.mocked(api.getBranchProtection).mockResolvedValue(rules())
   vi.mocked(api.listProjectMembers).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listOAuthConnections).mockResolvedValue({ connections: [] })
@@ -284,24 +276,14 @@ describe('分支保护', () => {
   })
 })
 
-describe('两条回跳各自落在自己那一块', () => {
-  it('仓库回跳的结果画在「连接 GitHub 仓库」那一块', async () => {
+describe('连接仓库的回跳', () => {
+  it('结果画在「连接 GitHub 仓库」那一块，读过就摘掉', async () => {
     route.query = { github_install: 'success', repo: 'acme/code' }
     const { container } = await openSettings()
 
     await waitFor(() => expect(section(container, '连接 GitHub 仓库').textContent).toContain('已连接仓库 acme/code'))
-    // 账号那一块不许出现仓库那句话：一次动作的结果不能报在另一件事的标题下面。
-    expect(section(container, '连接 GitHub 账号').textContent).not.toContain('已连接仓库')
     // 读过就把查询串摘掉，刷新不会重播。
     expect(router.replace).toHaveBeenCalledWith({ query: {} })
-  })
-
-  it('账号回跳的结果画在「连接 GitHub 账号」那一块', async () => {
-    route.query = { github_account: 'success' }
-    const { container } = await openSettings()
-
-    await waitFor(() => expect(section(container, '连接 GitHub 账号').textContent).toContain('已连接 GitHub 账号'))
-    expect(section(container, '连接 GitHub 仓库').textContent).not.toContain('已连接 GitHub 账号')
   })
 })
 
@@ -321,17 +303,26 @@ describe('两个「连接」入口', () => {
     expect(section(container, '连接 GitHub 仓库').textContent).toContain('acme/code')
   })
 
-  it('连接账号：把授权地址交给 goAuthorize', async () => {
+  it('关联 GitHub：授权完回到这一页', async () => {
     vi.mocked(api.getGithubAccountAuthorizeUrl).mockResolvedValue({
       url: 'https://github.com/login/oauth/authorize?client_id=x',
     })
     const { container } = await openSettings('repository')
-    await waitFor(() => expect(button(container, '连接 GitHub 账号')).toBeTruthy())
+    await waitFor(() => expect(button(container, '关联 GitHub 账号')).toBeTruthy())
 
-    await fireEvent.click(button(container, '连接 GitHub 账号'))
+    await fireEvent.click(button(container, '关联 GitHub 账号'))
 
     await waitFor(() =>
       expect(goAuthorize).toHaveBeenCalledWith('https://github.com/login/oauth/authorize?client_id=x')
     )
+    expect(api.getGithubAccountAuthorizeUrl).toHaveBeenCalledWith('/projects/project/settings')
+  })
+
+  it('署名给 AI 队友时，用不到看的人自己的 GitHub 账号', async () => {
+    vi.mocked(api.getCommitCredit).mockResolvedValue({ mode: 'agent' })
+    const { container } = await openSettings('repository')
+    await waitFor(() => expect(section(container, '提交署名')).toBeTruthy())
+
+    expect(container.querySelector('[data-testid="own-github"]')).toBeNull()
   })
 })

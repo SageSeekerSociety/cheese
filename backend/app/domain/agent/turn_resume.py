@@ -55,7 +55,7 @@ from app.domain.agent.resumable_failures import (
 from app.domain.agent.service import AgentResult
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind
-from app.domain.conversation.services import room_of
+from app.domain.conversation.services import room_of, rooms_of
 from app.domain.delivery.agent import instance_for_seat, record_agent
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.event_author import AuthorType
@@ -308,8 +308,10 @@ async def hand_due(
                 .with_for_update(skip_locked=True)
             )
         )
+        rooms = await rooms_of(session, [row.conversation_id for row in rows])
         for row in rows:
-            dropped = await _no_longer_applies(session, row)
+            room = rooms[row.conversation_id]
+            dropped = await _no_longer_applies(session, row, room)
             if dropped is not None:
                 row.dropped_at = now
                 row.dropped_reason = dropped
@@ -329,7 +331,7 @@ async def hand_due(
                     type=NotificationType.ROOM_NOTICE,
                     payload={
                         "projectId": str(row.project_id),
-                        "topicId": str(await room_of(session, row.conversation_id)),
+                        "topicId": str(room),
                         "eventType": EVENT_TURN_FAILED,
                         "severity": SEVERITY_WARN,
                     },
@@ -352,8 +354,10 @@ async def hand_due(
     return handed
 
 
-async def _no_longer_applies(session: AsyncSession, row: TurnResume) -> str | None:
-    if not await _open(session, row.conversation_id):
+async def _no_longer_applies(
+    session: AsyncSession, row: TurnResume, room: uuid.UUID
+) -> str | None:
+    if not await _open(session, row.conversation_id, room):
         return CLOSED
     instance = await session.get(AgentInstance, row.agent_instance_id)
     if instance is None or not instance.is_active:
@@ -394,14 +398,21 @@ async def _person_spoke(
     return said is not None
 
 
-async def _open(session: AsyncSession, conversation_id: uuid.UUID) -> bool:
+async def _open(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    room_id: uuid.UUID | None = None,
+) -> bool:
     """Whether work can still happen here: an open task in a live room, or a
-    room that is not archived."""
+    room that is not archived. ``room_id`` is the conversation's room when the
+    caller has read it already (`hand_due` reads a whole batch's at once)."""
     task = await session.get(Task, conversation_id)
     if task is not None:
         if task.status != TaskStatus.open:
             return False
         room = await session.get(Topic, task.room_id)
     else:
-        room = await session.get(Topic, await room_of(session, conversation_id))
+        room = await session.get(
+            Topic, room_id or await room_of(session, conversation_id)
+        )
     return room is not None and room.status != TopicStatus.archived

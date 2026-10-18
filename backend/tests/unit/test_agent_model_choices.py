@@ -18,7 +18,8 @@ from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway_usage import launch_env
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESS_SETTING, PI
 from app.domain.agent.market import subscription_model_alias
-from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
+from app.domain.agent.model_catalog import model_choices
+from app.domain.agent_instance.configuration import AgentConfiguration
 from tests.support.stand_in_harness import registered
 
 

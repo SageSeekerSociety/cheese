@@ -1,7 +1,7 @@
 """Resolve a work binding, teammate override, or project default against one catalog.
 
 目录（`choices`）是调用方递进来的，本模块不自己去够它：认「这个项目能用哪些模型」
-的是 `agent_instance.configuration`（第 5 层），本包在第 4 层，够不着 —— 那份目录
+的是 `agent.model_catalog`（第 5 层），本包在第 4 层，够不着 —— 那份目录
 按 id 从 `catalog` 拿，本模块只在它上面挑一个。别名表（目录 id 和上游名互为表里的
 地方）在 `agent.market`，也是第 5 层，所以那一行 `wire` 也跟着目录一起递下来。
 """
@@ -19,7 +19,7 @@ class WorkBinding:
 
     ``supply`` 跟着一起出，因为它不是从 id 上猜出来的 —— 订阅模型的 id 是
     ``sonnet`` 这样的短名，前缀里看不出它走订阅；目录
-    （``agent_instance.configuration.catalog``）是唯一知道这件事的地方，而调用方
+    （``agent.model_catalog.catalog``）是唯一知道这件事的地方，而调用方
     都要它：轮次组装拿它决定要不要换成 Claude 的全名，准入拿它决定送哪个池。
 
     ``wire_model`` 真发到上游、也真记进 `usage`，同样从目录上取下来（那一行的
@@ -75,7 +75,7 @@ def catalog_id(spent: str, choices: dict[str, dict]) -> str | None:
     就是同一张卡、同一个模型，在第一次请求之后换了个名字 —— 用户读到的是「模型
     被换了」。
 
-    这一反查对的是目录每一行上的 `wire`（`agent_instance.configuration.catalog`
+    这一反查对的是目录每一行上的 `wire`（`agent.model_catalog.catalog`
     算好的那一个名字，网关模型就是它自己的 id），所以本包不用再问一次别名表。
 
     认不出来就 `None`，由调用方照原样显示：上游给回一个目录里没有的名字（换了

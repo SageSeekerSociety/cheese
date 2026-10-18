@@ -549,7 +549,7 @@ async def test_events_arriving_during_a_refresh_cost_one_more_refresh(monkeypatc
     release = asyncio.Event()
     refreshes: list[str] = []
 
-    async def refresh(  # noqa: ARG001
+    async def refresh(
         chat,
         kind,
         repo,

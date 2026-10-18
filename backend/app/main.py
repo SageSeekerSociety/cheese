@@ -48,6 +48,7 @@ from app.core.obs import (
     get_logger,
 )
 from app.core.ownership import keep_holding
+from app.core.query_watch import install as install_query_watch
 from app.core.request_limits import RequestLimits
 from app.core.route_mounting import FAILED_ROUTE_MODULES
 from app.core.storage import reuse_s3_connections
@@ -119,7 +120,7 @@ async def lifespan(application: FastAPI):
         async with async_session_factory() as session:
             await IdentityService(session).ensure_agent_user()
             await session.commit()
-    except Exception as exc:  # noqa: BLE001 — a missing table (pre-migration) must not crash boot
+    except Exception as exc:  # a missing table (pre-migration) must not crash boot
         get_logger("cheesex.runtime").warning(
             "agent-user seed skipped", reason=str(exc)[:120]
         )
@@ -136,7 +137,7 @@ async def lifespan(application: FastAPI):
             for instance in await AgentInstanceRepository(session).list_all():
                 await service.ensure_identity(instance)
             await session.commit()
-    except Exception as exc:  # noqa: BLE001 — same rule as the seed above
+    except Exception as exc:  # same rule as the seed above
         get_logger("cheesex.runtime").warning(
             "agent identity backfill skipped", reason=str(exc)[:120]
         )
@@ -210,7 +211,7 @@ async def lifespan(application: FastAPI):
                 [job.name for job in mine if job.interval_seconds > 0],
                 datetime.now(UTC),
             )
-        except Exception:  # noqa: BLE001 — never block startup; jobs wait one interval
+        except Exception:  # never block startup; jobs wait one interval
             get_logger("cheesex.runtime").exception("periodic job runs unreadable")
             last_runs = {}
         for job in mine:
@@ -229,7 +230,7 @@ async def lifespan(application: FastAPI):
         """
         try:
             await backend_log.flush_all()
-        except Exception:  # noqa: BLE001 — never block handing over
+        except Exception:  # never block handing over
             get_logger("cheesex.runtime").exception("backend error flush failed")
 
     async def take_over() -> None:
@@ -260,7 +261,7 @@ async def lifespan(application: FastAPI):
             get_logger("cheesex.runtime").warning(
                 "hook subscriptions not recovered: device offline", device=exc.device_id
             )
-        except Exception:  # noqa: BLE001 — never block startup
+        except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("hook subscription recovery failed")
 
         # A turn asked for while this process was waiting starts now, against
@@ -276,7 +277,7 @@ async def lifespan(application: FastAPI):
             n = await get_work_runner().resume_orphans(get_chat_service())
             if n:
                 get_logger("cheesex.runtime").info("orphan_sweep", resumed=n)
-        except Exception:  # noqa: BLE001 — never block startup
+        except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("orphan sweep failed")
 
         try:
@@ -285,7 +286,7 @@ async def lifespan(application: FastAPI):
             )
             if n:
                 get_logger("cheesex.runtime").info("lost_messages_resumed", turns=n)
-        except Exception:  # noqa: BLE001 — never block startup
+        except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("lost message sweep failed")
 
         # 闸门孤儿卡扫底 (2026-08-11): the gate runner is an in-memory asyncio task,
@@ -311,7 +312,7 @@ async def lifespan(application: FastAPI):
                     condemned=len(swept["condemned"]),
                     errors=swept["errors"],
                 )
-        except Exception:  # noqa: BLE001 — never block startup
+        except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("startup gate sweep failed")
 
         # The jobs the lock still guards start here, now that this process holds
@@ -611,6 +612,10 @@ app = FastAPI(
 
 app.add_middleware(LogRefusedWebSockets)
 app.add_middleware(EndBusinessSocketsAtHandover)
+
+# One N+1 watch per request, across every session that request opens; logs only,
+# never raises (app/core/query_watch.py).
+install_query_watch(app)
 
 # Inside CORS, so a refusal still carries the headers a cross-origin page needs
 # to read it; inside `request_context`, so a 429 is in the access log like any

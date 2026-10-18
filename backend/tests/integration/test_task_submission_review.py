@@ -89,7 +89,7 @@ class TestTaskSubmissionReviewIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         assert approve_member_resp.status_code == 200, (
-            f"Member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"  # noqa: E501
+            f"Member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"
         )
 
         submit_resp = api_client.post(

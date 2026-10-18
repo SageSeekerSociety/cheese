@@ -16,7 +16,7 @@ const toRelativePath = (source) => source.replace(`${ROOT}/`, '')
 
 /**
  * A stylelint --formatter json report. Mixes design rules with the ungated
- * noise (property order, class naming) that dominates this tree, because
+ * noise (property order, radius, class naming) that dominates this tree, because
  * separating the two is the whole job of parseStylelintReport.
  */
 const SAMPLE = [
@@ -25,7 +25,13 @@ const SAMPLE = [
     warnings: [
       { line: 12, column: 3, rule: 'color-no-hex', text: 'Unexpected hex color "#757575"' },
       { line: 40, column: 5, rule: 'order/properties-order', text: 'Expected "color" to come before "background"' },
-      { line: 58, column: 3, rule: 'declaration-property-value-allowed-list', text: 'Unexpected value "10px"' },
+      {
+        line: 58,
+        column: 3,
+        rule: 'declaration-property-value-disallowed-list',
+        text: 'Unexpected value "rgb(0 0 0)"',
+      },
+      { line: 61, column: 3, rule: 'declaration-property-value-allowed-list', text: 'Unexpected value "10px"' },
     ],
   },
   {
@@ -62,13 +68,12 @@ test('entries without a source are skipped rather than crashing', () => {
   })
 })
 
-test('the gated rule set is the four design rules', () => {
+test('the gated rule set is the three colour rules', () => {
   // Guards against widening the gate by accident: adding a rule here silently
   // turns 2842 pre-existing violations into blocking ones.
   assert.deepEqual([...DESIGN_RULES].sort(), [
     'color-named',
     'color-no-hex',
-    'declaration-property-value-allowed-list',
     'declaration-property-value-disallowed-list',
   ])
 })
@@ -105,7 +110,7 @@ test('violationDetails lists the offending lines for regressed files only', () =
   const details = violationDetails(SAMPLE, toRelativePath, new Set(['src/components/ChatPanel.vue']))
   assert.deepEqual(details, [
     '  src/components/ChatPanel.vue:12:3  Unexpected hex color "#757575"',
-    '  src/components/ChatPanel.vue:58:3  Unexpected value "10px"',
+    '  src/components/ChatPanel.vue:58:3  Unexpected value "rgb(0 0 0)"',
   ])
 })
 

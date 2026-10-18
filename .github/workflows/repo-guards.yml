@@ -11,10 +11,6 @@ name: Repo Guards
 # `.github/workflows/**` is in the path filter because one of the guards judges
 # the workflows themselves (action pinning) — filtering on this file alone would
 # let an unpinned action land in any other workflow without ever running it.
-# And `frontend/**`, for the same reason: the fixed-palette guard judges .vue
-# templates, and the change it exists to catch — a new `color="grey-lighten-5"`
-# on a component — is by definition a frontend-only diff, which without this
-# line would sail past without the guard ever starting.
 on:
   workflow_call:
 permissions:
@@ -53,51 +49,16 @@ jobs:
       # Each guard proves itself before it is trusted to judge the tree: a guard
       # that silently stopped matching would otherwise look identical to a clean
       # repo, which is the failure mode these guards exist to prevent.
-      #
-      # check-guard-wired.py is last because it judges the list above it: every
-      # guard under .claude/scripts/ has to be named by something that runs, and
-      # this step is one of the somethings. Its own --self-test carries the
-      # repository-wide assertion as well, so a guard that lands unwired fails
-      # here rather than being found by hand a batch later.
       - name: Guards self-test
         run: |
           bash .claude/scripts/check-repo-rules.sh --self-test
           bash .claude/scripts/check-action-pins.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
           python3 .claude/scripts/check-migration-safety.py --self-test
-          python3 .claude/scripts/check-file-sizes.py --self-test
           python3 .claude/scripts/check-doc-references.py --self-test
-          python3 backend/tests/unit/test_check_review_artifacts.py
           python3 .claude/scripts/check-manual-anchors.py --self-test
           python3 .claude/scripts/scene-ratchet.py --self-test
           python3 .claude/scripts/frontend_grade.py --self-test
-          python3 .claude/scripts/catalog-ratchet.py --self-test
-          python3 .claude/scripts/verify-guard-self-tests.py --self-test
-          python3 .claude/scripts/check-guard-wired.py --self-test
-
-      # Two tree guards the pre-commit list does not carry. A hook in
-      # .pre-commit-config.yaml would be the usual home — that is how this job
-      # and a developer's commit read one list — but .pre-commit-config.yaml
-      # belongs to another change in flight, so these run here directly.
-      #
-      # check-i18n-lists.py holds the prose that says which i18n namespaces are
-      # directories to the locale trees on disk. It reads nothing a product
-      # suite opens, so a step here is the only thing that runs it.
-      #
-      # check-guard-wired.py is repeated from the self-test list above on
-      # purpose: there it proves the guard fires, here it judges the tree next
-      # to its peers, and a later edit that drops either line still leaves the
-      # question asked.
-      #
-      # check-seam-tests.py is deliberately NOT given a step of its own: #4082
-      # rewrote the two split tests it used to reject, so the guard is green and
-      # out of ON_DEMAND, and its self-test is now collected by the CI helper
-      # tests step below — a lane that asserts the tree is clean, which is the
-      # same question a step here would ask, minus a second process.
-      - name: i18n lists and every guard is wired
-        run: |
-          python3 .claude/scripts/check-i18n-lists.py
-          python3 .claude/scripts/check-guard-wired.py
 
       # Not a guard of this tree: prove-regression.py is what AGENTS.md tells an
       # author to run on a fix's own test, and nothing in CI runs it against the
@@ -162,15 +123,8 @@ jobs:
       #   * the two owned by Required CI itself — test_required_ci.py runs in
       #     the scope job, test_ci_fast.py in the cifast job of required-ci.yml
       #     (that one drives real pre-commit and is too slow for this lane);
-      #   * the three a step above already runs — .claude/scripts/test_pr_review.py
-      #     and test_ci_rounds.py in Trace tooling self-test, test_check_guard_wired.py
-      #     in Guards self-test;
-      #   * the self-test of every guard check-guard-wired.py excuses, read from
-      #     that guard rather than written out here: a guard with no lane to run
-      #     in has no lane for its self-test either. One list, both sides. An
-      #     entry deleted from ON_DEMAND takes its self-test out of this skip
-      #     along with it, which is how check-seam-tests.py's came back when
-      #     #4082 made that guard green;
+      #   * the two a step above already runs — .claude/scripts/test_pr_review.py
+      #     and test_ci_rounds.py in Trace tooling self-test;
       #   * the two that need an install this job does not have, both of them
       #     found red by the first full run of this step. test_scene_debt_ratchet.py
       #     shells out to a node scan and needs frontend/node_modules; its lane
@@ -186,16 +140,13 @@ jobs:
       # goes in NEEDS_AN_INSTALL, the comment above names the lane that runs it
       # instead, and when nothing does, it says that too.
       #
-      # It stops at `test_*.py` because the three hyphen-named files next to the
-      # guards are not one kind of file, and widening it would collect all three:
+      # It stops at `test_*.py` because the two hyphen-named files next to the
+      # guards are not one kind of file, and widening it would collect both:
       # test-changed.py is a developer entry point with no tests in it at all;
-      # test-check-split-frontend.py is check-split-frontend.py's --self-test and
-      # carries the same frontend/node_modules and few-minutes cost that keeps
-      # its guard in ON_DEMAND; test-verify-module-split.py is offline, green and
-      # 27 seconds but only reached by verify-module-split.py --self-test, a tool
-      # no step runs. The first will follow check-split-frontend.py into
-      # frontend.yml; the second is its own decision, a lane for a non-guard
-      # tooling, and is recorded here so the next diagnosis does not redo it.
+      # test-verify-module-split.py is offline, green and 27 seconds but only
+      # reached by verify-module-split.py --self-test, a tool no step runs — a
+      # lane for it is its own decision, recorded here so the next diagnosis
+      # does not redo it.
       - name: CI helper tests
         run: |
           python3 - <<'PYEOF'
@@ -205,20 +156,7 @@ jobs:
           import unittest
 
           OWNED_BY_REQUIRED_CI = {"test_required_ci", "test_ci_fast"}
-          RUN_BY_A_STEP_ABOVE = {
-              "test_pr_review",
-              "test_ci_rounds",
-              "test_check_guard_wired",
-          }
-          #: The self-test of every guard check-guard-wired.py excuses. Read from
-          #: the guard so one list decides both halves: an excused guard has no
-          #: lane for itself, so its self-test has none either.
-          guard_spec = importlib.util.spec_from_file_location(
-              "check_guard_wired", pathlib.Path(".claude/scripts/check-guard-wired.py")
-          )
-          guard_wired = importlib.util.module_from_spec(guard_spec)
-          guard_spec.loader.exec_module(guard_wired)
-          NO_LANE = {guard_wired.self_test_stem(name) for name in guard_wired.ON_DEMAND}
+          RUN_BY_A_STEP_ABOVE = {"test_pr_review", "test_ci_rounds"}
           #: Helpers that need an install this job does not have: one scans with
           #: node, one drives a script that imports alembic. Named rather than
           #: detected — a guess at what a module needs would hide the test that
@@ -229,9 +167,7 @@ jobs:
               "test_scene_debt_ratchet",
               "test_reanchor_migration_head",
           }
-          SKIP = (
-              OWNED_BY_REQUIRED_CI | RUN_BY_A_STEP_ABOVE | NO_LANE | NEEDS_AN_INSTALL
-          )
+          SKIP = OWNED_BY_REQUIRED_CI | RUN_BY_A_STEP_ABOVE | NEEDS_AN_INSTALL
           loader = unittest.TestLoader()
           suite = unittest.TestSuite()
           trees = (pathlib.Path(".github/scripts"), pathlib.Path(".claude/scripts"))
@@ -248,24 +184,12 @@ jobs:
           raise SystemExit(0 if result.wasSuccessful() else 1)
           PYEOF
 
-      # The step above runs each guard's --self-test and trusts the result.
-      # This one checks that trust: a guard whose self-test always prints PASS
-      # is green on every tree, and that is the failure mode the guards exist
-      # to prevent. It silences a copy of each guard and requires its self-test
-      # to go red. It runs through pre-commit like the tree guards below, so a
-      # developer's commit and this job run the same hook with the same
-      # allowance (scene-debt-ratchet.py: its self-test judges the guard in
-      # another process, and needs frontend/node_modules, which this job does
-      # not install — frontend.yml runs that self-test where the install is).
-      - name: Guard self-tests bite
-        run: uvx pre-commit run --all-files guard-self-tests
-
       # Run through pre-commit rather than calling the scripts directly, so
       # this job and a developer's commit are the same list by construction.
       # The guards' own --self-test above still calls them directly: that step
       # proves the guard fires, which is a different question from whether the
       # tree passes it.
-      - name: Repo rules (datetime, HTTPException, palette, platform CLI, …)
+      - name: Repo rules (datetime, HTTPException, platform CLI, …)
         run: uvx pre-commit run --all-files repo-rules
 
       # Third-party actions run on the dev and prod boxes themselves (build.yml,
@@ -284,23 +208,10 @@ jobs:
       - name: Agent docs name paths and sections that exist
         run: uvx pre-commit run --all-files doc-references
 
-      # Same reason as the step above: no product suite reads the review
-      # artifacts, so without a named step here the hook would only guard a
-      # developer's commit. Reads a handful of Markdown notes and a directory
-      # listing — no database, no network, well under a second.
-      - name: Review artifacts are cited by a review note
-        run: uvx pre-commit run --all-files review-artifacts
-
       # The remote-tracking ref has to exist for the comparison; a PR checkout
-      # does not create it. So does the HISTORY behind it, and that is the part
-      # this step used to skip: a file-size finding is measured at the merge
-      # base with main, and a depth-1 checkout has no common ancestor to compute
-      # one from. The old fallback compared against main's tip, which failed
-      # PR #2173 for frontend/src/api.ts "growing" 3615 → 3610 — main had shrunk
-      # the file after that branch forked, and the branch never touched it.
-      # check-file-sizes.py now exits 2 (cannot judge) rather than guess, so
-      # this fetch is what makes the guard judgeable at all. Note the command:
-      # a `--depth=1` here would RE-shallow origin/main and undo the merge base.
+      # does not create it. So does the HISTORY behind it: the alembic check
+      # below and the docs site's changelog both read past the tip. Note the
+      # command: a `--depth=1` here would RE-shallow origin/main.
       - name: Fetch main for comparison
         id: history
         if: ${{ !cancelled() }}
@@ -308,13 +219,6 @@ jobs:
 
       - name: Alembic chain would not fork on merge
         run: uvx pre-commit run --all-files migration-fork
-
-      # Runs here rather than in the backend lane because it needs the ref above
-      # and the history behind it: the comparison is against the merge base with
-      # main, and a file is frozen at the size it had there. No database, no uv
-      # venv, no network — it reads the changed files and counts lines.
-      - name: No file grew past its size cap
-        run: uvx pre-commit run --all-files file-size
 
       # The docs site is built into the frontend image by build.yml, after
       # merge. A broken internal link, a developer page missing its

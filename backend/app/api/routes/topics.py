@@ -379,6 +379,11 @@ async def list_topics(
         order=order,
         active_since=active_since,
     )
+    # 这一页的房间支线，下面四处都要（见 `get_topic` 同一行），问一次。
+    room_threads = await threads_of_rooms(db, [t.id for t in topics])
+    # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
+    asked = await _awaiting_an_answer(db, [t.id for t in topics], threads=room_threads)
+    asks_me = _asks_me(asked, _viewer(actor))
     # 这一页里哪几个话题**自己那条线**上有一轮在跑 —— `presentation` 那一格读的
     # 是它：看板一格是房间自己的格子，它名下的活有它们自己的格子
     # （`test_a_rooms_board_cell_does_not_follow_a_task_running_under_it`）。
@@ -402,11 +407,6 @@ async def list_topics(
         if actor.authenticated
         else set()
     )
-    # 这一页的房间支线，下面三处都要（见 `get_topic` 同一行），问一次。
-    room_threads = await threads_of_rooms(db, [t.id for t in topics])
-    # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
-    asked = await _awaiting_an_answer(db, [t.id for t in topics], threads=room_threads)
-    asks_me = _asks_me(asked, _viewer(actor))
     # 一次，给整页用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
     # 每个房间在等哪几位成员，一次查完。
@@ -564,9 +564,9 @@ async def get_topic(
         raise NotFoundError(say("topicNotFound"))
     topic = place.room
     actor = await _actor_in_place(resolver, place)
-    # 这三处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
+    # 这几处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
     # 遍（`_awaiting_an_answer`、`MemberWaits.for_rooms`、
-    # `topics_signals.working_in_threads`）。
+    # `topics_signals.working_in_threads`、`moving_topics`）。
     room_threads = await threads_of_rooms(db, [topic.id])
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics(
@@ -593,10 +593,9 @@ async def get_topic(
     threads_working = await topics_signals.working_in_threads(
         db, broker, [topic.id], threads=room_threads
     )
-    # 同 `list_topics`：这一行自己那条线上在跑的是 `running_ids`（`presentation`
-    # 读它），连着名下的活和支线的那一份是 `moving_ids`（侧栏那盏呼吸绿读它）。
+    # 同 `list_topics`：`running_ids` 是这行自己的线，`moving_ids` 连着名下的活和支线。
     running_ids = runner.running_topic_ids()
-    moving_ids = await moving_topics(db, [topic.id], running=running_ids)
+    moving_ids = await moving_topics(db, [topic.id], running_ids, room_threads)
     silent = silent_gaps(runner, [topic.id]) if topic.id in moving_ids else {}
     viewer = _viewer(actor)
     unseen = (

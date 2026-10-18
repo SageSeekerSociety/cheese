@@ -141,6 +141,50 @@ async def test_queue_events_keep_githubs_reason_and_actor():
     ]
 
 
+@pytest.mark.parametrize(
+    ("event_count", "has_next_page"), [(0, False), (2, False), (30, True)]
+)
+async def test_queue_event_truncation_follows_the_filtered_page(
+    event_count: int, has_next_page: bool
+):
+    # GitHub's totalCount includes timeline items outside the queue filter.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "search": {
+                        "issueCount": 1,
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {
+                                "number": 4186,
+                                "timelineItems": {
+                                    "totalCount": 70,
+                                    "pageInfo": {"hasNextPage": has_next_page},
+                                    "nodes": [
+                                        {
+                                            "__typename": "AddedToMergeQueueEvent",
+                                            "createdAt": "2026-10-17T01:00:00Z",
+                                        }
+                                        for _ in range(event_count)
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                }
+            },
+        )
+
+    events, listed = await _reader(handler).queue_events(
+        owner="o", repo="r", token="t", since=SINCE, until=UNTIL
+    )
+
+    assert len(events) == event_count
+    assert listed.truncated is has_next_page
+
+
 async def test_a_runs_jobs_are_read_for_every_attempt_and_every_page():
     jobs = [{"id": n, "run_attempt": 1 + n % 2} for n in range(130)]
     asked: list[dict] = []

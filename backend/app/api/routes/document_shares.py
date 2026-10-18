@@ -7,9 +7,10 @@ again makes a new one; the document's own address never changes. The token is
 the whole secret: the document's address names its project and number, which
 can be guessed.
 
-Who shares: for a project's document, whoever may publish the project's site
-(``edit_settings``); for a team's own or a person's own document, its author or
-an admin of its team. Either way the person must be able to read it.
+Who shares: for a project's document, whoever's role shares documents
+(``share_documents``); for a team's own or a person's own document, the person
+it is theirs or an admin of its team. Either way the person must be able to
+read it.
 """
 
 import uuid
@@ -69,7 +70,7 @@ async def _may_share(db, reached: Reached) -> bool:
         return False
     doc = reached.doc
     if doc.project_id is not None:
-        return await may(db, doc.project_id, actor.handle, Permission.edit_settings)
+        return await may(db, doc.project_id, actor.handle, Permission.share_documents)
     return await may_move_or_delete(db, reached)
 
 

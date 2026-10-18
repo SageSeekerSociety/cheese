@@ -1,4 +1,5 @@
-"""Resolve agent authors, requester credit policy, and declared contributors."""
+"""Resolve who a delivery is credited to: the task owner, the agent, and the
+declared contributors, under the project's credit mode."""
 
 import logging
 import uuid
@@ -41,25 +42,119 @@ class WorkItem:
     contributor_handles: tuple[str, ...] = ()
 
 
+#: The project setting that chooses who a delivery is credited to.
+CREDIT_SETTING = "commit_credit"
+#: The task owner opens the PR and authors the commit; the AI teammate is a
+#: co-author.
+CREDIT_OWNER = "owner"
+#: The AI teammate opens the PR and authors the commit; the owner is not named,
+#: and the `Link:` trailer leads back to the task.
+CREDIT_AGENT = "agent"
+CREDIT_MODES = (CREDIT_OWNER, CREDIT_AGENT)
+
+
+def credit_mode(project_settings: dict) -> str:
+    """The project's credit mode; unset reads as `CREDIT_OWNER`."""
+    chosen = project_settings.get(CREDIT_SETTING)
+    return chosen if chosen in CREDIT_MODES else CREDIT_OWNER
+
+
 @dataclass(frozen=True)
 class Attribution:
-    """Agent author and independently resolved human contribution roles."""
+    """Who a delivery is credited to, resolved once for every text it writes.
 
-    #: The human requester handle.
-    handle: str | None
-    #: The platform agent that authored the work.
+    One rule decides every commit it touches: on GitHub the task owner authors
+    the work when the project credits owners and the task has one; otherwise
+    the AI teammate does. Everyone else credited — the owner when they are not
+    the author, the declared contributors, and the AI teammate when it is not
+    — is a `Co-authored-by`."""
+
+    #: The task owner's handle: the human the work is for, or None when no
+    #: human owns the task.
+    owner_handle: str | None
+    #: The platform agent that wrote the work. It is never shown: the AI
+    #: teammate appears as `app` on GitHub and as 芝士 on the platform forge.
     author: GitIdentity | None
-    #: Declared contributors and, when enabled, the human requester.
-    coauthors: tuple[GitIdentity, ...] = ()
-    #: `Cheese-Task:`, one line each. See `work_items`.
+    #: `CREDIT_OWNER` or `CREDIT_AGENT`.
+    mode: str = CREDIT_OWNER
+    #: The owner's git identity — their GitHub one when linked.
+    owner: GitIdentity | None = None
+    #: People the task declares as having written part of it.
+    contributors: tuple[GitIdentity, ...] = ()
+    #: `Link:`, one line each. See `work_items`.
     tasks: tuple[WorkItem, ...] = ()
     #: `Reviewed-by:`'s git identity — the accepter's, when they connected
     #: GitHub. Resolved here rather than at the trailer builder for the same
     #: reason as `author`: that module is pure, so anything needing a session
     #: arrives already resolved.
     reviewer: GitIdentity | None = None
-    requester: GitIdentity | None = None
     reporters: tuple[GitIdentity, ...] = ()
+    #: The address of the human whose GitHub account opened the PR, None when
+    #: the App did (or there is no PR). GitHub makes the PR's opener the author
+    #: of its squash commit, so this is who the landed commit is by.
+    opened_by: str | None = None
+    #: The GitHub App's own identity — the AI teammate on GitHub, shown with
+    #: the App's logo. None off GitHub, or when it could not be read.
+    app: GitIdentity | None = None
+    #: Where the project's code lives: `"github"`, `"forgejo"`, or None when
+    #: there is no repository.
+    lane: str | None = None
+
+    @property
+    def ai(self) -> GitIdentity | None:
+        """How the AI teammate is named in git on this project's forge.
+
+        On the platform forge it keeps its own address — each address there
+        belongs to exactly one account, and the project's account claims the
+        agent's (`project.forge.ensure_author_email`) — under the name 芝士
+        rather than an internal handle nobody can read."""
+        if self.lane == "github":
+            return self.app
+        if self.lane == "forgejo" and self.author is not None:
+            return GitIdentity(CHEESE_NAME, self.author.email)
+        return None
+
+    @property
+    def commit_author(self) -> GitIdentity | None:
+        """The author of the commits the agent makes on the task branch.
+
+        The owner only on GitHub: on the platform forge an author's address
+        has to be claimed by the project's account, and one person's address
+        cannot belong to every project they own a task in."""
+        if self.lane == "github" and self.mode == CREDIT_OWNER and self.owner:
+            return self.owner
+        return self.ai or self.author
+
+    @property
+    def commit_coauthors(self) -> tuple[GitIdentity, ...]:
+        """The co-authors of those commits."""
+        author = self.commit_author
+        return self._credited_besides(author.email if author else None)
+
+    @property
+    def coauthors(self) -> tuple[GitIdentity, ...]:
+        """The co-authors of the commit that lands. On GitHub its author is
+        whoever opened the PR: a person (`opened_by`) or the App. The platform
+        forge keeps the branch's own author."""
+        if self.lane == "github":
+            landed = self.opened_by or (self.app.email if self.app else None)
+        else:
+            author = self.commit_author
+            landed = author.email if author else None
+        return self._credited_besides(landed)
+
+    def _credited_besides(self, author_email: str | None) -> tuple[GitIdentity, ...]:
+        credited: list[GitIdentity] = []
+        if self.mode == CREDIT_OWNER and self.owner is not None:
+            credited.append(self.owner)
+        credited.extend(self.contributors)
+        if self.ai is not None:
+            credited.append(self.ai)
+        unique: list[GitIdentity] = []
+        for person in credited:
+            if person.email != author_email and person not in unique:
+                unique.append(person)
+        return tuple(unique)
 
 
 __all__ = [
@@ -69,13 +164,19 @@ __all__ = [
     "Attribution",
     "GitIdentity",
     "WorkItem",
+    "CREDIT_AGENT",
+    "CREDIT_MODES",
+    "CREDIT_OWNER",
+    "CREDIT_SETTING",
     "attribution",
+    "app_identity",
     "coauthored_by",
+    "credit_mode",
     "identity_from_profile",
     "as_trailer",
     "noreply_email",
     "platform_identity",
-    "requester_handle",
+    "owner_handle",
     "resolve_for_handle",
     "work_items",
 ]
@@ -150,47 +251,33 @@ async def resolve_for_handle(session: Any, handle: str) -> GitIdentity | None:
     return identity_from_profile(*found)
 
 
-async def requester_handle(
-    session: Any, topic: "Topic", *, task_id: uuid.UUID | None = None
-) -> str | None:
-    """Resolve the requester from task ownership, then the room roster."""
-    if task_id is not None:
-        thread = await _thread(session, task_id)
-        if thread is not None:
-            if thread.owner_handle and not looks_like_agent_handle(thread.owner_handle):
-                return thread.owner_handle
-            if thread.created_by and not looks_like_agent_handle(thread.created_by):
-                return thread.created_by
-    owner = await _roster_owner(session, topic.id)
-    if owner and not looks_like_agent_handle(owner):
-        return owner
-    return topic.created_by or None
+async def owner_handle(session: Any, task_id: uuid.UUID | None) -> str | None:
+    """The human the task is for: its owner, else whoever created it.
+
+    None when neither is a human. A task an agent opened and owns has nobody
+    behind it, and crediting the channel's owner instead would put the name of
+    someone who may never have seen the change on it."""
+    if task_id is None:
+        return None
+    thread = await _thread(session, task_id)
+    if thread is None:
+        return None
+    for handle in (thread.owner_handle, thread.created_by):
+        if handle and not looks_like_agent_handle(handle):
+            return handle
+    return None
 
 
 async def _thread(session: Any, task_id: uuid.UUID):
-    """The task's row, or None if it cannot be read. Never raises, same rule as
-    `_roster_owner`: attribution must not be why a PR fails to open.
+    """The task's row, or None if it cannot be read. Never raises: attribution
+    must not be why a PR fails to open.
 
     A plain column read (`repository.task_rows`): `room_task` is a layer above
     this package, and this one needs the row, not that domain's behaviour."""
     try:
         return await task_rows.one(session, task_id)
-    except Exception:  # noqa: BLE001 — attribution never fails its caller
+    except Exception:  # attribution never fails its caller
         logger.info("could not read thread %s", task_id, exc_info=True)
-        return None
-
-
-async def _roster_owner(session: Any, topic_id: uuid.UUID) -> str | None:
-    """The room's owner per its roster, or None if it cannot be read. Never
-    raises: attribution must not be the reason a PR fails to open, so a broken
-    roster read degrades to "no answer" rather than to an exception."""
-    try:
-        # deferred-import: tests replace a name on app.domain.topic_membership.services
-        from app.domain.topic_membership.services import TopicMemberService
-
-        return await TopicMemberService(session).owner_of(topic_id)
-    except Exception:  # noqa: BLE001 — attribution never fails its caller
-        logger.info("could not read roster owner for topic %s", topic_id, exc_info=True)
         return None
 
 
@@ -209,7 +296,7 @@ async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
     the previous delivery.
 
     No fallback, deliberately. A card that declares nothing produces no
-    `Cheese-Task:` line, and falling back to the tree "just for those" would
+    `Link:` line to a task, and falling back to the tree "just for those" would
     quietly restore exactly the wrong answers this replaced. An audit believes a
     trailer; a wrong name is worse than a missing one.
 
@@ -254,23 +341,32 @@ async def attribution(
     card: Any = None,
     decided_by: str | None = None,
     task_id: uuid.UUID | None = None,
+    opened_by: str | None = None,
+    app: GitIdentity | None = None,
+    lane: str | None = None,
 ) -> "Attribution":
-    """Resolve the agent author and this task's human credits.
+    """Resolve who this delivery is credited to.
 
-    Requester coauthorship is an explicit project/deployment policy. Reporter
-    and additional contributor roles still come from task declarations."""
+    `lane`, `opened_by` and `app` describe the forge and the PR, which only
+    the caller holding them knows: where the code lives, the address of the
+    human whose account opened the PR, and the GitHub App's identity.
+    Contributors and reporters come from task declarations."""
     # deferred-import: tests replace this name on app.domain.topic_membership.services
     from app.domain.topic_membership.services import TopicMemberService
 
     task_id = task_id or getattr(card, "task_id", None)
     handle: str | None = None
     try:
-        handle = await requester_handle(session, topic, task_id=task_id)
-    except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
+        handle = await owner_handle(session, task_id)
+    except Exception:  # a trailer is not worth failing a merge
         logger.warning(
-            "could not resolve the requester for topic %s", topic.id, exc_info=True
+            "could not resolve the owner for topic %s", topic.id, exc_info=True
         )
-    requester = await _identity_of(session, handle)
+    owner = (
+        (await _identity_of(session, handle) or platform_identity(handle))
+        if handle
+        else None
+    )
     if task_id:
         task = await _thread(session, task_id)
         acting = getattr(task, "author_handle", None)
@@ -292,22 +388,20 @@ async def attribution(
                         tuple(task.contributor_handles or ()),
                     ),
                 )
-    except Exception:  # noqa: BLE001 — same rule again: a trailer, not a gate
+    except Exception:  # same rule again: a trailer, not a gate
         logger.warning(
             "could not resolve the work behind topic %s", topic.id, exc_info=True
         )
-    coauthors: list[GitIdentity] = []
     # deferred-import: tests replace this name on app.domain.project.services
     from app.domain.project.services import ProjectService
 
     project = await ProjectService(session).get(topic.project_id)
-    enabled = requester_credit_enabled((project.settings or {}) if project else {})
-    if enabled and handle and not looks_like_agent_handle(handle):
-        coauthors.append(requester or platform_identity(handle))
+    mode = credit_mode((project.settings or {}) if project else {})
+    contributors: list[GitIdentity] = []
     reporters: list[GitIdentity] = []
     for item in tasks:
         for person, credits in [
-            *[(person, coauthors) for person in item.contributor_handles],
+            *[(person, contributors) for person in item.contributor_handles],
             *([(item.reporter_handle, reporters)] if item.reporter_handle else []),
         ]:
             found = await _identity_of(session, person) or platform_identity(person)
@@ -316,17 +410,23 @@ async def attribution(
     return Attribution(
         handle,
         author,
-        tuple(coauthors),
-        tasks,
-        await _identity_of(session, decided_by),
-        requester,
-        tuple(reporters),
+        mode=mode,
+        owner=owner,
+        contributors=tuple(contributors),
+        tasks=tasks,
+        reviewer=await _identity_of(session, decided_by),
+        reporters=tuple(reporters),
+        opened_by=opened_by,
+        app=app,
+        lane=lane,
     )
 
 
-def requester_credit_enabled(project_settings: dict) -> bool:
-    override = project_settings.get("forge_requester_coauthor")
-    return settings.forge_attribution_default if override is None else bool(override)
+def app_identity(user_id: int | str) -> GitIdentity:
+    """The GitHub App's bot account as a git identity. GitHub shows the App's
+    logo for an address built from the bot account's numeric id."""
+    login = f"{settings.github_app_slug}[bot]"
+    return GitIdentity(login, noreply_email(str(user_id), login))
 
 
 async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:
@@ -336,13 +436,13 @@ async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:
         return None
     try:
         return await resolve_for_handle(session, handle)
-    except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
+    except Exception:  # a trailer is not worth failing a merge
         logger.warning("could not resolve a git identity for %s", handle, exc_info=True)
         return None
 
 
 def coauthored_by(identity: GitIdentity | None) -> str | None:
-    """Format a declared human code contributor as a Git trailer."""
-    if identity is None or identity == CHEESE_IDENTITY:
+    """Format a co-author as a Git trailer."""
+    if identity is None:
         return None
     return f"Co-authored-by: {identity.name} <{identity.email}>"

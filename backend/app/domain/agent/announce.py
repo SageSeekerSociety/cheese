@@ -46,6 +46,7 @@ from app.domain.addressing import (
     address,
 )
 from app.domain.agent.mentions import _MENTION_RE
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.asked import asked_of, settled, skipped_by
 from app.domain.block.models import Block, BlockKind
@@ -56,7 +57,7 @@ from app.domain.delivery.ledger import deliver, settle
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
-from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.handles import agent_instance_handle, names_a_person
 from app.domain.notice_meta import (
     SEVERITY_INFO,
     WHO_CHEESE,
@@ -451,6 +452,27 @@ async def instance_of_seat(session: AsyncSession, project_id, seat: str):
     for instance in await AgentInstanceService(session).list_for_project(project_id):
         if agent_instance_handle(instance.id) == seat:
             return instance
+    return None
+
+
+async def who_started_the_open_turn(
+    session: AsyncSession, project_id, conversation_id: uuid.UUID, seat: str
+) -> str | None:
+    """The person whose message opened ``seat``'s running turn in this
+    conversation, if a person did: None when no turn is open there, or when
+    the platform or another agent opened it.
+
+    A turn row names the agent by its instance's handle (the conversation it
+    runs in), a seat by the instance's id; either may be on the row.
+    """
+    instance = await instance_of_seat(session, project_id, seat)
+    turns = AgentTurnRepository(session)
+    for handle in (seat, *((instance.handle,) if instance is not None else ())):
+        author = await turns.open_turn_author_for_topic(
+            conversation_id, agent_handle=handle
+        )
+        if author is not None:
+            return author if names_a_person(author) else None
     return None
 
 

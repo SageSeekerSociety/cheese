@@ -1,7 +1,16 @@
 {
-  "hint": "When on, new commits credit the task requester as a co-author; the AI teammate stays the author. Existing commits are unchanged",
-  "label": "Credit the task requester as co-author",
-  "off": "Currently off",
-  "on": "Currently on",
-  "title": "Commit credit"
+  "agent": "AI teammate",
+  "agentHint": "The PR and the commit are credited to {agent}, and the task owner is not named. The commit links to the task",
+  "expired": "Authorization expired: {agent} opens the PRs for the tasks you own for now",
+  "hint": "Existing commits are unchanged",
+  "label": "Credit to",
+  "link": "Link GitHub account",
+  "linkHint": "Once linked, PRs for the tasks you own are opened with your account",
+  "manage": "Manage in account security",
+  "owner": "Task owner",
+  "ownerHint": "The PR is opened with the task owner's GitHub account, so the owner authors the commit and {agent} is a co-author. If the owner hasn't linked GitHub, {agent} opens the PR and the owner is a co-author",
+  "relink": "Authorize again",
+  "title": "Commit credit",
+  "unlinked": "Not linked",
+  "yourGithub": "Your GitHub account"
 }

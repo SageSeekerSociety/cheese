@@ -84,7 +84,7 @@ from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 
 class SpaceAnalyticsViewService:
-    """Service backing the NT-aligned analytics endpoints (overview / alerts / publishers)."""  # noqa: E501
+    """Service backing the NT-aligned analytics endpoints (overview / alerts / publishers)."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session

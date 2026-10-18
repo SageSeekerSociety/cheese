@@ -179,7 +179,7 @@ class CommentRepository:
     async def list_sub_comments(
         self, parent_comment_ids: list[int]
     ) -> dict[int, list[Comment]]:
-        """Fetch direct sub-comments (commentable_type=COMMENT) for the given parent ids."""  # noqa: E501
+        """Fetch direct sub-comments (commentable_type=COMMENT) for the given parent ids."""
         if not parent_comment_ids:
             return {}
         stmt: Select[tuple[Comment]] = (

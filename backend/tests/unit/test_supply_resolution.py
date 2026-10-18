@@ -13,7 +13,7 @@ from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
 
 _APP = Path(__file__).resolve().parents[2] / "app"
 _DEFINED_IN = "domain/agent/supply.py"
-_CALLED_FROM = "domain/agent_instance/configuration.py"
+_CALLED_FROM = "domain/agent/model_catalog.py"
 
 
 def test_an_explicit_setting_wins():

@@ -227,7 +227,7 @@ async def _ask(state: PeerState) -> BaseException:
     )
     try:
         await _let_the_machine_answer(state, connector)
-        with pytest.raises(BaseException) as raised:  # noqa: PT011,B017 — the type IS the column
+        with pytest.raises(BaseException) as raised:  # the type IS the column
             await asyncio.wait_for(asked, 5)
     finally:
         await backend.close()

@@ -419,7 +419,7 @@ async def test_resolve_entities_with_pointers():
 
 @pytest.mark.anyio
 async def test_resolve_entities_missing_resolver():
-    """When no resolver exists for an entity type, the pointer key still appears with None."""  # noqa: E501
+    """When no resolver exists for an entity type, the pointer key still appears with None."""
     svc = _make_service(resolvers=[])
     result = await svc.resolve_entities_from_metadata(
         [
@@ -428,7 +428,7 @@ async def test_resolve_entities_missing_resolver():
     )
 
     # The pointer is collected but no resolver handles "unknown_type",
-    # so resolved_by_type won't have "unknown_type" and flattened[path] = entity_map.get(id) = None  # noqa: E501
+    # so resolved_by_type won't have "unknown_type" and flattened[path] = entity_map.get(id) = None
     assert "actor" in result
     assert result["actor"] is None
 

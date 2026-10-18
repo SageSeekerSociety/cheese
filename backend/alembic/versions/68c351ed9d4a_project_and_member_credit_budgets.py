@@ -1,7 +1,7 @@
 """Project budgets, member task caps and execution-time credit attribution.
 
 Revision ID: 68c351ed9d4a
-Revises: 32b875c31a9a
+Revises: eef0ae0a8056
 """
 
 from collections.abc import Sequence
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "68c351ed9d4a"
-down_revision: str | Sequence[str] | None = "32b875c31a9a"
+down_revision: str | Sequence[str] | None = "eef0ae0a8056"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

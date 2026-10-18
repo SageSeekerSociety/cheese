@@ -54,6 +54,6 @@ async def count_online() -> int:
 
 try:
     print(asyncio.run(count_online()))
-except Exception as exc:  # noqa: BLE001 — a probe must always print a number
+except Exception as exc:  # a probe must always print a number
     print(f"probe failed: {exc}", file=sys.stderr)
     print(0)

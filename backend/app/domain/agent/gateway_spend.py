@@ -96,7 +96,7 @@ async def settle(
             await asyncio.sleep(delay)
             landed = await _charge_once(sessions, gateway, key, charge)
         return landed
-    except Exception:  # noqa: BLE001 — charging never fails the work it follows
+    except Exception:  # charging never fails the work it follows
         logger.exception("charging gateway spend failed (%s)", charge)
         return None
 

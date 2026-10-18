@@ -30,12 +30,13 @@ async def append_output(
     meta: dict | None = None,
     created_at: datetime | None = None,
     own_output: bool = False,
+    block_id: uuid.UUID | None = None,
 ) -> Block:
     """Append an attributable timeline row with the canonical pending-input rules.
 
-    Flush and refresh are part of the block write; committing is not. Returning
-    this same-session row lets the caller attach question/mention effects in the
-    very transaction that makes the output durable.
+    The flush is part of the block write; committing is not. Returning this
+    same-session row lets the caller attach question/mention effects in the very
+    transaction that makes the output durable.
     """
     return await BlockRepository(session).add(
         project_id=project_id,
@@ -50,6 +51,7 @@ async def append_output(
         meta=meta,
         created_at=created_at,
         own_output=own_output,
+        block_id=block_id,
     )
 
 

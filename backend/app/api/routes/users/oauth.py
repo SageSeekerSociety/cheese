@@ -5,6 +5,7 @@ import json
 import secrets
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlencode, urlparse
 
@@ -47,6 +48,7 @@ from app.api.users_deps import (
 from app.api.write_access import ROUTE_DECIDES
 from app.core import single_use_state
 from app.core.config import settings
+from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
@@ -98,6 +100,10 @@ def _oauth_frontend_url(path: str, **params: str | None) -> str:
 # minted and claimed by whichever create/bind request spends it.
 
 _OAUTH_STATE_TTL_S = 15 * 60
+
+
+#: cheesex-app's own user authorization: 关联 GitHub, and signing in with GitHub.
+GITHUB_APP_PROVIDER = "github_app"
 
 
 _OAUTH_STATE_SCOPE = "oauth_state"
@@ -222,6 +228,50 @@ async def _pop_oauth_pending(session_id: str) -> dict | None:
         return json.loads(raw) if raw else None
     finally:
         await redis.aclose()
+
+
+_OAUTH_TOKENS_PREFIX = "oauth:tokens:"
+
+
+def _held_tokens_key(provider_id: str, provider_user_id: str) -> str:
+    return f"{provider_id}:{provider_user_id}"
+
+
+async def _hold_oauth_tokens(
+    provider_id: str, provider_user_id: str, tokens: dict
+) -> None:
+    """Keep a provider's tokens server-side until the identity is bound.
+
+    Signing in with GitHub has to leave behind the same connection 关联 GitHub
+    does — with tokens, so the account's PRs open in its own name. Between the
+    callback and the binding the person may pass through the decision or the
+    verify page, and the tokens must not ride along to the browser on either:
+    they wait here, sealed, keyed by the identity they belong to."""
+    key = _held_tokens_key(provider_id, provider_user_id)
+    sealed = encrypt(Purpose.OAUTH_TOKEN, json.dumps(tokens), bound_to=f"held:{key}")
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        await redis.setex(f"{_OAUTH_TOKENS_PREFIX}{key}", _OAUTH_STATE_TTL_S, sealed)
+    finally:
+        await redis.aclose()
+
+
+async def _take_oauth_tokens(provider_id: str, provider_user_id: str) -> dict | None:
+    """The tokens `_hold_oauth_tokens` kept for this identity, once."""
+    key = _held_tokens_key(provider_id, provider_user_id)
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        sealed = await redis.getdel(f"{_OAUTH_TOKENS_PREFIX}{key}")
+    finally:
+        await redis.aclose()
+    if not isinstance(sealed, str):
+        return None
+    return json.loads(decrypt(Purpose.OAUTH_TOKEN, sealed, bound_to=f"held:{key}"))
+
+
+def _token_expiry(tokens: dict) -> datetime | None:
+    raw = tokens.get("token_expires")
+    return datetime.fromisoformat(raw) if raw else None
 
 
 async def _start_oauth_ownership(
@@ -465,6 +515,25 @@ async def handle_oauth_callback(
         logger.exception("OAuth callback: provider exchange failed for %s", provider_id)
         return _oauth_callback_error_redirect(provider_id, "oauth_failed")
 
+    return await _resolve_oauth_identity(
+        request, session, oauth_service, auth_service, provider_id, user_info
+    )
+
+
+async def _resolve_oauth_identity(
+    request: Request,
+    session: AsyncSession,
+    oauth_service: OAuthService,
+    auth_service: UserAuthService,
+    provider_id: str,
+    user_info,
+    tokens: dict | None = None,
+) -> RedirectResponse:
+    """Sign in the account this provider identity belongs to, or send the
+    person to the page that decides which account it becomes.
+
+    `tokens` are the provider's own (GitHub's), stored on the connection the
+    sign-in leaves behind."""
     # Step 2 — resolve the local account (reference contract):
     #   A. existing binding → straight to the success page.
     #   B. the provider email already belongs to a local account → the user must
@@ -478,11 +547,21 @@ async def handle_oauth_callback(
             provider_user_id=user_info.id,
         )
         if existing:
+            if tokens:
+                await oauth_service.update_connection_tokens(
+                    connection_id=existing["id"],
+                    access_token=tokens["access_token"],
+                    refresh_token=tokens.get("refresh_token"),
+                    token_expires=_token_expiry(tokens),
+                    raw_profile=_github_profile(user_info),
+                )
             return await _oauth_login_redirect(
                 request, session, auth_service, existing["userId"], provider_id
             )
 
         info_dict = _oauth_user_info_dict(user_info)
+        if tokens:
+            await _hold_oauth_tokens(provider_id, str(user_info.id), tokens)
 
         conflict_user = None
         if user_info.email:
@@ -610,6 +689,7 @@ async def _complete_oauth_binding(
     is rolled back, so an account created for the binding does not outlive it.
     """
     provider_user_id = str(user_info.get("id"))
+    tokens = await _take_oauth_tokens(provider_id, provider_user_id)
     existing = await oauth_service.get_connection_by_provider(
         provider_id=provider_id, provider_user_id=provider_user_id
     )
@@ -622,7 +702,11 @@ async def _complete_oauth_binding(
                 raw_profile={
                     "email": user_info.get("email"),
                     "name": user_info.get("name"),
+                    **({"login": user_info.get("username")} if tokens else {}),
                 },
+                access_token=tokens["access_token"] if tokens else None,
+                refresh_token=tokens.get("refresh_token") if tokens else None,
+                token_expires=_token_expiry(tokens) if tokens else None,
             )
         except ConflictError:
             # Linked by a concurrent request since the lookup above.
@@ -879,3 +963,64 @@ async def oauth_bind_user(
         await session.rollback()
         logger.exception("OAuth bind: binding failed")
         return _oauth_error_redirect("BINDING_FAILED", "Binding failed")
+
+
+def _github_profile(user_info) -> dict:
+    """What a GitHub connection keeps of the profile: the login is what the
+    settings page and every credit show (`identity.identity_from_profile`)."""
+    return {
+        "login": user_info.username,
+        "email": user_info.email,
+        "name": user_info.name,
+    }
+
+
+async def sign_in_with_github(
+    request: Request,
+    *,
+    code: str,
+    state: str,
+    session: AsyncSession,
+    oauth_service: OAuthService,
+    auth_service: UserAuthService,
+) -> RedirectResponse:
+    """The sign-in half of cheesex-app's one callback.
+
+    GitHub sends every authorization of the App back to the one URL it has
+    registered, which is 关联 GitHub's (`github_account.py`); a state that is
+    not a link state is a sign-in started at `/auth/oauth/login/github_app`,
+    and lands here. One authorization serves both: what it lets the App do is
+    bounded by the repositories the App is installed on, not by which button
+    started it."""
+    provider_id = GITHUB_APP_PROVIDER
+    if not await _spend_oauth_login_state(
+        provider_id, state, request.cookies.get(_OAUTH_LOGIN_STATE_COOKIE)
+    ):
+        logger.info("GitHub sign-in: state rejected")
+        return _oauth_callback_error_redirect(provider_id, "invalid_state")
+    try:
+        provider = oauth_service.get_provider(provider_id)
+        token_data = await provider.exchange_code(code)
+        access_token = token_data.get("access_token")
+        user_info = await provider.get_user_info(access_token) if access_token else None
+    except Exception:
+        logger.exception("GitHub sign-in: provider exchange failed")
+        return _oauth_callback_error_redirect(provider_id, "oauth_failed")
+    if user_info is None:
+        logger.info("GitHub sign-in: the exchange returned no access token")
+        return _oauth_callback_error_redirect(provider_id, "oauth_failed")
+    # Only present when the App expires its user tokens; otherwise the token
+    # is long-lived and both are absent.
+    expires_in = token_data.get("expires_in")
+    tokens = {
+        "access_token": access_token,
+        "refresh_token": token_data.get("refresh_token"),
+        "token_expires": (
+            (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
+            if expires_in
+            else None
+        ),
+    }
+    return await _resolve_oauth_identity(
+        request, session, oauth_service, auth_service, provider_id, user_info, tokens
+    )

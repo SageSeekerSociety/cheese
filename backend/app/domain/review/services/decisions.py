@@ -15,10 +15,10 @@ from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
 from app.domain.membership.services import MemberService
 from app.domain.project_permissions import Permission
-from app.domain.repository import identity
 from app.domain.review import (
     archive,
     commit_message,
+    credit,
     notes,
     pr_publish,
     pr_text,
@@ -40,6 +40,7 @@ from app.domain.review import github_pr
 from app.domain.review import services as pkg
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient, GitHubPRRateLimited
+from app.domain.review.github_pr_status import pr_opener
 from app.domain.review.services._shared import (
     EVENT_CARD_REDESCRIBED,
     EVENT_CARD_VOIDED,
@@ -317,7 +318,7 @@ async def redescribe(
 ) -> AcceptCard:
     """更正这张卡的描述 —— and rewrite the PR from it in the same breath.
 
-    **Why this may be corrected while `Cheese-Task:` may not.** A delivery
+    **Why this may be corrected while the credits may not.** A delivery
     claim is an ASSERTION OF FACT about who wrote the code; letting it be
     edited after filing is letting somebody put another agent's name on a
     change, and the wrong name in permanent history reads exactly like the
@@ -330,7 +331,7 @@ async def redescribe(
 
     The PR is rewritten from the card, never read back into it. The card is
     the single source of both texts, so they cannot disagree — and the
-    trailers (`Cheese-Task`, `Requested-by`, `Cheese-Agent`) stay something
+    trailers (`Co-authored-by`, `Link`) stay something
     the platform asserts rather than something anybody can retype in a
     GitHub textarea.
 
@@ -366,13 +367,14 @@ async def redescribe(
     if card.pr_number is not None:
         client = await self._app_pr_client(topic)
         if client is not None:
-            who = await identity.attribution(self._session, topic, card=card)
             view = await client.pr_view(card.pr_number)
             await pr_publish.sync_pr_text(
                 client,
                 view,
                 title=pr_text.change_subject(card, topic),
-                body=pr_text.pr_body(topic, "", card, who),
+                body=await pr_publish.pr_body_for(
+                    self._session, topic, card=card, opened_by=pr_opener(view)
+                ),
             )
     # 留痕：谁在什么时候把描述从什么改成了什么。这条入口的存在本身需要可追溯，
     # 否则它就是一条能悄悄改「这次改动会在历史里说什么」的路。
@@ -661,7 +663,7 @@ async def _override_github_checks(
             state=state,
             line=tail.splitlines()[0] if tail else "",
         )
-    except Exception as exc:  # noqa: BLE001 — a broken read must not lock a human out
+    except Exception as exc:  # a broken read must not lock a human out
         logger.warning("force-merge check read failed for card %s: %s", card.id, exc)
         state = None
         checks_at_merge = say("forceMergedChecksUnread")
@@ -670,8 +672,12 @@ async def _override_github_checks(
     verdict = _force_merge_verdict(state)
 
     number = card.pr_number
-    who = await identity.attribution(
-        self._session, topic, card=card, decided_by=decided_by
+    who = await credit.attribution(
+        self._session,
+        topic,
+        card=card,
+        decided_by=decided_by,
+        opened_by=status.opened_by,
     )
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email

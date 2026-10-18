@@ -177,7 +177,7 @@ def platform(machine, monkeypatch, lease_answers):
         def log_message(self, *_):
             pass
 
-        def do_POST(self):  # noqa: N802 — the stdlib's name
+        def do_POST(self):  # the stdlib's name
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path == "/lease" and lease_answers:
                 seen.append("lease")

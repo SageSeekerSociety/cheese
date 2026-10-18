@@ -911,7 +911,7 @@ def test_the_proxy_asks_admission_with_its_own_credential(monkeypatch, tmp_path)
     asked: list[dict] = []
 
     class Backend(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802 — the stdlib's name
+        def do_POST(self):  # the stdlib's name
             asked.append({k.lower(): v for k, v in self.headers.items()})
             body = json.dumps(
                 {
