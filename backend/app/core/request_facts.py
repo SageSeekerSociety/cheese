@@ -3,8 +3,8 @@
 A request handles a single `AsyncSession` from beginning to end: FastAPI hands
 every dependency the same one. Several of them ask the same question — where
 someone stands in a project, and so what they may do there — and each answer
-costs five to a dozen statements, depending on where the person sits. The
-session remembers those answers in `session.info`
+costs a handful of statements, four for an AI teammate and about ten for a
+roster member. The session remembers those answers in `session.info`
 under `REQUEST_FACTS` (the same place `core/live_frames` parks what it owes a
 page), so the second and third ask read the first answer.
 
