@@ -4,11 +4,15 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import event
+from sqlalchemy import event, select
 
 from app.domain.notification import digest
 from app.domain.notification.models import ChannelDelivery
-from app.domain.notification.preferences import DigestCadence, default_preferences
+from app.domain.notification.preferences import (
+    DigestCadence,
+    EmailMode,
+    default_preferences,
+)
 from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.user.repositories import UserRepository
 
@@ -21,7 +25,7 @@ async def test_digest_reads_preferences_once_for_all_receivers(db_factory, monke
                 username=f"digest-batch-{index}",
                 email=f"digest-batch-{index}@example.com",
             )
-            for index in range(3)
+            for index in range(5)
         ]
         await PreferencesRepository(session).save(
             users[0].id,
@@ -31,10 +35,19 @@ async def test_digest_reads_preferences_once_for_all_receivers(db_factory, monke
             users[1].id,
             replace(default_preferences(), digest_cadence=DigestCadence.weekly),
         )
-        # The third user's missing row exercises the default preferences.
+        await PreferencesRepository(session).save(
+            users[3].id,
+            replace(default_preferences(), digest_cadence=DigestCadence.off),
+        )
+        await PreferencesRepository(session).save(
+            users[4].id,
+            replace(default_preferences(), email_mode=EmailMode.off),
+        )
+        # The third active receiver's missing row exercises the defaults.
         for index, user in enumerate(users):
             content = f"digest item for receiver {index}"
-            receiver_items[user.id] = content
+            if index < 3:
+                receiver_items[user.id] = content
             session.add(
                 ChannelDelivery(
                     id=uuid.uuid4(),
@@ -76,3 +89,10 @@ async def test_digest_reads_preferences_once_for_all_receivers(db_factory, monke
     assert {
         receiver_id: items[0]["content"] for receiver_id, items in sent
     } == receiver_items
+    async with db_factory() as session:
+        unclaimed = await session.scalars(
+            select(ChannelDelivery.state)
+            .where(ChannelDelivery.receiver_id.in_([users[3].id, users[4].id]))
+            .order_by(ChannelDelivery.receiver_id)
+        )
+        assert list(unclaimed) == ["pending", "pending"]
