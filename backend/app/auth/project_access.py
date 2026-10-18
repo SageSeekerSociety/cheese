@@ -33,17 +33,22 @@ a member".
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence, Set
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.project_roles import standing
+from app.auth.project_roles import owner_of, standing
 from app.domain.identity.services import IdentityService
-from app.domain.project.models import ProjectMember
+from app.domain.membership.repositories import MemberRepository
+from app.domain.project.models import Project, ProjectMember
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import Seat
+from app.domain.team.models import TeamUserRelation
+from app.domain.team.protocol import TeamMemberRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.user.models import User
 
 
 async def may_read_project(
@@ -56,6 +61,101 @@ async def may_read_project(
     asked" must not read as "anybody may".
     """
     return await standing(session, project_id, handle) is not None
+
+
+async def may_read_project_many(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    handles: Sequence[str],
+    agents: Set[str] | None = None,
+) -> dict[str, bool]:
+    """``may_read_project`` for many handles, in a fixed number of reads.
+
+    The answer is the one :func:`standing` gives handle by handle; only the
+    price changes. Asking one at a time reads the project, its owner, its
+    exclusions and the team relations once per person, so a room roster of
+    people the project does not list costs a statement for every seat — the
+    shape a 20-seat room's audience check paid ~160 statements for. Here the
+    project is read once, its exclusions, its roster rows and the team
+    relations once, and each handle is decided in memory.
+
+    ``agents`` lets a caller that already asked
+    :meth:`IdentityService.agents_among` for these exact handles hand the
+    answer over instead of paying for the same two reads twice.
+    """
+    project = await ProjectRepository(session).get(project_id)
+    return await _may_read_project_many(
+        session, project, handles=handles, agents=agents
+    )
+
+
+async def _may_read_project_many(
+    session: AsyncSession,
+    project: Project | None,
+    *,
+    handles: Sequence[str],
+    agents: Set[str] | None = None,
+) -> dict[str, bool]:
+    """``may_read_project_many`` over a project the caller has already read.
+
+    The branches follow ``app.auth.project_roles.standing`` in order — agent,
+    project owner, team owner, team admin unless excluded, then 「on the roster,
+    or in the project through the team and not excluded」 — because the answer
+    has to stay the same one, handle for handle.
+    """
+    asked = list(dict.fromkeys(handles))
+    # No handle is nobody, and nobody reads nothing — the answer
+    # ``may_read_project`` gives ``None``.
+    named = [handle for handle in asked if handle]
+    if project is None or not named:
+        return {handle: False for handle in asked}
+    if agents is None:
+        agents = await IdentityService(session).agents_among(named)
+    owner = await owner_of(session, project)
+    listed = set(
+        (
+            await session.scalars(
+                select(ProjectMember.user_handle).where(
+                    ProjectMember.project_id == project.id,
+                    ProjectMember.user_handle.in_(named),
+                )
+            )
+        ).all()
+    )
+    excluded = await MemberRepository(session).excluded_handles(project.id)
+    team_roles: dict[str, int] = {}
+    if project.team_id is not None:
+        rows = await session.execute(
+            select(User.username, TeamUserRelation.role)
+            .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
+            .where(
+                TeamUserRelation.team_id == project.team_id,
+                TeamUserRelation.deleted_at.is_(None),
+                User.username.in_(named),
+            )
+        )
+        team_roles = {name: role for name, role in rows.all()}
+    out: dict[str, bool] = {}
+    for handle in named:
+        if handle in agents:
+            # An AI teammate sits only where the project put it on the roster.
+            out[handle] = handle in listed
+            continue
+        if handle == owner:
+            out[handle] = True
+            continue
+        team_role = team_roles.get(handle)
+        if team_role == TeamMemberRole.OWNER:
+            out[handle] = True
+            continue
+        if team_role == TeamMemberRole.ADMIN and handle not in excluded:
+            out[handle] = True
+            continue
+        out[handle] = handle in listed or (
+            team_role is not None and handle not in excluded
+        )
+    return out
 
 
 async def may_write_project(
@@ -78,9 +178,12 @@ async def outsiders_reading(
     project's own people (a room that is not private) and the room's roster
     (any room), and only a roster seat can belong to somebody outside the
     project: someone added to one channel, or still in a private chat after
-    leaving the project. So the roster alone is asked, and the full answer of
-    ``may_read_project`` is paid only for the seats the project roster and its
-    owner leave unexplained. A seat with no handle is nobody and reads nothing.
+    leaving the project. So the roster alone is asked, and ``may_read_project``
+    is paid only for the seats the project roster and its owner leave
+    unexplained — asked once for all of them (:func:`may_read_project_many`),
+    not once per seat, because the roster's length is the room's to choose and
+    the answer's cost must not be. A seat with no handle is nobody and reads
+    nothing.
     """
     seats = [
         m.member_handle
@@ -105,12 +208,13 @@ async def outsiders_reading(
     if not unexplained:
         return []
     agents = await IdentityService(session).agents_among(unexplained)
-    return [
-        handle
-        for handle in unexplained
-        if handle not in agents
-        and not await may_read_project(session, project_id=project_id, handle=handle)
-    ]
+    people = [handle for handle in unexplained if handle not in agents]
+    if not people:
+        return []
+    readable = await _may_read_project_many(
+        session, project, handles=people, agents=agents
+    )
+    return [handle for handle in people if not readable[handle]]
 
 
 async def may_read_topic(
