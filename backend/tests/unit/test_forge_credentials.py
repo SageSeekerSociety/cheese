@@ -163,7 +163,7 @@ def test_github_relay_receives_platform_credential_only(cli, monkeypatch, capsys
 
 
 @pytest.mark.parametrize("enabled", [True, False])
-def test_commit_requester_credit_does_not_replace_agent_author(
+def test_crediting_the_owner_does_not_replace_the_agent_author(
     cli, monkeypatch, tmp_path, enabled
 ):
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
@@ -177,9 +177,7 @@ def test_commit_requester_credit_does_not_replace_agent_author(
         lambda *_: {
             "data": {
                 "room_id": "room",
-                "coauthors": ["Requester <requester@example.invalid>"]
-                if enabled
-                else [],
+                "coauthors": ["Owner <owner@example.invalid>"] if enabled else [],
             }
         },
     )
@@ -208,5 +206,5 @@ def test_commit_requester_credit_does_not_replace_agent_author(
         ["git", "log", "-1", "--format=%an <%ae>%n%B"], text=True
     )
     assert committed.startswith("Agent <agent@example.invalid>\n")
-    assert committed.count("Co-authored-by: Requester") == int(enabled)
+    assert committed.count("Co-authored-by: Owner") == int(enabled)
     assert committed.count("Co-authored-by: Contributor") == 1
