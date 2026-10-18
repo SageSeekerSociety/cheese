@@ -15,7 +15,7 @@ export const COMMON_ENTRIES: CatalogEntry[] = [
     id: 'user-ref',
     title: 'UserRef',
     about:
-      '句子里提到的一个人：画成名字引用，浅色 chip、不带 @（带 @ 的实心 chip 只留给真的通知到人的那一处）。给了去处才可点。',
+      '句子里提到的一个人：画成名字引用，不带 @、也不给底（带 @ 的实心 chip 只留给真的通知到人的那一处）。给了去处才可点。',
     file: 'src/components/common/UserRef.vue',
     component: UserRef,
     needs: [],

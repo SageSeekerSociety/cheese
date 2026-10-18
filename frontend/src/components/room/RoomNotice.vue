@@ -156,7 +156,7 @@ const showRetry = computed(
 const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
 const environmentAt = computed(() => environmentTarget(props.block, props.projectId))
 
-// 提示里的人只是被提到（浅色 chip、不带 @）；这件事同时叫醒的那一位（交给它的 AI 队友、
+// 提示里的人只是被提到（名字引用、不带 @）；这件事同时叫醒的那一位（交给它的 AI 队友、
 // 被派去修合并后检查的那一位）才是带 @ 的实心 chip（lib/noticeText 的 noticeNotified）。
 const refs = computed(() => ({ ...props.refs, notified: noticeNotified(props.block) }))
 

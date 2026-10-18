@@ -1410,13 +1410,16 @@ button:not(.v-btn) {
   background: var(--accent-press);
 }
 /* 只是提到他的那颗不给底：主色橙直接落在消息底上（浅色 #f57f17 上 2.7:1，深色 #ffa733 上 8.0:1）。
-   悬停才浮出淡琥珀，看得出这里点得动。 */
+   悬停改成加一道下划线，不换底色——这颗字是亮橙，任何比消息底更暖的浅底都会把它压淡
+   （--accent-wash 上只剩 2.4:1），下划线是不动对比度的那个「点得动」的信号。 */
 .name-ref {
   color: var(--accent);
   background: transparent;
 }
 .name-ref:hover {
-  background: color-mix(in srgb, var(--accent) 18%, var(--accent-wash));
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .mention:is(.file-ref, .topic-ref) {
   color: var(--ink);
@@ -1433,12 +1436,13 @@ button:not(.v-btn) {
   cursor: default;
 }
 /* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。
-   悬停也不变色——底色去掉以后，这一下亮起来的淡琥珀就成了「点得动」的假信号。 */
+   悬停什么也不加——不给它下划线，也别亮出底色，那两种都是「点得动」的假信号。 */
 .name-ref--static {
   cursor: default;
 }
 .name-ref--static:hover {
   background: transparent;
+  text-decoration: none;
 }
 /* 文件 chip 前那个 mdi 图标。 */
 .file-ref__icon {
