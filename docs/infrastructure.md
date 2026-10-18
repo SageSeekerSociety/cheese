@@ -413,30 +413,34 @@ auto-delete on merge). Every PR lands as one squashed commit.
 
 `main` requires the GitHub Actions check `CI required` and the
 [Main CI and merge queue ruleset](https://github.com/SageSeekerSociety/cheese/rules/23778889).
-The ruleset has no bypass actors. Add a green PR through GitHub's merge queue UI
-or the GraphQL `enqueuePullRequest` mutation. Repository auto-merge is enabled
-so `gh pr merge` can request queue entry while required checks are pending.
-The queue tests its changes against the latest main and preceding queued
-changes before merging.
+The ruleset has no bypass actors and carries only the required status check: it
+has no merge-queue rule, so a green PR merges directly (squash) and repository
+auto-merge is enabled so `gh pr merge` can land it.
 
-`.github/workflows/required-ci.yml` runs on both `pull_request` and `merge_group`.
-It calls the existing suites selected by `.github/scripts/required-ci-paths.json`.
-Documentation-only changes run repository guards. Failed scope detection, failed
-or cancelled selected suites, and unexpected skips fail `CI required`. A draft PR
-runs the fast tier instead, aggregated by a separate job named
-`CI required (draft quick)`; both aggregating job names are literals in the
-workflow, so a cancelled run still shows its name and not its expression. The
-full-tier job checks this repo's commit titles with
-`.github/scripts/check-commit-title.py`:
-the PR title on a pull request, and every squash commit about to land in the
-merge queue. Remote
-execution acceptance remains advisory pending the stability target in #1279; the
-MCP latest-version canary runs on schedule or manual dispatch.
+`.github/workflows/required-ci.yml` runs on `pull_request`, on a `push` to main,
+and on `merge_group`. It calls the existing suites selected by
+`.github/scripts/required-ci-paths.json`. Documentation-only changes run
+repository guards. Failed scope detection, failed or cancelled selected suites,
+and unexpected skips fail `CI required`. A draft PR runs the fast tier instead,
+aggregated by a separate job named `CI required (draft quick)`; both aggregating
+job names are literals in the workflow, so a cancelled run still shows its name
+and not its expression.
 
-Queue settings: four concurrent merge-group builds, ALLGREEN, squash merge, one
-to five PRs per merge, no minimum-batch wait, and a 60-minute check-response timeout.
-That timeout bounds a stalled queue; the feedback-time targets remain those in
-#1279.
+A main push is the post-submit gate. Its scope base is `refs/heads/main-green`,
+the last commit the gate passed (`main-green` in the workflow moves it after a
+green run and leaves it after a red one), so one run covers every commit that
+landed since — including a commit whose own run a newer push superseded while it
+was queued. The push runs join one fixed concurrency group with
+`cancel-in-progress: false`, which is what keeps one run executing and one
+waiting. The deploy gate (`deploy/check-auto-deploy.py`) accepts that push run,
+and still accepts a `merge_group` run for the same commit. The full-tier job
+checks this repo's commit titles with `.github/scripts/check-commit-title.py`:
+the PR title on a pull request, the commits in the batch on a main push, and
+every squash commit about to land in a merge queue. Remote execution acceptance
+remains advisory pending the stability target in #1279; the MCP latest-version
+canary runs on schedule or manual dispatch.
+
+The feedback-time targets remain those in #1279.
 
 PRs opened before the gate was installed need a new pull-request event to report
 `CI required`, for example after updating their branch or reopening the PR.

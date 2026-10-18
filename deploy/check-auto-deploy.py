@@ -85,23 +85,34 @@ def workflow_runs(repository: str, workflow: str, candidate: str) -> list[dict]:
         page += 1
 
 
+#: Where one candidate's required evidence comes from, per workflow. A workflow
+#: is satisfied by any one of its routes: Required CI reports the gate on the
+#: push that landed the commit on main, and on a merge-queue entry for the same
+#: commit (the queue squashes onto its base and fast-forwards main to it). The
+#: routes are alternatives, not a list that all must be present: a commit merged
+#: directly has no queue run, and one landed through the queue has no push run.
+REQUIRED_RUNS = (
+    ("build.yml", (
+        ({"push", "workflow_dispatch"}, lambda branch: branch == "main"),
+    )),
+    ("required-ci.yml", (
+        ({"push"}, lambda branch: branch == "main"),
+        ({"merge_group"}, lambda branch: branch.startswith("gh-readonly-queue/main/")),
+    )),
+)
+
+
 def ci_ready(candidate: str, say=print) -> bool:
     """Check the latest build and required-CI attempts for this exact main SHA."""
     if not re.fullmatch(r"[0-9a-f]{40}", candidate):
         raise ValueError("the automatic release must name a full commit SHA")
     repository = os.environ["GITHUB_REPOSITORY"]
     ready = True
-    # Required CI runs once per commit, in the merge queue. The queue squashes
-    # each entry onto its base and fast-forwards main to that same commit, so
-    # the queue run's head SHA is the SHA that lands on main.
-    for workflow, events, on_branch in (
-        ("build.yml", {"push", "workflow_dispatch"}, lambda branch: branch == "main"),
-        ("required-ci.yml", {"merge_group"},
-         lambda branch: branch.startswith("gh-readonly-queue/main/")),
-    ):
+    for workflow, routes in REQUIRED_RUNS:
         runs = [run for run in workflow_runs(repository, workflow, candidate)
-                if run["head_sha"] == candidate and on_branch(run["head_branch"] or "")
-                and run["event"] in events
+                if run["head_sha"] == candidate
+                and any(run["event"] in events and on_branch(run["head_branch"] or "")
+                        for events, on_branch in routes)
                 and run["head_repository"]["full_name"] == repository]
         # A rerun keeps its run ID. Its latest update must supersede an older
         # success, including when another run for the same SHA was created later.
@@ -131,6 +142,28 @@ def ci_ready_settled(candidate: str) -> bool:
         print(f"Reading {candidate}'s runs again in {SETTLE_INTERVAL} s.")
         time.sleep(SETTLE_INTERVAL)
     return True
+
+
+def ci_waiting(candidate: str) -> bool:
+    """Whether Required CI for this commit is still to come rather than failed.
+
+    A main push runs the gate after the commit lands, so for a few minutes the
+    only honest reading is "not yet". A cancelled run is that too: the batched
+    push runs share one concurrency group, so a newer push cancels a run that
+    was still queued, and the newer commit's run covers both. The workflow is
+    triggered again by that run's completion, so nothing has to hold here.
+    """
+    repository = os.environ["GITHUB_REPOSITORY"]
+    runs = [run for run in workflow_runs(repository, "required-ci.yml", candidate)
+            if run["head_sha"] == candidate and run["event"] == "push"
+            and (run["head_branch"] or "") == "main"
+            and run["head_repository"]["full_name"] == repository]
+    if not runs:
+        return False
+    if any(run["status"] != "completed" for run in runs):
+        return True
+    latest = max(runs, key=lambda run: (run["updated_at"], run["id"]))
+    return latest["conclusion"] == "cancelled"
 
 
 def newer_on_main(candidate: str) -> list[str]:
@@ -259,12 +292,17 @@ def main() -> None:
         return
     if sys.argv[1] == "--ci-only":
         ready = ci_ready_settled(sys.argv[2])
+        waiting = not ready and ci_waiting(sys.argv[2])
         newer = superseded_by(sys.argv[2]) if ready else ""
         if newer:
             print(f"Not deploying {sys.argv[2]}: {newer}, newer on main, has its images and Required CI, "
                   "and its own run releases both.")
+        if waiting:
+            print(f"Not deploying {sys.argv[2]} yet: its Required CI run on main has not finished; "
+                  "that run's completion releases it.")
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-            output.write(f"ready={str(ready).lower()}\nsuperseded={newer}\n")
+            output.write(f"ready={str(ready).lower()}\nsuperseded={newer}\n"
+                         f"waiting={str(waiting).lower()}\n")
         return
     rebuilt = sys.argv[1] == "--rebuilt"
     candidate = sys.argv[2] if rebuilt else sys.argv[1]
