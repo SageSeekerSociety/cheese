@@ -19,7 +19,8 @@ from collections.abc import Collection, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from sqlalchemy import Uuid, column, select, table
+from sqlalchemy import Uuid, bindparam, column, func, select, table, union_all
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall
@@ -195,14 +196,31 @@ async def moving_topics(
     # 的一张部分索引（`ix_agent_turns_open`），回来之后再在内存里挑出属于这些话题的。
     # 落在活上的轮次顺手带回那件活的房间：库里这些开着的轮次是全站的，大多不在这
     # 批房间里，另拿它们去 `tasks` 查一趟房间，次数就看别的项目此刻有没有在跑了。
+    #
+    # 这个进程手里在跑、库里还没有那一行的对话也在这同一条语句里问：一轮刚起、还
+    # 没落库的那一下只有进程自己知道它在跑，而它归哪个房间仍要问 `tasks`。分开写
+    # 就是一次只在「此刻真有一轮在跑」时才发生的额外往返 —— 列表接口的 SQL 条数
+    # 于是随别的项目在不在跑而变（`test_topic_list_batches` 的 `_ALL_TASKS_SELECT`）。
+    # 在跑的那几个对话摊成行，和开着的轮次一起读回来，条数就是恒定的。
+    running_param = bindparam("running_conversations", list(running), type_=ARRAY(Uuid))
+    this_process = (
+        func.unnest(running_param)
+        .table_valued(column("id", Uuid))
+        .render_derived(name="running_conversations")
+    )
     arrived = (
         await db.execute(
-            select(AgentTurn.conversation_id, Task.room_id)
-            .outerjoin(Task, Task.id == AgentTurn.conversation_id)
-            .where(
-                AgentTurn.stopped_at.is_(None),
-                AgentTurn.delivered_at.is_not(None),
-                AgentTurn.started_at >= now - lookback,
+            union_all(
+                select(AgentTurn.conversation_id, Task.room_id)
+                .outerjoin(Task, Task.id == AgentTurn.conversation_id)
+                .where(
+                    AgentTurn.stopped_at.is_(None),
+                    AgentTurn.delivered_at.is_not(None),
+                    AgentTurn.started_at >= now - lookback,
+                ),
+                select(this_process.c.id, Task.room_id)
+                .select_from(this_process)
+                .outerjoin(Task, Task.id == this_process.c.id),
             )
         )
     ).all()
@@ -210,17 +228,6 @@ async def moving_topics(
         if conversation is not None and room_id in mine:
             inner[conversation] = room_id
     active = set(running) | {c for c, _ in arrived if c is not None}
-    # 只有这个进程手里在跑、库里还没那一行的，才另查它是不是这批房间的活。
-    unknown = [
-        c
-        for c in set(running) - {c for c, _ in arrived}
-        if c not in mine and c not in inner
-    ]
-    if unknown:
-        stmt = select(Task.id, Task.room_id).where(Task.id.in_(unknown))
-        for task_id, room_id in (await db.execute(stmt)).all():
-            if room_id in mine:
-                inner[task_id] = room_id
     moving: set[uuid.UUID] = set()
     for conversation in active:
         if conversation in mine:

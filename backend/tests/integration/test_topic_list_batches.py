@@ -32,6 +32,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import event
 
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import threads_of_rooms, threads_still_threads
 from app.domain.event_author import AuthorType
@@ -151,17 +152,19 @@ def _count(statements: list[str], pattern: re.Pattern[str]) -> int:
     return sum(1 for s in statements if pattern.search(s))
 
 
-def _seed_populated_project(client) -> tuple[str, list[str]]:
+def _seed_populated_project(client) -> tuple[str, list[str], str]:
     """A project with four channels, each holding 支线, own tasks, others'
-    tasks, acceptance cards, and open questions."""
+    tasks, acceptance cards, and open questions. Also returns one of those
+    tasks' ids, for seeding a turn this process is running on it."""
     pid = post_project(client, json={"name": "Batched list"}, owner="alice").json()[
         "data"
     ]["id"]
     for handle in ("bob", "carol"):
         join_project_team(client, pid, handle)
 
-    async def _seed(proj_uuid: uuid.UUID) -> list[str]:
+    async def _seed(proj_uuid: uuid.UUID) -> tuple[list[str], str]:
         seeded_rooms: list[str] = []
+        first_task = ""
         async with client.test_factory() as s:
             topics_svc = TopicService(s)
             tasks_svc = TaskService(s)
@@ -209,6 +212,8 @@ def _seed_populated_project(client) -> tuple[str, list[str]]:
                     owner_handle="bob",
                     created_by="bob",
                 )
+                if not first_task:
+                    first_task = str(mine_task.id)
                 for task in (mine_task, other_task):
                     await cards_repo.add(
                         topic_id=topic.id,
@@ -238,9 +243,10 @@ def _seed_populated_project(client) -> tuple[str, list[str]]:
                     content="进展正常",
                 )
             await s.commit()
-        return seeded_rooms
+        return seeded_rooms, first_task
 
-    return pid, client.portal.call(_seed, uuid.UUID(pid))
+    rooms, task_id = client.portal.call(_seed, uuid.UUID(pid))
+    return pid, rooms, task_id
 
 
 def _turn_running_elsewhere(client) -> None:
@@ -280,12 +286,29 @@ def _turn_running_elsewhere(client) -> None:
     client.portal.call(_insert)
 
 
+def _turn_running_here(client, conversation_id: uuid.UUID) -> None:
+    """A turn this process is running on ``conversation_id`` whose interval row
+    has not been written yet: only the in-process broker knows it, and the list
+    still has to place it in its room — without a `tasks` lookup that would
+    appear only on the requests where such a turn happens to be running."""
+    client.portal.call(
+        get_broker().publish,
+        str(conversation_id),
+        {
+            "type": "turn_started",
+            "turn_id": str(uuid.uuid4()),
+            "agent": "cheese-seat-here",
+        },
+    )
+
+
 def test_topic_list_batches_threads_cards_tasks_and_questions_once(client):
     """Across a populated project, `GET /topics?project_id=` reads `topics`,
     `threads`, task `accept_cards`, underway `tasks`, and `awaiting_an_answer`
     `blocks` once each, while preserving the full response field set."""
-    pid, room_ids = _seed_populated_project(client)
+    pid, room_ids, task_id = _seed_populated_project(client)
     _turn_running_elsewhere(client)
+    _turn_running_here(client, uuid.UUID(task_id))
     headers = session_auth_headers("alice")
 
     with counting_sql(client) as seen:
