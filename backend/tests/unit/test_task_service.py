@@ -714,7 +714,7 @@ class TestTaskSubmissionService:
         submission_repo.count_submissions.return_value = 1
 
         entry_repo = AsyncMock()
-        entry_repo.list_by_submission_id.return_value = [entry]
+        entry_repo.list_by_submission_ids.return_value = {200: [entry]}
 
         review_repo = AsyncMock()
 
@@ -733,6 +733,58 @@ class TestTaskSubmissionService:
         assert total == 1
         assert len(items) == 1
         assert items[0]["id"] == 200
+
+    @pytest.mark.anyio
+    async def test_list_submissions_reads_a_page_in_two_batches(self):
+        """A page of N submissions asks for entries and reviews once each."""
+        submissions = [
+            _make_submission(id=200 + i, membership_id=50 + i) for i in range(3)
+        ]
+        memberships = [_make_membership(id=50 + i) for i in range(3)]
+
+        membership_repo = AsyncMock()
+        membership_repo.list_memberships_for_task.return_value = memberships
+
+        submission_repo = AsyncMock()
+        submission_repo.list_submissions.return_value = submissions
+        submission_repo.count_submissions.return_value = len(submissions)
+
+        entry_repo = AsyncMock()
+        entry_repo.list_by_submission_ids.return_value = {
+            200: [_make_entry(task_submission_id=200)],
+            201: [],
+            202: [_make_entry(id=302, task_submission_id=202)],
+        }
+
+        review_repo = AsyncMock()
+        review_repo.get_by_submission_ids.return_value = {
+            200: _make_review(id=400, submission_id=200),
+        }
+
+        svc = self._build_service(
+            submission_repo=submission_repo,
+            entry_repo=entry_repo,
+            review_repo=review_repo,
+            membership_repo=membership_repo,
+        )
+
+        items, total = await svc.list_submissions(
+            task_id=1,
+            limit=20,
+            query_review=True,
+        )
+
+        assert total == 3
+        assert [item["id"] for item in items] == [200, 201, 202]
+        assert len(items[0]["content"]) == 1
+        assert items[1]["content"] == []
+        assert items[0]["review"]["reviewed"] is True
+        assert items[1]["review"]["reviewed"] is False
+
+        entry_repo.list_by_submission_ids.assert_awaited_once_with([200, 201, 202])
+        review_repo.get_by_submission_ids.assert_awaited_once_with([200, 201, 202])
+        entry_repo.list_by_submission_id.assert_not_awaited()
+        review_repo.get_by_submission_id.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_submission_dto_file_entry(self):
@@ -1615,7 +1667,9 @@ class TestTaskSubmissionServiceAdditional:
         submission_repo.count_submissions.return_value = 1
 
         entry_repo = AsyncMock()
+        entry_repo.list_by_submission_ids.return_value = {}
         review_repo = AsyncMock()
+        review_repo.get_by_submission_ids.return_value = {}
 
         svc = self._build_service(
             submission_repo=submission_repo,
@@ -1645,10 +1699,10 @@ class TestTaskSubmissionServiceAdditional:
         submission_repo.count_submissions.return_value = 1
 
         entry_repo = AsyncMock()
-        entry_repo.list_by_submission_id.return_value = [entry]
+        entry_repo.list_by_submission_ids.return_value = {200: [entry]}
 
         review_repo = AsyncMock()
-        review_repo.get_by_submission_id.return_value = review
+        review_repo.get_by_submission_ids.return_value = {200: review}
 
         svc = self._build_service(
             submission_repo=submission_repo,
@@ -1667,4 +1721,4 @@ class TestTaskSubmissionServiceAdditional:
         assert len(items) == 1
         assert items[0]["review"]["reviewed"] is True
         assert items[0]["review"]["detail"]["score"] == 90
-        review_repo.get_by_submission_id.assert_awaited_once_with(200)
+        review_repo.get_by_submission_ids.assert_awaited_once_with([200])
