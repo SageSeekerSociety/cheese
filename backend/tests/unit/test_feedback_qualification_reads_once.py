@@ -29,12 +29,11 @@ def asked(monkeypatch):
     async def platform_projects(_session):
         return set(PROJECTS)
 
-    class Projects:
-        def __init__(self, _session):
-            pass
+    class Session:
+        """Hands back a project row for every platform project the select asks for."""
 
-        async def get_by_ids(self, ids):
-            return {i: SimpleNamespace(id=i) for i in ids}
+        async def scalars(self, _statement):
+            return [SimpleNamespace(id=i) for i in PROJECTS]
 
     async def standings_in(_session, projects, _handle):
         calls.append("standings_in")
@@ -45,18 +44,17 @@ def asked(monkeypatch):
         return project_id in readable
 
     monkeypatch.setattr(claims, "platform_projects", platform_projects)
-    monkeypatch.setattr(claims, "ProjectRepository", Projects, raising=False)
     monkeypatch.setattr(claims, "standings_in", standings_in, raising=False)
     monkeypatch.setattr(claims, "may_read_project", may_read_project, raising=False)
-    return calls, readable
+    return calls, readable, Session()
 
 
 @pytest.mark.parametrize(
     "mine", [[PROJECTS[-1]], [], PROJECTS[:2]], ids=["last-only", "none", "first-two"]
 )
 async def test_asks_once_and_answers_like_project_by_project(asked, mine):
-    calls, readable = asked
+    calls, readable, session = asked
     readable.update(mine)
-    got = await claims.works_on_platform(None, "alice", room_project_id=None)
+    got = await claims.works_on_platform(session, "alice", room_project_id=None)
     assert calls == ["standings_in"]
     assert got is _per_project(readable)

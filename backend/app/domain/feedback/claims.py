@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.project_roles import standings_in
 from app.domain.docs_site.library import platform_projects
 from app.domain.feedback.models import Feedback
-from app.domain.project.repositories import ProjectRepository
+from app.domain.project.models import Project
 
 #: The timeline note on the 处理中 step a claim records.
 CLAIMED_NOTE = "已领取"
@@ -88,8 +88,11 @@ async def works_on_platform(
         return True
     # All the platform's projects in one read, not one `may_read_project` per
     # project: the answer is the one `standing` gives project by project.
-    found = await ProjectRepository(session).get_by_ids(
-        list(await platform_projects(session))
+    ids = await platform_projects(session)
+    projects = (
+        list(await session.scalars(select(Project).where(Project.id.in_(ids))))
+        if ids
+        else []
     )
-    held = await standings_in(session, list(found.values()), handle)
+    held = await standings_in(session, projects, handle)
     return any(seat is not None for seat in held.values())
