@@ -15,7 +15,17 @@ the page said where a task came from only at the very bottom, under the whole
 document, and a task a teammate made in the main line said nothing at all.
 """
 
+import asyncio
+import re
+import uuid
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import event
+
+from app.api.task_origin import ASKED_WITHIN, asked_in
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from tests.integration.conftest import (
     post_message,
     post_project,
@@ -133,3 +143,81 @@ def test_a_task_someone_created_on_its_own_quotes_nothing(client):
     ).json()["data"]["id"]
 
     assert _source(client, task) is None
+
+
+#: Reads of the two tables that answer "is this handle an agent" — ``user``
+#: (the handle) and ``agent_bindings`` (which users carry one).
+_IDENTITY_READ = re.compile(r'FROM\s+"?user"?\b|FROM\s+agent_bindings\b')
+
+
+def _seed_asked_window(client, project: str, thread: str, seat: str) -> str:
+    """A full window of messages handed to ``seat`` in ``thread``, oldest first.
+
+    The newest ``ASKED_WITHIN - 1`` of them are the teammate's own; the oldest is
+    the person's, so only a scan of the whole window can tell that apart — the
+    answer sits at the far end of it. Returns the person's message id.
+    """
+    asked = uuid.uuid4()
+
+    async def write() -> None:
+        base = datetime.now(UTC) - timedelta(minutes=5)
+        async with client.test_factory() as session:
+            for i in range(ASKED_WITHIN):
+                session.add(
+                    Block(
+                        id=asked if i == 0 else uuid.uuid4(),
+                        project_id=uuid.UUID(project),
+                        conversation_id=uuid.UUID(thread),
+                        kind=BlockKind.message,
+                        author_type=AuthorType.participant,
+                        author="alice" if i == 0 else seat,
+                        content=f"消息 {i}",
+                        meta={"agent_recipient": {"handle": seat, "mentioned": True}},
+                        created_at=base + timedelta(seconds=i),
+                    )
+                )
+            await session.commit()
+
+    asyncio.run(write())
+    return str(asked)
+
+
+def test_the_asking_message_is_found_with_one_identity_question_per_window(client):
+    """A window handed to the teammate costs one identity lookup, not one per
+    message.
+
+    Each ``is_agent`` is two round trips, so the loop this file used to run
+    asked twenty times to learn what one batched question answers. The answer
+    must be unchanged — the person's message at the far end of the window, past
+    nineteen of the teammate's own — and the identity tables must be read at
+    most twice: the handles once, and which of them carry a binding once.
+    """
+    project, channel, seat = _channel(client)
+    root = post_message(client, channel, "alice", {"content": "对话栏有问题"})
+    thread = _thread(client, root["id"])
+    asked = _seed_asked_window(client, project, thread, seat)
+
+    async def read() -> str | None:
+        async with client.test_request_factory() as session:
+            block = await asked_in(session, uuid.UUID(thread), seat, main_line=False)
+            return None if block is None else str(block.id)
+
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = client.test_app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        found = client.portal.call(read)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    assert found == asked
+    identity_reads = [s for s in statements if _IDENTITY_READ.search(s)]
+    assert len(identity_reads) <= 2, (
+        f"a window of {ASKED_WITHIN} messages cost {len(identity_reads)} "
+        "identity reads; the per-message agent check is back.\n"
+        + "\n".join(identity_reads)
+    )
