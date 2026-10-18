@@ -92,6 +92,7 @@ class BlockRepository(
         meta: dict | None = None,
         created_at: datetime | None = None,
         own_output: bool = False,
+        block_id: uuid.UUID | None = None,
     ) -> Block:
         # Cheese-side handlers don't pass turn_id explicitly; fall back to the
         # ambient turn id set from the X-Cheese-Turn header (R4).
@@ -146,6 +147,11 @@ class BlockRepository(
             turn_id=turn_id,
             mime_type=mime_type,
             meta=meta,
+            # A caller that already knows the row's id hands it over: the
+            # participant send writes `turn_id = <this block's own id>` in the
+            # same INSERT, and it can only know that id before the flush. Left
+            # out, the column default mints one, exactly as before.
+            **({"id": block_id} if block_id is not None else {}),
         )
         # Timeline order is `created_at`, so a caller that knows WHEN the thing
         # happened must be able to say so. The default (now) is right for
@@ -157,7 +163,10 @@ class BlockRepository(
             block.created_at = created_at
         self._session.add(block)
         await self._session.flush()
-        await self._session.refresh(block)
+        # No refresh: `eager_defaults` puts the INSERT's RETURNING values
+        # (`seq`, from `FetchedValue`) on the row at flush, and `created_at` /
+        # `updated_at` are Python-side defaults. Re-reading the row here bought
+        # nothing and cost a whole-row SELECT on every block written.
         return block
 
     async def get(self, block_id: uuid.UUID) -> Block | None:

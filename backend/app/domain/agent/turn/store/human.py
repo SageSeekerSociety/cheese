@@ -173,6 +173,12 @@ async def persist_human_message(
             admission = await refuse(
                 session, place, prepared, recipient, author, reply_author
             )
+            # A participant's own message groups under itself when the send
+            # carries no ambient turn: `turn_id` is what puts a send's blocks
+            # together. Mint that id here so the self-reference is one INSERT
+            # column — assigning it after the flush cost an UPDATE and a
+            # whole-row read to resynchronise.
+            self_grouping_id = uuid.uuid4() if attribution_id is None else None
             user_block = await append_output(
                 session,
                 project_id=topic.project_id,
@@ -181,7 +187,8 @@ async def persist_human_message(
                 author_type=AuthorType.participant,
                 content=content,
                 kind=BlockKind.message,
-                turn_id=turn_id,
+                block_id=self_grouping_id,
+                turn_id=self_grouping_id or turn_id,
                 reply_to=reply_uuid,  # B3: thread under another
                 # The sender's own id for this send, echoed straight back on
                 # the broadcast. A client that showed the message the instant
@@ -200,7 +207,6 @@ async def persist_human_message(
             )
             if attribution_id is None:
                 attribution_id = user_block.id
-                user_block.turn_id = attribution_id
             answered = await record_effects(
                 session,
                 place,
