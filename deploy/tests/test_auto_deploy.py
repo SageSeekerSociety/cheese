@@ -679,11 +679,16 @@ class CandidateCI(unittest.TestCase):
 
     def test_the_drift_job_repairs_the_same_shared_workspace(self):
         # drift runs deploy/ scripts from the same checkout on the same runner;
-        # it failed on the same missing file (09:53).
+        # it failed on the same missing file (09:53). Its own copy of the step
+        # has to do the same work, not just carry the same name.
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-drift.yml").read_text())
         steps = workflow["jobs"]["drift"]["steps"]
         self.assertEqual(steps[0]["name"], "Repair a sparse workspace")
         self.assertTrue(steps[1].get("uses", "").startswith("actions/checkout@"))
+        body = steps[0]["run"]
+        for fragment in ("core.sparseCheckout", "git sparse-checkout disable",
+                         "info/sparse-checkout"):
+            self.assertIn(fragment, body)
 
     def test_the_repair_step_actually_restores_a_sparse_checkout(self):
         # Behavioural, against a real repository: leave it in the shape
@@ -708,6 +713,13 @@ class CandidateCI(unittest.TestCase):
             git("sparse-checkout", "set", "--no-cone", "deploy")
             self.assertTrue((repo / "deploy" / "keep.sh").exists())
             self.assertFalse((repo / "outside.txt").exists(), "fixture is not sparse")
+            # Prove the fixture is really sparse by the same signal the repair
+            # has to remove — the config key alone lives at a scope that the
+            # fixture does not write.
+            before = subprocess.run(["git", "sparse-checkout", "list"], cwd=repo,
+                                    capture_output=True, text=True)
+            self.assertEqual(before.returncode, 0)
+            self.assertIn("deploy", before.stdout)
 
             env = {**os.environ, "GITHUB_WORKSPACE": str(repo)}
             proc = subprocess.run(["bash", "-e", "-c", body], env=env,
@@ -715,9 +727,9 @@ class CandidateCI(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue((repo / "outside.txt").exists(),
                             "the repair left the workspace sparse")
-            config = subprocess.run(["git", "config", "--local", "--get", "core.sparseCheckout"],
-                                    cwd=repo, capture_output=True, text=True)
-            self.assertNotEqual(config.returncode, 0, "sparse config survived the repair")
+            after = subprocess.run(["git", "sparse-checkout", "list"], cwd=repo,
+                                   capture_output=True, text=True)
+            self.assertNotEqual(after.returncode, 0, "the workspace is still sparse")
             info = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=repo,
                                   capture_output=True, text=True, check=True).stdout.strip()
             self.assertFalse((repo / info / "info" / "sparse-checkout").exists())

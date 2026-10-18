@@ -613,6 +613,11 @@ jobs:
         # curl, not gh: the cheese-ci boxes have no gh (same reason the title
         # step below spells its calls out in curl).
         #
+        # PATCH only updates an existing ref, so when the anchor is gone (deleted
+        # by hand, or the very first landing on a repository that never had one)
+        # it answers 422 and the anchor would never come back. POST creates it —
+        # no fast-forward question to ask about a ref that does not exist.
+        #
         # A refusal here must not fail the run. The deploy gate reads this run's
         # conclusion, so a network error on this one call would hold a commit
         # off dev — while an anchor that did not move is safe by construction:
@@ -621,12 +626,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if code="$(curl -sS --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
-              -X PATCH -o /dev/null -w '%{http_code}' \
+          update_ref() {
+            curl -sS --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
+              -o /dev/null -w '%{http_code}' \
               -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-              --data "{\"sha\":\"$GITHUB_SHA\",\"force\":false}" \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/heads/main-green")" \
+              "$@"
+          }
+          url="https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/heads/main-green"
+          moved=""
+          if code="$(update_ref -X PATCH --data "{\"sha\":\"$GITHUB_SHA\",\"force\":false}" "$url")" \
              && [ "${code:0:1}" = 2 ]; then
+            moved=1
+          elif code="$(update_ref -X POST \
+                 --data "{\"ref\":\"refs/heads/main-green\",\"sha\":\"$GITHUB_SHA\"}" \
+                 "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs")" \
+             && [ "${code:0:1}" = 2 ]; then
+            moved=1
+          fi
+          if [ -n "$moved" ]; then
             echo "Main green anchor moved to $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi

@@ -1331,11 +1331,45 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertIn("PATCH", args, "the anchor must move through the server")
             self.assertIn("https://api.github.com/repos/owner/repo/git/refs/heads/main-green",
                           args)
+            # Without the token the API answers 401 and the step stays green
+            # while the anchor never moves — the failure this change is about.
+            self.assertIn("Authorization: Bearer x", args)
+            self.assertIn("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}", job["text"])
             # The server decides whether this is a fast-forward; a force here
             # would let a rewritten main hide commits from the next batch.
             payload = "\n".join(args)
             self.assertIn('"force":false', payload)
             self.assertIn(f'"sha":"{"a" * 40}"', payload)
+
+    def test_a_missing_anchor_is_created_rather_than_left_missing(self):
+        # PATCH only updates an existing ref: with the anchor deleted, 422 is
+        # all it can answer, and an anchor that never comes back sends every
+        # later batch to the full scope — and a candidate covered by no batch
+        # can never be released. The POST creates it.
+        job = jobs_of(self.text)["mark-green"]
+        body = run_body_containing(job["text"], "refs/heads/main-green")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "curl", (
+                'printf "%s\\n" "$@" >> "$CURL_ARGS"; echo "---" >> "$CURL_ARGS"\n'
+                'case "$*" in *"-X PATCH"*) echo 422;; *) echo 201;; esac\n'
+            ))
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                   "GITHUB_SHA": "a" * 40, "CURL_ARGS": str(tmp / "args"),
+                   "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("::warning::", proc.stdout)
+            self.assertIn("a" * 40, (tmp / "summary").read_text())
+            calls = (tmp / "args").read_text()
+            self.assertIn("-X\nPATCH", calls)
+            self.assertIn("-X\nPOST", calls)
+            self.assertIn('"ref":"refs/heads/main-green"', calls)
+            self.assertIn(f'"sha":"{"a" * 40}"', calls)
 
     def test_a_failed_anchor_move_does_not_fail_the_run(self):
         # The deploy gate reads this run's conclusion, so one network error on
