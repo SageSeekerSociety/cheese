@@ -3505,12 +3505,15 @@ def test_a_catch_up_sweep_still_asks_about_a_quiet_branch(client, sweeping):
     assert opened["draft"] is True
 
 
-def test_a_zero_activity_window_sweeps_every_open_branch(client, sweeping, monkeypatch):
-    """窗口配成 0 就是不设窗口 —— 顺带钉住扫的是这个设置，不是写死的数。"""
+@pytest.mark.parametrize("window", [0, -3600])
+def test_a_window_of_zero_or_less_sweeps_every_open_branch(
+    client, sweeping, monkeypatch, window
+):
+    """窗口配成 0 或负数就是不设窗口 —— 顺带钉住扫的是这个设置，不是写死的数。"""
     from app.core.config import settings
     from app.domain.room_task.models import Task
 
-    monkeypatch.setattr(settings, "draft_pr_sweep_activity_window_s", 0)
+    monkeypatch.setattr(settings, "draft_pr_sweep_activity_window_s", window)
     _, tid = _room_with_work(client)
     task_id = _uuid.UUID(str(delivery_task_id(client, tid)))
 
