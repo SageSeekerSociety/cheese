@@ -774,15 +774,30 @@ class CiFastTest(unittest.TestCase):
             time.monotonic() - started, 15, "the wall clock did not fire"
         )
 
-    # --- an unknown path widens the scope; it must not shrink to guards-only
-    def test_unknown_path_widens_scope(self):
+    # --- an unknown path is recorded and judged by the guards/static tier; it
+    # must not pull in the product suites (that made the whole run unknown)
+    def test_unknown_path_runs_guards_only(self):
         self.write_hooks()
         self.make_base_and_head("strange-dir/thing.xyz")
         proc = self.run_ci_fast()
         self.assertEqual(proc.returncode, 0, proc.stdout)
-        self.assertTrue(FRONTEND_HOOKS & self.ran_hooks())
-        self.assertTrue(BACKEND_HOOKS & self.ran_hooks())
+        self.assertEqual(self.report()["status"], "pass")
+        self.assertTrue(GUARD_HOOKS <= self.ran_hooks())
+        self.assertFalse(FRONTEND_HOOKS & self.ran_hooks())
+        self.assertFalse(BACKEND_HOOKS & self.ran_hooks())
         self.assertIn("strange-dir/thing.xyz", self.report()["unknown_paths"])
+
+    # --- static hooks answer before the pure test tier, so a slow suite cannot
+    # turn their verdict into unknown
+    def test_quick_static_hooks_run_before_the_test_plan(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: order checks", env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        ids = [r["id"] for r in self.report()["ran"]]
+        static = [ids.index(h) for h in ("repo-rules", "action-pins", "scene-ratchet") if h in ids]
+        self.assertEqual(len(static), 3, ids)
+        self.assertLess(max(static), ids.index("frontend-unit"), ids)
 
     # --- prose is not an unknown path: a docs-only diff must not pull in the
     # product suites. The map leaves README.md/AGENTS.md/SKILL.md unnamed, so
@@ -800,15 +815,14 @@ class CiFastTest(unittest.TestCase):
         self.assertTrue(GUARD_HOOKS <= self.ran_hooks())
         self.assertEqual(self.report()["unknown_paths"], [])
 
-    # --- ...but prose alongside a path the map cannot place does not excuse it
-    def test_docs_next_to_an_unknown_path_still_widens(self):
+    # --- ...and prose alongside an unknown path leaves only the path unknown
+    def test_docs_next_to_an_unknown_path_reports_only_the_path(self):
         self.write_hooks()
         self.make_base_and_head("README.md")
         self.commit_file("strange-dir/thing.xyz")
         proc = self.run_ci_fast()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertTrue(FRONTEND_HOOKS & self.ran_hooks())
-        self.assertTrue(BACKEND_HOOKS & self.ran_hooks())
+        self.assertFalse(FRONTEND_HOOKS & self.ran_hooks())
         self.assertEqual(self.report()["unknown_paths"], ["strange-dir/thing.xyz"])
 
     # --- staged + unstaged + untracked all count, and the report proves it
