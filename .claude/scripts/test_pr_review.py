@@ -37,11 +37,16 @@ PR_BIG = "13"
 
 GH = r"""#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
-case "$*" in
-  *.head.sha*) case "$*" in *pulls/8*) echo "$PR8_HEAD" ;; *pulls/9*) echo "$PR9_HEAD" ;;
+head_of() {
+  case "$*" in *pulls/8*) echo "$PR8_HEAD" ;; *pulls/9*) echo "$PR9_HEAD" ;;
     *pulls/10*) echo "$PR10_HEAD" ;; *pulls/11*) echo "$PR11_HEAD" ;;
     *pulls/12*) echo "$PR12_HEAD" ;; *pulls/13*) echo "$PR13_HEAD" ;;
-    *) echo "$PR_HEAD" ;; esac ;;
+    *) echo "$PR_HEAD" ;; esac
+}
+case "$*" in
+  # ready.py reads the head and the draft flag in one call, `[.head.sha, .draft] | @tsv`.
+  *.head.sha*.draft*) printf '%s\t%s\n' "$(head_of "$*")" "${PR_DRAFT:-false}" ;;
+  *.head.sha*) head_of "$*" ;;
   *.base.ref*) echo main ;;
   *--paginate*/commits*)
     case "$*" in *pulls/8*) printf '%s\n' $PR8_COMMITS ;;
@@ -912,8 +917,9 @@ class PrReview(unittest.TestCase):
     GREEN = '{"name": "CI required", "status": "completed", "conclusion": "success", ' \
             '"started_at": "2026-01-01T00:00:00Z"}'
 
-    def ready(self, *args, ci=None):
-        return self.run_script("ready", *args, env_extra={"CI_JSON": self.GREEN if ci is None else ci})
+    def ready(self, *args, ci=None, draft=False):
+        return self.run_script("ready", *args, env_extra={
+            "CI_JSON": self.GREEN if ci is None else ci, "PR_DRAFT": "true" if draft else "false"})
 
     def test_ready_says_可递_when_the_ci_is_green_and_the_review_covers_the_head(self):
         review_md, _ = self.prepare()
@@ -926,6 +932,17 @@ class PrReview(unittest.TestCase):
                 f"可递：head {self.shas[-1][:8]}｜CI required success"
                 f"｜review {self.shas[-1][:8]} 结论 无 blocker/major｜档位 B",
             )
+
+    def test_ready_on_a_draft_reads_the_draft_tier(self):
+        # The draft flag comes from the same `pulls/{n}` call as the head: a stand-in that
+        # dropped it would leave ready with no head at all, so this pins the query's shape.
+        review_md, _ = self.prepare()
+        d, _ = self.post(review_md)
+        draft = self.ready(d, ci=self.GREEN.replace('"CI required"', '"CI required (draft quick)"'),
+                           draft=True)
+        self.assertEqual(draft.returncode, 0, draft.stdout)
+        self.assertIn("｜CI required (draft quick) success｜", draft.stdout.splitlines()[0])
+        self.assertIn("草稿档已绿", draft.stdout)
 
     def test_ready_says_what_is_missing(self):
         review_md, _ = self.prepare()
