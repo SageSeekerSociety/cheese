@@ -124,16 +124,6 @@ CHECKS: tuple[Check, ...] = (
         ("network", "legacy-network"),
     )),
     Check(
-        id="catalog-ratchet",
-        area=SCENES,
-        argv=("python", ".claude/scripts/catalog-ratchet.py", "--json"),
-        rules=(
-            ".claude/scripts/catalog-ratchet.py",
-            ".claude/scripts/frontend_grade.py",
-            ".claude/scripts/ratchet_report.py",
-        ),
-    ),
-    Check(
         id="fe-boundary",
         area=BOUNDARY,
         argv=("node", "scripts/import-boundary-ratchet.mjs", "--json"),
@@ -209,7 +199,6 @@ CHECKS: tuple[Check, ...] = (
         argv=("python", "-m", "pytest", "tests/unit/test_harness_boundary.py", "-q"),
         cwd="backend",
         rules=("backend/tests/unit/test_harness_boundary.py",),
-        probe=("tests/unit/test_harness_boundary.py", "len(_LEDGER)"),
         baseline="_LEDGER",
         ledger=True,
     ),
@@ -260,12 +249,6 @@ CHECKS: tuple[Check, ...] = (
             "frontend/scripts/tsc-ratchet-core.mjs",
             "frontend/scripts/ratchet-report.mjs",
         ),
-    ),
-    Check(
-        id="palette",
-        area=TYPES,
-        argv=("bash", ".claude/scripts/check-repo-rules.sh", "--json"),
-        rules=(".claude/scripts/check-repo-rules.sh",),
     ),
     Check(
         id="fe-contrast",
@@ -600,9 +583,6 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     **{check_id: {
         "frontend/scene-debt-baseline.json": "baseline: exact child, route and network debt sets",
     } for check_id in ("scene-non-a-children", "scene-use-route", "legacy-network")},
-    "catalog-ratchet": {
-        "frontend/catalog-baseline.json": "baseline: the grade-A components not in the catalog yet",
-    },
     "be-contracts": {
         "backend/scripts/__init__.py": (
             "not read: the checker asks whether a package marker exists, and the "
@@ -620,13 +600,6 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     },
     "stylelint-tokens": {
         "frontend/stylelint-baseline.json": "baseline: the frozen token counts",
-    },
-    "palette": {
-        "frontend/palette-baseline.json": "baseline: the frozen colour literals",
-        "AGENTS.md": "subject: the check reads it to judge it, so every edit is the measurement",
-        "backend/sandbox/skills/cheese/SKILL.md": (
-            "subject: the check reads it to judge it, so every edit is the measurement"
-        ),
     },
 }
 

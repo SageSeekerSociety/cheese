@@ -126,7 +126,7 @@ class VisitLimits:
             count = await redis.eval(  # type: ignore[misc]
                 _COUNT, 1, f"docs-visit:h:{visitor}", str(_WINDOW_S)
             )
-        except Exception:  # noqa: BLE001 — an unreachable counter allows
+        except Exception:  # an unreachable counter allows
             logger.warning("docs visit limiter unavailable", exc_info=True)
             return True
         return int(count) <= _PER_HOUR

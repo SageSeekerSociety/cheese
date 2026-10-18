@@ -26,7 +26,7 @@ def fire_on_done(callback: Callable[[], None]) -> None:
     """
     try:
         callback()
-    except Exception:  # noqa: BLE001 — a hook must never break the runner
+    except Exception:  # a hook must never break the runner
         logger.exception("submit on_done hook failed")
 
 

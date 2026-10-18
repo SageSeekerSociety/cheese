@@ -201,7 +201,7 @@ class TaskMembership(Base):
 
 
 class TaskSubmissionSchemaEntry(Base):
-    """Minimal mapping for task_submission_schema table (ElementCollection in Kotlin)."""  # noqa: E501
+    """Minimal mapping for task_submission_schema table (ElementCollection in Kotlin)."""
 
     __tablename__ = "task_submission_schema"
 

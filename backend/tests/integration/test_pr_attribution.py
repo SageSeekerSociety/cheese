@@ -158,9 +158,8 @@ class _FakeClient:
         )
 
 
-def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
-    """A GitHub the platform can push to, plus the set of handles that have
-    actually connected an account (`connected[handle] -> their token`)."""
+def _github_world(monkeypatch) -> None:
+    """A GitHub the platform can push to."""
     from app.domain.repository import forge_files
     from app.domain.review import pr_publish
 
@@ -180,16 +179,10 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
             "commits": [],
         }
 
-    async def _fake_user_token(_session, handle: str) -> str | None:
-        return connected.get(handle)
-
     monkeypatch.setattr(pr_publish, "proposal_client", _fake_proposal_client)
     monkeypatch.setattr(pr_publish, "branch_head", _fake_branch_head)
     monkeypatch.setattr(forge_files, "branch_head", _fake_branch_head)
     monkeypatch.setattr(forge_files, "repository_data", _comparison)
-    monkeypatch.setattr(
-        "app.domain.oauth.services.get_github_user_token_for_handle", _fake_user_token
-    )
 
 
 def _project(client, owner: str) -> tuple[str, str]:
@@ -224,25 +217,12 @@ def _publish(client, pid: str, tid: str, cid: str) -> None:
     )
 
 
-def test_requester_oauth_does_not_change_the_pr_author(client, monkeypatch):
-    """Requester OAuth never replaces the agent identity used to open a PR."""
-    _github_world(monkeypatch, connected={"alice": "gho_alice"})
-
-    pid, root = _project(client, owner="alice")
-    agent = room_agent_seat(client, root)
-    _publish(client, pid, root, _card(client, root))
-
-    [opened] = _FakeClient.opened
-    assert "Requested-by: alice" in opened["body"]
-    assert agent not in opened["body"]
-
-
 def test_the_agent_handle_never_reaches_the_pr_even_when_nobody_connected_github(
     client, monkeypatch
 ):
     """验收 4: alice owns the room but has no GitHub connection. The PR still
     opens — with the App token, as before — and still credits her by handle."""
-    _github_world(monkeypatch, connected={})
+    _github_world(monkeypatch)
 
     pid, root = _project(client, owner="alice")
     agent = room_agent_seat(client, root)
@@ -257,7 +237,7 @@ def test_a_room_with_no_human_owner_still_opens_its_pr(client, monkeypatch):
     """验收 4: an ownerless project has an ownerless room. Nothing to resolve —
     the PR must open anyway rather than raising, and the agent's handle must not
     be what fills the gap."""
-    _github_world(monkeypatch, connected={"alice": "gho_alice"})
+    _github_world(monkeypatch)
 
     p = post_project(client, json={"name": "P"}).json()["data"]
     pid, root = p["id"], p["root_topic_id"]
@@ -278,7 +258,7 @@ def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
 
     走不通的方式是 404：任务不是地点，那个 id 名下没有话题可以递。
     """
-    _github_world(monkeypatch, connected={"alice": "gho_alice"})
+    _github_world(monkeypatch)
 
     _, root = _project(client, owner="alice")
     tid = open_task(client, root)["id"]
@@ -299,7 +279,7 @@ def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
 def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
     """验收 5: creator and owner are the same person, so the answer must be the
     one this path always gave."""
-    _github_world(monkeypatch, connected={"alice": "gho_alice"})
+    _github_world(monkeypatch)
 
     pid, _ = _project(client, owner="alice")
     r = client.post(

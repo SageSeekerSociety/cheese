@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import ssl
 from pathlib import Path
 import subprocess
@@ -817,6 +818,61 @@ exit 0
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("check-auto-deploy.py", result.stderr)
             self.assertFalse(output.exists() and output.read_text())
+
+class MeteringReleasePolicy(unittest.TestCase):
+    def run_release(self, event, rebuilt="", ci_status=0, release_status=0):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        step = next(step for step in workflow["jobs"]["deploy"]["steps"]
+                    if step.get("name") == "Release the verified metering image")
+        shell = shutil.which("bash")
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            for command, status in (("python3", "CI_STATUS"), ("bash", "RELEASE_STATUS")):
+                executable = work / command
+                executable.write_text(
+                    f'#!/bin/sh\nprintf \'%s\\n\' "{command} $*" >> "$CALLS"\nexit "${status}"\n')
+                executable.chmod(0o755)
+            env = {**os.environ, "GITHUB_EVENT_NAME": event,
+                   "PATH": f"{work}:{os.environ['PATH']}", "CALLS": str(work / "calls"),
+                   "CI_STATUS": str(ci_status), "RELEASE_STATUS": str(release_status)}
+            env.pop("REBUILT", None)
+            env.update({key: str(value).replace("${{ inputs.rebuilt }}", rebuilt)
+                        for key, value in step.get("env", {}).items()})
+            result = subprocess.run(
+                [shell, "-eu", "-c", step["run"]], cwd=ROOT, env=env,
+                capture_output=True, text=True, timeout=10)
+            calls = (work / "calls").read_text().splitlines()
+        return result, calls
+
+    def expected_calls(self):
+        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        return [f"python3 deploy/check-auto-deploy.py --require-ci {sha}",
+                f"bash deploy/release-metering-proxy.sh {sha}"]
+
+    def test_manual_release_uses_the_existing_manual_ci_policy(self):
+        result, calls = self.run_release("workflow_dispatch", ci_status=17)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, self.expected_calls()[1:])
+
+    def test_automatic_release_requires_ci_before_metering(self):
+        for status in (0, 17):
+            with self.subTest(ci_status=status):
+                result, calls = self.run_release("workflow_run", ci_status=status)
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assertEqual(calls, self.expected_calls() if status == 0 else self.expected_calls()[:1])
+
+    def test_desktop_rebuild_requires_ci_before_metering(self):
+        for status in (0, 17):
+            with self.subTest(ci_status=status):
+                result, calls = self.run_release("workflow_dispatch", rebuilt="b" * 40, ci_status=status)
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assertEqual(calls, self.expected_calls() if status == 0 else self.expected_calls()[:1])
+
+    def test_manual_release_preserves_metering_failure(self):
+        result, calls = self.run_release("workflow_dispatch", ci_status=17, release_status=23)
+        self.assertEqual(result.returncode, 23, result.stderr)
+        self.assertEqual(calls, self.expected_calls()[1:])
+
 
 if __name__ == "__main__":
     unittest.main()

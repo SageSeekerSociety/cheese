@@ -126,7 +126,7 @@ async def poll_open_prs(
                     await session.commit()
                     _transient_misses.pop(card_id, None)
                     return None
-                except Exception as exc:  # noqa: BLE001 — one card must not stop the rest
+                except Exception as exc:  # one card must not stop the rest
                     await session.rollback()
                     _report_card_failure(card_id, exc)
                     await _note_card_poll_crashed(
@@ -275,7 +275,7 @@ async def poll_uncarded_task_prs(
                     )
                     await session.commit()
                     merged = True
-        except Exception as exc:  # noqa: BLE001 — one PR must not block the rest
+        except Exception as exc:  # one PR must not block the rest
             logger.warning(
                 "uncarded task PR poll failed for %s", task_id, exc_info=True
             )
@@ -371,7 +371,7 @@ async def _note_card_poll_crashed(
                 task_teammate=task_teammate,
             ).note_poll_crashed(card_id, exc)
             await session.commit()
-    except Exception:  # noqa: BLE001 — never let the explanation kill the loop
+    except Exception:  # never let the explanation kill the loop
         logger.exception("could not record poll failure on card %s", card_id)
 
 

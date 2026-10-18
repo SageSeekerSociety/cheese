@@ -581,7 +581,7 @@ class TaskMembershipRepository:
         task_id: int,
         user_id: int,
     ) -> Sequence[TaskMembership]:
-        """Return team-type memberships for this task where the user belongs to the team."""  # noqa: E501
+        """Return team-type memberships for this task where the user belongs to the team."""
         membership_stmt: Select[tuple[TaskMembership]] = select(TaskMembership).where(
             and_(
                 TaskMembership.task_id == task_id,

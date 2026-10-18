@@ -117,7 +117,7 @@ async def remind_silent_turns(chat: TurnNotices, now: datetime) -> int:
                 delivered,
             )
             return delivered is True
-        except Exception:  # noqa: BLE001 — one room must not stop the sweep
+        except Exception:  # one room must not stop the sweep
             logger.exception("chat progress reminder failed (topic=%s)", state.topic_id)
             return False
 
@@ -177,7 +177,7 @@ async def remind_stale_checklists(chat: TurnNotices, now: datetime) -> int:
                 delivered,
             )
             return delivered is True
-        except Exception:  # noqa: BLE001 — one room must not stop the sweep
+        except Exception:  # one room must not stop the sweep
             logger.exception("checklist reminder failed (topic=%s)", state.topic_id)
             return False
 

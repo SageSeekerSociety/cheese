@@ -355,7 +355,7 @@ async def _sweep_once(
     counts = {"completed": 0, "pending": 0}
     try:
         await expire_room_files(sessions)
-    except Exception:  # noqa: BLE001 — the next sweep tries again
+    except Exception:  # the next sweep tries again
         logger.warning("kept room files not expired", exc_info=True)
     # Sending them can take minutes; the cleanups below do not wait for it.
     spawn(keep_room_files_due(sessions), name="kept room files")

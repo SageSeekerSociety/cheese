@@ -1,14 +1,14 @@
 // Pure logic for the design-token ratchet. No I/O, no process — so it can be
 // tested directly (see stylelint-ratchet-core.test.mjs, run by `node --test`).
 //
-// WHY A RATCHET: docs/design-system.md forbids hardcoded colours and off-ladder
-// radii, and the tree violates that in 537 places across ~120 files. A gate that
+// WHY A RATCHET: docs/design-system.md forbids hardcoded colours, and the tree
+// violated that in hundreds of places across ~120 files. A gate that
 // fails on all of them from day one does not get the backlog fixed; it gets the
 // gate deleted. Freezing today's count per file and blocking only NEW violations
 // makes the rule enforceable immediately and lets the backlog be paid down file
 // by file.
 //
-// WHY ONLY FOUR RULES: stylelint reports 3379 warnings on this tree, but 2842 of
+// WHY ONLY THE COLOUR RULES: stylelint reports 3379 warnings on this tree, but 2842 of
 // them are things like property ORDER and class-name casing — rules that have
 // been configured for a long time and never actually run (stylelint appears in
 // no workflow and in no Taskfile target). Ratcheting those too would mean an
@@ -35,8 +35,6 @@ export const DESIGN_RULES = new Set([
   'color-named',
   // Numeric rgb()/hsl() literals.
   'declaration-property-value-disallowed-list',
-  // Off-ladder border-radius.
-  'declaration-property-value-allowed-list',
 ])
 
 /**

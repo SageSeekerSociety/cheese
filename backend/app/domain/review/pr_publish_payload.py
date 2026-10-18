@@ -202,5 +202,5 @@ async def _record_failure(
                 return
             notes.record(card, notes.NoteCode.pr_open_failed, note)
             await session.commit()
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("PR publish failure not recorded on card %s", card_id)

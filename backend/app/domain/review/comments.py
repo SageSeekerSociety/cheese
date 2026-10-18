@@ -123,7 +123,7 @@ class ReviewCommentService:
                 try:
                     read = await files.text(comment.path, "committed")
                     contents[comment.path] = read.get("content")
-                except Exception:  # noqa: BLE001 — a file gone from the version
+                except Exception:  # a file gone from the version
                     contents[comment.path] = None
             content = contents[comment.path]
             found[comment.id] = (
@@ -148,7 +148,7 @@ class ReviewCommentService:
             if comment.path not in raws:
                 try:
                     raws[comment.path] = (await files.raw(comment.path, "committed"))[0]
-                except Exception:  # noqa: BLE001 — a file gone from the version
+                except Exception:  # a file gone from the version
                     raws[comment.path] = None
             raw = raws[comment.path]
             there = raw is not None and await asyncio.to_thread(
@@ -212,7 +212,7 @@ class ReviewCommentService:
                 commit_sha = await ProjectFiles(
                     self._session, task.project_id, task.id
                 ).revision()
-            except Exception:  # noqa: BLE001 — a comment does not wait on the forge
+            except Exception:  # a comment does not wait on the forge
                 commit_sha = None
         comment = ReviewComment(
             task_id=task.id,

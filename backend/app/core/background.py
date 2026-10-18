@@ -226,7 +226,7 @@ class PeriodicRunner:
                 who=_PROCESS,
                 now=datetime.now(UTC),
             )
-        except Exception:  # noqa: BLE001 — a tick that cannot be leased still runs
+        except Exception:  # a tick that cannot be leased still runs
             logger.exception("%s: could not take its tick; running anyway", self._name)
             return True
 
@@ -250,7 +250,7 @@ class PeriodicRunner:
                     raise
                 logger.exception("%s was cancelled from inside; continuing", self._name)
                 continue
-            except Exception:  # noqa: BLE001 — one bad cycle must not end the loop
+            except Exception:  # one bad cycle must not end the loop
                 logger.exception("%s failed", self._name)
                 continue
             if _worth_reporting(result):

@@ -151,5 +151,5 @@ async def _run(
                     for row in rows
                 ],
             )
-    except Exception:  # noqa: BLE001 — a copy that failed changes nothing the platform holds
+    except Exception:  # a copy that failed changes nothing the platform holds
         logger.exception("copying the comments of card %s onto its PR failed", card_id)

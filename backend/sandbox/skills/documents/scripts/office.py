@@ -876,7 +876,7 @@ def cmd_validate(args) -> int:
         if name.endswith(".xml") or name.endswith(".rels"):
             try:
                 package.elements(name)
-            except ET.XMLSyntaxError as exc:  # noqa: PERF203 - report every part
+            except ET.XMLSyntaxError as exc:  # report every part
                 problems.append(f"{name} 不是合法 XML：{exc}")
     print(
         f"{target}：{len(package.names)} 个部件，"

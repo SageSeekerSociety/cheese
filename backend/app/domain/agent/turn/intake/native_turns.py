@@ -120,7 +120,7 @@ class NativeTurns:
                     agent_handle=agent.handle,
                     session_id=session_id,
                 )
-        except Exception:  # noqa: BLE001 — the event matters more than the row
+        except Exception:  # the event matters more than the row
             logger.exception(
                 "could not open the turn a session started for itself "
                 "(topic=%s, work=%s)",

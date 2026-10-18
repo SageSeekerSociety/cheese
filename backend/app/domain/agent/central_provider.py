@@ -120,7 +120,7 @@ class CentralChannel(DeviceChannel):
             # take that cannot be had now starts the session at the placeholder
             # (`client._take_leased_machine`).
             return True
-        except Exception:  # noqa: BLE001 — any failure means not now, and is logged
+        except Exception:  # any failure means not now, and is logged
             logger.info(
                 "central_session_stays_deferred topic=%s device=%s",
                 topic_id,

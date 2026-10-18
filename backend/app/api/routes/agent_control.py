@@ -140,7 +140,7 @@ async def control(
             }
     except ConflictError:
         raise
-    except Exception as exc:  # noqa: BLE001 — the room reads why it failed
+    except Exception as exc:  # the room reads why it failed
         response = {"subtype": "error", "error": str(exc) or type(exc).__name__}
     return ok(
         {

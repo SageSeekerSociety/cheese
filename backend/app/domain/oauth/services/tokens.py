@@ -3,8 +3,7 @@
 `services.py` 拆开之前是 897 行，这一份是其中的 token 那一块，现在住在
 `app/domain/oauth/services/` 里，和门面（包的 `__init__.py`）同一个包。拆开的理由只有
 文件体积，不是分层：函数体与类上的方法逐字对应（接收者由 `self` 换成 `svc`），
-`app.domain.oauth.services` 照旧再导出 `seal_oauth_token` / `open_oauth_token` /
-`TOKEN_UNAVAILABLE_*`。
+`app.domain.oauth.services` 照旧再导出 `seal_oauth_token` / `open_oauth_token`。
 
 两条判据跟着搬过来，它们是这里最容易改坏的东西：
 
@@ -61,17 +60,6 @@ _GITHUB_TOKEN_REFRESH_MARGIN = timedelta(minutes=5)
 # only ever holds one lock per connection that has refreshed, so it stays small.
 _refresh_locks: dict[int, asyncio.Lock] = {}
 
-# Machine-readable reasons `get_github_user_token_with_reason` /
-# `get_github_user_token_for_handle_with_reason` report alongside a None
-# token — for callers (两阶段采纳) that need to explain a degrade to a human
-# rather than silently falling back. Never derived from the token/ciphertext
-# itself, so surfacing one can't leak either.
-TOKEN_UNAVAILABLE_NOT_CONNECTED = "not_connected"
-TOKEN_UNAVAILABLE_UNDECRYPTABLE = "undecryptable"
-TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH = "expired_no_refresh"
-TOKEN_UNAVAILABLE_REFRESH_FAILED = "refresh_failed"
-TOKEN_UNAVAILABLE_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
-
 
 def _decrypt_stored_token(
     svc: pkg.OAuthService, stored: str, *, user_id: int, provider_id: str, field: str
@@ -80,10 +68,10 @@ def _decrypt_stored_token(
 
     Tokens are encrypted at rest (``app.core.crypto``), so a value sealed
     under a key no longer configured makes decryption raise. That must not blow up
-    the caller (the accept flow degrades on None, it does not handle
-    exceptions from here) — but it must never be silent either: an
-    unnoticed token problem is exactly how the "returns raw ciphertext" bug
-    survived, so this always logs.
+    the caller (the repository-connect route treats None as "link the account
+    first", it does not handle exceptions from here) — but it must never be
+    silent either: an unnoticed token problem is exactly how the "returns raw
+    ciphertext" bug survived, so this always logs.
     """
     try:
         return open_oauth_token(
@@ -108,46 +96,29 @@ async def get_github_user_token(
     token is expired with nothing to refresh it with. Callers must treat
     None as "fall back", not raise.
     """
-    token, _reason = await svc.get_github_user_token_with_reason(
-        user_id, provider_id=provider_id
-    )
-    return token
-
-
-async def get_github_user_token_with_reason(
-    svc: pkg.OAuthService, user_id: int, *, provider_id: str = "github_app"
-) -> tuple[str | None, str | None]:
-    """Same contract as ``get_github_user_token``, plus a
-    ``TOKEN_UNAVAILABLE_*`` reason whenever the token comes back None —
-    for callers (两阶段采纳's accept()) that need to explain a degrade to
-    a human instead of just falling back silently. ``reason`` is always
-    None when ``token`` is not.
-    """
     conn = await svc._repo.get_by_user_and_provider(user_id, provider_id)
     if conn is None or not conn.access_token:
-        return None, TOKEN_UNAVAILABLE_NOT_CONNECTED
+        return None
 
     if (
         conn.token_expires is None
         or conn.token_expires - datetime.now(UTC) > _GITHUB_TOKEN_REFRESH_MARGIN
     ):
-        token = svc._decrypt_stored_token(
+        return svc._decrypt_stored_token(
             conn.access_token,
             user_id=user_id,
             provider_id=conn.provider_id,
             field="access_token",
         )
-        return token, (None if token else TOKEN_UNAVAILABLE_UNDECRYPTABLE)
 
     if not conn.refresh_token:
-        return None, TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH
+        return None
 
     # The refresh itself commits in its OWN, independent transaction —
     # see _refresh_and_persist_token — so this connection's outer
     # session (whatever the caller is mid-way through) never determines
     # whether a successful GitHub refresh actually survives.
-    token = await svc._refresh_and_persist_token(conn.id, provider_id)
-    return token, (None if token else TOKEN_UNAVAILABLE_REFRESH_FAILED)
+    return await svc._refresh_and_persist_token(conn.id, provider_id)
 
 
 async def _refresh_and_persist_token(
@@ -155,7 +126,7 @@ async def _refresh_and_persist_token(
 ) -> str | None:
     """Refresh an expiring GitHub token and commit the result in its OWN
     transaction, on fresh sessions — deliberately NOT reusing whatever
-    session/transaction the caller (e.g. AcceptService.accept()) happens
+    session/transaction the caller (e.g. the repository-connect route) happens
     to be mid-way through, so a later rollback there cannot lose a token
     GitHub has already rotated (决策 0556ac50).
 
@@ -190,7 +161,7 @@ async def _refresh_and_persist_token(
         # Provider not configured on this deployment
         # (oauth_enabled_providers / client id + secret unset).
         # Degrade like any other missing prerequisite — raising here
-        # would escape into the accept flow.
+        # would escape into the caller.
         logger.warning(
             "github account link: provider %r is not configured, "
             "cannot refresh an expiring token",
@@ -240,11 +211,35 @@ async def _refresh_and_persist_token(
 
         try:
             token_data = await provider.refresh_access_token(stored_refresh)
-            new_access_token = token_data["access_token"]
         except Exception:
+            logger.exception("github account link: token refresh failed")
+            return await svc._current_token_if_fresh(bind, connection_id)
+        if token_data.get("error") == "bad_refresh_token":
+            # GitHub will never take this refresh token again (expired,
+            # revoked, or spent by a refresher elsewhere). Forget it so the
+            # settings page stops reporting a renewal token — unless that
+            # other refresher has already stored its replacement.
+            logger.warning(
+                "github account link: GitHub rejected the stored refresh token "
+                "of connection %s",
+                connection_id,
+            )
+            async with AsyncSession(bind=bind, expire_on_commit=False) as session:
+                await OAuthConnectionRepository(
+                    session
+                ).forget_refresh_token_if_unchanged(
+                    connection_id, seen_refresh_token=seen_refresh
+                )
+                await session.commit()
+            return await svc._current_token_if_fresh(bind, connection_id)
+        new_access_token = token_data.get("access_token")
+        if not new_access_token:
             # A refresher elsewhere may have spent this refresh token first;
             # then its result is the live one.
-            logger.exception("github account link: token refresh failed")
+            logger.error(
+                "github account link: token refresh answered without a token: %s",
+                token_data.get("error") or "no error code",
+            )
             return await svc._current_token_if_fresh(bind, connection_id)
 
         expires_in = token_data.get("expires_in")
