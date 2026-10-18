@@ -36,6 +36,7 @@ from pathlib import Path
 MAX_SYMBOLS = 300
 MAX_LOCS = 8
 COMMON_HITS = 200
+MAX_REMOVED = 600
 TS_EXPORT = re.compile(
     r"^export\s+(?:declare\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?"
     r"(?:type|interface|const|let|function\*?|class|enum)\s+(\w+)", re.M)
@@ -143,6 +144,20 @@ def refs(repo, rev, name):
 DEFINITION = re.compile(r"^\s*(?:export\s+)?(?:async\s+)?(?:def|class|function|const|let|type|interface|enum)\s|^\s*[A-Za-z_]\w*\s*(?::[^=]+)?=")
 
 
+def count_refs(repo, rev, names):
+    """Matches per name in one git grep: -o prints every whole-word hit on its own line."""
+    if not names:
+        return {}
+    pat = "\n".join(names) + "\n"
+    p = subprocess.run(["git", "-C", str(repo), "grep", "-o", "-h", "-I", "-w", "-F", "-f", "/dev/stdin", rev],
+                       input=pat, capture_output=True, text=True)
+    counts = dict.fromkeys(names, 0)
+    for w in p.stdout.split():
+        if w in counts:
+            counts[w] += 1
+    return counts
+
+
 def removed_identifiers(repo, base, head):
     try:
         diff = git(repo, "diff", "-U0", "--no-renames", base, head)
@@ -197,19 +212,21 @@ def section_symbols(repo, base, head):
     # definition in an untouched file whose last user the diff removed is found too.
     orphans = []
     added_set = set(added)
-    cands = [(path, n) for path, n in kept + list(changed_set) if (path, n) not in added_set]
-    cands += [(None, n) for n in removed_identifiers(repo, base, head)]
-    seen = set()
+    cands = [(path, n) for path, n in kept + list(changed_set) if (path, n) not in added_set][:MAX_SYMBOLS]
+    cands += [(None, n) for n in removed_identifiers(repo, base, head)][:MAX_REMOVED]
+    names = list(dict.fromkeys(n for _, n in cands))
+    now_counts = count_refs(repo, head, names)
+    single = {n for n in names if now_counts.get(n, 0) <= 1}
+    before_counts = count_refs(repo, base, [n for n in names if n in single])
+    done = set()
     for path, n in cands:
-        if n in seen or len(seen) >= MAX_SYMBOLS:
+        if n in done or n not in single or before_counts.get(n, 0) <= 1:
             continue
-        seen.add(n)
+        done.add(n)
         now = refs(repo, head, n)
         if len(now) != 1 or (path is None and not DEFINITION.search(now[0].split(":", 2)[-1])):
             continue
-        before = refs(repo, base, n)
-        if len(before) > 1:
-            orphans.append((path or now[0].split(":", 1)[0], n, len(before), now[0][:120]))
+        orphans.append((path or now[0].split(":", 1)[0], n, len(refs(repo, base, n)), now[0][:120]))
     out.append("")
     out.append("### 孤立符号（本次改动后只剩定义本身一处引用，改动前不止一处）")
     out += ([f"- ⚠ `{n}`（{p}）：改动前 {b} 处，现在只剩 `{where}`" for p, n, b, where in orphans]
@@ -253,8 +270,10 @@ def run_tests(wt, files, test_cmd):
         return None, "测试超过 600 秒，已停"
     except OSError as exc:
         return None, f"测试命令起不来：{exc}"
-    tail = "\n".join((p.stdout + p.stderr).strip().splitlines()[-12:])
-    if p.returncode and re.search(r"No module named pytest|command not found|Failed to spawn", tail):
+    text = p.stdout + p.stderr
+    tail = "\n".join(text.strip().splitlines()[-12:])
+    ran_tests = re.search(r"\d+ (?:passed|failed|error)|FAILED|Traceback|AssertionError", text)
+    if p.returncode and not ran_tests and re.search(r"No module named pytest|command not found|Failed to spawn", text):
         return None, "跑测试的环境缺 pytest，没跑成（不是测试失败）：" + tail.splitlines()[-1]
     return p.returncode, tail
 
@@ -299,8 +318,12 @@ def section_trial(repo, base, head, pr, body, main_ref, others, test_cmd):
     merge_refs = list(others)
     for n in mentioned:
         ref = f"refs/precompute/pr-{n}"
-        p = subprocess.run(["git", "-C", str(repo), "fetch", "-q", "origin", f"+refs/pull/{n}/head:{ref}"],
-                           capture_output=True, text=True, timeout=60)
+        try:
+            p = subprocess.run(["git", "-C", str(repo), "fetch", "-q", "origin", f"+refs/pull/{n}/head:{ref}"],
+                               capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            out.append(f"- #{n}：取它的 head 超过 60 秒，没试合")
+            continue
         if p.returncode == 0:
             merge_refs.append((f"#{n}", ref))
         else:

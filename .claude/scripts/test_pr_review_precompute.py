@@ -160,6 +160,29 @@ class Precompute(unittest.TestCase):
         out = "\n".join(load().section_trial(self.repo, base, head, 1, "", "main", [], None))
         self.assertIn("不做", out)
 
+    def test_real_failure_mentioning_command_not_found_is_a_failure(self):
+        base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
+        head = commit(self.repo, {"tests/test_x.py": "_KNOWN = set()\n"}, "t")
+        script = Path(self.tmp.name) / "f.sh"
+        script.write_text("#!/bin/sh\necho 'AssertionError: boom'\necho 'sh: git: command not found'\nexit 1\n")
+        out = "\n".join(load().section_trial(self.repo, base, head, 1, "", "main", [], f"sh {script} {{files}}"))
+        self.assertIn("最新 main + 本 PR：**失败**", out)
+
+    def test_orphan_found_beyond_three_hundred_public_names(self):
+        many = "".join(f"def f{i}():\n    pass\n" for i in range(320))
+        base = commit(self.repo, {"big.py": many, "a.py": "def helper():\n    pass\n",
+                                  "b.py": "from a import helper\nhelper()\n"}, "b")
+        head = commit(self.repo, {"big.py": many + "# touched\n", "b.py": "y = 1\n"}, "drop use")
+        out = "\n".join(load().section_symbols(self.repo, base, head))
+        self.assertIn("⚠ `helper`（a.py）", out)
+
+    def test_common_names_only_counted(self):
+        mod = load()
+        mod.COMMON_HITS = 1
+        base = commit(self.repo, {"a.py": "def helper():\n    pass\n", "b.py": "helper()\n"}, "b")
+        head = commit(self.repo, {"a.py": "def helper():\n    return 1\n"}, "chg")
+        self.assertIn("名字太常见", "\n".join(mod.section_symbols(self.repo, base, head)))
+
     # ---- ci:fast report
     def test_ci_report_split(self):
         commit(self.repo, {"a.py": "x = 1\n"}, "b")
