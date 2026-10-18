@@ -9,6 +9,7 @@ import { computed, inject, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useDocumentMove } from '@/composables/useDocumentMove'
+import { useDocumentShare } from '@/composables/useDocumentShare'
 import { usePanelDocWiring } from '@/composables/usePanelDocWiring'
 
 import TeamDocumentView from './TeamDocumentView.vue'
@@ -23,6 +24,7 @@ const props = defineProps<{ handle: string; docId: string }>()
 const router = useRouter()
 const dialog = useDialog()
 const mover = useDocumentMove((to) => void router.push(to))
+const sharer = useDocumentShare()
 const teamData = inject(teamDataInjectionKey, ref())
 /** 页头的上一级：自己名下是「我的文档」，团队是「某团队的文档」。 */
 const parentLabel = computed(() =>
@@ -85,6 +87,15 @@ async function remove() {
 <template>
   <TeamDocumentView
     v-model:moving="mover.state.open"
+    v-model:sharing="sharer.state.open"
+    :share="{
+      title: sharer.state.title,
+      loading: sharer.state.loading,
+      mayShare: sharer.state.mayShare,
+      url: sharer.url.value,
+      busy: sharer.state.busy,
+      error: sharer.state.error,
+    }"
     :document="document"
     :wiring="wiring"
     :error="error"
@@ -99,5 +110,9 @@ async function remove() {
     @delete="remove"
     @ask-move="mover.open(docId)"
     @move="mover.move"
+    @ask-share="sharer.open(docId)"
+    @share="sharer.share"
+    @unshare="sharer.unshare"
+    @copy="sharer.copy"
   />
 </template>

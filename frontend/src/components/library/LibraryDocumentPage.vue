@@ -34,6 +34,8 @@ const emit = defineEmits<{
   (e: 'delete'): void
   /** 「移动到…」：挪到自己名下、团队或团队的一个项目（#3774）。 */
   (e: 'move'): void
+  /** 「分享…」：给这份文档一条只读链接（#3774）。 */
+  (e: 'share'): void
   /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
   (e: 'open-topic', topicId: string, blockId?: string): void
 }>()
@@ -78,6 +80,7 @@ watch(
       @titled="emit('titled', $event)"
       @delete="emit('delete')"
       @move="emit('move')"
+      @share="emit('share')"
       @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
     />
     <div v-else-if="!error" class="d-flex justify-center py-10">

@@ -38,7 +38,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
 from app.domain.team.services import team_service
 from app.domain.team.summary import team_summary
-from app.domain.topic.models import Topic, TopicStatus, room_ref
+from app.domain.topic.models import Topic, TopicStatus, not_a_private_chat, room_ref
 from app.domain.topic.repositories import TopicRepository, readable_by, seen_by
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ def _listed_topic(viewer: str) -> ColumnElement[bool]:
     """A topic a personal page may name to ``viewer``: not a private 1:1 chat,
     which is not part of any topic listing — on the person's own page either —
     and not a private channel ``viewer`` is not in."""
-    return and_(Topic.is_private.is_(False), seen_by(viewer))
+    return and_(not_a_private_chat(), seen_by(viewer))
 
 
 def _outside(unseen: list[uuid.UUID]) -> ColumnElement[bool]:

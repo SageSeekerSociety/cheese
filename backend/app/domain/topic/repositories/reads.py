@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic, TopicStatus, not_a_private_chat
 from app.domain.topic.repositories.statements import (
     _last_activity,
     _order_by,
@@ -128,7 +128,7 @@ async def visible_unarchived_ids_for_projects(
         return []
     stmt = select(Topic.id).where(
         Topic.project_id.in_(project_ids),
-        Topic.is_private.is_(False),
+        not_a_private_chat(),
         Topic.deleted_at.is_(None),
         Topic.status != TopicStatus.archived,
         seen_by(viewer),
@@ -207,7 +207,7 @@ def _project_topics_stmt(
     # from every list the moment it is deleted.
     stmt = select(Topic).where(
         Topic.project_id.in_(project_ids),
-        Topic.is_private.is_(False),
+        not_a_private_chat(),
         Topic.deleted_at.is_(None),
     )
     if seen is not None:
@@ -330,7 +330,7 @@ async def count_for_project(
         .select_from(Topic)
         .where(
             Topic.project_id == project_id,
-            Topic.is_private.is_(False),
+            not_a_private_chat(),
             Topic.deleted_at.is_(None),
             seen_by(viewer),
         )
