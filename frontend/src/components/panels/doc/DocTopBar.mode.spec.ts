@@ -1,5 +1,5 @@
-// 顶栏上的编辑方式：能改的人在「编辑」和「建议」之间切；只能提建议的人（导师）固定在
-// 「建议」，没有切换，「⋯」里也没有删除、移动这些归作者的事。
+// 顶栏上的编辑方式：能改的人在「编辑」「建议」「只读」之间切；只能提建议的人（导师）
+// 没有「编辑」；没有编辑权限的人没有编辑方式可切。
 import type { Component } from 'vue'
 
 import { createVuetify } from 'vuetify'
@@ -67,17 +67,36 @@ describe('编辑方式', () => {
     expect(emitted()['set-suggesting']).toEqual([[true]])
   })
 
-  it('只能提建议的人固定在建议，没有切换', () => {
-    mount({ suggestOnly: true, suggesting: true })
-    expect(screen.queryByTestId('doc-mode')).toBeNull()
-    expect(screen.getByTitle(t('work.room.doc.mode.suggestOnly')).textContent).toContain(
-      t('work.room.doc.mode.suggest')
+  it('能改的人切到只读', async () => {
+    const { emitted } = mount()
+    await fireEvent.click(screen.getByTestId('doc-mode'))
+    await fireEvent.click(await screen.findByRole('menuitemradio', { name: new RegExp(t('work.room.doc.mode.read')) }))
+    expect(emitted()['toggle-editable']).toHaveLength(1)
+    expect(emitted()['set-suggesting']).toBeUndefined()
+  })
+
+  it('自己切到只读后，从同一个菜单回到建议', async () => {
+    const { emitted } = mount({ editable: false })
+    expect(screen.getByTestId('doc-mode').textContent).toContain(t('work.room.doc.mode.read'))
+    await fireEvent.click(screen.getByTestId('doc-mode'))
+    await fireEvent.click(
+      await screen.findByRole('menuitemradio', { name: new RegExp(t('work.room.doc.mode.suggest')) })
     )
+    expect(emitted()['toggle-editable']).toHaveLength(1)
+    expect(emitted()['set-suggesting']).toEqual([[true]])
+  })
+
+  it('只能提建议的人只有建议和只读，没有编辑', async () => {
+    mount({ suggestOnly: true, suggesting: true })
+    await fireEvent.click(screen.getByTestId('doc-mode'))
+    const names = (await screen.findAllByRole('menuitemradio')).map((el) => el.textContent ?? '')
+    expect(names).toHaveLength(2)
+    expect(names[0]).toContain(t('work.room.doc.mode.suggest'))
+    expect(names[1]).toContain(t('work.room.doc.mode.read'))
   })
 
   it('不能改的人看不到编辑方式', () => {
     mount({ editable: false, readOnly: true })
     expect(screen.queryByTestId('doc-mode')).toBeNull()
-    expect(screen.queryByTitle(t('work.room.doc.mode.suggestOnly'))).toBeNull()
   })
 })
