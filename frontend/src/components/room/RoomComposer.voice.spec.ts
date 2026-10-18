@@ -133,6 +133,23 @@ describe('语音输入', () => {
     expect(wav.size).toBe(44 + 1.5 * 32000)
   })
 
+  it('按住说话：松手就说完，哪怕按钮已经换成了录音条', async () => {
+    hearVoice.mockResolvedValue({ text: '好的', raw: '好的' })
+    const { draft } = mount('')
+
+    const mic = screen.getByRole('button', { name: '语音输入' })
+    await fireEvent.pointerDown(mic, { button: 0, pointerId: 1 })
+    await new Promise((r) => setTimeout(r, 300))
+    await flush()
+    speak(1)
+    // 松手落在页面别处：按着的那颗麦克风这时已经不在了。
+    window.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 1 }))
+    await flush()
+
+    expect(hearVoice).toHaveBeenCalledTimes(1)
+    expect(draft.value).toBe('好的')
+  })
+
   it('「还原原话」换成一字不差的转写，再点换回来', async () => {
     hearVoice.mockResolvedValue({ text: '周四之前改好。', raw: '嗯周三不对周四之前改好' })
     const { draft } = mount('前面')

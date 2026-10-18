@@ -508,9 +508,20 @@ watch(draft, () => {
   landed = null
 })
 
+// 按住说话：一开始录，动作行就换成录音条，按着的那颗麦克风连同它抓着的指针一起被卸掉，
+// 它自己再也听不到松手。所以松手在 window 上等，和按钮在不在无关。
 function onVoice(how: 'tap' | 'hold' | 'release') {
   if (how === 'release') return void voice.finish()
   if (voice.state.value === 'recording' && how === 'tap') return void voice.finish()
+  if (how === 'hold') {
+    const release = () => {
+      window.removeEventListener('pointerup', release)
+      window.removeEventListener('pointercancel', release)
+      void voice.finish()
+    }
+    window.addEventListener('pointerup', release)
+    window.addEventListener('pointercancel', release)
+  }
   void voice.start()
 }
 
