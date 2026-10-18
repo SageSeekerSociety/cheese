@@ -13,7 +13,7 @@
  * @param {string} root absolute path the file names are made relative to
  * @param {string | ((ruleId: string) => boolean)} rule the one rule whose
  *   messages are counted — its exact id, or a predicate for a ratchet that
- *   spans a family of rules (the a11y gate counts a whole plugin prefix).
+ *   spans a family of rules (a gate can count a whole plugin prefix).
  * @returns {{ counts: Record<string, number>, violations: {file: string, line: number, column: number, rule: string, message: string}[], unjudged: string[] }}
  */
 export function parseEslintJsonFor(text, root, rule) {

@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
@@ -45,6 +46,7 @@ async def get_user_auth_service(db=Depends(get_db)) -> UserAuthService:
 @router.post(
     "/{commentId}/attitudes",
     summary="Update Attitude To Comment",
+    dependencies=[ROUTE_DECIDES],
 )
 async def update_attitude_to_comment(
     commentId: Annotated[int, Path(ge=0)],
@@ -97,10 +99,7 @@ async def get_comment_by_id(
     return ok({"comment": comment_dto})
 
 
-@router.patch(
-    "/{commentId}",
-    summary="Update Comment",
-)
+@router.patch("/{commentId}", summary="Update Comment", dependencies=[ROUTE_DECIDES])
 async def update_comment(
     commentId: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
@@ -118,10 +117,7 @@ async def update_comment(
     return ok({"comment": comment})
 
 
-@router.delete(
-    "/{commentId}",
-    summary="Delete Comment",
-)
+@router.delete("/{commentId}", summary="Delete Comment", dependencies=[ROUTE_DECIDES])
 async def delete_comment(
     commentId: Annotated[int, Path(ge=0)],
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -157,6 +153,7 @@ async def get_comments(
     "/{commentableType}/{commentableId}",
     summary="Create Comment",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_comment(
     commentableType: str,

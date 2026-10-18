@@ -53,8 +53,6 @@
   [② 边界], [C2 路由不碰别域 models], [*%%V:check.be-contracts.routes-touch-no-models.actual%%*], [*%%V:check.be-contracts.routes-touch-no-models.frozen%%*], [%%V:stale.be-contracts.routes-touch-no-models%% 条豁免已失效（\#2153 删了接口） #real], [只存冻结数],
   [② 边界], [C3 同级领域无环], [%%V:check.be-contracts.domains-acyclic.actual%%], [%%V:check.be-contracts.domains-acyclic.frozen%%], [%%V:stale.be-contracts.domains-acyclic%% 条失效豁免 #real], [%%V:history%% 次],
   [② 边界], [领域不直连别域 repository（pytest 账本）], [%%V:check.domain-import-guard.actual%%], [%%V:check.domain-import-guard.frozen%%], [通过即相等；数从测试模块自带的登记表读 #real], [#miss],
-  [② 边界], [Claude Code 适配器跨界账本（pytest）], [%%V:check.harness-boundary.actual%%], [%%V:check.harness-boundary.frozen%%], [通过即相等 #real], [#miss],
-  [② 边界], [`is_private` 读点登记（pytest）], [%%V:check.is-private-read-points.actual%%], [%%V:check.is-private-read-points.frozen%%], [数的是读点、不是文件 #real], [#miss],
   [③ 规模], [单文件行数上限（`check-file-sizes.py`）], [%%V:check.file-sizes.actual%%], [无冻结表], [这道闸门只判改动文件，在 main 上通常是 0；树的全量数由看板给：%%V:board.size.offenders%% 个文件、超 %%V:board.size.excess_lines%% 行 #real], [%%V:history%% 次],
   [④ 样式], [vue-tsc 类型错误（`typecheck`）], [%%V:check.vue-tsc.actual%%], [%%V:check.vue-tsc.frozen%%], [#real], [#miss],
   [④ 样式], [设计令牌（`lint:style`）], [%%V:check.stylelint-tokens.actual%%], [%%V:check.stylelint-tokens.frozen%%], [#real], [#miss],
@@ -108,7 +106,7 @@
 
 上一稿里 `domain-import-guard` 的指纹是跟着豁免表走的：`_EXEMPT` 登记表就写在判定它的那个测试模块里，删掉一条豁免，整份文件的哈希就变，页面会把「还掉一条债」读成「换了把尺子」，正好把要数的东西挡掉。
 
-改法是给这类检查点名它自己的基线表（`_EXEMPT` / `_LEDGER` / `BASELINE`），取指纹时用 `ast` 把这条顶层语句整段切掉——语句到哪儿结束由语法回答，不靠数括号。和 `.importlinter` 里切掉 `ignore_imports` 是同一个道理。自测里补了三条：还掉一条不再动指纹、改断言仍然动、三道账本检查都必须点出自己的表。
+改法是给这类检查点名它自己的基线表（`_EXEMPT`），取指纹时用 `ast` 把这条顶层语句整段切掉——语句到哪儿结束由语法回答，不靠数括号。和 `.importlinter` 里切掉 `ignore_imports` 是同一个道理。自测里补了三条：还掉一条不再动指纹、改断言仍然动、每道账本检查都必须点出自己的表。
 
 同一件事的另一面：指纹是对整份判定文件取的哈希，所以给脚本本身加个 `--json` 参数也会让指纹变。本分支就是如此（vue-tsc、设计令牌两道脚本都加了 `--json` 并顺手排了 import），判定逻辑没动，数字也就没动。
 
@@ -129,7 +127,7 @@
 
 - *没跑到就是不记，不记 0。* 命令不在、超时、没吐记录、吐了两行，都记 `not_collected`，快照里 `actual` 是 `null`。快照里不会出现「用 0 冒充没测到」。
 - *退出码仍是判据。* 0 通过 / 1 违规 / 2 判不了；`--json` 只加输出、不改判定，默认模式的 stdout 逐字节不变。pytest 的账本检查退出码 2 及以上（被打断、用法错、没收集到用例）都算「判不了」，且跑之前先探一下 pytest 在不在——`python -m pytest` 缺 pytest 时也退 1，和「有测试失败」分不开。
-- *账本检查的实际数取自它自己的登记表。* 三道 pytest 账本（领域直连、适配器跨界、`is_private` 读点）没有 `--json` 出口，采集脚本跑 pytest 拿退出码，再把测试模块 import 进来读它的登记表；测试失败时数量记 `null` 而不是 0。`is_private` 那道数的是读点：12 个文件、合计 %%V:check.is-private-read-points.actual%% 处，不是 12。
+- *账本检查的实际数取自它自己的登记表。* pytest 账本没有 `--json` 出口，采集脚本跑 pytest 拿退出码，再把测试模块 import 进来读它的登记表；测试失败时数量记 `null` 而不是 0。
 
 #pagebreak()
 = 4　页面结构：三种做法
@@ -197,6 +195,6 @@
 - 走势的最后一点（09-30 05:51 的 `27a2619b1`）早于快照的提交，中间隔着 05:51 之后的若干次 main 提交（含 \#2199）。29 → %%V:board.size.offenders%% 的差有一部分出在那里，页面已写明。
 - 场景一区没有方向：main 上 \#2209（HuanCheng65）已经换过判定规则，这一稿按新规则重采；补强 \#2217 仍在 draft、未合。规则一改指纹就变，本页自动换新起点，不把 ready 数量的跳变当成重构成果。
 - 挂载证据是单独一件事：在 `aaed8e4f7` 上跑 `vitest run src/views/demo/catalog.spec.ts`，%%V:mount-components%% 个组件、%%V:mount-cases%% 格全部挂载通过（%%V:mount-tests%% passed / 0 failed）。它是跑出来的，不是规则给的，页面单独列一列。
-- 固定色、三个 pytest 账本和 vue-tsc 没有历史：CI 看板从来没存过，合入后才开始积累。上一版 PDF 里这三格是「未采集」，现在有当次数了，但还没有第二个点可比。
+- 固定色、一个 pytest 账本（领域直连）和 vue-tsc 没有历史：CI 看板从来没存过，合入后才开始积累。上一版 PDF 里这三格是「未采集」，现在有当次数了，但还没有第二个点可比。
 - 「还债 / 删除功能」的分类是我按 PR 标题人工标的，预览页上带 #tag(fill: white, ink: rgb("#5A5E66"))[样例] 标签。上线版只自动识别规则变更（靠指纹），其余变化直接列 PR，由人判断。
 - 预览页在真浏览器里截图核对过（1440 / 1100 两个宽度，无 JS 报错、无横向溢出）；真实页面在 PR \#2234 里，读的是后端 `GET /admin/ratchet` 的响应，导航项是真的路由与侧栏项。

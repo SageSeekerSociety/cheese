@@ -43,7 +43,7 @@ FULL_TEACHING = {
     "allowedTopics": ["循环", "数组"],
     "avoidInCode": ["递归"],
     "materialIds": [],
-    "knowledgeIds": [],
+    "documentIds": [],
 }
 
 #: What a level that says nothing reads back as.
@@ -53,7 +53,7 @@ EMPTY_TEACHING = {
     "allowedTopics": [],
     "avoidInCode": [],
     "materialIds": [],
-    "knowledgeIds": [],
+    "documentIds": [],
 }
 
 

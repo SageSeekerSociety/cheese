@@ -64,6 +64,9 @@ class Documents:
             project_id, after=after, limit=limit, also_of_room=also_of_room
         )
 
+    async def of_team(self, team_id: int) -> list[Document]:
+        return await self._repo.of_team(team_id)
+
     async def of_room(self, room_id: uuid.UUID) -> list[Document]:
         """The documents 芝士 wrote in this channel or private chat (#3828)."""
         return await self._repo.of_room(room_id)
@@ -76,7 +79,8 @@ class Documents:
     async def create(
         self,
         *,
-        project_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        team_id: int | None = None,
         title: str | None = None,
         author: str = "system",
         number: int | None = None,
@@ -89,6 +93,7 @@ class Documents:
         write is, through the service."""
         return await self._repo.create(
             project_id=project_id,
+            team_id=team_id,
             title=title,
             author=author,
             number=number,

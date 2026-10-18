@@ -10,6 +10,7 @@ import { legacyProjectRedirects } from './legacyProjectPaths'
 import LegalRoutes from './legal'
 import { carryLoginRedirect } from './loginRedirect'
 import QuestionRoutes from './question'
+import SharedRoutes from './shared'
 import SpacesRoutes from './spaces'
 import TeamsRoutes from './teams'
 import UserRoutes from './user'
@@ -45,6 +46,7 @@ const routes: RouteRecordRaw[] = [
   },
   AccountRoutes,
   ...LegalRoutes,
+  ...SharedRoutes,
   HomeRoutes,
   UserRoutes,
   QuestionRoutes,

@@ -51,10 +51,12 @@ from app.api.auth import (
     remember_for_media,
 )
 from app.api.byte_response import media_bytes_response
+from app.api.inert_headers import INERT_HEADERS, NO_SNIFF
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
 from app.api.topics_deps import _actor_in_place
 from app.api.topics_file_sources import source_bytes
+from app.api.write_access import ROUTE_DECIDES
 from app.core import raster_images, video_files
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
@@ -174,7 +176,7 @@ async def list_attachments(
     return ok(page(rows, len(rows)))
 
 
-@router.post("/{topic_id}/attachments")
+@router.post("/{topic_id}/attachments", dependencies=[ROUTE_DECIDES])
 async def upload_attachment(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -338,8 +340,7 @@ async def attachment_raw(
         "Content-Disposition": (
             f"attachment; filename*=UTF-8''{filename}" if download else "inline"
         ),
-        "X-Content-Type-Options": "nosniff",
-        "Content-Security-Policy": "default-src 'none'; sandbox",
+        **INERT_HEADERS,
         "Cache-Control": (
             "no-store" if task or source == "committed" else _cache_control_of(clean)
         ),
@@ -415,8 +416,7 @@ async def attachment_as_pdf(
         media_type="application/pdf",
         headers={
             "Content-Disposition": "inline",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; sandbox",
+            **INERT_HEADERS,
             "Cache-Control": "no-store",
             "X-Cheese-Source-Version": content_version(data),
         },
@@ -474,7 +474,7 @@ async def attachment_as_html(
         media_type="text/html; charset=utf-8",
         headers={
             "Content-Disposition": "inline",
-            "X-Content-Type-Options": "nosniff",
+            **NO_SNIFF,
             "Content-Security-Policy": _PAGE_POLICY_HEADER,
             "Cache-Control": "no-store",
             "X-Cheese-Source-Version": content_version(data),

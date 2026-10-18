@@ -89,19 +89,41 @@ def _usable():
 async def logins(db: AsyncSession, owner_user_id: int) -> list[Login]:
     """This person's model connections: their machines' logins, the most
     recently confirmed first, then the ones their account holds, oldest first."""
+    return (await logins_by_owners(db, {owner_user_id}))[owner_user_id]
+
+
+async def logins_by_owners(
+    db: AsyncSession, owner_user_ids: set[int]
+) -> dict[int, list[Login]]:
+    """The same ordered connections for each owner, read in two queries."""
+    result: dict[int, list[Login]] = {owner: [] for owner in owner_user_ids}
+    if not owner_user_ids:
+        return result
     rows = await db.execute(
-        select(DeviceRow.device_id, DeviceRow.name, DeviceClaudeLoginRow)
+        select(
+            DeviceRow.owner_user_id,
+            DeviceRow.device_id,
+            DeviceRow.name,
+            DeviceClaudeLoginRow,
+        )
         .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
         .join(
             DeviceClaudeLoginRow,
             DeviceClaudeLoginRow.device_id == DeviceRow.device_id,
         )
-        .where(DeviceRow.owner_user_id == owner_user_id, *_usable())
+        .where(DeviceRow.owner_user_id.in_(owner_user_ids), *_usable())
         .order_by(DeviceClaudeLoginRow.checked_at.desc())
     )
-    on_machines = [_login(device_id, name, row) for device_id, name, row in rows]
-    held = await account_connections.of_owner(db, owner_user_id)
-    return on_machines + [_held(row) for row in held]
+    for owner, device_id, name, row in rows:
+        result[owner].append(_login(device_id, name, row))
+    held = await db.scalars(
+        select(AccountConnection)
+        .where(AccountConnection.owner_user_id.in_(owner_user_ids))
+        .order_by(AccountConnection.created_at)
+    )
+    for row in held:
+        result[row.owner_user_id].append(_held(row))
+    return result
 
 
 def _connection_key(

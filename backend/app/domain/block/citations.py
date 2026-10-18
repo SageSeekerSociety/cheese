@@ -35,10 +35,12 @@ _CITING_READ = 500
 
 
 async def citing_conversations(
-    db: AsyncSession, project_id: uuid.UUID, document_id: uuid.UUID
+    db: AsyncSession, project_ids: list[uuid.UUID], document_id: uuid.UUID
 ) -> list[Citing]:
-    """The project's conversations whose messages reference ``document_id``,
-    the most recently referencing first."""
+    """The conversations of these projects whose messages reference
+    ``document_id``, the most recently referencing first."""
+    if not project_ids:
+        return []
     rows = await db.execute(
         select(
             Block.id,
@@ -48,7 +50,7 @@ async def citing_conversations(
             Block.created_at,
         )
         .where(
-            Block.project_id == project_id,
+            Block.project_id.in_(project_ids),
             Block.kind == BlockKind.message,
             cast(Block.refs, JSONB).contains([f"topic:{document_id}"]),
         )

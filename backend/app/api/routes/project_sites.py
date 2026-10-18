@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AppError, AuthenticationRequiredError, BaseError
 from app.core.sentences import say
 from app.domain.site.hosting import content_origin
@@ -57,7 +58,7 @@ async def get_project_site(
     )
 
 
-@router.post("/{project_id}/site")
+@router.post("/{project_id}/site", dependencies=[ROUTE_DECIDES])
 async def publish_project_site(
     project_id: uuid.UUID,
     body: PublishSiteBody,

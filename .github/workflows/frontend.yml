@@ -23,9 +23,11 @@ name: Frontend Test
 # ~24 s of checkout, node, pnpm install and toolchain check that every job in
 # this file opens with is added to the sums below:
 #
-#   eslint  the four `eslint` runs over the tree — `eslint .` plus the three
-#           ratcheted configs (component boundaries, direct Web Storage,
-#           accessibility). 215 s of checks, ~239 s with the setup.
+#   eslint  the three `eslint` runs over the tree — `eslint .` plus the two
+#           ratcheted configs (component boundaries, direct Web Storage).
+#           215 s of checks, ~239 s with the setup, measured while a fourth
+#           run (the accessibility ratchet, since folded into `eslint .`) was
+#           still here.
 #   check   everything else: the ratchets that are not eslint (scenes, scene
 #           debt, catalog, stylelint, i18n, global fallbacks), the ratchets' own
 #           unit tests, the collaboration service, and the two checks that need
@@ -69,10 +71,11 @@ defaults:
     working-directory: frontend
 
 jobs:
-  # The four eslint runs. `eslint .` is the tree's own config; the other three
-  # are the same binary with a config of their own and a JSON report the ratchet
-  # reads. Nothing here reads git history, the backend, or anything outside the
-  # checkout and node_modules.
+  # The three eslint runs. `eslint .` is the tree's own config, and carries the
+  # accessibility rules as plain errors; the other two are the same binary with
+  # a config of their own and a JSON report the ratchet reads. Nothing here
+  # reads git history, the backend, or anything outside the checkout and
+  # node_modules.
   eslint:
     name: eslint
     runs-on: ubuntu-24.04-arm
@@ -167,17 +170,7 @@ jobs:
       - name: Direct Web Storage (eslint ratchet)
         run: pnpm run lint:storage
 
-      # Accessibility: eslint-plugin-vuejs-accessibility's recommended rules over
-      # src/**/*.vue (a clickable <div> with no keyboard path, a control with no
-      # label, an image with no alt). Ratcheted like the boundary step above:
-      # 159 violations in 79 files are frozen in a11y-baseline.json, and only new
-      # ones fail. Read-only; the writer is `pnpm run lint:a11y:update`, which
-      # only lowers counts. Its tests are scripts/a11y-ratchet.test.mjs, run by
-      # the Ratchet unit tests step in the other job.
-      - name: Accessibility (eslint ratchet)
-        run: pnpm run lint:a11y
-
-  # The checks that are not one of the four eslint runs — plus the two that need
+  # The checks that are not one of the three eslint runs — plus the two that need
   # the backend's Python environment. It is the direct successor of the old
   # single `check` job, which is why it keeps the name.
   check:
@@ -360,15 +353,16 @@ jobs:
         run: pnpm run test:ratchet
 
       # src/api/openapi.d.ts is generated, not committed — and neither is the
-      # document it is generated from, only that document's digest. The type
-      # check below asks the backend to build the document and then generates
-      # the types from it (scripts/typecheck.mjs, scripts/gen-api-types.mjs), so
+      # document it is generated from, nor any digest of it. The type check
+      # below asks the backend to build the document and then generates the
+      # types from it (scripts/typecheck.mjs, scripts/gen-api-types.mjs), so
       # there is no separate "types match the document" step to run and no way
-      # for the two to disagree. The digest is what the path map watches to bring
-      # the suite here when the API surface moves, and the backend job is what
-      # holds it to the document. Both halves left the repository because a route
-      # change rewrote 1.4 MB of one and 1.8 MB of the other in every PR that
-      # touched a route, which is what two parallel route changes collided in.
+      # for the two to disagree. What brings the suite here when a backend
+      # change moves the API surface is required-ci.yml's `api` job, which
+      # compares the document at the base and at the change. All of it left the
+      # repository because every route change rewrote it (1.4 MB of types,
+      # 1.8 MB of document, then one line of digest), and that is what two
+      # parallel route changes collided in.
       #
       # Which is why this job installs a second toolchain — the backend's Python
       # environment, in the steps just above the type check: generating the

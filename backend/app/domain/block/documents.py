@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import String, Uuid, column, select, table
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -19,23 +19,16 @@ from app.domain.block.models import (
     consumed_turn,
 )
 from app.domain.block.repositories import BlockRepository
+
+# The task a document is the living document of. A bare table: ``room_task``
+# depends on this domain. Shared with `editing.py`, which reads the same row.
+from app.domain.block.task_rows import _tasks  # noqa: F401  (re-exported for tests)
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.living_doc.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import DocumentJournal, Documents
-
-# The task a document is the living document of. A bare table: ``room_task``
-# depends on this domain.
-_tasks = table(
-    "tasks",
-    column("id", Uuid),
-    column("room_id", Uuid),
-    column("document_id", Uuid),
-    column("title", String),
-    column("title_source", String),
-)
 
 
 def _doc_edit_lines(content: str) -> list[str]:
@@ -127,6 +120,15 @@ async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
     return row.title
 
 
+def _project_of(doc: Document) -> uuid.UUID:
+    """The project of a document a conversation shows: a channel's, a task's or
+    one 芝士 made there. A team's own document is in no conversation (#3774)."""
+    if doc.project_id is None:
+        # i18n-exempt: an invariant, never shown to a person
+        raise ValueError("A team's own document is in no conversation")
+    return doc.project_id
+
+
 class DocumentWriter:
     def __init__(self, session: AsyncSession, summarize: Callable[[str, str], str]):
         self._session = session
@@ -171,7 +173,6 @@ class DocumentWriter:
         if not actors:
             raise ValueError("a document version needs the actor who wrote it")
         room_id, task_id = await whose_document(self._session, doc)
-        project_id = doc.project_id
         self.notice_merged = False
         author = actors[0]
         journal = DocumentJournal(self._session)
@@ -210,7 +211,7 @@ class DocumentWriter:
             return doc, None
         landed = landing(
             EventAbout.task if task_id is not None else EventAbout.room,
-            project_id=project_id,
+            project_id=_project_of(doc),
             room_id=room_id,
             task_id=task_id,
         )
@@ -343,7 +344,7 @@ class DocumentWriter:
             return None
         landed = landing(
             EventAbout.task if task_id is not None else EventAbout.room,
-            project_id=doc.project_id,
+            project_id=_project_of(doc),
             room_id=room_id,
             task_id=task_id,
         )
@@ -435,11 +436,11 @@ async def tell_room_of_document(
     extended the last one."""
     blocks = BlockRepository(session)
     landed = (
-        landing(EventAbout.thread, project_id=doc.project_id, thread_id=thread_id)
+        landing(EventAbout.thread, project_id=_project_of(doc), thread_id=thread_id)
         if thread_id is not None
         else landing(
             EventAbout.task if task_id is not None else EventAbout.room,
-            project_id=doc.project_id,
+            project_id=_project_of(doc),
             room_id=room_id,
             task_id=task_id,
         )

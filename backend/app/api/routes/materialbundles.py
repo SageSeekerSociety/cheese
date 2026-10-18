@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
@@ -74,9 +75,7 @@ async def get_material_bundle(
 
 
 @router.post(
-    "",
-    summary="Create Material Bundle",
-    status_code=201,
+    "", summary="Create Material Bundle", status_code=201, dependencies=[ROUTE_DECIDES]
 )
 async def create_material_bundle(
     payload: dict = Body(...),
@@ -100,8 +99,7 @@ async def create_material_bundle(
 
 
 @router.patch(
-    "/{bundle_id}",
-    summary="Update Material Bundle",
+    "/{bundle_id}", summary="Update Material Bundle", dependencies=[ROUTE_DECIDES]
 )
 async def update_material_bundle(
     bundle_id: Annotated[int, Path(ge=0)],
@@ -127,6 +125,7 @@ async def update_material_bundle(
     "/{bundle_id}",
     summary="Delete Material Bundle",
     status_code=204,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_material_bundle(
     bundle_id: Annotated[int, Path(ge=0)],

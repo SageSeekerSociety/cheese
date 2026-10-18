@@ -77,11 +77,15 @@ def _readable(resolver: ActorResolver, reached: Reached) -> RoomFilter:
     """The channels whose tasks this reader may see named on a card."""
 
     async def readable(rooms: set[uuid.UUID]) -> set[uuid.UUID]:
+        project_id = reached.doc.project_id
+        if project_id is None:
+            # A team's own document is in no channel's project.
+            return set()
         return {
             room
             for room in rooms
             if await resolver.can_access_topic(
-                reached.actor, project_id=reached.doc.project_id, topic_id=room
+                reached.actor, project_id=project_id, topic_id=room
             )
         }
 
@@ -259,7 +263,10 @@ async def change_canvas(
     async def task_of(ref: str) -> uuid.UUID:
         flat = ref.strip().lstrip("#")
         found = None
-        if flat.isdigit():
+        if project_id is None:
+            # A task is a project's; a team's own document names none.
+            found = None
+        elif flat.isdigit():
             found = await thing_by_number(db, project_id, Numbered.task, int(flat))
         else:
             try:

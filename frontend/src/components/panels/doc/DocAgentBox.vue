@@ -4,7 +4,7 @@
 // 回车把这句话交给它。方向键在列表里上下。点一项就做，不再确认。
 import type { AgentPreset, AgentScope, PresetContext } from '../../../lib/docAgent'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, useId, watch } from 'vue'
 
 import { useFocusReturn } from '@/composables/useFocusReturn'
 
@@ -26,6 +26,9 @@ const name = (p: AgentPreset) => t(p.label)
 const groups = computed(() => matching(presetsFor(props.scope, props.context), text.value, name))
 const flat = computed(() => [...groups.value.edit, ...groups.value.ask])
 const active = ref(0)
+// The listbox the input controls, and each option's id, so a screen reader follows the arrow keys.
+const listId = useId()
+const optionId = (p: AgentPreset) => `${listId}-${index(p)}`
 watch(flat, () => (active.value = 0))
 const asksOnly = computed(() => !props.context.editable)
 
@@ -73,6 +76,8 @@ const index = (p: AgentPreset) => flat.value.indexOf(p)
         role="combobox"
         aria-autocomplete="list"
         :aria-expanded="flat.length > 0"
+        :aria-controls="listId"
+        :aria-activedescendant="flat[active] && optionId(flat[active])"
         :aria-label="asksOnly ? t('work.room.docAgent.askPlaceholder') : t('work.room.docAgent.placeholder')"
         :placeholder="asksOnly ? t('work.room.docAgent.askPlaceholder') : t('work.room.docAgent.placeholder')"
         @keydown="onKey"
@@ -87,7 +92,7 @@ const index = (p: AgentPreset) => flat.value.indexOf(p)
         <v-icon size="16">mdi-arrow-up</v-icon>
       </button>
     </div>
-    <div v-if="flat.length" class="doc-agent-box__list" role="listbox">
+    <div v-if="flat.length" :id="listId" class="doc-agent-box__list" role="listbox">
       <template v-for="group in ['edit', 'ask'] as const" :key="group">
         <template v-if="groups[group].length">
           <div class="doc-agent-box__group">
@@ -95,12 +100,14 @@ const index = (p: AgentPreset) => flat.value.indexOf(p)
           </div>
           <button
             v-for="preset in groups[group]"
+            :id="optionId(preset)"
             :key="preset.id"
             type="button"
             role="option"
             class="doc-agent-box__option"
             :aria-selected="index(preset) === active"
             @mouseenter="active = index(preset)"
+            @focus="active = index(preset)"
             @click="choose(preset)"
           >
             <v-icon size="16">{{ preset.icon }}</v-icon>

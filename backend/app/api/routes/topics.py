@@ -24,9 +24,9 @@ from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
-from app.api.topics_deps import _actor_in_place, _parse_moment
+from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
-from app.api.write_access import CHEESE_ONLY_IN_ROOM
+from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
@@ -104,7 +104,7 @@ from app.domain.webhook import service as webhook_service
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("")
+@router.post("", dependencies=[ROUTE_DECIDES])
 async def create_topic(
     body: TopicCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -561,7 +561,7 @@ async def get_topic(
     place = await place_or_404(db, topic_id)
     if place.task is not None:
         # A task is read as `GET /topics/{task}/task`.
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     topic = place.room
     actor = await _actor_in_place(resolver, place)
     # 这三处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
@@ -1138,7 +1138,7 @@ class ProgressIn(BaseModel):
     ) = None
 
 
-@router.put("/{topic_id}/progress")
+@router.put("/{topic_id}/progress", dependencies=[ROUTE_DECIDES])
 async def write_topic_progress(
     topic_id: uuid.UUID,
     body: ProgressIn,
@@ -1167,12 +1167,10 @@ async def write_topic_progress(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
     if not actor.authenticated:
-        # The global development token opens the room but is nobody, and a
-        # message needs an author.
+        # The global development token is nobody, and a message needs an author.
         raise ForbiddenError("Sign in to write a checklist")
-    # A task's checklist is written by the task's own session, and shown as its
-    # progress; a room's or a 支线's by an agent seated in the room, as a
-    # message in that conversation.
+    # A task's checklist is its own session's, shown as its progress; a room's or
+    # a 支线's is a seated agent's, or a person's said like any message of theirs.
     inner_id = place.task_id
     plans_the_turn = (
         resolver.credential_conversation() == inner_id
@@ -1192,6 +1190,8 @@ async def write_topic_progress(
             raise NotFoundError("Checklist not found in this room")
         if current is not None and current.author != actor.handle:
             raise ForbiddenError("Only the author can edit this message")
+    if not plans_the_turn and current is None:  # Posting is speaking; editing is not.
+        await require_person_speaks(db, actor, place)
     items = [
         {"id": str(number), "subject": todo.content, "status": todo.status}
         for number, todo in enumerate(body.todos, start=1)
@@ -1252,7 +1252,7 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
-@router.post("/{topic_id}/summon")
+@router.post("/{topic_id}/summon", dependencies=[ROUTE_DECIDES])
 async def summon_agent(
     topic_id: uuid.UUID,
     body: dict,
@@ -1364,7 +1364,7 @@ def _weekly_window(body: dict) -> tuple[datetime, datetime]:
     return since, until
 
 
-@router.post("/{topic_id}/weekly")
+@router.post("/{topic_id}/weekly", dependencies=[ROUTE_DECIDES])
 async def record_weekly(
     topic_id: uuid.UUID,
     body: dict,
@@ -1424,7 +1424,7 @@ async def record_weekly(
     return ok(out)
 
 
-@router.post("/{topic_id}/check-result")
+@router.post("/{topic_id}/check-result", dependencies=[ROUTE_DECIDES])
 async def record_check_result(
     topic_id: uuid.UUID,
     body: CheckResultIn,
@@ -1453,7 +1453,7 @@ async def record_check_result(
     return ok({"recorded": True, "task_id": str(task.id)})
 
 
-@router.post("/{topic_id}/clone-from")
+@router.post("/{topic_id}/clone-from", dependencies=[ROUTE_DECIDES])
 async def clone_topic_from(
     topic_id: uuid.UUID,
     body: dict,

@@ -33,6 +33,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
+from app.api.inert_headers import INERT_HEADERS
 from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.sentences import say
@@ -53,13 +54,6 @@ _NEVER_INLINE = {
     ".xsl",
     ".js",
     ".mjs",
-}
-
-# Deny every capability an HTML document could ask for, and sandbox it besides,
-# so even a mis-typed response cannot reach the session it was served next to.
-_INERT_HEADERS = {
-    "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": "default-src 'none'; sandbox",
 }
 
 
@@ -90,7 +84,7 @@ async def serve_upload(key: str) -> FileResponse:
         media_type = "application/octet-stream"
     else:
         media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return FileResponse(path, media_type=media_type, headers=_INERT_HEADERS)
+    return FileResponse(path, media_type=media_type, headers=INERT_HEADERS)
 
 
 # Registered at exactly the path the storage backend hands out, so the two can

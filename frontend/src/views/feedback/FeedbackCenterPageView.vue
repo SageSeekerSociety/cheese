@@ -368,7 +368,6 @@ function clearFilters() {
            清除的叉**只在框里有字时出现** —— 常驻的话它是一颗平时没有任何作用的按钮。 -->
       <div class="fb-fgroup">
         <!-- for 已关联下方原生 input；标签与含清除按钮的输入框分开，不重复嵌套控件。 -->
-        <!-- eslint-disable-next-line vuejs-accessibility/label-has-for -->
         <label class="fb-fgroup__label" for="fb-author">{{ t('feedback.center.filter.author') }}</label>
         <div class="fb-author">
           <input
