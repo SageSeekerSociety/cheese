@@ -136,10 +136,10 @@ pin with it; both workflows set that variable to `uvx pre-commit`, so this
 default is what a caller that sets nothing — the entry point, `task ci:fast`, a
 plain `python3 .github/scripts/ci-fast.py` — runs.
 
-## In Required CI (the draft tier)
+## In Required CI (the PR quick tier)
 
-`.github/workflows/required-ci.yml` reuses this tool for **draft** pull
-requests: one inline job runs
+`.github/workflows/required-ci.yml` reuses this tool for pull requests: one
+inline job runs
 
 ```
 gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
@@ -148,14 +148,12 @@ ci-fast.py --tier quick --budget 1200 --memory-mib 9216 \
 ```
 
 and every product suite is skipped. The aggregating job for a draft is named
-`CI required (draft quick)` — never the `CI required` branch protection requires
-— so a draft's quick green can never satisfy the real gate, even if a selected
-suite is skipped. Promoting the draft (`ready_for_review`) starts a fresh
-**full** run; the draft-quick green is not reused. `merge_group` entries are
-always the full tier. This tier says a draft is buildable; it is not, and cannot
-be, the merge gate (see `docs/workflows.md` §6).
+`CI required (draft quick)`, while a ready PR gets `CI required`. Promoting a
+draft (`ready_for_review`) starts a fresh quick run under the ready PR's check
+name. A push to main runs the full tier before dev deployment (see
+`docs/workflows.md` §5).
 
-### What the draft tier does not judge
+### What the PR quick tier does not judge
 
 A draft is a work in progress, and the tier is red only for what its author can
 act on. Three things it does not own, and therefore does not turn red (each is
@@ -192,7 +190,7 @@ in the run's `not_run`):
   warning annotation instead. GitHub has
   no third conclusion, so the summary is where "not judged" is readable; the
   green of `CI required (draft quick)` is not a statement that everything ran.
-  The merge queue's full run on the same commit is.
+  The push-to-main full run after the merge is.
 
 The three together were the bulk of the red: over the two days to 2026-10-12,
 of 188 merged PRs 83 failed their first Required CI run; the draft tier went
@@ -320,8 +318,8 @@ everything is still allowed to answer unknown.
   It is not a full consumer-type check.
 - **Not covered here**: contract / integration / build / e2e tests, remote
   checks, and full frontend consumer types. The summary lists every skipped
-  item. Full Required CI + merge queue remains the only merge gate — **ci:fast
-  green does not mean full CI passes.**
+  item. Full Required CI runs after a push to main and gates dev deployment;
+  **ci:fast green does not mean full CI passes.**
 
 ## Exit codes
 
