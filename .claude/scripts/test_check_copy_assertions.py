@@ -396,6 +396,29 @@ class CopyAssertionGuardTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertNotIn("通过", result.stdout)
 
+    def test_a_comment_right_after_brackets_is_a_comment(self) -> None:
+        for source in (
+            "const checks = ['a']/* expect(notice).toBe('本月的芝士额度已用完，11月1日重置。') */",
+            "function f() {}/* expect(notice).toBe('本月的芝士额度已用完，11月1日重置。') */",
+            "const x=/* expect(notice).toBe('本月的芝士额度已用完，11月1日重置。') */1;",
+        ):
+            with self.subTest(source=source):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = self._fixture(directory, source)
+                    result = self._run(SCRIPT, root)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_bare_glob_in_jsx_is_not_a_comment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._fixture(
+                directory,
+                "render(<code>**/*.ts</code>);\n"
+                "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')\n"
+                "  /* 真正的块注释在这里闭合 */\n",
+            )
+            result = self._run(SCRIPT, root)
+            self.assertEqual(result.returncode, 1, result.stderr)
+
     def test_a_string_after_a_keyword_is_a_string(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._fixture(
