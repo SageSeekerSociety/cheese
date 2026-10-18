@@ -473,13 +473,10 @@ def screen_env(
     if place.execution_target is not None:
         env["CHEESE_EXECUTION_TARGET"] = json.dumps(place.execution_target)
     if place.project_id:
-        # Who the turn's commits belong to (workspace/identity.py). Absent, the
-        # launcher falls back to 芝士 — the same default the in-repo snapshot
-        # path uses, so both surfaces agree.
-        env["CHEESE_GIT_AUTHOR_NAME"] = place.agent_handle
-        env["CHEESE_GIT_AUTHOR_EMAIL"] = f"{place.agent_handle}@agent.cheese.local"
-        env["GIT_AUTHOR_NAME"] = place.agent_handle
-        env["GIT_AUTHOR_EMAIL"] = env["CHEESE_GIT_AUTHOR_EMAIL"]
+        # The platform commits; who a commit is BY is not fixed here. A task's
+        # checkout sets its own author (`cheese worktree`, from the git route's
+        # `author`), and an author in the environment would override it; the
+        # launch script gives the seat the teammate as the default beneath it.
         env["GIT_COMMITTER_NAME"] = "芝士"
         env["GIT_COMMITTER_EMAIL"] = "cheese@zhishi.local"
     return env
@@ -683,6 +680,15 @@ mkdir -p "$HOME/.cheese"
 # old shape could serve: one agent.
 SEATD="$HOME/.cheese/seats/${{CHEESE_SEAT:-shared}}"
 mkdir -p "$SEATD"
+# Who this seat's commits are by when nothing closer says: the teammate. A
+# task's checkout names its own author in its own config, which this file sits
+# under; an author in the environment would sit over it. Per seat, because the
+# seats of a room share one HOME. The session's own ~/.gitconfig still applies.
+if [ -n "${{CHEESE_PROJECT:-}}" ] && [ -n "${{CHEESE_AUTHOR:-}}" ]; then
+  printf '[include]\\n\\tpath = %s/.gitconfig\\n[user]\\n\\tname = %s\\n\\temail = %s@agent.cheese.local\\n' \\
+    "$HOME" "$CHEESE_AUTHOR" "$CHEESE_AUTHOR" > "$SEATD/gitconfig"
+  export GIT_CONFIG_GLOBAL="$SEATD/gitconfig"
+fi
 cat > "$HOME/.cheese/cheese-environment.py" <<'CHEESE_ENV_PY'
 {environment_helper}CHEESE_ENV_PY
 {configure}# Ship the platform CLI with the launcher over the existing device

@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.background import PeriodicRunner
+from app.core.background import PeriodicJobs, PeriodicRunner
 from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio
@@ -28,12 +28,14 @@ class _Runs:
     def __init__(self, *, wins: bool = True) -> None:
         self.last: dict[str, datetime] = {}
         self.claims: list[str] = []
+        self.intervals: list[float] = []
         self._wins = wins
 
     async def claim(
         self, name: str, *, interval_s: float, who: str, now: datetime
     ) -> bool:
         self.claims.append(name)
+        self.intervals.append(interval_s)
         if self._wins:
             self.last[name] = now
         return self._wins
@@ -72,6 +74,183 @@ async def test_a_restart_does_not_run_a_job_before_it_is_due():
 
 async def test_a_job_without_a_recorded_run_waits_one_interval():
     assert not await _runs_within(0.2, 3600, None, _Runs())
+
+
+@pytest.fixture
+def depleted_forge_quota(monkeypatch):
+    import time
+
+    from app.core import forge_quota
+
+    monkeypatch.setattr(forge_quota, "_readings", {})
+    monkeypatch.setattr(forge_quota, "_refused_until", {})
+    forge_quota.record(152342238, 500, 5000, time.time() + 600)
+
+
+async def test_an_unmarked_job_keeps_running_at_ten_percent_quota(depleted_forge_quota):
+    ran = asyncio.Event()
+
+    async def job():
+        ran.set()
+
+    registry = PeriodicJobs()
+    registry.register("local work", 60, job)
+    runner = registry.ordered(["local work"])[0]
+    assert runner._next_interval_seconds() == 60
+
+    runner.start(_Runs(), datetime.now(UTC) - timedelta(hours=1))
+    try:
+        await asyncio.wait_for(ran.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+
+async def test_an_explicit_forge_job_pauses_at_ten_percent_quota(depleted_forge_quota):
+    ran = asyncio.Event()
+
+    async def job():
+        ran.set()
+
+    registry = PeriodicJobs()
+    registry.register("forge work", 60, job, forge_bound=True)
+    runner = registry.ordered(["forge work"])[0]
+    assert runner._next_interval_seconds() is None
+
+    runs = _Runs()
+    runner.start(runs, datetime.now(UTC) - timedelta(hours=1))
+    try:
+        await asyncio.sleep(0)
+        assert not ran.is_set()
+        assert runs.claims == []
+    finally:
+        await runner.stop()
+
+
+async def test_interval_policy_slows_ticks_without_extending_the_lease():
+    ran_twice = asyncio.Event()
+    started = []
+
+    async def job():
+        started.append(asyncio.get_running_loop().time())
+        if len(started) >= 2:
+            ran_twice.set()
+
+    runs = _Runs()
+    runner = PeriodicRunner(
+        "throttled job",
+        0.01,
+        job,
+        interval_policy=lambda _base: 0.07,
+        pause_wait=lambda: 0.07,
+    )
+    runner.start(runs)
+    try:
+        await asyncio.wait_for(ran_twice.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+    assert started[1] - started[0] >= 0.06
+    assert runs.intervals[:2] == [0.01, 0.01]
+
+
+async def test_a_slow_tick_then_pause_keeps_base_leases_after_recovery():
+    ran_twice = asyncio.Event()
+    state = ["slow"]
+    runs = _Runs()
+
+    def policy(base):
+        if state[0] == "paused":
+            return None
+        return 0.3 if state[0] == "slow" else base
+
+    def resume_wait():
+        state[0] = "recovered"
+        return 0.1
+
+    async def job():
+        if len(runs.claims) == 1:
+            state[0] = "paused"
+        else:
+            ran_twice.set()
+
+    runner = PeriodicRunner(
+        "slow then paused",
+        0.01,
+        job,
+        interval_policy=policy,
+        pause_wait=resume_wait,
+    )
+    runner.start(runs, datetime.now(UTC) - timedelta(seconds=1))
+    try:
+        await asyncio.wait_for(ran_twice.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+    assert state[0] == "recovered"
+    assert runs.intervals == [0.01, 0.01]
+
+
+async def test_a_paused_job_does_not_run_again_before_quota_recovers():
+    loop = asyncio.get_running_loop()
+    resume_at = [0.0]
+    ran_twice = asyncio.Event()
+    started = []
+
+    def interval_policy(base):
+        return None if loop.time() < resume_at[0] else base
+
+    async def job():
+        started.append(loop.time())
+        if len(started) == 1:
+            resume_at[0] = loop.time() + 0.12
+        else:
+            ran_twice.set()
+
+    runner = PeriodicRunner(
+        "paused job",
+        0.01,
+        job,
+        interval_policy=interval_policy,
+        pause_wait=lambda: max(0.001, resume_at[0] - loop.time()),
+    )
+    runner.start(_Runs())
+    try:
+        await asyncio.wait_for(ran_twice.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+    assert started[1] >= resume_at[0]
+
+
+async def test_starting_while_paused_waits_for_reset_even_when_overdue():
+    loop = asyncio.get_running_loop()
+    resume_at = loop.time() + 0.12
+    ran = asyncio.Event()
+    started = []
+
+    def interval_policy(base):
+        return base if loop.time() >= resume_at else None
+
+    async def job():
+        started.append(loop.time())
+        ran.set()
+
+    runs = _Runs()
+    runner = PeriodicRunner(
+        "paused on startup",
+        0.01,
+        job,
+        interval_policy=interval_policy,
+        pause_wait=lambda: max(0.001, resume_at - loop.time()),
+    )
+    runner.start(runs, datetime.now(UTC) - timedelta(seconds=200))
+    try:
+        await asyncio.wait_for(ran.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+    assert started[0] >= resume_at
+    assert runs.intervals == [0.01]
 
 
 async def test_a_job_keeps_running_on_its_interval():
@@ -319,6 +498,45 @@ def test_cloud_compute_is_metered_and_charged_on_a_clock():
 
 def test_forge_accounts_left_by_failed_creations_are_swept():
     assert any(job.name == "forge orphan account sweep" for job in _jobs())
+
+
+@pytest.mark.parametrize(
+    ("remaining", "floor"), [(4000, 0), (2500, 180), (1100, 300), (999, None)]
+)
+def test_only_the_github_jobs_use_the_quota_interval_policy(
+    monkeypatch, remaining, floor
+):
+    import time
+
+    from app.core import forge_quota
+    from app.core.config import settings
+
+    github_jobs = {
+        "pr poll",
+        "task pr poll",
+        "landing watch",
+        "draft pr sweep",
+        "ratchet ingest",
+        "ci activity sweep",
+    }
+    # Enable configured clocks so disabled test settings cannot hide a missing opt-in.
+    for field in type(settings).model_fields:
+        if field.endswith("_interval_s"):
+            monkeypatch.setattr(settings, field, 60)
+    monkeypatch.setattr(forge_quota, "_readings", {})
+    monkeypatch.setattr(forge_quota, "_refused_until", {})
+    forge_quota.record(152342238, remaining, 5000, time.time() + 600)
+
+    jobs = _jobs()
+    assert github_jobs <= {job.name for job in jobs}
+    for job in jobs:
+        if job.name not in github_jobs or job.interval_seconds <= 0:
+            assert job._next_interval_seconds() == job.interval_seconds, job.name
+            continue
+        expected = None if floor is None else max(job.interval_seconds, floor)
+        assert job._next_interval_seconds() == expected, job.name
+        if floor is None:
+            assert 590 < job._pause_wait_seconds() <= 600, job.name
 
 
 def test_every_job_is_named_once():

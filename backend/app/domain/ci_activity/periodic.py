@@ -11,4 +11,5 @@ def register_periodic_jobs(jobs: PeriodicJobs, *, sessions: SessionFactory) -> N
         "ci activity sweep",
         settings.ci_activity_sweep_interval_s,
         lambda: ingest.sweep(sessions),
+        forge_bound=True,
     )

@@ -93,14 +93,14 @@ async def test_the_minted_state_carries_the_jti_it_reserved():
     """铸出来的 jti 和 state 里的必须是同一个，否则预约的是一张、花掉的是另一张，
     两边都对不上——链接会变成一次都用不了。"""
     pid = uuid.uuid4()
-    minted = mint_account_link_state(470, return_project_id=pid)
+    minted = mint_account_link_state(470, return_path=f"/projects/{pid}/settings")
 
     claims = verify_account_link_state(minted.state)
 
     assert claims is not None
     assert claims.jti == minted.jti
     assert claims.user_id == 470
-    assert claims.return_project_id == pid
+    assert claims.return_path == f"/projects/{pid}/settings"
 
 
 async def test_two_mints_never_share_a_jti():

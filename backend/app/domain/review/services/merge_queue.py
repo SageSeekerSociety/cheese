@@ -258,7 +258,6 @@ async def _merge_pr_for_accept(
         card=card,
         decided_by=decided_by,
         opened_by=status.opened_by,
-        token=creds.read,
     )
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
@@ -421,7 +420,6 @@ async def _merge_armed_card(
         card=card,
         decided_by=armer,
         opened_by=opened_by,
-        token=creds.read,
     )
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email

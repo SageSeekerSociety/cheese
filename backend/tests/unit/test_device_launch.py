@@ -205,25 +205,70 @@ def test_the_contract_moves_with_whatever_the_session_reads_only_at_launch(
     assert device_launch.launch_holes(state=STATE).contract != before
 
 
-def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
-    _, env = _screen_launch(
-        token="test", home_dir=str(tmp_path), work_dir=str(tmp_path)
+def _commit_in_session(command: list[str], env: dict[str, str], repo: Path) -> str:
+    """Commit in ``repo`` from the session's shell — the launch script up to the
+    point the agent starts — on a machine with no git identity of its own, and
+    return the commit's author and committer."""
+    script = command[2]
+    start = script.index('SEATD="$HOME/.cheese/seats/')
+    end = script.index('cat > "$HOME/.cheese/cheese-environment.py"')
+    shell = {
+        **_clean_environ(),
+        **env,
+        "HOME": env["CHEESE_HOME"],
+        # No identity from the machine: not its config, not its account name.
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+    Path(env["CHEESE_HOME"]).mkdir(parents=True, exist_ok=True)
+    (Path(env["CHEESE_HOME"]) / ".gitconfig").write_text(
+        "[user]\n\tuseConfigOnly = true\n"
     )
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", "Fix"],
-        cwd=tmp_path,
-        env={**os.environ, **env},
+        [
+            "sh",
+            "-c",
+            script[start:end] + 'git -C "$1" -c commit.gpgsign=false '
+            "commit -q --allow-empty -m Fix",
+            "sh",
+            str(repo),
+        ],
+        env=shell,
         check=True,
         capture_output=True,
     )
-    actual = subprocess.check_output(
-        ["git", "log", "-1", "--format=%an <%ae>%n%cn <%ce>"], cwd=tmp_path, text=True
+    return subprocess.check_output(
+        ["git", "log", "-1", "--format=%an <%ae>%n%cn <%ce>"], cwd=repo, text=True
     )
+
+
+def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
+    command, env = _screen_launch(
+        token="test", home_dir=str(tmp_path / "home"), work_dir=str(tmp_path)
+    )
+    actual = _commit_in_session(command, env, tmp_path / "repo")
     assert actual.splitlines() == [
         "ops <ops@agent.cheese.local>",
         "芝士 <cheese@zhishi.local>",
     ]
+
+
+def test_a_tasks_checkout_names_its_own_author_over_the_teammate(tmp_path):
+    """The teammate is only the default: a checkout that names an author (a
+    task's, per `cheese worktree`) commits as that author."""
+    command, env = _screen_launch(
+        token="test", home_dir=str(tmp_path / "home"), work_dir=str(tmp_path)
+    )
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Owner"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "owner@example.com"],
+        check=True,
+    )
+    actual = _commit_in_session(command, env, repo)
+    assert actual.splitlines()[0] == "Owner <owner@example.com>"
 
 
 def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():
