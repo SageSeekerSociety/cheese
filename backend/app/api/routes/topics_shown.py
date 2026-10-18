@@ -216,17 +216,13 @@ async def show_in_room(
     #: When this call last changed what the card shows: the page or any file it
     #: loads. None when nothing was sent, so there is nothing to compare.
     saved_at: datetime | None = None
+    #: A person writing the room's files does it on the files' own terms,
+    #: whichever door they use: their role has to change files, and an original
+    #: sent in the conversation or kept in the library is not written over.
+    person = actor.authenticated and actor.via != "cheese"
     if as_ != "app" and ("content" in body or "content_b64" in body):
-        if actor.authenticated and actor.via != "cheese":
-            # A person writing the room's files does it on the files' own terms,
-            # whichever door they use: their role has to change files, and an
-            # original sent in the conversation or kept in the library is not
-            # written over.
+        if person:
             await require_role(db, actor, place.project_id, Permission.edit_content)
-            if library.library_name(path) is not None:
-                raise UnprocessableEntityError(say("libraryOriginalReadOnly"))
-            if library.is_message_attachment(path):
-                raise UnprocessableEntityError(say("attachmentOriginalReadOnly"))
         # A remote machine's file is not in the backend worktree until published.
         # Office files and PDFs are not text, so they travel base64-encoded; a
         # caller that sends them as `content` would either fail to read them or
@@ -250,6 +246,12 @@ async def show_in_room(
                 say("artifactTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
             )
         assets = _page_assets(body, path)
+        if person:
+            for written in [path, *(asset_path for asset_path, _ in assets)]:
+                if library.library_name(written) is not None:
+                    raise UnprocessableEntityError(say("libraryOriginalReadOnly"))
+                if library.is_message_attachment(written):
+                    raise UnprocessableEntityError(say("attachmentOriginalReadOnly"))
     if as_ != "app" and ("content" in body or "content_b64" in body):
         # Through the draft history: the state this replaces stays restorable,
         # and `base_version` (the version `cheese pull` read) turns an overwrite

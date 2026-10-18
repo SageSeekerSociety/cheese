@@ -348,6 +348,35 @@ def test_a_person_showing_a_file_does_not_overwrite_one_sent_in_the_conversation
     assert raw.content == b"the sent original"
 
 
+def test_a_page_a_person_shows_brings_no_file_over_one_sent_in_the_conversation(
+    client,
+):
+    """A page's own files are written too, on the same terms as the page."""
+    project, room = _room(client)
+    sent = client.post(
+        f"/topics/{room}/attachments",
+        files={"file": ("合同.txt", b"the sent original", "text/plain")},
+    )
+    assert sent.status_code == 200, sent.text
+    path = sent.json()["data"]["path"]
+
+    shown = client.post(
+        f"/topics/{room}/shown",
+        headers=session_auth_headers("owner"),
+        json={
+            "path": "index.html",
+            "content": "<html></html>",
+            "assets": [
+                {"path": path, "content_b64": base64.b64encode(b"replaced").decode()}
+            ],
+        },
+    )
+
+    assert shown.status_code == 422, shown.text
+    raw = client.get(f"/topics/{room}/files/raw", params={"path": path})
+    assert raw.content == b"the sent original"
+
+
 def test_closing_the_editor_after_saving_does_not_leave_a_duplicate(
     client, monkeypatch
 ):
