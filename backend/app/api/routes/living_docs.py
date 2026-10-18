@@ -506,11 +506,20 @@ async def document_ticket(
     Whoever may read the document may open it; who may change it is decided
     here and carried in the ticket, because the service trusts nothing a
     browser says about itself. Read-only: a caller without a verified
-    credential, an archived room, an archived project.
+    credential, an archived room, an archived project. Suggest-only: a person
+    who may comment but not change the text (a mentor, #3830) writes
+    suggestions of their own and nothing else.
     """
     reached = await reach(db, resolver, document_id)
-    read_only = not reached.actor.authenticated or await frozen(db, reached)
     agent = await IdentityService(db).is_agent(reached.actor.handle)
+    cannot_edit = not reached.actor.authenticated or await frozen(db, reached)
+    suggest_only = (
+        cannot_edit
+        and reached.actor.authenticated
+        and not agent
+        and not await frozen(db, reached, Permission.comment)
+    )
+    read_only = cannot_edit and not suggest_only
     return ok(
         {
             "document": collab.document_name(reached.doc.id),
@@ -519,8 +528,10 @@ async def document_ticket(
                 handle=reached.actor.handle,
                 agent=agent,
                 read_only=read_only,
+                suggest_only=suggest_only,
             ),
             "read_only": read_only,
+            "suggest_only": suggest_only,
         }
     )
 
