@@ -188,11 +188,44 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
             "11111111",
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = self.body_file.read_text(encoding="utf-8")
         self.assertEqual(
-            self.body_file.read_text(encoding="utf-8").splitlines()[-1],
+            text.splitlines()[-1],
             "独立 review：head 11111111 结论 无 blocker/major｜档位 B",
         )
+        # The stale line is replaced, not left behind: a wrong head mid-body is
+        # read by nobody downstream and would still mislead a human reader.
+        self.assertNotIn("head 99999999", text)
+        self.assertEqual(text.count("独立 review："), 1)
         check = self.run_script("--head", "11111111", "--text", str(self.body_file))
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+
+    def test_fix_strips_an_increment_from_a_first_round_with_later_rounds(self) -> None:
+        self.body_file.write_text(
+            "## 改动原因\n修复问题。\n\n"
+            "独立 review：head 11111111（增量自 00000000）结论 有 1 条｜档位 B\n"
+            "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major｜档位 B\n",
+            encoding="utf-8",
+        )
+        delta = self.root / "REVIEW-RESULT.md"
+        delta.write_text(
+            "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major｜档位 B\n",
+            encoding="utf-8",
+        )
+        result = self.run_script(
+            "--fix",
+            "--review-result",
+            str(delta),
+            "--text",
+            str(self.body_file),
+            "--out",
+            str(self.body_file),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        lines = self.body_file.read_text(encoding="utf-8").splitlines()
+        self.assertIn("head 11111111 结论 有 1 条｜档位 B", lines[-2])
+        self.assertIn("head 22222222（增量自 11111111）", lines[-1])
+        check = self.run_script("--head", "22222222", "--text", str(self.body_file))
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
 
     def test_check_rejects_a_head_that_is_not_the_delivery_head(self) -> None:
