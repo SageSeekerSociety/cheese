@@ -139,13 +139,14 @@ async def is_team_admin(db: AsyncSession, team_id: int, handle: str) -> bool:
 
 
 async def may_move_or_delete(db: AsyncSession, reached: Reached) -> bool:
-    """A team's own document is deleted or moved by its author or a team admin
+    """A team's own document is deleted or moved by the person it is theirs
+    (``created_by``: who made it, or who had 芝士 write it) or a team admin
     (#3774); a project's, by whoever may change it there."""
     doc = reached.doc
     if doc.project_id is not None:
         return True
     handle = reached.actor.handle
-    return doc.author == handle or await is_team_admin(db, doc.team_id, handle)
+    return doc.created_by == handle or await is_team_admin(db, doc.team_id, handle)
 
 
 async def authorize_in_project(

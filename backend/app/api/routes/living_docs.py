@@ -43,6 +43,7 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
+from app.domain.agent.announce import who_started_the_open_turn
 from app.domain.agent.chat import ChatService
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block import citations
@@ -172,6 +173,20 @@ def _origin(resolver: ActorResolver, reached_actor) -> uuid.UUID | None:
     return resolver.credential_conversation() if reached_actor.via == "cheese" else None
 
 
+async def _asked_for_by(
+    db, project_id: uuid.UUID, actor, origin: uuid.UUID | None
+) -> str | None:
+    """Whose the new document is: the person making it, or — when 芝士 makes
+    it — the person whose message opened the turn it writes in."""
+    if actor.via == "cheese":
+        if origin is None:
+            return None
+        return await who_started_the_open_turn(db, project_id, origin, actor.handle)
+    if await IdentityService(db).is_agent(actor.handle):
+        return None
+    return actor.handle
+
+
 @projects.get("/{project_id}/documents")
 async def project_documents(
     project_id: uuid.UUID,
@@ -236,6 +251,7 @@ async def create_document(
         project_id=project_id,
         title=title,
         author=actor.handle,
+        created_by=await _asked_for_by(db, project_id, actor, origin),
         number=await take_number(db, project_id, Numbered.document),
         room_id=await conversations.room_of(db, origin) if origin else None,
     )
@@ -468,7 +484,7 @@ async def delete_document(
     document_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Delete a document of the project's own or the team's, its history and
-    its comments; a team's by its author or a team admin (#3774).
+    its comments; a team's by the person it is theirs or a team admin (#3774).
     Whoever has it open is told; what they type after that is not kept."""
     reached = await _own(db, resolver, document_id)
     if not await may_move_or_delete(db, reached):

@@ -90,7 +90,7 @@
     "link": "Share link",
     "about": "Anyone with the link can read this document's current version without signing in. They don't see comments, suggestions or history.",
     "shared": "Anyone with the link can read the current version without signing in. Once you stop sharing, the link stops working.",
-    "notAllowed": "A project's documents are shared by whoever may publish the project's site; a team's or a person's own documents, by their author or a team admin.",
+    "notAllowed": "A project's document takes the Share documents permission; a team's or a person's own, its creator or a team admin.",
     "failed": "Sharing failed"
   },
   "mode": {

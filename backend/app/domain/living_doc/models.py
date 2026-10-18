@@ -64,6 +64,11 @@ class Document(UuidPk, Base):
     version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     #: Who made the latest version.
     author: Mapped[str] = mapped_column(String(128), default="system")
+    #: The person the document is theirs: who made it, or whose message had
+    #: 芝士 write it. It stays when others edit it, as ``author`` does not. None
+    #: when no person did: the platform made it (a task's, the project's goals),
+    #: or another agent or the platform asked 芝士 for it.
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     #: The channel or private chat 芝士 wrote it in. Until it is saved to the
     #: library only the people who can read that conversation can read it, and
     #: it goes when the conversation does. None for one made in the library.
