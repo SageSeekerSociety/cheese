@@ -2,10 +2,16 @@ import contextlib
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+# `python3 <path>` puts the script's directory on sys.path; exec_module does
+# not, and rerun-failed.py imports flake_log_signatures by bare name.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 spec = importlib.util.spec_from_file_location(
     "rerun_failed", Path(__file__).with_name("rerun-failed.py")
@@ -213,6 +219,334 @@ class KnownPatternTest(unittest.TestCase):
                     with contextlib.redirect_stdout(out):
                         self.assertEqual(rerun.main(), code)
                     self.assertIn(marker, out.getvalue())
+
+
+class PushToMainTest(unittest.TestCase):
+    """The push route exists for main only, and only when the log is a flake."""
+
+    FLAKE_LOG = (
+        "backend\tRun backend tests\t2026-10-18T00:00:00Z\n"
+        "  read ECONNRESET\n"
+    )
+
+    def push(self, **changes):
+        return run(event="push", head_branch="main", **changes)
+
+    def test_a_push_to_main_with_a_known_flake_log_may_be_rerun(self):
+        self.assertIsNone(
+            rerun.refusal(self.push(), REPO, failed_log=self.FLAKE_LOG)
+        )
+
+    def test_a_push_to_main_with_a_real_failure_is_refused(self):
+        reason = rerun.refusal(
+            self.push(), REPO, failed_log="AssertionError: 'open' != 'closed'"
+        )
+        self.assertIn("matches no known flake signature", reason)
+
+    def test_a_push_to_main_without_a_readable_log_is_refused(self):
+        reason = rerun.refusal(self.push(), REPO, failed_log=None)
+        self.assertIn("could not be read", reason)
+
+    def test_a_push_to_another_branch_is_refused_even_with_a_flake_log(self):
+        for branch in ("task/3560a698", None):
+            with self.subTest(branch=branch):
+                reason = rerun.refusal(
+                    run(event="push", head_branch=branch),
+                    REPO,
+                    failed_log=self.FLAKE_LOG,
+                )
+                self.assertIn("not by main", reason)
+
+    def test_the_state_and_attempt_gates_apply_to_a_push_too(self):
+        for shaped, marker in (
+            (self.push(run_attempt=3), "limit is 3"),
+            (self.push(run_attempt="1"), "limit is 3"),
+            (self.push(conclusion="success"), "not a completed failure"),
+        ):
+            with self.subTest(run=shaped):
+                reason = rerun.refusal(
+                    shaped, REPO, failed_log=self.FLAKE_LOG
+                )
+                self.assertIn(marker, reason)
+
+    def test_a_pull_request_run_keeps_its_old_behaviour(self):
+        """The log gate is the push route's: PR reruns still are standard."""
+        self.assertIsNone(
+            rerun.refusal(run(), REPO, failed_log="AssertionError: 1 != 2")
+        )
+
+    def test_the_log_is_read_only_where_it_decides_something(self):
+        """Every other run is decided without it, and a gh call is not free."""
+        self.assertTrue(rerun.needs_failed_log(self.push(), REPO))
+        for shaped, repository in (
+            (run(), REPO),
+            (self.push(run_attempt=3), REPO),
+            (run(event="push", head_branch="task/1"), REPO),
+            (self.push(repository={"full_name": "x/y"}), REPO),
+            (self.push(), "x/y"),
+        ):
+            with self.subTest(run=shaped, repository=repository):
+                self.assertFalse(rerun.needs_failed_log(shaped, repository))
+
+    def test_a_refused_push_run_reports_its_refusal_not_a_log_gate(self):
+        """The attempt limit is named, rather than the log that was not read."""
+        reason = rerun.refusal(self.push(run_attempt=3), REPO, failed_log=None)
+        self.assertIn("limit is 3", reason)
+        self.assertNotIn("log", reason)
+
+
+class LogSignatureTest(unittest.TestCase):
+    """flake_log_signatures.py: what it recognises, and what it must not."""
+
+    SAMPLES = (
+        ("econnreset", "  read ECONNRESET\n"),
+        (
+            "tls-connect-error",
+            "curl: (35) TLS connect error: error:0A000126:SSL routines\n",
+        ),
+        (
+            "http-403-rate-limit",
+            "HTTP 403: API rate limit exceeded for installation\n",
+        ),
+        (
+            "runner-lost",
+            "The self-hosted runner lost communication with the server.\n",
+        ),
+        (
+            "setup-uv-timeout",
+            "Failed to download uv-0.5.0: operation timed out\n",
+        ),
+    )
+
+    def test_every_signature_matches_its_own_sample(self):
+        for signature_id, sample in self.SAMPLES:
+            with self.subTest(signature=signature_id):
+                matched = rerun.flake_log_signature(sample)
+                self.assertEqual((matched or {}).get("id"), signature_id)
+
+    def test_matching_ignores_case(self):
+        self.assertEqual(
+            rerun.flake_log_signature("read econnreset")["id"], "econnreset"
+        )
+
+    # Shapes captured from `gh run view --log-failed`: job, step, timestamp,
+    # then the line. The report quotes what the tests expect, so a signature
+    # found in it would be the test's own text, not an observed flake.
+    PYTEST_REPORT = "\n".join(
+        (
+            "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
+            " =========================== FAILURES ============================",
+            "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
+            " ______ test_a_passing_failure_resumes[API Error: Connection"
+            " dropped (ECONNRESET)（server_error）-unreachable] ______",
+            "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
+            " >       assert classify(message) == expected",
+            "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
+            " E       AssertionError: assert 'transient' == 'unreachable'",
+            "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
+            ' >       respond(403, json={"message": "API rate limit exceeded'
+            ' for installation ID 1."})',
+            "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
+            " ==================== short test summary info ====================",
+            "backend\tRun backend tests\t2026-10-18T09:06:04.3675847Z"
+            " FAILED tests/unit/test_resumable_failures.py::test_a_passing_"
+            "failure_resumes[API Error: Connection dropped (ECONNRESET)"
+            "（server_error）-unreachable] - AssertionError",
+            "",
+        )
+    )
+
+    def test_an_ordinary_failure_matches_no_signature(self):
+        for log in (
+            "AssertionError: 'open' != 'closed'",
+            "E   assert 3 == 4",
+            "FAILED tests/unit/test_rate_limit.py::test_the_limiter_counts",
+            '        json={"message": "API rate limit exceeded for installation ID 1."},',
+            self.PYTEST_REPORT,
+            "",
+        ):
+            with self.subTest(log=log):
+                self.assertIsNone(rerun.flake_log_signature(log))
+
+    def test_a_flake_line_beside_a_test_report_still_matches(self):
+        log = "\n".join(
+            (
+                "backend\tInstall dependencies\t2026-10-18T09:06:04.3675847Z"
+                " Error: read ECONNRESET",
+                self.PYTEST_REPORT,
+            )
+        )
+        self.assertEqual(rerun.flake_log_signature(log)["id"], "econnreset")
+
+    def test_the_signatures_argument_is_honoured(self):
+        custom = (
+            {
+                "id": "custom",
+                "title": "custom",
+                "pattern": r"\bboom\b",
+                "action": "rerun",
+            },
+        )
+        self.assertEqual(
+            rerun.flake_log_signature("a boom happened", custom)["id"], "custom"
+        )
+        self.assertIsNone(rerun.flake_log_signature("a boom happened"))
+
+    def test_the_signature_list_is_valid(self):
+        rerun.validate_log_signatures()
+        self.assertTrue(rerun.LOG_SIGNATURES)
+
+    def test_a_signature_written_wrong_is_rejected(self):
+        good = dict(rerun.LOG_SIGNATURES[0])
+        for damage in (
+            {"id": ""},
+            {"title": " "},
+            {"pattern": "("},
+            {"action": ""},
+            {"id": rerun.LOG_SIGNATURES[1]["id"]},
+            {"pattern": None},
+        ):
+            with self.subTest(damage=damage):
+                broken = [good | damage, *rerun.LOG_SIGNATURES[1:]]
+                with self.assertRaises(ValueError):
+                    rerun.validate_log_signatures(broken)
+
+
+class RunIdEntryTest(unittest.TestCase):
+    """`--run <id>` is the entry a person or the orchestrator calls directly."""
+
+    FLAKE_LOG = PushToMainTest.FLAKE_LOG
+
+    def call(self, arguments, run_object, log=None, rerun_failure=None):
+        calls = []
+        log_fetches = []
+
+        def record(run_id, repository):
+            calls.append((run_id, repository))
+            return rerun_failure
+
+        def fetch_logs(run_id, repository):
+            log_fetches.append((run_id, repository))
+            return log
+
+        saved = list(sys.argv)
+        self.addCleanup(lambda: sys.argv.__setitem__(slice(None), saved))
+        sys.argv[:] = ["rerun-failed.py", *arguments]
+        out = io.StringIO()
+        with (
+            mock.patch.object(rerun, "fetch_run", return_value=run_object),
+            mock.patch.object(rerun, "fetch_failed_logs", side_effect=fetch_logs),
+            mock.patch.object(rerun, "rerun_failed_jobs", side_effect=record),
+            contextlib.redirect_stdout(out),
+        ):
+            code = rerun.main()
+        return code, out.getvalue(), calls, log_fetches
+
+    def test_it_fetches_the_run_and_reruns_when_the_log_is_a_flake(self):
+        code, out, calls, log_fetches = self.call(
+            ["--run", "42", REPO],
+            run(event="push", head_branch="main"),
+            log=self.FLAKE_LOG,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [(42, REPO)])
+        self.assertEqual(log_fetches, [(42, REPO)])
+        self.assertIn("failed on known flake 'econnreset'", out)
+
+    def test_dry_run_only_prints_the_decision(self):
+        code, out, calls, log_fetches = self.call(
+            ["--run", "42", REPO, "--dry-run"],
+            run(event="push", head_branch="main"),
+            log=self.FLAKE_LOG,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [])
+        self.assertEqual(log_fetches, [(42, REPO)])
+        self.assertIn("would rerun its failed jobs", out)
+        self.assertNotIn("rerunning its failed jobs", out)
+
+    def test_a_real_failure_is_refused_and_not_rerun(self):
+        code, out, calls, _ = self.call(
+            ["--run", "42", REPO],
+            run(event="push", head_branch="main"),
+            log="AssertionError: 1 != 2",
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, [])
+        self.assertIn("::error::", out)
+
+    def test_a_pull_request_run_never_reads_a_log(self):
+        code, _, calls, log_fetches = self.call(
+            ["--run", "42", REPO], run(), log=self.FLAKE_LOG
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [(42, REPO)])
+        self.assertEqual(log_fetches, [])
+
+    def test_a_run_that_could_not_be_fetched_is_an_error(self):
+        saved = list(sys.argv)
+        self.addCleanup(lambda: sys.argv.__setitem__(slice(None), saved))
+        sys.argv[:] = ["rerun-failed.py", "--run", "42", REPO]
+        with (
+            mock.patch.object(rerun, "fetch_run", return_value=None),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(rerun.main(), 1)
+
+    def test_a_run_id_that_is_not_a_number_is_a_usage_error(self):
+        code, _, calls, _ = self.call(["--run", "abc", REPO], run())
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [])
+
+    def test_the_rerun_command_failing_is_an_error(self):
+        code, out, _, _ = self.call(
+            ["--run", "42", REPO],
+            run(event="push", head_branch="main"),
+            log=self.FLAKE_LOG,
+            rerun_failure="HTTP 403",
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("could not rerun run 42", out)
+
+    def test_a_broken_signature_list_stops_the_entry(self):
+        """A bad flake list must be named, not silently ignored."""
+        saved = list(sys.argv)
+        self.addCleanup(lambda: sys.argv.__setitem__(slice(None), saved))
+        sys.argv[:] = ["rerun-failed.py", "--run", "42", REPO]
+        out = io.StringIO()
+        with (
+            mock.patch.object(
+                rerun,
+                "validate_log_signatures",
+                side_effect=ValueError("signature 'x' pattern does not compile"),
+            ),
+            mock.patch.object(rerun, "fetch_run") as fetch,
+            contextlib.redirect_stdout(out),
+        ):
+            self.assertEqual(rerun.main(), 1)
+        fetch.assert_not_called()
+        self.assertIn("does not compile", out.getvalue())
+
+
+class GhCallTest(unittest.TestCase):
+    """How the helper invokes `gh`, including the log that is not UTF-8."""
+
+    def test_the_output_is_decoded_with_replacement_not_strictly(self):
+        completed = subprocess.CompletedProcess([], 0, stdout="ok", stderr="")
+        with mock.patch.object(rerun.subprocess, "run", return_value=completed) as run:
+            self.assertIs(rerun._gh("api", "x"), completed)
+        self.assertEqual(run.call_args.kwargs["errors"], "replace")
+
+    def test_a_decode_error_is_a_refusal_not_a_traceback(self):
+        with (
+            mock.patch.object(
+                rerun.subprocess,
+                "run",
+                side_effect=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad"),
+            ),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertIsNone(rerun._gh("run", "view", "1", "--log-failed"))
 
 
 if __name__ == "__main__":
