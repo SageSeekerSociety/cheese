@@ -280,7 +280,7 @@ def _utc_midnight(day: date) -> datetime:
     return datetime.combine(day, time.min, tzinfo=UTC)
 
 
-@router.delete("/users/me/understanding/{entry_id}")
+@router.delete("/users/me/understanding/{entry_id}", dependencies=[ROUTE_DECIDES])
 async def forget_understanding(
     entry_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

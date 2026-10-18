@@ -108,7 +108,8 @@ def document_snapshot(doc: Document) -> dict:
     """What a reader of a document gets: its text and which version that is."""
     return {
         "id": str(doc.id),
-        "project_id": str(doc.project_id),
+        "team_id": doc.team_id,
+        "project_id": str(doc.project_id) if doc.project_id else None,
         "number": doc.number,
         "kind": doc.kind,
         "title": doc.title,
@@ -128,7 +129,10 @@ class DocumentRowOut(BaseModel):
     """A document as a list names it (`document_row`)."""
 
     id: str
-    project_id: str
+    #: The team it belongs to; a person's own documents are their personal team's.
+    team_id: int
+    #: The project of that team; None for a document of the team's own (#3774).
+    project_id: str | None
     number: int | None
     kind: str
     title: str | None
@@ -145,7 +149,8 @@ def document_row(doc: Document) -> dict:
     """A document as a list names it: everything but what it says."""
     return {
         "id": str(doc.id),
-        "project_id": str(doc.project_id),
+        "team_id": doc.team_id,
+        "project_id": str(doc.project_id) if doc.project_id else None,
         "number": doc.number,
         "kind": doc.kind,
         "title": doc.title,
@@ -163,7 +168,7 @@ def node_out(node: DocumentNode, doc: Document) -> dict:
     return {
         "id": str(node.id),
         "kind": "doc_node",
-        "project_id": str(doc.project_id),
+        "project_id": str(doc.project_id) if doc.project_id else None,
         "struct_parent": str(doc.id),
         "struct_order": node.position,
         "node_type": node.node_type,

@@ -96,9 +96,12 @@ class TeachingRequest(BaseModel):
     material_ids: list[Annotated[int, Field(gt=0)]] = Field(
         default_factory=list, alias="materialIds"
     )
-    knowledge_ids: list[Annotated[int, Field(gt=0)]] = Field(
-        default_factory=list, alias="knowledgeIds"
-    )
+    #: The team documents the course points its AI teammates at (#3774).
+    document_ids: list[
+        Annotated[
+            str, Field(pattern=r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
+        ]
+    ] = Field(default_factory=list, alias="documentIds")
 
 
 def teaching_to_api(teaching: Teaching) -> dict:
@@ -116,7 +119,7 @@ def teaching_to_api(teaching: Teaching) -> dict:
         "allowedTopics": list(teaching.allowed_topics),
         "avoidInCode": list(teaching.avoid_in_code),
         "materialIds": list(teaching.material_ids),
-        "knowledgeIds": list(teaching.knowledge_ids),
+        "documentIds": list(teaching.document_ids),
     }
 
 

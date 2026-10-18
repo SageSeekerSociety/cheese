@@ -64,5 +64,33 @@
     "title": "被引用",
     "edited": "{name} {when}编辑",
     "count": "共 {count} 条"
+  },
+  "move": "移动到…",
+  "moveDialog": {
+    "title": "移动「{name}」",
+    "place": "放在",
+    "mine": "我的文档",
+    "move": "移动",
+    "readersPersonal": "移动后只有你能读这份文档",
+    "readersTeam": "移动后「{name}」的成员都能读这份文档",
+    "readersProject": "移动后项目「{name}」的成员都能读这份文档",
+    "search": "搜索团队或项目",
+    "here": "当前位置",
+    "none": "暂无匹配",
+    "pick": "选择要放到哪里",
+    "failed": "移动失败"
+  },
+  "share": "分享…",
+  "shareDialog": {
+    "title": "分享「{name}」",
+    "create": "创建链接",
+    "copy": "复制链接",
+    "close": "关闭",
+    "stop": "停止分享",
+    "link": "分享链接",
+    "about": "创建链接后，拿到链接的人不用登录就能阅读这份文档的当前版本，看不到评论、修改建议和修改记录。",
+    "shared": "拿到链接的人不用登录就能阅读当前版本。停止分享后，这条链接立即失效。",
+    "notAllowed": "项目文档只有能发布项目网站的人可以分享；团队和个人的文档只有作者和团队管理员可以分享。",
+    "failed": "分享失败"
   }
 }

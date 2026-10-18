@@ -46,7 +46,7 @@ class FetchIn(BaseModel):
     project: uuid.UUID | None = None
 
 
-@router.post("/fetch", summary="Read a URL for an agent")
+@router.post("/fetch", summary="Read a URL for an agent", dependencies=[ROUTE_DECIDES])
 async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
     # A signed-in person or an agent's scoped token; never anonymous. The
     # backend reads from inside the platform's network, so an open fetch is an

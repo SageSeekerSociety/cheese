@@ -402,6 +402,26 @@ class ProjectService:
         rules a roster row follows."""
         return await self._repo.person(handle)
 
+    async def ids_of_team(self, team_id: int) -> list[uuid.UUID]:
+        """The ids of every project of this team, archived ones included."""
+        return list(
+            await self._session.scalars(
+                select(Project.id).where(Project.team_id == team_id)
+            )
+        )
+
+    async def live_of_teams(
+        self, team_ids: Sequence[int]
+    ) -> list[tuple[uuid.UUID, str, int]]:
+        """Each project of these teams that is not archived, as (id, name,
+        team id), by name."""
+        rows = await self._session.execute(
+            select(Project.id, Project.name, Project.team_id)
+            .where(Project.team_id.in_(team_ids), Project.archived_at.is_(None))
+            .order_by(Project.name)
+        )
+        return [(pid, name, team_id) for pid, name, team_id in rows]
+
     async def get_projects_by_ids(
         self, project_ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, Project]:

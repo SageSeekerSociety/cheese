@@ -14,8 +14,10 @@ connection it uses; the machine it runs on is its owner's business alone.
 import asyncio
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+import pytest
+from sqlalchemy import event, select
 
+from app.domain.agent_instance.models import AccountConnection
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -248,6 +250,128 @@ def test_everyone_sees_its_kind_and_only_its_owner_sees_its_machines(client):
         }
     assert "bobs-secret-laptop" not in str(_settings(client, project_id, "alice"))
     assert seen_by_bob["machine"]["name"] == "bobs-secret-laptop"
+
+
+def _account_login(client, handle):
+    async def run():
+        async with client.test_factory() as db:
+            owner = await db.scalar(select(User).where(User.username == handle))
+            row = AccountConnection(
+                owner_user_id=owner.id,
+                kind="api_key",
+                key="unused-in-listing",
+                key_last4="test",
+            )
+            db.add(row)
+            await db.commit()
+            return str(row.id)
+
+    return asyncio.run(run())
+
+
+@pytest.mark.parametrize("on_account", [False, True])
+@pytest.mark.parametrize("different_owners", [False, True])
+def test_listing_selects_do_not_grow_with_the_number_of_agents(
+    client, different_owners, on_account
+):
+    project_id, _room = _project(client)
+    _rules(client, project_id, allowed=True)
+    counts = []
+    engine = client.test_app_engine.sync_engine
+    statements = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    owners = []
+    for index in range(12):
+        owner = f"owner-{index}" if different_owners else "alice"
+        if different_owners:
+            join_project_team(client, project_id, owner)
+        owners.append(owner)
+        connection = (
+            _account_login(client, owner)
+            if on_account
+            else _log_in(client, owner, f"private-laptop-{index}", **SUBSCRIPTION)
+        )
+        response = _add(client, project_id, owner, connection)
+        assert response.status_code == 200, response.text
+        if index not in (2, 11):
+            continue
+
+        statements.clear()
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            result = _settings(client, project_id, "alice")
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+        counts.append(len(statements))
+        rows = result["agents"]
+        assert [row["owner_handle"] for row in rows] == owners
+        assert [row["owner_name"] for row in rows] == owners
+        assert all(
+            row["connection"]["kind"] == ("api_key" if on_account else "subscription")
+            and row["connection"]["on_account"] is on_account
+            for row in rows
+        )
+        if different_owners or on_account:
+            assert all(row["machine"] is None for row in rows)
+            assert "private-laptop" not in str(result)
+        else:
+            assert [row["machine"]["name"] for row in rows] == [
+                f"private-laptop-{i}" for i in range(index + 1)
+            ]
+
+    assert counts[0] > 0
+    assert counts[0] == counts[1], (
+        f"3 agents: {counts[0]} SELECTs; 12 agents: {counts[1]}"
+    )
+
+
+@pytest.mark.parametrize("revoked", [False, True])
+def test_an_unusable_login_keeps_its_machine_private_and_visible_to_its_owner(
+    client, revoked
+):
+    project_id, _room = _project(client)
+    device_id = _log_in(client, "bob", "bobs-laptop", **SUBSCRIPTION)
+    _rules(client, project_id, allowed=True)
+    assert _add(client, project_id, "bob", device_id).status_code == 200
+
+    async def remove_login():
+        async with client.test_factory() as db:
+            login = await db.get(DeviceClaudeLoginRow, device_id)
+            if revoked:
+                login.revoked_at = datetime.now(UTC)
+            else:
+                login.logged_in = False
+            await db.commit()
+
+    asyncio.run(remove_login())
+    (mine,) = _settings(client, project_id, "bob")["agents"]
+    (theirs,) = _settings(client, project_id, "alice")["agents"]
+    assert mine["connection"] is None
+    assert mine["machine"]["name"] == "bobs-laptop"
+    assert theirs["connection"] is None
+    assert theirs["machine"] is None
+
+
+def test_a_soft_deleted_owner_keeps_their_handle_in_the_agent_list(client):
+    project_id, _room = _project(client)
+    device_id = _log_in(client, "bob", "bobs-laptop", **SUBSCRIPTION)
+    _rules(client, project_id, allowed=True)
+    assert _add(client, project_id, "bob", device_id).status_code == 200
+
+    async def delete_owner():
+        async with client.test_factory() as db:
+            user = await db.scalar(select(User).where(User.username == "bob"))
+            user.deleted_at = datetime.now(UTC)
+            await db.commit()
+
+    asyncio.run(delete_owner())
+    (row,) = _settings(client, project_id, "alice")["agents"]
+    assert row["owner_handle"] == row["owner_name"] == "bob"
+    assert row["machine"] is None
 
 
 KIMI = {

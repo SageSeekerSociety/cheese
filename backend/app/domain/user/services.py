@@ -712,7 +712,6 @@ class UserAuthService:
                 "answer_count": stats["answerCount"],
                 "team_count": stats["teamCount"],
                 "task_participation_count": stats["taskParticipationCount"],
-                "knowledge_count": stats["knowledgeCount"],
                 "submission_count": stats["submissionCount"],
             }
         )

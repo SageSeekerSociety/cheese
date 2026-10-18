@@ -44,6 +44,7 @@ from app.domain.topic.models import (
     Topic,
     TopicMembership,
     TopicReadState,
+    not_a_private_chat,
 )
 from app.domain.topic.repositories.vocabulary import SortOrder, TopicSortField
 
@@ -200,6 +201,6 @@ def readable_by(user_handle: str):
     for both the unread map and the notify-level map, so the two can never
     disagree about a room."""
     return or_(
-        and_(Topic.is_private.is_(False), Topic.members_only.is_(False)),
+        and_(not_a_private_chat(), Topic.members_only.is_(False)),
         _seated(user_handle),
     )

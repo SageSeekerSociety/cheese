@@ -193,7 +193,7 @@ async def create_project_agent(
     )
 
 
-@router.put("/{project_id}/agents/{agent_id}")
+@router.put("/{project_id}/agents/{agent_id}", dependencies=[ROUTE_DECIDES])
 async def update_project_agent(
     project_id: uuid.UUID,
     agent_id: uuid.UUID,

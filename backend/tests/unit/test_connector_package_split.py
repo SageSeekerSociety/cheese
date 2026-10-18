@@ -12,7 +12,7 @@
 拆成**包**而不是四个同级模块：``routes/`` 下每个模块都会被
 ``main._discover_routers`` 逐个 import，并把它命名空间里**每一个** ``APIRouter``
 挂上 app（按 ``id()`` 去重）。四个同级模块会把 include 顺序交给文件名的字母序，而
-first-match 是 ``scripts/route_index_frozen.py`` 按「路径＋处理函数」钉住的，字母序
+first-match 由 include 顺序决定（``scripts/route_index.py --check`` 守着），字母序
 排不出来。
 
 这道测试钉四件事：
@@ -196,7 +196,7 @@ def test_the_facade_hands_discovery_exactly_one_router() -> None:
 
 
 def test_the_aggregate_is_the_pieces_in_declaration_order() -> None:
-    """顺序变了 first-match 就变了，而那是 `route_index_frozen.py` 钉住的东西。"""
+    """顺序变了 first-match 就变了。"""
     expected = [row for module in ORDER for row in _surface(module.router)]
 
     assert _surface(connector.router) == expected
