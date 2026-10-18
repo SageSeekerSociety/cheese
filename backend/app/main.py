@@ -48,6 +48,7 @@ from app.core.obs import (
     get_logger,
 )
 from app.core.ownership import keep_holding
+from app.core.query_watch import install as install_query_watch
 from app.core.request_limits import RequestLimits
 from app.core.route_mounting import FAILED_ROUTE_MODULES
 from app.core.storage import reuse_s3_connections
@@ -611,6 +612,10 @@ app = FastAPI(
 
 app.add_middleware(LogRefusedWebSockets)
 app.add_middleware(EndBusinessSocketsAtHandover)
+
+# One N+1 watch per request, across every session that request opens; logs only,
+# never raises (app/core/query_watch.py).
+install_query_watch(app)
 
 # Inside CORS, so a refusal still carries the headers a cross-origin page needs
 # to read it; inside `request_context`, so a 429 is in the access log like any
