@@ -1769,7 +1769,8 @@ class TitleRecheckTest(unittest.TestCase):
 
     def recheck(self, *, completed=False, fast="failure", required="failure",
                 status="completed", attempt=1, same_title=False, newer=False,
-                pull_changes=None, source_changes=None):
+                pull_changes=None, source_changes=None, renames=None,
+                job_started="2026-10-18T10:00:00Z", latest_attempt=None):
         head = "a" * 40
         pull = {"number": 7, "state": "open", "draft": False,
                 "title": 'fix: corrected title $(touch pwned)',
@@ -1783,9 +1784,16 @@ class TitleRecheckTest(unittest.TestCase):
                   "display_title": pull["title"] if same_title else "bad title"}
         source.update(source_changes or {})
         event = {"pull_request": event_pull, "workflow_run": source}
-        data = {"pull": pull, "runs": [{"databaseId": 100 if newer else 99, "status": status}],
-                "jobs": [{"name": "fast", "databaseId": 101, "conclusion": fast},
-                         {"name": "CI required", "databaseId": 202, "conclusion": required}]}
+        if renames is None:
+            renames = [{"event": "renamed", "created_at": "2026-10-18T10:01:00Z",
+                        "rename": {"from": "bad title", "to": pull["title"]}}]
+        data = {"pull": pull, "events": renames,
+                "runs": [{"databaseId": 100 if newer else 99, "status": status,
+                          "attempt": attempt if latest_attempt is None else latest_attempt}],
+                "jobs": [{"name": "fast", "databaseId": 101, "id": 101, "conclusion": fast,
+                          "started_at": job_started},
+                         {"name": "CI required", "databaseId": 202, "id": 202, "conclusion": required,
+                          "started_at": job_started}]}
         text = WORKFLOW.with_name("pr-title.yml").read_text()
         body = textwrap.dedent(run_body_containing(text, "gh"))
         with tempfile.TemporaryDirectory() as tmp:
@@ -1805,7 +1813,16 @@ class TitleRecheckTest(unittest.TestCase):
                 elif args[:2] == ["run", "view"]:
                     answer = {"jobs": data["jobs"]}
                 elif args[0] == "api":
-                    answer = [data["pull"]] if "/commits/" in args[1] else data["pull"]
+                    if "/jobs" in args[1]:
+                        assert "--paginate" in args and "--slurp" in args, args
+                        attempt = data["runs"][0]["attempt"]
+                        assert f"/attempts/{attempt}/jobs" in args[1], args
+                        answer = [{"jobs": data["jobs"][:1]}, {"jobs": data["jobs"][1:]}]
+                    elif "/events" in args[1]:
+                        assert "--paginate" in args and "--slurp" in args, args
+                        answer = [data["events"][:1], data["events"][1:]]
+                    else:
+                        answer = [data["pull"]] if "/commits/" in args[1] else data["pull"]
                 elif args[:2] == ["run", "rerun"]:
                     raise SystemExit(0)
                 else:
@@ -1833,7 +1850,7 @@ class TitleRecheckTest(unittest.TestCase):
             calls = [json.loads(line) for line in (tmp / "calls").read_text().splitlines()] if (tmp / "calls").exists() else []
             return [call[call.index("--job") + 1] for call in calls if call[:2] == ["run", "rerun"]]
 
-    def test_recheck_job_accepts_title_edits_and_one_failed_pr_completion(self):
+    def test_recheck_job_accepts_title_edits_and_failed_pr_completions(self):
         condition = jobs_of(WORKFLOW.with_name("pr-title.yml").read_text())["recheck"]["if"]
         for event_name, draft, fork, action, title_changed, conclusion, attempt, expected in (
             ("pull_request", False, False, "edited", True, "", 1, True),
@@ -1842,7 +1859,7 @@ class TitleRecheckTest(unittest.TestCase):
             ("pull_request", False, True, "edited", True, "", 1, False),
             ("pull_request", False, False, "ready_for_review", False, "", 1, True),
             ("workflow_run", False, False, "completed", False, "failure", 1, True),
-            ("workflow_run", False, False, "completed", False, "failure", 2, False),
+            ("workflow_run", False, False, "completed", False, "failure", 2, True),
             ("workflow_run", False, False, "completed", False, "success", 1, False),
             ("workflow_run", False, True, "completed", False, "failure", 1, False),
         ):
@@ -1872,12 +1889,38 @@ class TitleRecheckTest(unittest.TestCase):
             with self.subTest(fast=fast):
                 self.assertEqual(self.recheck(fast=fast), ["202"])
 
-    def test_title_edit_during_run_is_recovered_on_its_completion_once(self):
+    def test_title_edit_during_any_attempt_is_recovered_once_per_new_edit(self):
         self.assertEqual(self.recheck(status="in_progress"), [])
-        self.assertEqual(self.recheck(completed=True), ["101"])
-        self.assertEqual(self.recheck(completed=True, attempt=2), [])
-        self.assertEqual(self.recheck(completed=True, same_title=True), [])
+        for attempt in (1, 2, 7):
+            with self.subTest(attempt=attempt):
+                self.assertEqual(self.recheck(completed=True, attempt=attempt), ["101"])
+                self.assertEqual(self.recheck(completed=True, attempt=attempt + 1,
+                                             job_started="2026-10-18T10:02:00Z"), [])
         self.assertEqual(self.recheck(completed=True, newer=True), [])
+        self.assertEqual(self.recheck(completed=True, latest_attempt=2), [])
+
+    def test_restoring_the_original_title_after_fast_started_is_a_new_edit(self):
+        title = 'fix: corrected title $(touch pwned)'
+        events = [{"event": "renamed", "created_at": "2026-10-18T10:00:01Z",
+                   "rename": {"from": title, "to": "invalid intermediate title"}},
+                  {"event": "renamed", "created_at": "2026-10-18T10:01:00Z",
+                   "rename": {"from": "invalid intermediate title", "to": title}}]
+        self.assertEqual(self.recheck(completed=True, same_title=True, renames=events), ["101"])
+        self.assertEqual(self.recheck(completed=True, same_title=True, renames=events,
+                                     attempt=2, job_started="2026-10-18T10:02:00Z"), [])
+
+    def test_completion_requires_a_real_rename_to_the_current_title(self):
+        self.assertEqual(self.recheck(completed=True, renames=[]), [])
+        for change in ({"event": "commented"}, {"rename": {"to": "another title"}},
+                       {"created_at": "2026-10-18T09:59:59Z"}):
+            event = {"event": "renamed", "created_at": "2026-10-18T10:01:00Z",
+                     "rename": {"to": 'fix: corrected title $(touch pwned)'}}
+            event.update(change)
+            with self.subTest(change=change):
+                self.assertEqual(self.recheck(completed=True, renames=[event]), [])
+        # GitHub timestamps have second resolution; preserve an edit in the
+        # job's start second rather than silently treating it as older.
+        self.assertEqual(self.recheck(completed=True, job_started="2026-10-18T10:01:00Z"), ["101"])
 
     def test_completion_cannot_restart_main_or_other_repositories(self):
         for changes in ({"event": "push"}, {"conclusion": "success"},
