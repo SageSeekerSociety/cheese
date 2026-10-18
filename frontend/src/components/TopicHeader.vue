@@ -122,12 +122,21 @@ const detailsOpen = ref(false)
 // 成员名单开着没有。名单自己长在成员名册那一块上，详情只叫它开（清单第 5 条）。
 const membersOpen = ref(false)
 const managerName = ref<string | null>(null)
-// 我管不管这个项目：详情打开时才问，和工作区别处读同一份项目（`query/project`）。
+// 我在这个项目里能做什么：详情或名单打开时才问，和工作区别处读同一份项目（`query/project`）。
 const projectRead = useQuery(
-  computed(() => ({ ...projectQuery(props.topic.project_id), enabled: detailsOpen.value })),
+  computed(() => ({
+    ...projectQuery(props.topic.project_id),
+    enabled: detailsOpen.value || membersOpen.value,
+  })),
   queryClient
 )
 const managesProject = computed(() => mayIn(projectRead.data.value, 'manage_channels'))
+// 不管频道也能拉人：人在这个频道里，角色又允许拉人进自己所在的频道。
+// 项目还没读到时先按在不在频道里给，后端加人时再判一次。
+const bringsPeopleIn = computed(
+  () =>
+    props.topic.joined === true && (projectRead.data.value == null || mayIn(projectRead.data.value, 'create_channels'))
+)
 function archiveFromDetails() {
   detailsOpen.value = false
   if (nav) void archiveTopic(props.topic, nav.router)
@@ -203,7 +212,8 @@ useCommands(roomCommands)
       v-model:open="membersOpen"
       :topic-id="topic.id"
       :can-manage="topic.can_manage === true"
-      :can-invite="topic.joined === true"
+      :can-invite="bringsPeopleIn"
+      :joined="topic.joined === true"
       :general="!isWorkTopic"
       :project-id="topic.project_id"
       :project-members="members"

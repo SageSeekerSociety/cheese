@@ -36,8 +36,10 @@ const props = defineProps<{
   me: string
   /** 我管不管这个频道（创建者或项目管理员）。 */
   canManage: boolean
-  /** 不管频道也能加人：频道里的人都能加人，移出仍只归管理者。 */
+  /** 不管频道也能加人：频道里角色允许的人都能加人，移出仍只归管理者。 */
   canInvite?: boolean
+  /** 我在这个频道里：加不了人时，说的是角色不允许，而不是人不在频道里。 */
+  joined?: boolean
   /** 这是「综合」：项目里的人都在，名单上只有 AI 队友能加减。 */
   general?: boolean
 }>()
@@ -358,7 +360,9 @@ async function onRemove(handle: string) {
           {{ t('work.room.roster.add') }}
         </BaseButton>
       </div>
-      <div v-else class="roster__hint">{{ t('work.room.roster.readOnly') }}</div>
+      <div v-else class="roster__hint">
+        {{ joined ? t('work.room.roster.readOnlyRole') : t('work.room.roster.readOnly') }}
+      </div>
     </div>
   </v-menu>
 </template>

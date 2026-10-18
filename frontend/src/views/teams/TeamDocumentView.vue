@@ -5,6 +5,7 @@
 import type { MovePlace } from '@/components/library/DocMoveDialog.vue'
 import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { PanelDocWiring } from '@/composables/usePanelDocWiring'
+import type { DocAuthor } from '@/lib/docAuthors'
 import type { NavTarget } from '@/lib/navTarget'
 
 import { useDisplay } from 'vuetify'
@@ -18,6 +19,8 @@ import { t } from '@/i18n'
 defineProps<{
   /** 还在读的时候是 null。 */
   document: PanelDocument | null
+  /** 文档的作者，画在大标题下面。 */
+  authors: DocAuthor[]
   wiring: PanelDocWiring
   error: string
   parent: { label: string; to: NavTarget }
@@ -77,6 +80,7 @@ const { mdAndUp } = useDisplay()
       :topic-list="[]"
       agent-name=""
       :agent-handle="null"
+      :authors="authors"
       :bar-to="mdAndUp ? '#team-doc-bar' : undefined"
       @delete="emit('delete')"
       @move="emit('ask-move')"
@@ -114,6 +118,12 @@ const { mdAndUp } = useDisplay()
   display: flex;
   justify-content: flex-end;
   min-width: 0;
+}
+/* 顶栏在页头这一格里由按钮撑开：这一格本身按内容定宽，顶栏若按自己的宽度量（它的
+   `container-type`），两边都等对方给宽度，量出来是 0，整排按钮看不见。这里只在宽屏上
+   放顶栏，按钮上的字不必收起。 */
+.team-doc__bar :deep(.doc-top-bar) {
+  container-type: normal;
 }
 .team-doc {
   flex: 1 1 auto;
