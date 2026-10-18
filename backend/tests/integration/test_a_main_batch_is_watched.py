@@ -371,3 +371,90 @@ def test_a_gate_that_was_rerun_green_is_not_red(client, app_world, forge):
 
     assert _told(client, task_id) == told
     assert _landing(client, task_id).checks.value == "passed"
+
+
+def test_a_batch_blame_with_no_suite_on_its_gate_is_still_withdrawn(
+    client, app_world, forge
+):
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    forge.parents[LINE_ONE] = None
+    forge.changes[LINE_ONE] = CommitChange(LINE_ONE, "feat: a", ("backend/a.py",))
+    forge.failing[LINE_ONE] = ["backend/tests/test_a.py"]
+    forge.ran[LINE_ONE] = [
+        Check("CI required", "completed", "failure", "u", suite=None)
+    ]
+    watch(client)
+    assert _landing(client, task_id).checks.value == "failed"
+
+    forge.ran[HEAD] = [_gate("success")]
+    forge.green = HEAD
+    forge.ahead = {(LINE_ONE, HEAD)}
+    watch(client)
+
+    assert "这条催修撤销" in _told(client, task_id)
+    assert _landing(client, task_id).checks.value == "preexisting"
+
+
+def test_an_unsettled_red_is_not_withdrawn(client, app_world, forge):
+    """A completed red plus a re-run still going is not a green check yet."""
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    forge.parents = {LINE_ONE: ANCHOR}
+    forge.ran[ANCHOR] = [_gate("success")]
+    forge.ran[LINE_ONE] = [
+        _gate("success"),
+        _gate("failure", "build-gateway", suite=2),
+    ]
+    watch(client)
+    assert _landing(client, task_id).checks.value == "failed"
+
+    forge.ran[HEAD] = [_gate("success")]
+    forge.green = HEAD
+    forge.ahead = {(LINE_ONE, HEAD)}
+    forge.ran[LINE_ONE] = [
+        _gate("success"),
+        _gate("failure", "build-gateway", suite=2),
+        Check("build-gateway", "in_progress", None, "u", suite=2),
+    ]
+    watch(client)
+
+    assert "这条催修撤销" not in _told(client, task_id)
+    assert _landing(client, task_id).checks.value == "failed"
+
+
+def test_a_neutral_gate_is_a_pass(client, app_world, forge):
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    told = _told(client, task_id)
+    forge.ran[LINE_ONE] = [Check("CI required", "completed", "neutral", "u", suite=1)]
+
+    watch(client)
+
+    assert _told(client, task_id) == told
+    assert _landing(client, task_id).checks.value == "passed"
+
+
+def test_a_neutral_anchor_ends_the_walk_back(client, app_world, forge):
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=HEAD)
+    told = _told(client, task_id)
+    forge.green = None
+    forge.parents = {HEAD: LINE_TWO, LINE_TWO: LINE_ONE, LINE_ONE: ANCHOR}
+    forge.ran[HEAD] = [_gate("failure")]
+    forge.ran[LINE_TWO] = [_gate("cancelled")]
+    forge.ran[LINE_ONE] = [_gate("cancelled")]
+    forge.ran[ANCHOR] = [Check("CI required", "completed", "neutral", "u", suite=1)]
+    forge.changes = {
+        HEAD: CommitChange(HEAD, "feat: d", ("backend/d.py",)),
+        LINE_TWO: CommitChange(LINE_TWO, "feat: b", ("backend/b.py",)),
+        LINE_ONE: CommitChange(LINE_ONE, "feat: a", ("backend/a.py",)),
+        ANCHOR: CommitChange(ANCHOR, "feat: a0", ("backend/a0.py",)),
+    }
+    forge.failing[HEAD] = ["backend/tests/test_d.py"]
+
+    watch(client)
+
+    told_after = _told(client, task_id)
+    assert told_after != told
+    assert "本批共 3 个提交" in told_after

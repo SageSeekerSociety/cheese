@@ -436,6 +436,40 @@ def _red_checks(runs: list[Check]) -> list[Check]:
     return red
 
 
+def _reds_elsewhere(runs: list[Check], gate: Check | None) -> list[Check]:
+    """Red checks on a commit that the batch gate's own run does not own.
+
+    A completed pass for a name settles it; a completed red blocks even while
+    a re-run of it is in flight, because that red has not been settled yet.
+    """
+    by_name: dict[str, list[Check]] = {}
+    for run in runs:
+        by_name.setdefault(run.name, []).append(run)
+    red: list[Check] = []
+    for group in by_name.values():
+        others = [
+            run
+            for run in group
+            if run is not gate
+            and (
+                gate is None
+                or run.suite is None
+                or gate.suite is None
+                or run.suite != gate.suite
+            )
+        ]
+        if not others:
+            continue
+        if any(run.status == "completed" and run.conclusion in _PASS for run in others):
+            continue
+        red.extend(
+            run
+            for run in others
+            if run.status == "completed" and run.conclusion in _FAILED
+        )
+    return red
+
+
 async def _judge_checks(
     reads: LandingReads, sha: str, *, project_id, memo: dict
 ) -> Judgement | None:
@@ -1000,20 +1034,7 @@ async def _withdraw_passed(
             # suite, and Required CI going green says nothing about it. A
             # completed red counts even while a re-run of it is in flight: the
             # failure has not been settled yet.
-            still_red = [
-                run
-                for run in runs
-                if run is not gate
-                and run.status == "completed"
-                and run.conclusion in _FAILED
-                and (
-                    gate is None
-                    or run.suite is None
-                    or gate.suite is None
-                    or run.suite != gate.suite
-                )
-            ]
-            if still_red:
+            if _reds_elsewhere(runs, gate):
                 continue
             async with sessions() as session:
                 landing = await session.get(
