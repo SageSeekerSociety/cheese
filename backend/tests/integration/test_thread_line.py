@@ -380,8 +380,9 @@ def test_a_rooms_header_reads_its_threads_no_more_than_three_times(client, n):
     )
 
     # Both ends: a spelling of the query this pattern does not know would read
-    # as zero and pass the ceiling, which is the one way this guard can go
-    # quiet without anybody noticing.
+    # as zero and pass the ceiling. The floor only catches that total silence —
+    # a read rewritten in a spelling the pattern skips still hides the fourth
+    # read without making the count reach zero.
     assert 1 <= reads <= 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"
 
 
