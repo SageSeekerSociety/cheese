@@ -48,11 +48,6 @@ from .providers import (
     RUCProvider,
 )
 from .tokens import (
-    TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH,
-    TOKEN_UNAVAILABLE_NOT_CONNECTED,
-    TOKEN_UNAVAILABLE_PROVIDER_NOT_CONFIGURED,
-    TOKEN_UNAVAILABLE_REFRESH_FAILED,
-    TOKEN_UNAVAILABLE_UNDECRYPTABLE,
     open_oauth_token,
     seal_oauth_token,
 )
@@ -243,13 +238,6 @@ class OAuthService:
             self, user_id, provider_id=provider_id
         )
 
-    async def get_github_user_token_with_reason(
-        self, user_id: int, *, provider_id: str = "github_app"
-    ) -> tuple[str | None, str | None]:
-        return await tokens.get_github_user_token_with_reason(
-            self, user_id, provider_id=provider_id
-        )
-
     async def _refresh_and_persist_token(
         self, connection_id: int, provider_id: str
     ) -> str | None:
@@ -268,35 +256,6 @@ class OAuthService:
         return connections._connection_to_dict(conn)
 
 
-async def get_github_user_token_for_handle(
-    session: Any, handle: str, *, provider_id: str = "github_app"
-) -> str | None:
-    """批准人已连接的 GitHub 账号 token (两阶段采纳 PR迭代式, 2026-08-09).
-
-    Defaults to the "github_app" connection (#192's user-to-server flow for
-    cheesex-app, distinct from the plain "github" login provider) since PR
-    open/merge needs to act as the App on the user's behalf.
-
-    A thin handle → user_id adapter over ``OAuthService.get_github_user_token``,
-    deliberately NOT its own token lookup: tokens are encrypted at rest
-    (``create_connection`` / ``update_connection_tokens`` both call
-    ``seal_oauth_token``), and expiry/refresh handling lives on that method. Reading
-    ``conn.access_token`` straight off the row — as this function used to — hands
-    the caller raw ciphertext, which is non-empty and so passes every
-    ``if not token`` guard before failing against GitHub with a 401 that looks
-    exactly like "no connected account".
-
-    Returns None, never raises, whenever the mechanism is unavailable: unknown
-    handle, no connected account, no or undecryptable token, or an expired token
-    with no usable refresh. Callers treat None as "degrade to the direct-merge
-    accept path".
-    """
-    token, _reason = await get_github_user_token_for_handle_with_reason(
-        session, handle, provider_id=provider_id
-    )
-    return token
-
-
 async def get_github_profile_for_handle(
     session: Any,
     handle: str,
@@ -305,15 +264,15 @@ async def get_github_profile_for_handle(
 ) -> tuple[str, dict] | None:
     """This handle's connected GitHub account as ``(provider_user_id, profile)``.
 
-    The read behind commit/PR attribution (``workspace/identity.py``), which
+    The read behind commit/PR attribution (``repository/identity.py``), which
     needs the numeric GitHub id and the login and has no business reaching into
     this domain's repositories for them.
 
-    `github_app` is tried first because it is the connection the accept flow
-    already pushes and opens PRs with, so preferring it keeps commit authorship
-    and PR authorship pointing at the same account; `github` is the plain login
-    connection, present for people who signed in with GitHub but never
-    authorized the App.
+    `github_app` is tried first because it is the account the person linked
+    for exactly this (「连接 GitHub 账号」, ``api/routes/github_account_link.py``);
+    PRs themselves are opened with the App's installation token, not with any
+    person's. `github` is the plain login connection, present for people who
+    signed in with GitHub but never linked an account.
     """
     # deferred-import: tests replace this name on app.domain.user.repositories
     from app.domain.user.repositories import UserRepository
@@ -329,32 +288,9 @@ async def get_github_profile_for_handle(
     return None
 
 
-async def get_github_user_token_for_handle_with_reason(
-    session: Any, handle: str, *, provider_id: str = "github_app"
-) -> tuple[str | None, str | None]:
-    """Same contract as ``get_github_user_token_for_handle``, plus a
-    ``TOKEN_UNAVAILABLE_*`` reason whenever the token comes back None — see
-    ``OAuthService.get_github_user_token_with_reason``. An unknown handle
-    (no such platform user, as distinct from "user exists but never
-    connected GitHub") is bucketed under ``TOKEN_UNAVAILABLE_NOT_CONNECTED``
-    too: from an accept-flow caller's point of view both mean "this approver
-    has no usable GitHub identity".
-    """
-    # deferred-import: tests replace this name on app.domain.user.repositories
-    from app.domain.user.repositories import UserRepository
-
-    user = await UserRepository(session).get_by_handle(handle)
-    if user is None:
-        return None, TOKEN_UNAVAILABLE_NOT_CONNECTED
-    service = OAuthService(OAuthConnectionRepository(session))
-    return await service.get_github_user_token_with_reason(
-        user.id, provider_id=provider_id
-    )
-
-
 # 兼容门面：`app.domain.oauth.services` 仍是路由、`deps.py`、`identity.py` 和单测
 # 的导入路径。拆开之前这个模块的名字空间里有什么，这里就还导出什么 ——
-# `GitHubProvider`、`seal_oauth_token`、`TOKEN_UNAVAILABLE_*` 这些取的仍是子模块里
+# `GitHubProvider`、`seal_oauth_token` 这些取的仍是子模块里
 # 那一个，不是副本。
 __all__ = [
     "LINK_ONLY_PROVIDERS",
@@ -367,14 +303,7 @@ __all__ = [
     "OAuthService",
     "OAuthUserInfo",
     "RUCProvider",
-    "TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH",
-    "TOKEN_UNAVAILABLE_NOT_CONNECTED",
-    "TOKEN_UNAVAILABLE_PROVIDER_NOT_CONFIGURED",
-    "TOKEN_UNAVAILABLE_REFRESH_FAILED",
-    "TOKEN_UNAVAILABLE_UNDECRYPTABLE",
     "get_github_profile_for_handle",
-    "get_github_user_token_for_handle",
-    "get_github_user_token_for_handle_with_reason",
     "open_oauth_token",
     "seal_oauth_token",
 ]

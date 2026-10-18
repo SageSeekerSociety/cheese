@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.oauth.models import UserOAuthConnection
@@ -102,13 +102,18 @@ class OAuthConnectionRepository:
         token_expires: datetime | None,
     ) -> bool:
         """Write refreshed tokens only while the stored refresh_token is still
-        the ciphertext the refresher read. False means another refresher
+        the ciphertext the refresher read, or has been forgotten since
+        (`forget_refresh_token_if_unchanged`: a racer GitHub rejected because
+        this refresher spent the token first). False means another refresher
         already replaced it, and its tokens are the live ones."""
         result = await self._session.execute(
             update(UserOAuthConnection)
             .where(
                 UserOAuthConnection.id == connection_id,
-                UserOAuthConnection.refresh_token == seen_refresh_token,
+                or_(
+                    UserOAuthConnection.refresh_token == seen_refresh_token,
+                    UserOAuthConnection.refresh_token.is_(None),
+                ),
             )
             .values(
                 access_token=access_token,
@@ -118,6 +123,20 @@ class OAuthConnectionRepository:
             )
         )
         return result.rowcount > 0  # type: ignore[attr-defined]
+
+    async def forget_refresh_token_if_unchanged(
+        self, connection_id: int, *, seen_refresh_token: str
+    ) -> None:
+        """Drop a refresh token GitHub has rejected, unless another refresher
+        has already stored a new one in its place."""
+        await self._session.execute(
+            update(UserOAuthConnection)
+            .where(
+                UserOAuthConnection.id == connection_id,
+                UserOAuthConnection.refresh_token == seen_refresh_token,
+            )
+            .values(refresh_token=None, updated_at=datetime.now(UTC))
+        )
 
     async def update_tokens(
         self,
