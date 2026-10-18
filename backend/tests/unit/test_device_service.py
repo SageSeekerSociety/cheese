@@ -218,3 +218,26 @@ async def test_delete_owned_forgets_the_device():
     await service.delete_owned(device.device_id, actor_user_id=owner)
 
     assert await service.get_device(device.device_id) is None
+
+
+async def test_get_devices_answers_the_ids_that_exist_and_omits_the_rest():
+    service = DeviceService(InMemoryDeviceRepository())
+    owner = uuid.uuid4()
+    enrolled = [
+        await service.approve(
+            await service.start(name),
+            owner_user_id=owner,
+            supply=Supply.self_hosted,
+        )
+        for name in ("one", "two")
+    ]
+
+    found = await service.get_devices(
+        [enrolled[0].device_id, "never-enrolled", enrolled[1].device_id]
+    )
+
+    assert {device_id: device.name for device_id, device in found.items()} == {
+        enrolled[0].device_id: "one",
+        enrolled[1].device_id: "two",
+    }
+    assert await service.get_devices([]) == {}

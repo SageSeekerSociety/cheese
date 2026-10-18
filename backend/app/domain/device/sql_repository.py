@@ -92,6 +92,24 @@ class SqlDeviceRepository:
             .values(last_seen_at=at)
         )
 
+    @staticmethod
+    def _device(
+        row: DeviceRow,
+        project_ids: list[uuid.UUID],
+        team_ids: list[int],
+    ) -> Device:
+        return Device(
+            device_id=row.device_id,
+            name=row.name,
+            token=row.token,
+            owner_user_id=row.owner_user_id,
+            created_at=_aware(row.created_at),
+            project_ids=project_ids,
+            team_ids=team_ids,
+            supply=row.supply,
+            last_seen_at=_aware(row.last_seen_at) if row.last_seen_at else None,
+        )
+
     async def _to_device(self, row: DeviceRow) -> Device:
         project_ids = list(
             (
@@ -111,21 +129,57 @@ class SqlDeviceRepository:
                 )
             ).all()
         )
-        return Device(
-            device_id=row.device_id,
-            name=row.name,
-            token=row.token,
-            owner_user_id=row.owner_user_id,
-            created_at=_aware(row.created_at),
-            project_ids=project_ids,
-            team_ids=team_ids,
-            supply=row.supply,
-            last_seen_at=_aware(row.last_seen_at) if row.last_seen_at else None,
-        )
+        return self._device(row, project_ids, team_ids)
 
     async def get_device(self, device_id: str) -> Device | None:
         row = await self._session.get(DeviceRow, device_id)
         return await self._to_device(row) if row is not None else None
+
+    async def get_devices(self, device_ids: Sequence[str]) -> dict[str, Device]:
+        """Several machines at once, keyed by id, in one statement.
+
+        ``get_device`` reads the device row and then its project and team
+        bindings, so a loop over ids costs three statements per device. The
+        outer joins here return the batch's rows and both bindings in one
+        round trip; the ``(project, team)`` pairs the join repeats are folded
+        back into the two lists, in first-seen order.
+        """
+        unique_ids = list(dict.fromkeys(device_ids))
+        if not unique_ids:
+            return {}
+        rows = (
+            await self._session.execute(
+                select(
+                    DeviceRow,
+                    DeviceProjectRow.project_id,
+                    DeviceTeamRow.team_id,
+                )
+                .outerjoin(
+                    DeviceProjectRow, DeviceProjectRow.device_id == DeviceRow.device_id
+                )
+                .outerjoin(
+                    DeviceTeamRow, DeviceTeamRow.device_id == DeviceRow.device_id
+                )
+                .where(DeviceRow.device_id.in_(unique_ids))
+            )
+        ).all()
+        devices: dict[str, DeviceRow] = {}
+        projects: dict[str, dict[uuid.UUID, None]] = {}
+        teams: dict[str, dict[int, None]] = {}
+        for row, project_id, team_id in rows:
+            devices.setdefault(row.device_id, row)
+            if project_id is not None:
+                projects.setdefault(row.device_id, {})[project_id] = None
+            if team_id is not None:
+                teams.setdefault(row.device_id, {})[team_id] = None
+        return {
+            device_id: self._device(
+                row,
+                list(projects.get(device_id, {})),
+                list(teams.get(device_id, {})),
+            )
+            for device_id, row in devices.items()
+        }
 
     async def get_hosted_device(self, device_id: str) -> Device | None:
         row = await self._session.scalar(
