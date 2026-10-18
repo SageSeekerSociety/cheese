@@ -115,6 +115,18 @@ ASK_ONLY_CHEESE_ASK = (
 )
 
 
+#: 会话工作目录的短名，只在真的带着它的骨架里注入（`remote_execution.client`
+#: 把它放进会话环境，shell 前缀再把它带到执行机上）。codex、pi 的命令环境里
+#: 没有它：注了它们会 `cd` 到一个不存在的目录。
+WORKING_DIRECTORY = (
+    "## 工作目录的短名\n"
+    "启动时平台给这个会话的每条命令一个变量 `$T`，值是这次会话的工作目录。别在命令"
+    "里抄那条长路径——它是一串 UUID，每条命令都要重打一遍；写成 `cd \"$T\" && …`。"
+    "`$T` 在每次会话启动时按当时的位置重新给，换机器、重建工作区之后它指向的都是新的"
+    "那一个。"
+)
+
+
 #: 写作规则。每一轮都在，因为聊天、文档、记忆、PR 说明都是写给人读的，而不同
 #: 模型的写法差得很远：只给「为读者写」这条原则，每个模型都同意，照样写出反驳
 #: 没人说过的话、复述自己的推理、堆强调词。所以这里给的是能逐句检查的规则。
@@ -274,6 +286,7 @@ def build_system_prompt(
     role: str | None = None,
     keeps_memory: bool = False,
     name: str | None = None,
+    working_directory: bool = False,
 ) -> str:
     """拼一个会话的系统提示词：只有规矩，没有项目现状。
 
@@ -297,6 +310,7 @@ def build_system_prompt(
         base,
         PLATFORM_RULES,
         ALWAYS_PUSH,
+        *([WORKING_DIRECTORY] if working_directory else []),
         TODO_WRITE,
         ASK_ONLY_CHEESE_ASK,
         WRITING,
