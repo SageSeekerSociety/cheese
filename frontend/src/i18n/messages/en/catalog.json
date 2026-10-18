@@ -503,7 +503,7 @@
     }
   },
   "publishTaskView": {
-    "about": "Publish page: top to bottom one task (content, participants, timing, categories and topics, more settings); when several are read from a file, a task list appears above and the checked ones publish together, the button saying how many.",
+    "about": "Publish page: top to bottom one task (content, participants, timing, categories and tags, more settings); when several are read from a file, a task list appears above and the checked ones publish together, the button saying how many.",
     "s1": {
       "name": "Publish one",
       "note": "Default cell: a publish form (task content at the top, 'Import from file' and 'Use a template' at its top-right), the button says 'Publish', and the line beside it says 'Needs admin review after publishing'."
@@ -1643,6 +1643,25 @@
     "s5": {
       "name": "The address is taken",
       "note": "The new address collides with someone else: that error sits under the address field, whatever was half-typed stays, and the person just edits it."
+    }
+  },
+  "adminCiActivityPageView": {
+    "about": "The CI and merge queue screen: how long PRs wait in the merge queue, how long jobs wait for a runner, how long CI required takes, and how long each job and step takes on each runner.",
+    "s1": {
+      "name": "Two days of data",
+      "note": "The default: the first day had no merge, so its queue median is empty and the line breaks there; below are the runners and the slowest jobs."
+    },
+    "s2": {
+      "name": "A job's steps expanded",
+      "note": "One self-hosted runner picked and the e2e row expanded: p50, p90 and longest per step, and a dash for a step with no samples."
+    },
+    "s3": {
+      "name": "Backfilling, last sweep stopped by quota",
+      "note": "A new deployment's first day: the header says how far back the data reaches and how many runs' jobs are still unread, and quotes why the last sweep stopped."
+    },
+    "s4": {
+      "name": "Could not load",
+      "note": "No board was ever fetched: the page shows only that line and a retry."
     }
   }
 }

@@ -122,7 +122,7 @@ async def announce_archived_rooms(svc: pkg.RoutineService) -> int:
                 project_id=rule.project_id,
                 level=NotificationLevel.light,
                 kind=NotificationType.CHANGE_ALERT,
-                title=f"周期任务「{rule.title}」已随话题归档停止",
+                title=f"周期任务「{rule.title}」已随频道归档停止",
                 body=(
                     f"房间「{room.title}」归档了，这条规则随之停下。"
                     "取消归档后它会从下一个时刻继续，不用重新设置。"

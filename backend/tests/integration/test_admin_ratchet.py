@@ -41,7 +41,7 @@ BASE = datetime(2026, 9, 20, 4, 23, tzinfo=UTC)
 @pytest.fixture
 def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
     monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
-    monkeypatch.setattr(settings, "ratchet_repository", REPO)
+    monkeypatch.setattr(settings, "platform_repository", REPO)
     return ADMIN
 
 
@@ -269,7 +269,7 @@ def test_a_refresh_that_cannot_pull_says_so_and_keeps_the_board(
     seed_user(client, ADMIN)
     # Its own repository, so 「没有安装」 is a fact about this test and not about
     # whether the installation another test connected is still in the database.
-    monkeypatch.setattr(settings, "ratchet_repository", "owner/not-connected")
+    monkeypatch.setattr(settings, "platform_repository", "owner/not-connected")
     _seed(
         client, [_row("a" * 40, day=1, run_id=21, actual=6, repo="owner/not-connected")]
     )

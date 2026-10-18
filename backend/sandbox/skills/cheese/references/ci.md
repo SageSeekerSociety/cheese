@@ -8,6 +8,7 @@ PR 上的检查失败了，自己去读，别等人贴日志。
 - 读日志：`gh api repos/<o>/<r>/actions/jobs/<job_id>/logs`。`<job_id>` 是 Actions 检查的 `html_url` 里 `/job/` 后面那串数字，不是 run id，也不是别的 App 的 check-run id。
 - `output.summary` 为空时，看 `/check-runs/<id>/annotations` 和 job 日志。
 - 不要只筛 `##[error]`，失败那一步前后的日志也要读。日志的重定向 `gh api` 会自己处理。
+- 重跑失败的 job：仓库自己规定了重跑办法（例如它的 AGENTS.md 指定一个 workflow）时照它的办；没有时用 `gh run rerun <run_id> --failed`。`<run_id>` 是 `html_url` 里 `/runs/` 后面那串数字。只在确认失败与改动无关（超时、runner 断线）时重跑；回 403 说明这个仓库的安装没授予 `actions: write`，或这次会话的令牌只读，重跑不了，照实说。
 
 ## Forgejo 项目
 

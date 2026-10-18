@@ -39,6 +39,7 @@ from app.core.sentences import say
 from app.domain.agent.admission import Hold, Pool, Slot, enter, holding
 from app.domain.agent.document.machine import machine_to_read
 from app.domain.agent.harness.prompt import WRITING
+from app.domain.agent.session_host.consumptions import Consumption
 from app.domain.agent.session_host.contract import SessionRef
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent.skills import load_skills
@@ -117,6 +118,13 @@ def stopped(redis: Redis, key: uuid.UUID) -> Callable[[], Awaitable[bool]]:
         return bool(await redis.exists(_stop_key(key)))
 
     return asked_to_stop
+
+
+async def is_stopped(consumption: Consumption) -> bool:
+    """Whether the question a consumption answers was stopped; what ``Answers``
+    (box) and ``Replies`` (thread) both say for ``Consumer.stopped``."""
+    redis = get_redis_client()
+    return redis is not None and await stopped(redis, uuid.UUID(consumption.key))()
 
 
 async def unstop(redis: Redis, key: uuid.UUID) -> None:

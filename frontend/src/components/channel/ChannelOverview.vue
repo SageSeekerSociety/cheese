@@ -13,7 +13,7 @@ import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import { t } from '@/i18n'
 import { replySnippet } from '@/lib/blockDisplay'
-import { columnDotStyle, taskPhraseLabel } from '@/lib/board'
+import { taskDotStyle, taskPhraseLabel } from '@/lib/board'
 import { RECENT_DONE } from '@/lib/channelTasks'
 import { relTime } from '@/lib/relTime'
 import { taskTitle } from '@/lib/topicState'
@@ -237,7 +237,7 @@ async function save() {
         <span class="co-task__head">
           <span class="co-task__title t-body">{{ taskTitle(task) }}</span>
           <span class="co-task__state t-meta">
-            <span class="co-dot" :style="columnDotStyle(task.presentation.column)" aria-hidden="true" />
+            <span class="co-dot" :style="taskDotStyle(task)" aria-hidden="true" />
             {{ taskPhraseLabel(task, ME) }}
           </span>
         </span>
