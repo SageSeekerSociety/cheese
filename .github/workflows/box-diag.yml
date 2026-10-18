@@ -29,10 +29,16 @@ jobs:
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 5
     steps:
+      # Full checkout, on purpose. This job used to take only
+      # deploy/app-container.sh through sparse-checkout, and cheese-dev runs one
+      # job at a time in ONE workspace (_work/cheese/cheese), shared with Deploy.
+      # The sparse pattern stayed behind in that workspace: at 09:44 a box-diag
+      # run left it set, and at 09:46 the next Deploy's checkout produced a tree
+      # without deploy/check-auto-deploy.py, failing the deployment. A probe must
+      # not be able to break the thing it is probing; the cost of checking out
+      # the whole tree here is the same tree Deploy already keeps in this
+      # workspace, so no second copy and no extra disk.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          sparse-checkout: deploy/app-container.sh
-          sparse-checkout-cone-mode: false
       # Disk comes first on purpose: on 2026-10-18 the dev box was at 98%
       # (527 of 567 GiB) and the probe that should have said what filled it ran
       # last, after a database read that had already gone stale and failed the
