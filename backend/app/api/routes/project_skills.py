@@ -435,7 +435,7 @@ async def get_skill(
     )
 
 
-@router.patch("/skills/{skill_id}")
+@router.patch("/skills/{skill_id}", dependencies=[ROUTE_DECIDES])
 async def update_skill(
     skill_id: uuid.UUID,
     body: SkillPatch,
@@ -488,7 +488,7 @@ async def update_skill(
     return ok(_skill(row))
 
 
-@router.post("/skills/{skill_id}/confirm")
+@router.post("/skills/{skill_id}/confirm", dependencies=[ROUTE_DECIDES])
 async def confirm_skill(
     skill_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -552,7 +552,7 @@ async def restore_skill(
     return ok(_skill(row))
 
 
-@router.delete("/skills/{skill_id}")
+@router.delete("/skills/{skill_id}", dependencies=[ROUTE_DECIDES])
 async def delete_skill(
     skill_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

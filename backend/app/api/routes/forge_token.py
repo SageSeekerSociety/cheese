@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_seated_agent
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.api.ws_pipe import _pump_tcp_to_ws, _pump_ws_to_tcp
 from app.core.db import get_db
 from app.core.errors import (
@@ -145,6 +146,7 @@ def _forge_credential(authorization: str) -> str:
     "/forge/{project_id}/{path:path}",
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
 )
 async def forge_transport(
     project_id: uuid.UUID,

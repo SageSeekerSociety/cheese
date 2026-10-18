@@ -68,7 +68,7 @@ async def leave_channel(
     return ok({"topic_id": str(topic_id), "joined": False})
 
 
-@router.put("/{topic_id}/description")
+@router.put("/{topic_id}/description", dependencies=[ROUTE_DECIDES])
 async def set_description(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

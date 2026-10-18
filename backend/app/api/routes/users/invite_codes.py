@@ -105,6 +105,7 @@ async def create_invite_code(
 @router.delete(
     "/invite-codes/{code_id}",
     summary="Deactivate invite code (admin)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def deactivate_invite_code(
     code_id: int,
