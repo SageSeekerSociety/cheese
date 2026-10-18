@@ -347,6 +347,9 @@ class PrReview(unittest.TestCase):
         other = Path("/tmp") / f"pr-review-{PR}-{uuid.uuid4().hex[:12]}.input"
         other.mkdir()
         self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        # A real competing round, meta included: a lookup that only skips directories
+        # without meta must still not let this one answer.
+        shutil.copy(d / "meta", other / "meta")
         (other / "REVIEW-RESULT.md").write_text(
             "独立 review：head ffffffff 结论 无 blocker/major｜档位 B\n")
         out = self.run_script("ready", PR, env_extra={**env, "CI_JSON": self.GREEN})
@@ -426,6 +429,7 @@ class PrReview(unittest.TestCase):
                       "结论 无 blocker/major｜档位 B\n")
         (link / "REVIEW-RESULT.md").write_text(conclusion)
         (link / "result.json").write_text('{"from": "tmp"}\n')
+        (link / "spec.md").write_text("MIGRATED CONTRACT\n")
         out = self.run_script("prepare", PR_BASE_MERGE, self.base_merge_reviewed,
                               env_extra={"PR_REVIEW_DIR": None, "HOME": str(home)})
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -433,8 +437,38 @@ class PrReview(unittest.TestCase):
         self.assertTrue(str(d).startswith(str(home / ".cheese/review-cache")), d)
         self.assertEqual((d / "REVIEW-RESULT.md").read_text(), conclusion)
         self.assertEqual((d / "result.json").read_text(), '{"from": "tmp"}\n')
+        self.assertEqual((d / "spec.md").read_text(), "MIGRATED CONTRACT\n")
+        self.assertIn("MIGRATED CONTRACT", Path(out.stdout.strip()).read_text())
         self.assertTrue(link.is_symlink())
         self.assertEqual(link.resolve(), d.resolve())
+
+    def test_prepare_does_not_migrate_another_seats_link(self):
+        # The old /tmp path can be a compatibility symlink into another seat's cache (same
+        # uid, different HOME). That is not this seat's pre-move directory: following it
+        # would copy their conclusion and contract into this round.
+        link = Path("/tmp") / f"pr-review-{PR}-{self.shas[1][:12]}.input"
+        self.addCleanup(link.unlink, missing_ok=True)
+        link.unlink(missing_ok=True)
+        home_a = self.tmp / "seat-a"
+        spec = self.tmp / "seat-a-contract.md"
+        spec.write_text("SEAT A PRIVATE CONTRACT\n")
+        out = self.run_script("prepare", PR, self.shas[1], "--spec", str(spec),
+                              env_extra={"PR_REVIEW_DIR": None, "HOME": str(home_a)})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        da = Path(out.stdout.strip()).parent
+        self.post(Path(out.stdout.strip()), "minor")
+        self.assertTrue((da / "spec.md").exists())
+        self.assertTrue(link.is_symlink())
+        home_b = self.tmp / "seat-b"
+        home_b.mkdir()
+        out = self.run_script("prepare", PR, self.shas[1],
+                              env_extra={"PR_REVIEW_DIR": None, "HOME": str(home_b)})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        db = Path(out.stdout.strip()).parent
+        self.assertNotEqual(db, da)
+        self.assertFalse((db / "spec.md").exists())
+        self.assertFalse((db / "REVIEW-RESULT.md").exists())
+        self.assertIn("- Spec: none", Path(out.stdout.strip()).read_text())
 
     def test_a_delta_round_reads_the_previous_round_from_tmp(self):
         # --since looks under the default root and then /tmp; a round made before the move
@@ -454,12 +488,44 @@ class PrReview(unittest.TestCase):
         # old-layout round would be, and take the cache copy away.
         old.unlink(missing_ok=True)
         shutil.move(str(d), str(old))  # the round only; the tree was removed by post
+        (old / "spec.md").write_text("TMP ROUND CONTRACT\n")
+        # The new round leaves its own compatibility link; nothing removes it for us.
+        new_link = Path("/tmp") / f"pr-review-{PR}-{self.shas[2][:12]}.input"
+        self.addCleanup(new_link.unlink, missing_ok=True)
         out = self.run_script("prepare", PR, self.shas[2], "--since", self.shas[1],
                               env_extra=env)
         self.assertEqual(out.returncode, 0, out.stderr)
         d2 = Path(out.stdout.strip()).parent
         self.assertTrue((d2 / "previous.md").exists())
-        self.assertIn("previous.md", Path(out.stdout.strip()).read_text())
+        self.assertIn(self.shas[1][:8], (d2 / "previous.md").read_text())
+        self.assertIn("TMP ROUND CONTRACT", Path(out.stdout.strip()).read_text())
+
+    def test_a_prefixed_lookup_prefers_the_cache_over_tmp(self):
+        # The same round can sit in both roots (this seat's cache and a copy in /tmp). A
+        # prefixed lookup (--since) must take the cache copy: /tmp is the shared one.
+        home = self.tmp / "prefixed-home"
+        home.mkdir()
+        env = {"PR_REVIEW_DIR": None, "HOME": str(home)}
+        out = self.run_script("prepare", PR, self.shas[1], env_extra=env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        d = Path(out.stdout.strip()).parent
+        self.post(Path(out.stdout.strip()), "minor")
+        other = Path("/tmp") / f"pr-review-{PR}-{self.shas[1][:12]}.input"
+        self.addCleanup(
+            lambda: other.unlink(missing_ok=True) if other.is_symlink()
+            else shutil.rmtree(other, ignore_errors=True))
+        other.unlink(missing_ok=True)
+        shutil.copytree(d, other)
+        (other / "REVIEW-RESULT.md").write_text(
+            "独立 review：head ffffffff 结论 有 1 条｜档位 B\n")
+        new_link = Path("/tmp") / f"pr-review-{PR}-{self.shas[2][:12]}.input"
+        self.addCleanup(new_link.unlink, missing_ok=True)
+        out = self.run_script("prepare", PR, self.shas[2], "--since", self.shas[1],
+                              env_extra=env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        prev = (Path(out.stdout.strip()).parent / "previous.md").read_text()
+        self.assertIn(self.shas[1][:8], prev)
+        self.assertNotIn("ffffffff", prev)
 
     def test_prepare_decides_the_tier_and_prints_its_criteria(self):
         _, text = self.prepare()

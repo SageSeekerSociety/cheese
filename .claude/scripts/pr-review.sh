@@ -159,7 +159,10 @@ prepare() {
   for cand in "$dir/REVIEW-RESULT.md" "$dir/result.json" "$dir/spec.md"; do
     [ -f "$cand" ] && cp "$cand" "$keep/"
   done
-  if [ -n "$old_tmp" ]; then
+  # A symlink at the old path is another seat's round (a different HOME), not this seat's
+  # old-layout directory: following it would copy that seat's conclusion and contract into
+  # this round. Only a real pre-move directory is migrated.
+  if [ -n "$old_tmp" ] && [ -d "$old_tmp" ] && [ ! -L "$old_tmp" ]; then
     for cand in "$old_tmp/REVIEW-RESULT.md" "$old_tmp/result.json" "$old_tmp/spec.md"; do
       [ -f "$cand" ] && [ ! -f "$keep/${cand##*/}" ] && cp "$cand" "$keep/"
     done
