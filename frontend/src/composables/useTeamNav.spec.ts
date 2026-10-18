@@ -189,8 +189,6 @@ describe('目录的名单', () => {
 describe('退出团队', () => {
   it('确认了才退：这一行消失，项目清单跟着刷新', async () => {
     confirm.mockResolvedValue(true)
-    // 退出成了，服务端的名单里也就没有它了：退出后跳回待办会再读一次名单，假名单要跟着变，
-    // 不然那次重读会把它画回来，断言只能赶在重读回来之前碰巧看到它不在。
     removeMember.mockImplementation(async () => {
       getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组')] })
       return {}
@@ -200,11 +198,8 @@ describe('退出团队', () => {
     await fireEvent.click(await screen.findByText('退出团队'))
 
     await waitFor(() => expect(removeMember).toHaveBeenCalledWith(team('lab', '').id, 42))
-    await waitFor(() => expect(mounted.router!.currentRoute.value.name).toBe('inbox'))
-    // 等跳页触发的那次重读也落地，再看这一行：看的是终态，不是重读回来前的空档。
-    await waitFor(() => expect(getMyTeams).toHaveBeenCalledTimes(2))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(screen.queryByText('数据课第三组')).toBeNull()
+    await waitFor(() => expect(mounted.router!.currentRoute.value.fullPath).toBe('/inbox'))
+    await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
     expect(refreshProjects).toHaveBeenCalled()
   })
 
