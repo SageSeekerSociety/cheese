@@ -43,8 +43,8 @@ export function collectNamesFromText(text, into = new Set()) {
 
 /** 一个源码文件的正文；`readdir` 和这次读之间它没了就返回 null。
  *
- * 同一个作业里 `scripts/a11y-ratchet.test.mjs` 会一边跑一边往 `src/components/`
- * 里种一个探针 `.vue`、跑完删掉，而 `node --test` 默认几个测试文件并行 —— 扫树的
+ * 同一个作业里别的检查脚本测试（如 `scripts/import-boundary-ratchet.test.mjs`）会一边跑一边往 `src/`
+ * 里种探针文件、跑完删掉，而 `node --test` 默认几个测试文件并行 —— 扫树的
  * 这条只是路过那个目录，撞上就跳过去：一个已经不存在的文件里没有图标名。 */
 export function readSourceIfPresent(file) {
   try {

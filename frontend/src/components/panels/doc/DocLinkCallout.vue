@@ -84,6 +84,7 @@ onBeforeUnmount(() => props.target.editor.off('update', docChanged))
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- Enter and Escape bubble here from the callout's field and buttons -->
   <div
     ref="root"
     role="toolbar"

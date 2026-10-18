@@ -419,6 +419,7 @@ defineExpose({
 <template>
   <!-- 根元素上是那两件「针脚」：⌘S 从页面原样落到这里（存不存是取数那一半的事），
        鼠标经过转给浮层量坐标（坐标系就是这个壳的矩形）。 -->
+  <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/mouse-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- delegation: clicks on links and comment marks in the text, and the pointer's position for the block handle; the comment panel lists every thread for the keyboard -->
   <div class="doc-editor-wrap" @click="onDocClick" @mouseover="onHover" @pointerdown.capture="onPointerDown">
     <!-- 正文还在路上时画它的节奏，别把编辑器摆出来：一个空的编辑器会亮出
          占位的那句灰字，而那句话的意思是「这篇文档是空的」——文档有内容、
@@ -441,6 +442,7 @@ defineExpose({
       @hover="refMenu.hover"
     />
     <!-- 压在正文上的那几块：评论 CTA、slash 菜单、代码块工具条、块手柄。 -->
+    <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- `hover` is the slash menu's own event, which it also fires when an item takes focus -->
     <DocOverlays
       ref="overlaysRef"
       :editor="editor"

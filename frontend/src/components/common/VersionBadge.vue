@@ -6,15 +6,16 @@
   this only draws the answer, so it renders with no backend at all.
 -->
 <template>
-  <div
+  <button
     v-if="version?.badge && version.short"
+    type="button"
     class="version-badge"
     :title="t('shell.version.title', { sha: version.sha })"
     @click="copySha"
   >
     <span class="version-badge__dot" />
     {{ copied ? t('navigation.copy.done') : version.short }}
-  </div>
+  </button>
 </template>
 
 <script setup lang="ts">

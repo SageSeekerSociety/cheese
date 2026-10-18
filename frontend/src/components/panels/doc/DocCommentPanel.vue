@@ -250,6 +250,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   <div ref="root" class="doc-pane" :class="{ 'is-resizing': resizing }">
     <slot />
     <Transition name="doc-comment-panel">
+      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- Escape bubbles here from whatever inside the panel has focus and closes it -->
       <aside
         v-show="opened"
         ref="aside"
@@ -263,6 +264,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
         :style="{ width: `${width}px` }"
         @keydown="onEscape"
       >
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a focusable separator is a widget (ARIA 1.2); the rule does not count it as one. Arrow keys resize, see resizeKey -->
         <div
           v-if="docked"
           class="doc-comment-panel__resize"

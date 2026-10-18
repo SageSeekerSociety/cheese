@@ -148,7 +148,7 @@ CHECKS: tuple[Check, ...] = (
             # BETTER, the status mapping and the plain verdict live here.
             "frontend/scripts/ratchet-report.mjs",
             # Reading eslint's JSON output into per-file counts, shared with the
-            # a11y and storage ratchets — the boundary's counts come from it.
+            # storage ratchet — the boundary's counts come from it.
             "frontend/scripts/eslint-ratchet-json.mjs",
         ),
     ),
