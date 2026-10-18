@@ -34,6 +34,7 @@ from app.domain.project.forge import (
 )
 from app.domain.project.models import ProjectForge
 from app.domain.review import archive, landing_watch, pr_publish
+from app.domain.review.github_pr import _NO_VERDICT_CONCLUSIONS
 from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.merge_state import RED_CONCLUSIONS
 from app.domain.review.models import AcceptCard
@@ -89,11 +90,16 @@ def _checks_state(runs: Sequence[dict]) -> str:
     """这个提交上一批 check run 的净状态：``running`` / ``green`` / ``red``。
 
     一个还在跑的检查意味着结论还不存在，所以「有在跑的」压过其余两条——包括
-    一条已经红的，重跑会把它变绿。全部跑完、没有一条是
-    :data:`~app.domain.review.merge_state.RED_CONCLUSIONS` 里的词，才算全绿；
-    ``skipped``/``cancelled`` 没有正结论，但在平台别处也只当「缺席」而不是红
-    （卡面那句「已取消」另由各面板标出），不拿它拖住这条提醒——真有问题，递上
-    卡之后卡自己的轮询会照实说。
+    一条已经红的，重跑会把它变绿。
+
+    ``cancelled`` / ``stale`` 同样按「还没有结论」算，不折成绿：它们不是裁决。
+    被新推送顶掉的那次运行正是以 ``cancelled`` 收场的，把它读成全绿就会对着一个
+    还没人跑完的 head 说「可以递卡了」；`superseded_runs` 和卡面那句「已取消」
+    也是同一套词表（``_NO_VERDICT_CONCLUSIONS``）。``skipped`` 仍然是绿：路径过滤
+    不跑的那几个 job 在这套 CI 里是常态，把它们算成没结论会让这句话永远等不到。
+
+    全部跑完、没有一条是 :data:`~app.domain.review.merge_state.RED_CONCLUSIONS`
+    里的词、也没有一条是「没有裁决」的词，才算全绿。
 
     一份 run 都没读到按 ``running`` 算：推送后到 workflow 起跑之间正是这个
     空窗，那个时刻说「全绿」是错的；一直不报检查的仓库只是永远等不到这句话，
@@ -105,6 +111,9 @@ def _checks_state(runs: Sequence[dict]) -> str:
         return CHECKS_RUNNING
     if any(run.get("conclusion") in RED_CONCLUSIONS for run in runs):
         return CHECKS_RED
+    if any(run.get("conclusion") in _NO_VERDICT_CONCLUSIONS for run in runs):
+        # 没有裁决的 run 既不是过也不是没过：等它被重跑/被顶替后的那次结论。
+        return CHECKS_RUNNING
     return CHECKS_GREEN
 
 
