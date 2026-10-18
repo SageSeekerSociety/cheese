@@ -257,7 +257,7 @@ def test_decide_jsd_verdict_bands(mean, cells, expected) -> None:
 
 
 def test_the_verdict_reads_two_thresholds_and_no_paper_baseline() -> None:
-    """Only the two thresholds decide a band; the rest are quoted, not read.
+    """The paper baselines are quoted, never read.
 
     The paper's three median baselines used to sit beside the thresholds as
     module constants, and a ranking table sat beside the four verdicts. Neither
@@ -265,7 +265,7 @@ def test_the_verdict_reads_two_thresholds_and_no_paper_baseline() -> None:
     could believe a result was checked against the baselines. The numbers stay
     quoted in ``stats``'s docstring so a band can still be interpreted; this
     test keeps them from creeping back as apparent inputs, and pins the two
-    that do decide.
+    thresholds that do decide.
     """
     assert JSD_MATCH_THRESHOLD == 0.25
     assert JSD_MISMATCH_THRESHOLD == 0.35
