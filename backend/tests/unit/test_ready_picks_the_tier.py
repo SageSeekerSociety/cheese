@@ -99,7 +99,8 @@ def test_a_head_from_ready_reads_the_full_check_without_reading_the_pr(
 
     monkeypatch.setattr(ready, "gh", gh)
     monkeypatch.setattr(ready, "review_from", lambda _directory: REVIEW)
-    ok, lines = ready.verdict(ready.gather(tmp_path, "o/r", str(tmp_path), HEAD))
+    ok, lines = ready.verdict(ready.gather(tmp_path, "o/r", str(tmp_path), HEAD + "\n"))
     assert ok
     assert lines[0].startswith(f"可递：head {HEAD[:8]}｜CI required success")
     assert not any(a.endswith("/pulls/7") for a in asked)
+    assert f"repos/o/r/commits/{HEAD}/check-runs" in asked

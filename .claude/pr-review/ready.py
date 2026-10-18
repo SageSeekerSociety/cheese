@@ -215,7 +215,7 @@ def gather(directory, repo, root, head=None):
     f = {"head": None, "ci": None, "review": review_from(directory), "error": None}
     if head:
         # `/ready` answered with it, and `/ready` is what turned the PR ready: no draft.
-        f["head"], f["draft"] = head, False
+        f["head"], f["draft"] = head.strip(), False
     else:
         got = gh(f"repos/{repo}/pulls/{meta['pr']}", "--jq", "[.head.sha, .draft] | @tsv")
         if got is None or "\t" not in got:
