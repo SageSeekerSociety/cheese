@@ -469,8 +469,21 @@ jobs:
       # fewer on the critical path. `needs.backend.result == 'success'` already
       # says no shard failed, and an integration layer skipped when it was due
       # leaves its cases missing from the shards, which this step fails on.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: Download backend shard artifacts
+        id: download_backend_artifacts
         if: needs.backend.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: backend-*
+          path: ${{ runner.temp }}/backend-artifacts
+      - name: Clear partial backend artifacts before retry
+        id: clear_backend_artifacts
+        if: steps.download_backend_artifacts.outcome == 'failure'
+        run: rm -rf "$RUNNER_TEMP/backend-artifacts"
+      - name: Retry backend shard artifact download
+        if: steps.download_backend_artifacts.outcome == 'failure' && steps.clear_backend_artifacts.outcome == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: backend-*
           path: ${{ runner.temp }}/backend-artifacts

@@ -35,6 +35,12 @@ _EXPECTED_PORTS = {
     "task_teammate": task_teammate,
     "machines": checkout_sweep.sweep,
 }
+
+#: 接线时从设置里现读的口子：只有草稿扫描的窗口是这种。写成模块级常量会让它与
+#: 未改过的默认值相等，于是把 `periodic.py` 改成写死 7200 也照样绿。
+_LIVE_PORTS = {
+    "quiet_window_s": lambda: settings.draft_pr_sweep_activity_window_s,
+}
 _KEYWORD_PORTS = {
     "pr poll": (
         "settle_card",
@@ -43,7 +49,7 @@ _KEYWORD_PORTS = {
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
     "landing watch": ("record_instruction", "task_teammate", "machines"),
-    "draft pr sweep": ("dispatch_pending", "record_instruction"),
+    "draft pr sweep": ("dispatch_pending", "record_instruction", "quiet_window_s"),
 }
 
 
@@ -154,11 +160,16 @@ async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
     _world()
     work = AsyncMock(return_value={"did": 1})
     monkeypatch.setattr(f"app.domain.{target}", work)
+    # 一个和默认值不一样的窗口：写死 7200 的接线过不了这一条。
+    monkeypatch.setattr(settings, "draft_pr_sweep_activity_window_s", 4242)
     world = _world()
     assert world.get_runner.call_count == 0, "registration ran work before a tick"
     assert await world.jobs[name]._job() == {"did": 1}
     handed = argument if isinstance(argument, tuple) else (argument,)
-    ports = {port: _EXPECTED_PORTS[port] for port in _KEYWORD_PORTS.get(name, ())}
+    ports = {
+        port: (_LIVE_PORTS[port]() if port in _LIVE_PORTS else _EXPECTED_PORTS[port])
+        for port in _KEYWORD_PORTS.get(name, ())
+    }
     work.assert_awaited_once_with(*(getattr(world, one) for one in handed), **ports)
 
 
@@ -177,6 +188,39 @@ async def test_the_draft_sweep_hands_a_pump_bound_to_this_chat(monkeypatch):
     pump.assert_awaited_once_with(
         world.chat_sessions, chat=world.chat, runner=world.chat.work_runner
     )
+
+
+async def test_the_draft_sweep_clock_hands_its_window_down(monkeypatch):
+    """`open_draft_prs` 是周期那一拍和补扫共用的那道门。
+
+    周期递进来的窗口要原样交给扫描；补扫不递，就是「不设窗口」。少了这一句，
+    周期这一拍会悄悄变回扫全部 —— 正是这个 PR 要省掉的那笔 GitHub 请求。
+    """
+    from app.domain.review import pr_poll
+
+    sweep = AsyncMock(return_value={"opened": 0})
+    monkeypatch.setattr(pr_poll.pr_publish, "sweep_draft_prs", sweep)
+    monkeypatch.setattr(pr_poll, "deliver_dependency_notices", AsyncMock())
+    chat = SimpleNamespace(session_factory=Mock(name="the chat's sessions"))
+    pending = Mock(name="dispatch_pending")
+
+    await pr_poll.open_draft_prs(
+        chat,
+        announce,
+        dispatch_pending=pending,
+        record_instruction=record_task_instruction,
+        quiet_window_s=7211,
+    )
+    assert sweep.await_args.kwargs["quiet_window_s"] == 7211
+
+    sweep.reset_mock()
+    await pr_poll.open_draft_prs(
+        chat,
+        announce,
+        dispatch_pending=pending,
+        record_instruction=record_task_instruction,
+    )
+    assert sweep.await_args.kwargs["quiet_window_s"] is None
 
 
 @pytest.mark.parametrize(
@@ -394,6 +438,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "ratchet_ingest_interval_s",
         "wake_watch_interval_s",
         "sandbox_disk_check_s",
+        "draft_pr_sweep_interval_s",
         "ci_activity_sweep_interval_s",
     )
     for value, field in enumerate(fields, start=101):
@@ -408,7 +453,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("pr poll", 101),
         ("task pr poll", 101),
         ("landing watch", 101),
-        ("draft pr sweep", 101),
+        ("draft pr sweep", 121),
         ("orphan sweep", 102),
         ("closed task stop", 103),
         ("queued message sweep", 104),
@@ -435,7 +480,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("task deadline sweep", 116),
         ("memory dream", 117),
         ("ratchet ingest", 118),
-        ("ci activity sweep", 121),
+        ("ci activity sweep", 122),
         ("wake watch", 119),
     ]
     assert all(job.owner_only for job in world.jobs.values())

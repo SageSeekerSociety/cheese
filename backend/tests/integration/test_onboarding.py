@@ -2,8 +2,11 @@
 teammate knows about them; the guide in the project reads what has really
 happened."""
 
+import re
 import uuid
 from datetime import UTC, datetime
+
+from sqlalchemy import event
 
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.turn.intake.rooms import room_roster
@@ -111,6 +114,52 @@ def test_people_named_are_invited_and_unknown_names_are_reported(
     )
     assert invited.status_code == 200, invited.text
     assert friend.username in invited.text
+
+
+# An account lookup matches on the lowered username or email; counting either
+# catches a lookup that batches one of the two and loops over the other.
+_ACCOUNT_LOOKUP = re.compile(r'lower\("user"\.(username|email)\)', re.IGNORECASE)
+
+
+def _account_lookups(api_client, db_session, user_client, invite: int) -> int:
+    """How many account lookups finishing the guide sends when it names
+    ``invite`` people: half real accounts (one by email), half nobody."""
+    person = user_client.create_user()
+    token = _token(api_client, person)
+    friends = [user_client.create_user() for _ in range(invite // 2)]
+    named = [f.username for f in friends]
+    named[0] = friends[0].email.upper()
+    named += [f"nobody-{i}-{uuid.uuid4().hex[:6]}" for i in range(invite - len(named))]
+
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        statements.append(statement)
+
+    engine = db_session.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        done = _finish(api_client, token, solo=False, invitees=named)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    assert done["not_invited"] == named[len(friends) :]
+    invited = api_client.get(
+        f"/projects/{done['project_id']}/invitations", headers=_headers(token)
+    ).text
+    assert all(f.username in invited for f in friends)
+    return sum(1 for s in statements if _ACCOUNT_LOOKUP.search(s))
+
+
+def test_everyone_named_is_looked_up_in_one_statement(
+    api_client, db_session, user_client
+):
+    """Naming more people does not add lookups: the guide finds every invitee
+    at once, not one round-trip per name inside the request's transaction.
+    Ten is the most the guide accepts."""
+    few = _account_lookups(api_client, db_session, user_client, 3)
+    many = _account_lookups(api_client, db_session, user_client, 10)
+    assert few == many == 1
 
 
 def test_every_ai_teammate_reads_who_the_person_said_they_are(

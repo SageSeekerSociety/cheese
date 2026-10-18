@@ -39,7 +39,7 @@
     "adminRemoveSuccess": "Admin removed",
     "adminRoleFailed": "Couldn't update the admin role",
     "adminRoleSuccess": "Admin role updated",
-    "classificationTopicsFailed": "Couldn't update the category topics",
+    "classificationTopicsFailed": "Couldn't update the category tags",
     "loadFailed": "Couldn't load the space",
     "templatesFailed": "Couldn't update the templates",
     "updateFailed": "Couldn't update the space",
@@ -96,11 +96,11 @@
   },
   "manageTopics": {
     "add": "Add",
-    "addFailed": "Couldn't add topic",
-    "addSuccess": "Topic added",
-    "addTopics": "Add topics",
-    "delete": "Remove topic",
-    "noTopics": "No topics yet"
+    "addFailed": "Couldn't add tag",
+    "addSuccess": "Tag added",
+    "addTopics": "Add tags",
+    "delete": "Remove tag",
+    "noTopics": "No tags yet"
   },
   "publishTask": {
     "attachmentsUploading": "Attachments are still uploading. Publish once they finish.",
@@ -141,11 +141,11 @@
     "useTemplate": "Use template"
   },
   "tasks": {
-    "allTopics": "All topics",
+    "allTopics": "All tags",
     "clearTopics": "Clear selection",
     "loadFailed": "Couldn't load challenges",
     "noTasks": "No challenges yet",
-    "noTopics": "No topics",
+    "noTopics": "No tags",
     "pendingOnly": "Needs action only",
     "publishTask": "Publish challenge",
     "published": {
@@ -189,8 +189,8 @@
       "latestUpdated": "Recently updated",
       "nearestDeadline": "Ending soon"
     },
-    "topic": "Topic",
-    "topicCount": "{n} topics"
+    "topic": "Tag",
+    "topicCount": "{n} tags"
   },
   "templateForm": {
     "cancel": "Cancel",

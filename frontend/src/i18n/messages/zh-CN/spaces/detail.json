@@ -39,7 +39,7 @@
     "adminRemoveSuccess": "移除管理员成功",
     "adminRoleFailed": "更新管理员角色失败",
     "adminRoleSuccess": "更新管理员角色成功",
-    "classificationTopicsFailed": "更新分类话题失败",
+    "classificationTopicsFailed": "更新分类标签失败",
     "loadFailed": "获取空间信息失败",
     "templatesFailed": "更新模板失败",
     "updateFailed": "更新空间信息失败",
@@ -96,11 +96,11 @@
   },
   "manageTopics": {
     "add": "添加",
-    "addFailed": "添加话题失败",
-    "addSuccess": "添加话题成功",
-    "addTopics": "添加话题",
-    "delete": "移除话题",
-    "noTopics": "暂无话题"
+    "addFailed": "添加标签失败",
+    "addSuccess": "添加标签成功",
+    "addTopics": "添加标签",
+    "delete": "移除标签",
+    "noTopics": "暂无标签"
   },
   "publishTask": {
     "attachmentsUploading": "附件还在上传，请稍候再发布",
@@ -141,11 +141,11 @@
     "useTemplate": "使用模板"
   },
   "tasks": {
-    "allTopics": "全部话题",
+    "allTopics": "全部标签",
     "clearTopics": "清除选择",
     "loadFailed": "无法加载题目",
     "noTasks": "暂无题目",
-    "noTopics": "暂无话题",
+    "noTopics": "暂无标签",
     "pendingOnly": "只看待处理",
     "publishTask": "发布题目",
     "published": {
@@ -189,8 +189,8 @@
       "latestUpdated": "最新更新",
       "nearestDeadline": "最近截止"
     },
-    "topic": "话题",
-    "topicCount": "{n} 个话题"
+    "topic": "标签",
+    "topicCount": "{n} 个标签"
   },
   "templateForm": {
     "cancel": "取消",

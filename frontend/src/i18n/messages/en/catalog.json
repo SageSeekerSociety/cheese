@@ -503,7 +503,7 @@
     }
   },
   "publishTaskView": {
-    "about": "Publish page: top to bottom one task (content, participants, timing, categories and topics, more settings); when several are read from a file, a task list appears above and the checked ones publish together, the button saying how many.",
+    "about": "Publish page: top to bottom one task (content, participants, timing, categories and tags, more settings); when several are read from a file, a task list appears above and the checked ones publish together, the button saying how many.",
     "s1": {
       "name": "Publish one",
       "note": "Default cell: a publish form (task content at the top, 'Import from file' and 'Use a template' at its top-right), the button says 'Publish', and the line beside it says 'Needs admin review after publishing'."
