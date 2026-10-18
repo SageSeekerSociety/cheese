@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """回答一批主干红归谁、作者在不在修。
 
-    python3 .claude/scripts/main-red-owner.py <主干部 run id>
+    python3 .claude/scripts/main-red-owner.py <主干 run id>
     python3 .claude/scripts/main-red-owner.py <批 head sha>
     python3 .claude/scripts/main-red-owner.py --self-test
 
@@ -35,9 +35,8 @@ import urllib.request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: A completed check that went red. `cancelled` is not one: a newer push to
-#: main cancels the run it superseded (same set as landing_watch).
-FAILED = frozenset({"failure", "timed_out", "startup_failure"})
+#: A completed check that went red. Imported from landing_watch below, so it
+#: cannot drift from the set the platform blames with.
 
 #: Jobs that only restate another job's verdict.
 AGGREGATORS = frozenset(
@@ -127,6 +126,7 @@ def _load_attribution():
             _failed_test_paths,
         )
         from app.domain.review.landing_watch import (  # noqa: PLC0415
+            _FAILED,
             _blame,
             _names,
             _stem,
@@ -142,13 +142,22 @@ def _load_attribution():
             "main-red-owner imports the backend attribution rule; run it with "
             "backend/.venv/bin/python (backend dependencies are not installed here)"
         )
-    return BatchCommits, CommitChange, _failed_test_paths, _blame, _names, _stem
+    return (
+        BatchCommits,
+        CommitChange,
+        _failed_test_paths,
+        _FAILED,
+        _blame,
+        _names,
+        _stem,
+    )
 
 
 (
     BatchCommits,
     CommitChange,
     failed_test_paths,
+    FAILED,
     blame_of,
     names_test,
     stem_of,
