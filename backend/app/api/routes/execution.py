@@ -138,7 +138,7 @@ async def execute(
     # row would make an unrelated column removal break every tool call on it.
     room = await execution_room(db, room_id)
     if room is None:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     if claims.get("p") != str(room.project_id):
         raise ForbiddenError("Execution belongs to another project")
     # The credential outlives the agent's seat: an agent taken off the room

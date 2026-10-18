@@ -91,10 +91,14 @@ async def add_comment(
     told = await _announce(db, reached, comment)
     payload = {**comment_out(comment), "notified": told.notified, **_outside(told)}
     asked = asked_of(reached)
-    seat = await mentioned_seat(db, asked, reached.actor, content)
+    seat = (
+        await mentioned_seat(db, asked, reached.actor, content)
+        if asked is not None
+        else None
+    )
     await db.commit()
     await collab.tell(reached.doc.id, {"type": "state", "resource": "comments"})
-    if seat is not None:
+    if seat is not None and asked is not None:
         hand_to_agent(
             chat,
             questions,
@@ -109,6 +113,8 @@ async def add_comment(
 async def _as_stored(db, reached: Reached, content: str) -> str:
     """A comment's text as stored: a friendly @名字 becomes the person's
     ``<@handle>`` token, as every other text a person writes does."""
+    if reached.doc.project_id is None:
+        return content
     return await canonicalize_refs(
         db,
         reached.doc.project_id,
@@ -165,8 +171,13 @@ async def list_threads(
         for c in await service.roots(reached.doc.id)
     ]
     await db.commit()
-    states = await answering(
-        reached.doc.project_id, [uuid.UUID(item["comment"]["id"]) for item in items]
+    states = (
+        await answering(
+            reached.doc.project_id,
+            [uuid.UUID(item["comment"]["id"]) for item in items],
+        )
+        if reached.doc.project_id is not None
+        else {}
     )
     for item in items:
         item["answering"] = states.get(item["comment"]["id"])
@@ -256,6 +267,8 @@ async def reply(
 
     async def hand_off(reached: Reached):
         asked = asked_of(reached)
+        if asked is None:
+            return None
         seat = await mentioned_seat(db, asked, reached.actor, body.content)
         if seat is None:
             return None
@@ -314,7 +327,8 @@ async def stop_agent(
     redis = get_redis_client()
     if redis is None:
         raise SystemBusyError(say("docAgentAskUnavailable"))
-    await thread.stop(
-        redis, sessions, project_id=reached.doc.project_id, thread_id=comment_id
-    )
+    if reached.doc.project_id is not None:
+        await thread.stop(
+            redis, sessions, project_id=reached.doc.project_id, thread_id=comment_id
+        )
     return ok({})

@@ -18,10 +18,7 @@ import type { DocReviewRequest } from '../../lib/docReview'
 
 import { ref } from 'vue'
 
-import { useDocPeople } from '../../composables/useDocPeople'
-import { useDocThreads } from '../../composables/useDocThreads'
-import { useMentionOutside } from '../../composables/useMentionOutside'
-import { usePanelDoc } from '../../composables/usePanelDoc'
+import { usePanelDocWiring } from '../../composables/usePanelDocWiring'
 import PanelDoc from '../panels/PanelDoc.vue'
 
 import { t } from '@/i18n'
@@ -68,22 +65,15 @@ const emit = defineEmits<{
   (e: 'open-file', path: string): void
   (e: 'titled', title: string): void
   (e: 'delete'): void
+  /** 「移动到…」：挪到自己名下、团队或团队的一个项目（#3774）。 */
+  (e: 'move'): void
+  /** 「分享…」：给这份文档一条只读链接（#3774）。 */
+  (e: 'share'): void
 }>()
 
 const docRef = ref<InstanceType<typeof PanelDoc> | null>(null)
 
-const docPanel = usePanelDoc(props)
-const docThreads = useDocThreads(() => docPanel.documentId.value)
-const docPeople = useDocPeople({
-  members: () => props.members,
-  agentHandle: () => props.agentHandle,
-  agentName: () => props.agentName,
-})
-// 评论 @ 了打不开这份文档的人：问写的人要不要把他们加进频道（和对话里一样）。
-const commentOutside = useMentionOutside({
-  place: () => docPanel.documentId.value,
-  nameOf: (handle) => docPeople.names.value[handle] ?? handle,
-})
+const { docPanel, docThreads, docPeople, commentOutside } = usePanelDocWiring(props)
 
 // 面板那半边的外部接口原样透出去 —— 拿着外壳的 ref 调它们（资料库文档卡上的「查看
 // 改动」、高亮某一轮、闪一下），中间多一层不该让这些线断掉。
@@ -116,6 +106,8 @@ defineExpose({
     @open-file="emit('open-file', $event)"
     @titled="emit('titled', $event)"
     @delete="emit('delete')"
+    @move="emit('move')"
+    @share="emit('share')"
   >
     <template #lead><slot name="lead" /></template>
   </PanelDoc>
