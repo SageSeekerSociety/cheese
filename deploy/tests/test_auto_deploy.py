@@ -252,7 +252,8 @@ class ReleaseOrdering(unittest.TestCase):
         step = next(step for step in workflow["jobs"]["deploy"]["steps"] if step.get("id") == "release")
         with tempfile.TemporaryDirectory(dir=ROOT / ".tmp") as directory:
             output = Path(directory) / "output"
-            environment = {**os.environ, "HOME": directory, "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_OUTPUT": str(output)}
+            environment = {**os.environ, "HOME": directory, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                           "ACTOR": "wangchangxin", "REF_INPUT": "main", "GITHUB_OUTPUT": str(output)}
             result = subprocess.run(["bash", "-eu", "-c", step["run"]], cwd=directory, env=environment, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_text(), "skip=false\n")
@@ -676,6 +677,142 @@ class CandidateCI(unittest.TestCase):
         for fragment in ("core.sparseCheckout", "git sparse-checkout disable",
                          "info/sparse-checkout", "::warning::"):
             self.assertIn(fragment, body)
+
+    def test_drift_converges_to_the_green_anchor_and_never_builds_main(self):
+        # Drift against main's tip is the wrong question now: main moving ahead
+        # of the anchor is a batch still under test, and firing or building its
+        # commit is the bypass this file's guard exists to stop (2026-10-18
+        # 11:33). The anchor, or nothing.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-drift.yml").read_text())
+        body = next(step["run"] for step in workflow["jobs"]["drift"]["steps"]
+                    if "converge" in step.get("run", ""))
+        self.assertIn("git/ref/heads/main-green", body)
+        self.assertIn('TARGET_SHA="$anchor"', body)
+        self.assertNotIn("gh workflow run build.yml", body)
+        self.assertNotIn("image-tag.sh origin/main", body)
+        # Everything the build-run lookup asks about has to be the anchor too:
+        # asking main's tip would read "a build is in flight" and skip the hour
+        # while the anchor's own images never arrive.
+        self.assertIn('full_sha="$anchor"', body)
+        self.assertNotIn("rev-parse origin/main", body)
+        # A failed read must not read as "there is no anchor yet".
+        self.assertIn("404", body)
+        self.assertIn("::warning::", body)
+
+    def test_the_bot_check_reads_the_actor_context(self):
+        # The guard is only as good as the context it reads: another actor
+        # expression would leave the bot dispatch looking like a person.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        for job, step_id in (("eligibility", "check"), ("deploy", "release")):
+            step = next(step for step in workflow["jobs"][job]["steps"] if step.get("id") == step_id)
+            self.assertEqual(step["env"]["ACTOR"], "${{ github.actor }}", job)
+            self.assertEqual(step["env"]["REF_INPUT"], "${{ inputs.ref }}", job)
+        self.assertIn("recovery", workflow[True]["workflow_dispatch"]["inputs"])
+
+    def test_a_bot_dispatch_takes_the_guard_like_any_automatic_release(self):
+        # The drift convergence dispatches this workflow with `-f ref=<anchor>`.
+        # On 2026-10-18 that dispatch reached dev as a "manual release" and put
+        # a commit whose main batch had not run on the box. The actor is the
+        # part that tells a person from the bot.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        check = next(step for step in workflow["jobs"]["eligibility"]["steps"]
+                     if step.get("id") == "check")
+        release = next(step for step in workflow["jobs"]["deploy"]["steps"]
+                       if step.get("id") == "release")
+        for step in (check, release):
+            with tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                result = subprocess.run(
+                    ["bash", "-eu", "-c", step["run"]],
+                    cwd=directory if step is check else ROOT,
+                    capture_output=True, text=True,
+                    env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                         "ACTOR": "github-actions[bot]", "REF_INPUT": "a" * 40,
+                         "REBUILT": "", "CANDIDATE_SHA": "a" * 40,
+                         "GITHUB_OUTPUT": str(output)})
+                self.assertNotEqual(result.returncode, 0, "a bot dispatch took the manual bypass")
+                self.assertIn("check-auto-deploy.py", result.stderr)
+                self.assertFalse(output.exists() and output.read_text())
+
+    def test_the_slot_recovery_skips_only_the_backwards_guard(self):
+        # #2770: the box serves the -b slots and main's tree has no slots, so
+        # the only commit that can move it back is older than what it runs. The
+        # convergence names it and sets recovery=true. Required CI is still
+        # required (the eligibility job does not read recovery), and only the
+        # release step's backwards guard is passed over.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        check = next(step for step in workflow["jobs"]["eligibility"]["steps"]
+                     if step.get("id") == "check")
+        release = next(step for step in workflow["jobs"]["deploy"]["steps"]
+                       if step.get("id") == "release")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            result = subprocess.run(
+                ["bash", "-eu", "-c", check["run"]], cwd=directory, capture_output=True, text=True,
+                env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                     "ACTOR": "github-actions[bot]", "REF_INPUT": "a" * 40,
+                     "RECOVERY": "true", "REBUILT": "", "CANDIDATE_SHA": "a" * 40,
+                     "GITHUB_OUTPUT": str(output)})
+            self.assertNotEqual(result.returncode, 0, "a bot recovery skipped the CI check")
+            self.assertIn("check-auto-deploy.py", result.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            (work / "deploy").mkdir()
+            (work / "deploy" / "check-auto-deploy.py").write_text("")
+            output = work / "output"
+            result = subprocess.run(
+                ["bash", "-eu", "-c", release["run"]], cwd=work, capture_output=True, text=True,
+                env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                     "ACTOR": "github-actions[bot]", "REF_INPUT": "a" * 40,
+                     "RECOVERY": "true", "REBUILT": "", "CANDIDATE_SHA": "a" * 40,
+                     "GITHUB_OUTPUT": str(output)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("skip=false", output.read_text())
+
+    def test_a_recovery_dispatch_clears_superseded_so_the_job_runs(self):
+        # Without this the eligibility job answers superseded=<newer main tip>,
+        # and the deploy job's `superseded == ''` skips the whole release —
+        # the slot recovery would be dead code (2026-10-18 review).
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        check = next(step for step in workflow["jobs"]["eligibility"]["steps"]
+                     if step.get("id") == "check")
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            stub = work / "deploy"
+            stub.mkdir()
+            script = stub / "check-auto-deploy.py"
+            script.write_text(
+                "import os\n"
+                "with open(os.environ['GITHUB_OUTPUT'],'a') as f:\n"
+                "    f.write('ready=true\\nsuperseded=' + 'd'*40 + '\\nwaiting=false\\nuncovered=false\\n')\n")
+            output = work / "output"
+            result = subprocess.run(
+                ["bash", "-eu", "-c", check["run"]], cwd=work, capture_output=True, text=True,
+                env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                     "ACTOR": "github-actions[bot]", "REF_INPUT": "a" * 40,
+                     "RECOVERY": "true", "REBUILT": "", "CANDIDATE_SHA": "a" * 40,
+                     "GITHUB_OUTPUT": str(output)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            text = output.read_text()
+            self.assertIn("ready=true", text)
+            self.assertIn("superseded=\n", text, text)
+            self.assertNotIn("superseded=" + "d" * 40, text)
+
+    def test_a_bare_dispatch_is_not_a_manual_release_either(self):
+        # No ref names nothing a person chose; releasing the dispatch ref's
+        # HEAD that way is how a stale bot dispatch let a batch through.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        check = next(step for step in workflow["jobs"]["eligibility"]["steps"]
+                     if step.get("id") == "check")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            result = subprocess.run(
+                ["bash", "-eu", "-c", check["run"]], cwd=directory, capture_output=True, text=True,
+                env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                     "ACTOR": "wangchangxin", "REF_INPUT": "", "REBUILT": "",
+                     "CANDIDATE_SHA": "a" * 40, "GITHUB_OUTPUT": str(output)})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("check-auto-deploy.py", result.stderr)
 
     def test_the_drift_job_repairs_the_same_shared_workspace(self):
         # drift runs deploy/ scripts from the same checkout on the same runner;
@@ -1109,12 +1246,11 @@ exit 0
         self.assertIn("ref", inputs)
         self.assertEqual(inputs["ref"]["default"], "")
 
-    def test_a_ref_dispatch_is_a_manual_release(self):
+    def test_a_ref_dispatch_by_a_person_is_a_manual_release(self):
         # A bare commit SHA is not a legal `--ref` for `gh workflow run`, so
         # releasing one without inventing a ref is what the `ref` input is for.
-        # It must take the manual bypass, exactly like a dispatch with no inputs:
-        # that is what lets it roll the box back to a commit the automatic
-        # "no going backwards" guard refuses.
+        # It takes the manual bypass — that is what lets an operator roll the
+        # box back to a commit the automatic "no going backwards" guard refuses.
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
         check = next(step for step in workflow["jobs"]["eligibility"]["steps"]
                      if step.get("id") == "check")
@@ -1128,8 +1264,8 @@ exit 0
                     cwd=directory if step is check else ROOT,
                     capture_output=True, text=True,
                     env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
-                         "REBUILT": "", "CANDIDATE_SHA": self.built,
-                         "GITHUB_OUTPUT": str(output)})
+                         "REBUILT": "", "REF_INPUT": "main", "ACTOR": "wangchangxin",
+                         "CANDIDATE_SHA": self.built, "GITHUB_OUTPUT": str(output)})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(("ready=true" if step is check else "skip=false"), output.read_text())
 

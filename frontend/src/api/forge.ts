@@ -1,6 +1,7 @@
 import type { BranchProtection, BranchProtectionPatch, BranchProtectionRules } from '../branchProtection'
 import type {
-  ForgeAttribution,
+  CommitCredit,
+  CommitCreditMode,
   ForgeConnection,
   GithubConnection,
   OAuthConnectionInfo,
@@ -37,14 +38,14 @@ export function getForgeConnection(projectId: string): Promise<ForgeConnection> 
   return request(`/projects/${encodeURIComponent(projectId)}/forge`)
 }
 
-export function getForgeAttribution(projectId: string): Promise<ForgeAttribution> {
-  return request(`/projects/${encodeURIComponent(projectId)}/forge-attribution`)
+export function getCommitCredit(projectId: string): Promise<CommitCredit> {
+  return request(`/projects/${encodeURIComponent(projectId)}/commit-credit`)
 }
 
-export function setForgeAttribution(projectId: string, requesterCoauthor: boolean | null): Promise<ForgeAttribution> {
-  return request(`/projects/${encodeURIComponent(projectId)}/forge-attribution`, {
+export function setCommitCredit(projectId: string, mode: CommitCreditMode): Promise<CommitCredit> {
+  return request(`/projects/${encodeURIComponent(projectId)}/commit-credit`, {
     method: 'PUT',
-    body: JSON.stringify({ requester_coauthor: requesterCoauthor }),
+    body: JSON.stringify({ mode }),
   })
 }
 
@@ -61,8 +62,9 @@ export function connectGithubRepo(
 ): Promise<{ connected: boolean; repo?: string; account?: string; install_url?: string }> {
   return request(`/projects/${encodeURIComponent(projectId)}/github/connect`, { method: 'POST' })
 }
-export function getGithubAccountAuthorizeUrl(projectId: string): Promise<{ url: string }> {
-  return request(`/users/me/github-account/authorize-url?return_project_id=${encodeURIComponent(projectId)}`)
+/** GitHub's page to 关联 the signed-in person's account; it comes back to `returnPath`. */
+export function getGithubAccountAuthorizeUrl(returnPath: string): Promise<{ url: string }> {
+  return request(`/users/me/github-account/authorize-url?return_path=${encodeURIComponent(returnPath)}`)
 }
 
 // Personal OAuth/App connections (1.0 router, see legacyRequest): every

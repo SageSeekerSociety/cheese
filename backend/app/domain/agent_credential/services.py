@@ -62,7 +62,7 @@ class ProjectAgentCredentialService:
     async def _get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self._projects.get(project_id)
         if project is None:
-            raise NotFoundError("Project not found")
+            raise NotFoundError(say("projectNotFound"))
         return project
 
     async def agent_handle(self, project_id: uuid.UUID) -> str | None:

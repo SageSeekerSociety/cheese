@@ -211,7 +211,7 @@ async def tokens_for_project(project_id: uuid.UUID, session: AsyncSession):
 # person delivering or merging a card. Background work stops while less than
 # this share is left, so a burst of polling cannot use up what a person's
 # request needs; it resumes on a later tick, after the hourly reset at worst.
-KEPT_FOR_PEOPLE = 0.2
+KEPT_FOR_PEOPLE = forge_quota.BACKGROUND_STOP_QUOTA
 
 
 async def background_quota(

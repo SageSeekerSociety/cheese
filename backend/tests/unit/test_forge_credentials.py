@@ -163,7 +163,7 @@ def test_github_relay_receives_platform_credential_only(cli, monkeypatch, capsys
 
 
 @pytest.mark.parametrize("enabled", [True, False])
-def test_commit_requester_credit_does_not_replace_agent_author(
+def test_crediting_the_owner_does_not_replace_the_agent_author(
     cli, monkeypatch, tmp_path, enabled
 ):
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
@@ -177,9 +177,7 @@ def test_commit_requester_credit_does_not_replace_agent_author(
         lambda *_: {
             "data": {
                 "room_id": "room",
-                "coauthors": ["Requester <requester@example.invalid>"]
-                if enabled
-                else [],
+                "coauthors": ["Owner <owner@example.invalid>"] if enabled else [],
             }
         },
     )
@@ -208,5 +206,52 @@ def test_commit_requester_credit_does_not_replace_agent_author(
         ["git", "log", "-1", "--format=%an <%ae>%n%B"], text=True
     )
     assert committed.startswith("Agent <agent@example.invalid>\n")
-    assert committed.count("Co-authored-by: Requester") == int(enabled)
+    assert committed.count("Co-authored-by: Owner") == int(enabled)
     assert committed.count("Co-authored-by: Contributor") == 1
+
+
+def test_each_task_checkout_commits_as_the_author_the_platform_names(
+    cli, monkeypatch, tmp_path
+):
+    """Two tasks of one project share a repository and have different authors;
+    an author in the environment would override both, so none is used."""
+
+    def git(cwd, *args):
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL"):
+        monkeypatch.delenv(key, raising=False)
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    git(
+        repo,
+        "-c",
+        "user.name=x",
+        "-c",
+        "user.email=x@x",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "base",
+    )
+    first, second = tmp_path / "first", tmp_path / "second"
+    git(repo, "worktree", "add", "-b", "task/one", str(first))
+    git(repo, "worktree", "add", "-b", "task/two", str(second))
+
+    cli._commit_as(repo, first, {"author": "Alice <1+alice@users.noreply.github.com>"})
+    cli._commit_as(
+        repo,
+        second,
+        {"author": "cheesex-app[bot] <2+cheesex-app[bot]@users.noreply.github.com>"},
+    )
+    for where in (first, second):
+        git(where, "commit", "--allow-empty", "-m", "work")
+
+    assert git(first, "log", "-1", "--format=%an <%ae>") == (
+        "Alice <1+alice@users.noreply.github.com>"
+    )
+    assert git(second, "log", "-1", "--format=%an <%ae>") == (
+        "cheesex-app[bot] <2+cheesex-app[bot]@users.noreply.github.com>"
+    )

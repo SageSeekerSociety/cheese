@@ -36,6 +36,7 @@ the package from re-entering it.
 
 from app.domain.agent_instance.models import OwnCallers as OwnCallers
 from app.domain.agent_instance.own.admission import callable_by as callable_by
+from app.domain.agent_instance.own.admission import callable_by_many as callable_by_many
 from app.domain.agent_instance.own.admission import may_chat_with as may_chat_with
 from app.domain.agent_instance.own.admission import may_work_for as may_work_for
 from app.domain.agent_instance.own.admission import unusable as unusable

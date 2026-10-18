@@ -37,7 +37,10 @@ from app.domain.notice_meta import (
     WHO_CHEESE,
     notice,
 )
+from app.domain.oauth.services import github_link_state
+from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
+from app.domain.repository import identity
 from app.domain.review import comment_publish, pr_publish
 from app.domain.review.comments import ReviewCommentService
 from app.domain.review.comments import instruction as comment_instruction
@@ -130,16 +133,17 @@ async def _task_actor(
     return actor, place.room_id, task.id
 
 
-async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> None:
+async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> Actor:
     """Whoever may read this task, or this room's cards: the task's people, or
     whoever the room lets in."""
     if place.task is not None:
-        await _task_actor(place.conversation_id, db, resolver)
-        return
+        actor, _room, _task = await _task_actor(place.conversation_id, db, resolver)
+        return actor
     actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
+    return actor
 
 
 def _reviewer_admission(actor: Actor, resolver: ActorResolverDep) -> ReviewerAdmission:
@@ -250,7 +254,7 @@ async def describe_card(
     递卡那一刻的快照——#735 就是这么在 `1c298199a` 里留下一句与事实不符的
     历史陈述的。
 
-    署名（`Cheese-Task:`）没有这样的入口，而且不该有：见
+    署名（`Link:` 与各条署名）没有这样的入口，而且不该有：见
     `AcceptService.redescribe` 的 docstring。
     """
     actor, _room, task_id = await _task_actor(topic_id, db, resolver, writes=True)
@@ -340,9 +344,13 @@ async def topic_pr_checks(
     how a GitHub TLS blip turned into a wall of stack traces on 2026-08-17.
     The failure is still logged, and its reason is handed to the caller."""
     place = await place_or_404(db, topic_id)
-    await _reader(place, db, resolver)
+    actor = await _reader(place, db, resolver)
     try:
-        return ok(await _pr_checks_payload(place.room_id, db, task_id=place.task_id))
+        return ok(
+            await _pr_checks_payload(
+                place.room_id, db, task_id=place.task_id, viewer=actor.handle
+            )
+        )
     except NotFoundError:
         raise  # 404 for a topic that does not exist stays a 404
     except Exception as exc:  # display-only endpoint, see above
@@ -351,7 +359,11 @@ async def topic_pr_checks(
 
 
 async def _pr_checks_payload(
-    topic_id: uuid.UUID, db: AsyncSession, *, task_id: uuid.UUID | None = None
+    topic_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    task_id: uuid.UUID | None = None,
+    viewer: str | None = None,
 ) -> dict:
     svc = _accept_service(db)
     cards, _ = await svc.list_for_topic(topic_id)
@@ -369,6 +381,7 @@ async def _pr_checks_payload(
     client = await proposal_client(topic.project_id, db)
     if client is None:
         return {"available": False}
+    owner_link = await _owner_link_state(db, topic, card, viewer)
     # Every open card polls this, and the two forge calls below can take as
     # long as the forge's timeout. Holding the request's connection across them
     # pinned one pool slot per open card, so a slow forge alone could drain the
@@ -382,6 +395,7 @@ async def _pr_checks_payload(
         checks = await client.check_runs(head_sha)
     except GitHubPRError as exc:
         return {"available": False, "reason": str(exc)[:200]}
+    opened_by_app = (view.get("user") or {}).get("type") == "Bot"
     return {
         "available": True,
         "pr_number": card.pr_number,
@@ -389,7 +403,24 @@ async def _pr_checks_payload(
         "state": "merged" if view.get("merged") else view.get("state"),
         "mergeable": view.get("mergeable"),
         "checks": checks,
+        # Set only for the task owner, and only when the PR they would have
+        # opened was opened by the App: why, as the owner's own account stands.
+        "owner_credit": owner_link if opened_by_app else None,
     }
+
+
+async def _owner_link_state(db: AsyncSession, topic, card, viewer: str | None):
+    """`none`/`expired`/`ok` for the viewer's GitHub account, when the viewer
+    owns the card's task and the project credits task owners; else None."""
+    if not viewer or card.task_id is None:
+        return None
+    project = await ProjectService(db).get(topic.project_id)
+    settings_ = (project.settings or {}) if project else {}
+    if identity.credit_mode(settings_) != identity.CREDIT_OWNER:
+        return None
+    if await identity.owner_handle(db, card.task_id) != viewer:
+        return None
+    return await github_link_state(db, viewer)
 
 
 @router.post("/accept-cards/{card_id}/approve", dependencies=[ROUTE_DECIDES])
