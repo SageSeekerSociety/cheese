@@ -1,4 +1,4 @@
-"""定时投递一批旧行补身份时，实例表按项目只读一次。"""
+"""定时投递一批旧行补身份时，实例表每个项目只读一次，各行只认本项目的实例。"""
 
 from __future__ import annotations
 
@@ -28,7 +28,8 @@ class _Session:
             return iter(self.due)
         assert statement.column_descriptions[0]["entity"] is AgentInstance
         self.instance_reads += 1
-        return iter(self.instances)
+        wanted = set(statement.compile().params.values())
+        return iter(i for i in self.instances if i.project_id in wanted)
 
     async def commit(self):
         pass
@@ -100,3 +101,25 @@ async def test_a_row_whose_seat_has_no_instance_is_left_pending(monkeypatch):
 
     assert handed == []
     assert row.materialized_at is None
+
+
+async def test_each_project_is_read_once_and_rows_match_their_own_project(monkeypatch):
+    a, b = uuid.uuid4(), uuid.uuid4()
+    in_a = [SimpleNamespace(id=uuid.uuid4(), project_id=a) for _ in range(2)]
+    in_b = [SimpleNamespace(id=uuid.uuid4(), project_id=b)]
+    rows = [
+        _legacy_row(a, agent_instance_handle(in_a[0].id)),
+        _legacy_row(b, agent_instance_handle(in_b[0].id)),
+        _legacy_row(a, agent_instance_handle(in_a[1].id)),
+        _legacy_row(b, agent_instance_handle(in_a[0].id)),
+    ]
+    session = _Session(rows, in_a + in_b)
+
+    handed = await _run(monkeypatch, session)
+
+    assert session.instance_reads == 2
+    assert [r.agent_instance_id for r in handed] == [
+        in_a[0].id,
+        in_b[0].id,
+        in_a[1].id,
+    ]
