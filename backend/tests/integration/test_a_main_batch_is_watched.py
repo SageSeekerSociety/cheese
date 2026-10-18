@@ -458,3 +458,31 @@ def test_a_neutral_anchor_ends_the_walk_back(client, app_world, forge):
     told_after = _told(client, task_id)
     assert told_after != told
     assert "本批共 3 个提交" in told_after
+
+
+def test_a_green_rerun_of_another_workflows_check_settles_it(client, app_world, forge):
+    """A red build re-run green on the commit is settled, so the batch going
+    green takes the fix back instead of leaving a stale red."""
+    project = _make_project(client)
+    task_id = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    forge.parents = {LINE_ONE: ANCHOR}
+    forge.ran[ANCHOR] = [_gate("success")]
+    forge.ran[LINE_ONE] = [
+        _gate("success"),
+        _gate("failure", "build-gateway", suite=2),
+    ]
+    watch(client)
+    assert _landing(client, task_id).checks.value == "failed"
+
+    forge.ran[LINE_ONE] = [
+        _gate("success"),
+        _gate("failure", "build-gateway", suite=2),
+        _gate("success", "build-gateway", suite=2),
+    ]
+    forge.ran[HEAD] = [_gate("success")]
+    forge.green = HEAD
+    forge.ahead = {(LINE_ONE, HEAD)}
+    watch(client)
+
+    assert "这条催修撤销" in _told(client, task_id)
+    assert _landing(client, task_id).checks.value == "preexisting"

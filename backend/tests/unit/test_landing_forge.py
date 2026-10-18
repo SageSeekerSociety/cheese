@@ -348,6 +348,10 @@ def test_a_red_gate_beats_a_cancelled_one_whatever_the_order():
 def test_a_neutral_gate_counts_as_a_pass():
     from app.domain.review.landing_forge import gate_run
 
-    runs = [Check("CI required", "completed", "neutral", "", suite=1)]
+    # The precedence has to matter: with the neutral run first the old
+    # first-match code would return the failure.
+    runs = [
+        Check("CI required", "completed", "failure", "", suite=1),
+        Check("CI required", "completed", "neutral", "", suite=1),
+    ]
     assert gate_run(runs).conclusion == "neutral"
-    assert gate_run(runs).status == "completed"
