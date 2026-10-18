@@ -33,11 +33,45 @@ jobs:
         with:
           sparse-checkout: deploy/app-container.sh
           sparse-checkout-cone-mode: false
+      # Disk comes first on purpose: on 2026-10-18 the dev box was at 98%
+      # (527 of 567 GiB) and the probe that should have said what filled it ran
+      # last, after a database read that had already gone stale and failed the
+      # job — so the one run that mattered never reached it. Nothing below can
+      # keep these two from reporting.
+      - name: Deployed images and disk
+        run: |
+          docker ps --format '{{.Names}}  {{.Image}}' || true
+          df -h / | tail -1
+      # Read-only, top-down: whole filesystems, then the biggest directories
+      # under the trees that grow without bound, then what docker itself says
+      # it could reclaim. `sudo -n` never prompts — without passwordless sudo
+      # the same walk runs unprivileged and prints whatever it may read.
+      # Deletes nothing; a probe must not be able to change the box.
+      - name: Disk breakdown
+        run: |
+          echo "===== filesystem usage ====="
+          df -h / /tmp /var/lib/docker 2>/dev/null || true
+          echo "===== biggest directories (depth 2) ====="
+          if sudo -n true 2>/dev/null; then
+            sudo -n du -xh --max-depth=2 /home /var/lib/docker /tmp 2>/dev/null \
+              | sort -h | tail -40 || true
+          else
+            du -xh --max-depth=2 /home /var/lib/docker /tmp 2>/dev/null \
+              | sort -h | tail -40 || true
+          fi
+          echo "===== docker space usage ====="
+          docker system df -v 2>&1 | head -60 || true
       # The backend runs as cheese-backend-1 or cheese-backend-b-1 depending
       # on the last release (deploy/deploy-docker.sh, "Two slots").
       - name: Find the running backend container
         run: echo "BACKEND=$(bash deploy/app-container.sh backend)" >> "$GITHUB_ENV"
       - name: Read session host readiness and recent startup failures
+        # The readiness/startup read is one probe among many; the rest of the
+        # job must still report when it breaks. It did on 2026-10-18: the query
+        # still named `blocks.topic_id`, a column b6fcc6362b79 folded into
+        # `conversation_id`, so asyncpg raised UndefinedColumnError and took
+        # every later step — the disk ones above included — down with it.
+        continue-on-error: true
         run: |
           docker exec -i "$BACKEND" python - <<'PY'
           import asyncio
@@ -67,7 +101,7 @@ jobs:
                   async with db.transaction(readonly=True):
                       await db.execute("SET LOCAL statement_timeout = '15s'")
                       rows = await db.fetch("""
-                          SELECT created_at, topic_id,
+                          SELECT created_at, conversation_id,
                             CASE
                               WHEN concat(content, meta->>'detail') LIKE '%机器尚未配置或未连接%'
                                 THEN 'session_host_unavailable'
@@ -131,10 +165,6 @@ jobs:
                       cur.execute(Q)
                       show(cur.fetchone())
           '
-      - name: Deployed images and disk
-        run: |
-          docker ps --format '{{.Names}}  {{.Image}}' || true
-          df -h / | tail -1
       - name: Backend log tail
         # The backend process's own stdout is not reachable any other way: the
         # box has no public inbound, `backend_log.py` is a POST-only intake, and
