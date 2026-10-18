@@ -45,8 +45,8 @@ the report named — the mutation self-test beside it proves the cases would go
 red if the judgement were loosened.
 
 Usage: check-no-new-n-plus-one.py [--module PATH] [--json]
-Exit 0 every case was judged as claimed, 1 a case was judged differently,
-     2 the detector could not be loaded or a case could not be run.
+Exit 0 every case was judged as claimed, 1 a case was judged differently or
+     the detector raised where it must not, 2 the detector could not be loaded.
 """
 
 from __future__ import annotations
@@ -417,7 +417,12 @@ def main() -> int:
         module = load_module(args.module.resolve())
         _silence(module)
         failures: list[dict[str, str]] = []
+        #: Counted as they are judged, so the number reported is what ran —
+        #: a case deleted from CASES lowers it instead of leaving a constant
+        #: that still claims the old total.
+        ran = 0
         for case in CASES:
+            ran += 1
             try:
                 matched, detail = judge(module, case)
             except Exception as exc:
@@ -439,19 +444,23 @@ def main() -> int:
         except Exception as exc:
             boundary = f"失败: {exc}"
             failures.append({"case": "请求边界（中间件 + ContextVar）", "detail": boundary})
+        ran += 1
         try:
             _never_raises_check(module)
         except Exception as exc:
             failures.append({"case": "记录与报告不抛异常", "detail": str(exc)})
+        ran += 1
         try:
             _begin_finish_check(module)
         except Exception as exc:
             failures.append({"case": "begin/finish 边界", "detail": str(exc)})
+        ran += 1
         try:
             engine = _engine_scenario(module)
         except Exception as exc:
             engine = f"失败: {exc}"
             failures.append({"case": "真实引擎（greenlet 栈）", "detail": engine})
+        ran += 1
     except CannotJudge as exc:
         print(f"N+1 探测器守卫判不了: {exc}", file=sys.stderr)
         return 2
@@ -461,7 +470,7 @@ def main() -> int:
             json.dumps(
                 {
                     "module": str(args.module),
-                    "cases": len(CASES) + 4,
+                    "cases": ran,
                     "engine": engine,
                     "failures": failures,
                 },
@@ -487,7 +496,7 @@ def main() -> int:
             else "真实引擎路径未验证（本机没有 SQLAlchemy/aiosqlite）"
         )
         print(
-            f"N+1 探测器守卫通过（{len(CASES) + 4} 个场景：判定 4 类、指纹归一、"
+            f"N+1 探测器守卫通过（{ran} 个场景：判定 4 类、指纹归一、"
             f"两维白名单、请求边界、begin/finish、记录/报告不抛异常；{engine_note}）"
         )
 

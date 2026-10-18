@@ -22,6 +22,11 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("check-no-new-n-plus-one.py")
 MODULE = SCRIPT.parents[2] / "backend" / "app" / "core" / "query_watch.py"
 
+#: How many cases the guard runs. Update it when a case is added or removed:
+#: the guard reports what it ran, and this is the test's own expectation of
+#: that number, so a case that silently stopped running is caught here.
+EXPECTED_CASES = 18
+
 #: The judgement's two halves, as they read in the detector's source.
 STACK_ANCHOR = "    return (stack, fingerprint)"
 FINGERPRINT_ANCHOR = (
@@ -312,9 +317,11 @@ class NPlusOneGuardTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         names = [failure["case"] for failure in payload["failures"]]
         self.assertIn("同指纹同栈 3 次 → 报", names)
-        # The count has to match what actually ran, not just be a plausible
-        # number: a case that stopped running would otherwise go unnoticed.
-        self.assertGreaterEqual(payload["cases"], 16)
+        # The guard counts cases as it judges them, so this is the number that
+        # ran. Held against the test's own constant, not the guard's: a case
+        # deleted from CASES lowers the count and has to be noticed here, and
+        # a case added has to update this line deliberately.
+        self.assertEqual(payload["cases"], EXPECTED_CASES)
 
     def test_the_real_detector_has_the_fingerprint_this_guard_pins(self) -> None:
         # If the fingerprint is rewritten rather than loosened, the mutations
