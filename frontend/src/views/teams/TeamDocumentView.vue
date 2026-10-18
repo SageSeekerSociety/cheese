@@ -11,6 +11,7 @@ import { useDisplay } from 'vuetify'
 
 import AppPage from '@/components/common/AppPage.vue'
 import DocMoveDialog from '@/components/library/DocMoveDialog.vue'
+import DocShareDialog from '@/components/library/DocShareDialog.vue'
 import PanelDoc from '@/components/panels/PanelDoc.vue'
 import { t } from '@/i18n'
 
@@ -27,13 +28,26 @@ defineProps<{
     saving: boolean
     error: string
   }
+  share: {
+    title: string
+    loading: boolean
+    mayShare: boolean
+    url: string | null
+    busy: boolean
+    error: string
+  }
 }>()
 const moving = defineModel<boolean>('moving', { required: true })
+const sharing = defineModel<boolean>('sharing', { required: true })
 
 const emit = defineEmits<{
   delete: []
   'ask-move': []
   move: [to: { teamId: number; projectId: string | null }]
+  'ask-share': []
+  share: []
+  unshare: []
+  copy: []
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -66,6 +80,7 @@ const { mdAndUp } = useDisplay()
       :bar-to="mdAndUp ? '#team-doc-bar' : undefined"
       @delete="emit('delete')"
       @move="emit('ask-move')"
+      @share="emit('ask-share')"
     />
     <div v-else-if="!error" class="d-flex justify-center py-10">
       <v-progress-circular indeterminate color="primary" />
@@ -79,6 +94,18 @@ const { mdAndUp } = useDisplay()
     :saving="move.saving"
     :error="move.error"
     @move="emit('move', $event)"
+  />
+  <DocShareDialog
+    v-model="sharing"
+    :title="share.title"
+    :loading="share.loading"
+    :may-share="share.mayShare"
+    :url="share.url"
+    :busy="share.busy"
+    :error="share.error"
+    @share="emit('share')"
+    @unshare="emit('unshare')"
+    @copy="emit('copy')"
   />
 </template>
 

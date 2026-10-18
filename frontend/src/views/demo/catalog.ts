@@ -34,6 +34,7 @@ import { ACCOUNT_ENTRIES } from './catalog/account'
 import { ANALYTICS_ENTRIES } from './catalog/analytics'
 import { COMMON_ENTRIES } from './catalog/common'
 import { CONVERSATION_ENTRIES } from './catalog/conversation'
+import { DOC_SHARE_ENTRIES } from './catalog/doc-share'
 import { NAVIGATION_ENTRIES } from './catalog/navigation'
 import { PANEL_TABS_ENTRIES } from './catalog/panel-tabs'
 import { PANEL_VIEW_ENTRIES } from './catalog/panel-views'
@@ -90,6 +91,7 @@ export const CATALOG: CatalogEntry[] = [
   // 文件头上。下面带着 `...` 的还是原来那批同级分册，位置一处没动。
   ...COMMON_ENTRIES,
   ...TEAM_DOCS_ENTRIES,
+  ...DOC_SHARE_ENTRIES,
   ...CONVERSATION_ENTRIES,
   ...ACCEPT_BAR_ENTRIES,
   ...PANEL_TABS_ENTRIES,

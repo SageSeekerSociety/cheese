@@ -210,9 +210,13 @@ async def require_writable(
     await refuse_writes_if_archived(db, reached.doc.project_id)
 
 
-async def frozen(db: AsyncSession, reached: Reached) -> bool:
+async def frozen(
+    db: AsyncSession,
+    reached: Reached,
+    permission: Permission = Permission.edit_content,
+) -> bool:
     try:
-        await require_writable(db, reached)
+        await require_writable(db, reached, permission)
     except (ValidationError, ProjectArchivedError, ForbiddenError):
         return True
     return False
