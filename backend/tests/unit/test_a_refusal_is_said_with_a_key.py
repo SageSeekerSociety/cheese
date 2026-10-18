@@ -247,7 +247,6 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/addresses.py": 2,
     "app/api/routes/admin_run_records.py": 1,
     "app/api/routes/agent_control.py": 5,
-    "app/api/routes/agent_credential.py": 1,
     "app/api/routes/answers.py": 8,
     "app/api/routes/assistant.py": 1,
     "app/api/routes/attachments.py": 4,
@@ -276,7 +275,6 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/project_channels.py": 1,
     "app/api/routes/project_export.py": 1,
     "app/api/routes/projects.py": 6,
-    "app/api/routes/projects_run_config.py": 3,
     "app/api/routes/questions.py": 11,
     "app/api/routes/recruitment.py": 2,
     "app/api/routes/remote_mcp.py": 3,
@@ -426,7 +424,6 @@ _BASELINE: dict[str, int] = {
     # 2026-10: starting a session left `host.py` for `starting.py`, carrying
     # these sentences with it — the same count, in the file that now holds it.
     "app/domain/agent/session_host/starting.py": 7,
-    "app/domain/agent_credential/services.py": 1,
     "app/domain/agent_type/library.py": 11,
     "app/domain/answers/services.py": 9,
     "app/domain/attachment/services.py": 5,
@@ -473,8 +470,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/oauth/services/connections.py": 2,
     "app/domain/oauth/services/providers.py": 1,
     "app/domain/passkey/services.py": 5,
-    # Includes the three unchanged refusals moved out of the environment route.
-    "app/domain/project/environment.py": 5,
+    "app/domain/project/environment.py": 2,
     "app/domain/project/forge_migration.py": 20,
     "app/domain/project/forgejo_tokens.py": 7,
     "app/domain/project/github_app.py": 5,

@@ -64,7 +64,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          main_sha="$(bash deploy/image-tag.sh origin/main 2>/dev/null || bash deploy/image-tag.sh HEAD)"
+          # Drift is against the green anchor, not main's tip. Main moving ahead
+          # of the anchor is the normal state of a batch still under test; firing
+          # its commit here would deploy a batch the gate has not judged, which
+          # is exactly what happened at 11:33 on 2026-10-18.
+          if ! api_out="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main-green" --jq '.object.sha' 2>&1)"; then
+            # 404 is the honest "no batch has passed yet"; every other answer
+            # (403, 5xx, a dropped connection) means this run could not tell,
+            # and calling that "no anchor" would skip the hour in silence.
+            case "$api_out" in
+              *404*) echo "no main-green anchor yet (no main batch has passed); nothing to converge to"; exit 0 ;;
+            esac
+            echo "::warning::could not read refs/heads/main-green: ${api_out:-no output}; skipping this convergence rather than guessing"
+            exit 0
+          fi
+          anchor="$api_out"
+          main_sha="${anchor:0:7}"
           # The runner IS the box, so ask docker directly rather than over ssh.
           live="$(docker ps -a --no-trunc \
             --filter 'label=com.docker.compose.project=cheese' \
@@ -73,7 +88,7 @@ jobs:
           echo "main: ${main_sha}"
           echo "${live}"
           if printf '%s\n' "$live" | bash deploy/check-app-tier.sh "$main_sha"; then
-            echo "live matches main"
+            echo "live matches main-green (${anchor})"
             exit 0
           fi
 
@@ -81,7 +96,7 @@ jobs:
           # was lost, and re-fire exactly that one. head_sha filtering needs the
           # FULL sha — a short sha silently matches nothing. `gh api --jq` keeps
           # us off system jq, which this box does not have.
-          full_sha="$(git rev-parse origin/main 2>/dev/null || git rev-parse HEAD)"
+          full_sha="$anchor"
           api="repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${full_sha}&per_page=30"
           build_runs='.workflow_runs[] | select(.path==".github/workflows/build.yml")'
           in_flight="$(gh api "$api" --jq "[${build_runs} | select(.status==\"queued\" or .status==\"in_progress\")] | length")"
@@ -100,7 +115,7 @@ jobs:
             # serve if main's tree no longer has the slots, and re-firing that
             # hourly is a red loop that changes nothing. The script makes that
             # choice (and says so) and fails instead of re-dispatching blind.
-            bash deploy/converge-deploy-drift.sh
+            TARGET_SHA="$anchor" bash deploy/converge-deploy-drift.sh
             exit 0
           fi
           if [ "${built_failed}" -gt 0 ]; then
@@ -108,11 +123,16 @@ jobs:
           Check: gh run list --workflow=build.yml"
             exit 1
           fi
-          # No build at all, or only cancelled ones: accepts landing minutes
-          # apart cancel each other's builds (2026-08-06: five accepts in an
-          # hour, dev froze on the third; 2026-08-09: same with two PR merges).
-          echo "no live build for ${main_sha} (none, or cancelled) — dispatching build; deploy follows via workflow_run"
-          gh workflow run build.yml --ref main
+          # No build at all, or only cancelled ones. Do not dispatch one: a
+          # dispatched build builds main's tip, which is the commit this step
+          # just decided is not the anchor — deploying it is the bypass this
+          # check exists to stop. Say so; the anchor's own build either exists
+          # or the next push rebuilds it.
+          # A build of main's tip is not a build of the anchor, so dispatching
+          # one here would be the bypass this step exists to stop. Say it
+          # loudly instead: the anchor's images missing means either its own
+          # build was cancelled, or it never ran.
+          echo "::warning::the green anchor ${anchor} has no live build (none, or cancelled) and main's tip is not it, so nothing was dispatched"
           exit 0
 
       # A failed deployment check must not hide an independent gateway failure.

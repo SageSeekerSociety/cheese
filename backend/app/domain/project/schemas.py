@@ -77,6 +77,12 @@ class StartStepsOut(BaseModel):
     learned: bool
 
 
+class CommitCredit(BaseModel):
+    """Who a project's deliveries are credited to, as `credit_mode` reads it."""
+
+    mode: str
+
+
 class CommitCreditUpdate(BaseModel):
     """Who a project's deliveries are credited to (`identity.CREDIT_MODES`)."""
 
