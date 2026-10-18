@@ -374,7 +374,9 @@ class _ActionsTokens(_Tokens):
             self._granted["actions"] = actions
 
 
-def _probe_reads(*, actions="write", runs=None, steps=(), status="completed"):
+def _probe_reads(
+    *, actions: str | None = "write", runs=None, steps=(), status="completed"
+):
     posts: list[dict] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
