@@ -3,6 +3,7 @@ revoke, void, mark-ready, redescribe, push-fix and force-merge."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -141,12 +142,41 @@ _READY_CONFLICT = "分支与目标分支冲突，先在分支上解掉冲突再�
 _READY_REBASE_REFUSED = "分支落后于目标分支，自动更新分支被拒；请稍后重试"
 
 
-def _conflicts_with_base(status: PullRequestStatus) -> bool:
-    """GitHub's own word that the two sides cannot merge.
+#: How long to wait for an accepted update-branch to land. GitHub answers 202
+#: and merges in the background (`"Updating pull request branch."`), so the
+#: head read right after the call can still be the old one; flipping the ready
+#: flag then starts the full CI on the head we are replacing. Bounded — a miss
+#: only costs the wait, never the delivery.
+_UPDATE_BRANCH_WAITS_S = (0.0, 1.0, 2.0)
 
-    `mergeable` is three-valued on purpose: None is "not worked out yet",
-    which is what an open draft reads as — never a conflict."""
+
+def _conflicts_with_base(status: PullRequestStatus) -> bool:
+    """The forge's own word that the two sides cannot merge.
+
+    `draft` is checked first, like `merge_state.compute_merge_state` does:
+    Forgejo reports `mergeable: false` for every work-in-progress PR (its
+    draft flag IS the `WIP:` title there), and GitHub reports no mergeability
+    at all until the PR is ready. Reading either raw `False` as a conflict
+    would refuse to mark any draft ready."""
+    if status.draft:
+        return status.mergeable_state == "dirty"
     return status.mergeable is False or status.mergeable_state == "dirty"
+
+
+async def _head_after_update(
+    client: GitHubPRClient | ForgejoPRClient, number: int, old_head: str
+) -> PullRequestStatus | None:
+    """The PR's status once its head has moved, or None if it has not."""
+    for wait in _UPDATE_BRANCH_WAITS_S:
+        if wait:
+            await asyncio.sleep(wait)
+        try:
+            status = await client.pr_status(number)
+        except Exception:  # 读不到就当没动，照旧翻
+            return None
+        if status.head_sha and status.head_sha != old_head:
+            return status
+    return None
 
 
 async def _rebase_behind_before_ready(
@@ -218,16 +248,29 @@ async def _rebase_behind_before_ready(
         logger.warning("ready: update-branch refused for #%s", number, exc_info=True)
         return None
     if updated:
+        after = await _head_after_update(client, number, status.head_sha)
+        if after is not None and _conflicts_with_base(after):
+            return {"ready": False, "reason": _READY_CONFLICT}
         return None
 
-    # Refused. That is a conflict, or somebody moved the branch under us a
-    # moment ago — read once more so the two do not share one sentence.
+    # Refused. That is a conflict, somebody moved the branch under us a moment
+    # ago (GitHub answers 422 for "already up to date" too), or the forge
+    # cannot update this branch. Read once more so the three do not share one
+    # sentence, and let the already-current case through.
     try:
         after = await client.pr_status(number)
     except Exception:  # 见上
         return {"ready": False, "reason": _READY_REBASE_REFUSED}
     if _conflicts_with_base(after):
         return {"ready": False, "reason": _READY_CONFLICT}
+    try:
+        still_behind = await forge.compare_status(
+            owner=owner, repo=repo, base=base, head=after.head_sha, token=creds.read
+        )
+    except Exception:  # 见上
+        still_behind = ancestry
+    if still_behind not in ("behind", "diverged"):
+        return None
     return {"ready": False, "reason": _READY_REBASE_REFUSED}
 
 
