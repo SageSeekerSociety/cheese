@@ -40,6 +40,7 @@ channel private; only someone who manages the project turns one back.
 # 还在这儿，它建的就是门面这个类。
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,6 +76,10 @@ from app.domain.topic_membership.schemas import TopicMemberOut
 from . import housekeeping
 from .housekeeping import _public
 
+if TYPE_CHECKING:
+    # deferred-import: cycle membership.roster -> topic_membership.services
+    from app.domain.membership.roster import Member
+
 __all__ = ["CHEESE_HANDLE", "TopicMemberService", "addressable_seat"]
 
 
@@ -83,6 +88,9 @@ class TopicMemberService:
         self._session = session
         self._repo = TopicMembershipRepository(session)
         self._topics = TopicRepository(session)
+        # The project roster `_on_project` last read, kept so a request can hand
+        # it to the writer's own session instead of that session reading it again.
+        self.roster_read: tuple[Member, ...] | None = None
 
     async def _ensure_topic(self, topic_id: uuid.UUID) -> None:
         if await self._topics.get(topic_id) is None:
@@ -578,10 +586,8 @@ class TopicMemberService:
         # deferred-import: cycle membership.roster -> topic_membership.services
         from app.domain.membership.roster import roster
 
-        return any(
-            m.handle == handle
-            for m in await roster(self._session, project_id, team=team)
-        )
+        self.roster_read = await roster(self._session, project_id, team=team)
+        return any(m.handle == handle for m in self.roster_read)
 
     async def remove(self, *, topic_id: uuid.UUID, handle: str, actor: str) -> None:
         await self.require_manager(topic_id, actor)
