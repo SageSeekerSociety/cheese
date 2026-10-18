@@ -76,12 +76,49 @@ nothing, or stops printing the success line while still exiting 0 — there the
 run went quiet instead of red, so neither verdict is earned. Give such a guard an
 inline `--self-test` that judges the guard in its own process to be checked.
 
+A self-test that needs something the lane does not install is a separate case:
+it runs and fails on what the lane lacks, and the run comes back
+`self-test-not-green`, which is also the shape of a broken self-test. (One that
+cannot be started at all — a missing interpreter, an `OSError` — is `unverified`
+instead.) This tool cannot tell the not-green shapes apart by looking, so it
+does not guess — a lane that cannot run a guard's self-test names that guard
+with `--allow-unjudgeable` (see below), and the guard's own lane still runs the
+self-test.
+
     python3 .claude/scripts/verify-guard-self-tests.py
     python3 .claude/scripts/verify-guard-self-tests.py --guard check-file-sizes.py
     python3 .claude/scripts/verify-guard-self-tests.py --json
     python3 .claude/scripts/verify-guard-self-tests.py --self-test
+    python3 .claude/scripts/verify-guard-self-tests.py \
+        --allow-unjudgeable scene-debt-ratchet.py
 
-Exit code: 0 every guard in scope is covered and biting; 1 at least one finding;
+AN ALLOWED GUARD IS AN EXCUSE THIS TOOL CHECKS, NOT A WAIVER. Some guards
+cannot be judged where this runs, for a reason that is about the lane and not
+about the guard:
+
+  * the self-test hands the judgement to another process (`scene-debt-ratchet.py`
+    runs `test_scene_debt_ratchet.py`, which spawns the guard by its real file
+    name), so silencing a copy cannot reach it — the run is `unverified`;
+  * the self-test needs what the judging lane does not install. The same guard's
+    self-test shells out to a node scan over `frontend/node_modules`, which a
+    commit and the repo-guards job do not have, so there it runs and fails on
+    that — the run is `self-test-not-green`, the shape of a broken self-test
+    reached for a reason that is the lane's.
+
+`--allow-unjudgeable NAME` tolerates exactly those two statuses for exactly that
+named guard; both mean "this lane could not establish the bite", and neither is
+a pass. Everything else about the entry is still checked, so it cannot rot into
+a blanket excuse: a name no guard in scope carries, or a guard that is green
+and biting now, is a finding that says delete the entry; and
+`self-test-does-not-bite` is never waived for any name, because that verdict
+*is* this lane's own judgement — the self-test ran, printed its success line,
+and stayed green on a silenced guard. `missing-self-test` is never waived
+either: the lane can always see that much. A guard excused for a missing
+install is still covered where the install is: frontend.yml runs
+scene-debt-ratchet.py --self-test, which is the lane that can answer for it.
+
+Exit code: 0 every guard in scope is covered and biting, or allowed by name;
+1 at least one finding, including an entry that is spent or names nothing;
 2 nothing to report but something could not be judged.
 """
 
@@ -107,6 +144,15 @@ SUCCESS_RE = re.compile(r"^(?:PASS|OK)\b")
 
 #: Statuses that are a finding (a guard that must be fixed).
 FINDING_STATUSES = frozenset({"missing-self-test", "self-test-not-green", "self-test-does-not-bite"})
+
+#: Statuses a named guard may be excused under: the lane could not establish the
+#: bite, for a reason about the lane rather than the guard — the self-test hands
+#: the judgement to another process or cannot be started at all (`unverified`),
+#: or it runs and fails on something the lane does not install
+#: (`self-test-not-green`, which is also the shape of a broken self-test).
+#: `self-test-does-not-bite` is deliberately absent: there the self-test ran on
+#: this tree and stayed green, which is this lane's own judgement, not a gap.
+ALLOWABLE_STATUSES = frozenset({"unverified", "self-test-not-green"})
 
 #: One repair instruction per finding, so a red run says what to do next.
 HINTS = {
@@ -1993,7 +2039,44 @@ def evaluate(
     return results
 
 
-def report(results: list[tuple[str, Path, Outcome, bool]]) -> tuple[int, int]:
+def allowance_problems(
+    results: list[tuple[str, Path, Outcome, bool]], allowed: set[str]
+) -> list[str]:
+    """Every way an `--allow-unjudgeable` entry fails to be a true excuse.
+
+    The flag names a guard this lane could not judge. It is checked like any
+    other claim here, so it cannot rot into a blanket excuse: a name no guard in
+    scope carries, or a guard that is green and biting now, is a problem that
+    says delete the entry. The verdicts that are this lane's own judgement are
+    never waived — `self-test-does-not-bite` because the self-test ran and
+    stayed green on a silenced guard, `missing-self-test` because the lane can
+    always see that much.
+    """
+    judged = {path.name: outcome for _, path, outcome, in_scope in results if in_scope}
+    problems: list[str] = []
+    for name in sorted(allowed):
+        outcome = judged.get(name)
+        if outcome is None:
+            problems.append(
+                f"--allow-unjudgeable names {name}, but no guard of that name was judged: delete it"
+            )
+        elif outcome.status == "ok":
+            problems.append(
+                f"--allow-unjudgeable excuses {name}, but it is verified now: delete the entry"
+            )
+        elif outcome.status not in ALLOWABLE_STATUSES:
+            problems.append(
+                f"--allow-unjudgeable excuses {name}, but {outcome.status} is this lane's own "
+                f"judgement of the guard, not something the lane could not judge"
+            )
+    return problems
+
+
+def report(
+    results: list[tuple[str, Path, Outcome, bool]],
+    allowed: set[str] | frozenset[str] = frozenset(),
+    excuses: int = 0,
+) -> tuple[int, int]:
     checked = [item for item in results if item[3]]
     skipped = [item for item in results if not item[3]]
     if not checked:
@@ -2003,8 +2086,11 @@ def report(results: list[tuple[str, Path, Outcome, bool]]) -> tuple[int, int]:
     findings = 0
     unverified = 0
     for _hook, path, outcome, _ in checked:
-        label = outcome.status.upper()
+        excused = path.name in allowed and outcome.status in ALLOWABLE_STATUSES
+        label = f"{outcome.status.upper()} (allowed)" if excused else outcome.status.upper()
         print(f"{label:<22} {path.name:<{width}}  {outcome.detail}")
+        if excused:
+            continue
         if outcome.status in FINDING_STATUSES:
             findings += 1
             print(f"  {'':<20} 修法：{HINTS[outcome.status]}")
@@ -2012,8 +2098,70 @@ def report(results: list[tuple[str, Path, Outcome, bool]]) -> tuple[int, int]:
             unverified += 1
     if skipped:
         print(f"（另有 {len(skipped)} 个本地钩子的脚本不在 .claude/scripts 下，未核验：{', '.join(path.name for _, path, _, _ in skipped)}）")
-    print(f"共 {len(checked)} 个守卫：有发现 {findings} 个，判不了 {unverified} 个")
+    # The allowance problems are counted separately from the guards' own
+    # findings: one entry can name a guard that is already one of those findings
+    # (a finding this lane can see is not waivable), and adding the two numbers
+    # would report two findings for one guard. Both still reach the exit code.
+    allowance = f"，名单问题 {excuses} 条" if excuses else ""
+    print(
+        f"共 {len(checked)} 个守卫：有发现 {findings} 个{allowance}，"
+        f"判不了 {unverified} 个"
+    )
     return findings, unverified
+
+
+def flags_a_fake_green_self_test() -> None:
+    """Exit 1 unless a fake-green self-test still comes back as a finding.
+
+    This guard is itself one of the guards `--self-test` judges, so it owes the
+    property it asks of every other guard: silencing its own failure signals has
+    to take the self-test down. The expectation table in `self_test()` reads
+    `evaluate` directly, so a silenced `main` — the value that becomes the exit
+    status — leaves every row green. This asks the question that reaches it:
+    run this guard on a tree whose only guard has a self-test that always prints
+    PASS, and require exit 1. The run is a subprocess of this file, so under
+    verification it is the silencing *copy* that answers, and its `return 1`
+    comes back as 0.
+    """
+    with tempfile.TemporaryDirectory(prefix="verify-guard-self-tests-probe-") as raw:
+        root = Path(raw)
+        scripts = root / GUARD_DIR
+        scripts.mkdir(parents=True)
+        fake = scripts / "fake-green-guard.py"
+        fake.write_text(SYNTHETIC_GUARDS[fake.name], encoding="utf-8")
+        config = root / CONFIG_NAME
+        config.write_text(
+            "repos:\n  - repo: local\n    hooks:\n"
+            f"      - id: {fake.stem}\n"
+            f"        entry: python3 {(GUARD_DIR / fake.name).as_posix()}\n"
+            "        language: system\n",
+            encoding="utf-8",
+        )
+        try:
+            done = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--root",
+                    str(root),
+                    "--config",
+                    str(config),
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=DEFAULT_TIMEOUT,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"SELF-TEST FAIL: 假绿探针跑不起来：{exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+    if done.returncode != 1:
+        print(
+            "SELF-TEST FAIL: 一个自测永远印 PASS 的守卫应当以 1 报出，"
+            f"得到 {done.returncode}：{_tail(done.stdout, done.stderr)}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 def self_test() -> int:
@@ -2094,6 +2242,10 @@ def self_test() -> int:
         "bare-exit-guard.py": "self-test-does-not-bite",
     }
     failures = []
+    try:
+        flags_a_fake_green_self_test()
+    except SystemExit as exc:
+        failures.append(f"假绿探针没有通过（退出码 {exc.code}）")
     for name, want in expected.items():
         got = results.get(name)
         if got is None:
@@ -4714,6 +4866,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="单个自测的秒数上限")
     parser.add_argument("--json", action="store_true", help="按 JSON 输出，供机器读")
     parser.add_argument("--self-test", action="store_true", help="证明核验器本身能区分真假自测")
+    parser.add_argument(
+        "--allow-unjudgeable",
+        action="append",
+        default=[],
+        metavar="SCRIPT",
+        help="按名字容忍一个本车道判不了的守卫（只认 unverified / self-test-not-green），可重复；条目会自检",
+    )
     args = parser.parse_args(argv)
 
     if args.self_test:
@@ -4721,14 +4880,28 @@ def main(argv: list[str] | None = None) -> int:
 
     root = args.root.resolve()
     config = (args.config or (root / CONFIG_NAME)).resolve()
+    allowed = set(args.allow_unjudgeable)
     results = evaluate(config, root, args.timeout, set(args.guard) or None)
+    excuses = allowance_problems(results, allowed)
+    if excuses:
+        for problem in excuses:
+            print(problem, file=sys.stderr)
+
+    def excused(path: Path, outcome: Outcome) -> bool:
+        return path.name in allowed and outcome.status in ALLOWABLE_STATUSES
 
     if args.json:
         print(
             json.dumps(
                 {
                     "guards": [
-                        {"hook": hook, "script": path.name, "status": outcome.status, "detail": outcome.detail}
+                        {
+                            "hook": hook,
+                            "script": path.name,
+                            "status": outcome.status,
+                            "detail": outcome.detail,
+                            "allowed": excused(path, outcome),
+                        }
                         for hook, path, outcome, _ in results
                     ]
                 },
@@ -4740,10 +4913,19 @@ def main(argv: list[str] | None = None) -> int:
             print("没有在 .pre-commit-config.yaml 里找到 .claude/scripts 下的本地守卫", file=sys.stderr)
             unverified = 1
         else:
-            findings = sum(1 for item in in_scope if item[2].status in FINDING_STATUSES)
-            unverified = sum(1 for item in in_scope if item[2].status == "unverified")
+            findings = sum(
+                1
+                for item in in_scope
+                if item[2].status in FINDING_STATUSES and not excused(item[1], item[2])
+            )
+            unverified = sum(
+                1
+                for item in in_scope
+                if item[2].status == "unverified" and not excused(item[1], item[2])
+            )
     else:
-        findings, unverified = report(results)
+        findings, unverified = report(results, allowed, len(excuses))
+    findings += len(excuses)
     if findings:
         return 1
     if unverified:

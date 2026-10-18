@@ -203,7 +203,7 @@ async def task_related(
     return ok(await related_of(db, task))
 
 
-@router.post("/{topic_id}/opening")
+@router.post("/{topic_id}/opening", dependencies=[ROUTE_DECIDES])
 async def retry_opening(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -225,7 +225,7 @@ async def retry_opening(
     return ok({"opening": "drafting"})
 
 
-@router.post("/{topic_id}/close")
+@router.post("/{topic_id}/close", dependencies=[ROUTE_DECIDES])
 async def conclude_task(
     topic_id: uuid.UUID,
     body: ConclusionIn,
@@ -351,7 +351,7 @@ class TaskUpdateIn(BaseModel):
     contributor_handles: list[str] | None = Field(default=None, max_length=50)
 
 
-@router.post("/{topic_id}/tasks")
+@router.post("/{topic_id}/tasks", dependencies=[ROUTE_DECIDES])
 async def create_task(
     topic_id: uuid.UUID,
     body: TaskCreateIn,

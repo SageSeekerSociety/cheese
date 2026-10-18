@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.realtime.broker import get_broker
@@ -162,7 +163,9 @@ async def propose_feedback(
 
 
 @router.post(
-    "/{topic_id}/feedback-proposals/{block_id}/dismiss", **typed_response(Dismissed)
+    "/{topic_id}/feedback-proposals/{block_id}/dismiss",
+    **typed_response(Dismissed),
+    dependencies=[ROUTE_DECIDES],
 )
 async def dismiss_feedback_proposal(
     topic_id: uuid.UUID,
@@ -189,6 +192,7 @@ async def dismiss_feedback_proposal(
 @router.post(
     "/{topic_id}/feedback-proposals/{block_id}/accept",
     **typed_response(FeedbackDetail),
+    dependencies=[ROUTE_DECIDES],
 )
 async def accept_feedback_proposal(
     topic_id: uuid.UUID,

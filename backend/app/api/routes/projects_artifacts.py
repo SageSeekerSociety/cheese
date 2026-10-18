@@ -69,6 +69,7 @@ from app.api.auth import ActorResolverDep
 from app.api.place import channels_unseen, readable_rooms
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.deliverables import artifacts
@@ -311,7 +312,9 @@ async def rename_artifact(
     return ok({"id": str(renamed.id), "name": renamed.name})
 
 
-@router.post("/{project_id}/artifacts/{artifact_id}/merge")
+@router.post(
+    "/{project_id}/artifacts/{artifact_id}/merge", dependencies=[ROUTE_DECIDES]
+)
 async def merge_artifact(
     project_id: uuid.UUID,
     artifact_id: uuid.UUID,
@@ -332,7 +335,7 @@ async def merge_artifact(
     return ok({"id": str(kept.id), "name": kept.name})
 
 
-@router.delete("/{project_id}/artifacts/{artifact_id}")
+@router.delete("/{project_id}/artifacts/{artifact_id}", dependencies=[ROUTE_DECIDES])
 async def delete_artifact(
     project_id: uuid.UUID,
     artifact_id: uuid.UUID,

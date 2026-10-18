@@ -6,21 +6,17 @@
 //   node contrast-ratchet.mjs --json
 //
 // The gate that blocks a pull request is tests/contrast-ratchet.spec.ts. This is
-// the same walk — e2e/contrast-walk.mjs, over the rule and the baseline beside
-// it in frontend/ — with the browser and the frontend started here instead of
-// by Playwright's config, because the collector runs one process and reads its
-// stdout. The two must not disagree about anything: what this prints as
-// `actual` is what that gate turns red over.
+// the same walk — e2e/contrast-walk.mjs, over the rule in frontend/ — with the
+// browser and the frontend started here instead of by Playwright's config,
+// because the collector runs one process and reads its stdout. The two must not
+// disagree about anything: what this prints as `actual` is what that gate turns
+// red over.
 //
 // The pages are served by the dev server (`frontend/`, no production build).
 // The measurement is of painted colours and computed styles, which the bundler
 // does not touch, and a build would add minutes to a job that has none to
 // spare. The three pages are the ones a visitor reads before signing in, so
 // nothing here needs the backend.
-//
-// There is no `--update`: the baseline is written by the spec's documented
-// `CONTRAST_UPDATE=1`, one place, and a second way to change it is a second way
-// to change it by accident.
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -30,16 +26,9 @@ import { fileURLToPath } from 'node:url'
 
 import { chromium } from '@playwright/test'
 
-import {
-  PAGES,
-  THEMES,
-  compare,
-  formatContrastReport,
-  tightenedBaseline,
-  worstOf,
-} from '../frontend/scripts/contrast-ratchet-core.mjs'
+import { PAGES, THEMES, formatContrastReport, judge, worstOf } from '../frontend/scripts/contrast-ratchet-core.mjs'
 import { BETTER, asJson, cannotJudge, emit } from '../frontend/scripts/ratchet-report.mjs'
-import { measure, readBaseline } from './contrast-walk.mjs'
+import { measure } from './contrast-walk.mjs'
 
 const ID = 'fe-contrast'
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -173,38 +162,20 @@ async function walk(origin) {
 }
 
 /**
- * The record, from the same comparison the gate makes.
- *
- * `actual` and `frozen` are counts of frozen runs, not of violations: one entry
- * of the baseline is one selector, and it stands for every instance of it. What
- * the page is still owed is what `tightenedBaseline` keeps — the runs below
- * their floor and the runs that still carry instances the walker cannot read —
- * and it is computed with `freezeNew` so that a run which appeared below its
- * floor counts as the regression it is, instead of counting as nothing until
- * somebody freezes it.
+ * The record, from the same verdict the gate gives. `actual` counts failing
+ * keys, not instances: one key is one selector, and it stands for every
+ * instance of it. Nothing is frozen, so `frozen` is 0 and nothing is stale.
  */
-function judge(runs) {
-  const baseline = readBaseline()
-  const worst = worstOf(runs)
-  const result = compare(baseline, worst)
-  const owed = tightenedBaseline(baseline, worst, { freezeNew: true })
-  const stale = Object.keys(baseline)
-    .filter((key) => !(key in owed))
-    .sort()
-    .map((key) => ({
-      file: key,
-      frozen: baseline[key].ratio ?? null,
-      actual: worst.has(key) ? worst.get(key).ratio : null,
-      why: worst.has(key) ? 'the run clears its floor now' : 'gone from the page',
-    }))
-  const details = Object.keys(owed)
-    .sort()
-    .map((file) => ({
-      file,
-      ratio: owed[file].ratio,
-      need: owed[file].need,
-      unreadable: owed[file].unreadable,
-    }))
+function report(runs) {
+  const result = judge(worstOf(runs))
+  const failing = new Map()
+  for (const { key, run } of [...result.below, ...result.unjudged]) failing.set(key, run)
+  const details = [...failing.keys()].sort().map((file) => ({
+    file,
+    ratio: failing.get(file).unjudged ? null : failing.get(file).ratio,
+    need: failing.get(file).need,
+    unreadable: failing.get(file).unreadable,
+  }))
   return {
     ok: result.ok,
     text: formatContrastReport(result),
@@ -212,9 +183,9 @@ function judge(runs) {
       id: ID,
       better: BETTER,
       status: result.ok ? 'pass' : 'fail',
-      actual: Object.keys(owed).length,
-      frozen: Object.keys(baseline).length,
-      stale,
+      actual: failing.size,
+      frozen: 0,
+      stale: [],
       details,
     },
   }
@@ -225,7 +196,7 @@ async function main() {
   let outcome = null
   try {
     server = await startServer()
-    outcome = judge(await walk(server.origin))
+    outcome = report(await walk(server.origin))
   } catch (error) {
     outcome = { reason: error instanceof Error ? error.message : String(error) }
   }

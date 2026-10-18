@@ -197,8 +197,8 @@ Full rules: [`docs/i18n.md`](../../docs/i18n.md). What bites on turn one:
 ## The two ratchets
 
 `frontend/stylelint-baseline.json` freezes the pre-existing violations and the
-gate blocks only NEW ones — same mechanism as `tsc-baseline.json`, and for the
-same reason: a rule that goes red on hundreds of existing sites gets switched off.
+gate blocks only NEW ones: a rule that goes red on hundreds of existing sites
+gets switched off.
 
 ```bash
 cd frontend

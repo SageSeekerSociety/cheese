@@ -13,8 +13,7 @@
  * 2. **形状不对（JSON 能解析、类型不对）不动它**，交给调用者判。删数据要有理由，而
  *    「这一次读到的形状不是我要的」不是理由。
  *
- * 闸门：`pnpm run lint:storage`（eslint.browser-storage.config.mjs + browser-storage-baseline.json）。
- * 新代码不许绕过这里；baseline 里是存量，只许少 —— 迁完一处就删掉那一行。
+ * 闸门：`pnpm run lint:storage`（eslint.browser-storage.config.mjs），有一处直接引用就红。
  */
 
 /** 存在哪一份里。local 跨会话留着，session 关掉标签页就没。 */

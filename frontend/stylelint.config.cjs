@@ -8,8 +8,7 @@
  * THESE RULES DO NOT GO RED ON THE EXISTING TREE. There are ~251 hardcoded hex
  * colours across 46 files, and a rule that fails on all of them on day one gets
  * switched off within the week. scripts/stylelint-ratchet.mjs freezes today's
- * count per file in stylelint-baseline.json and blocks only NEW violations —
- * the same mechanism, and the same reasoning, as tsc-baseline.json.
+ * count per file in stylelint-baseline.json and blocks only NEW violations.
  *
  * Running `stylelint` directly (rather than through the ratchet) therefore
  * reports the whole backlog. That is intended: it is the paydown list.

@@ -20,7 +20,6 @@ sandbox's user namespaces. A missing pinned-build setup error or an actual
 the assertions passed; distinguish that from a test failure on a supported host.
 
 Read ratchet debt from its owner rather than another ledger's prose: repository
-cross-domain exemptions are `_EXEMPT` in `unit/test_domain_import_guard.py`,
-and harness edges are `_LEDGER` in `unit/test_harness_boundary.py`. Import-linter's
-separate contract exceptions live in `../.importlinter`; dropping one kind of
-debt does not automatically lower the other ledgers.
+cross-domain exemptions are `_EXEMPT` in `unit/test_domain_import_guard.py`.
+Import-linter's separate contract exceptions live in `../.importlinter`;
+dropping one kind of debt does not automatically lower the other ledgers.

@@ -11,6 +11,7 @@ from fastapi import (
 )
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import (
@@ -183,8 +184,7 @@ async def get_user_settings(
 
 
 @router.patch(
-    "/{userId}/settings",
-    summary="Update User Settings",
+    "/{userId}/settings", summary="Update User Settings", dependencies=[ROUTE_DECIDES]
 )
 async def update_user_settings(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
