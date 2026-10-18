@@ -1,7 +1,9 @@
 {
-  "hint": "When on, new commits credit the task requester as a co-author; the AI teammate stays the author. Existing commits are unchanged",
-  "label": "Credit the task requester as co-author",
-  "off": "Currently off",
-  "on": "Currently on",
+  "agent": "AI teammate",
+  "agentHint": "The PR and the commit are credited to {agent}, and the task owner is not named. The commit links to the task",
+  "hint": "Existing commits are unchanged",
+  "label": "Credit to",
+  "owner": "Task owner",
+  "ownerHint": "The PR is opened with the task owner's GitHub account, so the owner authors the commit and {agent} is a co-author. If the owner hasn't connected GitHub, {agent} opens the PR and the owner is a co-author",
   "title": "Commit credit"
 }

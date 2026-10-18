@@ -26,14 +26,21 @@ def remote_delivery(client, request):
 
 
 def _task_line(pid: str, room: str, task: str, title: str) -> str:
-    """`Cheese-Task:` 一个任务写一行：**打得开的地址**、标题。
+    """`Link:` 一个任务写一行：**打得开的地址**，就是那个任务自己的页面。
 
-    地址是那个任务自己的页面，任务的 id 就在地址末尾。
+    `title` 只为让调用处读得出是哪条任务，不在这一行里。
     """
     from app.core.config import settings
 
+    del title
     where = f"{settings.frontend_url.rstrip('/')}/projects/{pid}/topics/{room}"
-    return f"Cheese-Task: {where}/tasks/{task} {title}"
+    return f"Link: {where}/tasks/{task}"
+
+
+def _room_link(pid: str, room: str) -> str:
+    from app.core.config import settings
+
+    return f"{settings.frontend_url.rstrip('/')}/projects/{pid}/topics/{room}"
 
 
 def _project(client) -> str:
@@ -170,12 +177,8 @@ def test_the_landed_commit_names_the_agent_and_the_task_delivered(client):
     _accept(client, card["id"])
 
     body = _landed_body(client)
-    assert f"Cheese-Agent: {room_agent_seat(client, room)}" in body
     assert _task_line(pid, room, mine, "补 trailer") in body
     assert _task_line(pid, room, theirs, "顺手修 flaky 测试") not in body
-    # The trailers that were already there did not move over to make room.
-    assert f"/topics/{room}" in body
-    assert f"Cheese-Card: {card['id']}" in body
     assert "Reviewed-by: alice <alice@zhishi.local>" in body
 
 
@@ -278,14 +281,14 @@ def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatc
 
     body = _landed_body(client)
     assert body.splitlines()[0].startswith("feat: land when the batch is unreadable (#")
-    assert "Cheese-Task" not in body
-    assert f"Cheese-Card: {card['id']}" in body
+    assert "/tasks/" not in body
+    assert f"Link: {_room_link(pid, room)}" in body
 
 
 # --- What the declaration is checked against ------------------------------
 #
 # Exactly one thing about a claim is checkable at all, and it is checked rather
-# than trusted: a wrong `Cheese-Task:` is permanent, and it reads exactly like a
+# than trusted: a wrong `Link:` to a task is permanent, and it reads exactly like a
 # right one.
 
 
@@ -333,12 +336,4 @@ def test_git_itself_parses_the_trailers_on_the_commit_that_landed(client):
         check=True,
     ).stdout
     tokens = {line.split(":", 1)[0] for line in parsed.splitlines() if line.strip()}
-    assert tokens == {
-        "Requested-by",
-        "Reviewed-by",
-        "Cheese-Topic",
-        "Cheese-Card",
-        "Cheese-Agent",
-        "Cheese-Task",
-        "Co-authored-by",
-    }
+    assert tokens == {"Reviewed-by", "Link", "Co-authored-by"}
