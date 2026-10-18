@@ -16,14 +16,22 @@ with what the case says:
   * same fingerprint, different stacks -> not reported;
   * same stack, different fingerprints -> not reported;
   * inside either whitelist -> not reported;
-  * different literals (numbers, quoted strings, IN-list length) at one call
-    site -> one fingerprint, so reported;
+  * different literals (numbers, quoted strings, dollar-quoted strings, driver
+    placeholders including ``%(name)s``, IN-list length) at one call site ->
+    one fingerprint, so reported;
   * double-quoted *identifiers* are not literals: ``"topics"`` and
-    ``"projects"`` stay different statements.
+    ``"projects"`` stay different statements;
+  * a statement the detector cannot fingerprint, and a report whose log sink
+    raises, are swallowed: the detector never raises into a request.
 
 It also drives one request through ``QueryWatchMiddleware``: the watch is alive
 inside the request, both statements land in it, it is closed afterwards, and the
-ContextVar is left as it was outside.
+ContextVar is left as it was outside. Where SQLAlchemy and aiosqlite are
+installed, it additionally drives a real async engine and requires the group's
+stack to name this script's frame — the synthetic cases pass a stack in, so
+without this one nothing would notice a greenlet hop that stopped naming the
+caller. Without those packages the line says the engine path was not verified
+rather than staying silent.
 
 The module is imported by path and must stay importable without SQLAlchemy or
 FastAPI (the CI helper lane has neither); its engine hook imports them when it
@@ -139,6 +147,20 @@ CASES: tuple[Case, ...] = (
         ),
     ),
     Case(
+        name="dollar-quoted 字面量不同 → 同一指纹 → 报",
+        events=(
+            (STACK, "SELECT $$open$$ FROM topics WHERE id = 1"),
+            (STACK, "SELECT $$closed$$ FROM topics WHERE id = 2"),
+        ),
+    ),
+    Case(
+        name="命名占位符不同（%(name)s）→ 同一指纹 → 报",
+        events=(
+            (STACK, "SELECT * FROM topics WHERE id = %(topic_id)s"),
+            (STACK, "SELECT * FROM topics WHERE id = %(other_id)s"),
+        ),
+    ),
+    Case(
         name="双引号标识符不归一 → 不同表 → 不报",
         events=(
             (STACK, 'SELECT * FROM "topics" WHERE id = 1'),
@@ -237,6 +259,105 @@ async def _boundary_check(module: ModuleType) -> None:
         raise AssertionError(f"同一请求的两条语句没有并到一组: {found}")
 
 
+def _never_raises_check(module: ModuleType) -> None:
+    """The module's promise: a recording or a report never raises.
+
+    A detector that turns a request into a 500 is worse than the query it
+    failed to count, so a statement it cannot fingerprint must be dropped
+    quietly, and a report that hits an unusable logger must not escape either.
+    """
+    watch = module.RequestWatch()
+    watch.note(object())  # not even a string: must be swallowed, not raised
+    if watch.groups:
+        raise AssertionError("无法指纹的语句被记了下来")
+    watch.note("SELECT 1", stack=STACK)
+    watch.note("SELECT 1", stack=STACK)
+
+    class ExplodingLogger:
+        def warning(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("log sink is broken")
+
+        def debug(self, *_args, **_kwargs) -> None:
+            return None
+
+    original = module.logger
+    module.logger = ExplodingLogger()
+    try:
+        module.report(watch)
+    except Exception as exc:  # noqa: BLE001 - that is exactly what must not happen
+        raise AssertionError(f"report() 在日志坏掉时抛了出来: {exc}") from exc
+    finally:
+        module.logger = original
+
+
+def _begin_finish_check(module: ModuleType) -> None:
+    """``begin`` / ``finish`` are the request boundary for non-HTTP callers."""
+    token = module.begin()
+    if module.current_watch() is None:
+        raise AssertionError("begin() 之后 current_watch() 为空")
+    module.current_watch().note(SELECT_TOPICS.format(1), stack=STACK)
+    module.current_watch().note(SELECT_TOPICS.format(2), stack=STACK)
+    found = module.finish(token)
+    if len(found) != 1 or found[0].count != 2:
+        raise AssertionError(f"begin/finish 的两条语句没有并到一组: {found}")
+    if module.current_watch() is not None:
+        raise AssertionError("finish() 之后 ContextVar 没有恢复")
+
+
+def _engine_scenario(module: ModuleType) -> str:
+    """Drive a real async engine when this machine has one, else skip.
+
+    The synthetic cases pass the stack in, so they cannot see whether the
+    greenlet hop in ``call_site`` still names the caller: if it ever stops
+    doing that, every statement gets an empty stack, unrelated call sites
+    merge into one group, and a stack whitelist matches nothing. This case
+    issues three statements from one loop through a watched engine and
+    requires the group's stack to contain this script's frame.
+    """
+    try:
+        import aiosqlite  # noqa: F401 - the async driver the engine needs
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+    except ImportError:
+        return "skipped"
+
+    class FakeApp:
+        def __init__(self) -> None:
+            self.middleware: list = []
+
+        def add_middleware(self, middleware) -> None:
+            self.middleware.append(middleware)
+
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        try:
+            app = FakeApp()
+            module.install(app, engine=engine)
+            if app.middleware != [module.QueryWatchMiddleware]:
+                raise AssertionError(f"install() 没有挂上中间件: {app.middleware}")
+            if not getattr(engine.sync_engine, "_cheese_query_watch_installed", False):
+                raise AssertionError("install() 没有挂上引擎监听")
+            with module.request_scope() as watch:
+                async with engine.connect() as connection:
+                    for identifier in range(3):
+                        await connection.execute(
+                            text(
+                                f"select {identifier} from sqlite_master "
+                                "where name = 'x'"
+                            )
+                        )
+        finally:
+            await engine.dispose()
+        found = watch.repeats()
+        if len(found) != 1 or found[0].count != 3:
+            raise AssertionError(f"真实引擎的 3 次循环没有并成一组: {found}")
+        if not any("check-no-new-n-plus-one" in frame for frame in found[0].stack):
+            raise AssertionError(f"栈里没有本文件的帧: {found[0].stack}")
+
+    asyncio.run(run())
+    return "ok"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -267,6 +388,19 @@ def main() -> int:
         except Exception as exc:
             boundary = f"失败: {exc}"
             failures.append({"case": "请求边界（中间件 + ContextVar）", "detail": boundary})
+        try:
+            _never_raises_check(module)
+        except Exception as exc:
+            failures.append({"case": "记录与报告不抛异常", "detail": str(exc)})
+        try:
+            _begin_finish_check(module)
+        except Exception as exc:
+            failures.append({"case": "begin/finish 边界", "detail": str(exc)})
+        try:
+            engine = _engine_scenario(module)
+        except Exception as exc:
+            engine = f"失败: {exc}"
+            failures.append({"case": "真实引擎（greenlet 栈）", "detail": engine})
     except CannotJudge as exc:
         print(f"N+1 探测器守卫判不了: {exc}", file=sys.stderr)
         return 2
@@ -277,6 +411,7 @@ def main() -> int:
                 {
                     "module": str(args.module),
                     "cases": len(CASES) + 1,
+                    "engine": engine,
                     "failures": failures,
                 },
                 ensure_ascii=False,
@@ -295,9 +430,14 @@ def main() -> int:
             file=sys.stderr,
         )
     else:
+        engine_note = (
+            "真实引擎路径已验证"
+            if engine == "ok"
+            else "真实引擎路径未验证（本机没有 SQLAlchemy/aiosqlite）"
+        )
         print(
-            f"N+1 探测器守卫通过（{len(CASES) + 1} 个场景：判定 4 类、指纹归一、"
-            "两维白名单、请求边界）"
+            f"N+1 探测器守卫通过（{len(CASES) + 3} 个场景：判定 4 类、指纹归一、"
+            f"两维白名单、请求边界、begin/finish、记录/报告不抛异常；{engine_note}）"
         )
 
     if failures:

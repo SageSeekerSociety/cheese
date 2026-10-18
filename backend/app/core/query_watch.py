@@ -67,7 +67,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_MIN_N_QUERIES = 2
 
 #: Legitimate repeats, by call site. A frame matching any entry exempts the
-#: group. Module paths as they appear in ``call_site`` (``app/domain/...``).
+#: group. Write paths the way ``call_site`` writes them, below the package
+#: directory: ``domain/topic/repositories/reads.py``. Both layouts trim to
+#: that — the image keeps the package at ``/app/app/...`` and a checkout at
+#: ``backend/app/...`` — so an ``app/domain/...`` prefix matches nothing.
 IGNORED_STACKS: tuple[str, ...] = ()
 
 #: Legitimate repeats, by statement. Case-insensitive substring of the
@@ -131,8 +134,9 @@ def _is_library(path: str) -> bool:
 
 
 def _short_path(path: str) -> str:
-    # The container path of app code is /app/...; keep the part below it so a
-    # log line does not depend on where the image was built.
+    # The image keeps the package at /app/app/... and a checkout at
+    # backend/app/...; keep the part below the last app/ so a log line (and a
+    # stack whitelist entry) does not depend on where the tree was built.
     return path.rsplit("/app/", 1)[-1]
 
 

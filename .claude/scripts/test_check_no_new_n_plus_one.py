@@ -63,19 +63,68 @@ class NPlusOneGuardTests(unittest.TestCase):
         # The report's second deliberate violation: the fingerprint returns the
         # statement unchanged, so three statements differing only in a bound id
         # stop being one shape and the loop goes unreported.
-        override = (
-            "\n\ndef fingerprint_sql(statement):\n"
-            "    return statement\n"
-        )
         with tempfile.TemporaryDirectory() as directory:
             module = self._mutate(
                 directory,
-                lambda source: source + override,
-                "def fingerprint_sql",
+                lambda source: source.replace(
+                    FINGERPRINT_ANCHOR, "    return statement", 1
+                ),
+                FINGERPRINT_ANCHOR,
             )
             result = self._run(SCRIPT, "--module", str(module))
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("同指纹同栈", result.stderr)
+
+    def test_a_fingerprint_that_stops_folding_dollar_quotes_turns_this_guard_red(
+        self,
+    ) -> None:
+        # The documented normalization is pinned by cases, not by reading the
+        # regex: erasing either rule has to be noticed.
+        def erase(source: str) -> str:
+            broken = source.replace(
+                '_DOLLAR_QUOTED = re.compile(r"\\$[A-Za-z_0-9]*\\$.*?\\$[A-Za-z_0-9]*\\$", re.DOTALL)',
+                '_DOLLAR_QUOTED = re.compile(r"a^")',
+                1,
+            )
+            return broken.replace(
+                '_PLACEHOLDER = re.compile(r"\\$\\d+|%\\([^)]+\\)s")',
+                '_PLACEHOLDER = re.compile(r"\\$\\d+")',
+                1,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            module = self._mutate(directory, erase, "_DOLLAR_QUOTED = re.compile")
+            result = self._run(SCRIPT, "--module", str(module))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("dollar-quoted", result.stderr)
+        self.assertIn("命名占位符", result.stderr)
+
+    def test_a_detector_that_raises_instead_of_swallowing_turns_this_guard_red(
+        self,
+    ) -> None:
+        # "Only logs, never raises" is the module's promise. Rewriting the
+        # swallow into a re-raise has to be caught by the guard.
+        def re_raise(source: str) -> str:
+            return source.replace(
+                'logger.debug("query watch could not record a statement", exc_info=True)',
+                "raise",
+                1,
+            ).replace(
+                '        logger.debug("query watch could not report a request", exc_info=True)\n'
+                "        return []",
+                "        raise",
+                1,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            module = self._mutate(
+                directory,
+                re_raise,
+                'logger.debug("query watch could not record a statement"',
+            )
+            result = self._run(SCRIPT, "--module", str(module))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("记录与报告不抛异常", result.stderr)
 
     def test_a_detector_that_never_reports_turns_this_guard_red(self) -> None:
         override = (
