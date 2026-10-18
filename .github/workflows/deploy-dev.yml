@@ -206,6 +206,24 @@ jobs:
     # The first Forge cutover archives workspaces and builds a recovery bundle per task.
     timeout-minutes: 180
     steps:
+      # Another workflow on this runner (box-diag's dev-box job) can leave the
+      # shared workspace in a non-cone sparse checkout. actions/checkout then
+      # finishes green while deploy/ is not on disk at all, and the next two
+      # steps fail on a missing script (2026-10-18 09:46 and 10:01). Clear the
+      # leftovers before checking out. On a workspace that was never sparse this
+      # only rewrites git's sparse settings — no tracked file is touched — and
+      # the checkout after it clears them again.
+      - name: Repair a sparse workspace
+        run: |
+          cd "$GITHUB_WORKSPACE" 2>/dev/null || exit 0
+          git rev-parse --git-dir >/dev/null 2>&1 || exit 0
+          git config --local --unset-all core.sparseCheckout || true
+          git config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
+          if ! git sparse-checkout disable; then
+            echo "::warning::could not disable a leftover sparse checkout; deploy scripts may be missing"
+          fi
+          rm -f "$(git rev-parse --git-dir)/info/sparse-checkout"
+
       # The candidate may predate this guard. Read policy from the workflow's
       # default-branch commit before checking out that candidate's deploy code.
       - name: Check out automatic deployment policy

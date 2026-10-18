@@ -33,16 +33,25 @@ jobs:
     # a slow one from cancelling the job and losing every probe after it.
     timeout-minutes: 10
     steps:
-      # Full checkout, on purpose. This job used to take only
-      # deploy/app-container.sh through sparse-checkout, and cheese-dev runs one
-      # job at a time in ONE workspace (_work/cheese/cheese), shared with Deploy.
-      # The sparse pattern stayed behind in that workspace: at 09:44 a box-diag
-      # run left it set, and at 09:46 the next Deploy's checkout produced a tree
-      # without deploy/check-auto-deploy.py, failing the deployment. A probe must
-      # not be able to break the thing it is probing; the cost of checking out
-      # the whole tree here is the same tree Deploy already keeps in this
-      # workspace, so no second copy and no extra disk.
+      # Its OWN directory, never the workspace Deploy uses. cheese-dev runs one
+      # job at a time in ONE workspace (_work/cheese/cheese), and a checkout
+      # there is only as good as what the last job left in its .git. This job
+      # poisoned it once: the non-cone sparse checkout it used until #4271 left
+      # `.git/info/sparse-checkout` and `core.sparseCheckout=true` behind, and
+      # the next Deploy's checkout re-applied the old pattern and lost
+      # deploy/check-auto-deploy.py (runs 39116642574, 39120411594,
+      # 39121017323). #4275 repairs that state before the deploy job and
+      # deploy-drift check out; this change removes the source, so nothing has
+      # to repair it again.
+      #
+      # The probe takes `.box-diag/` in that workspace instead — one depth-1
+      # checkout, ~145MB (105MB worktree + 40MB .git) — and every step that
+      # needs a file from the tree says so by path. Deploy's `git clean -ffdx`
+      # removes the directory between runs, so nothing accumulates; a probe must
+      # not be able to change the thing it is probing.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: .box-diag
       # Disk comes first on purpose: on 2026-10-18 the dev box was at 98%
       # (527 of 567 GiB) and the probe that should have said what filled it ran
       # after a database read that had already gone stale and failed the job,
@@ -97,7 +106,7 @@ jobs:
       # The backend runs as cheese-backend-1 or cheese-backend-b-1 depending
       # on the last release (deploy/deploy-docker.sh, "Two slots").
       - name: Find the running backend container
-        run: echo "BACKEND=$(bash deploy/app-container.sh backend)" >> "$GITHUB_ENV"
+        run: echo "BACKEND=$(bash .box-diag/deploy/app-container.sh backend)" >> "$GITHUB_ENV"
       - name: Read session host readiness and recent startup failures
         # The readiness/startup read is one probe among many; the rest of the
         # job must still report when it breaks. It did on 2026-10-18: the query
