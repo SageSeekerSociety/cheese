@@ -98,6 +98,29 @@ def _imports_app(tree):
     return False
 
 
+def _repository_roots(tree):
+    """Names bound to a directory derived from this file's path (``parents[N]``).
+
+    A test that recursively scans one of these reads a repository tree rather
+    than only the module it lives in, and the import graph has no edge for a
+    read. ``parents[0]`` is the test's own directory and is left out.
+    """
+    roots = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            for inner in ast.walk(node.value):
+                if (isinstance(inner, ast.Subscript)
+                        and isinstance(inner.value, ast.Attribute)
+                        and inner.value.attr == "parents"
+                        and isinstance(inner.slice, ast.Constant)
+                        and isinstance(inner.slice.value, int)
+                        and inner.slice.value >= 1):
+                    roots.add(node.targets[0].id)
+                    break
+    return roots
+
+
 class CiFastTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="ci-fast-test-"))
@@ -530,12 +553,14 @@ class CiFastTest(unittest.TestCase):
     # --- the tuple above is written by hand, and a test that reads the tree has
     # --- no import edge from the file it guards, so nothing else notices it
     # --- being left out. Judge the shape rather than a marker comment: a unit
-    # --- test that names one of the repository's script roots (or derives
-    # --- REPO_ROOT) and imports nothing from app is a whole-tree guard, and
-    # --- the import graph will never select it. Readers of `.github/workflows/`
-    # --- are outside this criterion on purpose: a workflow-only change does not
-    # --- put the tier in backend scope, so an entry here would not run them
-    # --- there either — that needs a lane of its own.
+    # --- test that imports nothing from app and does one of these is a
+    # --- whole-tree guard, and the import graph will never select it:
+    # --- names a script root, derives REPO_ROOT, or recursively scans a
+    # --- directory it derived from ``__file__`` (``parents[N]``).
+    # --- Readers of `.github/workflows/` are outside this criterion on purpose:
+    # --- a workflow-only change does not put the tier in backend scope, so an
+    # --- entry here would not run them there either — that needs a lane of its
+    # --- own.
     def test_every_tree_reading_unit_test_is_in_the_tree_guard_tuple(self):
         from ci_fast_backend import TREE_GUARDS
         unit = SCRIPT.parents[2] / "backend" / "tests" / "unit"
@@ -548,8 +573,16 @@ class CiFastTest(unittest.TestCase):
                 node.value for node in ast.walk(tree)
                 if isinstance(node, ast.Constant) and isinstance(node.value, str))
             names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+            scanned = {
+                node.func.value.id for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"rglob", "glob", "iterdir"}
+                and isinstance(node.func.value, ast.Name)
+            }
             if (".claude/scripts" in text or ".github/scripts" in text
-                    or "REPO_ROOT" in names):
+                    or "REPO_ROOT" in names
+                    or scanned & _repository_roots(tree)):
                 readers.add(path.name)
         missing = readers - set(TREE_GUARDS)
         self.assertFalse(missing,

@@ -57,10 +57,13 @@ TREE_GUARDS = (
     "test_remote_hub_answers_every_hub_call.py", "test_the_platform_never_starts_a_turn.py",
     "test_one_roster_agents_included.py", "test_local_fs_sharing_guard.py",
     "test_get_by_id_has_batch_sibling.py",
-    # Read .claude/scripts, .github/workflows, deploy/ or the app/scripts/evals
-    # trees instead of importing app.*, so no import edge reaches them.
+    # Read .claude/scripts, .github/workflows, deploy/ or a repository tree
+    # (app, backend, tests) instead of importing app.*, so no import edge
+    # reaches them.
     "test_changed_runner.py", "test_postgres_version_pins.py",
     "test_event_landing_guard.py", "test_metering_proxy_addon.py",
+    "test_known_debt_is_not_an_xfail.py", "test_dead_definitions_stay_dead.py",
+    "test_success_envelope_single_home.py",
 )
 META = {
     "backend/pyproject.toml", "backend/uv.lock",

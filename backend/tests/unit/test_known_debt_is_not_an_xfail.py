@@ -69,9 +69,18 @@ def _offenders(path: Path) -> list[int]:
 
     An unparsable file reports nothing rather than failing: this scan is about
     the marker, and a syntax error is what the suite's own collection reports.
+
+    The text is read first because parsing every file under ``tests/`` took
+    longer than the pure layer's ceiling once this test ran in the whole-tree
+    guard set. An AST node whose attribute or name is ``xfail`` necessarily
+    has that text in its source, so skipping files without it cannot change
+    the verdict; prose that names the marker still parses and still passes.
     """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if ATTR not in text:
+        return []
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        tree = ast.parse(text)
     except SyntaxError:
         return []
     return sorted(
