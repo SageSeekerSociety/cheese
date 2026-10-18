@@ -83,3 +83,23 @@ def test_a_ready_pr_with_a_skipped_full_check_is_still_refused():
     ready, lines = _ready().verdict(_facts(draft=False, ci="skipped"))
     assert not ready
     assert "- CI required 在 head 上是 skipped，等它绿" in lines
+
+
+def test_a_head_from_ready_reads_the_full_check_without_reading_the_pr(
+    monkeypatch, tmp_path
+):
+    ready = _ready()
+    (tmp_path / "meta").write_text("pr=7\nbase=main\n")
+    fake = _github(draft=False)
+    asked = []
+
+    def gh(*args):
+        asked.append(args[0])
+        return fake(*args)
+
+    monkeypatch.setattr(ready, "gh", gh)
+    monkeypatch.setattr(ready, "review_from", lambda _directory: REVIEW)
+    ok, lines = ready.verdict(ready.gather(tmp_path, "o/r", str(tmp_path), HEAD))
+    assert ok
+    assert lines[0].startswith(f"可递：head {HEAD[:8]}｜CI required success")
+    assert not any(a.endswith("/pulls/7") for a in asked)
