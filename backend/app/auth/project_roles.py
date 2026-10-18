@@ -179,7 +179,7 @@ async def standing(
 
     One request asks this several times with the same arguments — room
     admission, the role gate and the route's own permission — and each answer
-    costs five statements. The first is remembered on the session
+    costs a handful of statements. The first is remembered on the session
     (`core.request_facts`); a write in that session forgets it, so an answer
     never outlives the rows it was read from. ``None`` is remembered too:
     "not in this project" is asked as often as the positive answer, and adding

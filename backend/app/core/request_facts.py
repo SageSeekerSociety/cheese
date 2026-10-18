@@ -3,7 +3,8 @@
 A request handles a single `AsyncSession` from beginning to end: FastAPI hands
 every dependency the same one. Several of them ask the same question — where
 someone stands in a project, and so what they may do there — and each answer
-costs five statements. The session remembers those answers in `session.info`
+costs five to a dozen statements, depending on where the person sits. The
+session remembers those answers in `session.info`
 under `REQUEST_FACTS` (the same place `core/live_frames` parks what it owes a
 page), so the second and third ask read the first answer.
 
@@ -17,17 +18,23 @@ The answers are forgotten whenever the session writes or takes a write back:
   ``MemberRepository.exclude`` writes the exclusion that way. Every DML
   statement executed through the session forgets the answers before it runs;
 * a commit ends the transaction those answers were read in, so the next read
-  is a new one that may see what other requests committed in between;
+  is a new one that may see what other requests committed in between — and so
+  does closing the session, which `core.db.release_read_session` does before
+  waiting on remote I/O;
 * a rollback of the session's transaction drops everything the request read;
 * a rollback of a savepoint drops it too. Releasing a savepoint commits
   nothing, but a savepoint that rolls back may have carried a change someone
   asked about; re-reading is cheap next to answering from a state that no
   longer holds.
 
-Within one transaction nothing here is shared with other requests: what they
-commit is invisible to this cache, exactly as it was invisible to a second
-read. Every write this session makes, and every transaction boundary, drops
-what it read.
+The cache belongs to the session, and a session belongs to one request. It
+does not see what another request commits: an answer read before that commit
+is served unchanged until this session writes or ends its transaction. Under
+READ COMMITTED a fresh SELECT would see the new row, so the cache deliberately
+trades that intra-request freshness for fewer statements; the staleness is
+bounded by one request. A second ``standing()`` call is not a way to observe
+another request's change — end the transaction if freshness matters. Every
+write this session makes, and every transaction boundary, drops what it read.
 """
 
 from typing import Any
@@ -86,6 +93,16 @@ def _forget_after_commit(session: Session) -> None:
 @event.listens_for(Session, "after_rollback")
 def _forget_after_rollback(session: Session) -> None:
     forget(session)
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _forget_after_transaction_ends(session: Session, transaction) -> None:
+    # A closed session ends its transaction without emitting a commit or a
+    # rollback: `core.db.release_read_session` closes one before waiting on
+    # remote I/O and then keeps reading on it. Only the session's own level
+    # counts — a released savepoint commits nothing and changes nothing.
+    if transaction.parent is None:
+        forget(session)
 
 
 @event.listens_for(Session, "after_soft_rollback")
