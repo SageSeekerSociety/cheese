@@ -534,6 +534,28 @@ class HttpxGitHubPrClient:
             )
         return bool(pr.get("mergeQueueEntry"))
 
+    async def merge_group_run_started(self, *, owner, repo, number, token) -> bool:
+        """Has any `merge_group` workflow run been created for PR `number`?
+
+        GitHub names the queue's temporary branch
+        `gh-readonly-queue/<base>/pr-<n>-<sha>`, and the runs it triggers carry
+        that name as `head_branch`. Read-only: the newest 100 runs of the event
+        are enough, a stalled entry's run is either among them or not yet there."""
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/actions/runs",
+                headers=self._headers(token),
+                params={"event": "merge_group", "per_page": 100},
+            )
+        if resp.status_code != 200:
+            raise _refused("githubRefusedCheckRuns", resp)
+        marker = f"/pr-{number}-"
+        return any(
+            marker in str(run.get("head_branch") or "")
+            for run in resp.json().get("workflow_runs") or []
+            if isinstance(run, dict)
+        )
+
     async def dequeue_pull_request(self, *, owner, repo, number, token) -> None:
         async with forge_client(transport=self._transport, timeout=30.0) as client:
             pr = await _queue_pr(

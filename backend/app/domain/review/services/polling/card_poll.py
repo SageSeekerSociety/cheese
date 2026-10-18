@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 
 from app.core.sentences import say
+from app.domain.notice_meta import EVENT_MERGE_WITHHELD
 from app.domain.review import merge_state, notes, pr_signals
 from app.domain.review import services as pkg
 from app.domain.review.merge_state import RED_CONCLUSIONS, MergeVerdict
@@ -14,12 +16,90 @@ from app.domain.review.services._shared import (
     _REQUIRED_CHECK_GRACE_MINUTES,
     EVENT_ACCEPT_DONE,
     SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_HUMAN,
     WHO_PLATFORM,
     _GitHubCredentials,
     notice,
 )
 from app.domain.review.services.merge_queue import _write_merge_mirror
 from app.domain.topic.models import Topic
+
+logger = logging.getLogger(__name__)
+
+#: 入队后多久还没有这个条目的 merge_group run，就在卡上标一次、告诉验收人。
+QUEUE_STALL_MINUTES = 30
+
+#: 卡上那句话的固定开头：既是文案，也是「已经标过」的判据 —— 不加字段、不加迁移。
+QUEUE_STALL_MARK = "已在合并队列"
+
+
+def _stall_text(minutes: int) -> str:
+    return f"{QUEUE_STALL_MARK} {minutes} 分钟，还没轮到这个条目的 merge_group"
+
+
+def _clear_stall_mark(card: AcceptCard) -> None:
+    """Strip the stall sentence `annotate` put in front of the note."""
+    note = card.note or ""
+    if QUEUE_STALL_MARK not in note:
+        return
+    head, _, rest = note.partition("；")
+    if QUEUE_STALL_MARK in head:
+        card.note = rest
+        if not rest:
+            card.note_code = None
+
+
+async def _watch_queue_stall(
+    self: pkg.AcceptService,
+    *,
+    card: AcceptCard,
+    topic: Topic,
+    owner: str,
+    repo: str,
+    creds: _GitHubCredentials,
+    client,
+    now: datetime | None = None,
+) -> None:
+    """卡在队列里：超过阈值还没有 merge_group run → 标一次并通知验收人；run
+    起来了就把那句话清掉。入队时刻读 `decided_at`（`_record_queue_entry` 写）。"""
+    lookup = getattr(client, "merge_group_run_started", None)
+    entered = card.decided_at
+    if lookup is None or entered is None or not card.pr_number:
+        return
+    marked = QUEUE_STALL_MARK in (card.note or "")
+    now = now or datetime.now(UTC)
+    if entered.tzinfo is None:
+        entered = entered.replace(tzinfo=UTC)
+    if not marked and now - entered < timedelta(minutes=QUEUE_STALL_MINUTES):
+        return
+    try:
+        started = await lookup(
+            owner=owner, repo=repo, number=card.pr_number, token=creds.read
+        )
+    except Exception:  # noqa: BLE001 — 只读提示，读不到不该拖垮轮询
+        logger.warning("card %s: merge_group run lookup failed", card.id, exc_info=True)
+        return
+    if started:
+        _clear_stall_mark(card)
+        return
+    if marked:
+        return
+    minutes = int((now - entered).total_seconds() // 60)
+    text = _stall_text(minutes)
+    notes.annotate(card, text)
+    await self._tell_the_reviewer(
+        card,
+        topic,
+        f"PR #{card.pr_number} {text}。",
+        meta=notice(
+            EVENT_MERGE_WITHHELD,
+            severity=SEVERITY_WARN,
+            who=WHO_HUMAN,
+            detail=card.pr_url or "",
+            detail_label=say("labelReason"),
+        ),
+    )
 
 
 async def _poll_pr_card(
@@ -103,6 +183,15 @@ async def _poll_pr_card(
                 "ci",
                 card.pr_head_sha or "",
             )
+            await _watch_queue_stall(
+                self,
+                card=card,
+                topic=topic,
+                owner=owner,
+                repo=repo,
+                creds=creds,
+                client=client,
+            )
             await self._session.flush()
             return
         # Removal can mean failed checks or a human cancellation. Never
@@ -110,6 +199,7 @@ async def _poll_pr_card(
         # the task's 芝士 instead of leaving it for someone to notice.
         card.auto_merge_armed_by = None
         card.auto_merge_armed_at = None
+        _clear_stall_mark(card)
         await self._note_left_merge_queue(card=card, topic=topic)
         await self._session.flush()
         return
