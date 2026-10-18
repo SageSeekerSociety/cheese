@@ -44,6 +44,7 @@ class VerifyBriefPathsTests(unittest.TestCase):
         (self.root / "public/lib.a").write_text("present\n", encoding="utf-8")
         (self.root / "public/module.io").write_text("present\n", encoding="utf-8")
         (self.root / "public/module.ml").write_text("present\n", encoding="utf-8")
+        (self.root / "public/module.q").write_text("present\n", encoding="utf-8")
         (self.root / "logo.avif").write_text("present\n", encoding="utf-8")
         (self.root / "文档.md").write_text("present\n", encoding="utf-8")
         (self.root / "README.md").write_text("readme\n", encoding="utf-8")
@@ -159,6 +160,31 @@ class VerifyBriefPathsTests(unittest.TestCase):
         self.assertIn("overlaps in-flight", errors)
         self.assertIn("docs/api.md", errors)
         self.assertNotIn("接口docs/api.md", errors)
+
+    def test_cjk_descriptor_before_unicode_path_keeps_actual_path(self):
+        brief = "新增接口docs/说明.md\n"
+        result, _, errors = self.run_tool(brief)
+        self.assertEqual(result, 1)
+        self.assertIn("marked new but already exists", errors)
+        self.assertIn("docs/说明.md", errors)
+        self.assertNotIn("接口docs/说明.md", errors)
+
+        result, _, errors = self.run_tool(
+            "更新 接口docs/说明.md中的段落。\n",
+            "--in-flight-actual", "docs/说明.md",
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("overlaps in-flight", errors)
+        self.assertIn("docs/说明.md", errors)
+
+        result, _, errors = self.run_tool(
+            "新增接口docs/new-api.md\n",
+            "--in-flight-actual", "docs/new-api.md",
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("overlaps in-flight", errors)
+        self.assertIn("docs/new-api.md", errors)
+        self.assertNotIn("接口docs/new-api.md", errors)
 
     def test_explicit_paths_do_not_read_implicit_stdin(self):
         class UnexpectedInput:
@@ -301,7 +327,7 @@ class VerifyBriefPathsTests(unittest.TestCase):
         for path in (
             "public/logo.png", "public/logo.avif", "public/demo.mp4",
             "public/font.woff2", "public/openapi.sha256", "public/lib.a",
-            "public/module.io", "public/module.ml",
+            "public/module.io", "public/module.ml", "public/module.q",
         ):
             with self.subTest(path=path):
                 result, output, errors = self.run_tool(f"更新 {path}中的引用。\n")
@@ -328,9 +354,38 @@ class VerifyBriefPathsTests(unittest.TestCase):
         self.assertIn("docs/v9.9说明", errors)
 
     def test_version_word_suffix_is_not_trimmed(self):
-        result, output, errors = self.run_tool("新建 docs/a.ver2说明\n")
+        brief = "新建 docs/a.ver2说明\n"
+        result, output, errors = self.run_tool(brief)
         self.assertEqual(result, 0, errors)
         self.assertIn("verified 1 brief path", output)
+        result, _, errors = self.run_tool(
+            brief, "--in-flight-actual", "docs/a.ver2说明"
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("overlaps in-flight", errors)
+        self.assertIn("docs/a.ver2说明", errors)
+
+    def test_version_suffix_trims_prose_after_known_path(self):
+        brief = "更新 docs/a.ver2中的引用。\n"
+        result, output, errors = self.run_tool(brief)
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 1 brief path", output)
+        result, _, errors = self.run_tool(
+            brief, "--in-flight-actual", "docs/a.ver2"
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("overlaps in-flight", errors)
+        self.assertIn("docs/a.ver2", errors)
+        self.assertNotIn("中的引用", errors)
+
+        for marker in ("新增", "新建"):
+            with self.subTest(marker=marker):
+                result, _, errors = self.run_tool(
+                    f"{marker} docs/a.ver2中的引用。\n"
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("marked new but already exists", errors)
+                self.assertIn("docs/a.ver2", errors)
 
     def test_new_marker_extracts_untracked_extensionless_path(self):
         result, output, errors = self.run_tool("新建 Dockerfile\n")
@@ -436,7 +491,8 @@ class VerifyBriefPathsTests(unittest.TestCase):
         for separator in (
             ";", "；", "&", "＆", "，以及 ", "，和 ", "，与 ",
             "、以及 ", "、和 ", "、与 ",
-            ", and ",
+            ", and ", ",和 ", ", 和 ", ",以及 ", ", 以及 ",
+            ",与 ", ", 与 ",
         ):
             with self.subTest(separator=separator):
                 result, _, errors = self.run_tool(
