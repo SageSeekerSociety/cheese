@@ -170,8 +170,11 @@ def test_no_module_in_the_app_binds_a_retired_name() -> None:
     """
     found: list[str] = []
     for path in sorted(APP_ROOT.rglob("*.py")):
-        names = _module_level_names(path.read_text(encoding="utf-8"))
-        hits = names & RETIRED_NAMES
+        source = path.read_text(encoding="utf-8")
+        # 字符串里都没有，就不可能绑定它。跳过的只是 AST 解析，判定口径不变。
+        if not any(name in source for name in RETIRED_NAMES):
+            continue
+        hits = _module_level_names(source) & RETIRED_NAMES
         if hits:
             found.append(f"{path.relative_to(APP_ROOT)}: {', '.join(sorted(hits))}")
     assert not found, (
