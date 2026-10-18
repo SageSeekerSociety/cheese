@@ -3623,6 +3623,58 @@ def test_ready_never_opens_a_pr(client, sweeping):
     assert sweeping["prs_by_head"] == {}
 
 
+def test_ready_rebases_a_behind_branch_then_the_ci_reads_the_new_check_set(
+    client, sweeping, monkeypatch
+):
+    """落后 main 的 draft：`ready` 先把 main 合进分支，再翻 ready。
+
+    分支 CI 用的是分支 head 上的工作流。不换基的话，翻 ready 之后跑的是这条分支
+    被切出来那天的工作流（旧检查集），合进 main 之后 merge_group 又要用新的跑
+    一遍 —— 这就是要省掉的那一轮。换基之后，轮询读 CI 用的 head 是带着 main 上
+    那套工作流的那个。"""
+    pid, tid = _room_with_work(client)
+    _sweep(client)
+    fake = sweeping["fake"]
+    pr = sweeping["prs_by_head"][_disk_branch(client, tid)]
+    number = pr["number"]
+    old_head = fake.prs[number]["head_sha"]
+    new_head = f"{old_head}-rebased"
+    # 有自己的提交、main 也往前走了 → compare 说 diverged（落后）。
+    fake.compare_status_by_pair[("main", old_head)] = "diverged"
+    # 旧工作流的检查集只挂在旧 head 上；main 上新工作流的检查集在换基后的 head。
+    fake.check_runs_by_sha[old_head] = [
+        {"name": "old-suite", "status": "completed", "conclusion": "success"}
+    ]
+    fake.check_runs_by_sha[new_head] = [
+        {"name": "new-suite", "status": "completed", "conclusion": "success"}
+    ]
+    read_refs: list[str] = []
+    original = fake.list_check_runs
+
+    async def recording(*, owner, repo, ref, token):
+        read_refs.append(ref)
+        return await original(owner=owner, repo=repo, ref=ref, token=token)
+
+    monkeypatch.setattr(fake, "list_check_runs", recording)
+
+    r = _ready(client, tid)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["ready"] is True
+    assert fake.update_branch_calls == [number]
+    assert fake.update_branch_tokens == ["ghs_app_write"]
+    assert fake.prs[number]["head_sha"] == new_head
+    assert sweeping["readied"] == [pr["node_id"]]
+
+    # 转可评审之后 CI 读的是换过基的 head —— 也就是 main 上那套工作流的检查集。
+    _make_card(client, tid)
+    _poll(client)
+    assert read_refs == [new_head]
+    assert [run["name"] for run in fake.check_runs_by_sha[read_refs[-1]]] == [
+        "new-suite"
+    ]
+
+
 # ======================= 更正卡片描述，PR 跟着改 =============================
 #
 # #735 是活例子：评审把 PR 正文改对了，采纳时用的却是递卡那一刻快照下来的卡片
