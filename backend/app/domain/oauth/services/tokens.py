@@ -61,11 +61,9 @@ _GITHUB_TOKEN_REFRESH_MARGIN = timedelta(minutes=5)
 # only ever holds one lock per connection that has refreshed, so it stays small.
 _refresh_locks: dict[int, asyncio.Lock] = {}
 
-# Machine-readable reasons `get_github_user_token_with_reason` /
-# `get_github_user_token_for_handle_with_reason` report alongside a None
-# token — for callers (两阶段采纳) that need to explain a degrade to a human
-# rather than silently falling back. Never derived from the token/ciphertext
-# itself, so surfacing one can't leak either.
+# Machine-readable reasons `get_github_user_token_with_reason` reports
+# alongside a None token (`get_github_user_token` discards them). Never
+# derived from the token/ciphertext itself, so surfacing one can't leak either.
 TOKEN_UNAVAILABLE_NOT_CONNECTED = "not_connected"
 TOKEN_UNAVAILABLE_UNDECRYPTABLE = "undecryptable"
 TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH = "expired_no_refresh"
@@ -80,8 +78,9 @@ def _decrypt_stored_token(
 
     Tokens are encrypted at rest (``app.core.crypto``), so a value sealed
     under a key no longer configured makes decryption raise. That must not blow up
-    the caller (the accept flow degrades on None, it does not handle
-    exceptions from here) — but it must never be silent either: an
+    the caller (the repository-connect route treats None as "link the account
+    first", it does not handle exceptions from here) — but it must never be
+    silent either: an
     unnoticed token problem is exactly how the "returns raw ciphertext" bug
     survived, so this always logs.
     """
@@ -118,10 +117,9 @@ async def get_github_user_token_with_reason(
     svc: pkg.OAuthService, user_id: int, *, provider_id: str = "github_app"
 ) -> tuple[str | None, str | None]:
     """Same contract as ``get_github_user_token``, plus a
-    ``TOKEN_UNAVAILABLE_*`` reason whenever the token comes back None —
-    for callers (两阶段采纳's accept()) that need to explain a degrade to
-    a human instead of just falling back silently. ``reason`` is always
-    None when ``token`` is not.
+    ``TOKEN_UNAVAILABLE_*`` reason whenever the token comes back None, for
+    a caller that needs to explain a degrade to a human instead of just
+    falling back silently. ``reason`` is always None when ``token`` is not.
     """
     conn = await svc._repo.get_by_user_and_provider(user_id, provider_id)
     if conn is None or not conn.access_token:
@@ -155,7 +153,7 @@ async def _refresh_and_persist_token(
 ) -> str | None:
     """Refresh an expiring GitHub token and commit the result in its OWN
     transaction, on fresh sessions — deliberately NOT reusing whatever
-    session/transaction the caller (e.g. AcceptService.accept()) happens
+    session/transaction the caller (e.g. the repository-connect route) happens
     to be mid-way through, so a later rollback there cannot lose a token
     GitHub has already rotated (决策 0556ac50).
 
@@ -190,7 +188,7 @@ async def _refresh_and_persist_token(
         # Provider not configured on this deployment
         # (oauth_enabled_providers / client id + secret unset).
         # Degrade like any other missing prerequisite — raising here
-        # would escape into the accept flow.
+        # would escape into the caller.
         logger.warning(
             "github account link: provider %r is not configured, "
             "cannot refresh an expiring token",
