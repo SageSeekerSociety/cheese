@@ -506,10 +506,19 @@ class Source:
     pr: int | None
     pr_title: str
     pr_author: str
+    commit_author: str
     pr_head: str | None
     task_id: str | None
     task_link: str | None
     merged_at: str | None
+
+
+def _commit_author(raw_commit: dict) -> str:
+    """The GitHub login when the commit has one, else the git author name."""
+    login = (raw_commit.get("author") or {}).get("login")
+    if login:
+        return str(login)
+    return str(((raw_commit.get("commit") or {}).get("author") or {}).get("name") or "")
 
 
 def _source(repo: str, sha: str, raw_commit: dict) -> Source:
@@ -544,6 +553,7 @@ def _source(repo: str, sha: str, raw_commit: dict) -> Source:
         pr=int(pr_raw["number"]) if pr_raw and pr_raw.get("number") else None,
         pr_title=str((pr_raw or {}).get("title") or ""),
         pr_author=str(((pr_raw or {}).get("user") or {}).get("login") or ""),
+        commit_author=_commit_author(raw_commit),
         pr_head=str(((pr_raw or {}).get("head") or {}).get("ref") or "") or None,
         task_id=task_id,
         task_link=task_link,
@@ -843,8 +853,13 @@ def _paragraph(report: Report, batch: Batch, source: Source | None) -> str:
         )
         if source:
             who = f"PR #{source.pr}" if source.pr else "未找到来源 PR"
-            if source.pr_author:
-                who += f"（作者 {source.pr_author}）"
+            authors = []
+            if source.commit_author:
+                authors.append(f"提交作者 {source.commit_author}")
+            if source.pr_author and source.pr_author != source.commit_author:
+                authors.append(f"PR 作者 {source.pr_author}")
+            if authors:
+                who += "（" + "，".join(authors) + "）"
             if report.task and report.task.get("number"):
                 who += f" · 任务 #{report.task['number']}"
                 if report.task.get("owner"):
@@ -936,7 +951,7 @@ def collect(repo: str, value: str) -> Report:
         task = _task(source)
         fix = _fix(
             repo,
-            source.pr_author or str((raw.get("author") or {}).get("login") or ""),
+            source.pr_author or source.commit_author,
             batch.tests,
             commit.files if commit else (),
             source.pr_head,
@@ -1174,6 +1189,7 @@ def _source_from_raw(sha: str, raw: dict, pulls: list[dict]) -> Source:
         pr=int(pr_raw["number"]) if pr_raw else None,
         pr_title=str((pr_raw or {}).get("title") or ""),
         pr_author=str(((pr_raw or {}).get("user") or {}).get("login") or ""),
+        commit_author=_commit_author(raw),
         pr_head=str(((pr_raw or {}).get("head") or {}).get("ref") or "") or None,
         task_id=link.group(1) if link else None,
         task_link=link.group(0) if link else None,
