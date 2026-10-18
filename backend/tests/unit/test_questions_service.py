@@ -276,7 +276,7 @@ class TestCreateQuestion:
         svc, _repo, topic_repo, _a_repo, _p_repo = _make_service()
         topic_repo.validate_topic_ids.return_value = {1}  # topic 999 is not valid
 
-        with pytest.raises(NotFoundError, match="Topic not found"):
+        with pytest.raises(NotFoundError) as raised:
             await svc.create_question(
                 user_id=50,
                 title="Valid",
@@ -286,6 +286,9 @@ class TestCreateQuestion:
                 bounty=0,
                 topic_ids=[1, 999],
             )
+        error = raised.value.to_response_body()["error"]
+        assert error["i18n"]["key"] == "resourceNotFound"
+        assert error["data"] == {"id": 999}
 
     @pytest.mark.anyio
     async def test_title_is_stripped(self):

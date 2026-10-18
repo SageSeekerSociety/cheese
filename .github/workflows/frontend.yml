@@ -353,15 +353,16 @@ jobs:
         run: pnpm run test:ratchet
 
       # src/api/openapi.d.ts is generated, not committed — and neither is the
-      # document it is generated from, only that document's digest. The type
-      # check below asks the backend to build the document and then generates
-      # the types from it (scripts/typecheck.mjs, scripts/gen-api-types.mjs), so
+      # document it is generated from, nor any digest of it. The type check
+      # below asks the backend to build the document and then generates the
+      # types from it (scripts/typecheck.mjs, scripts/gen-api-types.mjs), so
       # there is no separate "types match the document" step to run and no way
-      # for the two to disagree. The digest is what the path map watches to bring
-      # the suite here when the API surface moves, and the backend job is what
-      # holds it to the document. Both halves left the repository because a route
-      # change rewrote 1.4 MB of one and 1.8 MB of the other in every PR that
-      # touched a route, which is what two parallel route changes collided in.
+      # for the two to disagree. What brings the suite here when a backend
+      # change moves the API surface is required-ci.yml's `api` job, which
+      # compares the document at the base and at the change. All of it left the
+      # repository because every route change rewrote it (1.4 MB of types,
+      # 1.8 MB of document, then one line of digest), and that is what two
+      # parallel route changes collided in.
       #
       # Which is why this job installs a second toolchain — the backend's Python
       # environment, in the steps just above the type check: generating the

@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_roles import may
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
@@ -66,7 +67,7 @@ class IssueCredentialIn(BaseModel):
 
 @router.post(
     "/{project_id}/agent-credential",
-    dependencies=[Depends(require_credential_manager)],
+    dependencies=[ROUTE_DECIDES, Depends(require_credential_manager)],
 )
 async def issue_agent_credential(
     project_id: uuid.UUID, body: IssueCredentialIn, db: DbSession
@@ -102,7 +103,7 @@ async def get_agent_credential_status(project_id: uuid.UUID, db: DbSession) -> d
 
 @router.delete(
     "/{project_id}/agent-credential",
-    dependencies=[Depends(require_credential_manager)],
+    dependencies=[ROUTE_DECIDES, Depends(require_credential_manager)],
 )
 async def revoke_agent_credentials(project_id: uuid.UUID, db: DbSession) -> dict:
     """Revoke — every credential issued for this project stops working on the

@@ -179,7 +179,7 @@ function entryKey(row: unknown): string {
           <button type="button" class="library-row__open" @click="emit('openFolder', item.folder.path)">
             <v-icon icon="mdi-folder-outline" size="20" class="library-row__icon" />
             <span class="library-row__id">
-              <span class="library-row__name t-body">{{ item.folder.name }}</span>
+              <span class="library-row__name t-body" data-user-content>{{ item.folder.name }}</span>
               <span class="t-meta c-faint">{{ folderMeta(item.folder) }}</span>
             </span>
           </button>
@@ -201,7 +201,7 @@ function entryKey(row: unknown): string {
           <button type="button" class="library-row__open" @click="emit('openDoc', item.doc.id)">
             <v-icon icon="mdi-file-document-edit-outline" size="20" class="library-row__icon" />
             <span class="library-row__id">
-              <span class="library-row__name t-body">{{ docName(item.doc) }}</span>
+              <span class="library-row__name t-body" data-user-content>{{ docName(item.doc) }}</span>
               <span class="t-meta c-faint">{{ docMeta(item.doc) }}</span>
             </span>
           </button>
@@ -227,7 +227,7 @@ function entryKey(row: unknown): string {
           <button type="button" class="library-row__open" @click="emit('openFile', item.file)">
             <v-icon :icon="KIND_ICONS[kindOf(item.file.path)]" size="20" class="library-row__icon" />
             <span class="library-row__id">
-              <span class="library-row__name t-body">{{ fileName(item.file) }}</span>
+              <span class="library-row__name t-body" data-user-content>{{ fileName(item.file) }}</span>
               <span class="t-meta c-faint">{{ rowMeta(item.file) }}</span>
             </span>
           </button>

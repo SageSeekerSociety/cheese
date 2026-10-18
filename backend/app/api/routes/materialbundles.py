@@ -75,9 +75,7 @@ async def get_material_bundle(
 
 
 @router.post(
-    "",
-    summary="Create Material Bundle",
-    status_code=201,
+    "", summary="Create Material Bundle", status_code=201, dependencies=[ROUTE_DECIDES]
 )
 async def create_material_bundle(
     payload: dict = Body(...),

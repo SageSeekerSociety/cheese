@@ -13,6 +13,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError
 from app.core.sentences import say
 from app.domain.agent.ask import ask
@@ -23,7 +24,7 @@ from app.domain.topic_membership.services import TopicMemberService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("/{topic_id}/asks")
+@router.post("/{topic_id}/asks", dependencies=[ROUTE_DECIDES])
 async def create_questions(
     topic_id: uuid.UUID,
     body: dict,

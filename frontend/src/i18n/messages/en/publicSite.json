@@ -321,5 +321,11 @@
     "desktopHint": "Open this page on your computer to download",
     "copyLink": "Copy link",
     "copied": "Copied"
+  },
+  "sharedDoc": {
+    "pageTitle": "Shared document",
+    "updated": "Updated {time}",
+    "gone": "This share link no longer works",
+    "loadFailed": "Failed to load the document"
   }
 }

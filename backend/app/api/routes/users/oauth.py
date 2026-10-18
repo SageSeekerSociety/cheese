@@ -44,6 +44,7 @@ from app.api.routes.users._common import (
 from app.api.users_deps import (
     issue_session,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.core import single_use_state
 from app.core.config import settings
 from app.core.errors import (
@@ -546,6 +547,7 @@ async def get_oauth_state(
 @router.post(
     "/auth/oauth/email/code",
     summary="Send a code to the email a new OAuth account will hold",
+    dependencies=[ROUTE_DECIDES],
 )
 async def send_oauth_email_code(
     payload: OAuthEmailCodeRequest, request: Request
@@ -558,6 +560,7 @@ async def send_oauth_email_code(
 @router.post(
     "/auth/oauth/email/verify",
     summary="Verify the email a new OAuth account will hold",
+    dependencies=[ROUTE_DECIDES],
 )
 async def verify_oauth_email(
     payload: OAuthEmailVerifyRequest,
@@ -639,6 +642,7 @@ async def _complete_oauth_binding(
 @router.post(
     "/auth/oauth/verify",
     summary="Prove ownership of an email-conflicting account (verify page)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def oauth_verify_conflict(
     request: Request,
@@ -683,6 +687,7 @@ async def oauth_verify_conflict(
 @router.post(
     "/oauth/create",
     summary="Create a new account from the OAuth decision page (form post)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def oauth_create_user(
     request: Request,
@@ -832,6 +837,7 @@ async def oauth_create_user(
 @router.post(
     "/oauth/bind",
     summary="Bind OAuth to an existing account (decision page, form post)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def oauth_bind_user(
     request: Request,

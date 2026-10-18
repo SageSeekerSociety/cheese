@@ -131,6 +131,8 @@ export function useDocCollab(document: () => string | null) {
   const synced = ref(false)
   /** The ticket said this person may only read. */
   const readOnly = ref(false)
+  /** 只能提修改建议（导师）：打的字一律记成修订，服务端也只收这些。 */
+  const suggestOnly = ref(false)
   const peers = shallowRef<DocPeer[]>([])
   const error = ref<string | null>(null)
   /** The service speaks another document schema: this page has to be reloaded. */
@@ -173,6 +175,7 @@ export function useDocCollab(document: () => string | null) {
     }
     if (mine !== generation) return
     readOnly.value = first.read_only
+    suggestOnly.value = first.suggest_only
     const opened = connectToService(() => getDocTicket(id), first)
     const { doc, provider } = opened
     const account = myAccount()
@@ -256,5 +259,18 @@ export function useDocCollab(document: () => string | null) {
     teardown()
   })
 
-  return { session, connection, synced, readOnly, peers, error, outdated, stores, renames, deleted, mentionedOutside }
+  return {
+    session,
+    connection,
+    synced,
+    readOnly,
+    suggestOnly,
+    peers,
+    error,
+    outdated,
+    stores,
+    renames,
+    deleted,
+    mentionedOutside,
+  }
 }

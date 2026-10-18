@@ -42,7 +42,8 @@ export type SpaceTeaching = {
   avoidInCode?: string[]
   /** 课件 / 知识的**引用**（id），不是副本。 */
   materialIds?: number[]
-  knowledgeIds?: number[]
+  /** 课程让 AI 队友读的团队文档（#3774）。 */
+  documentIds?: string[]
 }
 
 /** One person the space is visible to — see `SpacesApi.listMembers`. */
