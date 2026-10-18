@@ -25,7 +25,7 @@
   "feishuUnreachable": "连不上飞书（{error}）",
   "forgeNoFileContent": "代码托管服务没有返回文件内容",
   "githubAccountConnectUnavailable": "暂时无法发起 GitHub 账号连接，请稍后重试",
-  "githubAccountLinkFirst": "请先在项目设置中连接或重新连接 GitHub 账号，再连接仓库",
+  "githubAccountLinkFirst": "先在项目设置中连接或重新连接 GitHub 账号，再连接仓库",
   "githubConnectionSignIn": "需要登录才能查看 GitHub 连接",
   "githubRepoAccessUnverified": "无法验证 GitHub 仓库访问权限，请重新连接 GitHub 账号后重试",
   "githubRepoConnectUnavailable": "暂时无法发起 GitHub 仓库连接，请稍后重试",

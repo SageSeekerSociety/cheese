@@ -78,3 +78,12 @@ export function isGithubAccountTokenExpired(conn: OAuthConnectionInfo, now: Date
   if (Number.isNaN(expires)) return false
   return expires <= now.getTime()
 }
+
+// Whether the linked account has to be reconnected: its access token has
+// expired and the backend holds no renewal token it can still use
+// (`hasRefreshToken`). With one, the backend renews the access token itself the
+// next time it needs it, so an expired access token alone is not worth telling
+// anyone about.
+export function githubAccountNeedsReconnect(conn: OAuthConnectionInfo, now: Date = new Date()): boolean {
+  return isGithubAccountTokenExpired(conn, now) && !conn.hasRefreshToken
+}
