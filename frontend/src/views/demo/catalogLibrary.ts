@@ -12,6 +12,7 @@ import type { ProjectMemberRow } from '@/cx_types'
 import type { LibraryFile } from '@/lib/libraryApi'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import DocAuthors from '@/components/library/DocAuthors.vue'
 import { libraryFile, listedDocument } from '@/test/fakeLibrary'
 import LibraryCrumbs from '@/views/library/LibraryCrumbs.vue'
 import LibraryFileDetail from '@/views/library/LibraryFileDetail.vue'
@@ -53,6 +54,8 @@ const ROWS: LibraryRow[] = [
       title: '2026 采购口径',
       doc_version: 3,
       author: 'cheese',
+      created_by: 'alice',
+      drafted_by: 'cheese',
       created_at: '2026-09-18T09:00:00Z',
       updated_at: '2026-09-21T10:00:00Z',
     }),
@@ -110,6 +113,35 @@ export const LIBRARY_ENTRIES: CatalogEntry[] = [
         note: '平铺时名字写完整路径，才能看出它本来在哪一层；这一行正忙（`busy`）时 ⋯ 里那颗「删除」转着圈。',
         props: { browsing: false, busy: '合同/2026/报价说明.md' },
         expect: '合同/2026/报价说明.md',
+      },
+    ],
+  },
+  {
+    id: 'doc-authors',
+    title: 'DocAuthors',
+    about:
+      '一份文档的作者：并列的头像和名字，像 git 提交的 co-author。建成时定下，之后谁再改都不变。资料库每一行和文档页标题下面都是它。',
+    file: 'src/components/library/DocAuthors.vue',
+    component: DocAuthors,
+    needs: UI,
+    args: {
+      authors: [
+        { handle: 'alice', name: '爱丽丝', avatar: null, agent: false },
+        { handle: 'cheese', name: '芝士', avatar: null, agent: true },
+      ],
+    },
+    states: [
+      {
+        name: '让芝士写的',
+        note: '让它写的人在前，芝士在后，中间只靠间距分开。',
+        props: {},
+        expect: '爱丽丝',
+      },
+      {
+        name: '人自己建的',
+        note: '只有这个人。',
+        props: { authors: [{ handle: 'alice', name: '爱丽丝', avatar: null, agent: false }] },
+        expect: '爱丽丝',
       },
     ],
   },

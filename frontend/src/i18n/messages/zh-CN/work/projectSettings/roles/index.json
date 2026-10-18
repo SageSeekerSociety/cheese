@@ -27,6 +27,7 @@
     "ask_agent": "使用{agent}",
     "tasks": "新建任务和审阅",
     "edit_content": "编辑文档和文件",
+    "share_documents": "分享文档",
     "comment": "评论",
     "configure_agents": "配置 AI 队友"
   },
@@ -41,6 +42,7 @@
     "ask_agent": "让{agent}回答问题、写文档、做事",
     "tasks": "把事情交给{agent}做成任务，审阅任务交回的结果",
     "edit_content": "新建、修改、删除文档和文件，保存到资料库",
+    "share_documents": "生成和收回文档的只读链接，项目外的人凭链接也能阅读",
     "comment": "在文档上评论",
     "configure_agents": "新增和停用 AI 队友，管理技能、MCP 服务器和项目共享记忆"
   }
