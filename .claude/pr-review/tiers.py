@@ -21,6 +21,13 @@ A first. G is not in that ranking: a change is G only when EVERY file is mechani
 a file the script cannot call mechanical is judged by its path. 判不了按 B, because B is
 what asks a person to read the change; granting G on a guess would skip the reading.
 
+B has a second topology. A B change small enough for one reader — at most
+B_FAST_FILES non-test files, at most B_FAST_LINES changed lines, and no file on a
+surface branch CI never runs (contract, remote execution, Windows) or on a repo-wide
+ratchet baseline — runs one finder instead of two. The letter stays B: the tier says
+what kind of change this is, and the conclusion line, render.py and the sweep read a
+letter, so the fast path changes what the review spends and not what the card says.
+
 The A paths are the same vocabulary `.claude/scripts/orchestrator_autoaccept.py` gates
 auto-accept on (its HIGH_RISK and PROD_DEPLOY): a change too risky to accept unattended
 must not be a lighter tier here either. `--self-test` fails when the two lists drift.
@@ -101,6 +108,30 @@ MECHANICAL = (
     "确认确实是机械的",
     "不审，CI 过即可",
     {"finders": 0, "refuters": 0, "claim": 0, "effort": "low"},
+)
+
+#: B 档的第二套拓扑：影响面小到一个人一次能读完的常规改动只派一路找茬。判定见
+#: b_fast()：非测试改动文件不超过 B_FAST_FILES 个，改动不超过 B_FAST_LINES 行，且
+#: 没有文件落在 wide_surface() 点名的面上。档位字母仍是 B——档位说的是改动的种类，
+#: 结论行、render.py 与 sweep 只认字母，快路径改的是这次审查花多少分身，不是卡片写
+#: 什么。数字来自 #1936 第一轮回测：14 张 B 档 PR 平均 13.5 分钟、强制打回 0 次、
+#: 26 条 minor 只有 3 条被采纳，两路 high effort 在这类改动上没有换回东西。
+B_FAST = {"finders": 1, "refuters": 1, "claim": 0, "effort": "high"}
+B_FAST_FILES = 6
+B_FAST_LINES = 250
+#: 快路径「审多深」那一句：B 档的表里写的是两路，而这条路只有一个分身，两个镜头都得跑。
+B_FAST_DEPTH = "一路全新上下文找茬，两个镜头都跑并说明每条候选来自哪个镜头，再逐条证伪只留站得住的"
+
+#: 让一张小 B 档不能只派一路的面，按路径里的字面词匹配。两件事都在说同一件事：
+#: 分支 CI 不跑它（contract、remote、Windows），或者它的数字和别的在途 PR 相撞
+#: （全仓棘轮基线）。宁严勿松：误判只是多花一路分身，漏判才是把该两路看的改动交给
+#: 一个人。
+WIDE_SURFACE = (
+    ("contract", "契约层，分支 ci-fast 不跑"),
+    ("remote", "远程执行，分支 CI 不跑"),
+    ("windows", "Windows 专属代码，分支 CI 不跑"),
+    ("ratchet", "全仓棘轮"),
+    ("baseline", "全仓棘轮基线"),
 )
 
 #: 迁移、鉴权、部署链、用户可见文案，as (what, prefix) — identical to
@@ -284,6 +315,55 @@ def paths_of(repo, *args):
     return None if out is None else [p for p in out.split("\0") if p]
 
 
+def changed_lines(repo, base, head, paths):
+    """Added plus removed lines over `paths`, or None when git cannot count them. `-z` for
+    the same reason paths_of uses it: a path holding a quote or a newline arrives whole.
+    A binary file reports "-" for both counts, which is not a line count; the caller reads
+    None as 判不了 and keeps the heavier topology, the same way 判不了按 B does."""
+    out = _git(repo, "diff", "--numstat", "-z", "--no-renames", base, head, "--", *paths)
+    if out is None:
+        return None
+    total = 0
+    for field in out.split("\0"):
+        if not field:
+            continue
+        cols = field.split("\t")
+        if len(cols) < 3 or not cols[0].isdigit() or not cols[1].isdigit():
+            return None
+        total += int(cols[0]) + int(cols[1])
+    return total
+
+
+def wide_surface(path):
+    """Why this path keeps a B change on the two-finder topology, or "" when it is an
+    ordinary one. Matched on the lower-cased whole path, so a Windows-only file is caught
+    whichever directory it sits in: `_windows.go` is not covered by branch CI, and neither
+    is anything else that names a platform this repo only runs remotely."""
+    low = path.lower()
+    for token, why in WIDE_SURFACE:
+        if token in low:
+            return why
+    return ""
+
+
+def b_fast(repo, base, head, hard):
+    """True when this B change runs the single-finder topology. `hard` is the files that
+    need reading, as classify() already worked them out; a mechanical lock file does not
+    count toward the size, because nobody reads it.
+
+    Three conditions, in the words they are checked with: at most B_FAST_FILES changed
+    files that are not tests, at most B_FAST_LINES changed lines across the files that
+    need reading, and no file on a wide surface. A change git cannot measure is not fast:
+    not being able to count is not the same as being small."""
+    read = [p for p in hard if not is_test(p)]
+    if not read or len(read) > B_FAST_FILES:
+        return False
+    if any(wide_surface(p) for p in hard):
+        return False
+    lines = changed_lines(repo, base, head, hard)
+    return lines is not None and lines <= B_FAST_LINES
+
+
 def mechanical(repo, base, head, path):
     """True when this file's change is one of §4's mechanical kinds: a lock or generated
     file, a diff of comments, whitespace and blank lines only, or a clean revert to a
@@ -443,20 +523,28 @@ def rule_files(repo, rev, changed):
 
 
 def classify(repo, base, head):
-    """(letter, detail) for the change `base`..`head` — the whole PR, so a delta review
-    still reports the tier of what is being merged."""
+    """(letter, detail, topology) for the change `base`..`head` — the whole PR, so a delta
+    review still reports the tier of what is being merged.
+
+    The topology is the tier's own, except for a B change b_fast() calls small: that one
+    spends the single-finder topology while its letter stays B, because the letter is what
+    says what kind of change this is and three other programs read it back."""
     paths = paths_of(repo, "--no-renames", base, head)
     if paths is None:
-        return "B", "读不到改动的文件，按 B 档"
+        return "B", "读不到改动的文件，按 B 档", topology("B")
     if not paths:
-        return "G", "没有改到任何文件"
+        return "G", "没有改到任何文件", topology("G")
     hard = [p for p in paths if not mechanical(repo, base, head, p)]
     if not hard:
-        return "G", "、".join(f"{p}（{_mechanical_why(p)}）" for p in sorted(paths)[:6])
+        why = "、".join(f"{p}（{_mechanical_why(p)}）" for p in sorted(paths)[:6])
+        return "G", why, topology("G")
     rank = {t[0]: i for i, t in enumerate(TIERS)}
     letter = min((tier_of_path(p) for p in hard), key=lambda t: rank[t])
     drivers = sorted(p for p in hard if tier_of_path(p) == letter)
-    return letter, "、".join(f"{p}（{_why(p, letter)}）" for p in drivers[:4])
+    detail = "、".join(f"{p}（{_why(p, letter)}）" for p in drivers[:4])
+    if letter == "B" and b_fast(repo, base, head, hard):
+        return letter, detail, B_FAST
+    return letter, detail, topology(letter)
 
 
 def _why(path, letter):
@@ -491,11 +579,12 @@ def max_in_flight(top):
     return max(top["finders"], top["refuters"], top["claim"])
 
 
-def topology_line(letter):
-    """The topology as one line of Chinese, for the `- 子代理拓扑：` bullet in REVIEW.md.
+def topology_line(top):
+    """One topology as a line of Chinese, for the `- 子代理拓扑：` bullet in REVIEW.md.
+    It takes the topology itself, not a letter: a B change on the fast path spends a
+    topology its letter does not name, and the line has to say what this review spends.
     It names counts and effort, never a seat or a model: which of those a session has
     changes between sessions, and a review must run on whatever it was handed."""
-    top = topology(letter)
     if not top["finders"]:
         return "不派分身"
     parts = [f"{top['finders']} 路找茬"]
@@ -507,16 +596,23 @@ def topology_line(letter):
             + "，".join(parts) + f"；子代理 effort 用 {top['effort']}")
 
 
-def block(letter, detail):
+def block(letter, detail, top=None):
     """The markdown `prepare` puts in REVIEW.md: the tier, why this change is in it, the
-    criteria of that tier as the doc words them, and the subagent topology to run it."""
+    criteria of that tier as the doc words them, and the subagent topology to run it.
+
+    `top` is the topology classify() decided, which is the tier's own except on the B fast
+    path; the depth bullet follows it, so the section cannot say two finders above its own
+    子代理拓扑 line saying one."""
     _, name, covers, criteria, depth, _ = row(letter)
+    top = top or topology(letter)
+    if letter == "B" and top == B_FAST:
+        depth = B_FAST_DEPTH
     head = f"**档位 {letter} {name}**（{covers}）"
     if letter == "G":
         head += "——免审，CI 过即可"
     return "\n".join((head, f"- 为什么会是这一档：{detail}",
                       f"- 审什么：{criteria}", f"- 审多深：{depth}",
-                      f"- 子代理拓扑：{topology_line(letter)}"))
+                      f"- 子代理拓扑：{topology_line(top)}"))
 
 
 def self_test():
@@ -620,14 +716,31 @@ def self_test():
     # topology numbers and the severities are the ones a refuter is spent on, so a rewording
     # that keeps the rules keeps the test green, and a count that drifts does not.
     check("拓扑行里的数字就是这一档拓扑的数字",
-          [(sorted({int(n) for n in re.findall(r"\d+", topology_line(l))}),
-            len(re.findall(r"\d+", topology_line(l)))) for l in "ABCDE"],
+          [(sorted({int(n) for n in re.findall(r"\d+", topology_line(topology(l)))}),
+            len(re.findall(r"\d+", topology_line(topology(l))))) for l in "ABCDE"],
           [([1, 2], 4), ([2], 3), ([1], 3), ([1], 3), ([1], 3)])
     check("带证伪的档都在拓扑行里点名 blocker 和 major",
-          [all(s in topology_line(l) for s in ("blocker", "major")) for l in "ABCDE"], [True] * 5)
+          [all(s in topology_line(topology(l)) for s in ("blocker", "major"))
+           for l in "ABCDE"], [True] * 5)
     check("拓扑行报出这一档的 effort",
-          [topology(l)["effort"] in topology_line(l) for l in "ABCDE"], [True] * 5)
+          [topology(l)["effort"] in topology_line(topology(l)) for l in "ABCDE"], [True] * 5)
     check("G 档的拓扑行说不派分身", "- 子代理拓扑：不派分身" in block("G", "x"), True)
+
+    # B 档的快路径：它换的是拓扑，不换档位字母。字母是结论行、render.py 与 sweep 读回去的
+    # 那个字段，改成 B-fast 就会让三处都认不出来；而拓扑写进 REVIEW.md，是 reviewer 真正
+    # 照着跑的东西，所以快路径必须在那行里看得见。
+    check("B 快路径只派一路找茬", B_FAST,
+          {"finders": 1, "refuters": 1, "claim": 0, "effort": "high"})
+    check("B 快路径仍留着一路独立证伪", B_FAST["refuters"], 1)
+    check("B 快路径的单轮并发只有 1", max_in_flight(B_FAST), 1)
+    check("B 快路径的拓扑行说一路找茬", "1 路找茬" in topology_line(B_FAST), True)
+    check("B 快路径的块里那行拓扑就是快路径",
+          f"- 子代理拓扑：{topology_line(B_FAST)}" in block("B", "x", B_FAST), True)
+    check("B 快路径的块仍写档位 B",
+          block("B", "x", B_FAST).splitlines()[0].startswith("**档位 B "), True)
+    check("B 快路径的「审多深」跟着拓扑，不说两路",
+          "两路" in block("B", "x", B_FAST), False)
+    check("没有快路径时 B 档仍是两路", topology_line(topology("B")).count("2 路找茬"), 1)
 
     check("块状 paths 前言读出来", paths_frontmatter('---\npaths:\n  - "backend/tests/**"\n---\n\n# 标题\n'),
           ["backend/tests/**"])
@@ -766,6 +879,39 @@ def self_test():
         case("一个机械文件加一份文档，是 E",
              {"frontend/pnpm-lock.yaml": "lockfileVersion: 4\n", "AGENTS.md": "hi\n"}, "E")
 
+        # The B fast path: a change small enough for one reader spends one finder, and its
+        # letter stays B. Each case is one of the three conditions, and the second is the
+        # deliberate violation — seven files must go back to two finders and this case must
+        # go red if they stop doing so.
+        def fast_case(name, pairs, want, parent=None):
+            head = from_(parent or base, pairs)
+            letter, _, top = classify(repo, parent or base, head)
+            check(name, (letter, top["finders"]), want)
+            return head
+
+        fast_case("一行实现改动的 B 档走单路快路径", {"small.py": "x = 1\n"}, ("B", 1))
+        fast_case("七个文件的 B 档升回两路（故意违规必须红）",
+                  {f"m{i}.py": "x = 1\n" for i in range(7)}, ("B", 2))
+        fast_case("六个文件刚好在快路径上",
+                  {f"n{i}.py": "x = 1\n" for i in range(6)}, ("B", 1))
+        fast_case("二百五十行的改动刚好在快路径上",
+                  {"edge.py": "".join(f"v{i} = 1\n" for i in range(250))}, ("B", 1))
+        fast_case("二百五十一行超出快路径",
+                  {"wide.py": "".join(f"v{i} = 1\n" for i in range(251))}, ("B", 2))
+        fast_case("碰 Windows 专属文件，不走快路径",
+                  {"cli/internal/procscreen/system_windows.go": "package x\n"}, ("B", 2))
+        fast_case("碰远程执行，不走快路径",
+                  {"scripts/remote_execution/run.py": "x = 1\n"}, ("B", 2))
+        fast_case("碰契约层，不走快路径",
+                  {"backend/app/domain/x.py": "x = 1\n",
+                   "backend/tests/contract/test_x.py": "def test_x():\n    pass\n"}, ("B", 2))
+        fast_case("碰全仓棘轮基线，不走快路径",
+                  {"frontend/stylelint-baseline.json": "{}\n"}, ("B", 2))
+        fast_case("A 档没有快路径",
+                  {"backend/app/auth/caller.py": "ok = False\n"}, ("A", 2))
+        fast_case("只改测试仍是 C 档，一路",
+                  {"backend/tests/unit/test_x.py": "x = 1\n"}, ("C", 1))
+
         head = from_(base, {"f.py": "x = 1\n# hi\n"})
         check("机械改动写明为什么", classify(repo, base, head)[1],
               "f.py（只动注释、空格或缩进，或是干净 revert）")
@@ -865,8 +1011,11 @@ def main(argv):
         for name in rule_files(repo, opts.get("--rev") or DEFAULT_REV, changed):
             print(name)
         return 0
-    letter, detail = classify(repo, base, head)
-    print(letter if "--letter" in opts else block(letter, detail))
+    letter, detail, top = classify(repo, base, head)
+    # `--letter` prints the letter alone: pr-review.sh keeps it for the conclusion line,
+    # where a B change on the fast path is still a B. The block is what the reviewer reads,
+    # so that one carries the topology this change actually spends.
+    print(letter if "--letter" in opts else block(letter, detail, top))
     return 0
 
 

@@ -2234,17 +2234,20 @@ def _self_test_review():
     renderer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(renderer)
     head, old = "a" * 40, "b" * 40
-    finding = lambda sev: {"severity": sev, "title": "t", "file": "f.py", "line": 1, "kind": "runtime",
-                           "rung": 4, "failure": "x", "evidence": "y", "confirm_with": ""}
+    # Every finding the schema accepts is a blocker or a major; a minor is refused before
+    # anything is rendered. A fixture carrying one would be a result this method can no
+    # longer produce, and the line that came out of it would not be a line any review has.
+    finding = lambda sev: {"severity": sev, "title": "t", "file": "f.py", "line": 1,
+                           "kind": "runtime", "rung": 4, "failure": "x", "evidence": "y"}
     result = lambda *sevs: {"reviewed_sha": head, "summary": "s", "candidates_found": 3,
                             "candidates_refuted": 2, "findings": [finding(v) for v in sevs],
                             "not_covered": []}
     out = []
     for name, res, since, tier, want in (
-        ("整轮、无严重问题", result("minor"), "", "", ("a" * 8, "", "无 blocker/major", "")),
-        ("增量、有 blocker 和 major", result("blocker", "major", "minor"), old, "",
+        ("整轮、无严重问题", result(), "", "", ("a" * 8, "", "无 blocker/major", "")),
+        ("增量、有 blocker 和 major", result("blocker", "major"), old, "",
          ("a" * 8, "b" * 8, "有 2 条", "")),
-        ("带档位", result("minor"), "", "A", ("a" * 8, "", "无 blocker/major", "A")),
+        ("带档位", result(), "", "A", ("a" * 8, "", "无 blocker/major", "A")),
     ):
         body = renderer.render(res, head, "m" * 40, since, tier)
         out.append((f"审查行：{name}，卡片正文里读得回", review_of("## 摘要\n\n" + body), want))
