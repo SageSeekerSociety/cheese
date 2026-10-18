@@ -15,7 +15,8 @@ one, on whichever host has a free slot.
 A session that asks for a whole machine is given a host of its own: a whole
 cloud VM created for it from ``microcloud_vm_offering_id``, which carries no
 other session, is never taken from the warm pool, and is released as soon as
-its home is gone. It counts against ``cloud_pool_max_hosts`` like any host.
+its home is gone. Another whole-VM request counts it against
+``cloud_pool_max_hosts``; a sandbox request does not.
 
 Provisioning is asynchronous on MicroCloud's side, so nothing here blocks on it:
 the pool sweep (``runner.CloudPoolSweeper``) keeps the table in line

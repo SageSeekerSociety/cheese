@@ -791,8 +791,7 @@ class Settings(BaseSettings, SandboxSettings):
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
-    # the choice. A VM holds no sandbox slots, so only another VM request counts
-    # it against `cloud_pool_max_hosts`; a sandbox request does not.
+    # the choice. Only another VM request counts VMs against the host cap.
     microcloud_vm_offering_id: int = 0
     # The size every whole cloud VM is created with, clamped into the offering's
     # own range. One size: what a session is charged is spec × time, and the
