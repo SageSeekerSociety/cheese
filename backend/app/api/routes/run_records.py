@@ -14,14 +14,12 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_session_host, get_work_runner
+from app.api.platform_room import require_platform_room
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.core.errors import ForbiddenError, NotFoundError
-from app.core.sentences import say
+from app.core.errors import NotFoundError
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.feedback.claims import is_platform_project
-from app.domain.room_task.place import place_or_404
 from app.domain.run_record import admin, turns
 from app.domain.run_record.turns import TurnDetailOut, TurnListOut
 
@@ -34,21 +32,6 @@ Runner = Annotated[AgentWorkRunner, Depends(get_work_runner)]
 router = APIRouter(prefix="/run-records", tags=["run-records"])
 
 Window = Literal["24h", "7d", "30d"]
-
-
-async def _from_platform_room(
-    db: DbSession, resolver: ActorResolverDep, topic: uuid.UUID
-) -> None:
-    """The caller is in this room, and the room's project works on the platform."""
-    place = await place_or_404(db, topic)
-    who = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        who, project_id=place.project_id, topic_id=place.room_id, enforce=True
-    )
-    if not await is_platform_project(db, place.project_id):
-        raise ForbiddenError(say("runRecordsPlatformRoomsOnly"))
 
 
 def _add_frames(payload: dict[str, Any], *, host: Host, runner: Runner) -> None:
@@ -109,7 +92,7 @@ async def run_records_overview(
     group: Literal["all", "errors", "recovered"] = "all",
     q: str | None = Query(None, max_length=200),
 ) -> dict:
-    await _from_platform_room(db, resolver, topic)
+    await require_platform_room(db, resolver, topic)
     return ok(await admin.overview(db, window=window, group=group, query=q))
 
 
@@ -125,7 +108,7 @@ async def run_records_turns(
 ) -> dict:
     """一轮一行，按窗口。运行记录答不了「分母」，这一条答的就是分母 —— 口径写在
     `app.domain.run_record.turns` 的模块 docstring 上。"""
-    await _from_platform_room(db, resolver, topic)
+    await require_platform_room(db, resolver, topic)
     data = await turns.in_window(db, window=window, limit=limit)
     _add_frames(data, host=host, runner=runner)
     return ok(data)
@@ -146,7 +129,7 @@ async def run_records_turn(
     校验错误统一是 400）。找不到这一轮是 404 —— 行是关掉不是删掉，所以「没有」
     只会是号不对。
     """
-    await _from_platform_room(db, resolver, topic)
+    await require_platform_room(db, resolver, topic)
     found = await turns.of_turn(db, turn_id)
     if found is None:
         raise NotFoundError()
@@ -163,7 +146,7 @@ async def run_records_detail(
     kind: str = Query(..., max_length=48),
     window: Window = "24h",
 ) -> dict:
-    await _from_platform_room(db, resolver, topic)
+    await require_platform_room(db, resolver, topic)
     found = await admin.detail(db, key=key, kind=kind, window=window)
     if found is None:
         raise NotFoundError("No such run records in this window")
