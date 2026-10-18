@@ -93,6 +93,7 @@ defineExpose({ scrollActiveIntoView })
               :class="{ 'is-active': i === activeIndex }"
               @click="emit('pick', mm)"
               @mouseenter="emit('hover', i)"
+              @focus="emit('hover', i)"
             >
               <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
                 <v-icon size="13">mdi-bullhorn-outline</v-icon>

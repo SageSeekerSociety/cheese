@@ -6,6 +6,7 @@ import vue from 'eslint-plugin-vue'
 import prettier from 'eslint-plugin-prettier/recommended'
 import vueParser from 'vue-eslint-parser'
 import simpleImportSort from 'eslint-plugin-simple-import-sort'
+import a11y from 'eslint-plugin-vuejs-accessibility'
 
 export default [
   {
@@ -242,6 +243,19 @@ export default [
         },
       ],
       'simple-import-sort/exports': 'warn',
+    },
+  },
+  // The accessibility rules (eslint-plugin-vuejs-accessibility), as plain
+  // errors. A line that departs from one carries an eslint-disable whose
+  // reason names the keyboard path or why the rule does not apply there.
+  ...a11y.configs['flat/recommended'],
+  {
+    rules: {
+      // HTML associates a label with its control either by wrapping it or by
+      // `for`; either one gives the control its name. The plugin's default
+      // demands both, which no label pointing `for` at a Vuetify field can meet,
+      // since the field's <input> is not a child of the label.
+      'vuejs-accessibility/label-has-for': ['error', { required: { some: ['nesting', 'id'] } }],
     },
   },
 ]

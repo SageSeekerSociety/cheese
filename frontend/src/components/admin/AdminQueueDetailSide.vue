@@ -175,7 +175,6 @@ defineExpose({ focusAssignee })
         </div>
 
         <div class="qdet__field">
-          <!-- eslint-disable-next-line vuejs-accessibility/label-has-for -->
           <label id="qdet-priority-label" for="qdet-priority" class="t-eyebrow-read qdet__label">{{
             t('feedback.queueDetail.priority')
           }}</label>

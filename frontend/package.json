@@ -20,8 +20,6 @@
     "lint:style:update": "node scripts/stylelint-ratchet.mjs --update",
     "lint:boundary": "node scripts/import-boundary-ratchet.mjs",
     "lint:storage": "node scripts/browser-storage-ratchet.mjs",
-    "lint:a11y": "node scripts/a11y-ratchet.mjs",
-    "lint:a11y:update": "node scripts/a11y-ratchet.mjs --update",
     "lint:global-fallback": "node scripts/check-global-fallback-ratchet.mjs",
     "lint:i18n": "node scripts/i18n-cjk-gate.mjs",
     "lint:scenes": "python3 ../.claude/scripts/scene-ratchet.py --base origin/main",
