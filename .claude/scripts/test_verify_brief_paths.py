@@ -409,6 +409,11 @@ class VerifyBriefPathsTests(unittest.TestCase):
             ("更新 docs/a.ver2中的v2.0说明。\n", "docs/a.ver2"),
             ("更新 docs/config.md中的第1.2节。\n", "docs/config.md"),
             ("检查 README.md中的v2.0说明。\n", "README.md"),
+            ("检查 README.md中的v2.0\n", "README.md"),
+            ("检查 Makefile中的v2.0。\n", "Makefile"),
+            ("README.md中的1.2 版本的说明需要更新。\n", "README.md"),
+            ("更新 docs/a.ver2中的1.2\n", "docs/a.ver2"),
+            ("更新 docs/a.ver2中的v2.0。\n", "docs/a.ver2"),
         ):
             with self.subTest(brief=brief):
                 result, output, errors = self.run_tool(brief)
