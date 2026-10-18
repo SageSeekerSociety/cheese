@@ -53,6 +53,8 @@ query($q: String!, $after: String) {
       ... on PullRequest {
         number
         headRefName
+        createdAt
+        mergedAt
         timelineItems(
           first: 30
           itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]

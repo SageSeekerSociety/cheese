@@ -44,6 +44,7 @@ from app.domain.ci_activity.models import (
     CiActivitySweep,
     CiJob,
     CiJobStep,
+    CiMergedPullRequest,
     CiMergeQueueEvent,
     CiWorkflowRun,
 )
@@ -129,6 +130,7 @@ class _GitHub:
         self.refuse_jobs_after: int | None = None
         self.gone: set[int] = set()
         self.queue_reads: list[tuple[datetime, datetime]] = []
+        self.pulls: list[dict] = []
 
     async def list_runs(self, *, owner, repo, token, since, until) -> Listed:
         assert (owner, repo, token) == ("owner", "ci-activity-test", "app-token")
@@ -155,7 +157,7 @@ class _GitHub:
 
     async def queue_events(self, *, owner, repo, token, since, until):
         self.queue_reads.append((since, until))
-        return list(self.events), Listed(items=[], requests=1)
+        return list(self.events), Listed(items=list(self.pulls), requests=1)
 
 
 class _Tokens:
@@ -265,6 +267,41 @@ def test_each_run_job_step_and_queue_event_is_stored_once(
             j.job_id: j.runner_kind for j in await db_session.scalars(select(CiJob))
         }
         assert kinds == {410: "hosted", 520: "self_hosted"}
+
+    _portal.call(_run_it)
+
+
+def test_direct_merges_are_stored_without_fabricating_queue_events(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens
+):
+    github = _GitHub()
+    github.pulls = [
+        {
+            "number": 71,
+            "headRefName": "feat/direct",
+            "createdAt": _iso(NOW - timedelta(days=1)),
+            "mergedAt": _iso(NOW - timedelta(minutes=5)),
+        },
+        {
+            "number": 72,
+            "headRefName": "feat/open",
+            "createdAt": _iso(NOW - timedelta(days=1)),
+            "mergedAt": None,
+        },
+    ]
+
+    async def _run_it() -> None:
+        await _connect(db_session)
+        for _ in range(2):
+            report = await _sweep(db_session, github)
+            assert report["error"] == ""
+        rows = list(await db_session.scalars(select(CiMergedPullRequest)))
+        assert [(r.pr_number, r.head_branch, r.merged_at) for r in rows] == [
+            (71, "feat/direct", NOW - timedelta(minutes=5))
+        ]
+        assert await _count(db_session, CiMergeQueueEvent) == 0
+        await CiActivityStore(db_session).prune(REPO, NOW)
+        assert await _count(db_session, CiMergedPullRequest) == 0
 
     _portal.call(_run_it)
 
