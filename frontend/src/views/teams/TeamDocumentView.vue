@@ -119,6 +119,12 @@ const { mdAndUp } = useDisplay()
   justify-content: flex-end;
   min-width: 0;
 }
+/* 顶栏在页头这一格里由按钮撑开：这一格本身按内容定宽，顶栏若按自己的宽度量（它的
+   `container-type`），两边都等对方给宽度，量出来是 0，整排按钮看不见。这里只在宽屏上
+   放顶栏，按钮上的字不必收起。 */
+.team-doc__bar :deep(.doc-top-bar) {
+  container-type: normal;
+}
 .team-doc {
   flex: 1 1 auto;
   min-height: 0;
