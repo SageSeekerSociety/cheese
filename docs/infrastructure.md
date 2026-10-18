@@ -428,7 +428,9 @@ and not its expression.
 
 A main push is the post-submit gate. Its scope base is `refs/heads/main-green`,
 the last commit the gate passed (`main-green` in the workflow moves it after a
-green run and leaves it after a red one), so one run covers every commit that
+green run and leaves it after a red one, through a `force: false` ref update —
+the job's depth-1 checkout cannot see the ancestry a `git push` would need to
+judge a fast-forward), so one run covers every commit that
 landed since — including a commit whose own run a newer push superseded while it
 was queued. The push runs join one fixed concurrency group with
 `cancel-in-progress: false`, which is what keeps one run executing and one
