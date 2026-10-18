@@ -51,7 +51,7 @@ async def require_credential_manager(
         raise ForbiddenError(say("projectCredentialManagerOnly"))
     project = await ProjectRepository(db).get(project_id)
     if project is None:
-        raise NotFoundError("Project not found")
+        raise NotFoundError(say("projectNotFound"))
     if actor.via != "cheese" and await may(
         db, project_id, actor.handle, Permission.edit_settings
     ):
