@@ -68,9 +68,8 @@ def test_no_module_in_agent_instance_imports_the_agent_package() -> None:
 def test_the_guard_would_notice_the_import_put_back() -> None:
     """证明上一条不是空转：两种写法、以及包本身，都能认出来。"""
     module = "app.domain.agent_instance.services"
-    assert _agent_imports("from app.domain.agent.market import TIER_INCLUDED\n", module) == {
-        "app.domain.agent.market"
-    }
+    market = "from app.domain.agent.market import TIER_INCLUDED\n"
+    assert _agent_imports(market, module) == {"app.domain.agent.market"}
     assert _agent_imports("from ..agent.supply import GATEWAY\n", module) == {
         "app.domain.agent.supply"
     }
