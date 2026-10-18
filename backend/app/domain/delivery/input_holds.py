@@ -43,11 +43,38 @@ async def seat_has_unfinished_input(session, topic_id, recipient_handle):
     whose work the platform has already ended cannot get one
     (:func:`unread_input_with_over_work`).
     """
-    rows = await session.scalars(
-        select(NativeInput).where(
-            NativeInput.conversation_id == topic_id,
-            NativeInput.recipient_handle == recipient_handle,
+    return (topic_id, recipient_handle) in await seats_with_unfinished_input(
+        session, [(topic_id, recipient_handle)]
+    )
+
+
+async def seats_with_unfinished_input(session, pairs) -> set[tuple]:
+    """`seat_has_unfinished_input` for many conversations and seats at once.
+
+    One scan asks the same question of every message it is about to answer, and
+    the messages come from a handful of conversations: one read of
+    ``native_inputs`` covers them all instead of one per pair. The judgement is
+    the single-pair one, row by row — the same ``unread_input_with_over_work``
+    filter, and a row holds its seat only while neither its completion nor its
+    termination is recorded.
+    """
+    wanted = {(topic_id, handle) for topic_id, handle in pairs if handle}
+    if not wanted:
+        return set()
+    rows = await session.execute(
+        select(
+            NativeInput.conversation_id,
+            NativeInput.recipient_handle,
+            NativeInput.completed_at,
+            NativeInput.terminated_at,
+        ).where(
+            NativeInput.conversation_id.in_({topic_id for topic_id, _ in wanted}),
+            NativeInput.recipient_handle.in_({handle for _, handle in wanted}),
             ~unread_input_with_over_work(),
         )
     )
-    return any(row.completed_at is None and row.terminated_at is None for row in rows)
+    return {
+        (conversation_id, recipient_handle)
+        for conversation_id, recipient_handle, completed_at, terminated_at in rows
+        if completed_at is None and terminated_at is None
+    } & wanted

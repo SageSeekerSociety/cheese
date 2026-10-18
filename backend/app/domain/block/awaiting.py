@@ -41,6 +41,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.block.asked import Awaited, may_answer, settled, skipped_by
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.indexed_rows import (
@@ -181,12 +182,23 @@ class AwaitingQueries:
     async def _awaiting_an_answer(self, place_ids: list[uuid.UUID], with_blocks=False):
         if not place_ids:
             return {}
+        if not with_blocks:
+            found_cache, cached = recall(self._session, "awaiting_an_answer")
+            known: dict[uuid.UUID, Awaited | None] = dict(cached) if found_cache else {}
+            query_ids = [pid for pid in dict.fromkeys(place_ids) if pid not in known]
+            if not query_ids:
+                return {
+                    pid: val for pid in place_ids if (val := known.get(pid)) is not None
+                }
+        else:
+            known = {}
+            query_ids = list(place_ids)
         selected = {}
         rows = []
         for place_id, meta, at, asker, block_id, content in (
             await self._session.execute(
                 self._awaiting_statement("places", self._build_places_statement),
-                {"places": list(place_ids)},
+                {"places": query_ids},
             )
         ).all():
             if place_id is None:
@@ -198,6 +210,13 @@ class AwaitingQueries:
                 continue
             rows.append((place_id, meta, at, asker, block_id, content))
         if not rows:
+            if not with_blocks:
+                for pid in query_ids:
+                    known[pid] = None
+                remember(self._session, "awaiting_an_answer", known)
+                return {
+                    pid: val for pid in place_ids if (val := known.get(pid)) is not None
+                }
             return {}
         # 没点按钮、直接打字回了一句，也是回应过了：题问出来之后，被问的那个人
         # （题上没记是谁，就任何一个人）在这里说过话，这道题就不再挂在他身上。
@@ -248,7 +267,10 @@ class AwaitingQueries:
                 place: (asked, selected[place], contents[place])
                 for place, asked in waiting.items()
             }
-        return waiting
+        for pid in query_ids:
+            known[pid] = waiting.get(pid)
+        remember(self._session, "awaiting_an_answer", known)
+        return {pid: val for pid in place_ids if (val := known.get(pid)) is not None}
 
     async def questions_a_reply_answers(
         self, reply: Block, *, first_word_only: bool = True

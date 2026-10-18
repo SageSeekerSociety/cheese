@@ -1337,6 +1337,20 @@ class WorkflowTextTest(unittest.TestCase):
             payload = "\n".join(args)
             self.assertIn('"force":false', payload)
             self.assertIn(f'"sha":"{"a" * 40}"', payload)
+            # --max-time bounds one attempt and --retry multiplies it: 3x30+4
+            # per call keeps update+create+read-back inside this job's five
+            # minutes, which a timed-out run would otherwise blow.
+            # Retry-After is served by the server and is not transport, so
+            # --max-time does not bound a retry wait; only --retry-max-time
+            # does. Without it a 429 that says "wait a minute" sleeps twice.
+            self.assertIn("--retry-max-time", args)
+            # Exact values, not substrings: "300" contains "30" and "600"
+            # contains "60", so an assertIn here would pass a budget that
+            # outlasts this job.
+            self.assertEqual(args[args.index("--retry-max-time") + 1], "60")
+            self.assertEqual(args[args.index("--max-time") + 1], "30")
+            self.assertEqual(args[args.index("--retry") + 1], "2")
+            self.assertNotIn("--max-time\n60", payload)
 
     def test_a_missing_anchor_is_created_rather_than_left_missing(self):
         # PATCH only updates an existing ref: with the anchor deleted, 422 is
@@ -1362,6 +1376,39 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertNotIn("::warning::", proc.stdout)
             self.assertIn("a" * 40, (tmp / "summary").read_text())
+
+    def test_a_create_whose_response_was_lost_is_read_back_before_warning(self):
+        # If the create reached GitHub and only its response was lost, curl's
+        # retry meets 409 ("already exists"). Calling that a failure would put
+        # "the anchor did not move" in the summary while it now points here.
+        job = jobs_of(self.text)["mark-green"]
+        body = run_body_containing(job["text"], "refs/heads/main-green")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "curl", (
+                'printf "%s\\n" "$@" >> "$CURL_ARGS"; echo "---" >> "$CURL_ARGS"\n'
+                'case "$*" in\n'
+                '  *"-X PATCH"*) echo 422;;\n'
+                '  *"-X POST"*) echo 409;;\n'
+                '  *) printf \'{"object":{"sha":"%s"}}\\n\' "$GITHUB_SHA";;\n'
+                'esac\n'
+            ))
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                   "GITHUB_SHA": "a" * 40, "CURL_ARGS": str(tmp / "args"),
+                   "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("::warning::", proc.stdout)
+            self.assertIn("a" * 40, (tmp / "summary").read_text())
+            # And the read-back really happened: a GET at the documented
+            # single-ref endpoint, not a third write.
+            self.assertIn("https://api.github.com/repos/owner/repo/git/ref/heads/main-green",
+                          (tmp / "args").read_text())
+            self.assertNotIn("-X\nPUT", (tmp / "args").read_text())
             calls = (tmp / "args").read_text()
             call_args = calls.splitlines()
             self.assertIn("-X\nPATCH", calls)
