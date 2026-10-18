@@ -283,7 +283,9 @@ class RepoReadToken:
     reason: str
 
 
-async def github_read_token_for_repo(repo: str, session: AsyncSession) -> RepoReadToken:
+async def github_read_token_for_repo(
+    repo: str, session: AsyncSession, *, background: bool = False
+) -> RepoReadToken:
     """A read token for ``repo``'s own CI, or the reason there is none.
 
     棘轮的采集按**仓库名**找人：它手上没有项目 id（那份快照说的是仓库的 CI），而
@@ -299,6 +301,9 @@ async def github_read_token_for_repo(repo: str, session: AsyncSession) -> RepoRe
     两种失败分开写，因为它们是两件事：`GitHubAppError` 是对方答复了、拒绝了；httpx
     的 `HTTPError`（ConnectError、TimeoutException 都是它的子类）是我们根本没问到话。
     合成一句会让人以为 GitHub 说了什么。
+
+    ``background=True`` 是后台扫描的问法：安装的配额落到留给人的那一份以下
+    （`installation_serves_background`）时不给牌子，原因写明，扫描这一轮就不花。
     """
     installation = await ProjectGitInstallationRepository(session).get_by_repo(repo)
     if installation is None:
@@ -308,6 +313,10 @@ async def github_read_token_for_repo(repo: str, session: AsyncSession) -> RepoRe
     tokens = await github_app_tokens_for_project(installation.project_id, session)
     if tokens is None:
         return RepoReadToken(None, f"{repo} 所属的项目没有可用的 GitHub App 凭据")
+    if background and not await installation_serves_background(tokens):
+        return RepoReadToken(
+            None, f"{repo} 的 GitHub 配额只剩留给人用的那一份，后台这一轮不读"
+        )
     try:
         token, _expires = await tokens.installation_token()
     except httpx.HTTPError as exc:

@@ -1064,11 +1064,11 @@ class Settings(BaseSettings, SandboxSettings):
     # those and produce merge commits in repos that allow several methods.
     accept_pr_merge_method: str = "squash"
 
-    # --- the architecture ratchet (后台「棘轮」页) ---
-    # The repository whose snapshots the page shows. The platform's own: the
-    # ratchet answers 「平台自己的债还得怎么样」, and `arch-metrics.yml` collects
-    # there. Configurable so a fork or a second deployment is not a code change.
-    ratchet_repository: str = "SageSeekerSociety/cheese"
+    # --- the platform's own repo: 后台「棘轮」页 and 「CI 与合并队列」页 ---
+    # The ratchet reads its `arch-metrics.yml` snapshots; the CI activity sweep
+    # (every N seconds, 0 disables it) its Actions runs and merge queue.
+    platform_repository: str = "SageSeekerSociety/cheese"
+    ci_activity_sweep_interval_s: int = 300
     #: How often the backend pulls new `ratchet-snapshot` artifacts. The page
     #: reads the table and never GitHub, so this clock is what makes a new
     #: collection visible there; 0 disables the pull and leaves the table as it

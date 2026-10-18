@@ -155,7 +155,7 @@ async def ingest_once(
     all-zero report stays quiet in the log, which is the point — a pull that
     found nothing new every fifteen minutes is not worth a line.
     """
-    repo = repo or settings.ratchet_repository
+    repo = repo or settings.platform_repository
     report: dict[str, Any] = {
         "repo": repo,
         "listed": 0,
