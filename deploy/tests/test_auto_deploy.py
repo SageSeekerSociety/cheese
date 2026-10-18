@@ -662,6 +662,17 @@ class CandidateCI(unittest.TestCase):
         self.assertGreaterEqual(reads[-1], GUARD.BUILD_WAIT_SECONDS)
         self.assertLessEqual(reads[-1], GUARD.BUILD_WAIT_SECONDS + GUARD.SETTLE_SECONDS)
 
+    def test_a_build_that_fails_during_the_wait_is_not_reported_as_still_building(self):
+        """`build_pending` is the re-read after the wait, not just "not ready":
+        a build that ends as a failure must get the generic refusal."""
+        building = ([self.run_record(status="in_progress", conclusion=None)],
+                    [self.queue_record()])
+        failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
+        self.clock.now = 0.0
+        output, reads = self.eligibility([building] * 12 + [failed])
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\nbuild_pending=false\n")
+        self.assertGreater(reads[-1], GUARD.SETTLE_SECONDS)
+
     def test_a_build_that_really_failed_is_refused_within_a_bounded_wait(self):
         failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
         output, reads = self.eligibility([failed])
@@ -916,13 +927,26 @@ class CandidateCI(unittest.TestCase):
         # refused for want of the gate -- a second run per commit whose
         # "success" read as "this commit is on dev".
         self.assertEqual(set(triggers["workflow_run"]["workflows"]), {"Required CI"})
-        # Room to wait out an image build that is still running.
-        self.assertGreaterEqual(workflow["jobs"]["eligibility"]["timeout-minutes"], 10)
+        # Room for the initial settle plus the wait, with room to spare for the
+        # API calls; 12 minutes equalled the sleep budget alone and the job
+        # could be killed mid-check instead of refusing.
+        self.assertGreaterEqual(
+            workflow["jobs"]["eligibility"]["timeout-minutes"] * 60,
+            GUARD.SETTLE_SECONDS + GUARD.BUILD_WAIT_SECONDS + 120,
+        )
         self.assertNotIn("build-did-not-produce-images", workflow["jobs"])
         # The refusal has to pass "the build was still running" on, or it
         # prints "no successful attempt" minutes after the build succeeded.
         self.assertIn("build_pending", workflow["jobs"]["eligibility"]["outputs"])
-        self.assertIn("BUILD_PENDING", json.dumps(workflow["jobs"]["eligibility"]))
+        reason = next(step for step in workflow["jobs"]["eligibility"]["steps"]
+                      if step.get("name") == "Fail when this commit will not be deployed")
+        self.assertEqual(reason["env"]["BUILD_PENDING"],
+                         "${{ steps.check.outputs.build_pending }}")
+        self.assertIn('"$BUILD_PENDING" = true', reason["run"])
+        self.assertIn("still running", reason["run"])
+        # The manual states the wait in minutes; keep it tied to the constant.
+        manual = (ROOT / "docs/manual/dev/ci.md").read_text()
+        self.assertIn(f"最多 {GUARD.BUILD_WAIT_SECONDS // 60} 分钟", manual)
 
     def test_required_ci_runs_on_the_main_push_and_on_a_queue_entry(self):
         # A commit reaches main as a push (merged directly) or through the merge
