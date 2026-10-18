@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
-from app.domain.agent_instance.models import AgentInstance, OwnCallers
+from app.domain.agent_instance.models import AgentInstance, OwnAgent, OwnCallers
 from app.domain.agent_instance.own.ownership import (
     Owned,
     connection_of,
@@ -30,6 +30,7 @@ from app.domain.agent_instance.own.settings import (
     kinds_refused_sentence,
 )
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.user.models import User
 
 
 async def unusable(
@@ -76,6 +77,26 @@ async def callable_by(
     if owner is not None and owner[0] == caller:
         return True
     return owned.callers is OwnCallers.project and not looks_like_agent_handle(caller)
+
+
+async def callable_by_many(
+    db: AsyncSession, instance_ids: list[uuid.UUID], caller: str | None
+) -> dict[uuid.UUID, bool]:
+    """``callable_by`` for several agents in one query: the same test per agent,
+    and an id that is nobody's own agent answers False, as it does singly."""
+    answers = dict.fromkeys(instance_ids, False)
+    if not caller or not instance_ids:
+        return answers
+    rows = await db.execute(
+        select(OwnAgent.instance_id, OwnAgent.callers, User.username)
+        .outerjoin(User, User.id == OwnAgent.owner_user_id)
+        .where(OwnAgent.instance_id.in_(instance_ids))
+    )
+    for instance_id, callers, owner in rows:
+        answers[instance_id] = owner == caller or (
+            callers is OwnCallers.project and not looks_like_agent_handle(caller)
+        )
+    return answers
 
 
 async def why_not(
