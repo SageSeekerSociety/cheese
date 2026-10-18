@@ -14,6 +14,7 @@ machine can actually run (see `precommit_command`), rather than naming a
 binary that may not be installed and reporting every hook as blocked.
 """
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -77,6 +78,24 @@ def _cores():
     """
     from ci_fast_checks import _cores as cores
     return cores()
+
+
+def _imports_app(tree):
+    """Whether a test module imports app code, at any depth.
+
+    The reverse import graph is built over the whole AST, so an import inside a
+    function is an edge like any other; the same reading is what decides that a
+    test which does import app is reachable without being a tree guard.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(a.name == "app" or a.name.startswith("app.") for a in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module and (
+                    node.module == "app" or node.module.startswith("app.")):
+                return True
+    return False
 
 
 class CiFastTest(unittest.TestCase):
@@ -507,6 +526,34 @@ class CiFastTest(unittest.TestCase):
             self.assertIn(f"tests/unit/{name}", argv)
         self.assertIn("test_domain_import_guard.py", argv)
         self.assertIn("tree-guards", {r["id"] for r in self.report()["ran"]})
+
+    # --- the tuple above is written by hand, and a test that reads the tree has
+    # --- no import edge from the file it guards, so nothing else notices it
+    # --- being left out. Judge the shape rather than a marker comment: a unit
+    # --- test that names one of the repository's script roots (or derives
+    # --- REPO_ROOT) and imports nothing from app is a whole-tree guard, and
+    # --- the import graph will never select it. Readers of `.github/workflows/`
+    # --- are outside this criterion on purpose: a workflow-only change does not
+    # --- put the tier in backend scope, so an entry here would not run them
+    # --- there either — that needs a lane of its own.
+    def test_every_tree_reading_unit_test_is_in_the_tree_guard_tuple(self):
+        from ci_fast_backend import TREE_GUARDS
+        unit = SCRIPT.parents[2] / "backend" / "tests" / "unit"
+        readers = set()
+        for path in sorted(unit.glob("test_*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            if _imports_app(tree):
+                continue
+            text = "\n".join(
+                node.value for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str))
+            names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+            if (".claude/scripts" in text or ".github/scripts" in text
+                    or "REPO_ROOT" in names):
+                readers.add(path.name)
+        missing = readers - set(TREE_GUARDS)
+        self.assertFalse(missing,
+                         f"reads the tree but is not in TREE_GUARDS: {sorted(missing)}")
 
     def test_a_failing_tree_guard_fails_the_static_tier(self):
         self.write_hooks()
