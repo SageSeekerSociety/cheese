@@ -198,7 +198,7 @@ async def dangling_refs(
             continue
     refs = await conversation_refs(session, parsed.values())
     documents = set(
-        await doc_links.documents_among(session, project_id, parsed.values())
+        await doc_links.documents_of_projects_team(session, project_id, parsed.values())
     )
     return [
         raw

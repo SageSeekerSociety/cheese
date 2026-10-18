@@ -11,6 +11,7 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.space_deps import get_space_service
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_access import may_read_project
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -248,7 +249,7 @@ def _utc_midnight(day: date) -> datetime:
     return datetime.combine(day, time.min, tzinfo=UTC)
 
 
-@router.delete("/users/me/understanding/{entry_id}")
+@router.delete("/users/me/understanding/{entry_id}", dependencies=[ROUTE_DECIDES])
 async def forget_understanding(
     entry_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

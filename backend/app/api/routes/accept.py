@@ -397,7 +397,7 @@ async def approve_card(
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/accept")
+@router.post("/accept-cards/{card_id}/accept", dependencies=[ROUTE_DECIDES])
 async def accept_card(
     card_id: uuid.UUID,
     body: AcceptDecision,

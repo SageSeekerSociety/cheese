@@ -219,7 +219,7 @@ async def write_memory_file(
     return ok({"file": _file_out(row), "warning": warning})
 
 
-@router.post("/delete")
+@router.post("/delete", dependencies=[ROUTE_DECIDES])
 async def delete_memory_file(
     body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
