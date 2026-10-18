@@ -24,6 +24,7 @@ from app.api.doc_access import Reached, asked_of, reach, require_writable
 from app.api.doc_identity import operation_actor
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import SystemBusyError, ValidationError
 from app.core.redis import get_redis_client
 from app.core.sentences import say
@@ -63,7 +64,7 @@ async def list_nodes(
     return ok(page(items, len(items)))
 
 
-@router.post("/{document_id}/comments")
+@router.post("/{document_id}/comments", dependencies=[ROUTE_DECIDES])
 async def add_comment(
     document_id: uuid.UUID,
     body: CommentIn,
@@ -250,7 +251,9 @@ async def _mutate(db, resolver, document_id, comment_id, body, action, hand_off=
     )
 
 
-@router.post("/{document_id}/comments/{comment_id}/replies")
+@router.post(
+    "/{document_id}/comments/{comment_id}/replies", dependencies=[ROUTE_DECIDES]
+)
 async def reply(
     document_id: uuid.UUID,
     comment_id: uuid.UUID,
@@ -281,7 +284,9 @@ async def reply(
     return await _mutate(db, resolver, document_id, comment_id, body, "reply", hand_off)
 
 
-@router.post("/{document_id}/comments/{comment_id}/resolve")
+@router.post(
+    "/{document_id}/comments/{comment_id}/resolve", dependencies=[ROUTE_DECIDES]
+)
 async def resolve(
     document_id: uuid.UUID,
     comment_id: uuid.UUID,
@@ -292,7 +297,9 @@ async def resolve(
     return await _mutate(db, resolver, document_id, comment_id, body, "resolve")
 
 
-@router.post("/{document_id}/comments/{comment_id}/reopen")
+@router.post(
+    "/{document_id}/comments/{comment_id}/reopen", dependencies=[ROUTE_DECIDES]
+)
 async def reopen(
     document_id: uuid.UUID,
     comment_id: uuid.UUID,
@@ -303,7 +310,9 @@ async def reopen(
     return await _mutate(db, resolver, document_id, comment_id, body, "reopen")
 
 
-@router.post("/{document_id}/comments/{comment_id}/agent/stop")
+@router.post(
+    "/{document_id}/comments/{comment_id}/agent/stop", dependencies=[ROUTE_DECIDES]
+)
 async def stop_agent(
     document_id: uuid.UUID,
     comment_id: uuid.UUID,

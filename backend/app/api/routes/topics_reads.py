@@ -16,6 +16,7 @@ from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import _parse_moment
+from app.api.write_access import ROUTE_DECIDES
 from app.domain.agent.project_feed import (
     NOTIFY_LEVELS,
     UNREAD,
@@ -27,7 +28,7 @@ from app.domain.topic.services import TopicService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("/{topic_id}/read")
+@router.post("/{topic_id}/read", dependencies=[ROUTE_DECIDES])
 async def mark_topic_read(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -53,7 +54,7 @@ async def mark_topic_read(
     return ok({"topic_id": str(topic_id), "handle": handle})
 
 
-@router.put("/{topic_id}/notify-level")
+@router.put("/{topic_id}/notify-level", dependencies=[ROUTE_DECIDES])
 async def set_topic_notify_level(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

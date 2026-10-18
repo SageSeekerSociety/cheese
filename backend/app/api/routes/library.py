@@ -146,7 +146,7 @@ async def list_library_versions(
     return ok({"versions": versions})
 
 
-@router.post("/{project_id}/library/restore")
+@router.post("/{project_id}/library/restore", dependencies=[ROUTE_DECIDES])
 async def restore_library_version(
     project_id: uuid.UUID,
     path: str,
@@ -263,7 +263,7 @@ async def _upload_bytes(file: UploadFile) -> bytes:
     return data
 
 
-@router.post("/{project_id}/library")
+@router.post("/{project_id}/library", dependencies=[ROUTE_DECIDES])
 async def upload_library_file(
     project_id: uuid.UUID,
     db: DbSession,
@@ -290,7 +290,7 @@ async def upload_library_file(
     return ok({"path": name, "bytes": len(data)})
 
 
-@router.put("/{project_id}/library")
+@router.put("/{project_id}/library", dependencies=[ROUTE_DECIDES])
 async def replace_library_file(
     project_id: uuid.UUID,
     path: str,
@@ -309,7 +309,7 @@ async def replace_library_file(
     return ok({"path": name, "bytes": len(data)})
 
 
-@router.delete("/{project_id}/library")
+@router.delete("/{project_id}/library", dependencies=[ROUTE_DECIDES])
 async def delete_library_file(
     project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

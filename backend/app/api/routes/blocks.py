@@ -88,7 +88,7 @@ async def edit_block(
     return ok(payload)
 
 
-@router.post("/{block_id}/reactions")
+@router.post("/{block_id}/reactions", dependencies=[ROUTE_DECIDES])
 async def toggle_reaction(
     block_id: uuid.UUID,
     body: ReactionToggleIn,
