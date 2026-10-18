@@ -430,7 +430,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent_type/library.py": 11,
     "app/domain/answers/services.py": 10,
     "app/domain/attachment/services.py": 5,
-    "app/domain/avatars/services.py": 3,
+    "app/domain/avatars/services.py": 1,
     "app/domain/block/documents.py": 1,
     "app/domain/block/editing.py": 3,
     "app/domain/comments/services.py": 7,
