@@ -23,11 +23,6 @@ class KnowledgeType(str, Enum):
     CODE = "CODE"
 
 
-class KnowledgeSource(str, Enum):
-    MANUAL = "MANUAL"
-    FROM_DISCUSSION = "FROM_DISCUSSION"
-
-
 knowledge_seq = Sequence("knowledge_seq")
 
 
