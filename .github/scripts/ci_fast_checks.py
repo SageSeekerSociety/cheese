@@ -108,6 +108,11 @@ OFF_DISK_SPECS = (
     # #3899 (befe4ab9, 2026-10-16 07:34) without a tuple entry; that PR's
     # cifast check was skipped, so this list's own test was the first to notice.
     "src/views/workspace/TopicView.splitBoundary.spec.ts",
+    # Asserts four deleted modules are not back. It reads the tree with
+    # existsSync rather than importing what it judges, so no changed root can
+    # seed it; without an entry here a change that restored one of the four
+    # would select no test file that notices.
+    "src/retiredModules.spec.ts",
 )
 # Config whose change invalidates the narrow type project and the related graph.
 FRONTEND_META = {
