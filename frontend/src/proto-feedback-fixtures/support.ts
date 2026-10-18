@@ -100,6 +100,7 @@ export function row(spec: {
   const created = ago(spec.minutesAgo)
   const thread = threadOf(spec.thread ?? [])
   return {
+    reward: null,
     id: spec.id,
     display_id: spec.display,
     kind: spec.kind,

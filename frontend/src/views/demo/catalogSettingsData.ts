@@ -45,6 +45,7 @@ import ProjectDefaultModelSettings from '@/components/ProjectDefaultModelSetting
 import ProjectEnvironmentSettings from '@/components/ProjectEnvironmentSettings.vue'
 import ProjectMcpSettings from '@/components/ProjectMcpSettings.vue'
 import ProjectTaskNamingSettings from '@/components/ProjectTaskNamingSettings.vue'
+import ProjectCreditBudget from '@/components/settings/ProjectCreditBudget.vue'
 import ProjectRolesSettings from '@/components/settings/ProjectRolesSettings.vue'
 
 /** 五件都吃 vuetify。`ProjectMcpSettings` 多一样 i18n：它用 `<i18n-t>`，那一个由插件
@@ -54,6 +55,56 @@ const UI_I18N: CatalogNeed[] = ['vuetify', 'i18n']
 const DeviceSessionsPreview = markRaw(defineComponent({ setup: () => () => h('span', '设备会话入口') }))
 
 export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'project-credit-budget',
+    title: 'ProjectCreditBudget',
+    about: 'Project spending and member task caps, with public spending shown separately.',
+    file: 'src/components/settings/ProjectCreditBudget.vue',
+    component: ProjectCreditBudget,
+    needs: UI,
+    states: [
+      {
+        name: 'Project administrator',
+        note: 'Blank limits leave spending bounded by the team balance and project budget.',
+        props: {
+          editable: true,
+          budget: {
+            credits_limit: 1000,
+            credits_used: 130,
+            credits_remaining: 870,
+            public_credits: 30,
+            unattributed_credits: 0,
+            members: { alice: { name: 'Alice', credits_limit: 200, credits_used: 100 } },
+            since: '2026-10-01T00:00:00+00:00',
+          },
+        },
+        expect: 'Alice',
+      },
+      {
+        name: 'Project member',
+        note: 'Members can read spending and limits; only project administrators can change them.',
+        props: {
+          editable: false,
+          budget: {
+            credits_limit: 1000,
+            credits_used: 130,
+            credits_remaining: 870,
+            public_credits: 30,
+            unattributed_credits: 0,
+            members: { alice: { name: 'Alice', credits_limit: 200, credits_used: 100 } },
+            since: '2026-10-01T00:00:00+00:00',
+          },
+        },
+        expect: 'Alice',
+      },
+      {
+        name: 'Read failed',
+        note: 'A failed read keeps its error and a retry action.',
+        props: { editable: false, budget: null, error: 'Budget information could not be loaded.' },
+        expect: 'Budget information could not be loaded.',
+      },
+    ],
+  },
   {
     id: 'settings-task-naming',
     title: 'ProjectTaskNamingSettings',
