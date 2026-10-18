@@ -167,7 +167,9 @@ class PeriodicRunner:
         pause_wait: Callable[[], float] | None = None,
     ) -> None:
         if interval_policy is not None and pause_wait is None:
-            raise ValueError("a paused interval policy needs a resume wait")
+            raise ValueError(  # i18n-exempt: invalid scheduler setup for developers
+                "a paused interval policy needs a resume wait"
+            )
         self._name = name
         self._interval = interval_seconds
         self._interval_policy = interval_policy or (lambda interval: interval)
@@ -180,7 +182,9 @@ class PeriodicRunner:
         try:
             interval = self._interval_policy(self._interval)
             return None if interval is None else max(0.0, interval)
-        except Exception:  # a bad policy must not kill the loop
+        except (
+            Exception
+        ):  # i18n-exempt: internal fallback for an invalid interval policy
             logger.exception("%s: could not select its interval", self._name)
             return self._interval
 
