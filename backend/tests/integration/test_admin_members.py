@@ -16,16 +16,14 @@
 """
 
 import asyncio
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import event
 
 from app.core.config import settings
 from app.domain.admin.repositories import AdminRepository
 from tests.integration.conftest import session_auth_headers
+from tests.support.counting_session import counting_sql
 
 #: 测试放进管理员名单、用来**操作**的那个 handle。故意不是任何东西的真实成员：
 #: 平台管理员是平台级的事实，不是某个项目里的角色。
@@ -195,34 +193,6 @@ def _seed_bare_account(client, handle: str) -> None:
             await s.commit()
 
     asyncio.run(_seed())
-
-
-@contextmanager
-def _counting_sql(client) -> Iterator[list[str]]:
-    """这个块里请求发出的每一条 SQL，按顺序。
-
-    Listens on the engine the request is served from (``client.test_app_engine``)
-    rather than on the ``Engine`` class. A class-wide listener also counts the
-    platform's own background work — the startup sweeps (taking over running
-    turns, sweeping storage) and every job in ``periodic_jobs`` — which runs on
-    ``app.core.db``'s engine, bound to ``settings.database_url``. Those
-    statements are charged to whichever window is open when they complete, and
-    each one moves the count: the guard fails in the direction opposite to the
-    N+1 it exists to catch. Copied, listener included, from
-    `test_hot_path_queries.py`, which fixed the same thing the same way (#2186);
-    this copy was the one still counting every engine.
-    """
-    seen: list[str] = []
-
-    def _record(conn, cursor, statement, parameters, context, executemany):
-        seen.append(" ".join(statement.split()))
-
-    engine = client.test_app_engine.sync_engine
-    event.listen(engine, "after_cursor_execute", _record)
-    try:
-        yield seen
-    finally:
-        event.remove(engine, "after_cursor_execute", _record)
 
 
 # --- 每行的昵称与脸 ---------------------------------------------------------
@@ -551,7 +521,7 @@ def test_the_roster_costs_the_same_number_of_queries_however_many_rows(
         _add(client, as_admin, f"am-roster-{i}")
 
     def count() -> int:
-        with _counting_sql(client) as seen:
+        with counting_sql(client) as seen:
             r = client.get("/admin/admins", headers=session_auth_headers(as_admin))
         assert r.status_code == 200, r.text
         return len(seen)

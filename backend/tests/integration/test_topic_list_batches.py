@@ -45,7 +45,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
-from tests.integration.test_hot_path_queries import counting_sql
+from tests.support.counting_session import counting_sql
 
 EXPECTED_TOPIC_KEYS = {
     "accepted_at",
