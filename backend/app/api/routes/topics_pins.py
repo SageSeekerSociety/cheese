@@ -21,6 +21,7 @@ from app.api.response import ok
 from app.api.topic_pin_rows import pin_rows
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.schemas import BlockOut
@@ -34,7 +35,7 @@ async def _channel(db, resolver, topic_id: uuid.UUID, *, acting: bool):
     """The channel and who is asking. A task or a 支线 has no pins."""
     place = await place_or_404(db, topic_id)
     if place.conversation_id != place.room_id:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     actor = await resolver.resolve(topic_id=topic_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=topic_id

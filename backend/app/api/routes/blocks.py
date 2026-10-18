@@ -45,7 +45,7 @@ class WithdrawnAnswer(BaseModel):
     answer_log: list[dict] = []
 
 
-@router.patch("/{block_id}")
+@router.patch("/{block_id}", dependencies=[ROUTE_DECIDES])
 async def edit_block(
     block_id: uuid.UUID,
     body: MessageEditIn,
