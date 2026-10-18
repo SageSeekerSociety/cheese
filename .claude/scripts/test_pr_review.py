@@ -204,8 +204,8 @@ class PrReview(unittest.TestCase):
         # commit exists here: the test moves main and merges it afterwards, the order in
         # which it really happens, so prepare cannot fetch the merge the review predates.
         git(work, "checkout", "-q", "-b", "base-merge", "main")
-        (work / "f2.txt").write_text("branch\n")
-        git(work, "add", "f2.txt")
+        (work / "f2.py").write_text("value = 'branch'\n")
+        git(work, "add", "f2.py")
         git(work, "commit", "-qm", "the change under review")
         cls.base_merge_reviewed = git(work, "rev-parse", "HEAD")
         git(work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_BASE_MERGE}/head")
@@ -974,14 +974,18 @@ class PrReview(unittest.TestCase):
             review_md = Path(out.stdout.strip())
             d, _ = self.post(review_md)
             git(self.work, "checkout", "-q", "main")
-            (self.work / "main-only.txt").write_text("main\n")
-            git(self.work, "add", "main-only.txt")
+            (self.work / "main-only.py").write_text("value = 1\n")
+            git(self.work, "add", "main-only.py")
             git(self.work, "commit", "-qm", "main moves on")
             git(self.work, "push", "-q", "origin", "main")
             git(self.work, "checkout", "-q", "base-merge")
             git(self.work, "merge", "-q", "--no-autostash", "--no-edit", "main")
             merged = git(self.work, "rev-parse", "HEAD")
             git(self.work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_BASE_MERGE}/head")
+            git(self.work, "checkout", "-q", "main")
+            (self.work / "main-only.py").write_text("value = 2\n")
+            git(self.work, "commit", "-qam", "main advances after the merge")
+            git(self.work, "push", "-q", "origin", "main")
             git(self.work, "fetch", "-q", "origin")
         finally:
             git(self.work, "checkout", "-q", "main")
@@ -992,6 +996,35 @@ class PrReview(unittest.TestCase):
         self.assertIn("不用重审", ready.stdout)
         self.assertNotIn("缺一次增量审", ready.stdout)
         self.assertIn(f"review {self.base_merge_reviewed[:8]}", ready.stdout)
+
+    def test_ready_requires_review_of_code_written_while_resolving_a_main_merge(self):
+        out = self.run_script("prepare", PR_BASE_MERGE, self.base_merge_reviewed)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        d, _ = self.post(Path(out.stdout.strip()))
+        original_main = git(self.work, "rev-parse", "origin/main")
+        try:
+            git(self.work, "checkout", "-q", "-b", "resolution-main", f"{self.base_merge_reviewed}^")
+            (self.work / "f2.py").write_text("value = 'main'\n")
+            git(self.work, "add", "f2.py")
+            git(self.work, "commit", "-qm", "main adds the same file")
+            git(self.work, "update-ref", "refs/remotes/origin/main", "HEAD")
+            git(self.work, "checkout", "-q", "-b", "resolution-pr", self.base_merge_reviewed)
+            conflict = subprocess.run(
+                ["git", "-C", str(self.work), "merge", "--no-autostash", "--no-edit", "resolution-main"],
+                capture_output=True, text=True)
+            self.assertEqual(conflict.returncode, 1, conflict.stdout + conflict.stderr)
+            (self.work / "f2.py").write_text("value = 'author-written resolution'\n")
+            git(self.work, "add", "f2.py")
+            git(self.work, "commit", "-qm", "resolve with new code")
+            resolved = git(self.work, "rev-parse", "HEAD")
+            ready = self.run_script("ready", str(d), env_extra={
+                "PR11_HEAD": resolved, "CI_JSON": self.GREEN})
+            self.assertEqual(ready.returncode, 1, ready.stdout + ready.stderr)
+            self.assertIn("缺一次增量审", ready.stdout)
+            self.assertIn("f2.py", ready.stdout)
+        finally:
+            git(self.work, "update-ref", "refs/remotes/origin/main", original_main)
+            git(self.work, "checkout", "-q", "main")
 
     def test_ready_asks_for_an_increment_review_when_the_head_moved(self):
         # The head moved, and what moved it is a change of this PR's own: the review of the

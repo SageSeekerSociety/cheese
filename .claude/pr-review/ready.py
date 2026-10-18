@@ -100,34 +100,36 @@ def exempt(path):
     return path.endswith(COPY_SUFFIX) and tiers.under(path, COPY)
 
 
-def _blob(repo, rev, path):
-    """The blob of `path` in `rev`, or None when the path is not in that tree."""
-    out = tiers._git(repo, "rev-parse", "--verify", "--quiet", f"{rev}:{path}")
-    return out.strip() if out and out.strip() else None
-
-
 def author_files(repo, base, since, head):
-    """The files whose content at `head` differs from the reviewed commit's version AND from
-    the base branch's: what the author changed after the review, plus anything a merge
-    brought in that is neither of those two versions — a conflict resolution the author
-    wrote. A merge of the base branch therefore does not count: every file it brought in
-    comes out at the base branch's own version, or unchanged from `since`.
+    """Net changed paths authored since review, excluding automatic merges of the base.
 
-    The comparison is between trees (`git diff since head`), not the commit graph. A merge
-    commit's own `diff-tree` prints nothing, so a log walk that skips merges never sees the
-    resolution a merge carries — it lives only in the tree that merge produced."""
-    out = tiers.paths_of(repo, since, head)
-    if out is None:
+    Recreate each base merge from its own two parents via remerge-diff. Only the
+    difference from that automatic merge is authored resolution; a later origin/main
+    cannot change the answer. Ordinary commits and non-base merges keep their diff.
+    Intersect with the net diff so a change reverted before head needs no review.
+    """
+    net = tiers.paths_of(repo, since, head)
+    commits = tiers._git(repo, "rev-list", "--first-parent", f"{since}..{head}")
+    if net is None or commits is None:
         return None
-    files = []
-    for path in out:
-        here = _blob(repo, head, path)
-        # Without a base branch there is nothing to compare against: keep the file. 判不了
-        # 按 B — a file nobody can clear is re-reviewed, not waved through.
-        if base and here == _blob(repo, f"origin/{base}", path):
-            continue
-        files.append(path)
-    return sorted(files)
+    authored = set()
+    for commit in commits.splitlines():
+        parents = tiers._git(repo, "show", "-s", "--format=%P", commit)
+        if parents is None or not parents.strip():
+            return None
+        parents = parents.split()
+        if (len(parents) == 2 and base
+                and tiers._git(repo, "merge-base", "--is-ancestor", parents[1],
+                               f"origin/{base}") is not None):
+            out = tiers._git(repo, "show", "--remerge-diff", "--format=", "--name-only",
+                             "-z", commit)
+            paths = None if out is None else [p for p in out.split("\0") if p]
+        else:
+            paths = tiers.paths_of(repo, parents[0], commit)
+        if paths is None:
+            return None
+        authored.update(paths)
+    return sorted(set(net) & authored)
 
 
 def increment(repo, base, since, head):
