@@ -299,10 +299,12 @@ class CandidateCI(unittest.TestCase):
         return self.run_record(**{"event": "merge_group",
                                   "head_branch": f"gh-readonly-queue/main/pr-7-{'b' * 40}", **changes})
 
-    def ready(self, build, ci):
+    def ready(self, build, ci, covered=False):
         def workflow_runs(_repository, workflow, _candidate):
             return build if workflow == "build.yml" else ci
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "workflow_runs", side_effect=workflow_runs):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), \
+                patch.object(GUARD, "workflow_runs", side_effect=workflow_runs), \
+                patch.object(GUARD, "covered_by_green", return_value=covered):
             return GUARD.ci_ready(self.candidate)
 
     def test_workflow_runs_use_authenticated_http_and_read_all_pages(self):
@@ -423,9 +425,161 @@ class CandidateCI(unittest.TestCase):
         for changes in ({"head_sha": "b" * 40}, {"head_branch": "feature"},
                         {"head_branch": f"gh-readonly-queue/release/pr-7-{'b' * 40}"},
                         {"head_repository": {"full_name": "fork/app"}}, {"event": "pull_request"},
-                        {"event": "push", "head_branch": "main"}):
+                        {"event": "push", "head_branch": "experiment/remote-execution"}):
             with self.subTest(changes=changes):
                 self.assertFalse(self.ready([self.run_record()], [self.queue_record(**changes)]))
+
+    def test_a_direct_main_push_authorizes_without_a_queue_run(self):
+        # Main is merged into directly now: the push run is the gate, and the
+        # absence of a merge_group run for the same commit is not a gap.
+        self.assertTrue(self.ready([self.run_record()], [self.run_record()]))
+
+    def gate_run(self, **changes):
+        return self.run_record(event="push", head_branch="main", **changes)
+
+    def green(self, *answers):
+        github, reads = self.github(*answers)
+        with patch.dict(os.environ, {"GH_TOKEN": "t"}), github:
+            return GUARD.green_anchor("example/app"), reads
+
+    def test_the_green_anchor_is_read_from_the_branch_endpoint(self):
+        # GET /git/ref/{ref} takes `heads/<branch>`; the `refs/heads/` spelling
+        # is for the create endpoint and 404s here, which would silently read as
+        # "no anchor yet" and disable the batch's coverage.
+        anchor, reads = self.green({"object": {"sha": self.candidate}})
+        self.assertEqual(anchor, self.candidate)
+        self.assertEqual(reads[-1], "https://api.github.com/repos/example/app/git/ref/heads/main-green")
+
+    def test_no_anchor_yet_is_not_an_error(self):
+        missing = GUARD.HTTPError("https://api.github.com/x", 404, "Not Found", {}, io.BytesIO(b""))
+        anchor, _reads = self.green(missing)
+        self.assertEqual(anchor, "")
+
+    def test_a_commit_behind_the_anchor_is_covered(self):
+        # compare/{candidate}...{anchor}: "ahead" means the anchor is ahead of
+        # this commit, i.e. the green run's diff included it.
+        for status, expected in (("ahead", True), ("identical", True),
+                                 ("behind", False), ("diverged", False)):
+            with self.subTest(status=status):
+                github, reads = self.github({"object": {"sha": "b" * 40}}, {"status": status})
+                with patch.dict(os.environ, {"GH_TOKEN": "t"}), github:
+                    self.assertEqual(GUARD.covered_by_green(self.candidate, "example/app"), expected)
+                self.assertIn(f"compare/{self.candidate}...{'b' * 40}", reads[-1])
+
+    def test_no_anchor_covers_nothing(self):
+        missing = GUARD.HTTPError("https://api.github.com/x", 404, "Not Found", {}, io.BytesIO(b""))
+        github, _reads = self.github(missing)
+        with patch.dict(os.environ, {"GH_TOKEN": "t"}), github:
+            self.assertFalse(GUARD.covered_by_green(self.candidate, "example/app"))
+
+    def test_a_batch_run_that_was_replaced_is_proved_by_the_later_green_one(self):
+        # The concurrency group replaced this commit's push run. A later run
+        # covered it and passed, so the commit is validated; its own release
+        # then steps aside for that newer commit (superseded_by).
+        replaced = [self.gate_run(conclusion="cancelled")]
+        self.assertTrue(self.ready([self.run_record()], replaced, covered=True))
+        self.assertFalse(self.ready([self.run_record()], replaced, covered=False))
+
+    def test_the_call_site_asks_about_the_candidate_commit(self):
+        # Every test above replaces covered_by_green with a constant, so a
+        # swapped call-site argument would stay green while in production the
+        # anchor were looked up in a repository named after the commit (404 →
+        # "no anchor") and no superseded run were ever excused. Drive the real
+        # wiring and read the two URLs it asks for.
+        for conclusion in ("cancelled", "skipped"):
+            with self.subTest(conclusion=conclusion):
+                replaced = [self.gate_run(conclusion=conclusion)]
+                github, reads = self.github({"object": {"sha": "b" * 40}},
+                                            {"status": "ahead"})
+                with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app",
+                                             "GH_TOKEN": "t"}), \
+                        patch.object(GUARD, "workflow_runs", side_effect=lambda _r, workflow, _c: (
+                            [self.run_record()] if workflow == "build.yml" else replaced)), github:
+                    self.assertTrue(GUARD.ci_ready(self.candidate))
+                self.assertEqual(reads[0],
+                                 "https://api.github.com/repos/example/app/git/ref/heads/main-green")
+                self.assertIn(f"compare/{self.candidate}...{'b' * 40}", reads[1])
+
+    def test_a_run_that_failed_is_not_excused_by_a_later_green_batch(self):
+        # Its change did fail here; the later run tested it together with a fix,
+        # which is not the same commit to release.
+        failed = [self.gate_run(conclusion="failure")]
+        self.assertFalse(self.ready([self.run_record()], failed, covered=True))
+
+    def test_a_queue_entry_that_passed_is_not_refused_by_a_later_cancelled_push(self):
+        # main is fast-forwarded to the queue entry's sha, which therefore also
+        # gets a push run; a later push can replace that run in the batch. The
+        # queue run already proved this exact commit.
+        queue_success = self.queue_record()
+        push_cancelled = self.gate_run(conclusion="cancelled", id=11,
+                                       updated_at="2026-09-22T12:05:00Z")
+        self.assertTrue(self.ready([self.run_record()], [queue_success, push_cancelled]))
+
+    def test_a_commit_with_no_run_is_not_proved_by_the_anchor_alone(self):
+        # An ancestor of the anchor need not have been inside the run that set
+        # it: the first push run diffs from the commit before its push.
+        self.assertFalse(self.ready([self.run_record()], [], covered=True))
+
+    def test_a_superseded_queue_entry_is_not_excused_by_the_green_anchor(self):
+        # A queue entry that did not pass was not replaced by a later push in a
+        # batch; it left the queue for a reason, and a green main run later does
+        # not say this commit's own gate passed.
+        replaced = [self.queue_record(conclusion="cancelled")]
+        self.assertFalse(self.ready([self.run_record()], replaced, covered=True))
+
+    def waiting(self, runs, newer=("n" * 40,)):
+        """ci_waiting with the gate's runs and the commits after it on main.
+
+        ``newer`` defaults to one commit: a cancelled run is only a wait when
+        something newer on main can cover it, and every test here but the
+        uncovered one is about that coverable case.
+        """
+        def workflow_runs(_repository, workflow, _candidate):
+            # Answering every workflow with the same list would hide a lookup
+            # pointed at the wrong one: build.yml's runs are not the gate.
+            if workflow != "required-ci.yml":
+                return []
+            return runs
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), \
+                patch.object(GUARD, "workflow_runs", side_effect=workflow_runs), \
+                patch.object(GUARD, "newer_on_main", return_value=list(newer)):
+            return GUARD.ci_waiting(self.candidate)
+
+    def test_a_gate_that_has_not_finished_is_waited_for_not_refused(self):
+        # Required CI runs on main after the commit lands, so at build
+        # completion it is usually still running; its own completion triggers
+        # this workflow again and releases the commit.
+        for status, conclusion in (("queued", None), ("in_progress", None)):
+            with self.subTest(status=status):
+                self.assertTrue(self.waiting([self.gate_run(status=status, conclusion=conclusion)]))
+
+    def test_a_queued_run_a_newer_push_superseded_waits_for_the_newer_batch(self):
+        # Batched push runs share a concurrency group, so GitHub cancels the
+        # older of two queued runs; the newer commit's run covers both.
+        self.assertTrue(self.waiting([self.gate_run(conclusion="cancelled")]))
+
+    def test_a_cancelled_run_nothing_newer_covers_is_not_waited_for(self):
+        # A manual or infrastructure cancellation, or a newer batch that itself
+        # failed: no later run can diff over this commit, so treating it as a
+        # wait would leave dev silently behind with no red anywhere.
+        self.assertFalse(self.waiting([self.gate_run(conclusion="cancelled")], newer=()))
+
+    def test_a_gate_that_failed_or_never_ran_is_not_waited_for(self):
+        for runs in ([self.gate_run(conclusion="failure")],
+                     [self.gate_run(conclusion="timed_out")],
+                     [self.gate_run(conclusion="success")],
+                     [self.queue_record()],
+                     []):
+            with self.subTest(runs=runs):
+                self.assertFalse(self.waiting(runs))
+
+    def test_the_latest_attempt_wins_across_the_two_routes(self):
+        # A queue run is one route and a push run the other, but a newer failed
+        # attempt on either still means the gate did not pass.
+        older = self.queue_record(updated_at="2026-09-22T12:00:00Z")
+        newer = self.run_record(event="push", head_branch="main",
+                                updated_at="2026-09-22T12:05:00Z", conclusion="failure")
+        self.assertFalse(self.ready([self.run_record()], [older, newer]))
 
     def test_rerunning_an_older_run_cannot_hide_its_failure_behind_a_newer_id(self):
         rerun = self.run_record(id=9, updated_at="2026-09-22T13:00:00Z", conclusion="failure")
@@ -449,6 +603,10 @@ class CandidateCI(unittest.TestCase):
         def workflow_runs(_repository, workflow, _candidate):
             if workflow == "build.yml":
                 reads.append(self.clock.now)
+            elif workflow != "required-ci.yml":
+                # ci_waiting asks about Required CI; a lookup pointed at any
+                # other workflow must not be answered with the gate's runs.
+                return []
             build, ci = answers[min(len(reads) - 1, len(answers) - 1)]
             return build if workflow == "build.yml" else ci
         with tempfile.TemporaryDirectory() as directory:
@@ -456,7 +614,8 @@ class CandidateCI(unittest.TestCase):
             with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GITHUB_OUTPUT": str(output)}), \
                     patch.object(GUARD.sys, "argv", ["check-auto-deploy.py", "--ci-only", self.candidate]), \
                     patch.object(GUARD, "workflow_runs", side_effect=workflow_runs), \
-                    patch.object(GUARD, "newer_on_main", return_value=[]):
+                    patch.object(GUARD, "newer_on_main", return_value=[]), \
+                    patch.object(GUARD, "covered_by_green", return_value=False):
                 GUARD.main()
             return output.read_text(), reads
 
@@ -468,15 +627,38 @@ class CandidateCI(unittest.TestCase):
             with self.subTest(stale=stale[0]):
                 self.clock.now = 0.0
                 output, reads = self.eligibility([stale, stale, settled])
-                self.assertEqual(output, "ready=true\nsuperseded=\n")
+                self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
                 self.assertLessEqual(reads[-1], 60)
 
     def test_a_build_that_really_failed_is_refused_within_a_bounded_wait(self):
         failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
         output, reads = self.eligibility([failed])
-        self.assertEqual(output, "ready=false\nsuperseded=\n")
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\n")
         self.assertGreater(len(reads), 1)
         self.assertLessEqual(reads[-1], 180)
+
+    def test_the_entry_point_refuses_a_cancelled_gate_nothing_covers(self):
+        # The other half of the waiting rule, driven end to end: with nothing
+        # newer on main, a cancelled gate is a refusal whose reason the step
+        # summary can name, not a wait that never ends.
+        cancelled = ([self.run_record()], [self.gate_run(conclusion="cancelled")])
+        output, _reads = self.eligibility([cancelled])
+        self.assertEqual(output,
+                         "ready=false\nsuperseded=\nwaiting=false\nuncovered=true\n")
+
+    def test_the_entry_point_reports_waiting_while_the_gate_runs(self):
+        # The build's completion is usually the first of the two events and the
+        # gate is still running then; the whole point of the waiting state is
+        # that this entry point says so instead of refusing. Driving only
+        # ci_waiting would leave `waiting = not ready and ...` unwatched.
+        running = ([self.run_record()],
+                   [self.gate_run(status="in_progress", conclusion=None)])
+        output, _reads = self.eligibility([running])
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=true\nuncovered=false\n")
+        # And a gate that really failed is still a refusal, not a wait.
+        refused = ([self.run_record()], [self.gate_run(conclusion="failure")])
+        output, _reads = self.eligibility([refused])
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\n")
 
     def test_workflow_checks_eligibility_before_reserving_deploy_runner(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
@@ -487,13 +669,57 @@ class CandidateCI(unittest.TestCase):
         self.assertNotIn("concurrency", workflow)
         self.assertEqual(workflow["jobs"]["deploy"]["concurrency"]["group"], "deploy-dev")
         triggers = workflow.get("on", workflow.get(True))
-        self.assertEqual(set(triggers["workflow_run"]["workflows"]), {"Build and Push Docker Image"})
+        # Either can finish last: the build has images, Required CI has the
+        # gate, and on main the gate takes longer.
+        self.assertEqual(set(triggers["workflow_run"]["workflows"]),
+                         {"Build and Push Docker Image", "Required CI"})
 
-    def test_required_ci_runs_once_per_commit_in_the_merge_queue(self):
+    def test_required_ci_runs_on_the_main_push_and_on_a_queue_entry(self):
+        # A commit reaches main as a push (merged directly) or through the merge
+        # queue; both must produce the gate this deployment reads.
         required = yaml.safe_load((ROOT / ".github/workflows/required-ci.yml").read_text())
         triggers = required.get("on", required.get(True))
-        self.assertNotIn("push", triggers)
+        self.assertEqual(triggers["push"]["branches"], ["main"])
         self.assertIn("merge_group", triggers)
+
+    def test_only_a_passing_main_push_gate_run_reaches_the_eligibility_job(self):
+        """The Required CI completion now triggers this workflow, so the job's
+        own condition is what keeps a failed or unrelated gate run from turning
+        into a red deploy run."""
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        condition = workflow["jobs"]["eligibility"]["if"]
+
+        def holds(event_name, name=None, event=None, branch=None, conclusion=None):
+            expression = " ".join(condition.split())
+            substituted = {
+                "github.event_name": repr(event_name),
+                "github.event.workflow_run.name": repr(name),
+                "github.event.workflow_run.event": repr(event),
+                "github.event.workflow_run.head_branch": repr(branch),
+                "github.event.workflow_run.conclusion": repr(conclusion),
+            }
+            for token, value in substituted.items():
+                expression = expression.replace(token, value)
+            expression = expression.replace("||", " or ").replace("&&", " and ")
+            return bool(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307
+
+        self.assertTrue(holds("workflow_run", "Required CI", "push", "main", "success"))
+        self.assertTrue(holds("workflow_run", "Build and Push Docker Image", "push", "main", "success"))
+        self.assertTrue(holds("workflow_dispatch"))
+        for named in (
+            ("Required CI", "push", "main", "failure"),
+            ("Required CI", "push", "main", "cancelled"),
+            # A pull request whose head branch is called main is admitted by
+            # `branches: [main]` too, and its commit is not one to release.
+            ("Required CI", "pull_request", "main", "success"),
+            # A push run on some other branch (a fork's main, a tag push) is
+            # likewise not this repository's main.
+            ("Required CI", "push", "someone-elses-main", "success"),
+            # A merge-queue entry runs on the queue's temporary branch.
+            ("Required CI", "merge_group", f"gh-readonly-queue/main/pr-1-{'b' * 40}", "success"),
+        ):
+            with self.subTest(named=named):
+                self.assertFalse(holds("workflow_run", *named))
 
     def test_ci_rerun_while_waiting_for_deploy_runner_fails_the_release(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -526,7 +752,8 @@ class CandidateCI(unittest.TestCase):
 
     def test_a_refused_release_fails_the_run_and_says_what_dev_runs(self):
         step = self.step("eligibility", "Fail when this commit will not be deployed")
-        self.assertEqual(step["if"], "steps.check.outputs.ready != 'true'")
+        self.assertEqual(step["if"],
+                         "steps.check.outputs.ready != 'true' && steps.check.outputs.waiting != 'true'")
         live = "b" * 40
         for curl, expected in ((f"echo '{{\"data\": {{\"sha\": \"{live}\"}}}}'", live), ("exit 7", "unknown")):
             with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
@@ -539,6 +766,22 @@ class CandidateCI(unittest.TestCase):
                 self.assertIn(f"::error::Not deployed {self.candidate}", result.stdout)
                 self.assertIn(f"Not deployed `{self.candidate}`", summary.read_text())
                 self.assertIn(f"dev runs `{expected}`", summary.read_text())
+
+    def test_the_refusal_says_when_a_cancelled_gate_nothing_covers(self):
+        # "No successful latest attempt" is true but useless for this case: the
+        # run existed and was cancelled, and no later batch will cover it. The
+        # summary has to name that, or the reader goes looking for a CI bug.
+        step = self.step("eligibility", "Fail when this commit will not be deployed")
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            result = subprocess.run(
+                ["bash", "-e", "-c", step["run"]], capture_output=True, text=True,
+                env={**os.environ, "PATH": self.fake_bin(directory, curl="exit 7"),
+                     "CANDIDATE_SHA": self.candidate, "UNCOVERED": "true",
+                     "GITHUB_STEP_SUMMARY": str(summary)})
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("cancelled", summary.read_text())
+            self.assertIn("no newer commit on main", summary.read_text())
 
     def test_every_deploy_run_names_the_commit_dev_runs(self):
         step = self.step("deploy", "Say which commit dev runs")
@@ -682,27 +925,27 @@ class SupersededRelease(unittest.TestCase):
     def test_an_older_commit_built_after_a_newer_ready_one_steps_aside(self):
         output, printed = self.eligibility([self.newer], {self.candidate: self.runs(self.candidate),
                                                           self.newer: self.runs(self.newer)})
-        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\n")
+        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\nwaiting=false\nuncovered=false\n")
         self.assertIn(f"Not deploying {self.candidate}: {self.newer}, newer on main", printed)
 
     def test_the_newest_commit_that_is_ready_is_the_one_named(self):
         output, _ = self.eligibility([self.newer, self.newest], {
             self.candidate: self.runs(self.candidate), self.newer: self.runs(self.newer),
             self.newest: self.runs(self.newest, build=None)})
-        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\n")
+        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\nwaiting=false\nuncovered=false\n")
 
     def test_a_newer_commit_that_cannot_be_released_yet_does_not_supersede(self):
         for build, ci in ((None, "success"), ("failure", "success"), ("success", "failure")):
             with self.subTest(build=build, ci=ci):
                 output, printed = self.eligibility([self.newer], {
                     self.candidate: self.runs(self.candidate), self.newer: self.runs(self.newer, build=build, ci=ci)})
-                self.assertEqual(output, "ready=true\nsuperseded=\n")
+                self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
                 # A newer commit's state is not this release's refusal.
                 self.assertNotIn(f"Not deploying {self.newer}", printed)
 
     def test_main_newest_commit_deploys(self):
         output, _ = self.eligibility([], {self.candidate: self.runs(self.candidate)})
-        self.assertEqual(output, "ready=true\nsuperseded=\n")
+        self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
 
     def test_a_superseded_run_does_not_ask_for_the_deploy_group(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())

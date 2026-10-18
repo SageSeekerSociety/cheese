@@ -1,8 +1,11 @@
 name: Required CI
 
-# No push trigger: every commit reaches main through the merge queue, which has
-# already run this workflow on that exact commit (a squash onto the tested base,
-# then a fast-forward). Deployment gates read that merge_group run.
+# A push to main is the POST-SUBMIT gate. Commits reach main directly (a squash
+# merge, no queue in between), so this workflow is what tests landed code: one
+# push run covers everything since `refs/heads/main-green`, the last commit the
+# gate passed (see `main-green` at the bottom and required-ci.py:
+# effective_base). Deployment gates read that push run. The merge_group trigger
+# stays for an entry that still goes through a queue.
 #
 # Two tiers, decided by the event (.github/scripts/required-ci.py: tier_for):
 #
@@ -36,6 +39,8 @@ name: Required CI
 # `CI required` skipped, which does not stand in for the full run's result on
 # that commit.
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
@@ -45,16 +50,23 @@ on:
 permissions:
   contents: read
 
+# A main push joins one fixed group with `cancel-in-progress: false`, so GitHub
+# keeps one run executing and at most one pending, and a newer pending run
+# replaces the older one. That is the batching: the run that starts covers
+# everything since `main-green`, so the commits of a superseded pending run are
+# not dropped. Pull requests still cancel their superseded runs, and a
+# merge-queue entry keeps its own group per commit.
 concurrency:
-  group: required-ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: required-ci-${{ github.event_name }}-${{ github.event_name == 'push' && 'main' || github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scope:
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
-    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
-    # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    # runner queue behind the big jobs. A main push, same-repo PRs and the merge
+    # queue use the cheese-ci pool (docs/infrastructure.md); fork PRs and a
+    # deleted fork stay on GitHub's machines.
+    runs-on: ${{ fromJSON((github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.scope.outputs.backend }}
@@ -81,20 +93,26 @@ jobs:
       - name: Select suites for the complete merge diff
         id: scope
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          # A pull request and a merge-queue entry name their base in the event.
+          # A main push has no base worth passing here (github.event.before is
+          # only the previous tip), so the script resolves its own from the
+          # `main-green` ref in the step below.
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          # Every selected suite waits on this fetch, so one transient network
-          # error here reddens the whole run. Retry it; the selection below is
-          # unchanged.
-          for attempt in 1 2 3; do
-            if git fetch --no-tags --depth=1 origin "$BASE_SHA"; then break; fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::git fetch of $BASE_SHA failed on all $attempt attempts" >&2
-              exit 1
-            fi
-            sleep 2
-          done
-          python3 .github/scripts/required-ci.py scope "$BASE_SHA"
+          if [ -n "$EVENT_BASE" ]; then
+            # Every selected suite waits on this fetch, so one transient network
+            # error here reddens the whole run. Retry it; the selection below is
+            # unchanged.
+            for attempt in 1 2 3; do
+              if git fetch --no-tags --depth=1 origin "$EVENT_BASE"; then break; fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "::error::git fetch of $EVENT_BASE failed on all $attempt attempts" >&2
+                exit 1
+              fi
+              sleep 2
+            done
+          fi
+          python3 .github/scripts/required-ci.py scope "$EVENT_BASE"
 
   # The DRAFT tier: a bounded local-evidence run, inline so a draft adds no
   # reusable workflow to enumerate (and a draft must not exercise the docs
@@ -453,9 +471,10 @@ jobs:
       pull-requests: read
     needs: [scope, api, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
     # Seconds-long serial job: on a GitHub machine it waited 3-20 min (#4101) in the shared
-    # runner queue behind the big jobs. Same-repo PRs and the merge queue use the
-    # cheese-ci pool (docs/infrastructure.md); fork PRs and a deleted fork stay on GitHub's machines.
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    # runner queue behind the big jobs. A main push, same-repo PRs and the merge
+    # queue use the cheese-ci pool (docs/infrastructure.md); fork PRs and a
+    # deleted fork stay on GitHub's machines.
+    runs-on: ${{ fromJSON((github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -492,14 +511,15 @@ jobs:
         working-directory: backend
         run: python3 -m scripts.assert_shards_complete "$RUNNER_TEMP/backend-artifacts" --plan backend-expected
       # This repo's own commit convention (docs/workflows.md §5); the platform
-      # leaves a hosted repo's titles to that repo. In the merge queue it reads
-      # the squash commits about to land, which is what main will say. On a PR
-      # it fetches the PR live rather than from the event payload, so
-      # re-running this job after editing the title sees the new one, and it
-      # passes a draft, whose title is still a placeholder. pr-title.yml re-runs
-      # this job when a PR is marked ready or retitled — which is why the draft
-      # job below has no title step: a draft's title is the platform's
-      # placeholder, nothing to check, and `ready_for_review` starts this job.
+      # leaves a hosted repo's titles to that repo. In the merge queue and on a
+      # main push it reads the squash commits that landed (or are about to),
+      # which is what main will say. On a PR it fetches the PR live rather than
+      # from the event payload, so re-running this job after editing the title
+      # sees the new one, and it passes a draft, whose title is still a
+      # placeholder. pr-title.yml re-runs this job when a PR is marked ready or
+      # retitled — which is why the draft job below has no title step: a draft's
+      # title is the platform's placeholder, nothing to check, and
+      # `ready_for_review` starts this job.
       - name: Commit titles follow the convention
         if: ${{ !cancelled() }}
         env:
@@ -507,6 +527,9 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          # A main push's batch base: the anchor scope resolved, empty when there
+          # is none yet.
+          PUSH_BASE_SHA: ${{ needs.scope.outputs.base }}
         # curl + python3, not gh + jq: the cheese-ci boxes have neither gh nor jq
         # (python3, git and curl only), and both calls are plain GETs.
         #
@@ -532,17 +555,69 @@ jobs:
             cat "$out"
             rm -f "$out"
           }
-          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
+          check_compare() {
             # Read the response into a file first: a failed read exits here (the
             # runner's shell runs with errexit) instead of feeding python "".
-            api "compare/$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/compare.json"
+            api "compare/$1...$2" > "$RUNNER_TEMP/compare.json"
             python3 -c 'import json,sys; [print(c["commit"]["message"].split("\n")[0]) for c in json.load(sys.stdin)["commits"]]' \
               < "$RUNNER_TEMP/compare.json" \
-              | python3 .github/scripts/check-commit-title.py
+              | python3 .github/scripts/check-commit-title.py ${3:-}
+          }
+          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
+            check_compare "$BASE_SHA" "$HEAD_SHA"
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ -n "$PUSH_BASE_SHA" ]; then
+            # The whole batch: every commit since the last green anchor,
+            # including those whose own run was superseded while pending.
+            # --warn-only: these titles are already on main, and a red gate would
+            # hold the commit (and dev) back over a mistake nobody can retitle.
+            check_compare "$PUSH_BASE_SHA" "$GITHUB_SHA" --warn-only
+          elif [ "$GITHUB_EVENT_NAME" = push ]; then
+            # No anchor yet (the first push after the gate moved to main): the
+            # commits this run can attribute are the push's own.
+            python3 -c 'import json,os; e=json.load(open(os.environ["GITHUB_EVENT_PATH"])); [print(c["message"].split("\n")[0]) for c in e.get("commits") or []]' \
+              | python3 .github/scripts/check-commit-title.py --warn-only
           else
             api "pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
             python3 .github/scripts/check-commit-title.py --pull-request "$RUNNER_TEMP/pull.json"
           fi
+
+  # The batch anchor for a main push. `scope` diffs a push run from the commit
+  # this ref names, so every commit that landed since the gate last passed stays
+  # in some run's coverage — including the commits of a run that a newer push
+  # superseded while it was pending. Only a main push whose `CI required`
+  # passed moves the ref; a red run leaves it, and the next run covers both.
+  # Not in `required`'s `needs`: the anchor records the gate's verdict and must
+  # never decide it. `contents: write` is only for the ref update, and the job
+  # never touches the tree it checked out.
+  mark-green:
+    name: Mark main green
+    needs: required
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.required.result == 'success' }}
+    permissions:
+      contents: write
+    # Seconds-long job on the same pool as the aggregators. Hosted runners'
+    # queue wait would hold the run's concurrency group — and with it the next
+    # batch — behind a machine this does not need.
+    runs-on: ${{ fromJSON((github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","cheese-ci"]' || '["ubuntu-latest"]') }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Point main-green at this commit
+        # A plain push, not a force: this ref only moves forward along main, and
+        # a push the server refuses (a rewritten main) leaves the anchor where
+        # it was — a wider diff, never a hidden commit.
+        #
+        # A refusal here must not fail the run. The deploy gate reads this run's
+        # conclusion, so a network error on this one push would hold a commit
+        # off dev — while an anchor that did not move is safe by construction:
+        # the next run diffs from the older commit, which covers more, never
+        # less. It is loud instead, so a stuck anchor gets noticed.
+        run: |
+          if git push origin "HEAD:refs/heads/main-green"; then
+            exit 0
+          fi
+          echo "::warning::could not move refs/heads/main-green to $GITHUB_SHA; it still points at the previous anchor, so the next main run diffs from there and covers this batch too."
+          echo "Main green anchor not moved: the next run covers this batch as well." >> "$GITHUB_STEP_SUMMARY"
 
   # Merge queue only: fails `CI required` on the entry's sha as soon as any job
   # of this run fails, instead of after the slowest suite, so the queue drops
