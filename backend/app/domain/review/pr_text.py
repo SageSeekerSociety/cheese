@@ -16,40 +16,24 @@ from app.domain.review import commit_message
 from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
 
-#: How much of a task's title a trailer carries. Titles run to 300 characters and
-#: a commit message is read in an 80-column terminal; the link in front of it is
-#: what identifies the work, the title is there to be recognised.
-MAX_TASK_TITLE = 120
-
 #: The width of `AcceptCard.change_subject`, the bound every filed subject
 #: already meets at the API.
 MAX_FALLBACK = 255
 
+#: The trailers this module writes. A card body that ends with any of them —
+#: an agent pasting its own commit's trailers — has them dropped, so a credit
+#: is written once and only by `pr_trailers`.
+_OWN_TRAILERS = frozenset(
+    {"co-authored-by", "reported-by", "reviewed-by", "requested-by", "link"}
+)
+_TRAILER_LINE = re.compile(r"^([A-Za-z][A-Za-z0-9-]*):\s+\S")
 
-def task_trailer(topic: Topic, item: identity.WorkItem) -> str:
-    """One `Cheese-Task:` line — a URL that opens the task, and its title.
 
-    The URL is the task's own page, under its room
+def task_link(topic: Topic, item: identity.WorkItem) -> str:
+    """The address of one task: its own page, under its room
     (`/projects/<p>/topics/<room>/tasks/<task>`), the page clicking the task
-    opens. That is the whole difference from `Cheese-Card`, which stays a bare
-    id — an accept card has no route, so a URL built from one would look
-    clickable and open nothing.
-
-    The id is still greppable out of permanent history: `/tasks/` is a fixed
-    prefix in front of it, so `grep -o 'tasks/[0-9a-f-]*'` gets it.
-
-    Squashed onto one line, always. A trailer block ends at the first line that
-    is not a trailer, so a newline inside a task's title would not merely look
-    untidy: it would cut every trailer after it out of the block git and GitHub
-    read, and a title chosen to contain `Requested-by: someone` would forge one.
-    Titles come from whoever dispatched the work, so this is the boundary where
-    that stops being possible."""
-    title = " ".join(item.title.split())
-    if len(title) > MAX_TASK_TITLE:
-        title = f"{title[: MAX_TASK_TITLE - 1]}…"
-    # A URL has no spaces in it, so one split takes the line apart.
-    where = f"{_room_url(topic)}/tasks/{item.task_id}"
-    return f"Cheese-Task: {where} {title}".rstrip()
+    opens."""
+    return f"{_room_url(topic)}/tasks/{item.task_id}"
 
 
 def fallback_subject(topic: Topic) -> str:
@@ -88,60 +72,61 @@ def pr_trailers(
     topic: Topic,
     decided_by: str,
     who: identity.Attribution | None = None,
-    card: AcceptCard | None = None,
+    kept: tuple[str, ...] = (),
 ) -> str:
-    """Render contribution roles and delivery links as one Git trailer block.
+    """The trailer block: credits, then where the change came from.
 
-    Reporters and code contributors come only from explicitly declared tasks;
-    ownership does not imply either role. Agent and task links identify the work."""
-    lines = []
-    requester = (who.handle if who else None) or topic.created_by
-    # `Name <email>`, not a bare handle (#189). A handle names a string; an
-    # address names a person — GitHub renders an avatar and a link for one it
-    # recognises, and `git log --author` / `shortlog` can group by it. Somebody
-    # who never connected GitHub gets the platform's own domain rather than a
-    # fabricated GitHub address (`identity.platform_identity`): a degrade that
-    # admits itself beats one that looks linkable and points at nobody.
-    if requester:
-        asker = identity.as_trailer(requester, who.requester if who else None)
-        lines.append(f"Requested-by: {asker}")
+    Only keys git and GitHub already know. `Co-authored-by` is the one GitHub
+    shows (an avatar, a contribution); `Reported-by` and `Reviewed-by` are the
+    kernel's; `Link` is the kernel's line for where a change was discussed. The
+    commit's author is not here: GitHub takes it from whoever opened the PR.
+
+    `kept` are trailer lines from the card body this module does not write
+    (`Fixes-feedback:`), put in the same block so git reads them."""
+    lines = list(kept)
     for reporter in who.reporters if who else ():
         lines.append(f"Reported-by: {reporter}")
     if decided_by:
-        # Empty when the PR is being OPENED (pr_publish): nobody has accepted
-        # yet, and `Reviewed-by:` with a blank or a merely-routed name would
-        # claim a review that has not happened.
+        # Empty when the PR is being OPENED: nobody has accepted yet, and
+        # `Reviewed-by:` with a blank or a merely-routed name would claim a
+        # review that has not happened.
         seen_it = identity.as_trailer(decided_by, who.reviewer if who else None)
         lines.append(f"Reviewed-by: {seen_it}")
-    # The ROOM is a URL (#189): a uuid in `git log` is a dead end unless the
-    # reader already knows this platform's routes, and this line exists so that
-    # somebody auditing a commit can get to where the change was made.
-    room_title = " ".join((topic.title or "").split())
-    lines.append(f"Cheese-Topic: {_room_url(topic)} {room_title}".rstrip())
-    if card is not None:
-        # The CARD stays a bare id, deliberately. There is no route that opens an
-        # accept card: `/tasks/<id>` under the room takes a TASK id, so hanging
-        # the card's id off it would produce a link that looks clickable and
-        # opens nothing — worse than an id, because an
-        # id is honestly a lookup key while a dead link is a claim. Making it a
-        # URL is a frontend change (a deep link that resolves an accept card),
-        # not a string change here.
-        lines.append(f"Cheese-Card: {card.id}")
-    if who and who.author:
-        lines.append(f"Cheese-Agent: {who.author.name}")
-    lines.extend(task_trailer(topic, item) for item in (who.tasks if who else ()))
+    tasks = who.tasks if who else ()
+    if tasks:
+        lines.extend(f"Link: {task_link(topic, item)}" for item in tasks)
+    else:
+        lines.append(f"Link: {_room_url(topic)}")
     coauthors = who.coauthors if who else ()
-    credited = [line for line in map(identity.coauthored_by, coauthors) if line]
-    # ONE block, no blank line before the co-authors. There used to be one, with
-    # a comment claiming git wanted it; git wants the opposite. A blank line ENDS
-    # a trailer block, and `git interpret-trailers --parse` reads only the LAST
-    # one — so the separator did not group these trailers, it threw away every
-    # trailer above it: on a change with a co-author, git saw `Co-authored-by`
-    # and nothing else. Nothing caught it because the tests asked whether the
-    # text contained the line, and it did; only git disagreed — which is why the
-    # regression for this runs `git interpret-trailers` for real.
-    lines.extend(credited)
+    # ONE block, no blank line before the co-authors. A blank line ENDS a
+    # trailer block, and `git interpret-trailers --parse` reads only the LAST
+    # one, so a separator would throw away every trailer above it.
+    lines.extend(line for line in map(identity.coauthored_by, coauthors) if line)
     return "\n".join(lines)
+
+
+def _written_here(line: str) -> bool:
+    found = _TRAILER_LINE.match(line)
+    key = found.group(1).lower() if found else ""
+    # `Cheese-*` is what this module used to write; a body copied from an
+    # older commit still carries it.
+    return key in _OWN_TRAILERS or key.startswith("cheese-")
+
+
+def split_trailers(body: str) -> tuple[str, tuple[str, ...]]:
+    """`body` without its closing trailer paragraph, and the lines of that
+    paragraph this module does not write itself.
+
+    A paragraph is a trailer paragraph when every line in it is `Key: value`,
+    the rule git applies. Lines with a key `pr_trailers` writes are dropped:
+    those credits are decided by the platform, and a pasted copy would repeat
+    them above the real block."""
+    head, sep, last = body.rstrip().rpartition("\n\n")
+    lines = [line.strip() for line in last.splitlines() if line.strip()]
+    if not lines or not all(_TRAILER_LINE.match(line) for line in lines):
+        return body, ()
+    kept = tuple(line for line in lines if not _written_here(line))
+    return (head if sep else "").rstrip(), kept
 
 
 #: The line that starts an independent review's result in a card body. The seat
@@ -173,9 +158,9 @@ def pr_body(
     and useless to a reviewer, who can see that from the PR's own metadata. The
     body a reviewer needs is the WHY, which is why `change_body` exists."""
     body = (getattr(card, "change_body", None) or "").strip() if card else ""
-    body = without_review_block(body)
+    body, kept = split_trailers(without_review_block(body))
     parts = [body] if body else []
-    parts.append(pr_trailers(topic, decided_by, who, card))
+    parts.append(pr_trailers(topic, decided_by, who, kept))
     return "\n\n".join(parts)
 
 
@@ -224,18 +209,3 @@ def merge_commit_message(
     in `merge_commit_title`; repeating it here would put it in the commit
     twice."""
     return pr_body(topic, decided_by, card, who)
-
-
-def local_merge_commit_message(
-    topic: Topic,
-    decided_by: str,
-    card: AcceptCard | None = None,
-    who: identity.Attribution | None = None,
-) -> str:
-    """The WHOLE commit message for the platform forge's squash (#363): subject,
-    blank line, then the same body the GitHub lane writes. One string because the
-    local merge takes one `-m`, and no `(#N)` because there is no PR whose number
-    it could truthfully cite."""
-    return "\n\n".join(
-        [change_subject(card, topic), pr_body(topic, decided_by, card, who)]
-    )

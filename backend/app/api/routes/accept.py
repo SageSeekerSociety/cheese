@@ -250,7 +250,7 @@ async def describe_card(
     递卡那一刻的快照——#735 就是这么在 `1c298199a` 里留下一句与事实不符的
     历史陈述的。
 
-    署名（`Cheese-Task:`）没有这样的入口，而且不该有：见
+    署名（`Link:` 与各条署名）没有这样的入口，而且不该有：见
     `AcceptService.redescribe` 的 docstring。
     """
     actor, _room, task_id = await _task_actor(topic_id, db, resolver, writes=True)

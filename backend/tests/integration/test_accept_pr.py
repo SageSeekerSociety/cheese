@@ -559,6 +559,7 @@ def app_world(client, monkeypatch):
             title: str,
             body: str,
             draft: bool = False,
+            as_user_token: str | None = None,
         ) -> OpenedPR:
             if head in recorded["prs_by_head"]:
                 adopted = recorded["prs_by_head"][head]

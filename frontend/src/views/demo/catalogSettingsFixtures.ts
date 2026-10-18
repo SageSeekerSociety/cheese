@@ -4,9 +4,8 @@
  * 形状不是编的：就是那六件自己声明的 props，少一个键多一个键都在 `vue-tsc` 那里
  * 当场红（`bpRules` / `accountConn` 的返回类型引的是 `@/cx_types` 那两个接口）。
  * 值照抄 `views/ProjectSettingsView.vue` 那一层真实的
- * 传法 —— 成员名单来自项目成员、`attributionItems` 的三档文案来自
- * `composables/useProjectSettings.ts`（`跟随系统默认（开启/关闭）` 那一档里带着部署的
- * 默认值）、`merge_method` / `github_protection` 是 `GET /projects/{id}/branch-protection`
+ * 传法 —— 成员名单来自项目成员、`merge_method` / `github_protection` 是
+ * `GET /projects/{id}/branch-protection`
  * 带回来那两块只读附注。
  *
  * 为什么单独一份文件：`catalogFixtures.ts` 已经八百多行、`catalog.ts` 也八百多行，
@@ -84,13 +83,6 @@ export function forgeConn(over: Partial<ForgeConnection> = {}): ForgeConnection 
 export function callbackNotice(over: Partial<CallbackNotice> = {}): CallbackNotice {
   return { type: 'success', text: '已连接 GitHub 仓库。', ...over }
 }
-
-/** 署名三档；`跟随系统默认` 那一档的名字里带着部署的默认值，和页面算的一样。 */
-export const ATTRIBUTION_ITEMS = [
-  { title: '跟随系统默认（开启）', value: 'default' },
-  { title: '开启', value: 'on' },
-  { title: '关闭', value: 'off' },
-]
 
 /** 一个绑着的 GitHub 账号。`tokenExpires: null` = user token 不过期（不等于已过期）。 */
 export function accountConn(over: Partial<OAuthConnectionInfo> = {}): OAuthConnectionInfo {

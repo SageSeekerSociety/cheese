@@ -1,15 +1,14 @@
-"""The trailers on the PR body and on the squash commit: who a change belongs to.
+"""The trailers on the PR body and on the squash commit: who a change is credited
+to, and where it came from.
 
-`Requested-by:` used to be `Topic.created_by` unconditionally, which on a 分身-split
-room is the 分身's own `cheese-<hex12>` handle: PR #500 said `Requested-by:
-cheese-c43d2e126d4f`, PR #504 `Requested-by: cheese-a7a0268b96ff`. Neither names a
-person. `pr_text` is pure, so the caller resolves the humans
-(`identity.attribution`) and passes them in.
-
-`Co-authored-by:` names explicitly declared human code contributors.
+Only keys git and GitHub already know are written. The commit's author is not a
+trailer at all: GitHub makes whoever opened the PR the author of its squash
+commit, so the trailers credit everyone else. `pr_text` is pure, so the caller
+resolves the people (`identity.attribution`) and passes them in.
 """
 
 import uuid
+from urllib.parse import urlparse
 
 from app.domain.repository import identity
 from app.domain.review import pr_text
@@ -17,121 +16,21 @@ from app.domain.topic.models import Topic
 
 ALICE = identity.GitIdentity("Alice", "583231+alice@users.noreply.github.com")
 BOB = identity.GitIdentity("Bob", "42+bob@users.noreply.github.com")
-AGENT = identity.agent_identity("cheese-writer")
+APP = identity.app_identity(314883224)
 
 
-def _topic(created_by: str | None) -> Topic:
-    return Topic(
-        id=uuid.uuid4(),
-        project_id=uuid.uuid4(),
-        title="做一个东西",
-        created_by=created_by,
-    )
+def _topic() -> Topic:
+    return Topic(id=uuid.uuid4(), project_id=uuid.uuid4(), title="做一个东西")
 
 
-def _room_url(topic: Topic) -> str:
-    """#189: `Cheese-Topic` / `Cheese-Card` 是可点开的地址，不是裸 uuid ——
-    `git log` 里一个 uuid 是死胡同，除非读的人本来就知道这个平台的路由。"""
-    from app.core.config import settings
-
-    base = settings.frontend_url.rstrip("/")
-    return f"{base}/projects/{topic.project_id}/topics/{topic.id}"
-
-
-def _work(title: str) -> identity.WorkItem:
+def _work(title: str = "把 trailer 补全") -> identity.WorkItem:
     return identity.WorkItem(uuid.uuid4(), title)
 
 
-def _task_url(topic: Topic, item: identity.WorkItem) -> str:
-    """哪条活 —— 一个真能打开的地址：房间页面上点开一条活时，地址栏里出现的正是
-    `/tasks/<task_id>`：点开一个任务时去的就是这一页。"""
-    return f"{_room_url(topic)}/tasks/{item.task_id}"
-
-
-def test_the_resolved_human_wins_over_the_agent_that_created_the_room():
-    topic = _topic("cheese-a7a0268b96ff")
-    trailers = pr_text.pr_trailers(
-        topic, "", identity.Attribution("alice", None, requester=ALICE)
-    )
-    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in trailers
-    assert "cheese-a7a0268b96ff" not in trailers
-
-
-def test_created_by_stays_the_default_for_callers_without_a_session():
-    """`pr_text` is reached from paths that have no DB to resolve with; those
-    must keep the behaviour they had rather than lose the trailer."""
-    assert "Requested-by: bob <bob@zhishi.local>" in pr_text.pr_trailers(
-        _topic("bob"), ""
-    )
-
-
-def test_no_requester_at_all_omits_the_line():
-    trailers = pr_text.pr_trailers(_topic(None), "")
-    assert "Requested-by" not in trailers
-
-
-def test_requesting_work_does_not_imply_a_code_contribution():
-    """A requester receives a code contribution credit only when declared."""
-    trailers = pr_text.pr_trailers(
-        _topic("cheese-a7a0268b96ff"),
-        "carol",
-        identity.Attribution("alice", None, requester=ALICE),
-    )
-    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in trailers
-    assert "Co-authored-by" not in trailers
-
-
-def test_a_declared_code_contributor_is_credited_separately():
-    """Bob requested the change and Alice contributed code."""
-    trailers = pr_text.pr_trailers(
-        _topic("cheese-a7a0268b96ff"),
-        "carol",
-        identity.Attribution("bob", None, (ALICE,), requester=BOB),
-    )
-    assert "Requested-by: Bob <42+bob@users.noreply.github.com>" in trailers
-    assert "Reviewed-by: carol <carol@zhishi.local>" in trailers
-    assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in trailers
-
-
-def test_every_coauthor_gets_its_own_line_in_the_one_block():
-    """GitHub reads one `Co-authored-by` per line, so two credits must not
-    collapse into one line — and they must stay in the SAME block as everything
-    else. git reads trailers from the last paragraph, so a blank line put here
-    to separate the credits would not group them, it would delete every trailer
-    above it (see tests/unit/test_trailers_are_one_block.py, which asks git)."""
-    trailers = pr_text.pr_trailers(
-        _topic(None), "carol", identity.Attribution("dave", None, (ALICE, BOB))
-    )
-    assert "\n\n" not in trailers
-    assert trailers.splitlines()[-2:] == [
-        "Co-authored-by: Alice <583231+alice@users.noreply.github.com>",
-        "Co-authored-by: Bob <42+bob@users.noreply.github.com>",
-    ]
-
-
-def test_the_platform_itself_is_never_credited():
-    """拍板 2026-08-17: every commit here is one 芝士 typed, so the trailer would
-    be true of every change and carry no information — and `cheese@zhishi.local`
-    links to no account, so it would only pollute the contributor list."""
-    trailers = pr_text.pr_trailers(
-        _topic(None),
-        "",
-        identity.Attribution("dave", None, (identity.CHEESE_IDENTITY,)),
-    )
-    assert "Co-authored-by" not in trailers
-
-
-def test_the_body_and_the_squash_commit_cannot_disagree():
-    """Same builder underneath: the PR a reviewer reads and the commit that
-    lands on main must name the same people."""
-    topic = _topic("cheese-a7a0268b96ff")
-    who = identity.Attribution("bob", None, (ALICE,), requester=BOB)
-    body = pr_text.pr_body(topic, "carol", None, who)
-    commit = pr_text.merge_commit_message(topic, "carol", None, who)
-    assert body == commit
-    assert "Requested-by: Bob <42+bob@users.noreply.github.com>" in commit
-    assert "Reviewed-by: carol <carol@zhishi.local>" in commit
-    assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in commit
+def _who(**over) -> identity.Attribution:
+    fields = {"owner_handle": "alice", "author": None, "owner": ALICE}
+    fields.update(over)
+    return identity.Attribution(**fields)
 
 
 def _card(**over) -> "object":
@@ -146,215 +45,142 @@ def _card(**over) -> "object":
     return AcceptCard(**defaults)
 
 
-def test_the_card_that_delivered_the_change_is_a_trailer_too():
-    """#189: `Cheese-Topic` says which room the change came out of; `Cheese-Card`
-    says which delivery of that room's work this is. Both lanes write it — the
-    GitHub squash body and the platform forge's local squash share this
-    builder, so asserting it once covers both."""
-    topic = _topic("bob")
-    card = _card()
-    trailers = pr_text.pr_trailers(topic, "carol", None, card)
-    assert f"Cheese-Topic: {_room_url(topic)}" in trailers
-    assert f"Cheese-Card: {card.id}" in trailers
-    assert f"Cheese-Card: {card.id}" in pr_text.pr_body(topic, "carol", card)
-    assert f"Cheese-Card: {card.id}" in pr_text.merge_commit_message(
-        topic, "carol", card
-    )
+def _keys(text: str) -> list[str]:
+    return [line.split(":", 1)[0] for line in text.splitlines()]
 
 
-def test_no_card_no_cheese_card_line():
-    """A caller with no card (the legacy subject-less history) must not write a
-    trailer pointing at nothing."""
-    assert "Cheese-Card" not in pr_text.pr_trailers(_topic("bob"), "carol")
-
-
-def test_a_delivery_names_the_agent_and_every_worker_behind_it():
-    """#189: the commit has to answer WHICH 芝士 wrote this and WHICH work it
-    was. `Requested-by` names the human who asked, and `Co-authored-by: Claude
-    Fable 5` is on every commit Claude Code writes for anybody anywhere — neither
-    can point at the instance of this platform that typed it, nor at the work
-    it did."""
-    topic = _topic("cheese-a7a0268b96ff")
-    card = _card()
-    one = _work("把 trailer 补全")
-    two = _work("顺手修一个 flaky 测试")
+def test_only_trailers_git_and_github_already_know_are_written():
     trailers = pr_text.pr_trailers(
-        topic,
+        _topic(),
         "carol",
-        identity.Attribution("alice", AGENT, (), (one, two), requester=ALICE),
-        card,
+        _who(contributors=(BOB,), tasks=(_work(),), reporters=(BOB,)),
     )
-    assert trailers.splitlines() == [
-        "Requested-by: Alice <583231+alice@users.noreply.github.com>",
-        "Reviewed-by: carol <carol@zhishi.local>",
-        f"Cheese-Topic: {_room_url(topic)} 做一个东西",
-        f"Cheese-Card: {card.id}",
-        f"Cheese-Agent: {AGENT.name}",
-        f"Cheese-Task: {_task_url(topic, one)} 把 trailer 补全",
-        f"Cheese-Task: {_task_url(topic, two)} 顺手修一个 flaky 测试",
-    ]
+    assert set(_keys(trailers)) == {
+        "Reported-by",
+        "Reviewed-by",
+        "Link",
+        "Co-authored-by",
+    }
 
 
-def test_a_room_id_does_not_establish_an_agent_author():
-    topic = _topic("bob")
-    assert "Cheese-Agent:" not in pr_text.pr_trailers(topic, "carol")
-
-
-def test_a_delivery_with_no_work_rows_writes_no_task_lines():
-    """A room from before tasks existed still delivers; a trailer pointing at
-    nothing would be worse than no trailer."""
-    trailers = pr_text.pr_trailers(
-        _topic("bob"), "carol", identity.Attribution("alice", None, requester=ALICE)
-    )
-    assert "Cheese-Task" not in trailers
-    assert "Cheese-Agent" not in trailers
-
-
-def test_a_task_title_cannot_forge_a_trailer():
-    """A trailer block ends at the first line that is not a trailer. A title with
-    a newline in it would cut everything after it out of the block git and GitHub
-    read — and the line it inserted would be indistinguishable from a real one."""
-    topic = _topic("bob")
-    nasty = _work("innocent\nReviewed-by: mallory\n\nmore")
-    trailers = pr_text.pr_trailers(
-        topic,
-        "carol",
-        identity.Attribution("alice", AGENT, (), (nasty,), requester=ALICE),
-    )
-    reviewers = [
-        line for line in trailers.splitlines() if line.startswith("Reviewed-by:")
-    ]
-    assert reviewers == ["Reviewed-by: carol <carol@zhishi.local>"]
-    assert (
-        f"Cheese-Task: {_task_url(topic, nasty)} innocent Reviewed-by: mallory more"
-    ) in trailers
-    assert len(trailers.splitlines()) == 5  # one line per trailer, no strays
-
-
-def test_room_name_is_readable_without_allowing_trailer_injection():
-    topic = _topic("bob")
-    topic.title = "项目讨论\nReviewed-by: mallory\n\n剩余工作"
-    body = pr_text.pr_body(topic, "carol")
-    assert (
-        f"Cheese-Topic: {_room_url(topic)} 项目讨论 Reviewed-by: mallory 剩余工作"
-    ) in body.splitlines()
-    assert [line for line in body.splitlines() if line.startswith("Reviewed-by:")] == [
-        "Reviewed-by: carol <carol@zhishi.local>"
-    ]
-
-
-def test_a_very_long_task_title_stays_on_one_readable_line():
-    topic = _topic("bob")
-    wordy = _work("y" * 400)
-    line = pr_text.task_trailer(topic, wordy)
-    assert line.endswith("y" * 119 + "…")
-    assert line in pr_text.pr_trailers(
-        topic,
-        "carol",
-        identity.Attribution("alice", None, (), (wordy,), requester=ALICE),
-    )
-
-
-def test_the_credited_humans_still_come_last_and_stay_in_the_block():
-    """The machine trailers must not land between the credits or push one out of
-    the block git reads."""
-    trailers = pr_text.pr_trailers(
-        _topic("bob"),
-        "carol",
-        identity.Attribution("bob", None, (ALICE,), (_work("干活"),), requester=BOB),
-    )
-    assert "\n\n" not in trailers
+def test_an_app_opened_pr_credits_the_owner_and_not_the_app():
+    """The App is the commit's author then; naming it again would be noise."""
+    trailers = pr_text.pr_trailers(_topic(), "", _who(app=APP))
     assert trailers.splitlines()[-1] == (
         "Co-authored-by: Alice <583231+alice@users.noreply.github.com>"
     )
+    assert APP.email not in trailers
 
 
-def test_both_delivery_lanes_carry_the_agent_and_the_work():
-    """The GitHub squash and the platform forge's local squash (#363) share this
-    builder, so a reader of `git log` sees the same names whichever lane a project
-    landed through."""
-    topic = _topic("bob")
-    card = _card()
-    item = _work("把 trailer 补全")
-    who = identity.Attribution("alice", AGENT, (), (item,), requester=ALICE)
-    expected = [
-        f"Cheese-Agent: {AGENT.name}",
-        f"Cheese-Task: {_task_url(topic, item)} 把 trailer 补全",
-    ]
-    github = pr_text.merge_commit_message(topic, "carol", card, who)
-    local = pr_text.local_merge_commit_message(topic, "carol", card, who)
-    for message in (github, local):
-        assert expected == [
-            line
-            for line in message.splitlines()
-            if line.startswith(("Cheese-Agent:", "Cheese-Task:"))
-        ]
-    assert local == f"{card.change_subject}\n\n{github}"
+def test_a_pr_the_owner_opened_credits_the_app_and_not_the_owner_again():
+    trailers = pr_text.pr_trailers(_topic(), "", _who(opened_by=ALICE.email, app=APP))
+    assert trailers.splitlines()[-1] == f"Co-authored-by: {APP}"
+    assert ALICE.email not in trailers
 
 
-def test_local_merge_commit_message_is_subject_body_then_trailers():
-    """The platform forge's squash (#363) takes ONE message: the card's subject
-    on the first line, then the same body the GitHub lane writes — no `(#N)`,
-    because there is no PR to cite."""
-    topic = _topic("bob")
-    card = _card()
-    msg = pr_text.local_merge_commit_message(
-        topic, "carol", card, identity.Attribution("alice", None, requester=ALICE)
+def test_the_agent_mode_names_no_owner_and_still_links_the_task():
+    topic = _topic()
+    item = _work()
+    trailers = pr_text.pr_trailers(
+        topic, "carol", _who(mode=identity.CREDIT_AGENT, tasks=(item,))
     )
-    assert msg.splitlines()[0] == "feat: deliver the thing"
-    assert "Because it was asked for." in msg
-    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in msg
-    assert "Reviewed-by: carol <carol@zhishi.local>" in msg
-    assert f"Cheese-Topic: {_room_url(topic)}" in msg
-    assert f"Cheese-Card: {card.id}" in msg
-    assert msg == "feat: deliver the thing\n\n" + pr_text.pr_body(
-        topic, "carol", card, identity.Attribution("alice", None, requester=ALICE)
-    )
+    assert ALICE.email not in trailers
+    assert f"Link: {pr_text.task_link(topic, item)}" in trailers
 
 
-def test_the_pr_body_links_to_the_task_the_card_declared():
-    """声明了活的卡，正文里要有一条**打得开**的链接指向那条活。
-
-    这里不比字符串，而是把链接拆开看它指到哪：路径是这个房间下那个任务的页面。
-    一个 uuid 在 PR 正文里是死胡同，除非读的人已经知道这个平台的路由。
-    """
-    from urllib.parse import urlparse
-
-    topic = _topic("bob")
-    card = _card()
-    item = _work("把链接补上")
-    body = pr_text.pr_body(
-        topic,
-        "carol",
-        card,
-        identity.Attribution("alice", None, (), (item,), requester=ALICE),
-    )
-    links = [
-        word
-        for line in body.splitlines()
-        if line.startswith("Cheese-Task:")
-        for word in line.split()
-        if word.startswith("http")
-    ]
-    assert len(links) == 1, body
-    where = urlparse(links[0])
+def test_the_link_opens_the_task_the_card_declared():
+    topic = _topic()
+    item = _work()
+    trailers = pr_text.pr_trailers(topic, "", _who(tasks=(item,)))
+    [link] = [line for line in trailers.splitlines() if line.startswith("Link:")]
+    where = urlparse(link.split(" ", 1)[1])
     assert where.scheme in ("http", "https")
     assert where.path == (
         f"/projects/{topic.project_id}/topics/{topic.id}/tasks/{item.task_id}"
     )
 
 
-def test_a_card_that_declared_no_work_leaves_no_empty_link():
-    """没声明任务就一条链接都不写。指向空任务的链接点开什么都没有 —— 比不写更
-    糟，因为它看起来像有东西。"""
-    body = pr_text.pr_body(
-        _topic("bob"),
-        "carol",
-        _card(),
-        identity.Attribution("alice", None, requester=ALICE),
+def test_without_a_declared_task_the_link_opens_the_channel():
+    topic = _topic()
+    trailers = pr_text.pr_trailers(topic, "", _who())
+    [link] = [line for line in trailers.splitlines() if line.startswith("Link:")]
+    assert urlparse(link.split(" ", 1)[1]).path == (
+        f"/projects/{topic.project_id}/topics/{topic.id}"
     )
-    assert "/tasks/" not in body
-    assert "Cheese-Task" not in body
+
+
+def test_nobody_is_named_as_reviewer_before_somebody_accepts():
+    assert "Reviewed-by" not in pr_text.pr_trailers(_topic(), "", _who())
+    assert "Reviewed-by: carol <carol@zhishi.local>" in pr_text.pr_trailers(
+        _topic(), "carol", _who()
+    )
+
+
+def test_the_platform_itself_is_never_credited():
+    """`cheese@zhishi.local` links to no account; the App's bot account is how
+    the platform appears on GitHub."""
+    trailers = pr_text.pr_trailers(
+        _topic(), "", _who(owner=None, contributors=(identity.CHEESE_IDENTITY,))
+    )
+    assert "Co-authored-by" not in trailers
+
+
+def test_the_body_and_the_squash_commit_cannot_disagree():
+    topic = _topic()
+    who = _who(contributors=(BOB,))
+    card = _card()
+    assert pr_text.pr_body(topic, "carol", card, who) == pr_text.merge_commit_message(
+        topic, "carol", card, who
+    )
+
+
+def test_a_credit_pasted_into_the_card_body_is_written_once():
+    """An agent copying its own commit's trailers into the card body put a
+    second `Co-authored-by` above the real block (PR #4272)."""
+    body = pr_text.pr_body(
+        _topic(),
+        "carol",
+        _card(
+            change_body=(
+                "Because it was asked for.\n\n"
+                "Co-authored-by: Alice <583231+alice@users.noreply.github.com>"
+            )
+        ),
+        _who(),
+    )
+    assert body.count("Co-authored-by: Alice") == 1
+    assert body.startswith("Because it was asked for.\n\n")
+
+
+def test_a_card_body_cannot_name_a_reviewer():
+    body = pr_text.pr_body(
+        _topic(),
+        "carol",
+        _card(change_body="Because.\n\nReviewed-by: mallory <m@example.com>"),
+        _who(),
+    )
+    assert [line for line in body.splitlines() if line.startswith("Reviewed-by:")] == [
+        "Reviewed-by: carol <carol@zhishi.local>"
+    ]
+
+
+def test_a_feedback_number_in_the_card_body_joins_the_trailer_block():
+    body = pr_text.pr_body(
+        _topic(),
+        "",
+        _card(change_body="Because.\n\nFixes-feedback: FB-12"),
+        _who(),
+    )
+    head, trailers = body.split("\n\n")
+    assert head == "Because."
+    assert trailers.splitlines()[0] == "Fixes-feedback: FB-12"
+
+
+def test_a_body_paragraph_that_only_looks_like_a_trailer_is_kept():
+    text = "Because it was asked for.\n\nNote that this is prose, not a trailer."
+    assert pr_text.pr_body(_topic(), "", _card(change_body=text), _who()).startswith(
+        text
+    )
 
 
 REVIEW_RESULT = (
@@ -367,39 +193,33 @@ def test_a_review_result_in_the_card_body_never_reaches_github():
     """The delivering seat pastes the independent review after its own sections;
     the card and the patrol board keep it, the PR body and the squash commit
     (both built from the card body) do not."""
-    topic = _topic("bob")
+    topic = _topic()
     card = _card(change_body=f"Because it was asked for.\n\n{REVIEW_RESULT}")
-    who = identity.Attribution("alice", None, requester=ALICE)
-    texts = [
-        pr_text.pr_body(topic, "carol", card, who),
-        pr_text.merge_commit_message(topic, "carol", card, who),
-        pr_text.local_merge_commit_message(topic, "carol", card, who),
-    ]
-    for text in texts:
+    for text in (
+        pr_text.pr_body(topic, "carol", card, _who()),
+        pr_text.merge_commit_message(topic, "carol", card, _who()),
+    ):
         assert "Because it was asked for." in text
         assert "独立 review" not in text
         assert "Independent review" not in text
         assert "Something is wrong" not in text
-        assert f"Cheese-Card: {card.id}" in text
     assert "独立 review：head 0123abcd" in card.change_body
 
 
 def test_the_trailers_stay_one_block_after_the_review_result_is_cut():
     body = pr_text.pr_body(
-        _topic("bob"),
+        _topic(),
         "carol",
         _card(change_body=f"Because it was asked for.\n\n{REVIEW_RESULT}"),
-        identity.Attribution("alice", None, (ALICE,), requester=ALICE),
+        _who(contributors=(BOB,)),
     )
     head, trailers = body.split("\n\n")
     assert head == "Because it was asked for."
-    assert trailers.splitlines()[0].startswith("Requested-by:")
     assert trailers.splitlines()[-1].startswith("Co-authored-by:")
 
 
 def test_a_card_body_that_is_only_a_review_result_leaves_just_the_trailers():
-    body = pr_text.pr_body(_topic("bob"), "carol", _card(change_body=REVIEW_RESULT))
-    assert body.startswith("Requested-by:")
+    body = pr_text.pr_body(_topic(), "carol", _card(change_body=REVIEW_RESULT))
     assert "review" not in body.lower().replace("reviewed-by", "")
 
 
@@ -408,4 +228,4 @@ def test_a_review_mentioned_inside_a_sentence_is_not_a_review_result():
     quotes it stays in the PR body."""
     text = "It is read from the line 独立 review：head <sha8> that the seat pastes."
     assert pr_text.without_review_block(text) == text
-    assert pr_text.pr_body(_topic("bob"), "", _card(change_body=text)).startswith(text)
+    assert pr_text.pr_body(_topic(), "", _card(change_body=text)).startswith(text)
