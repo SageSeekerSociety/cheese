@@ -1,5 +1,6 @@
 import type { MarketNodes, MarketPools, ProjectCredits } from '../cx_types'
 import type { Environment, ProjectComputeConfigs, TopicEnvironment } from '../types/compute'
+import type { CreditBudgetUpdate, ProjectCreditBudget } from '../types/creditBudgets'
 
 import { request } from './http'
 
@@ -18,6 +19,17 @@ export function getMarketNodes(): Promise<MarketNodes> {
 // 算力额度: the project's grant balance (unlimited when no grants).
 export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
   return request<ProjectCredits>(`/projects/${encodeURIComponent(projectId)}/credits`)
+}
+
+export function getProjectCreditBudget(projectId: string): Promise<ProjectCreditBudget> {
+  return request(`/projects/${encodeURIComponent(projectId)}/credit-budget`)
+}
+
+export function saveProjectCreditBudget(projectId: string, update: CreditBudgetUpdate): Promise<ProjectCreditBudget> {
+  return request(`/projects/${encodeURIComponent(projectId)}/credit-budget`, {
+    method: 'PUT',
+    body: JSON.stringify(update),
+  })
 }
 
 // ---- 题目匹配市场 (spec §13 阶段 6) ----
