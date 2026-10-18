@@ -247,7 +247,7 @@ async def open_pr_for_card(
     place = await PlaceResolver(session).resolve(topic_id)
     if place is not None:
         body = await pr_body_for(
-            session, client, place.room, card=card, opened_by=pr_opener(pr)
+            session, place.room, card=card, opened_by=pr_opener(pr)
         )
     # The PR very often already exists by now: the task's draft PR was opened
     # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
@@ -816,9 +816,7 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:
         client,
         pr,
         title=str(pr.get("title") or ""),
-        body=await pr_body_for(
-            session, client, room, task_id=task.id, opened_by=pr_opener(pr)
-        ),
+        body=await pr_body_for(session, room, task_id=task.id, opened_by=pr_opener(pr)),
     )
     logger.info(
         "draft PR #%s opened for task %s (%s)",

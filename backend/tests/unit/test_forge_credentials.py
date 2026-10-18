@@ -208,3 +208,60 @@ def test_crediting_the_owner_does_not_replace_the_agent_author(
     assert committed.startswith("Agent <agent@example.invalid>\n")
     assert committed.count("Co-authored-by: Owner") == int(enabled)
     assert committed.count("Co-authored-by: Contributor") == 1
+
+
+def test_each_task_checkout_commits_as_the_author_the_platform_names(
+    cli, monkeypatch, tmp_path
+):
+    """Two tasks of one project share a repository and have different authors;
+    an author in the environment would override both, so none is used."""
+
+    def git(cwd, *args):
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL"):
+        monkeypatch.delenv(key, raising=False)
+    # The project's repository is bare, as `cheese worktree` makes it.
+    seed, repo = tmp_path / "seed", tmp_path / "project.git"
+    subprocess.run(["git", "init", str(seed)], check=True, capture_output=True)
+    git(
+        seed,
+        "-c",
+        "user.name=x",
+        "-c",
+        "user.email=x@x",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "base",
+    )
+    subprocess.run(
+        ["git", "clone", "--bare", str(seed), str(repo)],
+        check=True,
+        capture_output=True,
+    )
+    first, second = tmp_path / "first", tmp_path / "second"
+    git(repo, "worktree", "add", "-b", "task/one", str(first))
+    git(repo, "worktree", "add", "-b", "task/two", str(second))
+
+    cli._commit_as(repo, first, {"author": "Alice <1+alice@users.noreply.github.com>"})
+    cli._commit_as(
+        repo,
+        second,
+        {"author": "cheesex-app[bot] <2+cheesex-app[bot]@users.noreply.github.com>"},
+    )
+    for where in (first, second):
+        (where / "work.txt").write_text("work\n")
+        git(where, "add", "work.txt")
+        git(where, "commit", "-m", "work")
+
+    assert git(first, "log", "-1", "--format=%an <%ae>") == (
+        "Alice <1+alice@users.noreply.github.com>"
+    )
+    assert git(second, "log", "-1", "--format=%an <%ae>") == (
+        "cheesex-app[bot] <2+cheesex-app[bot]@users.noreply.github.com>"
+    )
+    # The project's repository itself stays bare.
+    assert git(repo, "rev-parse", "--is-bare-repository") == "true"

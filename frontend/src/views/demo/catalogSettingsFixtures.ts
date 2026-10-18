@@ -18,8 +18,8 @@
  */
 import type { BranchProtection } from '@/branchProtection'
 import type { BranchProtectionLoadState } from '@/composables/useBranchProtection'
-import type { CallbackNotice, GithubAccountLoadState } from '@/composables/useProjectSettings'
-import type { ForgeConnection, OAuthConnectionInfo } from '@/cx_types'
+import type { CallbackNotice } from '@/composables/useProjectSettings'
+import type { ForgeConnection } from '@/cx_types'
 
 /** 一条规则本体。`github_protection` 默认是「没绑 GitHub / 查得到、没开保护」。 */
 export function bpRules(over: Partial<BranchProtection> = {}): BranchProtection {
@@ -82,43 +82,6 @@ export function forgeConn(over: Partial<ForgeConnection> = {}): ForgeConnection 
 /** 一条流程结果。仓库那条和账号那条各传各的。 */
 export function callbackNotice(over: Partial<CallbackNotice> = {}): CallbackNotice {
   return { type: 'success', text: '已连接 GitHub 仓库。', ...over }
-}
-
-/** 一个绑着的 GitHub 账号。`tokenExpires: null` = user token 不过期（不等于已过期）。 */
-export function accountConn(over: Partial<OAuthConnectionInfo> = {}): OAuthConnectionInfo {
-  return {
-    id: 1,
-    providerId: 'github_app',
-    providerName: 'GitHub',
-    providerUserId: '583231',
-    connectedAt: '2026-09-01T00:00:00Z',
-    login: 'octocat',
-    tokenExpires: null,
-    hasRefreshToken: true,
-    ...over,
-  }
-}
-
-/** 连接 GitHub 账号那一块吃的六样。 */
-export function accountProps(
-  over: {
-    state?: GithubAccountLoadState
-    loadError?: string | null
-    conn?: OAuthConnectionInfo | null
-    connecting?: boolean
-    disconnecting?: boolean
-    notice?: CallbackNotice | null
-  } = {}
-) {
-  return {
-    state: 'loaded' as GithubAccountLoadState,
-    loadError: null as string | null,
-    conn: null as OAuthConnectionInfo | null,
-    connecting: false,
-    disconnecting: false,
-    notice: null as CallbackNotice | null,
-    ...over,
-  }
 }
 
 /** 「归档项目」那一块和它的弹窗：项目名取自模型管理那一组的夹具里的一个真项目。 */

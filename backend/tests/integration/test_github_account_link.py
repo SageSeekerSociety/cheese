@@ -1,9 +1,9 @@
-"""Connect a human's own GitHub account via cheesex-app (#192, user-to-server).
+"""关联 GitHub: a signed-in person links their own GitHub account through
+cheesex-app's user authorization (#192, user-to-server).
 
-Only the parts that don't require a real GitHub OAuth exchange: auth gating,
-state verification, and the redirect shape. The token-exchange path itself
-is exercised at the unit level (app.core.github_install_state) and via
-GitHubProvider, which is shared with the "github" login provider.
+The exchange with GitHub is faked; the state, the redirect, the stored
+connection and its encryption are real. Signing in with GitHub, which comes
+back to the same callback, is `test_github_sign_in.py`.
 """
 
 import asyncio
@@ -41,7 +41,7 @@ def _bearer(token: str) -> dict:
 _LINK_SCOPE = "github_account_link"
 
 
-def _link_state(user_id: int, return_project_id: uuid.UUID | None = None) -> str:
+def _link_state(user_id: int, return_path: str | None = None) -> str:
     """A state the callback will actually accept — minted AND reserved.
 
     Minting alone stopped being enough at #222: the state is single-use now, so
@@ -57,7 +57,7 @@ def _link_state(user_id: int, return_project_id: uuid.UUID | None = None) -> str
     throwaway one. The autouse fixture in conftest spans test boundaries and
     cannot see either of these — nine tests here go red without this pair.
     """
-    minted = mint_account_link_state(user_id, return_project_id=return_project_id)
+    minted = mint_account_link_state(user_id, return_path=return_path)
     get_redis_client.cache_clear()
     asyncio.run(reserve(_LINK_SCOPE, minted.jti, ttl_s=ACCOUNT_LINK_TTL_S))
     get_redis_client.cache_clear()
@@ -79,9 +79,10 @@ def test_authorize_url_404s_when_provider_not_configured(client):
 
 
 def test_callback_garbage_state_redirects_to_root(client):
+    # Shaped like a link state (a JWT has dots), so it gets the link's answer.
     r = client.get(
         "/users/me/github-account/callback",
-        params={"code": "x", "state": "not-a-jwt"},
+        params={"code": "x", "state": "not.a.jwt"},
         follow_redirects=False,
     )
     assert r.status_code == 302
@@ -89,19 +90,29 @@ def test_callback_garbage_state_redirects_to_root(client):
     assert "reason=invalid_state" in r.headers["location"]
 
 
-def test_callback_returns_to_the_originating_project(client):
-    pid = uuid.uuid4()
-    state = _link_state(1, return_project_id=pid)
+def test_callback_returns_to_the_page_that_started_it(client):
+    page = f"/projects/{uuid.uuid4()}/settings/repository"
+    state = _link_state(1, return_path=page)
     # No oauth provider configured → the exchange itself fails, but the
-    # redirect must still land on the project that asked, not the root.
+    # redirect must still land on the page that asked, not the root.
     r = client.get(
         "/users/me/github-account/callback",
         params={"code": "x", "state": state},
         follow_redirects=False,
     )
     assert r.status_code == 302
-    assert f"/projects/{pid}/settings" in r.headers["location"]
+    assert r.headers["location"].startswith(f"{settings.frontend_url}{page}?")
     assert "github_account=error" in r.headers["location"]
+
+
+def test_a_return_path_off_the_site_is_never_followed(client):
+    state = _link_state(1, return_path="//evil.example/steal")
+    r = client.get(
+        "/users/me/github-account/callback",
+        params={"code": "x", "state": state},
+        follow_redirects=False,
+    )
+    assert r.headers["location"].startswith(f"{settings.frontend_url}/?")
 
 
 def _enable_github_app_provider(monkeypatch):

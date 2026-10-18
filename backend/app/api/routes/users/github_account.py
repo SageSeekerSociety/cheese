@@ -1,12 +1,11 @@
-"""Connect a human's own GitHub account via cheesex-app (#192, user-to-server).
+"""关联 GitHub: a signed-in person links their own GitHub account through
+cheesex-app's user authorization (#192, user-to-server).
 
-Distinct from both:
-- the classic "github" OAuth login provider (``oauth_github_client_id``) —
-  that authenticates/creates a *session*; this only records which GitHub
-  identity an already-logged-in user is.
-- the install flow in ``github_install.py`` — that connects a *project* to a
-  *repo*; this connects a *person* to their GitHub account (feeds #189
-  credit attribution).
+The App has one registered callback, and it is this route's: a sign-in with
+GitHub comes back here too, and is handed to ``oauth.sign_in_with_github`` by
+the shape of its state. Distinct from the install flow in
+``github_install.py`` — that connects a *project* to a *repo*; this connects a
+*person* to their GitHub account (the commit credit of #4291 reads it).
 
 Stored as a normal ``UserOAuthConnection`` row with ``provider_id ==
 "github_app"``, so the existing ``/users/{userId}/oauth/connections`` list/
@@ -14,7 +13,6 @@ unbind endpoints already cover viewing and removing it.
 """
 
 import logging
-import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
@@ -24,6 +22,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_return import back_in_app, started_in_app
+from app.api.deps import get_user_auth_service
 from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -39,12 +38,15 @@ from app.core.sentences import say
 from app.core.single_use_state import SingleUseUnavailableError, claim, reserve
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
+from app.domain.user.services import UserAuthService
+
+from . import oauth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/users/me/github-account", tags=["github"])
 
-_PROVIDER_ID = "github_app"
+_PROVIDER_ID = oauth.GITHUB_APP_PROVIDER
 # Account and repository installation flows reserve states in separate namespaces.
 _LINK_SCOPE = "github_account_link"
 
@@ -53,11 +55,8 @@ async def _oauth_service(db: AsyncSession = Depends(get_db)) -> OAuthService:
     return OAuthService(repo=OAuthConnectionRepository(session=db))
 
 
-def _link_redirect(
-    return_project_id: uuid.UUID | None, **query: str
-) -> RedirectResponse:
-    path = f"/projects/{return_project_id}/settings" if return_project_id else "/"
-    url = f"{settings.frontend_url}{path}"
+def _link_redirect(return_path: str | None, **query: str) -> RedirectResponse:
+    url = f"{settings.frontend_url}{return_path or '/'}"
     if query:
         url = f"{url}?{urlencode(query)}"
     return RedirectResponse(url, status_code=302)
@@ -66,13 +65,13 @@ def _link_redirect(
 @router.get("/authorize-url")
 async def get_github_account_authorize_url(
     request: Request,
-    return_project_id: uuid.UUID | None = Query(default=None),
+    return_path: str | None = Query(default=None),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     oauth_service: OAuthService = Depends(_oauth_service),
 ) -> dict:
     minted = mint_account_link_state(
         auth_user.user_id,
-        return_project_id=return_project_id,
+        return_path=return_path,
         in_app=started_in_app(request),
     )
     try:
@@ -91,10 +90,28 @@ async def get_github_account_authorize_url(
 
 @router.get("/callback")
 async def github_account_link_callback(
+    request: Request,
     code: str = Query(...),
-    state: str = Query(...),
+    # Optional so a callback without one is refused the way sign-in refuses it,
+    # not with a validation error.
+    state: str = Query(default=""),
+    session: AsyncSession = Depends(get_db),
     oauth_service: OAuthService = Depends(_oauth_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> RedirectResponse:
+    """cheesex-app's one callback. A link state minted by `authorize-url` is
+    关联 GitHub; any other state is a sign-in with GitHub (`oauth.py`)."""
+    # A sign-in state is a random token; a link state is a signed JWT, dots
+    # and all — expired or not, it is still a link and gets the link's answer.
+    if "." not in state:
+        return await oauth.sign_in_with_github(
+            request,
+            code=code,
+            state=state,
+            session=session,
+            oauth_service=oauth_service,
+            auth_service=auth_service,
+        )
     landing = await _link_account(code, state, oauth_service)
     claims = verify_account_link_state(state)
     return back_in_app(landing) if claims and claims.in_app else landing
@@ -121,7 +138,7 @@ async def _link_account(
             "github account link: cannot claim state uid=%s", claims.user_id
         )
         return _link_redirect(
-            claims.return_project_id, github_account="error", reason="internal_error"
+            claims.return_path, github_account="error", reason="internal_error"
         )
     if not first_use:
         # Either a forwarded link someone else clicked (#222's incident) or the
@@ -129,9 +146,9 @@ async def _link_account(
         # because from here the two are indistinguishable — and the copy for
         # invalid_state already says 「已失效或被用过了，请重新点一次」.
         #
-        # Deliberately NOT bounced to `claims.return_project_id`: whoever is
-        # holding a spent state may well be a stranger, and the project id is
-        # the one thing in these claims worth not handing them.
+        # Deliberately NOT bounced to `claims.return_path`: whoever is
+        # holding a spent state may well be a stranger, and the page it names
+        # is the one thing in these claims worth not handing them.
         logger.info("github account link: state already spent uid=%s", claims.user_id)
         return _link_redirect(None, github_account="error", reason="invalid_state")
 
@@ -150,7 +167,7 @@ async def _link_account(
             "github account link: GitHub unreachable uid=%s", claims.user_id
         )
         return _link_redirect(
-            claims.return_project_id,
+            claims.return_path,
             github_account="error",
             reason="github_unreachable",
         )
@@ -159,7 +176,7 @@ async def _link_account(
             "github account link: token exchange failed uid=%s", claims.user_id
         )
         return _link_redirect(
-            claims.return_project_id, github_account="error", reason="oauth_failed"
+            claims.return_path, github_account="error", reason="oauth_failed"
         )
 
     # Only set when this App has "Expire user authorization tokens" enabled
@@ -193,7 +210,7 @@ async def _link_account(
             existing["userId"],
         )
         return _link_redirect(
-            claims.return_project_id, github_account="error", reason="already_linked"
+            claims.return_path, github_account="error", reason="already_linked"
         )
     if existing:
         # Re-link refreshes the profile too. Without this the fix above would
@@ -230,7 +247,7 @@ async def _link_account(
         except ConflictError:
             # Linked by a concurrent flow since the lookup above.
             return _link_redirect(
-                claims.return_project_id,
+                claims.return_path,
                 github_account="error",
                 reason="already_linked",
             )
@@ -240,4 +257,4 @@ async def _link_account(
             user_info.id,
         )
 
-    return _link_redirect(claims.return_project_id, github_account="success")
+    return _link_redirect(claims.return_path, github_account="success")

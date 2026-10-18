@@ -63,7 +63,7 @@ describe('isGithubAccountTokenExpired', () => {
 
 describe('explainAccountLinkFailure', () => {
   it('turns every code the account callback can emit into a sentence', () => {
-    // The full set, read off github_account_link.py — a code missing here is a
+    // The full set, read off users/github_account.py — a code missing here is a
     // user staring at an English identifier (the #222 incident).
     for (const code of ['already_linked', 'oauth_failed', 'github_unreachable', 'invalid_state']) {
       const text = explainAccountLinkFailure(code)

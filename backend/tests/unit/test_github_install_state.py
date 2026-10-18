@@ -67,18 +67,26 @@ def test_install_state_does_not_validate_as_session_token_or_scoped_token():
     assert gis.verify_install_state(scoped) is None
 
 
-def test_account_link_state_roundtrip_with_and_without_return_project():
+def test_account_link_state_roundtrip_with_and_without_return_path():
     claims = gis.verify_account_link_state(gis.mint_account_link_state(42).state)
     assert claims is not None
     assert claims.user_id == 42
-    assert claims.return_project_id is None
+    assert claims.return_path is None
 
-    pid = uuid.uuid4()
     claims2 = gis.verify_account_link_state(
-        gis.mint_account_link_state(42, return_project_id=pid).state
+        gis.mint_account_link_state(42, return_path="/users/settings/security").state
     )
     assert claims2 is not None
-    assert claims2.return_project_id == pid
+    assert claims2.return_path == "/users/settings/security"
+
+
+def test_an_account_link_state_never_carries_a_way_off_the_site():
+    for path in ("//evil.example", "https://evil.example", "/ok?next=//x", "/a\\b"):
+        claims = gis.verify_account_link_state(
+            gis.mint_account_link_state(42, return_path=path).state
+        )
+        assert claims is not None
+        assert claims.return_path is None
 
 
 def test_account_link_state_expired_rejected():

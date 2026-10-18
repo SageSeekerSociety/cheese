@@ -191,29 +191,36 @@ async def moving_topics(
     inner: dict[uuid.UUID, uuid.UUID] = {
         thread_id: room_id for thread_id, room_id in threads.items() if room_id in mine
     }
-    found_underway, underway_rows = recall(db, ("underway_for_rooms", tuple(ids)))
-    if found_underway:
-        for task, _ in underway_rows:
-            if task.room_id in mine:
-                inner[task.id] = task.room_id
-
     # 刚起来、还开着、而且真送出去了的那些轮次。不是拿房间去 IN：这一份读的是很小
     # 的一张部分索引（`ix_agent_turns_open`），回来之后再在内存里挑出属于这些话题的。
-    arrived = await db.scalars(
-        select(AgentTurn.conversation_id).where(
-            AgentTurn.stopped_at.is_(None),
-            AgentTurn.delivered_at.is_not(None),
-            AgentTurn.started_at >= now - lookback,
+    # 落在活上的轮次顺手带回那件活的房间：库里这些开着的轮次是全站的，大多不在这
+    # 批房间里，另拿它们去 `tasks` 查一趟房间，次数就看别的项目此刻有没有在跑了。
+    arrived = (
+        await db.execute(
+            select(AgentTurn.conversation_id, Task.room_id)
+            .outerjoin(Task, Task.id == AgentTurn.conversation_id)
+            .where(
+                AgentTurn.stopped_at.is_(None),
+                AgentTurn.delivered_at.is_not(None),
+                AgentTurn.started_at >= now - lookback,
+            )
         )
-    )
-    active = set(running) | {c for c in arrived if c is not None}
-    unknown = [c for c in active if c not in mine and c not in inner]
-    if unknown or not found_underway:
-        stmt = select(Task.id, Task.room_id).where(Task.room_id.in_(ids))
-        if found_underway:
-            stmt = stmt.where(Task.id.in_(unknown))
+    ).all()
+    for conversation, room_id in arrived:
+        if conversation is not None and room_id in mine:
+            inner[conversation] = room_id
+    active = set(running) | {c for c, _ in arrived if c is not None}
+    # 只有这个进程手里在跑、库里还没那一行的，才另查它是不是这批房间的活。
+    unknown = [
+        c
+        for c in set(running) - {c for c, _ in arrived}
+        if c not in mine and c not in inner
+    ]
+    if unknown:
+        stmt = select(Task.id, Task.room_id).where(Task.id.in_(unknown))
         for task_id, room_id in (await db.execute(stmt)).all():
-            inner[task_id] = room_id
+            if room_id in mine:
+                inner[task_id] = room_id
     moving: set[uuid.UUID] = set()
     for conversation in active:
         if conversation in mine:
