@@ -64,6 +64,40 @@ def test_the_copies_say_the_real_table_names() -> None:
         assert bare.name == model.__tablename__, name
 
 
+#: 这两个包里任何一层的 `models` 都不许从 `project_material` 读回来。
+FORBIDDEN = ("app.domain.room_task.models", "app.domain.review.models")
+
+
+def _model_imports(source: str, module: str) -> list[str]:
+    """这个源文件 import 的、属于 `FORBIDDEN` 的模块。
+
+    三种写法都能把那条边加回来，三种都要认：
+    `from app.domain.room_task.models import Task`、
+    `from app.domain.room_task import models`、`import app.domain.room_task.models`。
+    ``module`` 是文件自己的模块名，相对 import 靠它折回绝对路径。
+    """
+    import ast
+
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = module.split(".")[: -node.level]
+                head = ".".join(base + (node.module.split(".") if node.module else []))
+            else:
+                head = node.module or ""
+            targets = [head, *(f"{head}.{alias.name}" for alias in node.names)]
+        elif isinstance(node, ast.Import):
+            targets = [alias.name for alias in node.names]
+        else:
+            continue
+        for target in targets:
+            if target in FORBIDDEN:
+                found.append(target)
+                break
+    return found
+
+
 def test_project_material_takes_their_rows_and_not_their_models() -> None:
     """裸表副本还回来不算还：模型 import 一旦加回去，那条环就回来了。
 
@@ -72,30 +106,36 @@ def test_project_material_takes_their_rows_and_not_their_models() -> None:
     已经还掉的那两条边只能在这里钉住——判据和 `counterpart` 那条一样：本包只许读
     `project_material_rows` 里的副本，不许 import 那两个包的 `models`。
     """
-    import ast
-
     root = Path(__file__).resolve().parents[2]
-    forbidden = ("app.domain.room_task.models", "app.domain.review.models")
     offenders: dict[str, list[str]] = {}
     for name in ("project_material.py", "project_material_rows.py"):
         source = (root / "app/domain" / name).read_text(encoding="utf-8")
-        module = f"app.domain.{name[:-3]}"
-        found = []
-        for node in ast.walk(ast.parse(source)):
-            if not isinstance(node, ast.ImportFrom):
-                continue
-            if node.level:
-                base = module.split(".")[: -node.level]
-                head = ".".join(base + (node.module.split(".") if node.module else []))
-            else:
-                head = node.module or ""
-            if head in forbidden:
-                found.append(head)
+        found = _model_imports(source, f"app.domain.{name[:-3]}")
         if found:
             offenders[name] = found
     assert not offenders, (
         f"project_material 又 import 了真模型：{offenders}。"
         "只读的那几列走 project_material_rows 的副本，不要在包内把边加回去。"
+    )
+
+
+def test_the_guard_would_notice_the_import_put_back() -> None:
+    """证明上一条不是空转：三种写法都认得出，名字相近的包不误报。"""
+    module = "app.domain.project_material"
+    assert _model_imports("from app.domain.room_task.models import Task\n", module) == [
+        "app.domain.room_task.models"
+    ]
+    assert _model_imports("from app.domain.room_task import models\n", module) == [
+        "app.domain.room_task.models"
+    ]
+    assert _model_imports("import app.domain.review.models\n", module) == [
+        "app.domain.review.models"
+    ]
+    assert not _model_imports(
+        "from app.domain.room_task.naming import announce_stale\n", module
+    ), "同包但不是 models 的模块不算"
+    assert not _model_imports(
+        "from app.domain.project_material_rows import _tasks\n", module
     )
 
 
