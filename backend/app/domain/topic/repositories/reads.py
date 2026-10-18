@@ -233,7 +233,7 @@ async def names_in_projects(
         order="desc",
         active_since=None,
         seen=seen_by(viewer),
-    )
+    ).options(defer(Topic.environment), defer(Topic.default_environment))
     return list(await repo._session.scalars(stmt))
 
 
