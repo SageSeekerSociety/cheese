@@ -544,7 +544,11 @@ class GitHubLandingReads:
             except ForgeUnavailable:
                 return None
             for run in data.get("workflow_runs") or []:
-                if run.get("name") == f"culprit {nonce}" and run.get("id"):
+                # `run-name` comes back as `display_title`; `name` is the
+                # workflow's own name, and only a run without a `run-name`
+                # shows its title there.
+                titles = (run.get("display_title"), run.get("name"))
+                if f"culprit {nonce}" in titles and run.get("id"):
                     return str(run["id"])
         return None
 

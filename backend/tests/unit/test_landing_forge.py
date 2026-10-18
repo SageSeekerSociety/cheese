@@ -419,7 +419,9 @@ def _probe_reads(
 
 def test_the_dispatch_names_the_branch_the_commit_and_the_nonce(monkeypatch):
     monkeypatch.setattr("app.domain.review.landing_forge._RUN_LOOKUP_WAIT_S", 0)
-    reads, posts = _probe_reads(runs=[{"id": 7, "name": "culprit n-1"}])
+    reads, posts = _probe_reads(
+        runs=[{"id": 7, "name": "culprit-bisect", "display_title": "culprit n-1"}]
+    )
     run = asyncio.run(
         reads.dispatch_bisect("a" * 40, ["backend/tests/unit/test_x.py"], "n-1")
     )
@@ -438,14 +440,17 @@ def test_the_dispatch_names_the_branch_the_commit_and_the_nonce(monkeypatch):
 
 def test_another_nonce_is_not_our_run(monkeypatch):
     monkeypatch.setattr("app.domain.review.landing_forge._RUN_LOOKUP_WAIT_S", 0)
-    reads, _ = _probe_reads(runs=[{"id": 7, "name": "culprit other"}])
+    reads, _ = _probe_reads(
+        runs=[{"id": 7, "name": "culprit-bisect", "display_title": "culprit other"}]
+    )
     assert asyncio.run(reads.dispatch_bisect("a" * 40, ["t.py"], "n-1")) is None
 
 
 def test_without_actions_write_nothing_is_posted():
     for actions in (None, "read"):
         reads, posts = _probe_reads(
-            actions=actions, runs=[{"id": 7, "name": "culprit n"}]
+            actions=actions,
+            runs=[{"id": 7, "name": "culprit-bisect", "display_title": "culprit n"}],
         )
         assert asyncio.run(reads.dispatch_bisect("a" * 40, ["t.py"], "n")) is None
         assert posts == []
