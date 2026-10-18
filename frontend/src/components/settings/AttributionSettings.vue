@@ -3,7 +3,7 @@
 //
 // 两种：任务负责人（默认），或者 AI 队友。选中哪种、存没存上由页面管，这一件只画、
 // 只把选中的那一种报上去。署名给任务负责人时，下面多一行看的人自己的 GitHub 账号：
-// 他负责的任务用它创建 PR。账号在账号安全里管，这里只说状态、给一个登录入口。
+// 他负责的任务用它创建 PR。账号在账号安全里管，这里只说状态、给一个连接入口。
 import type { CommitCreditMode } from '@/cx_types'
 import type { OwnGithub } from '@/lib/githubAccount'
 import type { NavTarget } from '@/lib/navTarget'
@@ -31,7 +31,7 @@ defineProps<{
 
 const emit = defineEmits<{
   save: [mode: CommitCreditMode]
-  /** 再次用 GitHub 登录，刷新看的人自己的授权。 */
+  /** 为看的人自己连接 GitHub，或续期已有的授权。 */
   signInGithub: []
 }>()
 

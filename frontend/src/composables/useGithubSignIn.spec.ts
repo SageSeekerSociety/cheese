@@ -1,3 +1,4 @@
+import { toast } from 'vuetify-sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { signInWithGithub } from './useGithubSignIn'
@@ -8,17 +9,17 @@ import { goAuthorize } from '@/lib/desktopApp'
 vi.mock('@/api/userAuth', () => ({
   UserAuthApi: {
     oauthLoginUrl: vi.fn(() => 'https://api.example.test/users/auth/oauth/login/github_app'),
-    getGithubReauthIntent: vi.fn(),
+    getGithubAppIntent: vi.fn(),
   },
 }))
 vi.mock('@/lib/desktopApp', () => ({ goAuthorize: vi.fn() }))
 vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
 
-describe('GitHub reauthentication', () => {
+describe('GitHub authorization from the app', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('binds GitHub reauthorization to the account that opened it', async () => {
-    vi.mocked(UserAuthApi.getGithubReauthIntent).mockResolvedValue({ intent: 'account-ticket' })
+  it('ties the authorization to the account that opened it', async () => {
+    vi.mocked(UserAuthApi.getGithubAppIntent).mockResolvedValue({ intent: 'account-ticket' })
 
     await signInWithGithub()
 
@@ -27,11 +28,12 @@ describe('GitHub reauthentication', () => {
     )
   })
 
-  it('uses regular GitHub sign-in when this account has no existing authorization', async () => {
-    vi.mocked(UserAuthApi.getGithubReauthIntent).mockResolvedValue({ intent: null })
+  it('never falls back to a sign-in that is not tied to the account', async () => {
+    vi.mocked(UserAuthApi.getGithubAppIntent).mockRejectedValue(new Error('offline'))
 
     await signInWithGithub()
 
-    expect(goAuthorize).toHaveBeenCalledWith('https://api.example.test/users/auth/oauth/login/github_app')
+    expect(goAuthorize).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalled()
   })
 })

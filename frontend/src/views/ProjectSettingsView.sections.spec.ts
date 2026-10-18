@@ -48,7 +48,12 @@ const router = vi.hoisted(() => ({
 const goAuthorize = vi.hoisted(() => vi.fn(() => true))
 
 vi.mock('../api')
-vi.mock('@/api/userAuth', () => ({ UserAuthApi: { redirectToOAuthLogin: vi.fn() } }))
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
+    getGithubAppIntent: vi.fn(async () => ({ intent: 'ticket-for-alice' })),
+    oauthLoginUrl: vi.fn(() => 'https://api.example.test/users/auth/oauth/login/github_app'),
+  },
+}))
 vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
   default: { template: '<section>运行环境</section>' },
 }))
@@ -305,13 +310,18 @@ describe('两个「连接」入口', () => {
     expect(section(container, '连接 GitHub 仓库').textContent).toContain('acme/code')
   })
 
-  it('没有 GitHub 登录时，从署名设置发起 GitHub 登录', async () => {
+  it('没有连接 GitHub 时，从署名设置为当前账号发起 GitHub 授权', async () => {
     const { container } = await openSettings('repository')
-    await waitFor(() => expect(button(container, '用 GitHub 登录')).toBeTruthy())
+    await waitFor(() => expect(button(container, '连接 GitHub')).toBeTruthy())
 
-    await fireEvent.click(button(container, '用 GitHub 登录'))
+    await fireEvent.click(button(container, '连接 GitHub'))
 
-    await waitFor(() => expect(UserAuthApi.redirectToOAuthLogin).toHaveBeenCalledWith('github_app'))
+    await waitFor(() =>
+      expect(goAuthorize).toHaveBeenCalledWith(
+        'https://api.example.test/users/auth/oauth/login/github_app?intent=ticket-for-alice'
+      )
+    )
+    expect(UserAuthApi.getGithubAppIntent).toHaveBeenCalled()
   })
 
   it('署名给 AI 队友时，用不到看的人自己的 GitHub 账号', async () => {

@@ -279,9 +279,9 @@ export const ACCEPT_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '负责人的 PR 由 AI 队友创建',
-        note: '只给任务负责人看：本该用他的 GitHub 账号创建的 PR，这次由 AI 队友创建了。还没用 GitHub 登录时给登录入口；授权失效时提示重新登录。',
+        note: '只给任务负责人看：本该用他的 GitHub 账号创建的 PR，这次由 AI 队友创建了。还没连接 GitHub 时给连接入口；授权失效时提示重新授权。',
         props: acceptHeadProps({ prChecks: { ...ACCEPT_CHECKS, owner_credit: 'none' } }),
-        expect: '用 GitHub 登录后，之后的 PR 用你的账号创建',
+        expect: '连接 GitHub 后，之后的 PR 用你的账号创建',
       },
       {
         name: '检查还没绿',

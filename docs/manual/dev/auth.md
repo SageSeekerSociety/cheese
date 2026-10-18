@@ -26,7 +26,7 @@ covers:
 
 用 GitHub 登录经过 cheesex-app 的用户授权。登录回调保存一条 `github_app` 用户连接；连接项目仓库时，平台用这条连接确认安装和仓库权限，任务负责人署名也读取同一条连接。用户授权过期且无法刷新时，重新用 GitHub 登录。GitHub App 的用户授权不请求 OAuth scopes；读取已验证的邮箱依赖 App 的 `Email addresses: Read-only` 权限。
 
-从设置页重新授权已有 GitHub 连接时，前端用当前知是会话取得短时意图；外部浏览器用该意图发起授权，回调的 `state` 绑定发起者的用户 ID。只有 GitHub 身份仍属于该知是账号时，才更新连接令牌。桌面 app 目前不把此结果交回 app：不匹配时在浏览器显示错误，用户从 app 重新发起。
+从 app 内（账号安全、项目设置的「仓库与署名」、采纳卡）发起 GitHub 授权时，前端用当前知是会话取得短时、一次性的意图（`POST /users/auth/oauth/github-app/intent`）；浏览器用该意图发起授权，回调的 `state` 绑定发起者的用户 ID。回调里：GitHub 身份已属于该账号就更新连接令牌；该账号还没有 GitHub 连接、这个身份也未被关联，就直接连接到该账号，不验证密码；身份已属于其他账号时返回 `ALREADY_LINKED`；该账号已连接另一个 GitHub 身份时返回 `ACCOUNT_MISMATCH`。登录页不带意图，仍走决定页和已有账号的密码验证。桌面 app 目前不把此结果交回 app：被拒时在浏览器显示错误，用户从 app 重新发起。
 
 ## 芝士和机器 {#agents}
 

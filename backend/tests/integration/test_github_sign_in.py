@@ -65,6 +65,29 @@ def _sign_in_with_github(client: TestClient, *, intent: str | None = None):
     )
 
 
+def _intent_for(client: TestClient, user) -> str:
+    """What the app asks for, as the signed-in ``user``, before it opens GitHub."""
+    response = client.post(
+        "/users/auth/oauth/github-app/intent",
+        headers={
+            "Authorization": "Bearer "
+            + create_access_token(user.user_id, handle=user.username)
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["intent"]
+
+
+def _drop_password(db_session, portal, user) -> None:
+    async def drop():
+        await db_session.execute(
+            update(User).where(User.id == user.user_id).values(hashed_password=None)
+        )
+        await db_session.flush()
+
+    portal.call(drop)
+
+
 def _github_of(db_session, portal, user):
     async def read():
         found = await get_github_profile_for_handle(db_session, user.username)
@@ -192,17 +215,7 @@ def test_signing_in_again_renews_the_stored_authorization(
     github["access_token"] = "ghu_second"
     github["refresh_token_expires_in"] = 3600
 
-    intent_response = api_client.post(
-        "/users/auth/oauth/github-app/intent",
-        headers={
-            "Authorization": "Bearer "
-            + create_access_token(user.user_id, handle=user.username)
-        },
-    )
-    assert intent_response.status_code == 200, intent_response.text
-    again = _sign_in_with_github(
-        api_client, intent=intent_response.json()["data"]["intent"]
-    )
+    again = _sign_in_with_github(api_client, intent=_intent_for(api_client, user))
 
     assert (
         urlparse(again.headers["location"]).path == settings.frontend_oauth_success_path
@@ -236,14 +249,7 @@ def test_existing_account_without_password_gets_github_setup_guidance(
     api_client: TestClient, user_client, db_session, _portal, github
 ):
     user = user_client.create_user()
-
-    async def drop_password():
-        await db_session.execute(
-            update(User).where(User.id == user.user_id).values(hashed_password=None)
-        )
-        await db_session.flush()
-
-    _portal.call(drop_password)
+    _drop_password(db_session, _portal, user)
     back = _sign_in_with_github(api_client)
     bound = api_client.post(
         "/users/oauth/bind",
@@ -264,14 +270,7 @@ def test_matching_email_without_password_gets_the_same_github_guidance(
     api_client: TestClient, user_client, db_session, _portal, github, monkeypatch
 ):
     user = user_client.create_user()
-
-    async def drop_password():
-        await db_session.execute(
-            update(User).where(User.id == user.user_id).values(hashed_password=None)
-        )
-        await db_session.flush()
-
-    _portal.call(drop_password)
+    _drop_password(db_session, _portal, user)
 
     async def github_with_same_email(self, access_token):
         return OAuthUserInfo(id="4242", email=user.email, name="Octo", username="octo")
@@ -330,16 +329,7 @@ def test_reauthorization_from_another_cheese_account_cannot_renew_its_github_tok
     )
     assert _q(bound.headers["location"]).get("bound") == "true"
 
-    intent_response = api_client.post(
-        "/users/auth/oauth/github-app/intent",
-        headers={
-            "Authorization": "Bearer "
-            + create_access_token(account_a.user_id, handle=account_a.username)
-        },
-    )
-    assert intent_response.status_code == 200, intent_response.text
-    intent = intent_response.json()["data"]["intent"]
-    assert intent
+    intent = _intent_for(api_client, account_a)
 
     # The app belongs to A, but the system browser authorizes B's GitHub.
     github["access_token"] = "ghu_b_new"
@@ -358,3 +348,72 @@ def test_reauthorization_from_another_cheese_account_cannot_renew_its_github_tok
     assert "cheese_refresh" not in result.headers.get("set-cookie", "")
     assert _github_of(db_session, _portal, account_b)[1] == "ghu_b"
     assert _github_of(db_session, _portal, account_a)[1] == "ghu_first"
+
+
+def test_a_signed_in_account_without_a_password_connects_github_from_the_app(
+    api_client: TestClient, user_client, db_session, _portal, github
+):
+    # Signed in by email code or RUC auth: there is no password to prove.
+    user = user_client.create_user()
+    _drop_password(db_session, _portal, user)
+
+    back = _sign_in_with_github(api_client, intent=_intent_for(api_client, user))
+
+    location = back.headers["location"]
+    assert urlparse(location).path == settings.frontend_oauth_success_path, location
+    found, token = _github_of(db_session, _portal, user)
+    assert found is not None and found[0] == "4242"
+    assert found[1]["login"] == "octo"
+    assert token == "ghu_first"
+
+
+def test_connecting_from_the_app_refuses_a_github_identity_bound_to_another_account(
+    api_client: TestClient, user_client, db_session, _portal, github
+):
+    owner = user_client.create_user()
+    back = _sign_in_with_github(api_client)
+    bound = api_client.post(
+        "/users/oauth/bind",
+        data={
+            "stateToken": _q(back.headers["location"])["stateToken"],
+            "username": owner.username,
+            "password": owner.password,
+        },
+        follow_redirects=False,
+    )
+    assert _q(bound.headers["location"]).get("bound") == "true"
+    api_client.cookies.clear()
+
+    other = user_client.create_user()
+    github["access_token"] = "ghu_other"
+    back = _sign_in_with_github(api_client, intent=_intent_for(api_client, other))
+
+    assert _q(back.headers["location"])["error_code"] == "ALREADY_LINKED"
+    assert "cheese_refresh" not in back.headers.get("set-cookie", "")
+    assert _github_of(db_session, _portal, other)[0] is None
+    assert _github_of(db_session, _portal, owner)[1] == "ghu_first"
+
+
+def test_an_app_intent_starts_one_authorization_only(
+    api_client: TestClient, user_client, db_session, _portal, github
+):
+    # A copied link must not bind a second browser's GitHub to the account.
+    user = user_client.create_user()
+    intent = _intent_for(api_client, user)
+    first = api_client.get(
+        "/users/auth/oauth/login/github_app",
+        params={"intent": intent},
+        follow_redirects=False,
+    )
+    assert urlparse(first.headers["location"]).netloc == "github.com"
+
+    api_client.cookies.clear()
+    second = api_client.get(
+        "/users/auth/oauth/login/github_app",
+        params={"intent": intent},
+        follow_redirects=False,
+    )
+    assert urlparse(second.headers["location"]).path == (
+        settings.frontend_oauth_error_path
+    )
+    assert _github_of(db_session, _portal, user)[0] is None

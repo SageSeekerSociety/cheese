@@ -50,7 +50,7 @@ vi.mock('@/api', () => ({
 }))
 vi.mock('@/api/userAuth', () => ({
   UserAuthApi: {
-    getGithubReauthIntent: vi.fn(),
+    getGithubAppIntent: vi.fn(),
     oauthLoginUrl: vi.fn(() => 'https://api.example.test/users/auth/oauth/login/github_app'),
   },
 }))
@@ -150,14 +150,14 @@ function github(over: Record<string, unknown> = {}) {
 }
 
 describe('the linked GitHub account', () => {
-  it('asks for GitHub sign-in again when nothing can renew it', async () => {
-    vi.mocked(UserAuthApi.getGithubReauthIntent).mockResolvedValue({ intent: 'account-ticket' })
+  it('asks to renew the GitHub authorization when nothing can refresh it', async () => {
+    vi.mocked(UserAuthApi.getGithubAppIntent).mockResolvedValue({ intent: 'account-ticket' })
     vi.mocked(listOAuthConnections).mockResolvedValue({
       connections: [github({ tokenExpires: '2026-01-01T00:00:00Z', hasRefreshToken: false })],
     })
     const { findByRole } = await renderPage()
 
-    await fireEvent.click(await findByRole('button', { name: 'Sign in with GitHub again' }))
+    await fireEvent.click(await findByRole('button', { name: 'Renew GitHub authorization' }))
 
     await waitFor(() =>
       expect(goAuthorize).toHaveBeenCalledWith(
@@ -173,6 +173,6 @@ describe('the linked GitHub account', () => {
     const { findByText, queryByRole } = await renderPage()
 
     await findByText('@octocat')
-    expect(queryByRole('button', { name: 'Sign in with GitHub again' })).toBeNull()
+    expect(queryByRole('button', { name: 'Renew GitHub authorization' })).toBeNull()
   })
 })

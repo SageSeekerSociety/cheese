@@ -59,18 +59,18 @@ function withCredit(ownerCredit: 'none' | 'expired' | 'ok' | null) {
 }
 
 describe('负责人自己的 PR 由 AI 队友创建时', () => {
-  it('没有 GitHub 登录：提示用 GitHub 登录', async () => {
+  it('没有连接 GitHub：入口是连接 GitHub', async () => {
     const { container, emitted } = withCredit('none')
     const line = container.querySelector('[data-testid="owner-credit"]')
     expect(line).not.toBeNull()
-    expect(line!.textContent).toContain('用 GitHub 登录')
+    expect(line!.textContent).toContain('连接 GitHub')
     await fireEvent.click(line!.querySelector('button')!)
     expect(emitted()['sign-in-github']).toHaveLength(1)
   })
 
-  it('授权失效：入口是重新用 GitHub 登录', async () => {
+  it('授权失效：入口是重新授权 GitHub', async () => {
     const { container, emitted } = withCredit('expired')
-    expect(container.querySelector('[data-testid="owner-credit"]')!.textContent).toContain('重新用 GitHub 登录')
+    expect(container.querySelector('[data-testid="owner-credit"]')!.textContent).toContain('重新授权 GitHub')
     await fireEvent.click(container.querySelector('[data-testid="owner-credit"] button')!)
     expect(emitted()['sign-in-github']).toHaveLength(1)
   })

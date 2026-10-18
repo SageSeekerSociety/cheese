@@ -59,7 +59,7 @@ const emit = defineEmits<{
   (e: 'void'): void
   (e: 'force-merge'): void
   (e: 'toggle-auto-merge', enabled: boolean): void
-  /** 再次用 GitHub 登录。 */
+  /** 连接 GitHub，或续期已有的授权。 */
   (e: 'sign-in-github'): void
 }>()
 

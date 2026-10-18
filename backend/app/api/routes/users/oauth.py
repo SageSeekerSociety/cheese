@@ -409,21 +409,37 @@ _OAUTH_LOGIN_STATE_SCOPE = "oauth_login_state"
 _OAUTH_LOGIN_STATE_TTL_S = 10 * 60
 
 
-def _github_reauth_account(token: str) -> int:
+# A GitHub authorization started from inside the app names the Cheese account
+# that started it: the intent is minted for the signed-in session, spent once at
+# the login endpoint, and carried on as the state the callback reads back.
+_GITHUB_INTENT_SCOPE = "github_app_intent"
+
+
+async def _spend_github_intent(token: str) -> int:
+    """The account a GitHub intent was minted for, spending the intent.
+
+    Single use for the reason `single_use_state` gives: the intent binds a
+    GitHub identity to an account, so a copy that reached another browser must
+    not bind that browser's GitHub too."""
     try:
         claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-        if claims.get("type") == "github_reauth" and type(claims.get("user_id")) is int:
+        if (
+            claims.get("type") == "github_intent"
+            and type(claims.get("user_id")) is int
+            and isinstance(claims.get("jti"), str)
+            and await single_use_state.claim(_GITHUB_INTENT_SCOPE, claims["jti"])
+        ):
             return claims["user_id"]
-    except jwt.PyJWTError:
+    except (jwt.PyJWTError, SingleUseUnavailableError):
         pass
     raise AuthenticationRequiredError("Invalid or expired GitHub authorization")
 
 
-def _github_reauth_state(user_id: int) -> str:
+def _github_intent_state(user_id: int) -> str:
     now = int(time.time())
     return jwt.encode(
         {
-            "type": "github_reauth_state",
+            "type": "github_intent_state",
             "user_id": user_id,
             "iat": now,
             "exp": now + _OAUTH_LOGIN_STATE_TTL_S,
@@ -434,13 +450,13 @@ def _github_reauth_state(user_id: int) -> str:
     )
 
 
-def _github_reauth_expected_user(state: str) -> int | None:
+def _github_intent_user(state: str) -> int | None:
     if "." not in state:
         return None
     try:
         claims = jwt.decode(state, settings.jwt_secret, algorithms=["HS256"])
         if (
-            claims.get("type") == "github_reauth_state"
+            claims.get("type") == "github_intent_state"
             and type(claims.get("user_id")) is int
         ):
             return claims["user_id"]
@@ -496,10 +512,10 @@ async def get_oauth_login_url(
         if provider_id != GITHUB_APP_PROVIDER:
             return _oauth_callback_error_redirect(provider_id, "invalid_state")
         try:
-            expected_user_id = _github_reauth_account(intent)
+            expected_user_id = await _spend_github_intent(intent)
         except AuthenticationRequiredError:
             return _oauth_callback_error_redirect(provider_id, "invalid_state")
-        state = _github_reauth_state(expected_user_id)
+        state = _github_intent_state(expected_user_id)
     else:
         state = secrets.token_urlsafe(32)
     try:
@@ -536,21 +552,23 @@ async def get_oauth_login_url(
 
 
 @router.post("/auth/oauth/github-app/intent", dependencies=[ROUTE_DECIDES])
-async def github_reauth_intent(
+async def github_app_intent(
     auth_user: AuthUserInfo = Depends(require_auth_user),
-    oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> dict:
-    """Bind a GitHub reauthorization started in the app to its Cheese account."""
-    connections = await oauth_service.list_user_connections(auth_user.user_id)
-    if not any(c["providerId"] == GITHUB_APP_PROVIDER for c in connections):
-        return ok({"intent": None})
+    """Tie a GitHub authorization started in the app to the signed-in account:
+    the callback connects GitHub to it, or renews the connection it has."""
     now = int(time.time())
+    jti = uuid.uuid4().hex
+    await single_use_state.reserve(
+        _GITHUB_INTENT_SCOPE, jti, ttl_s=_OAUTH_LOGIN_STATE_TTL_S
+    )
     intent = jwt.encode(
         {
-            "type": "github_reauth",
+            "type": "github_intent",
             "user_id": auth_user.user_id,
             "iat": now,
             "exp": now + _OAUTH_LOGIN_STATE_TTL_S,
+            "jti": jti,
         },
         settings.jwt_secret,
         algorithm="HS256",
@@ -625,9 +643,15 @@ async def _resolve_oauth_identity(
         if expected_user_id is not None and (
             existing is None or existing["userId"] != expected_user_id
         ):
-            return _oauth_error_redirect(
-                "ACCOUNT_MISMATCH",
-                "This GitHub account is not linked to the Cheese account that started authorization",
+            return await _connect_github_to(
+                request,
+                session,
+                oauth_service,
+                auth_service,
+                expected_user_id,
+                user_info,
+                tokens,
+                bound_elsewhere=existing is not None,
             )
         if existing:
             if tokens:
@@ -684,6 +708,56 @@ async def _resolve_oauth_identity(
             ),
             status_code=302,
         )
+
+
+async def _connect_github_to(
+    request: Request,
+    session: AsyncSession,
+    oauth_service: OAuthService,
+    auth_service: UserAuthService,
+    user_id: int,
+    user_info,
+    tokens: dict | None,
+    *,
+    bound_elsewhere: bool,
+) -> RedirectResponse:
+    """Connect a GitHub identity to the signed-in account that started the
+    authorization. No password: that account's own session minted the intent.
+
+    An account that already has a GitHub connection only renews it, so a
+    different identity there is a mismatch, never a second connection."""
+    connections = await oauth_service.list_user_connections(user_id)
+    if any(c["providerId"] == GITHUB_APP_PROVIDER for c in connections):
+        return _oauth_error_redirect(
+            "ACCOUNT_MISMATCH",
+            "This GitHub account is not linked to the Cheese account that started authorization",
+        )
+    if bound_elsewhere:
+        return _oauth_error_redirect(
+            "ALREADY_LINKED", "This OAuth account is linked to another user"
+        )
+    try:
+        await oauth_service.create_connection(
+            user_id=user_id,
+            provider_id=GITHUB_APP_PROVIDER,
+            provider_user_id=str(user_info.id),
+            raw_profile=_github_profile(user_info),
+            access_token=tokens["access_token"] if tokens else None,
+            refresh_token=tokens.get("refresh_token") if tokens else None,
+            token_expires=_token_expiry(tokens) if tokens else None,
+            refresh_token_expires=_token_expiry(tokens, "refresh_token_expires")
+            if tokens
+            else None,
+        )
+    except ConflictError:
+        # Linked by a concurrent request since the lookup.
+        await session.rollback()
+        return _oauth_error_redirect(
+            "ALREADY_LINKED", "This OAuth account is linked to another user"
+        )
+    return await _oauth_login_redirect(
+        request, session, auth_service, user_id, GITHUB_APP_PROVIDER, bound="true"
+    )
 
 
 @router.get(
@@ -1090,7 +1164,7 @@ async def sign_in_with_github(
         logger.info("GitHub sign-in: state rejected")
         return _oauth_callback_error_redirect(provider_id, "invalid_state")
     try:
-        expected_user_id = _github_reauth_expected_user(state)
+        expected_user_id = _github_intent_user(state)
     except AuthenticationRequiredError:
         return _oauth_callback_error_redirect(provider_id, "invalid_state")
     try:
