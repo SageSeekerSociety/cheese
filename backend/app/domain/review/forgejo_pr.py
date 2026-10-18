@@ -341,7 +341,11 @@ class ForgejoPRClient:
             "draft": data["title"].upper().startswith(("WIP:", "[WIP]")),
         }
 
-    async def open_pr(self, *, head, base, title, body, draft=False) -> OpenedPR:
+    async def open_pr(
+        self, *, head, base, title, body, draft=False, as_user_token=None
+    ) -> OpenedPR:
+        # A Forgejo project has no account of the owner's to open it with.
+        del as_user_token
         token, _ = await self.tokens.write_token()
         # Matching both refs prevents adopting another task's proposal.
         existing = await self.client.pages(

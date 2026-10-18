@@ -59,21 +59,31 @@ def _question(**overrides):
     return SimpleNamespace(**defaults)
 
 
+def _stats(**overrides):
+    """One answer's counters, as the repository's batched read returns them."""
+    defaults = {
+        "positive_count": 0,
+        "negative_count": 0,
+        "user_vote": None,
+        "favorite_count": 0,
+        "is_favorite": False,
+        "comment_count": 0,
+        "view_count": 0,
+    }
+    defaults.update(overrides)
+    return defaults
+
+
 def _make_service(
     repo=None, question_repo=None, profile_repo=None
 ) -> tuple[AnswersService, AsyncMock, AsyncMock, AsyncMock]:
     repo = repo or AsyncMock()
     question_repo = question_repo or AsyncMock()
     profile_repo = profile_repo or AsyncMock()
-    # list_answers now also enriches each row with attitudes / favorite_count
-    # via _attach_answer_stats. Default the underlying repo calls to numeric
-    # zeros / empty maps so tests that don't configure them still pass.
-    repo.count_votes.return_value = {}
-    repo.count_favorites.return_value = 0
-    repo.count_comments.return_value = 0
-    repo.count_views.return_value = 0
-    repo.is_favorited.return_value = False
-    repo.get_user_vote.return_value = None
+    # list_answers and get_answer read every per-row counter in one batched
+    # call now. Default it to "nothing recorded" so tests that don't care about
+    # the counters still pass.
+    repo.answer_stats_for_ids.return_value = {}
     profile_repo.get_profiles_by_user_ids.return_value = {}
     # profile_to_author 现在按 chosen 判据取头像（契约 §3.14）：没人挑过时回空映射，
     # 测试里默认没人挑过，dto 的 avatarId 就是 None。
@@ -409,10 +419,15 @@ class TestGetAnswer:
             if uid == 99
             else _profile(user_id=uid, nickname="qauthor")
         )
-        repo.count_votes.return_value = {"POSITIVE": 5, "NEGATIVE": 2}
-        repo.get_user_vote.return_value = "POSITIVE"
-        repo.count_favorites.return_value = 3
-        repo.is_favorited.return_value = True
+        repo.answer_stats_for_ids.return_value = {
+            1: _stats(
+                positive_count=5,
+                negative_count=2,
+                user_vote="POSITIVE",
+                favorite_count=3,
+                is_favorite=True,
+            )
+        }
         q_repo.get_by_id.return_value = _question(id=10, created_by_id=50)
 
         dto, q_dto = await svc.get_answer(answer_id=1, user_id=7)
@@ -436,10 +451,9 @@ class TestGetAnswer:
         svc, repo, q_repo, p_repo = _make_service()
         repo.get_by_id.return_value = _answer(id=1)
         p_repo.get_profile_by_user_id.return_value = _profile()
-        repo.count_votes.return_value = {"POSITIVE": 0, "NEGATIVE": 1}
-        repo.get_user_vote.return_value = "NEGATIVE"
-        repo.count_favorites.return_value = 0
-        repo.is_favorited.return_value = False
+        repo.answer_stats_for_ids.return_value = {
+            1: _stats(negative_count=1, user_vote="NEGATIVE")
+        }
         q_repo.get_by_id.return_value = _question()
 
         dto, _ = await svc.get_answer(answer_id=1, user_id=7)
@@ -451,14 +465,16 @@ class TestGetAnswer:
         svc, repo, q_repo, p_repo = _make_service()
         repo.get_by_id.return_value = _answer(id=1)
         p_repo.get_profile_by_user_id.return_value = _profile()
-        repo.count_votes.return_value = {"POSITIVE": 2, "NEGATIVE": 0}
-        repo.count_favorites.return_value = 1
+        repo.answer_stats_for_ids.return_value = {
+            1: _stats(positive_count=2, favorite_count=1)
+        }
         q_repo.get_by_id.return_value = _question()
 
         dto, _ = await svc.get_answer(answer_id=1, user_id=None)
 
-        repo.get_user_vote.assert_not_awaited()
-        repo.is_favorited.assert_not_awaited()
+        repo.answer_stats_for_ids.assert_awaited_once_with(
+            answer_ids=[1], viewer_id=None
+        )
         assert dto["attitudes"]["user_attitude"] == "UNDEFINED"
         assert dto["is_favorite"] is False
 
@@ -467,10 +483,7 @@ class TestGetAnswer:
         svc, repo, q_repo, p_repo = _make_service()
         repo.get_by_id.return_value = _answer(id=1)
         p_repo.get_profile_by_user_id.return_value = _profile()
-        repo.count_votes.return_value = {"POSITIVE": 0, "NEGATIVE": 0}
-        repo.get_user_vote.return_value = None
-        repo.count_favorites.return_value = 0
-        repo.is_favorited.return_value = False
+        repo.answer_stats_for_ids.return_value = {1: _stats()}
         q_repo.get_by_id.return_value = _question()
 
         dto, _ = await svc.get_answer(answer_id=1, user_id=7)
@@ -490,10 +503,7 @@ class TestGetAnswer:
         svc, repo, q_repo, p_repo = _make_service()
         repo.get_by_id.return_value = _answer(id=1, question_id=10)
         p_repo.get_profile_by_user_id.return_value = _profile()
-        repo.count_votes.return_value = {"POSITIVE": 0, "NEGATIVE": 0}
-        repo.get_user_vote.return_value = None
-        repo.count_favorites.return_value = 0
-        repo.is_favorited.return_value = False
+        repo.answer_stats_for_ids.return_value = {1: _stats()}
         q_repo.get_by_id.return_value = None
 
         dto, q_dto = await svc.get_answer(answer_id=1, user_id=7)
