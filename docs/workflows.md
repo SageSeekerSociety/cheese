@@ -183,7 +183,7 @@ Required CI（`.github/workflows/required-ci.yml`）按事件分两档，档位�
 关键点：
 
 - **两个档是两个聚合 job，名字都写死**。`required`（`name: CI required`）跑完整档，`required-draft`（`name: CI required (draft quick)`）跑快检档，谁跑由 `if` 里事件的 `draft` 决定，不依赖 scope 输出——scope 失败也不会退化成裸名字。名字是字面量而不是用表达式拼的：表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示，看起来像一条红。两边的判断仍是同一次 `required-ci.py check`（它自己按事件重算档位，和 scope 输出对不上就红），不存在两套规则。
-- **草稿的绿永远不会被当成正式门禁的绿**。分支保护要求的是 `CI required` 这个名字，只有完整档那个 job 会在它名下给出结果；草稿只在 `CI required (draft quick)` 名下判绿。不跑的那个聚合 job 在 run 里显示 skipped，而 GitHub 把 skipped 当「已满足」，所以草稿上 `CI required` 是一条 skipped。这不妨碍把关：草稿本来就合不了，真正拦住的是平台自己的判断（`merge_state.py` 把缺席和 skipped 都当没通过）和合并队列——`merge_group` 上完整档会重跑一次，队列要的是那一次的结果。
+- **草稿的绿永远不会被当成正式门禁的绿**。分支保护要求的是 `CI required` 这个名字，只有完整档那个 job 会在它名下给出结果；草稿只在 `CI required (draft quick)` 名下判绿。不跑的那个聚合 job 在 run 里显示 skipped，而 GitHub 把 skipped 当「已满足」，所以草稿上 `CI required` 是一条 skipped。这不妨碍把关：草稿本来就合不了，真正拦住的是平台自己的判断（`merge_state.py` 把缺席和 skipped 都当没通过），转正式时 `ready_for_review` 还会起一次完整的 run；提交落进 main 之后，主干那次完整的 `push` run 也会再判一遍。
 - **`ready_for_review` 会重跑，且是完整的**。`pull_request` 触发器显式列了 `opened / synchronize / reopened / ready_for_review / converted_to_draft`；草稿转正触发的是一次全新的**完整** run，草稿那次快检的绿不会被复用。并发组按 ref 只取消**仍在途**的旧 run；已经跑完的草稿快检 run 不会被撤销，也不需要撤销——它那条 `CI required` 是 skipped（对草稿来说本来就等于没跑），要采信的是完整 run 在同名下的结果。
 - **判定失败即红，绝不放行**：`draft` 缺失、事件 JSON 读不出、事件名未知，一律按**完整档**处理（fail closed）；聚合时按事件重算档位，scope 报的档位与事件不一致就报错。草稿 run 里若有产品 suite 真的跑了（哪怕绿）也算失败——那意味着有完整 suite 在草稿名下跑过。所选 suite 缺结果、取消、空报告、超预算都不算绿。
 - **部署门禁认落码的那次 run**：`deploy/check-auto-deploy.py` 认 `required-ci.yml` 在 main 上的 `push` run，也仍认合并队列的 `merge_group` run——同一个提交走哪条路都算数，缺另一条不算缺口。

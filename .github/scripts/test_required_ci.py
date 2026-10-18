@@ -1749,6 +1749,32 @@ class MainCliTest(unittest.TestCase):
             self.assertEqual(written["frontend"], "false")
             self.assertIn("no refs/heads/main-green anchor yet", proc.stdout)
 
+    def test_an_anchorless_main_push_never_runs_the_api_job_without_a_base(self):
+        # Without an anchor every tracked path counts as changed, which selects
+        # backend and frontend together; `api` is gated on the frontend suite NOT
+        # being selected, so it is skipped and the empty base is never read. If
+        # that stops holding, api runs with BASE_SHA="" and its fetch of
+        # `origin ""` fails the whole full-tier run on every main push until the
+        # first anchor exists.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            for rel in ("backend/app/main.py", "frontend/src/main.ts"):
+                target = tmp / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("x\n")
+            git("add", "-A")
+            git("commit", "-qm", "touch both sides")
+
+            _proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            self.assertEqual(written["base"], "")
+            self.assertEqual((written["backend"], written["frontend"]), ("true", "true"),
+                             "api would run with no base to compare the document against")
+            self.assertFalse(gate.api_selected(written, written["tier"]))
+
     def test_pull_request_defers_e2e_and_remote_while_merge_group_requires_them(self):
         scripts = WORKFLOW.parent.parent / "scripts"
         with tempfile.TemporaryDirectory() as tmp:
