@@ -90,9 +90,13 @@ STRUCTURED_ACTION_LABEL = (
     r"(?:read|write|admin|export|create|update|delete|manage|execute|list|view|invite|approve|"
     r"download|upload|deploy|access|run|edit|review|import|share)"
 )
+STRUCTURED_RESOURCE_LABEL = (
+    r"(?:actions|attestations|checks|contents|deployments|discussions|id-token|issues|models|packages|"
+    r"pages|pull-requests|pull_requests|repository-projects|repository_projects|security-events|statuses|workflows)"
+)
 STRUCTURED_LABEL_LIST_RE = re.compile(
     rf"^(?:{STRUCTURED_ACTION_LABEL}:\s*[^,:]+(?:,\s*{STRUCTURED_ACTION_LABEL}:\s*[^,:]+)+|"
-    rf"[\w-]+:\s*{STRUCTURED_ACTION_LABEL}(?:,\s*[\w-]+:\s*{STRUCTURED_ACTION_LABEL})+)$",
+    rf"{STRUCTURED_RESOURCE_LABEL}:\s*{STRUCTURED_ACTION_LABEL}(?:,\s*{STRUCTURED_RESOURCE_LABEL}:\s*{STRUCTURED_ACTION_LABEL})+)$",
     re.IGNORECASE,
 )
 IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
@@ -150,7 +154,7 @@ SQL_WHERE_RE = re.compile(
     r":\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)).*",
     re.DOTALL | re.IGNORECASE,
 )
-SQL_VALUE_PATTERN = r"(?:'[^']*'|\"[^\"]*\"|\$\d+|:\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)(?:\s*::\s*[\w.]+)?"
+SQL_VALUE_PATTERN = r"(?:'[^']*'|\"[^\"]*\"|\$\d+|:\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)(?:\s*::\s*[\w.]+(?:\s*\([^)]*\))?)?"
 SQL_COLUMN_PATTERN = r"[\w.]+(?:\s*(?:->>|->|#>>|#>)\s*(?:'[^']*'|\"[^\"]*\"|[\w.]+))*"
 SQL_JSON_OPERATOR_PATTERN = r"(?:@>|<@|\?\||\?&|\?|=|!=|<>|<=|>=|<|>)"
 SQL_PREDICATE_PATTERN = (
@@ -160,8 +164,8 @@ SQL_PREDICATE_PATTERN = (
 )
 SQL_RETURNING_ITEM_PATTERN = (
     rf"(?:\*|{SQL_COLUMN_PATTERN}(?:\.\*)?)"
-    rf"(?:\s*::\s*[\w.]+)?(?:\s+AS\s+[\w]+)?"
-    rf"(?:\s+IS\s+(?:NOT\s+)?NULL)?"
+    rf"(?:\s*::\s*[\w.]+(?:\s*\([^)]*\))?)?"
+    rf"(?:\s+AS\s+[\w]+)?(?:\s+IS\s+(?:NOT\s+)?NULL)?(?:\s+AS\s+[\w]+)?"
 )
 SQL_RETURNING_PATTERN = (
     rf"(?:\s+RETURNING\s+{SQL_RETURNING_ITEM_PATTERN}"
@@ -200,8 +204,8 @@ SQL_PROSE_WORD_RE = re.compile(
     re.IGNORECASE,
 )
 SQL_RETURNING_PROSE_RE = re.compile(
-    r"(?<![A-Za-z0-9_.])(?:the|an|this|that|these|those|because|please|you|your|we|they|"
-    r"should|could|will|must|then|continue|continuing|for|to|with|of|and|but)"
+    r"(?<![A-Za-z0-9_.])(?:the|because|please|you|your|we|they|"
+    r"should|could|will|must|then|continue|continuing|and|but)"
     r"(?![A-Za-z0-9_.])",
     re.IGNORECASE,
 )

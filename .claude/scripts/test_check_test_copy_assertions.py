@@ -219,14 +219,17 @@ expect(actual).not.toBe("This explanatory sentence should be checked by its impo
                 'assert text == "UPDATE logs SET status = $1 WHERE before < now() RETURNING id::text"\n'
                 'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING tasks.*"\n'
                 'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING id AS task_id"\n'
-                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING id IS NULL"\n',
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING id IS NULL"\n'
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING id, to"\n'
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING deleted_at IS NULL AS is_active"\n'
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING amount::numeric(10,2)"\n',
             )
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         for line in (1, 2, 3):
             self.assertIn(f"test_sql_copy.py:{line}", result.stderr)
-        for line in (4, 5, 6, 7):
+        for line in range(4, 11):
             self.assertNotIn(f"test_sql_copy.py:{line}", result.stderr)
 
     def test_explicit_root_is_scanned_when_scanner_script_is_shallow(self) -> None:
@@ -274,12 +277,13 @@ assert actual == "登录状态已失效，请重新登录后再发言"
 assert actual == "Upload failed: the file is too large: remove it, then try again"
 assert actual == "step one failed, please retry after the environment starts"
 assert actual == "Note: this file is read-only, Action: choose another location and try again"
+assert actual == "Error: read, Note: write, Warning: run, Action: edit"
 ''',
             )
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        for line in (*range(2, 18), 20, 21, 22):
+        for line in (*range(2, 18), 20, 21, 22, 23):
             self.assertIn(f"test_copy.py:{line}", result.stderr)
         self.assertNotIn("test_copy.py:18", result.stderr)
         self.assertNotIn("test_copy.py:19", result.stderr)
