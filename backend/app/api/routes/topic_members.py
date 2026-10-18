@@ -67,7 +67,7 @@ async def add_topic_member(
     return ok(TopicMemberOut.model_validate(member).model_dump(mode="json"))
 
 
-@router.delete("/{topic_id}/members/{handle}")
+@router.delete("/{topic_id}/members/{handle}", dependencies=[ROUTE_DECIDES])
 async def remove_topic_member(
     topic_id: uuid.UUID,
     handle: str,

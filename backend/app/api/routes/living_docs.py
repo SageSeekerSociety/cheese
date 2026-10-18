@@ -451,7 +451,7 @@ async def rename_document(
     return ok(document_row(doc))
 
 
-@router.delete("/{document_id}")
+@router.delete("/{document_id}", dependencies=[ROUTE_DECIDES])
 async def delete_document(
     document_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -558,7 +558,7 @@ def _answering_agent(resolver: ActorResolver) -> str | None:
     return delegation.agent
 
 
-@router.put("/{document_id}")
+@router.put("/{document_id}", dependencies=[ROUTE_DECIDES])
 async def replace_document(
     document_id: uuid.UUID,
     body: DocEditIn,
@@ -874,7 +874,7 @@ class StoreIn(BaseModel):
     reason: str | None = None
 
 
-@internal.put("/documents/{name}")
+@internal.put("/documents/{name}", dependencies=[ROUTE_DECIDES])
 async def store_document(
     name: str,
     body: StoreIn,
