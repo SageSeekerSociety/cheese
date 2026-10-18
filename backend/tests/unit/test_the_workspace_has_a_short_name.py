@@ -9,6 +9,7 @@ session sees, so two sessions on one machine never mean each other's directory.
 
 import shlex
 
+from app.domain.agent.executor_transport import to_machine
 from app.domain.agent.harness import CLAUDE_CODE, CODEX
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     PINNED_VERSION,
@@ -73,7 +74,7 @@ def test_the_name_is_short_and_reaches_the_command():
     # the machine.
     assert len(WORKING_DIRECTORY) <= 2
     assert (
-        bind_working_directory('cd "$T" && pwd', {WORKING_DIRECTORY: "/the project"})
+        bind_working_directory('cd "$T" && pwd', "/the project")
         == "T='/the project'\ncd \"$T\" && pwd"
     )
 
@@ -85,15 +86,32 @@ def test_the_machines_environment_does_not_carry_the_name():
     put it in every command's `env` listing on one side only and turned the four
     equivalence shards red; it travels inside the command's body instead."""
     assert WORKING_DIRECTORY not in FORWARDED_ENV
-    assert bind_working_directory("pwd", {}) == "pwd"
-    assert bind_working_directory("pwd", {"PATH": "/usr/bin"}) == "pwd"
+    assert bind_working_directory("pwd", None) == "pwd"
+
+
+def test_a_placeholder_is_quoted_for_the_substitution_that_spells_it():
+    """A session started before its machine is rented names a placeholder, and
+    the transport replaces it inside the body after this point, textually. The
+    binding is single-quoted for that: the machine's path can have a space, and
+    an escaped value would no longer match the placeholder it replaces."""
+    bound = bind_working_directory(
+        'cd "$T" && pwd', "/unavailable-project", spelled_later=True
+    )
+    spelled = to_machine(bound, "/unavailable-project", "/home/First Last/project")
+    assert spelled.splitlines()[0] == "T='/home/First Last/project'"
+    # A placeholder with a quote cannot be spelled that way: nothing is bound
+    # rather than a value that would break the shell.
+    assert (
+        bind_working_directory("pwd", "/it's here/workspace", spelled_later=True)
+        == "pwd"
+    )
 
 
 def test_a_path_with_spaces_and_quotes_is_bound_whole():
     # A machine's project path can have both; an unquoted binding would split it
     # and `cd "$T"` would name a part of it.
     path = "/the project/it's here"
-    body = bind_working_directory("pwd", {WORKING_DIRECTORY: path})
+    body = bind_working_directory("pwd", path)
     assert body.splitlines()[0] == "T=" + shlex.quote(path)
     assert shlex.split(body.splitlines()[0]) == ["T=" + path]
 
@@ -106,14 +124,3 @@ def test_the_line_is_told_the_name_only_on_the_harness_that_has_it():
     assert TOLD in _room_prompt(CLAUDE_CODE)
     # codex and pi are not given the variable, so they are not told about it.
     assert TOLD not in _room_prompt(CODEX)
-
-
-def test_the_name_crosses_spelled_the_machines_way():
-    """A session started before its machine was rented sees the project at a
-    placeholder while its commands already run on the machine. The value travels
-    as part of `body`, so the transport respells it where it respells every
-    other path a body names (`to_machine`) — or `cd "$T"` names nothing there.
-    That is asserted end to end by `test_native_shell`; here the value the body
-    carries is the one this host spells."""
-    body = bind_working_directory("pwd", {WORKING_DIRECTORY: "/unavailable-project"})
-    assert body == "T=/unavailable-project\npwd"

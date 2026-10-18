@@ -33,6 +33,7 @@ from pathlib import Path
 
 if __package__:
     from app.domain.agent.executor_transport import (
+        DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         WORKING_DIRECTORY,
         MachineOutOfReach,
@@ -52,6 +53,7 @@ else:
     # the same module beside this script, which remains first on sys.path.
     sys.path.append(str(Path(__file__).resolve().parents[3]))
     from executor_transport import (
+        DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         WORKING_DIRECTORY,
         MachineOutOfReach,
@@ -85,20 +87,30 @@ FORWARDED_ENV = (
 )
 
 
-def bind_working_directory(body, environment):
+def bind_working_directory(body, value, *, spelled_later=False):
     """``body`` with the session's short name bound in the shell that runs it.
 
     Not in the command's environment: a build running natively on the executor
     has no variable there, and a room's command must see exactly the environment
     that one sees (the equivalence check holds the two equal). Bound as a shell
-    variable it is still there for what the line is told to write, `cd "$T"`,
-    and the value crosses inside `body`, so the transport respells it where the
-    machine holds the project — a session started before its machine was rented
-    names a placeholder that does not exist there.
+    variable it is still there for what the line is told to write, `cd "$T"`.
+    ``value`` is the directory as the machine holds it (`outward`), so the line
+    bound here is the one the command's other paths are spelled with.
+
+    ``spelled_later`` is the placeholder a session names before its machine is
+    rented: the transport substitutes the machine's path into ``body`` after
+    this point, textually. Single quotes keep whatever it substitutes one word —
+    a machine path can have a space — and are not escaped, since an escaped
+    value would no longer match the placeholder it replaces. A placeholder that
+    itself has a quote cannot be spelled that way and is left unbound (the value
+    stays a directory this host does not hold, so binding it would be no better).
     """
-    value = environment.get(WORKING_DIRECTORY)
     if value is None:
         return body
+    if spelled_later:
+        if "'" in value:
+            return body
+        return f"{WORKING_DIRECTORY}='{value}'\n{body}"
     return f"{WORKING_DIRECTORY}={shlex.quote(value)}\n{body}"
 
 
@@ -384,6 +396,17 @@ def run_on_the_machine(target, command):
     env = {name: os.environ[name] for name in FORWARDED_ENV if name in os.environ}
     if "CLAUDE_PROJECT_DIR" in os.environ:
         env["CLAUDE_PROJECT_DIR"] = outward(os.environ["CLAUDE_PROJECT_DIR"])
+    # The short name is bound in the command's shell, not exported
+    # (`bind_working_directory`): this session's spelling of its directory goes
+    # through the same `outward` as every other path a command names, so the
+    # shell gets it whole. While the target still names the placeholder the
+    # machine has not been rented, and only the transport can spell the project
+    # — after this point, inside `body`; the binding quotes for that
+    # substitution rather than escaping a value that is about to be replaced.
+    short_name = os.environ.get(WORKING_DIRECTORY)
+    spelled_later = target.get("workspace") == DEFERRED_WORKSPACE
+    if short_name is not None and not spelled_later:
+        short_name = outward(short_name)
     merge = _same_file(1, 2)
     command_id = "shell-" + uuid.uuid4().hex
     client = RemoteClient(target)
@@ -424,7 +447,9 @@ def run_on_the_machine(target, command):
             started = call(
                 "start",
                 kind="bash" if bash else "sh",
-                body=bind_working_directory(outward(body), os.environ),
+                body=bind_working_directory(
+                    outward(body), short_name, spelled_later=spelled_later
+                ),
                 cwd=cwd,
                 env=env,
                 merge=merge,

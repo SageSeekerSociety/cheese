@@ -977,6 +977,45 @@ def test_the_short_name_is_bound_in_the_command(session, machine):
     assert output == f"{machine.workspace}/under T\n0\n".encode()
 
 
+def test_the_short_name_is_respelled_where_the_machine_holds_the_project(
+    session, machine
+):
+    """A session started in a directory of its own (`virtual_workspace`, as a
+    member's own session apart from its executor starts) names that directory
+    under `$T`; the command runs on the machine, so the value has to cross with
+    `body` the way every other path a body names does."""
+    own = session.root / "own"
+    target = json.loads(Path(session.target).read_text())
+    target["virtual_workspace"] = str(own)
+    Path(session.target).write_text(json.dumps(target))
+    code, output = session.run(
+        session.wrapped('cd "$T" && pwd'),
+        env=session.env(T=str(own)),
+    )
+    assert (code, output) == (0, f"{machine.workspace}\n".encode())
+
+
+def test_a_session_that_has_not_rented_its_machine_binds_its_placeholder(
+    session, machine
+):
+    """While the target still names the placeholder, only the transport can
+    spell the project — after this point, inside the body. The name is bound
+    single-quoted for that substitution (see
+    `test_the_workspace_has_a_short_name`); once the lease is written the
+    target names the machine and the prefix spells the value itself."""
+    # `executor_transport.DEFERRED_WORKSPACE`: the target a session is started
+    # with before its machine is rented.
+    placeholder = "/unavailable-project"
+    target = json.loads(Path(session.target).read_text())
+    target["workspace"] = placeholder
+    Path(session.target).write_text(json.dumps(target))
+    code, output = session.run(
+        session.wrapped('echo "[${T-unset}]"'),
+        env=session.env(T=placeholder),
+    )
+    assert (code, output) == (0, b"[/unavailable-project]\n")
+
+
 @pytest.mark.parametrize(
     "target",
     [
