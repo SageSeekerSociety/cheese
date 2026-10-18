@@ -66,8 +66,7 @@ POLICIES: Final[dict[str, Policy]] = {
     RATE_LIMITED: Policy(base_s=60, cap_s=30 * 60, attempts=6),
     OVERLOADED: Policy(base_s=30, cap_s=15 * 60, attempts=6),
     STREAM_ENDED: Policy(base_s=30, cap_s=15 * 60, attempts=6),
-    # The connection card itself says to try once more and then have someone
-    # look: a tunnel helper that went away does not come back on a timer.
+    # A tunnel helper that went away may need a person after two waits.
     UNREACHABLE: Policy(base_s=60, cap_s=10 * 60, attempts=2),
     EGRESS_OFFLINE: Policy(base_s=120, cap_s=30 * 60, attempts=6),
     # Unreadable snapshot: the accounts' thaw is unknown, so ask rarely.

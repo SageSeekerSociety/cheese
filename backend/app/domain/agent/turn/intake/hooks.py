@@ -134,9 +134,9 @@ class HookEvents:
         *,
         seat: str | None,
         route: str | None,
-    ) -> None:
+    ) -> bool:
         try:
-            await turn_resume.after_failure(
+            row = await turn_resume.after_failure(
                 self.sessions,
                 project_id=project_id,
                 conversation_id=conversation_id,
@@ -145,12 +145,15 @@ class HookEvents:
                 result=result,
                 route=route,
             )
+            if row is None or row.dropped_at is not None:
+                return False
+            await turn_resume.show_waiting(self.sessions, row)
+            return True
         except Exception:
-            # The failure card is already posted; a resume that could not be
-            # scheduled leaves the seat where it was before this existed.
             logger.exception(
                 "could not schedule a resume after turn %s failed", turn_id
             )
+            return False
 
     async def accept(
         self,
@@ -165,6 +168,7 @@ class HookEvents:
         sessions, live, work_runner = self.sessions, self.live, self.work_runner
         frame: dict | None = None
         error_line, error_code = "", None
+        recovering = False
         state = live.hook_work.get((topic_id, turn_id))
         if state is None and platform_unsolicited and proves_output([event]):
             # Nobody fed this session anything and it is producing output anyway
@@ -372,6 +376,12 @@ class HookEvents:
                     harness=event.harness,
                 )
             if event.is_error:
+                await turn_resume.clear_waiting(
+                    self.sessions,
+                    conversation_id=topic_id,
+                    seat=event.agent_handle
+                    or (state.acting_agent if state is not None else None),
+                )
                 # Only a failure the service reported: the watchdog's timeout
                 # and a spent balance are not waits (`turn_resume`).
                 resumable = False
@@ -421,18 +431,8 @@ class HookEvents:
                     )
                     resumable = True
                 error_line, error_code = line, meta.get("code")
-                payload = await post_system_event(
-                    sessions, room_id, line, turn_id, meta=meta, inner_id=inner_id
-                )
-                if payload is not None:
-                    frame = {"type": "event_block", "block": payload}
-                    # In a 支线 nobody has replied to yet, this line is the only
-                    # thing in it: the main line reads its 支线 again, so the
-                    # message it hangs under says the reply failed.
-                    if inner_id is not None:
-                        await self.thread_replied(inner_id)
                 if resumable:
-                    await self._resume_later(
+                    recovering = await self._resume_later(
                         project_id,
                         topic_id,
                         turn_id,
@@ -444,7 +444,25 @@ class HookEvents:
                         or (state.acting_agent if state is not None else None),
                         route=state.route if state is not None else None,
                     )
-            elif event.text.strip():
+                    if recovering:
+                        await turn_resume.clear_retry(self.sessions, turn_id)
+                if not recovering:
+                    payload = await post_system_event(
+                        sessions, room_id, line, turn_id, meta=meta, inner_id=inner_id
+                    )
+                    if payload is not None:
+                        frame = {"type": "event_block", "block": payload}
+                        if inner_id is not None:
+                            await self.thread_replied(inner_id)
+            else:
+                await turn_resume.clear_waiting(
+                    self.sessions,
+                    conversation_id=topic_id,
+                    seat=event.agent_handle
+                    or (state.acting_agent if state is not None else None),
+                )
+                await turn_resume.clear_retry(self.sessions, turn_id)
+            if not event.is_error and event.text.strip():
                 # Terminal output, the final response included, stays in
                 # activity: a reply reaches the room only through chat_send,
                 # in a private chat exactly as in any other room.
@@ -479,7 +497,7 @@ class HookEvents:
             turn_id=turn_id,
             event=event,
             state=state,
-            landed=LandedEvent(frame, error_line, error_code),
+            landed=LandedEvent(frame, error_line, error_code, recovering),
             close_interval=self.close_interval,
             finish_work=self.completion.close,
             forget_claims=self.completion.forget_claims,

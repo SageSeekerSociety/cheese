@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.agent.realtime.broker import get_broker
+from app.domain.notice_meta import EVENT_API_RETRY, EVENT_TURN_RESUME_WAIT
 from app.domain.run_record.models import RunRecord
 from app.domain.run_record.service import (
     FRAME,
@@ -139,4 +140,13 @@ async def for_site(
     """The conversation's run records between two moments, as the 现场 reads
     them (oldest first). `author` keeps only that teammate's."""
     kept = await of_conversation(session, conversation_id, since=since, until=until)
-    return [as_payload(r) for r in kept if author is None or r.seat == author]
+    return [
+        as_payload(r)
+        for r in kept
+        if (author is None or r.seat == author)
+        and not (
+            (r.meta or {}).get("event_type")
+            in (EVENT_API_RETRY, EVENT_TURN_RESUME_WAIT)
+            and (r.meta or {}).get("state") == "resolved"
+        )
+    ]

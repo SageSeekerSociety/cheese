@@ -2,7 +2,7 @@
 
 Before this, such a seat stayed idle until a person or another agent poked it
 (`resumable_failures` has the measurement). Now the failure is classified as it
-lands (`after_failure`, called from the hook intake right after the failure
+lands (`after_failure`, called from the hook intake before any failure
 card is posted), and a resumable one leaves a `TurnResume` row due after a
 backoff, or at the reset the service named. A clock (`hand_due`) turns a due
 row into one instruction on the delivery ledger (`delivery.agent.record_agent`),
@@ -32,6 +32,7 @@ Why it cannot storm:
 from __future__ import annotations
 
 import logging
+import math
 import random
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -46,6 +47,7 @@ from app.core.obs import scrub_secrets
 from app.core.sentences import say
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.models import AgentTurn, TurnResume
+from app.domain.agent.run_records import record_now, restate_now
 from app.domain.agent.own_limit import refused_until
 from app.domain.agent.resumable_failures import (
     SUBSCRIPTION_COOLING,
@@ -60,9 +62,17 @@ from app.domain.delivery.agent import instance_for_seat, record_agent
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column
-from app.domain.notice_meta import EVENT_TURN_FAILED, SEVERITY_WARN
+from app.domain.notice_meta import (
+    EVENT_API_RETRY,
+    EVENT_TURN_FAILED,
+    EVENT_TURN_RESUME_WAIT,
+    SEVERITY_WARN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.run_record.models import RunRecord
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.usage.claude_pool import read_claude_pool, snapshot_path
 
@@ -232,6 +242,65 @@ async def after_failure(
     return stored
 
 
+async def show_waiting(sessions: SessionFactory, row: TurnResume) -> None:
+    """Show one quiet line in 现场 while this resume is owed."""
+    minutes = max(1, math.ceil((row.due_at - _now()).total_seconds() / 60))
+    line = say("turnResumeWait", minutes=minutes)
+    await record_now(
+        sessions,
+        conversation_id=row.conversation_id,
+        content=line,
+        meta={
+            **notice(EVENT_TURN_RESUME_WAIT, severity=SEVERITY_WARN, who=WHO_PLATFORM),
+            "state": "waiting",
+        },
+        turn_id=row.failed_turn_id,
+        seat=row.recipient_handle,
+    )
+
+
+async def clear_waiting(
+    sessions: SessionFactory, *, conversation_id: uuid.UUID, seat: str | None
+) -> None:
+    """A newer turn has settled the wait; remove its line from 现场."""
+    if seat is None:
+        return
+    async with sessions() as session:
+        ids = list(
+            await session.scalars(
+                select(RunRecord.id).where(
+                    RunRecord.conversation_id == conversation_id,
+                    RunRecord.seat == seat,
+                    RunRecord.kind == EVENT_TURN_RESUME_WAIT,
+                    RunRecord.meta["state"].as_string() == "waiting",
+                )
+            )
+        )
+    for record_id in ids:
+        await restate_now(
+            sessions,
+            record_id,
+            content="",
+            meta={"state": "resolved"},
+        )
+
+
+async def clear_retry(sessions: SessionFactory, turn_id: uuid.UUID) -> None:
+    """Remove a model retry trace after the CLI or platform recovers."""
+    async with sessions() as session:
+        ids = list(
+            await session.scalars(
+                select(RunRecord.id).where(
+                    RunRecord.turn_id == turn_id,
+                    RunRecord.kind == EVENT_API_RETRY,
+                    RunRecord.meta["state"].as_string().is_distinct_from("resolved"),
+                )
+            )
+        )
+    for record_id in ids:
+        await restate_now(sessions, record_id, content="", meta={"state": "resolved"})
+
+
 def _wait(
     found: Resumable, attempt: int, now: datetime
 ) -> tuple[float | None, str | None]:
@@ -298,6 +367,7 @@ async def hand_due(
     timed-delivery clock dispatches them (`delivery.timer.deliver_due`)."""
     now = now or _now()
     handed = 0
+    dropped_waits: list[tuple[uuid.UUID, str]] = []
     async with sessions() as session:
         rows = list(
             await session.scalars(
@@ -315,6 +385,7 @@ async def hand_due(
             if dropped is not None:
                 row.dropped_at = now
                 row.dropped_reason = dropped
+                dropped_waits.append((row.conversation_id, row.recipient_handle))
                 logger.info(
                     "turn resume: %s in %s not resumed: %s",
                     row.recipient_handle,
@@ -351,6 +422,8 @@ async def hand_due(
                 row.attempt,
             )
         await session.commit()
+    for conversation_id, seat in dropped_waits:
+        await clear_waiting(sessions, conversation_id=conversation_id, seat=seat)
     return handed
 
 

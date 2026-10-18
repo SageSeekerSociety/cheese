@@ -21,6 +21,13 @@ from app.api.deps import get_work_runner
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import TurnResume
+from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent.resumable_failures import (
+    POLICIES,
+    RATE_LIMITED as RATE_KIND,
+    Policy,
+)
+from app.domain.agent.run_records import for_site
 from app.domain.agent.service import AgentResult
 from app.domain.agent.turn_resume import RESUME_NOTE, after_failure, hand_due
 from app.domain.agent_instance.services import AgentInstanceService
@@ -54,9 +61,10 @@ class Seat(StubChannel):
     """The agent's session: its first ``failing`` turns fail with ``failure``,
     every later one ends normally. Records each input it is handed."""
 
-    def __init__(self, failure: str):
+    def __init__(self, failure: str, *, retrying: bool = False):
         super().__init__()
         self.failure = failure
+        self.retrying = retrying
         #: How many of its first turns fail.
         self.failing = 1
         self.handed: list[str] = []
@@ -66,6 +74,18 @@ class Seat(StubChannel):
         self.handed.append(prompt)
         self.starts(topic_id, agent=agent)
         self.acknowledges(topic_id, prompt, agent=agent)
+        if self.retrying:
+            self.record(
+                topic_id,
+                agent=agent,
+                type="system",
+                subtype="api_retry",
+                attempt=1,
+                max_retries=10,
+                retry_delay_ms=500,
+                error_status=429,
+                error="rate_limit",
+            )
         if len(self.handed) <= self.failing:
             self.record(
                 topic_id,
@@ -110,21 +130,12 @@ async def _resumes(factory, conversation) -> list[TurnResume]:
 async def _owed_resumes(
     factory, conversation, *, expected: bool = True
 ) -> list[TurnResume]:
-    """The resumes owed once the failure has landed. Scheduling follows the
-    failure card in the same step: where one is expected, wait for it as long
-    as for anything else; where none is, a moment after the card is enough."""
-    async with asyncio.timeout(HANG_S):
-        while not await _failure_card(factory, conversation):
-            await asyncio.sleep(0.05)
+    """The resumes owed once the failed turn has ended."""
     for _ in range(HANG_S * 10 if expected else 20):
         if rows := await _resumes(factory, conversation):
             return rows
         await asyncio.sleep(0.1)
     return []
-
-
-async def _failure_card(factory, conversation) -> bool:
-    return await _failure_cards(factory, conversation) > 0
 
 
 async def _failure_cards(factory, conversation) -> int:
@@ -141,10 +152,10 @@ async def _failure_cards(factory, conversation) -> int:
         )
 
 
-async def _first_turn_fails(factory, tmp_path, failure: str):
+async def _first_turn_fails(factory, tmp_path, failure: str, *, retrying=False):
     """A person gives the agent work and the turn ends on ``failure``."""
     _project, conversation, seat, _instance = await _room_with_agent(factory)
-    screen = Seat(failure)
+    screen = Seat(failure, retrying=retrying)
     runner = get_work_runner()
     chat = ChatService(
         work_runner=runner,
@@ -164,14 +175,35 @@ async def _first_turn_fails(factory, tmp_path, failure: str):
 
 
 @pytest.mark.anyio
-async def test_a_rate_limited_turn_resumes_by_itself(business_db_factory, tmp_path):
+async def test_a_rate_limited_turn_resumes_by_itself(
+    business_db_factory, tmp_path, monkeypatch
+):
     factory = business_db_factory
+    frames = []
+    broker = get_broker()
+    original_publish = broker.publish
+
+    async def capture(channel, frame):
+        frames.append(frame)
+        await original_publish(channel, frame)
+
+    monkeypatch.setattr(broker, "publish", capture)
     conversation, _seat, screen, runner, chat = await _first_turn_fails(
-        factory, tmp_path, RATE_LIMITED
+        factory, tmp_path, RATE_LIMITED, retrying=True
     )
     try:
         rows = await _owed_resumes(factory, conversation)
         assert len(rows) == 1, "the rate-limited turn left nothing to resume it"
+        assert await _failure_cards(factory, conversation) == 0
+        assert not [f for f in frames if f.get("type") == "error"]
+        async with factory() as session:
+            waiting = await for_site(session, conversation, since=None, until=None)
+        recovery_lines = [
+            r for r in waiting if r["meta"].get("event_type") == "turn_resume_wait"
+        ]
+        assert len(recovery_lines) == 1
+        assert not [r for r in waiting if r["meta"].get("event_type") == "api_retry"]
+        assert recovery_lines[0]["meta"]["i18n"]["content"]["params"]["minutes"] >= 1
         [owed] = rows
         # It waits first: a request limited a moment ago is limited now.
         assert owed.due_at > datetime.now(UTC)
@@ -189,6 +221,20 @@ async def test_a_rate_limited_turn_resumes_by_itself(business_db_factory, tmp_pa
         assert len(screen.handed) == 2
         assert str(RESUME_NOTE) in screen.handed[-1]
         assert len(screen.sessions) == 1
+        await runner.drain(timeout_s=10)
+        async with asyncio.timeout(HANG_S):
+            while True:
+                async with factory() as session:
+                    completed = await for_site(
+                        session, conversation, since=None, until=None
+                    )
+                if not [
+                    r
+                    for r in completed
+                    if r["meta"].get("event_type") in ("turn_resume_wait", "api_retry")
+                ]:
+                    break
+                await asyncio.sleep(0.05)
         # Handed over once: the clock running again sends nothing more.
         assert await hand_due(factory, now=owed.due_at + timedelta(hours=1)) == 0
     finally:
@@ -205,10 +251,35 @@ async def test_a_refused_request_is_not_resumed(business_db_factory, tmp_path):
     try:
         # Sending the same conversation again is refused the same way.
         assert await _owed_resumes(factory, conversation, expected=False) == []
+        assert await _failure_cards(factory, conversation) == 1
         later = datetime.now(UTC) + timedelta(days=1)
         assert await hand_due(factory, now=later) == 0
         assert await dispatch_pending(factory, chat=chat, runner=runner) == 0
         assert len(screen.handed) == 1
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_exhausted_resume_budget_shows_failure_card(
+    business_db_factory, tmp_path, monkeypatch
+):
+    monkeypatch.setitem(POLICIES, RATE_KIND, Policy(base_s=60, cap_s=1800, attempts=0))
+    factory = business_db_factory
+    conversation, _seat, _screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, RATE_LIMITED
+    )
+    try:
+        async with asyncio.timeout(HANG_S):
+            while await _failure_cards(factory, conversation) == 0:
+                await asyncio.sleep(0.05)
+        assert await _failure_cards(factory, conversation) == 1
+        async with factory() as session:
+            visible = await for_site(session, conversation, since=None, until=None)
+        assert not [
+            r for r in visible if r["meta"].get("event_type") == "turn_resume_wait"
+        ]
     finally:
         await runner.drain(timeout_s=10)
         await chat.stop_listening(timeout_s=2)
@@ -233,6 +304,11 @@ async def test_a_person_speaking_takes_the_turn_back(business_db_factory, tmp_pa
         assert len(screen.handed) == 1
         [dropped] = await _resumes(factory, conversation)
         assert dropped.dropped_reason == "person_spoke"
+        async with factory() as session:
+            visible = await for_site(session, conversation, since=None, until=None)
+        assert not [
+            r for r in visible if r["meta"].get("event_type") == "turn_resume_wait"
+        ]
     finally:
         await runner.drain(timeout_s=10)
         await chat.stop_listening(timeout_s=2)
@@ -257,17 +333,13 @@ async def test_a_seat_that_fails_again_after_being_woken_still_resumes(
         await asyncio.wait_for(screen.handed_one.wait(), HANG_S)
         screen.handed_one.clear()
         await runner.drain(timeout_s=10)
-        async with asyncio.timeout(HANG_S):
-            while await _failure_cards(factory, conversation) < 2:
-                await asyncio.sleep(0.05)
-        # Scheduling follows the card in the same step; give it as long as
-        # anything else to land. Without the fix nothing ever changes here and
-        # the assertion below is what reports it.
+        # The next failure replaces the owed resume without posting a card.
         for _ in range(HANG_S * 10):
             rows = await _resumes(factory, conversation)
             if any(r.failed_at > first.failed_at for r in rows):
                 break
             await asyncio.sleep(0.1)
+        assert await _failure_cards(factory, conversation) == 0
 
         # Long after any backoff the second failure could have asked for.
         later = datetime.now(UTC) + timedelta(hours=2)
