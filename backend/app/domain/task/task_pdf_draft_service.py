@@ -190,32 +190,6 @@ class TaskPdfDraftService:
             return selected
         return {}
 
-    async def generate_task_payload_from_pdf(
-        self,
-        *,
-        pdf_bytes: bytes,
-        template: dict[str, Any],
-        space_id: int,
-        category_id: int | None,
-        forced_submitter_type: str | None,
-        user_id: int,
-        default_topic_ids: list[int] | None = None,
-    ) -> tuple[dict[str, Any], int]:
-        """Convenience wrapper: return a single task payload from a PDF."""
-        payloads, token_used, _ = await self.generate_task_payloads_from_pdf(
-            pdf_bytes=pdf_bytes,
-            template=template,
-            space_id=space_id,
-            category_id=category_id,
-            forced_submitter_type=forced_submitter_type,
-            user_id=user_id,
-            default_topic_ids=default_topic_ids,
-            max_tasks=1,
-        )
-        if not payloads:
-            raise BadRequestError("No task payload extracted from PDF")
-        return payloads[0], token_used
-
     def _validate_page_count(self, page_count: int) -> None:
         if page_count == 0:
             raise BadRequestError("PDF has no pages")
@@ -634,10 +608,10 @@ class TaskPdfDraftService:
             "3. 可以将图片中提取的文本（picture text部分）删除；\n"
             "4. 将修正后的 Markdown 放入 JSON 的 `description` 字段；\n"
             "5. 从内容中提炼出合适的 `name`（赛题名称）和 `intro`（简短介绍）。\n\n"
-            "**输出格式要求**：直接输出一个 JSON 对象，包含 name、intro、description 三个字段。"  # noqa: E501
+            "**输出格式要求**：直接输出一个 JSON 对象，包含 name、intro、description 三个字段。"
             "形如 "
             '{"name": "...", "intro": "...", "description": "..."}。\n\n'
-            "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"  # noqa: E501
+            "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"
         )
 
     def _build_user_prompt(self, *, text: str, template: dict[str, Any]) -> str:

@@ -356,7 +356,7 @@ def test_a_live_request_waits_for_the_migration_instead_of_deadlocking(database)
                 30,
             )
             await tx.commit()
-        except Exception as exc:  # noqa: BLE001 — the outcome is what is checked
+        except Exception as exc:  # the outcome is what is checked
             outcome = type(exc).__name__
             await tx.rollback()
         finally:

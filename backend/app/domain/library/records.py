@@ -186,7 +186,7 @@ def _pdf_text(data: bytes) -> str | None:
                 for i in range(min(pdf.page_count, PDF_TEXT_PAGES))
             ]
             more = pdf.page_count > PDF_TEXT_PAGES
-    except Exception:  # noqa: BLE001 — a file that is not a readable PDF reads as binary
+    except Exception:  # a file that is not a readable PDF reads as binary
         return None
     text = "\n\n".join(page for page in pages if page)
     if not text:

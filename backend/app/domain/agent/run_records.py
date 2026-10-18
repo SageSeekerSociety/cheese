@@ -58,7 +58,7 @@ async def publish(
                     "record": payload,
                 },
             )
-    except Exception:  # noqa: BLE001 — see above
+    except Exception:  # see above
         logger.exception("could not publish run record %s", payload.get("id"))
 
 
@@ -97,7 +97,7 @@ async def record_now(
             payload = as_payload(kept)
             room = await _thread_room(session, conversation_id)
             await session.commit()
-    except Exception:  # noqa: BLE001 — see `publish`
+    except Exception:  # see `publish`
         logger.exception("could not keep run record %s", content)
         return None
     await publish(payload, channel, room)
@@ -121,7 +121,7 @@ async def restate_now(
             payload = as_payload(kept)
             room = await _thread_room(session, kept.conversation_id)
             await session.commit()
-    except Exception:  # noqa: BLE001 — see `publish`
+    except Exception:  # see `publish`
         logger.exception("could not restate run record %s", record_id)
         return None
     await publish(payload, channel, room)

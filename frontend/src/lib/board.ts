@@ -54,6 +54,15 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
   return { borderColor: 'var(--line-2)' }
 }
 
+/** 一件任务自己的那颗点：列决定颜色，但「已退回」画成红的 —— 交付被人退回来、还
+ *  等着队友去改，这不是「有事等你」。和侧栏那盏灯、频道里那张任务卡同一个意思。 */
+export function taskDotStyle(task: Pick<RoomTask, 'presentation'>): Record<string, string> {
+  if (task.presentation.phrase === 'bounced') {
+    return { borderColor: 'var(--danger)', background: 'var(--danger)' }
+  }
+  return columnDotStyle(task.presentation.column)
+}
+
 /** 还有人要管的那些任务：去掉已归档频道里没走完的。
  *
  *  任务不归档，频道归档：一个频道收了尾，里面没走完的任务后端照样按它自己的状态落在

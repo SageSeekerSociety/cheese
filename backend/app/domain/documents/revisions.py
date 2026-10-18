@@ -130,7 +130,7 @@ def package(raw: bytes, path: str, office: Any, *, kinds: tuple[str, ...] = ("wo
         temporary = Path(handle.name)
     try:
         opened = office.Package(temporary)
-    except Exception as exc:  # noqa: BLE001 — the script's message is the answer
+    except Exception as exc:  # the script's message is the answer
         temporary.unlink(missing_ok=True)
         raise RevisionsFailed(str(exc)) from exc
     if opened.kind() not in kinds:
@@ -145,7 +145,7 @@ def revisions_in(raw: bytes, path: str) -> list[Revision]:
     opened, temporary = package(raw, path, office)
     try:
         rows = office._revision_rows(opened, "word")
-    except Exception as exc:  # noqa: BLE001 — a malformed part reads as unreadable
+    except Exception as exc:  # a malformed part reads as unreadable
         raise RevisionsFailed(say("revisionsUnreadable", error=exc)) from exc
     finally:
         temporary.unlink(missing_ok=True)
@@ -214,7 +214,7 @@ def decide(
                 opened.put(name, root)
         opened.save(temporary)
         made = temporary.read_bytes()
-    except Exception as exc:  # noqa: BLE001 — the script's message is the answer
+    except Exception as exc:  # the script's message is the answer
         raise RevisionsFailed(str(exc)) from exc
     finally:
         temporary.unlink(missing_ok=True)

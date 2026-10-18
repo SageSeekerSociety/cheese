@@ -75,7 +75,7 @@ def compare(old: bytes | None, new: bytes, path: str) -> dict | None:
             return _sheet(old, new)
         if kind == "slide":
             return _slides(old, new)
-    except Exception:  # noqa: BLE001 — an unreadable file has no comparison
+    except Exception:  # an unreadable file has no comparison
         return None
     return None
 

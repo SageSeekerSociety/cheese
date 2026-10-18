@@ -405,7 +405,7 @@ class S3StorageBackend(StorageBackend):
 def multipart_etag(part_md5s: list[str]) -> str:
     """The ETag S3 and R2 give an object joined from parts with these MD5s."""
     joined = b"".join(bytes.fromhex(md5) for md5 in part_md5s)
-    return f"{hashlib.md5(joined).hexdigest()}-{len(part_md5s)}"  # noqa: S324
+    return f"{hashlib.md5(joined).hexdigest()}-{len(part_md5s)}"
 
 
 def generate_storage_key(filename: str, prefix: str = "uploads") -> str:

@@ -594,7 +594,7 @@ async def _revoke(row: ProjectMcpConnection) -> None:
                         hint,
                         status,
                     )
-    except Exception as exc:  # noqa: BLE001 — the local disconnect still happens
+    except Exception as exc:  # the local disconnect still happens
         logger.warning(
             "remote_mcp: revoke failed server=%s error=%s",
             row.server_name,

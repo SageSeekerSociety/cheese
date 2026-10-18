@@ -125,7 +125,7 @@ class TaskMembershipService:
         task_id: int,
         user_id: int,
     ) -> Sequence[TaskMembership]:
-        """Return team-type memberships for this task where the user belongs to the team."""  # noqa: E501
+        """Return team-type memberships for this task where the user belongs to the team."""
         return await self._repo.list_team_memberships_for_user(
             task_id=task_id, user_id=user_id
         )
@@ -185,10 +185,10 @@ class TaskMembershipService:
         personal_advantage: str | None,
         remark: str | None,
     ) -> TaskMembership:
-        """Create a new TaskMembership row with扩展校验（人数上限、报名窗口、实名等）。"""  # noqa: E501
+        """Create a new TaskMembership row with扩展校验（人数上限、报名窗口、实名等）。"""
 
         # 参与人数上限校验 — 仅在 enforce_task_participant_limit_check 开启时生效
-        # （对齐 NT TaskMembershipEligibilityService.ensureTaskParticipantNotReachedLimit  # noqa: E501
+        # （对齐 NT TaskMembershipEligibilityService.ensureTaskParticipantNotReachedLimit
         # 与 applicationConfig.enforceTaskParticipantLimitCheck 默认 false）。
         if (
             settings.enforce_task_participant_limit_check
@@ -307,7 +307,7 @@ class TaskMembershipService:
                     raise TeamSizeNotEnoughError(task.min_team_size, team_size)
                 if task.max_team_size is not None and team_size > task.max_team_size:
                     raise TeamSizeTooLargeError(task.max_team_size, team_size)
-                # requireRealName 对 TEAM 的细粒度校验（所有成员实名）留待后续引入 team 视图服务时补齐。  # noqa: E501
+                # requireRealName 对 TEAM 的细粒度校验（所有成员实名）留待后续引入 team 视图服务时补齐。
             else:
                 # USER 任务 + requireRealName：检查该用户是否有实名。
                 if task.require_real_name and self._realname_repo is not None:
@@ -316,7 +316,7 @@ class TaskMembershipService:
                     )
                     if not has_identity:
                         raise BadRequestError(
-                            "Cannot approve: user is missing required real name information."  # noqa: E501
+                            "Cannot approve: user is missing required real name information."
                         )
 
         # 应用字段更新
@@ -328,7 +328,7 @@ class TaskMembershipService:
             membership.email = email
         if phone is not None:
             membership.phone = phone
-        # TaskMembership 目前模型中不包含 rejectReason 等附加字段，仅在 Task 上维护，故此处忽略。  # noqa: E501
+        # TaskMembership 目前模型中不包含 rejectReason 等附加字段，仅在 Task 上维护，故此处忽略。
         _ = reject_reason
 
         membership.updated_at = datetime.now(UTC)
@@ -394,7 +394,7 @@ class TaskMembershipService:
                     reasons.append(
                         {
                             "code": "PARTICIPANT_LIMIT_REACHED",
-                            "message": f"Task participant limit ({task.participant_limit}) reached.",  # noqa: E501
+                            "message": f"Task participant limit ({task.participant_limit}) reached.",
                         }
                     )
 
@@ -415,11 +415,11 @@ class TaskMembershipService:
                     reasons.append(
                         {
                             "code": "MISSING_REAL_NAME",
-                            "message": "Real name information is required for this task.",  # noqa: E501
+                            "message": "Real name information is required for this task.",
                         }
                     )
 
-            # Rank 规则：当空间启用 rank 且任务有 rank 要求时，若开启检查则限制「用户 rank + rank_jump >= task.rank」。  # noqa: E501
+            # Rank 规则：当空间启用 rank 且任务有 rank 要求时，若开启检查则限制「用户 rank + rank_jump >= task.rank」。
             if (
                 settings.rank_check_enforced
                 and isinstance(getattr(task, "space_id", None), int)
@@ -439,7 +439,7 @@ class TaskMembershipService:
                             reasons.append(
                                 {
                                     "code": "USER_RANK_NOT_HIGH_ENOUGH",
-                                    "message": f"Your rank ({actual_rank}) is not high enough. Required: {required_rank}.",  # noqa: E501
+                                    "message": f"Your rank ({actual_rank}) is not high enough. Required: {required_rank}.",
                                     "details": {
                                         "userId": user_id,
                                         "actualRank": actual_rank,
@@ -526,12 +526,12 @@ class TaskMembershipService:
                     reasons.append(
                         {
                             "code": "PARTICIPANT_LIMIT_REACHED",
-                            "message": f"Task participant limit ({task.participant_limit}) reached.",  # noqa: E501
+                            "message": f"Task participant limit ({task.participant_limit}) reached.",
                         }
                     )
 
             # 已有 membership 记录（且未软删除）视为已参与
-            # NONE(待审批) 和 APPROVED(已批准) 不可重复加入，DISAPPROVED(已拒绝) 允许重新申请  # noqa: E501
+            # NONE(待审批) 和 APPROVED(已批准) 不可重复加入，DISAPPROVED(已拒绝) 允许重新申请
             if existing is not None and existing.approved != 1:
                 reasons.append(
                     {
@@ -561,19 +561,19 @@ class TaskMembershipService:
                 reasons.append(
                     {
                         "code": "TEAM_TOO_SMALL",
-                        "message": f"Team size ({team_size}) is below minimum ({task.min_team_size}).",  # noqa: E501
+                        "message": f"Team size ({team_size}) is below minimum ({task.min_team_size}).",
                     }
                 )
             if task.max_team_size is not None and team_size > task.max_team_size:
                 reasons.append(
                     {
                         "code": "TEAM_TOO_LARGE",
-                        "message": f"Team size ({team_size}) exceeds maximum ({task.max_team_size}).",  # noqa: E501
+                        "message": f"Team size ({team_size}) exceeds maximum ({task.max_team_size}).",
                     }
                 )
 
             # requireRealName: 若任务要求实名，TEAM 参与需要所有队员均有实名记录。
-            # NT checks allVerified from getTeamMembers(teamId, queryRealNameStatus=true).  # noqa: E501
+            # NT checks allVerified from getTeamMembers(teamId, queryRealNameStatus=true).
             if task.require_real_name and self._realname_repo is not None:
                 # Check all team members, not just the requesting user.
                 all_verified = True
@@ -592,7 +592,7 @@ class TaskMembershipService:
                     reasons.append(
                         {
                             "code": "TEAM_MEMBER_MISSING_REAL_NAME",
-                            "message": "One or more team members missing real name info.",  # noqa: E501
+                            "message": "One or more team members missing real name info.",
                         }
                     )
 
@@ -616,7 +616,7 @@ class TaskMembershipService:
                             reasons.append(
                                 {
                                     "code": "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH",
-                                    "message": f"Your rank ({actual_rank}) is not high enough for this team task. Required: {required_rank}.",  # noqa: E501
+                                    "message": f"Your rank ({actual_rank}) is not high enough for this team task. Required: {required_rank}.",
                                     "details": {
                                         "userId": user_id,
                                         "actualRank": actual_rank,
@@ -919,7 +919,7 @@ class TaskSubmissionService:
         version: int,
         contents: list[dict],
     ) -> dict:
-        """Modify an existing submission version by soft-deleting old entries and recreating."""  # noqa: E501
+        """Modify an existing submission version by soft-deleting old entries and recreating."""
         membership = await self._membership_repo.list_memberships_for_task(
             task_id=task_id,
             approved=None,

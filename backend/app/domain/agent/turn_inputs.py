@@ -410,7 +410,7 @@ async def retire_failed(
         async with session_factory() as session:
             await retire_failed_interval(session, turn_id=turn_id, at=at)
             await session.commit()
-    except Exception:  # noqa: BLE001 — the turn already failed
+    except Exception:  # the turn already failed
         logger.exception(
             "could not close the failed turn's interval (topic=%s, turn=%s)",
             topic_id,
@@ -477,7 +477,7 @@ async def stamp_delivery_fact(
         async with session_factory() as session:
             await stamp_delivered(session, turn_id=turn_id, at=at)
             await session.commit()
-    except Exception:  # noqa: BLE001 — bookkeeping must not kill a working turn
+    except Exception:  # bookkeeping must not kill a working turn
         logger.exception("could not stamp delivery for turn %s", turn_id)
 
 

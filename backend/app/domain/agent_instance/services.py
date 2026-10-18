@@ -2,6 +2,7 @@
 
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
+from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance, NameSource, OwnAgent
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.library import AgentTypeDef, preset_types
@@ -121,10 +122,20 @@ def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScop
     return MemoryScope.agent_project, agent_project_scope_id(project_id, agent.handle)
 
 
+#: The models a project can be pointed at (`agent.model_choices`), as the
+#: caller hands it in. Deliberately a plain callable rather than an import of
+#: the agent package: what models exist needs the gateway, the harnesses and the
+#: supply policy, and reading any of them back from here is the cycle C3 counts.
+ModelChoices = Callable[[dict | None], list[dict]]
+
+
 class AgentInstanceService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, *, models: ModelChoices | None = None):
         self._session = session
         self._repo = AgentInstanceRepository(session)
+        #: Without one no model can be bound (`_validate_model` refuses every
+        #: id); every read path here works without it.
+        self._models = models
 
     # --- resolution ---------------------------------------------------------
 
@@ -389,10 +400,8 @@ class AgentInstanceService:
         project = await self._session.get(Project, project_id)
         if project is None:
             raise NotFoundError(say("projectNotFound"))
-        choice = next(
-            (c for c in model_choices(project.settings) if c["id"] == config.model),
-            None,
-        )
+        choices = self._models(project.settings) if self._models else []
+        choice = next((c for c in choices if c["id"] == config.model), None)
         access = await UsageService(self._session).model_access(project.team_id)
         if choice is None or not access.shows(choice):
             raise ValidationError(say("modelUnavailable"))

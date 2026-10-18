@@ -133,7 +133,7 @@ def _review(
     accepted: bool,
 ) -> None:
     resp = api_client.post(
-        f"/tasks/{task_id}/participants/{membership_id}/submissions/{submission_id}/review",  # noqa: E501
+        f"/tasks/{task_id}/participants/{membership_id}/submissions/{submission_id}/review",
         json={"accepted": accepted, "score": 5, "comment": "判了"},
         headers=_auth(board["creator_token"]),
     )

@@ -371,7 +371,7 @@ class RunnerIntake:
             block = await chat_service.post_system_event(
                 topic_id, text, turn_id, meta=meta
             )
-        except Exception:  # noqa: BLE001 — visibility is best-effort
+        except Exception:  # visibility is best-effort
             logger.exception("failed to post admission event for %s", topic_id)
             return False
         if block is not None:
@@ -414,7 +414,7 @@ class RunnerIntake:
         """
         try:
             policy = await chat_service.work_policy(topic_id, agent)
-        except Exception:  # noqa: BLE001 — admission must never kill a turn
+        except Exception:  # admission must never kill a turn
             logger.exception("work_policy failed for %s; admitting", topic_id)
             policy = None
         if policy is None:
@@ -519,7 +519,7 @@ class RunnerIntake:
                 ):
                     if frame.get("type") != "done":
                         await self._broker.publish(channel, frame)
-            except Exception:  # noqa: BLE001 — still surface the refusal
+            except Exception:  # still surface the refusal
                 logger.exception("failed to land message for refused turn")
         posted = await self._post_event(
             chat_service,

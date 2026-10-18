@@ -243,7 +243,7 @@ async def get_space(
     # admins / classificationTopics 都由这一个构建器给齐：前端拿到任何
     # 一份 Space 响应都能直接用（它的 store 会用响应覆盖本地状态）。
     space_data = await _build_full_space_payload(space, service=service, db=db)
-    _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.  # noqa: E501
+    _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.
 
     data: dict = {
         "space": space_data,
@@ -634,7 +634,7 @@ async def get_publishers_participation(
     "/{spaceId}/participants/export",
     summary="Export Space Participants",
     deprecated=True,
-    description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",  # noqa: E501
+    description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",
 )
 async def export_space_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -652,6 +652,6 @@ async def export_space_participants(
         content=csv_payload,
         media_type="text/csv",
         headers={
-            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"  # noqa: E501
+            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"
         },
     )

@@ -271,7 +271,7 @@ def watch(directory, *, every=ABANDONED_CHECK_S):
                 # From this thread, past the FUSE loop in the main one, which
                 # serves the copies other sessions hold for as long as they live.
                 os._exit(0)
-        except Exception as error:  # noqa: BLE001 — see the docstring
+        except Exception as error:  # see the docstring
             print(f"abandoned-view check failed: {error!r}", flush=True)
 
 

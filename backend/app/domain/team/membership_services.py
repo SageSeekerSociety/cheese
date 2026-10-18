@@ -242,7 +242,7 @@ class TeamMembershipService:
     ) -> TeamMembershipApplication:
         if not await self._team_repo.is_team_at_least_admin(team_id, initiator_user_id):
             raise ForbiddenError(
-                f"User {initiator_user_id} is not authorized to invite members to team {team_id}."  # noqa: E501
+                f"User {initiator_user_id} is not authorized to invite members to team {team_id}."
             )
 
         if role in (TeamMemberRole.ADMIN, TeamMemberRole.OWNER):
@@ -399,7 +399,7 @@ class TeamMembershipService:
 
         if not await self._team_repo.is_team_at_least_admin(team_id, approver_user_id):
             raise ForbiddenError(
-                f"User {approver_user_id} is not authorized to approve requests for team {team_id}."  # noqa: E501
+                f"User {approver_user_id} is not authorized to approve requests for team {team_id}."
             )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
@@ -451,7 +451,7 @@ class TeamMembershipService:
     ) -> None:
         if not await self._team_repo.is_team_at_least_admin(team_id, rejector_user_id):
             raise ForbiddenError(
-                f"User {rejector_user_id} is not authorized to reject requests for team {team_id}."  # noqa: E501
+                f"User {rejector_user_id} is not authorized to reject requests for team {team_id}."
             )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
@@ -497,7 +497,7 @@ class TeamMembershipService:
     ) -> None:
         if not await self._team_repo.is_team_at_least_admin(team_id, canceler_user_id):
             raise ForbiddenError(
-                f"User {canceler_user_id} is not authorized to cancel invitations for team {team_id}."  # noqa: E501
+                f"User {canceler_user_id} is not authorized to cancel invitations for team {team_id}."
             )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
@@ -605,7 +605,7 @@ class TeamMembershipService:
             team_id, requesting_user_id
         ):
             raise ForbiddenError(
-                f"User {requesting_user_id} is not authorized to view requests for team {team_id}."  # noqa: E501
+                f"User {requesting_user_id} is not authorized to view requests for team {team_id}."
             )
         limit = page_size or self._default_page_size
         offset = page_start or 0
@@ -641,7 +641,7 @@ class TeamMembershipService:
             team_id, requesting_user_id
         ):
             raise ForbiddenError(
-                f"User {requesting_user_id} is not authorized to view invitations for team {team_id}."  # noqa: E501
+                f"User {requesting_user_id} is not authorized to view invitations for team {team_id}."
             )
         limit = page_size or self._default_page_size
         offset = page_start or 0

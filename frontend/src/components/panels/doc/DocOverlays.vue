@@ -13,6 +13,7 @@
 import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Selection } from '@tiptap/pm/state'
+import type { SlashMenuState } from '../../../composables/useDocSlashMenu'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
@@ -43,7 +44,7 @@ const props = withDefaults(
     editable: boolean
     topicId: string | null
     /** 上面那把 slash 菜单现在开在哪、停在第几行；null = 关着。 */
-    slashMenu?: { items: SlashItem[]; index: number; top: number; left: number } | null
+    slashMenu?: SlashMenuState | null
     /** 父层每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
     /** 项目 AI 队友的名字和 handle：浮条上的那个入口是它。 */
@@ -626,8 +627,7 @@ defineExpose({ onHover, onEdited })
       v-if="slashMenu"
       :items="slashMenu.items"
       :index="slashMenu.index"
-      :top="slashMenu.top"
-      :left="slashMenu.left"
+      :at="slashMenu"
       @pick="emit('pick', $event)"
       @hover="emit('hover', $event)"
     />

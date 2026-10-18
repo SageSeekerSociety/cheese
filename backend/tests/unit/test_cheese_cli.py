@@ -185,7 +185,7 @@ def test_wait_for_app_probes_a_real_server_and_a_dead_port():
     class _Handler(http.server.BaseHTTPRequestHandler):
         seen: list[str] = []
 
-        def do_GET(self):  # noqa: N802 — http.server's own spelling
+        def do_GET(self):  # http.server's own spelling
             type(self).seen.append(self.headers.get("Accept", ""))
             self.send_response(200)
             self.end_headers()
@@ -227,7 +227,7 @@ def test_wait_for_app_returns_at_once_when_the_app_answers_non_2xx():
     cli = _load()
 
     class _Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802 — http.server's own spelling
+        def do_GET(self):  # http.server's own spelling
             self.send_response(404)
             self.end_headers()
             self.wfile.write(b"not found")

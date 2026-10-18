@@ -204,7 +204,7 @@ async def sweep(
                         return card_id, False, None
                     await condemn(session, card)
                     await session.commit()
-                except Exception as exc:  # noqa: BLE001 — 一张卡失败不能停下整轮
+                except Exception as exc:  # 一张卡失败不能停下整轮
                     await session.rollback()
                     return card_id, False, f"{card_id}: {exc}"
             if nudge is not None:

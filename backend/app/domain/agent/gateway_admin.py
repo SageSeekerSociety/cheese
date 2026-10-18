@@ -71,7 +71,7 @@ from app.domain.agent.gateway_admin_types import (
     _PRICE_FIELDS,  # noqa: F401
     _SOURCE_INFO_KEYS,  # noqa: F401
     _UPSTREAM_INFO_KEYS,  # noqa: F401
-    EXTRA_HEADERS,  # noqa: F401
+    EXTRA_HEADERS,
     FREE,  # noqa: F401
     NO_EXPLICIT_CACHE,  # noqa: F401
     SESSION_HEADER,  # noqa: F401
@@ -188,7 +188,7 @@ class GatewayAdmin:
                 )
                 response.raise_for_status()
                 body = response.json()
-        except Exception:  # noqa: BLE001 — 探活失败就是「不健康」,不是异常
+        except Exception:  # 探活失败就是「不健康」,不是异常
             logger.warning("gateway readiness probe failed", exc_info=True)
             return None
         status = body.get("status") if isinstance(body, dict) else None

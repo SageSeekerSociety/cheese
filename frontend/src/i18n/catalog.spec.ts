@@ -187,7 +187,7 @@ describe('locale catalogs', () => {
 // The directory form is asserted, not just the two listings matching: putting
 // either catalog back into one file is the regression the split exists to
 // prevent (every change to any sentence collides in git, and the shared file
-// becomes the merge base for unrelated PRs — `route_index.yaml`).
+// becomes the merge base for unrelated PRs).
 const MESSAGES = resolve(SRC, 'i18n/messages')
 const FLAT_CATALOGS = ['apiError', 'roomNotice']
 

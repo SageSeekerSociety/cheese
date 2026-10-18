@@ -199,8 +199,6 @@ EVENT_FILE_EDITED: Final = "file_edited"
 #: 是改的人或 AI 队友；改的是一位 AI 队友的设置时，`meta.agent` 是它的 handle。
 #: 这一行就是这次改动的记录，没有另一张表。
 EVENT_SETTING_CHANGED: Final = "setting_changed"
-#: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
-#: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(

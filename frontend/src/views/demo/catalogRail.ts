@@ -164,9 +164,12 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         expectSelector: '.row-light--red',
       },
       {
-        name: '一位成员卡住了',
-        note: '房间在等的那位成员，小头像带红点和一圈淡红晕。判据（报错 / 等太久）是父级带钟算的，hover 说出是谁、为什么。',
-        props: rowProps({ row: RAIL_ROWS.stalled, stalled: true, marks: RAIL_MARKS.stalled }),
+        name: '等一位队友，等太久了（红灯）',
+        note: '房间在等的那位队友一直没回来接（报错，或者等过了五分钟）：行尾一颗红灯，和任务行同一种点，不画头像。判据是父级带钟算的，hover 说出在等谁、为什么。',
+        props: rowProps({
+          row: RAIL_ROWS.stalled,
+          light: { kind: 'red', breathe: false, why: 'waiting' },
+        }),
         expect: '把成绩单导出成 CSV',
       },
       {
