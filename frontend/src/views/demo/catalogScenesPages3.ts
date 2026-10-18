@@ -176,7 +176,7 @@ export const SCENES_PAGES3_ENTRIES: CatalogEntry[] = [
     id: 'detail-view',
     title: 'DetailView',
     about:
-      '题目详情那一页的画面：题卡（标题、关注、话题、提问者、悬赏、正文、赞同/反对）、被采纳时的提示条、中间留给子页的一格、底下发回答的编辑器。读哪道题、关注/投票/加悬赏/发回答、以及邀请弹窗里那份名单，都在容器 `question/Detail.vue` 那边；中间那一格是被路由认出来的子页，由容器从插槽递进来。',
+      '题目详情那一页的画面：题卡（标题、关注、标签、提问者、悬赏、正文、赞同/反对）、被采纳时的提示条、中间留给子页的一格、底下发回答的编辑器。读哪道题、关注/投票/加悬赏/发回答、以及邀请弹窗里那份名单，都在容器 `question/Detail.vue` 那边；中间那一格是被路由认出来的子页，由容器从插槽递进来。',
     file: 'src/views/question/DetailView.vue',
     component: DetailView,
     needs: UI_T,
@@ -200,7 +200,7 @@ export const SCENES_PAGES3_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '一道题',
-        note: '读回来了：标题、发布/浏览那几段、关注按钮、话题、提问者、正文，底下是赞同/反对和评论收藏。中间那一格空着（预览站里没有子路由）。',
+        note: '读回来了：标题、发布/浏览那几段、关注按钮、标签、提问者、正文，底下是赞同/反对和评论收藏。中间那一格空着（预览站里没有子路由）。',
         props: {},
         expect: '为什么天空是蓝的',
       },

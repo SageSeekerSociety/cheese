@@ -36,8 +36,8 @@
     "ok": "OK"
   },
   "topicSelector": {
-    "label": "Add topics",
-    "placeholder": "Search topics or create one"
+    "label": "Add tags",
+    "placeholder": "Search tags or create one"
   },
   "notFound": {
     "text": "This page doesn’t exist",

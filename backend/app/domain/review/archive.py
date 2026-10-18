@@ -135,13 +135,13 @@ async def close_cards_for_archived_topic(
         if pr_left_open(card):
             # 骑着未合并的 PR：停止跟进，但不替任何人去关它。
             note = (
-                f"话题已归档，平台已停止跟进 PR #{card.pr_number}。PR 未合并，"
+                f"频道已归档，平台已停止跟进 PR #{card.pr_number}。PR 未合并，"
                 f"仍在 GitHub 上打开，需要人决定合并还是关闭："
                 f"{card.pr_url or '（无链接）'}"
             )
             stranded.append(card)
         else:
-            note = f"话题已归档，审阅随之关闭，关闭时状态为「{was}」。"
+            note = f"频道已归档，审阅随之关闭，关闭时状态为「{was}」。"
         await _converge_card(
             session,
             card,
