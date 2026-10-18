@@ -45,9 +45,7 @@ def _clear_stall_mark(card: AcceptCard) -> None:
         return
     head, _, rest = note.partition("；")
     if QUEUE_STALL_MARK in head:
-        card.note = rest
-        if not rest:
-            card.note_code = None
+        notes.record(card, card.note_code, rest)
 
 
 async def _watch_queue_stall(
@@ -75,7 +73,11 @@ async def _watch_queue_stall(
         return
     try:
         started = await lookup(
-            owner=owner, repo=repo, number=card.pr_number, token=creds.read
+            owner=owner,
+            repo=repo,
+            number=card.pr_number,
+            token=creds.read,
+            since=entered,
         )
     except Exception:  # 只读提示，读不到不该拖垮轮询
         logger.warning("card %s: merge_group run lookup failed", card.id, exc_info=True)

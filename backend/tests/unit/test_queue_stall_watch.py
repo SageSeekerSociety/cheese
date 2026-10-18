@@ -7,11 +7,14 @@ import httpx
 import pytest
 
 from app.domain.review import notes
-from app.domain.review.github_pr import HttpxGitHubPrClient
+from app.domain.review.github_pr import GitHubPrError, HttpxGitHubPrClient
+from app.domain.review.models import AcceptStatus
+from app.domain.review.services.polling import card_poll
 from app.domain.review.services.polling.card_poll import (
     QUEUE_STALL_MARK,
     QUEUE_STALL_MINUTES,
     _clear_stall_mark,
+    _poll_pr_card,
     _watch_queue_stall,
 )
 
@@ -31,8 +34,9 @@ class _Client:
         self.started = started
         self.calls = 0
 
-    async def merge_group_run_started(self, **_):
+    async def merge_group_run_started(self, **kwargs):
         self.calls += 1
+        self.since = kwargs["since"]
         return self.started
 
 
@@ -65,12 +69,14 @@ async def _watch(svc, card, client, minutes):
 @pytest.mark.anyio
 async def test_marks_once_after_threshold_without_run():
     svc, card, client = _Svc(), _card(), _Client(started=False)
-    await _watch(svc, card, client, QUEUE_STALL_MINUTES - 1)
+    assert QUEUE_STALL_MINUTES == 30
+    await _watch(svc, card, client, 29)
     assert QUEUE_STALL_MARK not in card.note and client.calls == 0
-    await _watch(svc, card, client, QUEUE_STALL_MINUTES + 1)
-    await _watch(svc, card, client, QUEUE_STALL_MINUTES + 2)
+    await _watch(svc, card, client, 31)
+    await _watch(svc, card, client, 32)
     assert card.note.count(QUEUE_STALL_MARK) == 1
     assert len(svc.told) == 1
+    assert client.since == T0  # only runs created after the entry count
     assert card.note_code is notes.NoteCode.waiting_merge_queue
 
 
@@ -117,6 +123,67 @@ async def test_lookup_error_does_not_raise():
 
 
 @pytest.mark.anyio
+async def test_card_poll_in_queue_runs_the_stall_watch(monkeypatch):
+    """The wiring: a poll of a queued card past the threshold marks it."""
+
+    class Client(_Client):
+        async def pull_request_status(self, **_):
+            return SimpleNamespace(merged=False, state="open", head_sha="h")
+
+        async def merge_queue_entry(self, **_):
+            return True
+
+    class Svc(_Svc):
+        class _session:  # noqa: N801 - minimal stand-in for the db session
+            @staticmethod
+            async def flush():
+                return None
+
+    svc, card, client = Svc(), _card(), Client(started=False)
+    card.status = AcceptStatus.accepted
+    card.pr_head_sha = "h"
+    card.auto_merge_armed_by = None
+    card.merge_state = None
+    real = card_poll.datetime
+    monkeypatch.setattr(
+        card_poll,
+        "datetime",
+        SimpleNamespace(now=lambda tz=None: T0 + timedelta(minutes=45)),
+    )
+    try:
+        await _poll_pr_card(
+            svc,
+            card=card,
+            topic=None,
+            owner="o",
+            repo="r",
+            creds=SimpleNamespace(read="t"),
+            client=client,
+            chat_service=None,
+            runner=None,
+        )
+    finally:
+        monkeypatch.setattr(card_poll, "datetime", real)
+    assert QUEUE_STALL_MARK in card.note and len(svc.told) == 1
+
+
+@pytest.mark.anyio
+async def test_client_sends_created_filter_and_raises_on_error():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(request.url.params)
+        return httpx.Response(403, text="no")
+
+    client = HttpxGitHubPrClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(GitHubPrError):
+        await client.merge_group_run_started(
+            owner="o", repo="r", number=1, token="t", since=T0
+        )
+    assert seen["created"] == ">=2026-10-17T12:00:00Z"
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("branch", "expected"),
     [
@@ -132,6 +199,6 @@ async def test_client_matches_pr_number_in_head_branch(branch, expected):
 
     client = HttpxGitHubPrClient(transport=httpx.MockTransport(handler))
     got = await client.merge_group_run_started(
-        owner="o", repo="r", number=4081, token="t"
+        owner="o", repo="r", number=4081, token="t", since=T0
     )
     assert got is expected
