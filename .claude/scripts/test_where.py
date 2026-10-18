@@ -26,6 +26,9 @@ FILES = {
     "app/other.py": "def widget():\n    return 2\n",
     "app/rel.py": "import app.other\nfrom app.other import widget as w\nfrom .lib import widget\n\n\ndef run():\n    return widget()\n",
     "app/user.py": "from app.other import widget\n\n\ndef run():\n    return widget()\n",
+    "app/pkg/__init__.py": "from .impl import gadget\n",
+    "app/pkg/impl.py": "def gadget():\n    return 3\n",
+    "app/viapkg.py": "from app.pkg import gadget\n\n\ndef run():\n    return gadget()\n",
     "scripts/zz_tool.py": "from app.lib import widget\n\nwidget()\n",
     "tests/unit/test_lib.py": "from app.lib import widget\n\n\ndef test_it():\n    assert widget() == 1\n",
 }
@@ -71,6 +74,11 @@ class WhereTest(unittest.TestCase):
         self.assertNotIn("backend/app/other.py", found)
         self.assertEqual(found["backend/app/lib.py"]["tags"], {"defines"})
         self.assertEqual(found["backend/app/caller.py"]["lines"][-1], (5, "return widget()"))
+
+    def test_scoped_symbol_reaches_callers_through_a_reexporting_package(self):
+        found = where.find(self.root, "app.pkg.impl.gadget")
+        self.assertEqual(found["backend/app/viapkg.py"]["tags"], {"imports"})
+        self.assertEqual(found["backend/app/pkg/impl.py"]["tags"], {"defines"})
 
     def test_module_importers_include_tests(self):
         found = where.find(self.root, "backend/app/lib.py")

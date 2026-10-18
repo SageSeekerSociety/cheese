@@ -25,7 +25,6 @@ import argparse
 import ast
 import importlib.util
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -89,9 +88,9 @@ def find(root, target):
     by_module = {graph.module_name(p.relative_to(backend)): p for p in paths}
     modules = set(by_module)
     kind, scope, name = classify(target, modules)
-    imported_by = defaultdict(set)  # module -> modules whose import statements name it
     needle = name or scope.rpartition(".")[2]
     result = {}
+    seen = {}  # module -> (text, imports) for the files that mention the needle
 
     def add(path, tag, lines=()):
         entry = result.setdefault(str(path.relative_to(root)), {"tags": set(), "lines": []})
@@ -99,34 +98,46 @@ def find(root, target):
         entry["lines"].extend(lines)
 
     for module, path in by_module.items():
-        text = path.read_text()
-        if kind == "symbol" and name not in text:
+        try:
+            text = path.read_text()
+        except (OSError, UnicodeError):
             continue
-        if kind == "module" and needle not in text:
+        if needle not in text:
             continue
         try:
             _, imports, _, _ = graph.dependencies(path, module, modules)
-        except SyntaxError:
+        except (SyntaxError, UnicodeError):
             continue
-        for dep in imports:
-            imported_by[dep].add(module)
-        src = text.splitlines()
-        if kind == "module":
+        seen[module] = (text, imports)
+    if kind == "module":
+        for module, (text, imports) in seen.items():
             if scope in imports or any(i.startswith(scope + ".") for i in imports):
-                tree = ast.parse(text)
-                lines = sorted({n.lineno for n in ast.walk(tree)
+                path = by_module[module]
+                src = text.splitlines()
+                lines = sorted({n.lineno for n in ast.walk(ast.parse(text))
                                 if isinstance(n, (ast.Import, ast.ImportFrom))
                                 and _names_module(n, scope, module, path, modules)})
                 add(path, "imports", [(n, src[n - 1].strip()) for n in lines])
-            continue
+        return result
+    # A name defined in app/x/tokens.py is usually imported from the package
+    # app/x that re-exports it, so the scope reaches every __init__ that imports it.
+    reach = {scope} if scope is not None else None
+    while reach is not None:
+        grown = {m for m, (_, imports) in seen.items()
+                 if by_module[m].name == "__init__.py" and imports & reach} - reach
+        if not grown:
+            break
+        reach |= grown
+    for module, (text, imports) in seen.items():
+        path = by_module[module]
         hits = uses_of(ast.parse(text), name)
         if not hits:
             continue
-        if scope is not None and module != scope and scope not in imports:
+        if reach is not None and module not in reach and not imports & reach:
             continue
-        defines = module == scope
-        add(path, "defines" if defines else ("imports" if scope in imports else "uses"),
-            [(n, src[n - 1].strip()) for n in sorted(hits)])
+        src = text.splitlines()
+        tag = "defines" if module == scope else ("imports" if reach and imports & reach else "uses")
+        add(path, tag, [(n, src[n - 1].strip()) for n in sorted(hits)])
     return result
 
 
@@ -162,7 +173,10 @@ def main(argv=None):
     parser.add_argument("target", help="symbol, dotted module, module path, or module.symbol")
     parser.add_argument("--root", type=Path, default=ROOT, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    print(render(find(args.root, args.target)))
+    result = find(args.root, args.target)
+    if not result and "." in args.target.removesuffix(".py"):
+        print("note: nothing found; check that the module part of the dotted name exists", file=sys.stderr)
+    print(render(result))
 
 
 if __name__ == "__main__":
