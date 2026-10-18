@@ -393,7 +393,7 @@ async def _settle(
                     kind="docs_ask",
                 )
             await session.commit()
-    except Exception:  # noqa: BLE001 — the reader has their answer either way
+    except Exception:  # the reader has their answer either way
         logger.warning("settling a docs question failed", exc_info=True)
 
 

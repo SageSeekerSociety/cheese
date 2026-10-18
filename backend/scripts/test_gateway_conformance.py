@@ -13,8 +13,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
-import gateway_conformance as suite  # noqa: E402
-import gateway_supply_probe as probe  # noqa: E402
+import gateway_conformance as suite
+import gateway_supply_probe as probe
 
 
 def sse(events, done=False):

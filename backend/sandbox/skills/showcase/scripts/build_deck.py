@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: E501  (usage docstrings show JSON and command lines that read worse wrapped)
+
 """build_deck.py — 把一份 JSON 幻灯片稿渲染成 16:9 的 .pptx。
 
 用法:

@@ -154,7 +154,16 @@ async def list_user_connections(svc: pkg.OAuthService, user_id: int) -> list[dic
             # Token 健康度 (2026-08-09): 只暴露元数据，绝不返回 token/密文本身.
             "login": (c.raw_profile or {}).get("login"),
             "tokenExpires": (c.token_expires.isoformat() if c.token_expires else None),
-            "hasRefreshToken": c.refresh_token is not None,
+            # A renewal token the backend can still use: stored, readable, and
+            # not rejected by GitHub (a rejection forgets it, tokens.py).
+            "hasRefreshToken": c.refresh_token is not None
+            and svc._decrypt_stored_token(
+                c.refresh_token,
+                user_id=c.user_id,
+                provider_id=c.provider_id,
+                field="refresh_token",
+            )
+            is not None,
         }
         for c in conns
     ]

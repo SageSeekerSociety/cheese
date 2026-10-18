@@ -15,6 +15,9 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
+  CRV_CI_BOARD,
+  CRV_CI_JOBS,
+  CRV_CI_STEPS,
   CRV_HISTORY,
   CRV_LEGAL,
   CRV_MACHINES,
@@ -28,6 +31,7 @@ import {
 } from './catalogViewAdminFixtures'
 
 import { t } from '@/i18n'
+import AdminCiActivityPageView from '@/views/admin/AdminCiActivityPageView.vue'
 import AdminCreditsPageView from '@/views/admin/AdminCreditsPageView.vue'
 import AdminMachinesPageView from '@/views/admin/AdminMachinesPageView.vue'
 import AdminRatchetPageView from '@/views/admin/AdminRatchetPageView.vue'
@@ -128,6 +132,70 @@ export const VIEW_ADMIN_ENTRIES: CatalogEntry[] = [
         },
         props: { planDialogOpen: true, planEditing: null },
         expect: '新建方案',
+      },
+    ],
+  },
+  {
+    id: 'admin-ci-activity-page-view',
+    title: 'AdminCiActivityPageView',
+    get about() {
+      return t('catalog.adminCiActivityPageView.about')
+    },
+    file: 'src/views/admin/AdminCiActivityPageView.vue',
+    component: AdminCiActivityPageView,
+    needs: UI_T_R,
+    args: { board: CRV_CI_BOARD, days: 7, jobs: CRV_CI_JOBS },
+    states: [
+      {
+        get name() {
+          return t('catalog.adminCiActivityPageView.s1.name')
+        },
+        get note() {
+          return t('catalog.adminCiActivityPageView.s1.note')
+        },
+        props: {},
+        expect: 'e2e / e2e',
+      },
+      {
+        get name() {
+          return t('catalog.adminCiActivityPageView.s2.name')
+        },
+        get note() {
+          return t('catalog.adminCiActivityPageView.s2.note')
+        },
+        props: { job: CRV_CI_JOBS[0], steps: CRV_CI_STEPS, runner: 'cheese-ci-runner-1' },
+        expect: 'Run e2e',
+      },
+      {
+        get name() {
+          return t('catalog.adminCiActivityPageView.s3.name')
+        },
+        get note() {
+          return t('catalog.adminCiActivityPageView.s3.note')
+        },
+        props: {
+          board: {
+            ...CRV_CI_BOARD,
+            sweep: {
+              at: '2026-10-17T22:35:00+00:00',
+              error: 'CiQuotaRefused: GitHub quota spent (HTTP 403)',
+              jobs_owed: 4210,
+              covered_from: '2026-10-12T04:00:00+00:00',
+              complete: false,
+            },
+          },
+        },
+        expect: 'GitHub quota spent',
+      },
+      {
+        get name() {
+          return t('catalog.adminCiActivityPageView.s4.name')
+        },
+        get note() {
+          return t('catalog.adminCiActivityPageView.s4.note')
+        },
+        props: { board: null, jobs: [], failed: true },
+        expectSelector: '.v-btn, button',
       },
     ],
   },

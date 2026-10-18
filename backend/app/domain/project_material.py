@@ -23,8 +23,12 @@ from app.domain.library import records as library_records
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.overview import pointed_overview
 from app.domain.project.models import Project
-from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.project_material_rows import (
+    STATUS_ACCEPTED,
+    STATUS_OPEN,
+    _cards,
+    _tasks,
+)
 from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.reads import open_rooms
@@ -40,6 +44,50 @@ _DOC_HEAD_CHARS = 260
 _GOAL_CHARS = 6000
 #: 一次最多读回多少条人话；按频道分好以后每个频道只留最后 20 条。
 _TALK_ROWS = 3000
+
+
+@dataclass(frozen=True)
+class TaskRow:
+    """`tasks` 的一行，只带上本模块读的那几列。"""
+
+    id: uuid.UUID
+    room_id: uuid.UUID
+    title: str
+    document_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime | None
+    open: bool
+
+
+async def _task_rows(
+    session: AsyncSession, project_id: uuid.UUID, room_ids: list[uuid.UUID]
+) -> list[TaskRow]:
+    """这些频道里的活，带上本模块要的那几列（`_tasks` 是裸表副本）。"""
+    if not room_ids:
+        return []
+    rows = await session.execute(
+        select(
+            _tasks.c.id,
+            _tasks.c.room_id,
+            _tasks.c.title,
+            _tasks.c.document_id,
+            _tasks.c.created_at,
+            _tasks.c.updated_at,
+            _tasks.c.status,
+        ).where(_tasks.c.project_id == project_id, _tasks.c.room_id.in_(room_ids))
+    )
+    return [
+        TaskRow(
+            id=row.id,
+            room_id=row.room_id,
+            title=row.title,
+            document_id=row.document_id,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            open=row.status == STATUS_OPEN,
+        )
+        for row in rows
+    ]
 
 
 def _cut(text: str | None, n: int) -> str:
@@ -89,19 +137,19 @@ async def marks(session: AsyncSession, project_id: uuid.UUID) -> Marks:
     tasks = (
         await session.execute(
             select(
-                func.count(Task.id),
-                func.max(Task.created_at),
-                func.max(Task.closed_at),
-            ).where(Task.project_id == project_id, Task.room_id.in_(room_ids))
+                func.count(_tasks.c.id),
+                func.max(_tasks.c.created_at),
+                func.max(_tasks.c.closed_at),
+            ).where(_tasks.c.project_id == project_id, _tasks.c.room_id.in_(room_ids))
         )
     ).one()
     accepted = await session.scalar(
-        select(func.max(AcceptCard.decided_at))
-        .join(Task, Task.id == AcceptCard.task_id)
+        select(func.max(_cards.c.decided_at))
+        .join(_tasks, _tasks.c.id == _cards.c.task_id)
         .where(
-            Task.project_id == project_id,
-            Task.room_id.in_(room_ids),
-            AcceptCard.status == AcceptStatus.accepted,
+            _tasks.c.project_id == project_id,
+            _tasks.c.room_id.in_(room_ids),
+            _cards.c.status == STATUS_ACCEPTED,
         )
     )
     said = await session.scalar(
@@ -131,7 +179,9 @@ async def _conversations(
     if not room_ids:
         return []
     tasks = await session.scalars(
-        select(Task.id).where(Task.project_id == project_id, Task.room_id.in_(room_ids))
+        select(_tasks.c.id).where(
+            _tasks.c.project_id == project_id, _tasks.c.room_id.in_(room_ids)
+        )
     )
     threads = await session.scalars(
         select(Thread.id).where(
@@ -172,16 +222,10 @@ async def gather(
     overview = await pointed_overview(session, project_id)
     goal = (overview.content if overview is not None else "").strip()
 
-    tasks = list(
-        await session.scalars(
-            select(Task).where(
-                Task.project_id == project_id, Task.room_id.in_(room_ids)
-            )
-        )
-    )
+    tasks = await _task_rows(session, project_id, room_ids)
     by_id = {task.id: task for task in tasks}
     open_tasks = sorted(
-        (t for t in tasks if t.status == TaskStatus.open),
+        (t for t in tasks if t.open),
         key=lambda t: t.updated_at or t.created_at,
         reverse=True,
     )
@@ -195,16 +239,16 @@ async def gather(
     accepted = list(
         await session.execute(
             select(
-                AcceptCard.task_id,
-                AcceptCard.change_subject,
-                AcceptCard.deliverable_name,
+                _cards.c.task_id,
+                _cards.c.change_subject,
+                _cards.c.deliverable_name,
             )
             .where(
-                AcceptCard.task_id.in_(list(by_id)),
-                AcceptCard.status == AcceptStatus.accepted,
-                AcceptCard.decided_at > since,
+                _cards.c.task_id.in_(list(by_id)),
+                _cards.c.status == STATUS_ACCEPTED,
+                _cards.c.decided_at > since,
             )
-            .order_by(AcceptCard.decided_at.desc())
+            .order_by(_cards.c.decided_at.desc())
         )
     )
 
@@ -237,7 +281,7 @@ async def gather(
         lines.append("（没有）")
 
     lines += ["", "## 正在做的事（还没做完的，按频道分）"]
-    going: dict[str, list[Task]] = defaultdict(list)
+    going: dict[str, list[TaskRow]] = defaultdict(list)
     for task in open_tasks:
         going[rooms.names[task.room_id]].append(task)
     for room, listed in sorted(going.items(), key=lambda item: -len(item[1])):
@@ -284,8 +328,8 @@ async def _talk(
         return {}
     room_of: dict[uuid.UUID, uuid.UUID] = {room: room for room in room_ids}
     for task_id, room_id in await session.execute(
-        select(Task.id, Task.room_id).where(
-            Task.project_id == project_id, Task.room_id.in_(room_ids)
+        select(_tasks.c.id, _tasks.c.room_id).where(
+            _tasks.c.project_id == project_id, _tasks.c.room_id.in_(room_ids)
         )
     ):
         room_of[task_id] = room_id

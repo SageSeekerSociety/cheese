@@ -33,13 +33,13 @@ commits and none (`sweep_draft_prs`, `_draft_pr_for_one_task`, `_branch_ahead`,
 about. Tests replace `enabled`, `dispatch`, `branch_head`, `proposal_client`,
 `sweep_draft_prs` and `_branch_ahead` on THIS module object, so every body that
 reads one of them has to live here; in the sibling it would read the sibling's
-own copy and the replacement would quietly stop taking effect. `tests/unit/
-test_pr_publish_module_split.py` holds both halves to that.
+own copy and the replacement would quietly stop taking effect.
 """
 
 import asyncio
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -153,7 +153,7 @@ async def _run(
             topic_id=topic_id,
             project_id=project_id,
         )
-    except Exception as exc:  # noqa: BLE001 — card stays PR-less, but never silently (#362)
+    except Exception as exc:  # card stays PR-less, but never silently (#362)
         logger.exception("PR publication failed for card %s", card_id)
         await _record_failure(session_factory, card_id=card_id, exc=exc)
         return
@@ -261,13 +261,24 @@ async def sweep_draft_prs(
     *,
     announce: Announce,
     record_instruction: RecordInstruction,
+    quiet_window_s: int | None = None,
 ) -> dict[str, int]:
     """Open draft PRs for task branches with commits and no existing PR.
 
     Commits arrive from different executors through Git; the shared PR poller
-    observes them after synchronization. Delay is one poll interval plus the
+    observes them after synchronization. Delay is one sweep interval plus the
     time spent on earlier tasks in this pass. Each task uses its own session
     so a failed write cannot poison the remaining deliveries.
+
+    ``quiet_window_s`` limits a pass to tasks whose last activity (newest
+    block in their own conversation, or their creation) is inside that many
+    seconds: each candidate costs two GitHub requests (`branch_head` +
+    `compare_status`), and a branch with nothing said for hours is not being
+    pushed to. Only the periodic clock passes it — that is where the cost is.
+    An event-driven or catch-up pass leaves it ``None`` and sweeps every open
+    task, because those passes are exactly how a push missed while the relay
+    was down, or a pass lost to a spent quota, gets made good. Zero or less
+    also keeps every open task.
     """
     # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
@@ -281,10 +292,17 @@ async def sweep_draft_prs(
     )
     if not enabled():
         return counts
+    active_since = (
+        datetime.now(UTC) - timedelta(seconds=quiet_window_s)
+        if quiet_window_s is not None and quiet_window_s > 0
+        else None
+    )
     async with session_factory() as session:
         wanted = [
             (t.id, t.project_id)
-            for t in await TaskService(session).open_without_pr()
+            for t in await TaskService(session).open_without_pr(
+                active_since=active_since
+            )
             if project_id is None or t.project_id == project_id
         ]
     # A project whose forge refused for quota in this pass: every later task of
@@ -314,7 +332,7 @@ async def sweep_draft_prs(
                 "draft PRs of project %s wait for the next pass: %s", task_project, exc
             )
             continue
-        except Exception:  # noqa: BLE001 — one bad task must not end the sweep
+        except Exception:  # one bad task must not end the sweep
             counts["failed"] += 1
             logger.warning("draft PR not opened for task %s", task_id, exc_info=True)
             continue
@@ -730,7 +748,7 @@ async def _branch_ahead(session: AsyncSession, task_id: uuid.UUID) -> bool:
     return difference in ("ahead", "diverged")
 
 
-async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # noqa: ANN001
+async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:
     """The draft PR for one task, or None when this task cannot have one yet.
 
     None (not an error) for: a project with no App installation, a non-GitHub

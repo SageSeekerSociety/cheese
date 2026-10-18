@@ -121,7 +121,7 @@ class HookEvents:
     async def credits_refused(self, turn_id: uuid.UUID) -> bool:
         try:
             return await turn_credits_refused(self.sessions, turn_id)
-        except Exception:  # noqa: BLE001 — a failed read must not break the notice
+        except Exception:  # a failed read must not break the notice
             logger.exception("could not read credits-refused stamp for %s", turn_id)
             return False
 

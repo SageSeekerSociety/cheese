@@ -17,7 +17,7 @@ import threading
 
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_doc_agent import _tool
-from tests.integration.test_doc_agent import sessions as sessions  # noqa: F401
+from tests.integration.test_doc_agent import sessions as sessions
 from tests.integration.test_doc_edits import ALICE_PARAGRAPH, _doc, _document
 from tests.support.living_doc import document_of
 

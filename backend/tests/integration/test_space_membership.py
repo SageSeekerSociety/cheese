@@ -223,7 +223,7 @@ def sql_log(db_connection):
     target = db_connection.sync_connection
     statements: list[str] = []
 
-    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    def record(conn, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
     event.listen(target, "before_cursor_execute", record)

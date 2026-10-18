@@ -24,7 +24,7 @@ from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.db.session import get_db
-from app.domain.agent_instance.configuration import model_choices
+from app.domain.agent.model_catalog import model_choices
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
 from app.domain.team.services import team_service

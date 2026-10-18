@@ -100,7 +100,7 @@ async def sweep_warm_pool(
             return
         try:
             swept = await service.sweep()
-        except Exception as exc:  # noqa: BLE001 — said on change, not every sweep
+        except Exception as exc:  # said on change, not every sweep
             _health.failed(f"{type(exc).__name__}: {exc}", exc)
             return
         if swept is None:

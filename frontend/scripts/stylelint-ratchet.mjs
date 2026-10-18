@@ -126,7 +126,7 @@ if (update) {
     `${JSON.stringify(
       {
         _comment:
-          'Frozen design-token violations (hardcoded colours, off-ladder radii). The ' +
+          'Frozen design-token violations (hardcoded colours). The ' +
           'ratchet blocks any NEW one; these are pre-existing and may only go down. ' +
           'Regenerate with `pnpm run lint:style:update`. See docs/design-system.md.',
         files: next,

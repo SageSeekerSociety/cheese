@@ -86,7 +86,7 @@ def _parse_approved_optional(value: str | None) -> int | None:
     key = value.upper()
     if key not in APPROVED_MAP:
         raise BadRequestError(
-            f"Invalid participationApproved: {value}. Must be APPROVED, DISAPPROVED, or NONE"  # noqa: E501
+            f"Invalid participationApproved: {value}. Must be APPROVED, DISAPPROVED, or NONE"
         )
     return APPROVED_MAP[key]
 
@@ -97,7 +97,7 @@ def _normalize_completion_status(value: str | None) -> str | None:
     key = value.upper()
     if key not in COMPLETION_STATUSES:
         raise BadRequestError(
-            f"Invalid completionStatus: {value}. Must be one of {sorted(COMPLETION_STATUSES)}"  # noqa: E501
+            f"Invalid completionStatus: {value}. Must be one of {sorted(COMPLETION_STATUSES)}"
         )
     return key
 
@@ -122,7 +122,7 @@ def _normalize_publisher_sort_by(value: str) -> str:
     key = value or "taskCount"
     if key not in PUBLISHER_SORT_FIELDS:
         raise BadRequestError(
-            f"Invalid sortBy: {value}. Must be one of {sorted(PUBLISHER_SORT_FIELDS)}"  # noqa: E501
+            f"Invalid sortBy: {value}. Must be one of {sorted(PUBLISHER_SORT_FIELDS)}"
         )
     return key
 

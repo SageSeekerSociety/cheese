@@ -13,10 +13,10 @@ run-name: Deploy ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.h
 # prod runs: pull the per-commit images, migrate, up, health-check. The frontend
 # image bundles its own nginx; the ghg edge terminates TLS and hits :80.
 
-# Triggered by the image build finishing for a main commit. Required CI for that
-# commit ran in the merge queue before the commit reached main, so it has already
-# finished by then; the eligibility job still checks both for the candidate SHA
-# without occupying the deployment runner.
+# Triggered by the image build or by Required CI finishing for a main commit.
+# Required CI runs on main after the commit lands, and it outlasts the build, so
+# whichever finishes last is the event that releases; the eligibility job checks
+# both for the candidate SHA without occupying the deployment runner.
 # A release of a commit from before the two slots per service
 # (deploy/deploy-docker.sh, "Two slots"), a revert or a manual dispatch, runs
 # that commit's own script. It installs its own app-router.conf and reloads —
@@ -60,7 +60,14 @@ on:
         type: string
         default: ""
   workflow_run:
-    workflows: ["Build and Push Docker Image"]
+    # Both triggers, because either can finish last and the gate needs both.
+    # Build finishes in a few minutes, Required CI on main takes longer (its
+    # suites include the layers a PR run defers), so the build's event usually
+    # arrives first and refuses for want of a green gate; Required CI's own
+    # completion is the event that then releases. `branches: [main]` keeps this
+    # to runs that landed on main: a pull_request run's head branch is the PR's,
+    # and a merge queue entry's is the queue's temporary branch.
+    workflows: ["Build and Push Docker Image", "Required CI"]
     types: [completed]
     branches: [main]
 
@@ -74,11 +81,27 @@ permissions:
 
 jobs:
   eligibility:
+    # A Required CI run that did not pass releases nothing, and a real failure
+    # is read on that run. A cancelled one is looked at too: usually a batched
+    # push a newer one replaced (the script then says "waiting"), but a
+    # cancellation with nothing newer on main leaves a commit nothing will ever
+    # cover, and skipping the job here would leave that silent. The event and
+    # branch are checked as well as the name: `branches: [main]` also admits a
+    # pull request whose head branch is called main, and a commit on someone's
+    # fork is not a candidate to release.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.name != 'Required CI' ||
+      (github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      (github.event.workflow_run.conclusion == 'success' ||
+      github.event.workflow_run.conclusion == 'cancelled'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       ready: ${{ steps.check.outputs.ready }}
       superseded: ${{ steps.check.outputs.superseded }}
+      waiting: ${{ steps.check.outputs.waiting }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -95,15 +118,32 @@ jobs:
           else
             python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
           fi
-      # A refused release skips the deploy job, and a run whose only skipped job
-      # is the deploy concludes success, which reads as "this commit is on dev".
-      - name: Fail when this commit will not be deployed
-        if: steps.check.outputs.ready != 'true'
+      # Required CI on main runs after the commit lands, so for a few minutes
+      # the honest answer is "not yet" rather than a refusal: this workflow is
+      # triggered again by that run's completion, and the newer batch's run
+      # covers a commit whose own run a later push superseded while queued.
+      - name: Say this commit waits for Required CI
+        if: steps.check.outputs.waiting == 'true'
         env:
           CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
         run: |
+          echo "Not deployed \`$CANDIDATE_SHA\` yet: its Required CI run on main has not finished. That run's completion triggers this workflow again and releases it; a commit whose queued run a newer push superseded is released by the newer batch's run." >> "$GITHUB_STEP_SUMMARY"
+
+      # A refused release skips the deploy job, and a run whose only skipped job
+      # is the deploy concludes success, which reads as "this commit is on dev".
+      - name: Fail when this commit will not be deployed
+        if: steps.check.outputs.ready != 'true' && steps.check.outputs.waiting != 'true'
+        env:
+          CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
+          UNCOVERED: ${{ steps.check.outputs.uncovered }}
+        run: |
           live="$(curl -fsS --max-time 10 https://okcheese.com/api/version | jq -r '.data.sha // empty')" || true
           reason="its image build or Required CI has no successful latest attempt"
+          # A cancelled gate run with nothing newer on main is its own case: no
+          # later batch will cover it, so this needs a person, not another wait.
+          if [ "$UNCOVERED" = true ]; then
+            reason="its Required CI run was cancelled and no newer commit on main covers it"
+          fi
           echo "Not deployed \`$CANDIDATE_SHA\`: $reason. dev runs \`${live:-unknown}\`." >> "$GITHUB_STEP_SUMMARY"
           echo "::error::Not deployed $CANDIDATE_SHA: $reason."
           exit 1
@@ -385,11 +425,15 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          REBUILT: ${{ inputs.rebuilt }}
           METERING_ALLOW_INTERRUPT: "1"
         run: |
           set -euo pipefail
           release_sha="$(git rev-parse HEAD)"
-          python3 deploy/check-auto-deploy.py --require-ci "$release_sha"
+          # Explicit manual releases follow the same CI policy as the app release.
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || [ -n "${REBUILT:-}" ]; then
+            python3 deploy/check-auto-deploy.py --require-ci "$release_sha"
+          fi
           bash deploy/release-metering-proxy.sh "$release_sha"
 
       # A commit carrying `Fixes-feedback: FB-<n>` moves that report to 已修复

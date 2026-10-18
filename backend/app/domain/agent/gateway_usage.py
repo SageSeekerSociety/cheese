@@ -43,12 +43,12 @@ from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
+from app.domain.agent.model_catalog import catalog, project_pool
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.queries import _model_policy_call, _Proposed
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.supply import SUBSCRIPTION
-from app.domain.agent_instance.configuration import catalog, project_pool
 from app.domain.agent_instance.own import owned_instance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.policy import gate
@@ -553,7 +553,7 @@ async def _gateway_project_env(
                 await repo.merge_settings(project, patch, remove=remove)
                 await session.commit()
         return {"ANTHROPIC_AUTH_TOKEN": key}
-    except Exception:  # noqa: BLE001 — never fail a turn on admin plumbing
+    except Exception:  # never fail a turn on admin plumbing
         logger.exception("gateway project-env failed for %s", project_id)
         return None
 

@@ -169,7 +169,7 @@ async def _recover_business_state(device_id: str) -> None:
         logger.warning(
             "hook subscriptions not recovered: device %s said %s", device_id, exc
         )
-    except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
+    except Exception:  # recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
     # Restore screen ownership before cleanup looks for sessions to close.
     # deferred-import: tests patch this name on app.core.db

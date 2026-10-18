@@ -12,6 +12,7 @@
   "managerHint": "在项目设置的频道表里更换",
   "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
   "readOnly": "只有频道里的人能添加成员",
+  "readOnlyRole": "无法添加成员：你的角色没有这项权限",
   "remove": "移出频道",
   "title": "频道成员"
 }

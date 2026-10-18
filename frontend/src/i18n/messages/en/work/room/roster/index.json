@@ -12,6 +12,7 @@
   "managerHint": "Change it in the project's channel table",
   "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
   "readOnly": "Only people in the channel can add members",
+  "readOnlyRole": "Can't add members: your role doesn't have this permission",
   "remove": "Remove from channel",
   "title": "Channel members"
 }

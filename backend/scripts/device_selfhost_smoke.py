@@ -281,6 +281,6 @@ async def main() -> int:
 
 try:
     sys.exit(asyncio.run(main()))
-except urllib.error.HTTPError as exc:  # noqa: BLE001 — report, don't traceback
+except urllib.error.HTTPError as exc:  # report, don't traceback
     print(f"FAIL http {exc.code}: {exc.read()[:300]!r}")
     sys.exit(2)

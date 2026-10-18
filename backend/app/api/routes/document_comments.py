@@ -323,6 +323,8 @@ async def stop_agent(
     """Stop the agent answering this thread: its wait, or the answer being
     written. Its reply keeps what was written, marked as stopped."""
     reached, _ = await _member(db, resolver, document_id)
+    # The thread named is this document's own, as for every other thread route.
+    await CommentThreads(db).root(reached.doc.id, comment_id)
     await db.commit()
     redis = get_redis_client()
     if redis is None:

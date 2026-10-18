@@ -1126,7 +1126,7 @@ class RemoteClient:
                     },
                 }
             )
-        except Exception:  # noqa: BLE001 — a report is not worth a failed call
+        except Exception:  # a report is not worth a failed call
             pass
 
     def local_outcome(self, server, error):

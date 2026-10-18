@@ -352,7 +352,7 @@ class Runner(Generic[J]):  # noqa: UP046
                 )
                 if isinstance(result, dict) and result.get("error"):
                     raise RuntimeError(result["error"])
-            except Exception as error:  # noqa: BLE001 — the next turn's tries again
+            except Exception as error:  # the next turn's tries again
                 print(f"turn checkpoint failed: {error!r}", file=sys.stderr, flush=True)
             if not self.checkpoint_again:
                 return
@@ -624,7 +624,7 @@ class Runner(Generic[J]):  # noqa: UP046
         if owes_reply:
             try:
                 await self.yield_foreground()
-            except Exception as error:  # noqa: BLE001 — the message is in regardless
+            except Exception as error:  # the message is in regardless
                 print(
                     f"could not move foreground work aside for {identifier}: {error}",
                     file=sys.stderr,

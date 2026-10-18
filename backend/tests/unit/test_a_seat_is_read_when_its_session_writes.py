@@ -127,7 +127,7 @@ async def test_a_runner_that_cannot_hold_a_read_is_refused_with_a_clear_error():
         await room.close()
 
 
-async def test_what_the_agent_is_writing_reaches_the_room_as_it_grows_and_goes_when_it_lands():  # noqa: E501
+async def test_what_the_agent_is_writing_reaches_the_room_as_it_grows_and_goes_when_it_lands():
     channel = Counting()
     room = Room(channel)
     shown: list[tuple[uuid.UUID | None, str, list[dict], list[str]]] = []

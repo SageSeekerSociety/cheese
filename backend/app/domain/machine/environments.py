@@ -9,6 +9,7 @@ machine it then works on is settled on its next tool call (``session_work``).
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -86,12 +87,23 @@ async def offered_specs(db: AsyncSession, project) -> list[dict]:
         out.append(_spec(STANDARD, say("specStandard")))
     if cloud_vm_provisionable(settings):
         out.append(_spec(VM, say("specVm")))
-    for user_id in await _people_with_sandboxes(db, project.id):
-        user = await db.get(User, user_id)
-        if user is not None:
-            out.append(
-                _spec(devices_of(user_id), say("specDevicesOf", name=user.username))
+    user_ids = await _people_with_sandboxes(db, project.id)
+    if user_ids:
+        rows = (
+            (
+                await db.execute(
+                    select(User.id, User.username).where(User.id.in_(user_ids))
+                )
             )
+            .tuples()
+            .all()
+        )
+        users: dict[int, str] = {user_id: username for user_id, username in rows}
+        for user_id in user_ids:
+            if (username := users.get(user_id)) is not None:
+                out.append(
+                    _spec(devices_of(user_id), say("specDevicesOf", name=username))
+                )
     return out
 
 

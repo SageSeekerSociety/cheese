@@ -4,8 +4,8 @@ team's and a project's (#3774).
 A document belongs to a team — a person's own to their personal team — and to
 at most one of its projects. One of no project is the team's: its members list,
 read and write it (`api.doc_access`). Moving changes who reads it, so it is a
-person's act — the document's author or an admin of its team — and lands only
-where that person is a member.
+person's act — the person the document is theirs or an admin of its team —
+and lands only where that person is a member.
 """
 
 import uuid
@@ -94,6 +94,7 @@ async def create_team_document(
         team_id=team_id,
         title=body.title.strip(),
         author=actor.handle,
+        created_by=actor.handle,
     )
     await db.commit()
     await db.refresh(doc)
@@ -124,7 +125,7 @@ class PlacesOut(BaseModel):
 async def _movable(db, resolver, document_id: uuid.UUID):
     """The document and its reach, once the caller may move it: a library or a
     team document — not a task's, a conversation's or the project's goals — by
-    its author or an admin of its team."""
+    the person it is theirs or an admin of its team."""
     reached = await reach(db, resolver, document_id, enforce=True)
     doc = reached.doc
     if await whose_document(db, doc) != (None, None) or (

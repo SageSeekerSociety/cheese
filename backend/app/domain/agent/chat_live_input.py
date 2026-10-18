@@ -194,7 +194,7 @@ class LiveInput:
                 exc.identity.input_id,
             )
             return InputReconciliationPending(exc.identity, exc.accepted)
-        except Exception:  # noqa: BLE001 — pre-send failure may queue a fallback
+        except Exception:  # pre-send failure may queue a fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             delivered = False
         if not delivered:
@@ -270,7 +270,7 @@ class LiveInput:
                 exc.identity.input_id,
             )
             return InputReconciliationPending(exc.identity, exc.accepted)
-        except Exception:  # noqa: BLE001 — a failed notice must not fail the write
+        except Exception:  # a failed notice must not fail the write
             logger.exception(
                 "platform notice into running turn failed (topic=%s)", topic_id
             )
@@ -366,7 +366,7 @@ class LiveInput:
                 exc.identity.input_id,
             )
             return InputReconciliationPending(exc.identity, exc.accepted)
-        except Exception:  # noqa: BLE001 — refused and retried, never dropped
+        except Exception:  # refused and retried, never dropped
             logger.exception(
                 "delivery into running turn failed (delivery=%s)", delivery_id
             )

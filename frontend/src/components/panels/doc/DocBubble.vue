@@ -394,6 +394,8 @@ useFocusReturn(blockOpen)
   box-shadow: none;
   color: var(--text);
   overflow-x: auto;
+  /* 横着滑就够了，滚动条那道灰线不画：被切掉一半的那颗按钮已经说明右边还有。 */
+  scrollbar-width: none;
 }
 .doc-bubble--bar button {
   flex: 0 0 auto;
