@@ -131,8 +131,8 @@ def main() -> None:
     fact("budget.status", int(budget_status), ADDON, budget_src)
     fact("budget.type", budget_type, ADDON, budget_src)
     fact("budget.prefix", budget_prefix, ADDON, prefix_src)
-    binding_status, binding_src = grab(ADDON, r'_refuse\(flow, (\d+), "invalid_request_error", verdict\.reason\)', 1)
-    binding_type, _ = grab(ADDON, r'_refuse\(flow, \d+, "([^"]+)", verdict\.reason\)')
+    binding_status, binding_src = grab(ADDON, r'if verdict.reason_kind == BINDING:\s+_refuse\(flow, (\d+), "[^"]+", verdict\.reason\)', 1)
+    binding_type, _ = grab(ADDON, r'if verdict.reason_kind == BINDING:\s+_refuse\(flow, \d+, "([^"]+)", verdict\.reason\)')
     fact("binding.status", int(binding_status), ADDON, binding_src)
     fact("binding.type", binding_type, ADDON, binding_src)
     # A CONNECT that cannot prove "bill this project" gets this instead of a
