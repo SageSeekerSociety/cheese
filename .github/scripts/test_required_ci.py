@@ -1402,6 +1402,21 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertNotIn("::warning::", proc.stdout)
 
+    def test_fail_fast_watches_a_main_push_batch_as_well_as_a_queue_entry(self):
+        # A main push batch has the same problem the queue entry had: its
+        # `CI required` cannot start before the slowest suite, so without this
+        # watcher main reads pending for the whole run after a job already
+        # failed. A pull request keeps the aggregator's own report.
+        job = jobs_of(self.text)["fail-fast"]
+        for event, runs in (("push", True), ("merge_group", True),
+                            ("pull_request", False)):
+            self.assertEqual(condition_holds(job["if"], event, None), runs, event)
+        self.assertIn("checks: write", job["text"])
+        # The watcher posts its check on the commit under test: on a push there
+        # is no merge_group payload, so the env must fall back to github.sha.
+        self.assertIn("github.event.merge_group.head_sha || github.sha", job["text"])
+        self.assertIn("merge-group-fail-fast.py", job["text"])
+
     def test_backend_integration_is_deferred_to_merge_group(self):
         jobs = jobs_of(self.text)
         self.assertIn("branch_heavy", jobs["scope"]["text"])
@@ -1829,6 +1844,54 @@ class MainCliTest(unittest.TestCase):
             self.assertIn("is not an ancestor", proc.stdout)
             self.assertEqual(written["backend"], "true")
             self.assertEqual(written["e2e"], "true")
+
+    def test_a_shallow_checkout_skips_the_ancestry_question(self):
+        # The workflow's checkout is depth one, and so is the anchor it fetches:
+        # git there sees two commits on one line as unrelated, so asking the
+        # real question would widen every batch. The answer for a shallow clone
+        # is therefore "cannot tell, keep going" — read where it is produced,
+        # because the full-clone test above takes the other branch.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            git("update-ref", "refs/heads/main-green", "HEAD")
+            anchor = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            (tmp / "more.txt").write_text("x\n")
+            git("add", "more.txt")
+            git("commit", "-qm", "one more")
+
+            shallow = tmp / "shallow"
+            subprocess.run(["git", "clone", "-q", "--depth=1", f"file://{tmp}", str(shallow)],
+                           check=True, capture_output=True)
+            subprocess.run(
+                ["git", "fetch", "--no-tags", "--depth=1", "origin",
+                 "+refs/heads/main-green:refs/remotes/origin/main-green"],
+                cwd=shallow, check=True, capture_output=True)
+            # The clone really cannot answer: git itself says "unrelated".
+            plain = subprocess.run(
+                ["git", "merge-base", "--is-ancestor",
+                 "refs/remotes/origin/main-green", "HEAD"],
+                cwd=shallow, capture_output=True)
+            self.assertNotEqual(plain.returncode, 0,
+                                "the fixture is not shallow enough to test the skip")
+
+            script = (
+                "import importlib.util, sys\n"
+                "spec = importlib.util.spec_from_file_location('rc', sys.argv[2])\n"
+                "rc = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(rc)\n"
+                "print(rc._is_ancestor(sys.argv[1], 'HEAD'))\n"
+            )
+            proc = subprocess.run(
+                [sys.executable, "-c", script, anchor, str(tmp / "required-ci.py")],
+                cwd=shallow, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip().splitlines()[-1], "True")
+            self.assertIn("Shallow checkout", proc.stdout)
 
     def test_a_main_push_without_an_anchor_scopes_every_tracked_path(self):
         # The first push after the gate moved to main has no anchor to diff

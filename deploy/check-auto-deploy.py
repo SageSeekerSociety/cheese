@@ -216,8 +216,11 @@ def waiting_state(candidate: str) -> str:
     cover it (the batched push runs share one concurrency group, so a newer
     push cancels a queued one, and the newer commit's run diffs over both).
     ``"cancelled-uncovered"`` — cancelled with nothing newer on main: a manual
-    or infrastructure cancellation, or a newer batch that itself failed. No run
-    will ever cover this commit, so it is a refusal, not a wait.
+    or infrastructure cancellation. No batch will ever be triggered that diffs
+    over this commit, so it is a refusal, not a wait. (A cancelled run with a
+    newer commit on main is ``"superseded"`` even if that newer commit's own
+    gate later fails: that failure is red on its own run, so the wait there is
+    bounded by a signal somebody sees, not silent.)
     """
     repository = os.environ["GITHUB_REPOSITORY"]
     runs = [run for run in workflow_runs(repository, "required-ci.yml", candidate)
@@ -373,9 +376,12 @@ def main() -> None:
         return
     if sys.argv[1] == "--ci-only":
         ready = ci_ready_settled(sys.argv[2])
-        state = waiting_state(sys.argv[2])
-        waiting = not ready and state in WAITABLE
-        uncovered = not ready and state == "cancelled-uncovered"
+        # Only a release that was refused asks why it might still come:
+        # a ready one must not pay another run-list read (and must not
+        # fail when that read fails) before its deploy starts.
+        state = "" if ready else waiting_state(sys.argv[2])
+        waiting = state in WAITABLE
+        uncovered = state == "cancelled-uncovered"
         newer = superseded_by(sys.argv[2]) if ready else ""
         if newer:
             print(f"Not deploying {sys.argv[2]}: {newer}, newer on main, has its images and Required CI, "
