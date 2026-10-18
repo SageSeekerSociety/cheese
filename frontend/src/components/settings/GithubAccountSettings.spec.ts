@@ -58,6 +58,12 @@ describe('the expired notice on 连接 GitHub 账号', () => {
     )
   })
 
+  it('stays hidden for a link whose access token does not expire, renewal token or not', () => {
+    expect(shownText(conn({ tokenExpires: null, hasRefreshToken: false }))).not.toContain(
+      t('work.projectSettings.githubAccount.expired')
+    )
+  })
+
   it('shows when the access token has expired and nothing can renew it', () => {
     expect(shownText(conn({ tokenExpires: PAST, hasRefreshToken: false }))).toContain(
       t('work.projectSettings.githubAccount.expired')
