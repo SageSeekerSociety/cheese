@@ -1,7 +1,5 @@
 """注册与注册邮箱验证码。"""
 
-import re
-
 from fastapi import (
     APIRouter,
     Depends,
@@ -27,8 +25,10 @@ from app.api.routes.users._common import (
 from app.api.users_deps import (
     issue_session,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
+from app.core.email import EMAIL_FORMAT
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -57,6 +57,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 @router.post(
     "/verify/email",
     summary="Send registration email verification code",
+    dependencies=[ROUTE_DECIDES],
 )
 async def send_register_email_code(
     payload: SendEmailCodeRequest,
@@ -81,8 +82,7 @@ async def send_register_email_code(
         except ValueError as exc:
             raise _invite_code_error(exc) from exc
 
-    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    if not re.match(email_regex, email):
+    if not EMAIL_FORMAT.match(email):
         raise UnprocessableEntityError("Invalid email address format")
 
     client = resolved_client_address(request)
@@ -129,10 +129,7 @@ async def get_registration_config() -> dict:
     )
 
 
-@router.post(
-    "",
-    summary="Register User",
-)
+@router.post("", summary="Register User", dependencies=[ROUTE_DECIDES])
 async def register_user(
     payload: RegisterUserRequest,
     request: Request,

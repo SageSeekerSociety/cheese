@@ -9,7 +9,8 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.living_doc.models import DocumentNode
 from app.domain.living_doc.services import Documents
-from app.domain.project.models import ProjectArtifact
+from app.domain.project.models import Project, ProjectArtifact
+from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.repositories import TopicRepository
@@ -136,8 +137,15 @@ def test_a_private_room_and_another_project_stay_out(client):
     _seed(client, _say(other, elsewhere, "机密预算 99 万"))
 
     async def private_room(db):
+        # A channel's number and environment are the project's to hand out.
+        start = await ProjectService(db).channel_start(
+            await db.get(Project, uuid.UUID(project))
+        )
         room = await TopicRepository(db).add(
-            project_id=uuid.UUID(project), title="私人预算房间"
+            project_id=uuid.UUID(project),
+            number=start[0],
+            environment=start[1],
+            title="私人预算房间",
         )
         room.is_private = True
         await db.flush()
@@ -387,8 +395,14 @@ def test_counts_leave_out_rooms_the_caller_cannot_read(client):
     here = _room(client, project, "公开")
 
     async def private_room(db):
+        start = await ProjectService(db).channel_start(
+            await db.get(Project, uuid.UUID(project))
+        )
         room = await TopicRepository(db).add(
-            project_id=uuid.UUID(project), title="私人房间"
+            project_id=uuid.UUID(project),
+            number=start[0],
+            environment=start[1],
+            title="私人房间",
         )
         room.is_private = True
         await db.flush()

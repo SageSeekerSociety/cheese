@@ -51,10 +51,12 @@ from typing import Literal
 from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
+from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import _actor_in_place
 from app.api.topics_file_sources import source_bytes
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import (
     ConflictError,
@@ -85,6 +87,7 @@ from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import clean_artifact_path
+from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
@@ -93,7 +96,7 @@ from app.domain.textfile import content_version
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("/{topic_id}/documents/recalc")
+@router.post("/{topic_id}/documents/recalc", dependencies=[ROUTE_DECIDES])
 async def recalc_spreadsheet(
     topic_id: uuid.UUID,
     body: dict,
@@ -130,7 +133,7 @@ async def recalc_spreadsheet(
     )
 
 
-@router.post("/{topic_id}/documents/convert")
+@router.post("/{topic_id}/documents/convert", dependencies=[ROUTE_DECIDES])
 async def convert_document(
     topic_id: uuid.UUID,
     body: dict,
@@ -205,7 +208,7 @@ async def list_document_revisions(
     )
 
 
-@router.post("/{topic_id}/documents/revisions")
+@router.post("/{topic_id}/documents/revisions", dependencies=[ROUTE_DECIDES])
 async def decide_document_revisions(
     topic_id: uuid.UUID,
     body: dict,
@@ -230,6 +233,8 @@ async def decide_document_revisions(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
+    # Deciding a change writes the file back: a person's role has to change files.
+    await require_role(db, actor, topic.project_id, Permission.edit_content)
     topic_id = topic.id
     clean = clean_artifact_path(body.get("path") or "")
     if library.library_name(clean) is not None:

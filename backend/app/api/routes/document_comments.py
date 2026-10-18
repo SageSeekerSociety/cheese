@@ -24,6 +24,7 @@ from app.api.doc_access import Reached, asked_of, reach, require_writable
 from app.api.doc_identity import operation_actor
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import SystemBusyError, ValidationError
 from app.core.redis import get_redis_client
 from app.core.sentences import say
@@ -63,7 +64,7 @@ async def list_nodes(
     return ok(page(items, len(items)))
 
 
-@router.post("/{document_id}/comments")
+@router.post("/{document_id}/comments", dependencies=[ROUTE_DECIDES])
 async def add_comment(
     document_id: uuid.UUID,
     body: CommentIn,
@@ -90,10 +91,14 @@ async def add_comment(
     told = await _announce(db, reached, comment)
     payload = {**comment_out(comment), "notified": told.notified, **_outside(told)}
     asked = asked_of(reached)
-    seat = await mentioned_seat(db, asked, reached.actor, content)
+    seat = (
+        await mentioned_seat(db, asked, reached.actor, content)
+        if asked is not None
+        else None
+    )
     await db.commit()
     await collab.tell(reached.doc.id, {"type": "state", "resource": "comments"})
-    if seat is not None:
+    if seat is not None and asked is not None:
         hand_to_agent(
             chat,
             questions,
@@ -108,6 +113,8 @@ async def add_comment(
 async def _as_stored(db, reached: Reached, content: str) -> str:
     """A comment's text as stored: a friendly @名字 becomes the person's
     ``<@handle>`` token, as every other text a person writes does."""
+    if reached.doc.project_id is None:
+        return content
     return await canonicalize_refs(
         db,
         reached.doc.project_id,
@@ -164,8 +171,13 @@ async def list_threads(
         for c in await service.roots(reached.doc.id)
     ]
     await db.commit()
-    states = await answering(
-        reached.doc.project_id, [uuid.UUID(item["comment"]["id"]) for item in items]
+    states = (
+        await answering(
+            reached.doc.project_id,
+            [uuid.UUID(item["comment"]["id"]) for item in items],
+        )
+        if reached.doc.project_id is not None
+        else {}
     )
     for item in items:
         item["answering"] = states.get(item["comment"]["id"])
@@ -239,7 +251,9 @@ async def _mutate(db, resolver, document_id, comment_id, body, action, hand_off=
     )
 
 
-@router.post("/{document_id}/comments/{comment_id}/replies")
+@router.post(
+    "/{document_id}/comments/{comment_id}/replies", dependencies=[ROUTE_DECIDES]
+)
 async def reply(
     document_id: uuid.UUID,
     comment_id: uuid.UUID,
@@ -253,6 +267,8 @@ async def reply(
 
     async def hand_off(reached: Reached):
         asked = asked_of(reached)
+        if asked is None:
+            return None
         seat = await mentioned_seat(db, asked, reached.actor, body.content)
         if seat is None:
             return None
@@ -268,7 +284,9 @@ async def reply(
     return await _mutate(db, resolver, document_id, comment_id, body, "reply", hand_off)
 
 
-@router.post("/{document_id}/comments/{comment_id}/resolve")
+@router.post(
+    "/{document_id}/comments/{comment_id}/resolve", dependencies=[ROUTE_DECIDES]
+)
 async def resolve(
     document_id: uuid.UUID,
     comment_id: uuid.UUID,
@@ -279,7 +297,9 @@ async def resolve(
     return await _mutate(db, resolver, document_id, comment_id, body, "resolve")
 
 
-@router.post("/{document_id}/comments/{comment_id}/reopen")
+@router.post(
+    "/{document_id}/comments/{comment_id}/reopen", dependencies=[ROUTE_DECIDES]
+)
 async def reopen(
     document_id: uuid.UUID,
     comment_id: uuid.UUID,
@@ -290,7 +310,9 @@ async def reopen(
     return await _mutate(db, resolver, document_id, comment_id, body, "reopen")
 
 
-@router.post("/{document_id}/comments/{comment_id}/agent/stop")
+@router.post(
+    "/{document_id}/comments/{comment_id}/agent/stop", dependencies=[ROUTE_DECIDES]
+)
 async def stop_agent(
     document_id: uuid.UUID,
     comment_id: uuid.UUID,
@@ -305,7 +327,8 @@ async def stop_agent(
     redis = get_redis_client()
     if redis is None:
         raise SystemBusyError(say("docAgentAskUnavailable"))
-    await thread.stop(
-        redis, sessions, project_id=reached.doc.project_id, thread_id=comment_id
-    )
+    if reached.doc.project_id is not None:
+        await thread.stop(
+            redis, sessions, project_id=reached.doc.project_id, thread_id=comment_id
+        )
     return ok({})

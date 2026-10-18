@@ -294,6 +294,7 @@ const fileRows = computed(() =>
           @select="pickFile"
           @toggle-dir="emit('toggle-dir', $event)"
         />
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drag handle for the pointer; without it the file tree keeps its width -->
         <div
           v-if="treeShown"
           class="tree-resizer"

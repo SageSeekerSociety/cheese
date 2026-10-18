@@ -31,6 +31,7 @@ from app.domain.block.documents import (
 from app.domain.block.models import Block
 from app.domain.block.schemas import BlockOut
 from app.domain.living_doc import collab
+from app.domain.living_doc import links as doc_links
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.schemas import document_snapshot
 from app.domain.living_doc.services import DocumentJournal
@@ -125,7 +126,10 @@ async def store(
             conversation_id=conversation_id,
             actor=actors[0],
         )
-        if conversation_id is not None and actors and not quiet
+        if conversation_id is not None
+        and doc.project_id is not None
+        and actors
+        and not quiet
         else None
     )
     if suggested:
@@ -157,6 +161,8 @@ async def store(
         turn_id=turn_id,
     )
     changed = recorded is not None
+    if changed:
+        await doc_links.sync(db, doc, content)
     outside = (
         await tell_new_mentions(db, doc, before=before, after=content, actors=actors)
         if changed and not quiet
@@ -246,7 +252,11 @@ async def tell_origin_room(
     (`announce`); a change made from no conversation (a person's, or 芝士
     answering on the document itself) is in the document's history and
     nowhere else."""
-    if conversation_id is None or await whose_document(db, doc) != (None, None):
+    if (
+        conversation_id is None
+        or doc.project_id is None
+        or await whose_document(db, doc) != (None, None)
+    ):
         return
     place = await PlaceResolver(db).conversation(conversation_id)
     if place is None:

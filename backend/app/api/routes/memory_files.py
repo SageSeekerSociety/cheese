@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
 from app.domain.memory.files import (
@@ -147,7 +148,7 @@ async def list_memory_files(
     return ok(page([_file_out(r) for r in rows], len(rows)))
 
 
-@router.put("")
+@router.put("", dependencies=[ROUTE_DECIDES])
 async def write_memory_file(
     body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -218,7 +219,7 @@ async def write_memory_file(
     return ok({"file": _file_out(row), "warning": warning})
 
 
-@router.post("/delete")
+@router.post("/delete", dependencies=[ROUTE_DECIDES])
 async def delete_memory_file(
     body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

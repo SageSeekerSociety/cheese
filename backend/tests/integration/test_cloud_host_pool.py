@@ -11,12 +11,14 @@ on it that it did not push.
 import asyncio
 import logging
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, event, select
 
-from app.core.config import settings
+from app.core.config import Settings, settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
@@ -540,6 +542,54 @@ def test_the_pool_adds_a_host_before_its_free_slots_run_out(pool, monkeypatch):
     assert len(pool.cloud.created) == 2
 
 
+def _with_the_default_host_size(monkeypatch) -> None:
+    """A host runs four sandboxes, and the floor is what a deployment that
+    leaves `cloud_pool_min_free_slots` alone gets. The fixture turns
+    pre-scaling off, so the tests about it set both back."""
+    monkeypatch.setattr(settings, "cloud_host_slots_per_core", 2)
+    monkeypatch.setattr(settings, "microcloud_default_memory_mb", 16384)
+    monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 3072)
+    monkeypatch.setattr(
+        settings,
+        "cloud_pool_min_free_slots",
+        Settings.model_fields["cloud_pool_min_free_slots"].default,
+    )
+
+
+def test_the_pool_adds_a_host_while_three_of_four_slots_are_free(pool, monkeypatch):
+    """A host of the default size runs four sandboxes. One session on it
+    leaves three free — less than a whole host's worth — so the sweep adds a
+    host then, instead of waiting until the pool is full and the next session
+    has to wait for it."""
+    _with_the_default_host_size(monkeypatch)
+    [alice] = pool.room("alice", 1)
+    host_id = pool.place("alice", alice)
+    pool.up(host_id)
+
+    pool.pool("maintain")
+
+    assert len(pool.cloud.created) == 2
+
+
+def test_the_pool_at_a_whole_hosts_slots_adds_no_host(pool, monkeypatch):
+    """One empty host of the default size leaves exactly a whole host's slots
+    free, which is not below the floor: the sweep leaves the pool there."""
+    _with_the_default_host_size(monkeypatch)
+
+    pool.pool("maintain")  # no host yet: no free slots, below the floor
+
+    async def hosts():
+        async with pool.client.test_request_factory() as db:
+            return list(await db.scalars(select(CloudHost.id)))
+
+    [host_id] = pool.run(hosts)
+    pool.up(host_id)
+
+    pool.pool("maintain")
+
+    assert len(pool.cloud.created) == 1
+
+
 def test_a_full_pool_tells_the_session_to_try_later(pool, monkeypatch):
     monkeypatch.setattr(settings, "cloud_pool_max_hosts", 1)
     sessions = pool.room("alice", 3)
@@ -876,3 +926,182 @@ def test_the_admin_page_counts_a_host_given_up_and_the_sandbox_lost_with_it(
     assert history["hosts_lost"] == 1
     assert history["hosts_lost_by_reason"] == {"connector_away": 1}
     assert history["sandboxes_lost"] == 1
+
+
+@contextmanager
+def _statements(pool, starting: str) -> Iterator[list[str]]:
+    """The SQL statements starting with ``starting`` that the pool's sessions
+    send meanwhile (the fixture's engine is the one they all share)."""
+    sent: list[str] = []
+
+    def keep(_conn, _cursor, statement, _params, _context, _many):
+        if statement.lstrip().upper().startswith(starting):
+            sent.append(statement)
+
+    engine = pool.client.test_app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", keep)
+    try:
+        yield sent
+    finally:
+        event.remove(engine, "before_cursor_execute", keep)
+
+
+def test_a_host_given_up_loses_its_homes_in_one_statement(pool, monkeypatch):
+    """Every room on the host is told first, then its homes go together: one
+    DELETE, not one a home."""
+    monkeypatch.setattr(settings, "microcloud_default_cores", 4)
+    monkeypatch.setattr(settings, "microcloud_default_memory_mb", 8192)
+    sessions = pool.room("alice", 4)
+    [host_id] = {pool.place("alice", session) for session in sessions}
+    for waiting in sessions[1:]:
+        pool.pool("tell_waiting", waiting)
+    pool.works_on(sessions[0], pool.up(host_id))
+    pool.cloud.machines[pool.host(host_id).machine_id]["status"] = "error"
+
+    async def broken():
+        async with pool.client.test_request_factory() as db:
+            row = await db.get(CloudHost, host_id)
+            row.status = MachineStatus.error
+            await db.commit()
+
+    pool.run(broken)
+    with _statements(pool, "DELETE FROM SANDBOX_HOMES") as deletes:
+        pool.pool("maintain")
+
+    assert len(deletes) == 1
+    assert pool.host(host_id).released_at is not None
+    assert pool.said("alice") == [LOST_LINE]
+    assert pool.room_lines("alice").count("环境准备失败，正在重新准备") == 3
+
+    async def left():
+        async with pool.client.test_request_factory() as db:
+            return list(
+                await db.scalars(
+                    select(SandboxHome).where(SandboxHome.host_id == host_id)
+                )
+            )
+
+    assert pool.run(left) == []
+
+
+def test_a_vanished_host_still_counted_as_failed_drops_its_homes_at_once(
+    pool, monkeypatch
+):
+    """The provider forgot a host it failed minutes ago: its row stays for the
+    failure count, and every home on it goes in one statement."""
+    monkeypatch.setattr(settings, "microcloud_reconcile_interval_s", 0)
+    sessions = pool.room("alice", 2)
+    [host_id] = {pool.place("alice", session) for session in sessions}
+
+    async def failed_just_now():
+        async with pool.client.test_request_factory() as db:
+            row = await db.get(CloudHost, host_id)
+            row.failed_at = datetime.now(UTC)
+            row.released_at = datetime.now(UTC)
+            await db.commit()
+            return row.machine_id
+
+    pool.cloud.machines.pop(pool.run(failed_just_now))
+    with _statements(pool, "DELETE FROM SANDBOX_HOMES") as deletes:
+        pool.pool("refresh_due")
+
+    assert len(deletes) == 1
+    assert pool.host(host_id) is not None
+
+    async def left():
+        async with pool.client.test_request_factory() as db:
+            return list(
+                await db.scalars(
+                    select(SandboxHome).where(SandboxHome.host_id == host_id)
+                )
+            )
+
+    assert pool.run(left) == []
+
+
+def test_rooms_whose_host_came_up_are_settled_in_one_transaction(pool):
+    """The homes waiting on hosts that are up are locked together and committed
+    once; one on a host still coming up keeps waiting."""
+    sessions = pool.room("alice", 3)
+    hosts = [pool.place("alice", session) for session in sessions]
+    up, coming = hosts[0], hosts[2]
+    assert hosts[1] == up and coming != up
+    for session in sessions:
+        pool.pool("tell_waiting", session)
+    pool.up(up)
+
+    async def settle():
+        async with pool.client.test_request_factory() as db:
+            commits = 0
+            commit = db.commit
+
+            async def counted():
+                nonlocal commits
+                commits += 1
+                await commit()
+
+            db.commit = counted
+            await HostPool(db, pool.cloud).settle_waiting()
+            return commits
+
+    with _statements(pool, "SELECT") as selects:
+        commits = pool.run(settle)
+
+    assert commits == 1
+    assert len([sql for sql in selects if "FOR UPDATE" in sql.upper()]) == 1
+    assert pool.room_lines("alice").count("环境已就绪") == 2
+
+    async def still_waiting():
+        async with pool.client.test_request_factory() as db:
+            return list(
+                await db.scalars(
+                    select(SandboxHome.host_id).where(
+                        SandboxHome.waiting_since.is_not(None)
+                    )
+                )
+            )
+
+    assert pool.run(still_waiting) == [coming]
+
+
+def test_a_home_another_transaction_holds_is_left_for_the_next_sweep(pool):
+    """A tool call holding its own home (``place`` locks it, then may delete
+    the rest of its host's) is not waited on: the batch settles the others,
+    and that one on a later sweep."""
+    sessions = pool.room("alice", 2)
+    [host_id] = {pool.place("alice", session) for session in sessions}
+    for session in sessions:
+        pool.pool("tell_waiting", session)
+    pool.up(host_id)
+
+    async def settle_while_one_is_held():
+        async with pool.client.test_request_factory() as held:
+            home_id = await held.scalar(
+                select(SandboxHome.id)
+                .where(SandboxHome.session_id == sessions[0])
+                .with_for_update()
+            )
+            async with pool.client.test_request_factory() as db:
+                await asyncio.wait_for(
+                    HostPool(db, pool.cloud).settle_waiting(), timeout=10
+                )
+            await held.rollback()
+            return home_id
+
+    held_id = pool.run(settle_while_one_is_held)
+
+    async def waiting():
+        async with pool.client.test_request_factory() as db:
+            return list(
+                await db.scalars(
+                    select(SandboxHome.id).where(SandboxHome.waiting_since.is_not(None))
+                )
+            )
+
+    assert pool.run(waiting) == [held_id]
+    assert pool.room_lines("alice").count("环境已就绪") == 1
+
+    pool.pool("settle_waiting")
+
+    assert pool.run(waiting) == []
+    assert pool.room_lines("alice").count("环境已就绪") == 2

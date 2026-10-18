@@ -60,7 +60,7 @@ def _invitations(db: DbSession) -> InvitationService:
     return InvitationService(db, deliver=deliver, settle=settle, team=project_team)
 
 
-@router.post("/projects/{project_id}/members")
+@router.post("/projects/{project_id}/members", dependencies=[ROUTE_DECIDES])
 async def add_member(
     project_id: uuid.UUID,
     body: MemberCreate,
@@ -114,7 +114,9 @@ async def list_members(
     return ok(page(items, len(items)))
 
 
-@router.delete("/projects/{project_id}/members/{user_handle}")
+@router.delete(
+    "/projects/{project_id}/members/{user_handle}", dependencies=[ROUTE_DECIDES]
+)
 async def remove_member(
     project_id: uuid.UUID,
     user_handle: str,
@@ -128,7 +130,7 @@ async def remove_member(
     return ok({"deleted": True})
 
 
-@router.delete("/projects/{project_id}/membership")
+@router.delete("/projects/{project_id}/membership", dependencies=[ROUTE_DECIDES])
 async def leave_project(
     project_id: uuid.UUID,
     db: DbSession,
@@ -152,7 +154,7 @@ async def leave_project(
 # 人点头。
 
 
-@router.post("/projects/{project_id}/invitations")
+@router.post("/projects/{project_id}/invitations", dependencies=[ROUTE_DECIDES])
 async def invite_member(
     project_id: uuid.UUID,
     body: InvitationCreate,
@@ -205,7 +207,7 @@ async def list_my_invitations(db: DbSession, resolver: ActorResolverDep) -> dict
     return ok(page(rows, len(rows)))
 
 
-@router.post("/invitations/{invitation_id}/respond")
+@router.post("/invitations/{invitation_id}/respond", dependencies=[ROUTE_DECIDES])
 async def respond_to_invitation(
     invitation_id: uuid.UUID,
     body: InvitationRespond,
@@ -220,7 +222,7 @@ async def respond_to_invitation(
     return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))
 
 
-@router.delete("/invitations/{invitation_id}")
+@router.delete("/invitations/{invitation_id}", dependencies=[ROUTE_DECIDES])
 async def revoke_invitation(
     invitation_id: uuid.UUID,
     db: DbSession,

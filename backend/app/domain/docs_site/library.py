@@ -22,9 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.sentences import say
 from app.domain.docs_site import access, retrieval, site
+from app.domain.docs_site.excerpt import excerpt
 from app.domain.project.models import ProjectForge, ProjectGitInstallation
 
 PAGE_CHARS = 20000
+EXCERPT_CHARS = 280
 _PAGE = re.compile(r"^(dev/)?[a-z0-9-]{1,64}$")
 
 
@@ -67,11 +69,6 @@ class Found:
     dev: bool
 
 
-def _excerpt(text: str, limit: int = 280) -> str:
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[:limit].rstrip() + "…"
-
-
 async def search(query: str, *, dev: bool, limit: int = 6) -> list[Found] | None:
     """The best sections for ``query``; None when no index could be read."""
     indexes = [(await retrieval.source.get(), False)]
@@ -91,7 +88,7 @@ async def search(query: str, *, dev: bool, limit: int = 6) -> list[Found] | None
             title=h.section.title,
             heading=h.section.heading,
             url=h.section.url,
-            excerpt=_excerpt(h.section.text),
+            excerpt=excerpt(h.section.text, EXCERPT_CHARS),
             dev=is_dev,
         )
         for h, is_dev in hits[:limit]

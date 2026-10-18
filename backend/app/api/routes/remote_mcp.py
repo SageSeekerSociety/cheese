@@ -101,7 +101,9 @@ async def list_servers(
     )
 
 
-@router.post("/projects/{project_id}/mcp/servers/{name}/connect")
+@router.post(
+    "/projects/{project_id}/mcp/servers/{name}/connect", dependencies=[ROUTE_DECIDES]
+)
 async def connect(
     project_id: uuid.UUID,
     name: str,
@@ -121,7 +123,9 @@ async def connect(
     return ok({"authorization_url": url})
 
 
-@router.delete("/projects/{project_id}/mcp/servers/{name}/connection")
+@router.delete(
+    "/projects/{project_id}/mcp/servers/{name}/connection", dependencies=[ROUTE_DECIDES]
+)
 async def disconnect(
     project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -241,7 +245,7 @@ class SecretIn(BaseModel):
     value: str = Field(min_length=1, max_length=8192)
 
 
-@router.put("/projects/{project_id}/mcp/secrets/{name}")
+@router.put("/projects/{project_id}/mcp/secrets/{name}", dependencies=[ROUTE_DECIDES])
 async def set_secret(
     project_id: uuid.UUID,
     name: str,
@@ -256,7 +260,9 @@ async def set_secret(
     return ok(None)
 
 
-@router.delete("/projects/{project_id}/mcp/secrets/{name}")
+@router.delete(
+    "/projects/{project_id}/mcp/secrets/{name}", dependencies=[ROUTE_DECIDES]
+)
 async def clear_secret(
     project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -323,7 +329,11 @@ class ProxyIn(BaseModel):
     params: dict[str, Any] = {}
 
 
-@router.post("/topics/{topic_id}/mcp/{name}", include_in_schema=False)
+@router.post(
+    "/topics/{topic_id}/mcp/{name}",
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
+)
 async def proxy(
     topic_id: uuid.UUID, name: str, body: ProxyIn, request: Request, db: DbSession
 ) -> dict:

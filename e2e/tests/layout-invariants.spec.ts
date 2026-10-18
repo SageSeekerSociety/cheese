@@ -1054,7 +1054,7 @@ const WARM_STEP_MS = 10_000;
 // `Error: Test timeout of 60000ms exceeded`），看不出在等第几次导航、等的是哪一步。
 // 2026-09-26 它就是因此成了 main 上的常客：当天至少 8 次跑里先失败、靠 `retries: 2`
 // 才绿，CI 每次白等一两分钟。
-const TAB_PATHS = ['', 'members', 'knowledge', 'compute'];
+const TAB_PATHS = ['', 'members', 'docs', 'compute'];
 const VIEWPORT_SIZES = [
   // 视图高度压到 360 是故意的：这一套种子数据只有 5 个小队成员，靠内容自然长到溢出
   // 不可靠；把窗口压矮能让「内容比窗口高」这件事在任何数据下都成立，而宽度保持在

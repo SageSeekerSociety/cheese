@@ -93,6 +93,7 @@ defineExpose({ scrollActiveIntoView })
               :class="{ 'is-active': i === activeIndex }"
               @click="emit('pick', mm)"
               @mouseenter="emit('hover', i)"
+              @focus="emit('hover', i)"
             >
               <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
                 <v-icon size="13">mdi-bullhorn-outline</v-icon>
@@ -115,6 +116,9 @@ defineExpose({ scrollActiveIntoView })
               </span>
               <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
                 <v-icon size="13">mdi-file-outline</v-icon>
+              </span>
+              <span v-else-if="mm.kind === 'document'" class="mention-avatar mention-avatar--file">
+                <v-icon size="13">mdi-file-document-outline</v-icon>
               </span>
               <span v-else class="mention-avatar mention-avatar--topic">
                 <v-icon size="13">mdi-pound</v-icon>

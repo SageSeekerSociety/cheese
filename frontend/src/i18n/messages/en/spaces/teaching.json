@@ -7,7 +7,7 @@
     "avoidInCodeHint": "Comma-separated, e.g. recursion, pointers",
     "currentWeek": "Current week",
     "currentWeekHint": "Leave empty to leave it unset",
-    "knowledgeIds": "Knowledge entry IDs",
+    "documentIds": "Reading document IDs",
     "listHint": "Comma-separated",
     "materials": "Reference materials",
     "materialsCollapse": "Collapse the library list",

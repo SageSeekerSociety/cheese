@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """check-guard-wired.py — every guard under `.claude/scripts/` has to be called
-by something.
+by something. A guard is a `check-*.py`/`check-*.sh` tree check or a
+`verify-*.py` check run on every commit.
 
 WHY THIS EXISTS. Three guards landed in one day and none of them was wired:
 `check-i18n-lists.py` (#4019), `check-seam-tests.py` (#4010) and
@@ -71,8 +72,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 SCRIPTS_DIR = Path(".claude/scripts")
 
-#: What counts as a guard here: the tree-wide checks live under this name.
-GUARD_GLOBS = ("check-*.py", "check-*.sh")
+#: What counts as a guard here. `check-*` is the tree-wide check; `verify-*` is
+#: the same kind of script under the other name this tree already uses for a
+#: check it runs on every commit (verify-module-split.py, and
+#: verify-guard-self-tests.py, which judges the guards' own self-tests). Both
+#: are wired by name or not at all, so both belong to the same question.
+GUARD_GLOBS = ("check-*.py", "check-*.sh", "verify-*.py")
 
 #: Files that run things. A guard named in one of these is wired.
 WIRING_FILES = (".pre-commit-config.yaml", "Taskfile.yml", ".cheese/pre-push")

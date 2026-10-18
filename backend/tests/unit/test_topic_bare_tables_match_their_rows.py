@@ -170,7 +170,9 @@ async def test_the_bare_table_reads_build_their_statements() -> None:
     topic = uuid.uuid4()
 
     await repo.unread_counts(project, "user-1")
-    await repo.private_unread_counts(project, "user-1", seats={})
+    await repo.private_unread_counts(
+        project, "user-1", seats={}, default_agent_instance_id=None
+    )
     await repo.replied_to_me([topic], "user-1")
     await repo.mark_read_many([topic], "user-1")
     await last_word(session, topic)  # type: ignore[arg-type]

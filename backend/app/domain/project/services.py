@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.delivery_events import SettleCard
+from app.domain.project.address import Numbered, take_number
+from app.domain.project.environment import project_environment
 from app.domain.project.member_settings import MEMBER_SETTINGS, SettingChange
 from app.domain.project.models import AiMode, Project, ProjectGitInstallation
 from app.domain.project.ports import (
@@ -199,6 +201,23 @@ class ProjectService:
             raise RuntimeError("task_terms was not handed in")
         return self._task_terms
 
+    async def channel_start(self, project: Project) -> tuple[int, dict]:
+        """A new channel's number and the environment it starts with.
+
+        Both are the project's to hand out: the counter row and the settings
+        snapshot live here, and reading them from `topic`'s repositories made
+        the two packages a cycle. A private chat takes the environment without
+        a number — it is not addressed.
+        """
+        return (
+            await take_number(self._session, project.id, Numbered.channel),
+            project_environment(project.settings),
+        )
+
+    def room_environment(self, project: Project) -> dict:
+        """The environment a private chat starts with; no number, see above."""
+        return project_environment(project.settings)
+
     async def create(
         self,
         *,
@@ -244,8 +263,11 @@ class ProjectService:
             project_id=project_id,
         )
         project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
+        number, environment = await self.channel_start(project)
         root = await self._topics.add(
             project_id=project.id,
+            number=number,
+            environment=environment,
             title="综合",
             kind=TopicKind.root,
             created_by=owner_handle,
@@ -379,6 +401,26 @@ class ProjectService:
         """``{name, avatar_id}`` for someone not on the roster yet, by the same
         rules a roster row follows."""
         return await self._repo.person(handle)
+
+    async def ids_of_team(self, team_id: int) -> list[uuid.UUID]:
+        """The ids of every project of this team, archived ones included."""
+        return list(
+            await self._session.scalars(
+                select(Project.id).where(Project.team_id == team_id)
+            )
+        )
+
+    async def live_of_teams(
+        self, team_ids: Sequence[int]
+    ) -> list[tuple[uuid.UUID, str, int]]:
+        """Each project of these teams that is not archived, as (id, name,
+        team id), by name."""
+        rows = await self._session.execute(
+            select(Project.id, Project.name, Project.team_id)
+            .where(Project.team_id.in_(team_ids), Project.archived_at.is_(None))
+            .order_by(Project.name)
+        )
+        return [(pid, name, team_id) for pid, name, team_id in rows]
 
     async def get_projects_by_ids(
         self, project_ids: Sequence[uuid.UUID]

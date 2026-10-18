@@ -254,6 +254,7 @@ useCommands(roomCommands)
           :title="t('work.room.menu.more')"
           :aria-label="t('work.room.menu.more')"
           @mouseenter="loadUsage"
+          @focus="loadUsage"
         />
       </template>
       <!-- 用量排在操作前面：它是这一段的口径，不是一件能做的事。桌面那颗 ⋯ 本来就
@@ -288,6 +289,7 @@ useCommands(roomCommands)
       :primary-disabled="!draftTitle.trim()"
       @primary="saveRename"
     >
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to type the name; focus moves into the one field it holds -->
       <v-text-field
         v-model="draftTitle"
         :label="t('work.room.menu.topicName')"
@@ -298,6 +300,7 @@ useCommands(roomCommands)
         autofocus
         @keyup.enter="saveRename"
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
     </AdaptiveDialog>
     <DeleteChannelDialog v-model="deleteOpen" :name="title" :busy="deleting" @confirm="confirmRemove" />
   </div>

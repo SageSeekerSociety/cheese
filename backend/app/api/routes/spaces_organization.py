@@ -54,6 +54,7 @@ from app.api.space_payloads import (
     _category_to_api_model,
     _domain_group_to_api_model,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
@@ -126,6 +127,7 @@ async def list_space_categories(
     "/{spaceId}/categories",
     summary="Create Space Category",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -146,6 +148,7 @@ async def create_space_category(
 @router.patch(
     "/{spaceId}/categories/{categoryId}",
     summary="Update Space Category",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -200,6 +203,7 @@ async def get_space_category(
     "/{spaceId}/categories/{categoryId}",
     summary="Delete Space Category",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -216,6 +220,7 @@ async def delete_space_category(
 @router.post(
     "/{spaceId}/categories/{categoryId}/archive",
     summary="Archive Space Category",
+    dependencies=[ROUTE_DECIDES],
 )
 async def archive_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -235,6 +240,7 @@ async def archive_space_category(
 @router.delete(
     "/{spaceId}/categories/{categoryId}/archive",
     summary="Unarchive Space Category",
+    dependencies=[ROUTE_DECIDES],
 )
 async def unarchive_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -273,6 +279,7 @@ async def list_space_domain_groups(
     "/{spaceId}/domain-groups",
     summary="Create Space Domain Group",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_space_domain_group(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -293,6 +300,7 @@ async def create_space_domain_group(
 @router.patch(
     "/{spaceId}/domain-groups/{groupId}",
     summary="Update Space Domain Group",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_space_domain_group(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -316,6 +324,7 @@ async def patch_space_domain_group(
     "/{spaceId}/domain-groups/{groupId}",
     summary="Delete Space Domain Group",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_space_domain_group(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -352,6 +361,7 @@ async def list_space_admins(
     "/{spaceId}/managers",
     summary="Add Space Manager",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def add_space_admin(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -381,6 +391,7 @@ async def add_space_admin(
     "/{spaceId}/managers/{userId}",
     summary="Remove Space Manager",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_space_admin(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -399,6 +410,7 @@ async def delete_space_admin(
 @router.patch(
     "/{spaceId}/managers/{userId}",
     summary="Update Space Manager Role",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_space_manager(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],

@@ -93,6 +93,7 @@ onBeforeUnmount(() => observer?.disconnect())
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- Escape bubbles here from the note's field and buttons and closes it -->
   <div
     ref="card"
     data-region-note

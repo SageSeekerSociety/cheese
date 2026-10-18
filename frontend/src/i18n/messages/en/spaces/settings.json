@@ -19,11 +19,11 @@
   "overlay": "Space settings",
   "sections": {
     "categories": "Categories",
-    "topics": "Topics"
+    "topics": "Tags"
   },
   "tabs": {
     "basic": "Basics",
-    "categories": "Categories and topics",
+    "categories": "Categories and tags",
     "domainGroups": "Email domain groups",
     "guidance": "Guidance for the AI teammate",
     "inviteCodes": "Invite codes",

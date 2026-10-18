@@ -1,35 +1,31 @@
-// Tests for the component boundary rule and its ratchet. Run by `pnpm run
+// Tests for the component boundary rule and its gate. Run by `pnpm run
 // test:ratchet` (node --test scripts/*.test.mjs), locally and in frontend.yml.
 //
 // Three kinds of case, and the third is the one that matters:
 //
-//   1. the counting, `compare()` and the baseline arithmetic — pure functions,
-//      driven with fixtures, including the shapes that must NOT be counted;
+//   1. the counting — a pure function, driven with fixtures, including the
+//      shapes that must NOT be counted — and the report;
 //   2. what the RULE fires on, driven through eslint's own API against the real
 //      eslint.boundary.config.mjs, so a rule that drifted from the config, or a
 //      config that stopped being applied, fails here;
 //   3. plants — a component that violates the rule is written into the tree and
-//      the ratchet is required to go red on it, then to go green once the
-//      baseline is allowed to know about it. A boundary nobody has watched fail
-//      is not a boundary; the violations frozen in import-boundary-baseline.json
-//      make today's tree pass either way.
+//      the gate is required to go red on it. A boundary nobody has watched fail
+//      is not a boundary, and today's tree passes it with nothing planted.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { rmSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { ESLint } from 'eslint'
 
-import { BOUNDARY_RULE_ID, compare, formatBoundaryReport, parseEslintJson } from './import-boundary-ratchet-core.mjs'
+import { BOUNDARY_RULE_ID, formatBoundaryReport, parseEslintJson } from './import-boundary-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
 const CONFIG = resolve(ROOT, 'eslint.boundary.config.mjs')
 const RATCHET = resolve(HERE, 'import-boundary-ratchet.mjs')
-const BASELINE = resolve(ROOT, 'import-boundary-baseline.json')
 
 // ---------------------------------------------------------------------------
 // 1. Counting, and what must not be counted.
@@ -141,40 +137,10 @@ describe('parseEslintJson', () => {
   })
 })
 
-describe('the ratchet arithmetic', () => {
-  it('a file over its baseline is a regression; an absent file starts at 0', () => {
-    const result = compare({ 'a.vue': 2 }, { 'a.vue': 3, 'b.vue': 1 })
-    assert.equal(result.ok, false)
-    assert.deepEqual(
-      result.regressions.map((r) => [r.file, r.base, r.now]),
-      [
-        ['a.vue', 2, 3],
-        ['b.vue', 0, 1],
-      ]
-    )
-  })
-
-  it('a file under its baseline is not a failure — paying debt down is allowed', () => {
-    const result = compare({ 'a.vue': 5, 'gone.vue': 2 }, { 'a.vue': 4 })
-    assert.equal(result.ok, true)
-    assert.deepEqual(result.regressions, [])
-    assert.deepEqual(
-      result.improvements.map((r) => [r.file, r.base, r.now]),
-      [
-        ['a.vue', 5, 4],
-        ['gone.vue', 2, 0],
-      ]
-    )
-  })
-})
-
 describe('the failure report', () => {
-  // The report the reader gets on a regression: the count, then the lines the
-  // editor would underline — so the new violation is distinguishable from any
-  // frozen one in the same file without a second run.
+  // The lines the editor would underline, and the chapter that says why.
   it('names the line and the rule, and points at the architecture chapter', () => {
-    const result = compare({ 'src/components/A.vue': 1 }, { 'src/components/A.vue': 2 })
-    const text = formatBoundaryReport(result, [
+    const text = formatBoundaryReport([
       {
         file: 'src/components/A.vue',
         line: 7,
@@ -184,18 +150,11 @@ describe('the failure report', () => {
       },
     ])
 
-    assert.match(text, /src\/components\/A\.vue: 1 -> 2/)
     assert.match(
       text,
       /src\/components\/A\.vue:7:1 {2}boundary\/no-api-or-router {2}A component under src\/components must not call the API layer\./
     )
     assert.match(text, /\.claude\/rules\/architecture\.md/)
-  })
-
-  it('stays a set of counts when no diagnostics are passed', () => {
-    const text = formatBoundaryReport(compare({ 'a.vue': 1 }, { 'a.vue': 2 }))
-    assert.match(text, /a\.vue: 1 -> 2/)
-    assert.doesNotMatch(text, /:7:1/)
   })
 })
 
@@ -393,82 +352,58 @@ describe('the boundary rule', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 3. The plant. A real file, in the real tree, judged by the real ratchet.
+// 3. The plant. A real file, in the real tree, judged by the real gate.
 // ---------------------------------------------------------------------------
 
-describe('the ratchet on a planted violation', () => {
+describe('the gate on a planted violation', () => {
   const PROBE = resolve(ROOT, 'src/components/__boundaryProbe.vue')
-  const sandbox = mkdtempSync(join(tmpdir(), 'boundary-ratchet-'))
-  const scratchBaseline = join(sandbox, 'baseline.json')
 
-  after(() => {
-    rmSync(PROBE, { force: true })
-    rmSync(sandbox, { recursive: true, force: true })
+  after(() => rmSync(PROBE, { force: true }))
+
+  const runGate = (...args) => spawnSync(process.execPath, [RATCHET, ...args], { cwd: ROOT, encoding: 'utf8' })
+
+  it('passes a component that renders from props', () => {
+    try {
+      writeFileSync(
+        PROBE,
+        `<script setup lang="ts">\ndefineProps<{ title: string }>()\n</script>\n<template><div>{{ title }}</div></template>\n`
+      )
+      const clean = runGate('--files', 'src/components/__boundaryProbe.vue')
+      assert.equal(clean.status, 0, `${clean.stdout}${clean.stderr}`)
+    } finally {
+      rmSync(PROBE, { force: true })
+    }
   })
 
-  const runRatchet = (...args) => spawnSync(process.execPath, [RATCHET, ...args], { cwd: ROOT, encoding: 'utf8' })
-
-  it('blocks it, then accepts it once the baseline is allowed to know', () => {
+  it('fails on a single violation, in a file it has never seen', () => {
     try {
       writeFileSync(
         PROBE,
         `<script setup lang="ts">\nimport { api } from '@/api'\nconst x = api\n</script>\n<template><div /></template>\n`
       )
-
-      // Against an empty baseline the planted file is a new violation.
-      const blocked = runRatchet('--files', 'src/components/__boundaryProbe.vue', '--baseline', scratchBaseline)
+      const blocked = runGate('--files', 'src/components/__boundaryProbe.vue')
       assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
-      assert.match(blocked.stdout, /__boundaryProbe\.vue: 0 -> 1/)
-      // And the report carries eslint's own line:col and rule id, not only the
-      // count — the diagnostic a reader needs to fix it without grepping.
+      // eslint's own line:col and rule id — the diagnostic a reader needs to fix
+      // it without grepping.
       assert.match(blocked.stdout, /__boundaryProbe\.vue:\d+:\d+ {2}boundary\/no-api-or-router {2}/)
-
-      // Freezing it (explicitly, into a scratch baseline) turns the same run green.
-      const update = runRatchet(
-        '--files',
-        'src/components/__boundaryProbe.vue',
-        '--baseline',
-        scratchBaseline,
-        '--update'
-      )
-      assert.equal(update.status, 0, `${update.stdout}${update.stderr}`)
-      assert.equal(JSON.parse(readFileSync(scratchBaseline, 'utf8')).files['src/components/__boundaryProbe.vue'], 1)
-
-      const after = runRatchet('--files', 'src/components/__boundaryProbe.vue', '--baseline', scratchBaseline)
-      assert.equal(after.status, 0, `${after.stdout}${after.stderr}`)
     } finally {
       rmSync(PROBE, { force: true })
     }
   })
 
   // The same plant, spelled as a relative path. This is the end-to-end proof
-  // that the gate — not just the rule — counts the relative form: before the
-  // fix the run below exited 0 over a file that imports src/api.ts.
-  it('blocks a planted RELATIVE import of the API layer too', () => {
-    const relativeBaseline = join(sandbox, 'baseline-relative.json')
+  // that the gate — not just the rule — counts the relative form.
+  it('fails on a planted RELATIVE import of the API layer too', () => {
     try {
       writeFileSync(
         PROBE,
         `<script setup lang="ts">\nimport { api } from '../api'\nconst x = api\n</script>\n<template><div /></template>\n`
       )
-
-      const blocked = runRatchet('--files', 'src/components/__boundaryProbe.vue', '--baseline', relativeBaseline)
+      const blocked = runGate('--files', 'src/components/__boundaryProbe.vue')
       assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
-      assert.match(blocked.stdout, /__boundaryProbe\.vue: 0 -> 1/)
+      assert.match(blocked.stdout, /__boundaryProbe\.vue:\d+:\d+ {2}boundary\/no-api-or-router/)
     } finally {
       rmSync(PROBE, { force: true })
-    }
-  })
-
-  it('the committed baseline still describes the tree it was written against', () => {
-    // Not a full re-run (that is the `lint:boundary` step in frontend.yml): this
-    // only asserts the file is readable and every key is a path under the
-    // component tree, so a baseline written from absolute paths — the shape that
-    // silently matches nothing on another machine — fails here.
-    const files = JSON.parse(readFileSync(BASELINE, 'utf8')).files
-    for (const key of Object.keys(files)) {
-      assert.match(key, /^src\/components\//, `baseline key is not a component path: ${key}`)
-      assert.equal(typeof files[key], 'number')
     }
   })
 })

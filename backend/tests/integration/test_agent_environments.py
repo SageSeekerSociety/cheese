@@ -396,3 +396,61 @@ async def test_nobody_is_shown_the_platforms_machines(client):
     listed = {device["device_id"] for device in shown.json()["data"]["devices"]}
     assert listed == {room.old_device, room.new_device}
     assert host.device_id not in shown.text
+
+
+async def test_device_sessions_select_count_does_not_scale_with_sessions(client):
+    room = await _room(client)
+    from sqlalchemy import event
+
+    from app.domain.machine.session_reports import device_sessions
+    from app.domain.room_task.models import Task
+
+    async def add_task_sessions(titles: list[str]) -> None:
+        async with client.test_factory() as db:
+            sessions = AgentSessionService(db)
+            for title in titles:
+                task = Task(
+                    project_id=room.project_id,
+                    room_id=room.topic_id,
+                    title=title,
+                )
+                db.add(task)
+                await db.flush()
+                await sessions.ensure(task.id, room.agent_handle, harness="claude-code")
+                await sessions.set_environment(
+                    task.id,
+                    room.agent_handle,
+                    _self_hosted(room.old_device),
+                    chosen_by=None,
+                )
+            await db.commit()
+
+    async def count_selects() -> tuple[int, list[dict]]:
+        selects = 0
+
+        def record(_conn, _cursor, statement: str, *_rest) -> None:
+            nonlocal selects
+            if statement.lstrip().upper().startswith("SELECT"):
+                selects += 1
+
+        async with client.test_factory() as db:
+            target = db.sync_session.bind
+            event.listen(target, "before_cursor_execute", record)
+            try:
+                rows = await device_sessions(db, room.project_id, room.old_device)
+            finally:
+                event.remove(target, "before_cursor_execute", record)
+        return selects, [session for _topic, session in rows]
+
+    await add_task_sessions([f"Task {i}" for i in range(2)])
+    selects_3, sessions_3 = await count_selects()
+
+    await add_task_sessions([f"Task {i}" for i in range(2, 11)])
+    selects_12, sessions_12 = await count_selects()
+
+    assert len(sessions_3) == 3
+    assert len(sessions_12) == 12
+    assert {s["task_title"] for s in sessions_3} == {None, "Task 0", "Task 1"}
+    assert all(s["agent_name"] for s in sessions_12)
+    assert selects_3 > 0
+    assert selects_3 == selects_12

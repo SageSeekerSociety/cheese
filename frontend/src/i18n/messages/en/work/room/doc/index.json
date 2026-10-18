@@ -59,5 +59,47 @@
   "titlePlaceholder": "Title",
   "undo": "Undo",
   "untitled": "Untitled doc",
-  "you": "you"
+  "you": "you",
+  "backlinks": {
+    "title": "Linked from",
+    "edited": "Edited by {name} {when}",
+    "count": "{count} messages"
+  },
+  "move": "Move to…",
+  "moveDialog": {
+    "title": "Move \"{name}\"",
+    "place": "Put it in",
+    "mine": "My documents",
+    "move": "Move",
+    "readersPersonal": "After the move only you can read this document",
+    "readersTeam": "After the move every member of \"{name}\" can read this document",
+    "readersProject": "After the move every member of the project \"{name}\" can read this document",
+    "search": "Search teams or projects",
+    "here": "Current",
+    "none": "No matches",
+    "pick": "Choose where to put it",
+    "failed": "Move failed"
+  },
+  "share": "Share…",
+  "shareDialog": {
+    "title": "Share \"{name}\"",
+    "create": "Create link",
+    "copy": "Copy link",
+    "close": "Close",
+    "stop": "Stop sharing",
+    "link": "Share link",
+    "about": "Anyone with the link can read this document's current version without signing in. They don't see comments, suggestions or history.",
+    "shared": "Anyone with the link can read the current version without signing in. Once you stop sharing, the link stops working.",
+    "notAllowed": "A project's documents are shared by whoever may publish the project's site; a team's or a person's own documents, by their author or a team admin.",
+    "failed": "Sharing failed"
+  },
+  "mode": {
+    "label": "Editing mode",
+    "edit": "Editing",
+    "editHint": "Change the text directly",
+    "suggest": "Suggesting",
+    "suggestHint": "Changes become suggestions others accept or reject",
+    "suggestOnly": "You can only suggest changes; someone who can edit this document accepts or rejects them",
+    "blockRefused": "Whole paragraphs can't be added or removed as suggestions; change the text inside a paragraph"
+  }
 }

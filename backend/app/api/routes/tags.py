@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
@@ -62,11 +63,7 @@ async def get_tag(
     return ok({"topic": tag})
 
 
-@router.post(
-    "",
-    summary="Create Tag",
-    status_code=201,
-)
+@router.post("", summary="Create Tag", status_code=201, dependencies=[ROUTE_DECIDES])
 async def create_tag(
     payload: dict = Body(...),
     auth_user: AuthUserInfo = Depends(require_auth_user),

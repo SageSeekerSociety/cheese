@@ -230,22 +230,47 @@ class DiscussionService:
     ) -> list[dict]:
         if not rows:
             return []
-        user_ids = {row.sender_id for row in rows}
-        for row in rows:
+        counts, children = (
+            await self._repo.children_for([row.id for row in rows], limit=2)
+            if include_subs
+            else ({}, {})
+        )
+        all_rows = [*rows, *(child for group in children.values() for child in group)]
+        user_ids = {row.sender_id for row in all_rows}
+        for row in all_rows:
             user_ids.update(row.mentioned_user_ids or [])
         user_map = await self._load_user_map(user_ids)
-        dtos: list[dict] = []
-        for row in rows:
-            dtos.append(
-                await self._build_discussion_dto(
-                    row,
-                    current_user_id=current_user_id,
-                    user_map=user_map,
-                    include_subs=include_subs,
-                    with_reactions=with_reactions,
-                )
+        summaries = (
+            await self._reaction_service.summaries_for(
+                [row.id for row in all_rows], current_user_id=current_user_id
             )
-        return dtos
+            if with_reactions
+            else {}
+        )
+        return [
+            self._discussion_dto(
+                row,
+                user_map=user_map,
+                reactions=summaries.get(row.id, []),
+                sub_info=(
+                    {
+                        "count": counts.get(row.id, 0),
+                        "examples": [
+                            self._discussion_dto(
+                                child,
+                                user_map=user_map,
+                                reactions=summaries.get(child.id, []),
+                                sub_info=None,
+                            )
+                            for child in children.get(row.id, [])
+                        ],
+                    }
+                    if include_subs
+                    else None
+                ),
+            )
+            for row in rows
+        ]
 
     async def _build_discussion_dto(
         self,
@@ -253,46 +278,31 @@ class DiscussionService:
         *,
         current_user_id: int | None,
         include_subs: bool = True,
-        user_map: dict[int, dict] | None = None,
         with_reactions: bool = True,
     ) -> dict:
-        sender = None
-        if user_map is None:
-            user_map = await self._load_user_map(
-                {entity.sender_id, *(entity.mentioned_user_ids or [])}
+        return (
+            await self._build_discussion_dtos(
+                [entity],
+                current_user_id=current_user_id,
+                include_subs=include_subs,
+                with_reactions=with_reactions,
             )
+        )[0]
+
+    @staticmethod
+    def _discussion_dto(
+        entity,
+        *,
+        user_map: dict[int, dict],
+        reactions: list[dict],
+        sub_info: dict | None,
+    ) -> dict:
         sender = user_map.get(entity.sender_id)
         mentioned = [
             user_map.get(uid)
             for uid in entity.mentioned_user_ids or []
             if user_map.get(uid)
         ]
-        summary = (
-            await self.get_reaction_summary(entity.id, current_user_id)
-            if with_reactions
-            else []
-        )
-
-        sub_info = None
-        if include_subs:
-            examples, _ = await self.list_discussions(
-                model_type=None,
-                model_id=None,
-                parent_id=entity.id,
-                page_start=0,
-                page_size=2,
-                sort_by="createdAt",
-                sort_order="desc",
-                current_user_id=current_user_id,
-                include_subs=False,
-                with_reactions=with_reactions,
-            )
-            count = await self._repo.count_children(entity.id)
-            sub_info = {
-                "count": count,
-                "examples": examples,
-            }
-
         created_at_ms = int(entity.created_at.timestamp() * 1000)
         updated_at_ms = int(entity.updated_at.timestamp() * 1000)
 
@@ -314,7 +324,7 @@ class DiscussionService:
             "parentId": entity.parent_id,
             "sender": sender,
             "mentionedUsers": mentioned,
-            "reactions": summary,
+            "reactions": reactions,
             "subDiscussions": sub_info,
             "createdAt": created_at_ms,
             "updatedAt": updated_at_ms,

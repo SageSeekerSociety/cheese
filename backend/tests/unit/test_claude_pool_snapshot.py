@@ -9,7 +9,7 @@
 import json
 from pathlib import Path
 
-from app.domain.platform_stats.claude_pool import (
+from app.domain.usage.claude_pool import (
     STALE_AFTER_S,
     read_claude_pool,
     snapshot_path,

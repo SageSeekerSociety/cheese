@@ -736,6 +736,28 @@ class HostPool(PoolSweep):
             },
         )
 
+    async def holds(self, session_id: uuid.UUID, device_id: str) -> bool:
+        """Whether the session's sandbox is on ``device_id`` as the last tool
+        call left it, read without a lock and without moving anything: its
+        home is there, nothing is destroying it, its host is kept, and a tool
+        call touched it within ``ACTIVE_STEP``. Only a sandbox that is all of
+        these can be handed out again without ``place``/``keep_on_device``
+        (``session_work._verified``); one touched longer ago goes through them,
+        so its idle clock is moved exactly as often as when every call did."""
+
+        home = await self._repo.current_home(session_id)
+        if (
+            home is None
+            or home.stopped_at is not None
+            or home.active_at is None
+            or datetime.now(UTC) - home.active_at >= ACTIVE_STEP
+        ):
+            return False
+        if home.host_id is None:
+            return home.device_id == device_id
+        host = await self._repo.get(home.host_id)
+        return host is not None and host.device_id == device_id and _keeps(host)
+
     async def tell_waiting(self, session_id: uuid.UUID) -> dict | None:
         """Tell the session's room, once, that its sandbox is being prepared.
         Returns what to publish once committed."""
