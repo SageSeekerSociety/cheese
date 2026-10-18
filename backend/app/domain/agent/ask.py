@@ -16,10 +16,10 @@ from app.domain.agent.announce import (
     instance_of_seat,
     notices_now_answered,
     notify_question,
+    who_started_the_open_turn,
 )
 from app.domain.agent.mentions import MENTION_ALL
 from app.domain.agent.realtime.broker import get_broker
-from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.asked import SKIPPED, asked_of, skipped_by_all
 from app.domain.block.models import Block
@@ -33,7 +33,6 @@ from app.domain.block.schemas import BlockOut
 from app.domain.delivery.agent import now, record_agent
 from app.domain.delivery.ledger import settle, settle_for
 from app.domain.delivery_events import DeliveryEvent
-from app.domain.identity.handles import names_a_person
 from app.domain.notification.models import NotificationType
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -50,7 +49,9 @@ async def ask(session, *, place, seat, body) -> list:
     questions = parse_questions(body)
     to = body.get("to")
     if to is None:
-        starter = await _who_started_the_open_turn(session, place, seat)
+        starter = await who_started_the_open_turn(
+            session, place.project_id, place.conversation_id, seat
+        )
         asked, everyone = ((starter,) if starter else ()), False
     else:
         asked, everyone = await _addressees(session, place.room, to)
@@ -103,23 +104,6 @@ async def _addressees(session, room, to) -> tuple[tuple[str, ...], bool]:
             say("askToNotInChannel", handles=", ".join(unknown))
         )
     return handles, False
-
-
-async def _who_started_the_open_turn(session, place, seat) -> str | None:
-    """The person whose message opened ``seat``'s running turn, if a person did.
-
-    A turn row names the agent by its instance's handle (the conversation it
-    runs in), a seat by the instance's id; either may be on the row.
-    """
-    instance = await instance_of_seat(session, place.project_id, seat)
-    turns = AgentTurnRepository(session)
-    for handle in (seat, *((instance.handle,) if instance is not None else ())):
-        author = await turns.open_turn_author_for_topic(
-            place.conversation_id, agent_handle=handle
-        )
-        if author is not None:
-            return author if names_a_person(author) else None
-    return None
 
 
 #: 撤回一次答复叫醒提问那位时，投递 `payload.eventType` 上的名字。它不叫

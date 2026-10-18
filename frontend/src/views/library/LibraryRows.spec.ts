@@ -104,12 +104,14 @@ describe('资料库那一列的行', () => {
     expect(view.emitted()['openFile']).toEqual([[fileRow.file]])
   })
 
-  it('一份文档行里写的是改它的人的名字，不是 handle', () => {
-    const { container } = mount([
-      { key: 'doc:d1', rank: '3', doc: listedDocument(doc('d1', '竞品定价对比', 'cheese')) },
-    ])
+  it('一份文档行里写的是它的作者，用名字不用 handle；之后谁改过不算作者', () => {
+    // alice 让芝士写的，后来 bob 改过一次。
+    const written = { ...doc('d1', '竞品定价对比', 'bob'), created_by: 'alice', drafted_by: 'cheese' }
+    const { container } = mount([{ key: 'doc:d1', rank: '3', doc: listedDocument(written) }])
     expect(container.textContent).toContain('竞品定价对比')
+    expect(container.textContent).toContain('Alice')
     expect(container.textContent).toContain('芝士')
+    expect(container.textContent).not.toContain('bob')
   })
 
   it('行上的「删除」只是把这一份报上去，自己不问也不动', async () => {

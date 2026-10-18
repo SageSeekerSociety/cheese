@@ -11,7 +11,11 @@ export interface ProjectDocument {
   kind: string
   title: string | null
   doc_version: number
+  /** 最近一个版本是谁改的。 */
   author: string
+  /** 作者，建成时定下（`lib/docAuthors.ts`）：文档归谁，和写它的 AI 队友。 */
+  created_by?: string | null
+  drafted_by?: string | null
   created_at: string
   updated_at: string
 }

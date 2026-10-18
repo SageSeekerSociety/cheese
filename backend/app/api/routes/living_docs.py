@@ -43,6 +43,7 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
+from app.domain.agent.announce import who_started_the_open_turn
 from app.domain.agent.chat import ChatService
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block import citations
@@ -172,6 +173,23 @@ def _origin(resolver: ActorResolver, reached_actor) -> uuid.UUID | None:
     return resolver.credential_conversation() if reached_actor.via == "cheese" else None
 
 
+async def _authors(
+    db, project_id: uuid.UUID, actor, origin: uuid.UUID | None
+) -> tuple[str | None, str | None]:
+    """The new document's authors, fixed from now on: the person it is theirs
+    and the AI teammate writing it. A person making it is the one; 芝士 making
+    it is the other, beside the person whose message opened the turn it
+    writes in."""
+    if actor.via != "cheese" and not await IdentityService(db).is_agent(actor.handle):
+        return actor.handle, None
+    asker = (
+        await who_started_the_open_turn(db, project_id, origin, actor.handle)
+        if origin is not None
+        else None
+    )
+    return asker, actor.handle
+
+
 @projects.get("/{project_id}/documents")
 async def project_documents(
     project_id: uuid.UUID,
@@ -232,10 +250,13 @@ async def create_document(
             task = await TaskService(db).of_document(source.id)
             title = source.title or (task.title if task is not None else "")
     origin = _origin(resolver, actor)
+    created_by, drafted_by = await _authors(db, project_id, actor, origin)
     doc = await Documents(db).create(
         project_id=project_id,
         title=title,
         author=actor.handle,
+        created_by=created_by,
+        drafted_by=drafted_by,
         number=await take_number(db, project_id, Numbered.document),
         room_id=await conversations.room_of(db, origin) if origin else None,
     )
@@ -468,7 +489,7 @@ async def delete_document(
     document_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Delete a document of the project's own or the team's, its history and
-    its comments; a team's by its author or a team admin (#3774).
+    its comments; a team's by the person it is theirs or a team admin (#3774).
     Whoever has it open is told; what they type after that is not kept."""
     reached = await _own(db, resolver, document_id)
     if not await may_move_or_delete(db, reached):
