@@ -17,14 +17,6 @@ export type GetUserInfoResponse = {
   user: User
 }
 
-export type PasskeyRegistrationOptionsResponse = {
-  options: any // 根据实际返回类型调整
-}
-
-export type PasskeyAuthenticationOptionsResponse = {
-  options: any // 根据实际返回类型调整
-}
-
 export type PasskeyInfo = {
   id: string
   createdAt: Date
@@ -122,12 +114,6 @@ export type GetOAuthProvidersResponse = {
   providers: OAuthProvider[]
 }
 
-// OAuth 验证请求类型
-export interface OAuthVerifyRequest {
-  sessionId: string
-  password?: string
-}
-
 // OAuth 状态信息类型
 export interface OAuthState {
   providerId: string
@@ -169,28 +155,9 @@ export interface OAuthCreateUserRequest {
   consentMethod?: 'checkbox' | 'dialog'
 }
 
-export type OAuthCreateUserResponse = {
-  user: {
-    id: number
-    username: string
-    email: string
-    nickname: string
-  }
-  token: string
-}
-
 // OAuth 绑定用户请求类型 (传统方式)
 export interface OAuthBindUserRequest {
   stateToken: string
   username: string
   password: string
-}
-
-export type OAuthBindUserResponse = {
-  user: {
-    id: number
-    username: string
-    email: string
-  }
-  token: string
 }
