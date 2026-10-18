@@ -1004,3 +1004,61 @@ class TestSpaceDomainGroups:
             headers={"Authorization": f"Bearer {owner.token}"},
         )
         assert resp.status_code == 400
+
+
+def test_a_spaces_admins_are_read_in_one_batch(client) -> None:
+    """``GET /spaces`` costs the same for a board with 8 admins as with 1.
+
+    The admin list used to read each admin's user and profile in turn, so the
+    statement count grew with the number of admins even though the JSON was
+    right.
+    """
+    import base64
+    import json
+
+    from tests.conftest import seed_user
+    from tests.support.counting_session import assert_does_not_scale
+
+    suffix = unique_int()
+
+    def _login(handle: str) -> tuple[int, dict[str, str]]:
+        token = seed_user(client, handle)
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        user_id = int(json.loads(base64.urlsafe_b64decode(payload))["sub"])
+        return user_id, {"Authorization": f"Bearer {token}"}
+
+    _, owner = _login(f"adm-owner-{suffix}")
+    resp = create_approved_space(
+        client, json={"name": f"Admin batch {suffix}"}, headers=owner
+    )
+    assert resp.status_code == 201, resp.text
+    space_id = resp.json()["data"]["space"]["id"]
+    added = 0
+
+    def seed(n: int) -> None:
+        nonlocal added
+        while added + 1 < n:
+            user_id, _ = _login(f"adm-extra-{suffix}-{added}")
+            r = client.post(
+                f"/spaces/{space_id}/managers",
+                json={"userId": user_id, "role": "ADMIN"},
+                headers=owner,
+            )
+            assert r.status_code == 201, r.text
+            added += 1
+
+    def request():
+        return client.get("/spaces", params={"pageSize": 100}, headers=owner)
+
+    assert_does_not_scale(
+        client,
+        seed=seed,
+        request=request,
+        small=1,
+        large=8,
+        allow_growth=0,
+        what="GET /spaces admins",
+    )
+    ours = next(s for s in request().json()["data"]["spaces"] if s["id"] == space_id)
+    assert len(ours["admins"]) == 8
