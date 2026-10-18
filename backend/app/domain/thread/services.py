@@ -185,7 +185,12 @@ async def answered_in_many(
             )
             # A 支线 another process opened first wins; read the ids back.
             threads = await _threads_under(session, roots)
-    answers = {b.id: threads.get(b.id, b.conversation_id) for b in blocks}
+    answers = {block.id: block.conversation_id for block in blocks}
+    answers.update(threads)
+    # A message that should have a 支线 has one now. `open_thread` asserts the
+    # same thing; without it a write lost between the insert and the read would
+    # answer in the channel's main line, where 芝士 has no session.
+    assert all(block.id in threads for block in opens)
     return answers
 
 
