@@ -111,9 +111,7 @@ HOME = {
     oauth_services: [
         "OAuthService",
         "OAuthConnectionRepository",
-        "get_github_user_token_for_handle",
         "get_github_profile_for_handle",
-        "get_github_user_token_for_handle_with_reason",
     ],
 }
 

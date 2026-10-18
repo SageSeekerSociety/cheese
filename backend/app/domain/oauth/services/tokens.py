@@ -61,10 +61,9 @@ _GITHUB_TOKEN_REFRESH_MARGIN = timedelta(minutes=5)
 # only ever holds one lock per connection that has refreshed, so it stays small.
 _refresh_locks: dict[int, asyncio.Lock] = {}
 
-# Machine-readable reasons `get_github_user_token_with_reason` /
-# `get_github_user_token_for_handle_with_reason` report alongside a None
-# token — for callers (两阶段采纳) that need to explain a degrade to a human
-# rather than silently falling back. Never derived from the token/ciphertext
+# Machine-readable reasons `get_github_user_token_with_reason` reports
+# alongside a None token, for a caller that has to explain a degrade to a
+# human rather than silently falling back. Never derived from the token/ciphertext
 # itself, so surfacing one can't leak either.
 TOKEN_UNAVAILABLE_NOT_CONNECTED = "not_connected"
 TOKEN_UNAVAILABLE_UNDECRYPTABLE = "undecryptable"
