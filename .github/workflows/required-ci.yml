@@ -609,14 +609,20 @@ jobs:
         # retry budget would put this job past its five minutes — a timed-out
         # run is a failed run to the deploy gate, which is the one outcome this
         # job must never cause.
+        #
+        # Every call below is bounded so the whole step fits in five minutes on
+        # its worst path: --max-time is per attempt, and --retry 2 makes three
+        # of them, so one call is at most 3x30+2x2=94s. Update 94 + create 94 +
+        # the 15s read-back = 203s, plus a checkout, well inside the timeout.
+        # (With the old 60s/per-call numbers a PATCH that timed out twice and
+        # then answered 422 still stacked two 246s budgets: 492s.)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
           update_ref() {
-            curl -sS --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
-              -o /dev/null -w '%{http_code}' \
-              -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-              "$@"
+            curl -sS --retry 2 --retry-all-errors --retry-delay 2 --max-time 30 \
+              -o /dev/null -w '%{http_code}' "${auth[@]}" "$@"
           }
           url="https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/heads/main-green"
           moved=""
@@ -630,6 +636,14 @@ jobs:
                    "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs")" \
                && [ "${post_code:0:1}" = 2 ]; then
               moved=1
+            elif [ "$post_code" = 409 ]; then
+              # "Reference already exists": either the create really landed
+              # and only its response was lost (the retry met the new ref), or
+              # someone else made it point elsewhere. Read it back before
+              # saying the anchor did not move.
+              if curl -sS --max-time 15 "${auth[@]}" "$url" | grep -q "$GITHUB_SHA"; then
+                moved=1
+              fi
             fi
           fi
           if [ -n "$moved" ]; then
