@@ -147,10 +147,17 @@ CASES: tuple[Case, ...] = (
         ),
     ),
     Case(
-        name="dollar-quoted 字面量不同 → 同一指纹 → 报",
+        name="dollar-quoted 字面量不同（$$）→ 同一指纹 → 报",
         events=(
             (STACK, "SELECT $$open$$ FROM topics WHERE id = 1"),
             (STACK, "SELECT $$closed$$ FROM topics WHERE id = 2"),
+        ),
+    ),
+    Case(
+        name="dollar-quoted 字面量不同（$tag$）→ 同一指纹 → 报",
+        events=(
+            (STACK, "SELECT $tag$open$tag$ FROM topics WHERE id = 1"),
+            (STACK, "SELECT $tag$closed$tag$ FROM topics WHERE id = 2"),
         ),
     ),
     Case(
@@ -267,39 +274,62 @@ def _never_raises_check(module: ModuleType) -> None:
     quietly, and a report that hits an unusable logger must not escape either.
     """
     watch = module.RequestWatch()
-    watch.note(object())  # not even a string: must be swallowed, not raised
+    try:
+        watch.note(object())  # not even a string: must be swallowed, not raised
+    except Exception as exc:  # noqa: BLE001 - raising here is the failure
+        # Kept separate from the report check below: sharing one try made a
+        # note() that raised end this case before the report ever ran, which
+        # is how the report half stopped being covered.
+        raise AssertionError(f"note() 记录不了这条语句时抛了出来: {exc}") from exc
     if watch.groups:
         raise AssertionError("无法指纹的语句被记了下来")
     watch.note("SELECT 1", stack=STACK)
     watch.note("SELECT 1", stack=STACK)
 
     class ExplodingLogger:
-        def warning(self, *_args, **_kwargs) -> None:
+        def __init__(self) -> None:
+            self.warned: list = []
+
+        def warning(self, *args, **_kwargs) -> None:
+            # The log line is the detector's whole output, so record that one
+            # was asked for before failing the way a broken sink would.
+            self.warned.append(args)
             raise RuntimeError("log sink is broken")
 
         def debug(self, *_args, **_kwargs) -> None:
             return None
 
     original = module.logger
-    module.logger = ExplodingLogger()
+    sink = ExplodingLogger()
+    module.logger = sink
     try:
         module.report(watch)
     except Exception as exc:  # noqa: BLE001 - that is exactly what must not happen
         raise AssertionError(f"report() 在日志坏掉时抛了出来: {exc}") from exc
     finally:
         module.logger = original
+    if not sink.warned:
+        # Every other case runs with the logger silenced and asserts the
+        # return value, so a report that stopped logging entirely would pass
+        # all of them; this is the one place the log line itself is required.
+        raise AssertionError("report() 没有为重复组打出日志")
 
 
 def _begin_finish_check(module: ModuleType) -> None:
     """``begin`` / ``finish`` are the request boundary for non-HTTP callers."""
     token = module.begin()
-    if module.current_watch() is None:
+    watch = module.current_watch()
+    if watch is None:
         raise AssertionError("begin() 之后 current_watch() 为空")
-    module.current_watch().note(SELECT_TOPICS.format(1), stack=STACK)
-    module.current_watch().note(SELECT_TOPICS.format(2), stack=STACK)
+    watch.note(SELECT_TOPICS.format(1), stack=STACK)
+    watch.note(SELECT_TOPICS.format(2), stack=STACK)
     found = module.finish(token)
     if len(found) != 1 or found[0].count != 2:
         raise AssertionError(f"begin/finish 的两条语句没有并到一组: {found}")
+    if not watch.closed:
+        # A task that inherited the watch must stop counting into a request
+        # nobody will report.
+        raise AssertionError("finish() 之后 watch 没有关闭")
     if module.current_watch() is not None:
         raise AssertionError("finish() 之后 ContextVar 没有恢复")
 
@@ -410,7 +440,7 @@ def main() -> int:
             json.dumps(
                 {
                     "module": str(args.module),
-                    "cases": len(CASES) + 1,
+                    "cases": len(CASES) + 4,
                     "engine": engine,
                     "failures": failures,
                 },
@@ -436,7 +466,7 @@ def main() -> int:
             else "真实引擎路径未验证（本机没有 SQLAlchemy/aiosqlite）"
         )
         print(
-            f"N+1 探测器守卫通过（{len(CASES) + 3} 个场景：判定 4 类、指纹归一、"
+            f"N+1 探测器守卫通过（{len(CASES) + 4} 个场景：判定 4 类、指纹归一、"
             f"两维白名单、请求边界、begin/finish、记录/报告不抛异常；{engine_note}）"
         )
 

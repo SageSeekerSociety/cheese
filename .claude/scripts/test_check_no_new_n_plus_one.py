@@ -99,20 +99,17 @@ class NPlusOneGuardTests(unittest.TestCase):
         self.assertIn("dollar-quoted", result.stderr)
         self.assertIn("命名占位符", result.stderr)
 
-    def test_a_detector_that_raises_instead_of_swallowing_turns_this_guard_red(
+    def test_a_note_that_raises_instead_of_swallowing_turns_this_guard_red(
         self,
     ) -> None:
         # "Only logs, never raises" is the module's promise. Rewriting the
-        # swallow into a re-raise has to be caught by the guard.
+        # swallow into a re-raise has to be caught by the guard. Note and
+        # report are mutated one at a time: sharing a try in the check made a
+        # raising note() end the case before the report was ever exercised.
         def re_raise(source: str) -> str:
             return source.replace(
                 'logger.debug("query watch could not record a statement", exc_info=True)',
                 "raise",
-                1,
-            ).replace(
-                '        logger.debug("query watch could not report a request", exc_info=True)\n'
-                "        return []",
-                "        raise",
                 1,
             )
 
@@ -125,6 +122,66 @@ class NPlusOneGuardTests(unittest.TestCase):
             result = self._run(SCRIPT, "--module", str(module))
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("记录与报告不抛异常", result.stderr)
+
+    def test_a_report_that_raises_instead_of_swallowing_turns_this_guard_red(
+        self,
+    ) -> None:
+        def re_raise(source: str) -> str:
+            return source.replace(
+                '        logger.debug("query watch could not report a request", exc_info=True)\n'
+                "        return []",
+                "        raise",
+                1,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            module = self._mutate(
+                directory,
+                re_raise,
+                'logger.debug("query watch could not report a request"',
+            )
+            result = self._run(SCRIPT, "--module", str(module))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("记录与报告不抛异常", result.stderr)
+
+    def test_a_finish_that_leaves_the_watch_open_turns_this_guard_red(self) -> None:
+        # finish() closes the watch so a task that inherited it stops counting.
+        def leave_open(source: str) -> str:
+            return source.replace(
+                "    watch.closed = True\n    return report(watch)",
+                "    return report(watch)",
+                1,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            module = self._mutate(
+                directory,
+                leave_open,
+                "    watch.closed = True\n    return report(watch)",
+            )
+            result = self._run(SCRIPT, "--module", str(module))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("begin/finish 边界", result.stderr)
+
+    def test_a_dollar_quote_that_keeps_its_tag_turns_this_guard_red(self) -> None:
+        # $$...$$ and $tag$...$tag$ are both documented; a case has to cover
+        # each, or dropping the tagged branch goes unnoticed.
+        def only_untagged(source: str) -> str:
+            return source.replace(
+                '_DOLLAR_QUOTED = re.compile(r"\\$[A-Za-z_0-9]*\\$.*?\\$[A-Za-z_0-9]*\\$", re.DOTALL)',
+                '_DOLLAR_QUOTED = re.compile(r"\\$\\$.*?\\$\\$", re.DOTALL)',
+                1,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            module = self._mutate(
+                directory,
+                only_untagged,
+                "_DOLLAR_QUOTED = re.compile",
+            )
+            result = self._run(SCRIPT, "--module", str(module))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("$tag$", result.stderr)
 
     def test_a_detector_that_never_reports_turns_this_guard_red(self) -> None:
         override = (
@@ -160,6 +217,29 @@ class NPlusOneGuardTests(unittest.TestCase):
             result = self._run(SCRIPT, "--module", str(module))
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("不同指纹", result.stderr)
+
+    def test_a_report_that_stops_logging_turns_this_guard_red(self) -> None:
+        # The log line is the detector's only output: a report that returns
+        # its repeats without logging would pass every other case, because
+        # they run with the logger silenced and assert the return value.
+        def stop_logging(source: str) -> str:
+            return source.replace(
+                "        for item in repeats:\n"
+                "            logger.warning(",
+                "        for item in []:\n"
+                "            logger.warning(",
+                1,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            module = self._mutate(
+                directory,
+                stop_logging,
+                "            logger.warning(",
+            )
+            result = self._run(SCRIPT, "--module", str(module))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("没有为重复组打出日志", result.stderr)
 
     def test_json_names_the_case_that_failed(self) -> None:
         override = (
