@@ -118,15 +118,23 @@ class TaskService:
         )
         await self._session.refresh(task)
 
-    async def open_without_pr(self) -> list[Task]:
+    async def open_without_pr(
+        self, *, active_since: datetime | None = None
+    ) -> list[Task]:
         """Open tasks on live rooms that could still need a draft PR.
 
         A room that is archived is not worked in, so its tasks are left out
         like the PR pollers leave them out: every one of them costs a GitHub
         request on each sweep, and rooms archived before archiving closed
         their tasks still hold open ones whose branches never reached GitHub.
+
+        ``active_since``: only tasks whose last activity is at or after this
+        instant — the newest block in the task's own conversation, or its
+        creation when nobody has said anything. That is the same 「最后一次
+        活动」 the board shows. A caller that would rather not pay two GitHub
+        requests for every long-quiet branch passes it; ``None`` keeps them all.
         """
-        rows = await self._session.scalars(
+        stmt = (
             select(Task)
             .join(Topic, Topic.id == Task.room_id)
             .where(
@@ -136,6 +144,14 @@ class TaskService:
                 Topic.status != TopicStatus.archived,
             )
         )
+        if active_since is not None:
+            last_said = (
+                select(func.max(Block.created_at))
+                .where(Block.conversation_id == Task.id)
+                .scalar_subquery()
+            )
+            stmt = stmt.where(func.coalesce(last_said, Task.created_at) >= active_since)
+        rows = await self._session.scalars(stmt)
         return list(rows.all())
 
     async def claim_for_pr(self, task_id: uuid.UUID) -> Task | None:

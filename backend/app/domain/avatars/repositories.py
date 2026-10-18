@@ -56,9 +56,3 @@ class AvatarRepository:
         self._session.add(avatar)
         await self._session.flush()
         return avatar
-
-    async def increment_usage(self, avatar_id: int) -> None:
-        avatar = await self.get_by_id(avatar_id)
-        if avatar:
-            avatar.usage_count += 1
-            await self._session.flush()

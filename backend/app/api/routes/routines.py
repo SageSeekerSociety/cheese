@@ -330,12 +330,6 @@ async def create_routine(
     room = await TopicService(db).get(place.room_id)
     if room is None:
         raise NotFoundError(say("topicNotFound"))
-    await _own_agent_works_for(
-        db,
-        place.project_id,
-        body.agent_handle,
-        body.owner_handle or (actor.handle if _is_person(actor) else ""),
-    )
     row = await RoutineService(db).create(
         topic=room,
         by=await _speaker(db, actor, room.id),
@@ -349,6 +343,12 @@ async def create_routine(
         tz=body.timezone,
         owner_handle=body.owner_handle,
         agent_handle=body.agent_handle,
+    )
+    # Asked of the rule as made, before it is committed: the service settles who
+    # it is for (a person's rule is their own) and which teammate runs it (the
+    # room's first when none is named), and those two are what the check is about.
+    await _own_agent_works_for(
+        db, place.project_id, row.agent_handle, row.owner_handle or ""
     )
     presented = await _present_one(db, actor, row)
     await db.commit()
