@@ -631,6 +631,24 @@ class CandidateCI(unittest.TestCase):
                 self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
                 self.assertLessEqual(reads[-1], 60)
 
+    def test_the_entry_point_waits_for_an_image_build_still_running(self):
+        # Required CI finishing before the build is the rare ordering; with no
+        # other trigger, giving up would leave the commit unreleased.
+        building = ([self.run_record(status="in_progress", conclusion=None)],
+                    [self.queue_record()])
+        settled = ([self.run_record()], [self.queue_record()])
+        output, reads = self.eligibility([building] * 20 + [settled])
+        self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
+        # It outlasted the two-minute settle wait, i.e. the build wait ran.
+        self.assertGreater(reads[-1], 120)
+        self.assertLessEqual(reads[-1], GUARD.BUILD_WAIT_SECONDS + 180)
+
+    def test_a_failed_build_is_not_waited_for(self):
+        failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
+        output, reads = self.eligibility([failed])
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\n")
+        self.assertLessEqual(reads[-1], 180)
+
     def test_a_build_that_really_failed_is_refused_within_a_bounded_wait(self):
         failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
         output, reads = self.eligibility([failed])
@@ -880,10 +898,14 @@ class CandidateCI(unittest.TestCase):
         self.assertNotIn("concurrency", workflow)
         self.assertEqual(workflow["jobs"]["deploy"]["concurrency"]["group"], "deploy-dev")
         triggers = workflow.get("on", workflow.get(True))
-        # Either can finish last: the build has images, Required CI has the
-        # gate, and on main the gate takes longer.
-        self.assertEqual(set(triggers["workflow_run"]["workflows"]),
-                         {"Build and Push Docker Image", "Required CI"})
+        # One release run per merged commit: Required CI is the event. The
+        # build used to trigger one too, and it almost always arrived first and
+        # refused for want of the gate -- a second run per commit whose
+        # "success" read as "this commit is on dev".
+        self.assertEqual(set(triggers["workflow_run"]["workflows"]), {"Required CI"})
+        # Room to wait out an image build that is still running.
+        self.assertGreaterEqual(workflow["jobs"]["eligibility"]["timeout-minutes"], 10)
+        self.assertNotIn("build-did-not-produce-images", workflow["jobs"])
 
     def test_required_ci_runs_on_the_main_push_and_on_a_queue_entry(self):
         # A commit reaches main as a push (merged directly) or through the merge
@@ -918,7 +940,9 @@ class CandidateCI(unittest.TestCase):
 
         self.assertTrue(holds("workflow_run", "Required CI", "push", "main", "success"))
         self.assertTrue(holds("workflow_run", "Required CI", "push", "main", "cancelled"))
-        self.assertTrue(holds("workflow_run", "Build and Push Docker Image", "push", "main", "success"))
+        # The build no longer triggers this workflow; if it ever does again,
+        # the eligibility job refuses it rather than guessing.
+        self.assertFalse(holds("workflow_run", "Build and Push Docker Image", "push", "main", "success"))
         self.assertTrue(holds("workflow_dispatch"))
         for named in (
             ("Required CI", "push", "main", "failure"),

@@ -207,6 +207,44 @@ def ci_ready_settled(candidate: str) -> bool:
     return True
 
 
+#: How long the entry point waits for an image build that is still running.
+#: Required CI is the only release event now, and it outlasts the build in the
+#: normal case, so a build still running when the gate finishes is the rare
+#: ordering; giving up on it would leave the commit unreleased until the next
+#: merge. The eligibility job's timeout is sized for this window.
+BUILD_WAIT_SECONDS = 480
+BUILD_POLL_SECONDS = 15
+
+
+def build_running(candidate: str) -> bool:
+    """Whether this commit's image build has a run that has not finished."""
+    repository = os.environ["GITHUB_REPOSITORY"]
+    runs = [run for run in workflow_runs(repository, "build.yml", candidate)
+            if run["head_sha"] == candidate
+            and run["event"] in ("push", "workflow_dispatch")
+            and (run["head_branch"] or "") == "main"
+            and run["head_repository"]["full_name"] == repository]
+    if not runs:
+        return False
+    latest = max(runs, key=lambda run: (run["updated_at"], run["id"]))
+    return latest["status"] != "completed"
+
+
+def wait_for_build(candidate: str, say=print) -> bool:
+    """Wait out a running image build, then re-check; False when it never fits."""
+    deadline = time.monotonic() + BUILD_WAIT_SECONDS
+    while True:
+        if ci_ready_settled(candidate):
+            return True
+        if not build_running(candidate):
+            return False
+        if time.monotonic() + BUILD_POLL_SECONDS > deadline:
+            return False
+        say(f"{candidate}'s image build is still running; checking again in"
+            f" {BUILD_POLL_SECONDS} s.")
+        time.sleep(BUILD_POLL_SECONDS)
+
+
 def waiting_state(candidate: str) -> str:
     """Why this commit's Required CI may still be to come, as a short state.
 
@@ -376,6 +414,11 @@ def main() -> None:
         return
     if sys.argv[1] == "--ci-only":
         ready = ci_ready_settled(sys.argv[2])
+        # Required CI is the only release event. It outlasts the image build in
+        # the normal case; when it does not, the build is still running here and
+        # no later event will come, so wait for it rather than give up.
+        if not ready and build_running(sys.argv[2]):
+            ready = wait_for_build(sys.argv[2])
         # Only a release that was refused asks why it might still come:
         # a ready one must not pay another run-list read (and must not
         # fail when that read fails) before its deploy starts.

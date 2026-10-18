@@ -13,10 +13,14 @@ run-name: Deploy ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.h
 # prod runs: pull the per-commit images, migrate, up, health-check. The frontend
 # image bundles its own nginx; the ghg edge terminates TLS and hits :80.
 
-# Triggered by the image build or by Required CI finishing for a main commit.
-# Required CI runs on main after the commit lands, and it outlasts the build, so
-# whichever finishes last is the event that releases; the eligibility job checks
-# both for the candidate SHA without occupying the deployment runner.
+# Triggered by Required CI finishing for a main commit, and by nothing else:
+# one release run per merged commit. The image build used to trigger a run of
+# its own too, which almost always arrived first and refused for want of the
+# gate — a second run per commit whose "success" read as "this commit is on
+# dev". The eligibility job still checks both the images and the gate for the
+# candidate SHA, and waits for a build that is still running (the build is
+# minutes, the batch longer; the reverse is rare and would otherwise leave the
+# commit unreleased until the next merge).
 # A release of a commit from before the two slots per service
 # (deploy/deploy-docker.sh, "Two slots"), a revert or a manual dispatch, runs
 # that commit's own script. It installs its own app-router.conf and reloads —
@@ -73,14 +77,13 @@ on:
         type: string
         default: ""
   workflow_run:
-    # Both triggers, because either can finish last and the gate needs both.
-    # Build finishes in a few minutes, Required CI on main takes longer (its
-    # suites include the layers a PR run defers), so the build's event usually
-    # arrives first and refuses for want of a green gate; Required CI's own
-    # completion is the event that then releases. `branches: [main]` keeps this
-    # to runs that landed on main: a pull_request run's head branch is the PR's,
-    # and a merge queue entry's is the queue's temporary branch.
-    workflows: ["Build and Push Docker Image", "Required CI"]
+    # Required CI is the release event. It runs on main after the commit lands
+    # and outlasts the image build, so the images are there by the time it
+    # finishes; a build still running is waited for by the eligibility job
+    # below. `branches: [main]` keeps this to runs that landed on main: a
+    # pull_request run's head branch is the PR's, and a merge queue entry's is
+    # the queue's temporary branch.
+    workflows: ["Required CI"]
     types: [completed]
     branches: [main]
 
@@ -104,13 +107,16 @@ jobs:
     # fork is not a candidate to release.
     if: >-
       github.event_name != 'workflow_run' ||
-      github.event.workflow_run.name != 'Required CI' ||
-      (github.event.workflow_run.event == 'push' &&
+      (github.event.workflow_run.name == 'Required CI' &&
+      github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
       (github.event.workflow_run.conclusion == 'success' ||
       github.event.workflow_run.conclusion == 'cancelled'))
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Room for an image build still running when the gate finishes
+    # (deploy/check-auto-deploy.py, BUILD_WAIT_SECONDS) plus the two-minute
+    # settle wait around each read of the run lists.
+    timeout-minutes: 12
     outputs:
       ready: ${{ steps.check.outputs.ready }}
       superseded: ${{ steps.check.outputs.superseded }}
@@ -156,16 +162,14 @@ jobs:
               echo "superseded=" >> "$GITHUB_OUTPUT"
             fi
           fi
-      # Required CI on main runs after the commit lands, so for a few minutes
-      # the honest answer is "not yet" rather than a refusal: this workflow is
-      # triggered again by that run's completion, and the newer batch's run
-      # covers a commit whose own run a later push superseded while queued.
+      # A rerun of the gate can still be in flight when this release runs, and
+      # a queued run a newer push superseded is covered by that newer batch.
       - name: Say this commit waits for Required CI
         if: steps.check.outputs.waiting == 'true'
         env:
           CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
         run: |
-          echo "Not deployed \`$CANDIDATE_SHA\` yet: its Required CI run on main has not finished. That run's completion triggers this workflow again and releases it; a commit whose queued run a newer push superseded is released by the newer batch's run." >> "$GITHUB_STEP_SUMMARY"
+          echo "Not deployed \`$CANDIDATE_SHA\` yet: the Required CI run for it is still in flight, or a newer batch on main covers it. That batch's run releases it." >> "$GITHUB_STEP_SUMMARY"
 
       # A refused release skips the deploy job, and a run whose only skipped job
       # is the deploy concludes success, which reads as "this commit is on dev".
@@ -196,26 +200,6 @@ jobs:
           NEWER: ${{ steps.check.outputs.superseded }}
         run: |
           echo "Not deployed \`$CANDIDATE_SHA\` on its own: \`$NEWER\`, newer on main, is ready and its deploy run releases both." >> "$GITHUB_STEP_SUMMARY"
-
-  # A failed build used to leave this workflow SKIPPED, which reads exactly like
-  # "nothing to do" — so main could sit ahead of the box with nothing red to
-  # show it, and a merged fix looked shipped when it was not. This job turns that
-  # case red instead. It touches nothing on the box — it only prints and exits.
-  build-did-not-produce-images:
-    if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.name == 'Build and Push Docker Image' &&
-      github.event.workflow_run.conclusion != 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Say why nothing was deployed
-        run: |
-          echo "::error::Build ${{ github.event.workflow_run.conclusion }} for \
-          ${{ github.event.workflow_run.head_sha }} — no images were pushed, so \
-          dev is still running the previous commit. Re-run the build; a PyPI or \
-          registry reset is the usual cause."
-          exit 1
 
   deploy:
     needs: eligibility
