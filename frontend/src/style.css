@@ -1432,12 +1432,13 @@ button:not(.v-btn) {
   background: var(--fill);
   cursor: default;
 }
-/* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。 */
+/* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。
+   悬停也不变色——底色去掉以后，这一下亮起来的淡琥珀就成了「点得动」的假信号。 */
 .name-ref--static {
   cursor: default;
 }
 .name-ref--static:hover {
-  background: var(--accent-wash);
+  background: transparent;
 }
 /* 文件 chip 前那个 mdi 图标。 */
 .file-ref__icon {
