@@ -97,6 +97,8 @@ def test_blocks_without_the_receipt_still_get_one(monkeypatch):
 
     _run_echo([*already, *missing])
 
+    # 假仓储的 rows 是它自己按唯一约束模拟出来的账，证据是「整批都交过去了」：
+    # 真实的「已有的不重复、缺的补上」由下面钉语句的那组用例证明。
     assert repo.rows == set(already + missing), "缺的那几条没有补上"
     assert len(repo.batch_calls) == 1
     assert repo.batch_calls[0][0] == [*already, *missing]
@@ -131,9 +133,18 @@ class _CapturingSession:
         return _ScalarRows(self.created)
 
 
-def _compiled(session: _CapturingSession) -> str:
+def _compiled(session: _CapturingSession):
     (statement,) = session.statements
-    return str(statement.compile(dialect=postgresql.dialect()))
+    return statement.compile(dialect=postgresql.dialect())
+
+
+def _written_blocks(compiled) -> list[uuid.UUID]:
+    """每行 VALUES 里绑的那个 block —— 行数就是语句要写的行数。"""
+    return [
+        compiled.params[key]
+        for key in sorted(compiled.params)
+        if key.startswith("block_id_m")
+    ]
 
 
 def test_the_batch_entry_sends_one_multi_row_insert():
@@ -145,10 +156,14 @@ def test_the_batch_entry_sends_one_multi_row_insert():
     fresh = asyncio.run(repo.add_reactions_if_absent(ids, "👀", "cheese"))
 
     assert fresh == created, "应返回真正新建的那些块"
-    sql = _compiled(session)
+    compiled = _compiled(session)
+    sql = str(compiled)
     assert sql.count("INSERT INTO block_reactions") == 1
     assert "ON CONFLICT" in sql and "DO NOTHING" in sql
-    assert sql.count("%(block_id_m") == len(ids), "应为每块一行、合成一条语句"
+    assert "uq_block_reaction" in sql, "冲突目标是那条唯一约束"
+    # 每一行写它自己那个块。都写第一个块的话，其余行撞唯一约束后被
+    # DO NOTHING 丢掉，语句照样合法 —— 所以这里钉住绑定进去的值。
+    assert _written_blocks(compiled) == ids, "每块的 👀 应当各写一行"
 
 
 def test_a_block_listed_twice_is_written_once():
@@ -158,7 +173,7 @@ def test_a_block_listed_twice_is_written_once():
 
     asyncio.run(repo.add_reactions_if_absent([block, block], "👀", "cheese"))
 
-    assert _compiled(session).count("%(block_id_m") == 1
+    assert _written_blocks(_compiled(session)) == [block]
 
 
 def test_an_empty_batch_sends_nothing():
