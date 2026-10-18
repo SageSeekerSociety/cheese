@@ -30,22 +30,21 @@ from unittest import mock
 SCRIPT = Path(__file__).with_name("ci-fast.py")
 
 ALL_HOOKS = [
-    "ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork",
-    "eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet",
-    "repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references",
+    "ruff", "boundary-check", "migration-fork",
+    "eslint", "stylelint", "boundary-check-frontend", "scene-ratchet",
+    "repo-rules", "action-pins", "manual-anchors", "doc-references",
     "pyright", "frontend-typecheck", "openapi-document",
 ]
-BACKEND_HOOKS = {"ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"}
+BACKEND_HOOKS = {"ruff", "boundary-check", "migration-fork"}
 # Selected by the pre-push entry point ALONE, on top of FAST_HOOKS — a plain
 # `task ci:fast` run and Required CI's draft job do not run these. Kept in step
 # with `PRE_PUSH_HOOKS` in ci-fast.py.
 PRE_PUSH_HOOKS = {"openapi-document"}
-FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"}
-GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references"}
+FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet"}
+GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "doc-references"}
 # Hooks that judge against the merge base, so they are the ones that must report
 # not-run — never a pass — when there is no base or the caller names another one.
-# Kept in step with `MERGE_BASE_HOOKS` in ci-fast.py, minus `file-size`, which
-# is one of the guard hooks this file tracks separately.
+# Kept in step with `MERGE_BASE_HOOKS` in ci-fast.py.
 BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet", "boundary-check"}
 
 
@@ -212,11 +211,9 @@ class CiFastTest(unittest.TestCase):
         self.assertTrue(rep["fallback"])
         # everything ran except the checks that themselves need the merge base
         self.assertTrue((BACKEND_HOOKS | FRONTEND_HOOKS) - BASE_JUDGING_HOOKS <= self.ran_hooks())
-        self.assertNotIn("file-size", self.ran_hooks())
         for hook in BASE_JUDGING_HOOKS:
             self.assertNotIn(hook, self.ran_hooks())
         skipped = {n["id"] for n in rep["not_run"]}
-        self.assertIn("file-size", skipped)
         for hook in BASE_JUDGING_HOOKS:
             self.assertIn(hook, skipped)
 
@@ -229,13 +226,11 @@ class CiFastTest(unittest.TestCase):
         proc = self.run_ci_fast("--base", "release")
         self.assertEqual(proc.returncode, 2, proc.stdout)
         self.assertIn("无法验证", proc.stdout)
-        self.assertNotIn("file-size", self.ran_hooks())
         self.assertNotIn("migration-fork", self.ran_hooks())
         self.assertIn("ruff", self.ran_hooks())  # base-independent hooks still ran
         rep = self.report()
         self.assertEqual(rep["status"], "unknown")
         skipped = {n["id"] for n in rep["not_run"]}
-        self.assertIn("file-size", skipped)
         self.assertIn("migration-fork", skipped)
 
     # --- a stray SKIP in the caller's shell must NOT silently skip a nested
@@ -332,7 +327,7 @@ class CiFastTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         ran = self.ran_hooks()
         self.assertFalse({"eslint", "stylelint", "boundary-check-frontend"} & ran)
-        self.assertTrue({"scene-ratchet", "catalog-ratchet"} <= ran)  # the rest of the tier
+        self.assertIn("scene-ratchet", ran)  # the rest of the tier
         not_run = {item["id"]: item["reason"] for item in self.report()["not_run"]}
         for hook_id in ("eslint", "stylelint", "boundary-check-frontend"):
             self.assertIn(hook_id, not_run)
@@ -420,8 +415,8 @@ class CiFastTest(unittest.TestCase):
         proc = self.run_ci_fast("--pre-push")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         ran = self.ran_hooks()
-        self.assertTrue({"scene-ratchet", "catalog-ratchet"} <= ran)
-        self.assertIn("file-size", ran)
+        self.assertIn("scene-ratchet", ran)
+        self.assertIn("repo-rules", ran)
         self.assertNotIn("blocked", proc.stdout)
         proc = self.run_ci_fast()
         self.assertEqual(proc.returncode, 3, proc.stdout)
@@ -1230,14 +1225,14 @@ sys.exit(0)
         rows = {row["id"]: row for row in rep["ran"]}
         self.assertEqual(rows["commit-title"]["result"], "unknown")
         self.assertIn("pull-request", rows["commit-title"]["reason"])
-        self.assertIn("file-size", rows, "the tier judged nothing at all")
+        self.assertIn("repo-rules", rows, "the tier judged nothing at all")
 
     def test_an_unreadable_pull_request_still_judges_the_change(self):
         # The same payload with a check that really fails: the failure must
         # reach the verdict. Aborting at the payload instead reported unknown
         # having executed nothing, so a failure in the same commit went unseen
         # and the draft was green — the false green this tier exists to remove.
-        self.write_hooks(failing={"file-size"})
+        self.write_hooks(failing={"repo-rules"})
         self.make_base_and_head("frontend/src/probe.ts")
         payload = self.tmp / "pull.json"
         payload.write_text("gh: Not Found (HTTP 404)")
@@ -1245,7 +1240,7 @@ sys.exit(0)
                                 env_extra=self.quick_tools())
         self.assertEqual(proc.returncode, 1, proc.stdout)
         self.assertEqual(self.report()["status"], "fail")
-        self.assertIn("file-size", self.ran_hooks())
+        self.assertIn("repo-rules", self.ran_hooks())
 
     def test_quick_pull_request_that_is_not_an_object_is_unknown(self):
         # JSON that parses but is not a PR object — a scalar, a list, a
@@ -1265,7 +1260,7 @@ sys.exit(0)
             report = self.report()
             self.assertEqual(report["status"], "unknown", text)
             self.assertIn("pull-request", " ".join(report["reasons"]), text)
-            self.assertIn("file-size", [row["id"] for row in report["ran"]], text)
+            self.assertIn("repo-rules", [row["id"] for row in report["ran"]], text)
         # ...and a PR object whose title is not a string is the same story: it
         # would reach check-commit-title.py as an argv element and raise there.
         payload = self.tmp / "pull.json"
@@ -1292,7 +1287,7 @@ sys.exit(0)
         # what this test exists to catch. Warm the readiness command first and
         # give the budget room to reach the checks. It is then spent by a real
         # (slow) stub hook, so nothing here is stubbed away.
-        self.write_hooks(slow={"file-size"})
+        self.write_hooks(slow={"repo-rules"})
         self.make_base_and_head("frontend/src/probe.ts")
         subprocess.run([*shlex.split(self.env.get("CI_FAST_PRECOMMIT", precommit_command())), "--version"],
                        cwd=self.repo, capture_output=True, env=self.env, timeout=120)
@@ -1330,11 +1325,10 @@ sys.exit(0)
         for identifier in ("eslint", "stylelint", "boundary-check-frontend"):
             self.assertEqual(rows[identifier]["result"], "unknown", identifier)
         self.assertNotIn("eslint", self.ran_hooks())
-        # The two ratchets are python scripts costing seconds, far too cheap for
-        # a fixed floor to judge: they are left to their own per-check timeout,
-        # so a budget that ran out must still never read as their failure.
-        for identifier in ("scene-ratchet", "catalog-ratchet"):
-            self.assertNotEqual(rows.get(identifier, {}).get("result"), "fail", identifier)
+        # The scene ratchet is a python script costing seconds, far too cheap for
+        # a fixed floor to judge: it is left to its own per-check timeout, so a
+        # budget that ran out must still never read as its failure.
+        self.assertNotEqual(rows.get("scene-ratchet", {}).get("result"), "fail")
 
 
 class SelectionEvidenceTest(unittest.TestCase):
@@ -1418,8 +1412,8 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertIn("tests/unit/test_needs_the_build.py", selected)
 
     def test_backend_harness_omission_follows_imports_only(self):
-        # Naming a file is a selection dependency — the legacy-error ratchet
-        # names every file it counts — but it is not a reason a test needs the
+        # Naming a file is a selection dependency — a tree guard that counts files
+        # names every file it counts — but that is not a reason a test needs the
         # pinned build. Following it here would drop a test this tier can run.
         from ci_fast_backend import select_backend
         self.put("backend/tests/pinned_claude.py", "def claude_binary(): raise SystemExit\n")
@@ -1845,9 +1839,9 @@ class SelectionEvidenceTest(unittest.TestCase):
         # edit. A deletion with no surviving root is the same case.
         from ci_fast_checks import test_plan
         self.put("frontend/src/i18n/messages/en/tasks/artifactComparison.json", "{}\n")
-        self.put("frontend/catalog-baseline.json", "{}\n")
+        self.put("frontend/stylelint-baseline.json", "{}\n")
         for changed in (["frontend/src/i18n/messages/en/tasks/artifactComparison.json"],
-                        ["frontend/catalog-baseline.json"],
+                        ["frontend/stylelint-baseline.json"],
                         ["frontend/src/styles/docBlocks.css"],
                         ["frontend/src/gone.ts"]):
             plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root)

@@ -9,7 +9,7 @@ beforeEach(() => setLocale('zh-CN'))
 const NOW = Date.parse('2026-10-05T08:00:00Z')
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString()
 
-/** 六条事实的默认值：什么都不成立、也没在跑、也没有没恢复的失败。 */
+/** 八条事实的默认值：什么都不成立、也没在跑、也没有没恢复的失败、也没在等谁。 */
 const quiet = {
   awaitsMe: false,
   repliedToMe: false,
@@ -17,6 +17,8 @@ const quiet = {
   unseenDelivery: false,
   lastOutputAt: null as string | null,
   incompleteSince: null as string | null,
+  waitStalled: false,
+  bounced: false,
 }
 
 describe('lightOf —— 四盏灯各自的判据', () => {
@@ -85,7 +87,7 @@ describe('lightOf —— 四盏灯各自的判据', () => {
     expect(lightOf(failed, NOW)).toEqual({ kind: 'red', breathe: false, why: 'unfinished' })
   })
 
-  it('两种红都说得出是哪一件：在跑却没动静，还是停下报错没人接手', () => {
+  it('每种红都说得出是哪一件：在跑却没动静，还是停下报错没人接手', () => {
     // 既有没恢复的失败、又在跑却没动静 —— 说的是更重的那一件（坏了这件事）。
     expect(lightOf({ ...quiet, moving: true, lastOutputAt: ago(9), incompleteSince: ago(6) }, NOW)).toEqual({
       kind: 'red',
@@ -97,6 +99,41 @@ describe('lightOf —— 四盏灯各自的判据', () => {
       kind: 'red',
       breathe: false,
       why: 'quiet',
+    })
+  })
+
+  it('房间在等一位队友、等太久了，也是红灯（说的是等的那一件）', () => {
+    expect(lightOf({ ...quiet, waitStalled: true }, NOW)).toEqual({
+      kind: 'red',
+      breathe: false,
+      why: 'waiting',
+    })
+  })
+
+  it('等队友的红压过黄和绿：那位队友没回来之前，这一行先红着', () => {
+    expect(lightOf({ ...quiet, waitStalled: true, awaitsMe: true }, NOW)).toEqual({
+      kind: 'red',
+      breathe: false,
+      why: 'waiting',
+    })
+    expect(lightOf({ ...quiet, waitStalled: true, moving: true, lastOutputAt: ago(1) }, NOW)).toEqual({
+      kind: 'red',
+      breathe: false,
+      why: 'waiting',
+    })
+  })
+
+  it('交付被退回、还没人来改，是红灯（不是有事等你）', () => {
+    expect(lightOf({ ...quiet, bounced: true }, NOW)).toEqual({
+      kind: 'red',
+      breathe: false,
+      why: 'bounced',
+    })
+    // 退回那一刻后端也会把它算成「等你」，但球其实已经交回给队友了：红灯压过黄灯。
+    expect(lightOf({ ...quiet, bounced: true, awaitsMe: true }, NOW)).toEqual({
+      kind: 'red',
+      breathe: false,
+      why: 'bounced',
     })
   })
 
@@ -130,13 +167,35 @@ describe('lightOf —— 四盏灯各自的判据', () => {
 
   it('红压过黄：既卡住了又有事等我，先让我看见卡住的那一件', () => {
     expect(
-      lightOf({ awaitsMe: true, repliedToMe: true, moving: true, unseenDelivery: true, lastOutputAt: ago(9) }, NOW)
+      lightOf(
+        {
+          awaitsMe: true,
+          repliedToMe: true,
+          moving: true,
+          unseenDelivery: true,
+          waitStalled: false,
+          bounced: false,
+          lastOutputAt: ago(9),
+        },
+        NOW
+      )
     ).toEqual({ kind: 'red', breathe: false, why: 'quiet' })
   })
 
   it('黄压过绿：在往前走、同时又有事等我，黄更该被看见', () => {
     expect(
-      lightOf({ awaitsMe: true, repliedToMe: true, moving: true, unseenDelivery: true, lastOutputAt: ago(1) }, NOW)
+      lightOf(
+        {
+          awaitsMe: true,
+          repliedToMe: true,
+          moving: true,
+          unseenDelivery: true,
+          waitStalled: false,
+          bounced: false,
+          lastOutputAt: ago(1),
+        },
+        NOW
+      )
     ).toEqual({ kind: 'yellow', breathe: false })
   })
 
@@ -188,9 +247,11 @@ describe('lightTitle —— 灯上悬停那一句', () => {
     expect(lightTitle({ kind: 'blue', breathe: false })).toBe('我负责的')
   })
 
-  it('红灯分两种原因说两句：在跑却没动静，和停下报错没人接手', () => {
-    // 「停下报错」和「显示在跑」说的不是一件事：前者不在跑。两种各有一句。
+  it('红灯分三种原因说三句：在跑却没动静、停下报错没人接手、等队友等太久了', () => {
+    // 「停下报错」和「显示在跑」说的不是一件事：前者不在跑。等队友又是另一件事。
     expect(lightTitle({ kind: 'red', breathe: false, why: 'quiet' })).toBe('显示在跑，但五分钟没动静')
     expect(lightTitle({ kind: 'red', breathe: false, why: 'unfinished' })).toBe('停下来报错，五分钟没人接手')
+    expect(lightTitle({ kind: 'red', breathe: false, why: 'waiting' })).toBe('在等一位队友，等太久了')
+    expect(lightTitle({ kind: 'red', breathe: false, why: 'bounced' })).toBe('已退回，还没人来改')
   })
 })

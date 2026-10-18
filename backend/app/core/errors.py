@@ -383,9 +383,7 @@ class AppError(BaseError):
     (ValidationError is an UnprocessableEntityError, and so on), so an
     ``except`` written for either catches both while the raises move over one
     domain at a time. What AppError keeps is its constructor — the message
-    may be left out, and the class's ``message`` stands in — and
-    tests/unit/test_legacy_error_ratchet.py counts every use of these names
-    per file, so the count only goes down meanwhile.
+    may be left out, and the class's ``message`` stands in.
     """
 
     status_code: int = HTTP_400_BAD_REQUEST

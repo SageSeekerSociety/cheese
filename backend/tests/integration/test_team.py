@@ -1196,7 +1196,7 @@ class TestTeamIntegration:
             400,
             409,
         ), (
-            f"Expected 400 or 409 when inviting already-member, got {invite_again_resp.status_code}"  # noqa: E501
+            f"Expected 400 or 409 when inviting already-member, got {invite_again_resp.status_code}"
         )
 
     def test_change_role_multiple_times(

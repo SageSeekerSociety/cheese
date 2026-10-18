@@ -256,7 +256,7 @@ class TestReactionServiceGetSummary:
 
         result = await svc.get_reaction_summary(discussion_id=10, current_user_id=7)
 
-        # NT DiscussionReactionSummary: [{reactionType: {id, code, ...}, count, hasReacted}]  # noqa: E501
+        # NT DiscussionReactionSummary: [{reactionType: {id, code, ...}, count, hasReacted}]
         assert len(result) == 2
         like_entry = result[0]
         assert like_entry["reactionType"]["id"] == 1

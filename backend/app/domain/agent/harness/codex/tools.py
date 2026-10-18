@@ -87,7 +87,7 @@ def platform_tools():
         else (Path(__file__).resolve().parents[5] / "sandbox" / "cheese").read_text()
     )
     module = types.ModuleType("cheese_platform_tools")
-    exec(compile(source, "cheese", "exec"), module.__dict__)  # noqa: S102
+    exec(compile(source, "cheese", "exec"), module.__dict__)
     return module
 
 
@@ -504,7 +504,7 @@ class RemoteTools:
             text = self.platform.run_platform_tool(tool, arguments, host)
         except MachineOutOfReach:
             text, success = MACHINE_OUT_OF_REACH, False
-        except Exception as exc:  # noqa: BLE001 — the agent reads the reason
+        except Exception as exc:  # the agent reads the reason
             text, success = failure_text(exc), False
         else:
             success = True

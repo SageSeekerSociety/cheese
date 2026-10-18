@@ -1,4 +1,4 @@
-"""Unit tests for TaskVisibilityService — covering visibility rules and predicate building."""  # noqa: E501
+"""Unit tests for TaskVisibilityService — covering visibility rules and predicate building."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock

@@ -147,7 +147,7 @@ async def _fan_out_screen_data(screen: HubScreen, raw: bytes) -> None:
     for viewer in list(screen.viewers):
         try:
             await viewer.send_bytes(raw)
-        except Exception:  # noqa: BLE001 — a dead viewer is dropped, not fatal
+        except Exception:  # a dead viewer is dropped, not fatal
             dead.append(viewer)
     for viewer in dead:
         screen.viewers.discard(viewer)

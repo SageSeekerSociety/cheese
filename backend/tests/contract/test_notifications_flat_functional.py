@@ -415,7 +415,7 @@ async def test_a_page_of_notifications_costs_constant_queries(
     factory = authed_client.test_factory  # type: ignore[attr-defined]
     statements: list[str] = []
 
-    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    def record(conn, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
     engine = authed_client.test_app_engine.sync_engine  # type: ignore[attr-defined]

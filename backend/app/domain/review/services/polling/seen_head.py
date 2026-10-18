@@ -99,7 +99,7 @@ async def _refresh_github_unseen_head(
             live = await client.pull_request_head_sha(
                 owner=owner, repo=repo, number=number, token=creds.read
             )
-        except Exception as exc:  # noqa: BLE001 — refuse anyway; refresh with what we have
+        except Exception as exc:  # refuse anyway; refresh with what we have
             logger.warning("card %s: first-look head read failed: %s", card.id, exc)
     await self._refresh_stale_card(
         card,
@@ -162,5 +162,5 @@ async def _refresh_stale_card(
                 + f"，请重新查看后再{action}",
             )
             await session.commit()
-    except Exception:  # noqa: BLE001 — the raise this accompanies must fire
+    except Exception:  # the raise this accompanies must fire
         logger.exception("could not refresh stale card %s", card_id)

@@ -196,17 +196,29 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   function lightOf(id: string): RowLight | null {
     const topic = topicById.value.get(id)
     if (!topic) return null
-    return lightFor(
+    const stalled = stalledWaits(topic)
+    const light = lightFor(
       {
         awaitsMe: topic.awaits_me === true,
         repliedToMe: topic.replied_to_me === true,
         moving: topic.moving === true,
         unseenDelivery: topic.unseen_delivery === true,
+        // 房间在等一位队友、等太久了：和「在跑却没动静」一样是红灯（`waiting`）。
+        waitStalled: stalled.length > 0,
+        // 频道自己不是一条活，没有「被退回」这一格：它名下哪条活被退了，走的是
+        // `waits`（`waiting`）。
+        bounced: false,
         lastOutputAt: topic.last_output_at,
         incompleteSince: topic.incomplete_since,
       },
       clock.value
     )
+    // 红灯说什么，那一句还是「在等谁、为什么」：头像不画了，这句话不能跟着丢。
+    if (light?.why === 'waiting' && stalled[0]) {
+      const who = memberOf(stalled[0].member)
+      return { ...light, title: waitText(stalled[0], who.name, clock.value) }
+    }
+    return light
   }
 
   /** 挂在频道下面的一条活。和频道行同一个判据，只是事实来自这条活自己那一份 ——
@@ -219,6 +231,9 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
         repliedToMe: false,
         moving: task.moving === true,
         unseenDelivery: task.unseen_delivery === true,
+        waitStalled: false,
+        // 交付被退回了，还没有人来改：这不是「有事等你」，是一颗红灯。
+        bounced: task.presentation?.phrase === 'bounced',
         lastOutputAt: task.last_output_at,
         incompleteSince: task.incomplete_since,
       },
@@ -271,11 +286,14 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     }
   }
 
-  /** 这一行上画的那几位成员：卡住了的在前（红），在干活的在后（绿）。同一位只画一次。 */
+  /** 这一行上画的那几位成员：此刻在这里干活的（绿点）。房间在等一位队友、等太久了
+   *  是这一行的**状态**，由行尾那盏红灯说（`lib/roomLight.ts` 的 `waiting`），不再画
+   *  成头像——和任务行同一个规矩。同一位只画一次；卡住了的那位也不画（红灯已经说了，
+   *  头像上再点一颗绿点会和它打架）。 */
   function memberMarks(topic: Topic): RailMemberMark[] {
     const marks: RailMemberMark[] = []
     const drawn = new Set<string>()
-    const add = (who: RailMemberWho, state: RailMemberMark['state'], title: string) => {
+    const add = (who: RailMemberWho, title: string) => {
       if (drawn.has(who.identity)) return
       drawn.add(who.identity)
       marks.push({
@@ -283,17 +301,14 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
         name: who.name,
         avatar: who.avatar,
         agent: who.agent,
-        state,
         title,
       })
     }
-    for (const wait of stalledWaits(topic)) {
-      const who = memberOf(wait.member)
-      add(who, 'stalled', waitText(wait, who.name, clock.value))
-    }
+    const stalled = new Set(stalledWaits(topic).map((wait) => memberOf(wait.member).identity))
     for (const work of workersOf(topic)) {
       const who = memberOf(work.member)
-      add(who, 'working', t('work.sidebar.workingTip', { name: who.name }))
+      if (stalled.has(who.identity)) continue
+      add(who, t('work.sidebar.workingTip', { name: who.name }))
     }
     return marks
   }

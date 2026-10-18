@@ -171,7 +171,7 @@ async def _gateway_usage(
         else:
             window = await admin.usage(start_iso, end_iso)
             read = GatewayRead("gateway", window.by_key.get(key.key_hash, _ZERO), key)
-    except Exception:  # noqa: BLE001 — an unreachable gateway is unknown, not zero
+    except Exception:  # an unreachable gateway is unknown, not zero
         logger.warning(
             "reading topic naming usage from the gateway failed", exc_info=True
         )

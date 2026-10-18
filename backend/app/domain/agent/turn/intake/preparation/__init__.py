@@ -58,7 +58,7 @@ from app.domain.agent.turn.steps.send import SendEffects
 # Re-exported so a name the tree reaches through this module keeps resolving,
 # and as the module global `_held_blocks` below reads at call time: the one test
 # double for it is set here (native_deferred_message.py).
-from app.domain.delivery.receipts import held_blocks  # noqa: F401
+from app.domain.delivery.receipts import held_blocks
 
 logger = logging.getLogger(__name__)
 

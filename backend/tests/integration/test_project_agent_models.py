@@ -149,11 +149,11 @@ async def test_a_removed_teammate_model_is_refused_without_switching_pool(
         f"/projects/{pid}/agents/{teammate['id']}",
         json={"configuration": {"model": "opus"}},
     )
-    from app.domain.agent_instance import configuration
+    from app.domain.agent import model_catalog
 
-    available = configuration.subscription_model_listings()
+    available = model_catalog.subscription_model_listings()
     monkeypatch.setattr(
-        configuration,
+        model_catalog,
         "subscription_model_listings",
         lambda: [item for item in available if item.id != "opus"],
     )
@@ -181,11 +181,11 @@ async def test_removed_main_is_refused_but_unused_defaults_do_not_block_override
         == 200
     )
     from app.core.errors import ValidationError
-    from app.domain.agent_instance import configuration
+    from app.domain.agent import model_catalog
 
-    available = configuration.subscription_model_listings()
+    available = model_catalog.subscription_model_listings()
     monkeypatch.setattr(
-        configuration,
+        model_catalog,
         "subscription_model_listings",
         lambda: [item for item in available if item.id != "opus"],
     )
@@ -518,11 +518,11 @@ def test_the_picker_reports_a_main_model_that_left_the_catalog_as_saved(
     pid = create(client)["id"]
     route = f"/projects/{pid}/default-model"
     assert client.put(route, json={"model": "opus"}).status_code == 200
-    from app.domain.agent_instance import configuration
+    from app.domain.agent import model_catalog
 
-    available = configuration.subscription_model_listings()
+    available = model_catalog.subscription_model_listings()
     monkeypatch.setattr(
-        configuration,
+        model_catalog,
         "subscription_model_listings",
         lambda: [item for item in available if item.id != "opus"],
     )

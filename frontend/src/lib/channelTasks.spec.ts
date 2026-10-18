@@ -64,6 +64,15 @@ describe('任务卡', () => {
     expect(line.accepted).toContain('1')
   })
 
+  it('交付被退回了，是红灯（不是等你）：球已经交回给队友去改', () => {
+    const line = taskLine(
+      task({ presentation: { column: 'needs_you', phrase: 'bounced' }, waiting_on: null }),
+      'linxiao',
+      nameOf
+    )
+    expect(line.tone).toBe('stuck')
+  })
+
   it('一条消息下面挂着从它出来的每一件任务，按创建的先后', () => {
     const under = tasksByOrigin([
       task({ id: 'b', upgraded_from_block_id: 'm1', created_at: '2026-10-07T02:00:00Z' }),

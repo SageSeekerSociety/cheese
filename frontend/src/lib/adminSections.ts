@@ -112,6 +112,14 @@ export const ADMIN_SECTIONS: AdminSectionDef[] = [
     group: 'delivery',
   },
   {
+    to: '/admin/ci-activity',
+    name: 'AdminCiActivity',
+    icon: 'mdi-timer-sand',
+    labelKey: 'navigation.admin.ciActivity',
+    badge: false,
+    group: 'delivery',
+  },
+  {
     to: '/admin/usage',
     name: 'AdminUsage',
     icon: 'mdi-chart-areaspline',

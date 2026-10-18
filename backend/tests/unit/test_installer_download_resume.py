@@ -28,7 +28,7 @@ DIGEST = hashlib.sha256(BINARY).hexdigest()
 class _CutsFirstTransfer(http.server.BaseHTTPRequestHandler):
     requests: list[str | None] = []
 
-    def do_GET(self):  # noqa: N802
+    def do_GET(self):
         byte_range = self.headers.get("Range")
         type(self).requests.append(byte_range)
         if byte_range is None:

@@ -120,7 +120,7 @@ def test_backend_lint_is_a_separate_hosted_job():
     )
     config = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())
     declared = {h["id"] for repo in config["repos"] for h in repo["hooks"]}
-    for hook in ("ruff", "ruff-format", "pyright"):
+    for hook in ("ruff", "pyright"):
         assert hook in declared, _rule(
             f"{hook} is not declared in .pre-commit-config.yaml"
         )
@@ -128,6 +128,10 @@ def test_backend_lint_is_a_separate_hosted_job():
             "static job 没跑 pre-commit run --all-files"
         )
         assert hook in lint_commands, _rule(f"static job 没跑 {hook}")
+    # Layout is fixed on a developer's commit, never judged in CI.
+    assert "ruff-format" not in lint_commands, _rule(
+        "static job 又在判格式——ruff-format 只在 pre-commit 里自动修"
+    )
 
     test_commands = "\n".join(
         s.get("run", "") for s in workflow["jobs"]["test"]["steps"]

@@ -276,7 +276,7 @@ class Consumptions:
                 kept = await self._valkey().eval(
                     _RENEW, 1, _lease(work), self._me, _ms(LEASE_S)
                 )  # type: ignore[misc]
-            except Exception:  # noqa: BLE001 — the next renewal tries again
+            except Exception:  # the next renewal tries again
                 logger.warning("renewing the lease on %s failed", work, exc_info=True)
                 continue
             if not kept:
@@ -316,7 +316,7 @@ class Consumptions:
             failure = None
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 — the consumer says why
+        except Exception as exc:  # the consumer says why
             answer, failure = Answer("", str(exc)), exc
         await self._end(consumption, answer, progress, failure)
 
@@ -372,7 +372,7 @@ class Consumptions:
                     stopped=await consumer.stopped(consumption),
                     failure=failure,
                 )
-        except Exception:  # noqa: BLE001 — the question still ends
+        except Exception:  # the question still ends
             logger.warning(
                 "ending a %s question failed work=%s",
                 consumption.kind,
@@ -451,7 +451,7 @@ class Consumptions:
         while not self._closing:
             try:
                 await self.sweep()
-            except Exception:  # noqa: BLE001 — the next pass tries again
+            except Exception:  # the next pass tries again
                 logger.warning(
                     "looking for questions nobody reads failed", exc_info=True
                 )
@@ -541,7 +541,7 @@ class Consumptions:
             failure = None
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 — the consumer says why
+        except Exception as exc:  # the consumer says why
             answer, failure = Answer("", str(exc)), exc
         await self._end(consumption, answer, progress, failure)
 

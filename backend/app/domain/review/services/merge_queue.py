@@ -166,7 +166,7 @@ async def _merge_pr_for_accept(
         status = await client.pull_request_status(
             owner=owner, repo=repo, number=number, token=creds.read
         )
-    except Exception as exc:  # noqa: BLE001 — stop visibly; never local-merge
+    except Exception as exc:  # stop visibly; never local-merge
         logger.warning(
             "cannot read PR #%s for card %s at accept time: %s",
             number,
@@ -222,7 +222,7 @@ async def _merge_pr_for_accept(
             status=status,
             ref=seen,
         )
-    except Exception as exc:  # noqa: BLE001 — stop visibly; never guess green
+    except Exception as exc:  # stop visibly; never guess green
         logger.warning(
             "cannot compute merge state for PR #%s at accept time: %s",
             number,
@@ -274,7 +274,7 @@ async def _merge_pr_for_accept(
             ),
             sha=seen,
         )
-    except Exception:  # noqa: BLE001 — the remote may have merged before disconnecting
+    except Exception:  # the remote may have merged before disconnecting
         # 这个 `except` 故意不按异常类型分家（2026-10-16 试过把
         # `GitHubPrError` 单独接出来，又撤回）：`client` 可能是 GitHub 也可能是
         # Forgejo 的实现，而 `GitHubPrError` 在两边都不只表示「对面明确说这次没
@@ -294,7 +294,7 @@ async def _merge_pr_for_accept(
             live = await client.pull_request_head_sha(
                 owner=owner, repo=repo, number=number, token=creds.read
             )
-        except Exception:  # noqa: BLE001 — refresh with what we know
+        except Exception:  # refresh with what we know
             logger.warning("card %s: post-409 head read failed", card.id)
         await self._refresh_stale_card(card, topic, live_head=live)
         raise ValidationError(say("prNewCommitsDuringAccept", number=number))
