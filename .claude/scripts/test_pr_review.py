@@ -32,20 +32,24 @@ PR_RULE_EDIT = "10"
 #: A PR whose reviewed commit was followed by a merge of the base branch and nothing else:
 #: the increment §4 exempts, so ready must take the original conclusion line.
 PR_BASE_MERGE = "11"
+#: A B PR bigger than the fast path: seven files have to buy the two-finder topology back.
+PR_BIG = "13"
 
 GH = r"""#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$*" in
   *.head.sha*) case "$*" in *pulls/8*) echo "$PR8_HEAD" ;; *pulls/9*) echo "$PR9_HEAD" ;;
     *pulls/10*) echo "$PR10_HEAD" ;; *pulls/11*) echo "$PR11_HEAD" ;;
-    *pulls/12*) echo "$PR12_HEAD" ;; *) echo "$PR_HEAD" ;; esac ;;
+    *pulls/12*) echo "$PR12_HEAD" ;; *pulls/13*) echo "$PR13_HEAD" ;;
+    *) echo "$PR_HEAD" ;; esac ;;
   *.base.ref*) echo main ;;
   *--paginate*/commits*)
     case "$*" in *pulls/8*) printf '%s\n' $PR8_COMMITS ;;
       *pulls/9*) printf '%s\n' $PR9_COMMITS ;;
       *pulls/10*) printf '%s\n' $PR10_COMMITS ;;
       *pulls/11*) printf '%s\n' $PR11_COMMITS ;;
-      *) printf '%s\n' $PR_COMMITS ;; esac ;;
+      *pulls/12*) printf '%s\n' $PR12_COMMITS ;;
+      *pulls/13*) printf '%s\n' $PR13_COMMITS ;; *) printf '%s\n' $PR_COMMITS ;; esac ;;
   *check-runs*) printf '%s\n' "${CI_JSON:-}" ;;
   *'"# "'*) printf '# A title\n\nThe body.\n' ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
@@ -102,7 +106,6 @@ def result_json(sha, *severities, kinds=None):
                 "rung": 4,
                 "failure": "it breaks",
                 "evidence": "ran it",
-                "confirm_with": "",
             }
             for i, sev in enumerate(severities)
         ],
@@ -204,6 +207,16 @@ class PrReview(unittest.TestCase):
         git(work, "commit", "-qm", "the change under review")
         cls.base_merge_reviewed = git(work, "rev-parse", "HEAD")
         git(work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_BASE_MERGE}/head")
+        # A B PR whose size leaves the fast path: seven ordinary implementation files. The
+        # fast path is a claim about how much one reader can cover, and this is the case
+        # that has to buy the second finder back.
+        git(work, "checkout", "-q", "-b", "big", "main")
+        for n in range(7):
+            (work / f"big{n}.py").write_text(f"value = {n}\n")
+        git(work, "add", *[f"big{n}.py" for n in range(7)])
+        git(work, "commit", "-qm", "seven files")
+        cls.big = git(work, "rev-parse", "HEAD")
+        git(work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_BIG}/head")
         git(work, "checkout", "-q", "main")
         git(work, "fetch", "-q", "origin")
         cls.work = work
@@ -239,6 +252,8 @@ class PrReview(unittest.TestCase):
             "PR11_HEAD": self.base_merge_reviewed,
             "PR11_COMMITS": self.base_merge_reviewed,
             "PR12_HEAD": self.shas[-1],
+            "PR13_HEAD": self.big,
+            "PR13_COMMITS": self.big,
             "PR_REVIEW_DIR": str(self.tmp / "reviews"),
         }
         for key, value in (env_extra or {}).items():
@@ -285,7 +300,7 @@ class PrReview(unittest.TestCase):
     def test_post_writes_the_result_and_never_calls_gh(self):
         review_md, text = self.prepare()
         self.assertNotIn("Incremental review", text)
-        d, out = self.post(review_md, "minor")
+        d, out = self.post(review_md)
         saved = (d / "REVIEW-RESULT.md").read_text()
         self.assertEqual(saved, out)
         self.assertEqual(
@@ -309,7 +324,7 @@ class PrReview(unittest.TestCase):
         self.assertTrue(seen)
         self.assertEqual(set(seen), {"<unset>"})
         self.gitlog.unlink()
-        self.post(review_md, "minor")
+        self.post(review_md)
         seen = self.gitlog.read_text().splitlines()
         # post's own git calls run guarded. At most the script's pre-dispatch root lookup
         # may run before the guard; moving the export below merge-base or the tier
@@ -333,7 +348,7 @@ class PrReview(unittest.TestCase):
         self.assertTrue(link.is_symlink())
         self.assertEqual(link.resolve(), d.resolve())
         sha = self.meta_of(Path(out.stdout.strip()))["sha"].strip("'")
-        (d / "result.json").write_text(json.dumps(result_json(sha, "minor")))
+        (d / "result.json").write_text(json.dumps(result_json(sha)))
         out = self.run_script("post", str(d))
         self.assertEqual(out.returncode, 0, out.stderr)
         tree = d.with_name(d.name[: -len(".input")])
@@ -362,7 +377,7 @@ class PrReview(unittest.TestCase):
         # lookup must read /tmp as well, or every review done before this change becomes
         # invisible to ready the moment it merges.
         review_md, _ = self.prepare()
-        d, _ = self.post(review_md, "minor")
+        d, _ = self.post(review_md)
         old = Path("/tmp") / f"pr-review-12-{self.shas[-1][:12]}.input"
         self.addCleanup(shutil.rmtree, old, ignore_errors=True)
         shutil.rmtree(old, ignore_errors=True)
@@ -396,7 +411,7 @@ class PrReview(unittest.TestCase):
         spec.write_text("CONTRACT STAYS\n")
         out = self.run_script("prepare", PR, "--spec", str(spec), env_extra=env)
         self.assertEqual(out.returncode, 0, out.stderr)
-        d, _ = self.post(Path(out.stdout.strip()), "minor")
+        d, _ = self.post(Path(out.stdout.strip()))
         conclusion = (d / "REVIEW-RESULT.md").read_text()
         result = (d / "result.json").read_text()
         out = self.run_script("prepare", PR, env_extra=env)  # no --spec this time
@@ -456,7 +471,7 @@ class PrReview(unittest.TestCase):
                               env_extra={"PR_REVIEW_DIR": None, "HOME": str(home_a)})
         self.assertEqual(out.returncode, 0, out.stderr)
         da = Path(out.stdout.strip()).parent
-        self.post(Path(out.stdout.strip()), "minor")
+        self.post(Path(out.stdout.strip()))
         self.assertTrue((da / "spec.md").exists())
         self.assertTrue(link.is_symlink())
         home_b = self.tmp / "seat-b"
@@ -479,7 +494,7 @@ class PrReview(unittest.TestCase):
         out = self.run_script("prepare", PR, self.shas[1], env_extra=env)
         self.assertEqual(out.returncode, 0, out.stderr)
         d = Path(out.stdout.strip()).parent
-        self.post(Path(out.stdout.strip()), "minor")
+        self.post(Path(out.stdout.strip()))
         old = Path("/tmp") / f"pr-review-{PR}-{self.shas[1][:12]}.input"
         self.addCleanup(
             lambda: old.unlink(missing_ok=True) if old.is_symlink()
@@ -509,7 +524,7 @@ class PrReview(unittest.TestCase):
         out = self.run_script("prepare", PR, self.shas[1], env_extra=env)
         self.assertEqual(out.returncode, 0, out.stderr)
         d = Path(out.stdout.strip()).parent
-        self.post(Path(out.stdout.strip()), "minor")
+        self.post(Path(out.stdout.strip()))
         other = Path("/tmp") / f"pr-review-{PR}-{self.shas[1][:12]}.input"
         self.addCleanup(
             lambda: other.unlink(missing_ok=True) if other.is_symlink()
@@ -531,22 +546,47 @@ class PrReview(unittest.TestCase):
         _, text = self.prepare()
         self.assertIn("## Review tier", text)
         self.assertIn("**档位 B 实现代码**", text)
-        self.assertIn("两路全新上下文找茬", text)
+        # PR 7 is one file and one line: a B change small enough for the fast path, whose
+        # letter stays B while the depth bullet says one finder instead of two.
+        self.assertIn("一路全新上下文找茬", text)
         self.assertIn("f.txt（实现代码）", text)
+
+    def test_the_method_says_what_a_finder_must_not_spend_time_on(self):
+        # The prompt is what a finder reads, so the rules this method added have to be in
+        # it: start from the precomputed facts, do not re-run what ci-fast already passed,
+        # do not file an auxiliary case that passes on the baseline, and file only rung-4
+        # blocker/major findings. Asserted by phrase, not by line: rewording that keeps the
+        # rule stays green, and removing it goes red.
+        _, text = self.prepare()
+        for needle in ("PRECOMPUTED.md", "`ruff`", "`eslint`",
+                       "auxiliary case that also passes on the baseline",
+                       "the result takes only `blocker` and `major`"):
+            self.assertIn(needle, text)
 
     def test_prepare_prints_the_topology_that_tier_spends(self):
         # The topology is what the tier costs in subagents; it is written where the reviewer
-        # reads it, next to the tier it belongs to. What it has to say is the numbers and
-        # the severities — tier B is two finders and at most two concurrent refuters, spent
-        # on blockers and majors — so the assertion is on those, not on the sentence.
+        # reads it, next to the tier it belongs to. PR 7 is small enough for the B fast
+        # path: one finder, and at most one refuter spent on blockers and majors.
         _, text = self.prepare()
         line = next(l for l in text.splitlines() if l.startswith("- 子代理拓扑："))
-        self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [2, 2, 2])
+        self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [1, 1, 1])
         # The effort is an enum the tier spends, not a phrase: rewording the sentence around
         # it must not go red, and dropping it must.
         self.assertIn("high", line)
         for severity in ("blocker", "major"):
             self.assertIn(severity, line)
+
+    def test_a_b_change_over_the_size_buys_the_second_finder_back(self):
+        # The fast path is a claim about how much one reader can cover. Seven files is
+        # past it, and the tier must then spend the two-finder topology — this is the
+        # deliberate violation the change's own review is prompted to try.
+        out = self.run_script("prepare", PR_BIG)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        text = Path(out.stdout.strip()).read_text()
+        self.assertIn("**档位 B 实现代码**", text)
+        line = next(l for l in text.splitlines() if l.startswith("- 子代理拓扑："))
+        self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [2, 2, 2])
+        self.assertIn("两路全新上下文找茬", text)
 
     def meta_of(self, review_md):
         return dict(
@@ -695,6 +735,32 @@ class PrReview(unittest.TestCase):
         self.assertEqual(out.returncode, 1)
         self.assertIn("speculation", out.stderr)
 
+    def test_post_refuses_a_minor_finding(self):
+        # The result is only what must be fixed: 88% of the minors this method used to
+        # file were never acted on (#1936), so a minor must not render at all. The refusal
+        # is the schema's, which is what makes it hold whatever a seat's prompt says.
+        review_md, _ = self.prepare()
+        d = review_md.parent
+        sha = self.meta_of(review_md)["sha"].strip("'")
+        (d / "result.json").write_text(json.dumps(result_json(sha, "minor")))
+        out = self.run_script("post", str(d))
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("minor", out.stderr)
+        self.assertIn("blocker", out.stderr)
+
+    def test_post_refuses_a_finding_nobody_could_prove(self):
+        # Evidence rung 4 is the bar: a command was run that would fail loudly if the
+        # claim were wrong. A rung-3 candidate is counted in candidates_refuted, not put
+        # on the card for the author to work out.
+        review_md, _ = self.prepare()
+        d = review_md.parent
+        result = result_json(self.meta_of(review_md)["sha"].strip("'"), "major")
+        result["findings"][0]["rung"] = 3
+        (d / "result.json").write_text(json.dumps(result))
+        out = self.run_script("post", str(d))
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("rung", out.stderr)
+
     def test_prepare_still_works_when_the_tier_cannot_be_decided(self):
         # The tier says how deep to review; it is not a gate on reviewing at all. A machine
         # that cannot decide it — tiers.py not on main yet, a checkout that predates it —
@@ -749,7 +815,7 @@ class PrReview(unittest.TestCase):
         meta = (d / "meta").read_text().replace("tier=B", "tier=G")
         self.assertIn("tier=G", meta)
         (d / "meta").write_text(meta)
-        _, out = self.post(review_md, "minor")
+        _, out = self.post(review_md)
         self.assertIn("档位 B", out.splitlines()[0])
         self.assertNotIn("档位 G", out.splitlines()[0])
 
@@ -764,7 +830,7 @@ class PrReview(unittest.TestCase):
         (d / "meta").write_text(
             (d / "meta").read_text().replace("tier=B", "tier=G"))
         (d / "tiers.py").write_text('print("G")\n')
-        _, out = self.post(review_md, "minor")
+        _, out = self.post(review_md)
         self.assertIn("档位 B", out.splitlines()[0])
 
     def test_post_reports_the_whole_changes_tier_not_the_head_commits(self):
@@ -782,7 +848,7 @@ class PrReview(unittest.TestCase):
         # off the head commit alone it would be G here, and the auth change would come out
         # of prepare already marked as needing no review.
         self.assertEqual(meta["tier"].strip("'"), "A")
-        (d / "result.json").write_text(json.dumps(result_json(meta["sha"].strip("'"), "minor")))
+        (d / "result.json").write_text(json.dumps(result_json(meta["sha"].strip("'"))))
         out = self.run_script("post", str(d))
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(
@@ -803,7 +869,7 @@ class PrReview(unittest.TestCase):
             line.split("=", 1) for line in (d / "meta").read_text().splitlines() if "=" in line
         )
         sha = meta["sha"].strip("'")
-        (d / "result.json").write_text(json.dumps(result_json(sha, "minor")))
+        (d / "result.json").write_text(json.dumps(result_json(sha)))
         (d / "render.py").write_text(OLD_RENDER)
         out = self.run_script("post", str(d))
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -830,7 +896,7 @@ class PrReview(unittest.TestCase):
             review_md, _ = self.prepare()
             d = review_md.parent
             self.assertNotEqual((d / "render.py").read_text(), OLD_RENDER)
-            _, out = self.post(review_md, "minor")
+            _, out = self.post(review_md)
             self.assertEqual(
                 out.splitlines()[0],
                 f"独立 review：head {self.shas[-1][:8]} 结论 无 blocker/major｜档位 B",
@@ -851,7 +917,7 @@ class PrReview(unittest.TestCase):
 
     def test_ready_says_可递_when_the_ci_is_green_and_the_review_covers_the_head(self):
         review_md, _ = self.prepare()
-        d, _ = self.post(review_md, "minor")
+        d, _ = self.post(review_md)
         for arg in (str(d), PR):  # a prepare directory, or the PR it belongs to
             out = self.ready(arg)
             self.assertEqual(out.returncode, 0, out.stderr)
@@ -863,7 +929,7 @@ class PrReview(unittest.TestCase):
 
     def test_ready_says_what_is_missing(self):
         review_md, _ = self.prepare()
-        d, _ = self.post(review_md, "minor")
+        d, _ = self.post(review_md)
         red = self.ready(d, ci='{"name": "CI required", "status": "completed", '
                                '"conclusion": "failure", "started_at": "2026-01-01T00:00:00Z"}')
         self.assertEqual(red.returncode, 1)
@@ -904,7 +970,7 @@ class PrReview(unittest.TestCase):
             out = self.run_script("prepare", PR_BASE_MERGE, self.base_merge_reviewed)
             self.assertEqual(out.returncode, 0, out.stderr)
             review_md = Path(out.stdout.strip())
-            d, _ = self.post(review_md, "minor")
+            d, _ = self.post(review_md)
             git(self.work, "checkout", "-q", "main")
             (self.work / "main-only.txt").write_text("main\n")
             git(self.work, "add", "main-only.txt")
@@ -929,7 +995,7 @@ class PrReview(unittest.TestCase):
         # The head moved, and what moved it is a change of this PR's own: the review of the
         # older commit no longer covers the head, so ready points at the delta review.
         review_md, _ = self.prepare()
-        d, _ = self.post(review_md, "minor")
+        d, _ = self.post(review_md)
         git(self.work, "checkout", "-q", "pr")
         (self.work / "f.txt").write_text("change 4\n")
         git(self.work, "commit", "-qam", "change 4")
@@ -963,7 +1029,7 @@ class PrReview(unittest.TestCase):
         # author's code, and a walk that skips merge commits cannot see it.
         self.assertIn("git diff origin/main HEAD -- <path>", text)
         self.assertNotIn("--no-merges", text)
-        d, out = self.post(review_md, "blocker", "major", "minor")
+        d, out = self.post(review_md, "blocker", "major")
         self.assertEqual(
             out.splitlines()[0],
             f"独立 review：head {self.shas[-1][:8]}（增量自 {since[:8]}）结论 有 2 条｜档位 B",

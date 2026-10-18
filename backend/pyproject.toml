@@ -54,6 +54,7 @@ dependencies = [
     # app/core/model_images.py decodes an uploaded picture before a model is
     # sent it; the image the app runs must have it.
     "pillow>=12.3.0",
+    "cachetools==7.2.3",
 ]
 
 [dependency-groups]

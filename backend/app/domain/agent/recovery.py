@@ -25,6 +25,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# A stalled reader yields its replay slot; its journal reader and cursor stay
+# alive, and only that conversation waits for the next attempt.
+REPLAY_ATTEMPT_S = 30.0
+REPLAY_RETRY_S = 10.0
+
 
 class SessionRecovery:
     """The recovery/replay orchestration half of ChatService. The attributes
@@ -120,37 +125,54 @@ class SessionRecovery:
     ) -> None:
         if after is not None:
             await asyncio.gather(after, return_exceptions=True)
-        async with self._replay_slots:
-            for session in seats:
+        pending = seats
+        while pending:
+            retry = []
+            for session in pending:
                 try:
-                    await self._compute.replay(session)
+                    async with self._replay_slots:
+                        await asyncio.wait_for(
+                            self._compute.replay(session), timeout=REPLAY_ATTEMPT_S
+                        )
+                except TimeoutError:
+                    logger.warning(
+                        "session replay still pending for topic %s after %ss",
+                        session.conversation_id,
+                        REPLAY_ATTEMPT_S,
+                    )
+                    retry.append(session)
                 except DeviceOffline:
-                    # The machine holding this session is not there. Nothing to
-                    # recover and nothing to fix; its next connection runs this.
+                    # An absent machine cannot establish what was read. Keep
+                    # the conversation pending while other rooms recover.
                     logger.warning(
                         "session not recovered for topic %s: device offline",
                         session.conversation_id,
                     )
+                    retry.append(session)
                 except DeviceCallError as exc:
                     # The machine is there and said no — its runner's socket is
                     # not up yet (a cold one takes about a minute), or the room's
-                    # home is gone. Same standing as the machine being away: the
-                    # next connection recovers this session, and the machine's
-                    # own words are what somebody reading this would act on.
+                    # home is gone. Keep retrying without claiming the tail
+                    # was read; the machine's answer explains the delay.
                     logger.warning(
                         "session not recovered for topic %s: %s",
                         session.conversation_id,
                         exc,
                     )
+                    retry.append(session)
                 except Exception:  # one topic cannot block startup
                     logger.exception(
                         "session recovery failed for topic %s", session.conversation_id
                     )
+                    retry.append(session)
                 else:
                     nudge_messages(self, session.conversation_id)
                     # Taken over, read up: now compare it with what this
                     # release would start, while nobody is waiting on it.
                     self.prewarm.nudge(session)
+            pending = retry
+            if pending:
+                await asyncio.sleep(REPLAY_RETRY_S)
 
     def retire_unheard(self, turn_ids: set[uuid.UUID]) -> None:
         """Let go of the live state of turns the orphan sweep closed because

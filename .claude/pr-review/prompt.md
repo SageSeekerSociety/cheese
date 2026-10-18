@@ -23,7 +23,11 @@ first line (`独立 review：head <sha8> 结论 ...｜档位 A..G`) is what the 
   check gets a subagent of its own, and the effort. It changes how many
   subagents run the steps below, not the steps themselves. It is decided from
   the files the PR touches, so a delta review still reports the tier of the
-  whole change.
+  whole change. A small B change — at most six non-test files, at most 250
+  changed lines, nothing on the contract, remote-execution, Windows or
+  ratchet-baseline surfaces — runs one finder and still says 档位 B: the
+  letter is what kind of change this is, the topology line is what this
+  review spends.
 - "This review" also names the rules injected into this review — the ones the
   changed paths load, read from the default branch — and, when the PR came
   with one, the requirement contract it is supposed to satisfy. Pass the
@@ -62,8 +66,8 @@ say two never have four sessions open.
 
 Whether a finding stands is decided by its refuter, not by you: do not add,
 drop, merge away or soften a finding on your own judgment. This matters
-most when you wrote the change. The one exception is a candidate a finder
-itself called `minor` or lighter: those are checked in step 3 by you.
+most when you wrote the change. A candidate a finder called `minor` or
+lighter never reaches the result: step 3 says what happens to it.
 
 The review tree is a detached checkout of exactly the pinned commit. Nobody
 edits it. Anything that needs edits (reverting the change to watch a test go
@@ -84,14 +88,31 @@ reports the mutation as the change.
 ## 2. Independent finders
 
 Start as many finders in parallel as the topology line says: two at the
-heavier tiers, one at the lighter ones. Give each the review tree, the pinned
-SHA, the merge base, the list of changed files, the injected rules, and one
-lens; neither sees the other's output. Each returns candidates only: file,
-line, the concrete failure (input or state -> wrong result), and what it read
-or ran.
+heavier tiers, one at the lighter ones and at a small B change. Give each the
+review tree, the pinned SHA, the merge base, the list of changed files, the
+injected rules, the precomputed facts below, and one lens; neither sees the
+other's output. Each returns candidates only: file, line, the concrete failure
+(input or state -> wrong result), and what it read or ran.
 
 A tier with one finder gets one subagent that does both lenses and says which
 lens each candidate came from.
+
+**Precomputed facts.** When the review directory holds a `PRECOMPUTED.md`, or
+this file carries a section that `prepare` appended from one, hand it to every
+finder and tell them to start there. It holds what a script already
+established at the pinned SHA — which `ci-fast` checks ran and passed, which
+did not run, where the changed symbols are referenced, whether reverting the
+change really reddens the new tests, and whether a trial merge with another
+open PR stays green. A fact it prints is answered: do not re-derive it, and do
+not re-run a check it reports as passed. That includes `ruff`, `eslint`,
+`stylelint`, the boundary and import guards, the file-size and scene/contrast
+ratchets, `check_boundaries.py` and the rest of what `ci-fast` runs on every
+change — a finder that spends minutes reproducing one of those has bought
+nothing this review did not already have. Aim instead at the checks the facts
+report as not run (contract, integration, e2e, the remote-execution and
+Windows jobs, a full type check) and at what no script can decide. With no
+such file or section, nothing changes: read the change the way these steps
+say.
 
 - Lens A, runtime behaviour: crashes, wrong results, data loss or
   corruption, security holes, races and ordering, migrations that cannot run
@@ -100,15 +121,28 @@ lens each candidate came from.
   misreport.
 - Lens B, checks that do not bite: for each test the PR adds or changes,
   revert the non-test part in a separate copy and run the test; a test that
-  stays green without the change protects nothing. Mocks or fixtures that
-  hide the behaviour under test; a test that asserts the implementation
-  instead of the effect; things that pass locally and fail in CI (paths, env
-  vars, ordering, timeouts, ratchet baselines and generated files the PR
-  forgot to update); rules in AGENTS.md and the nearest directory AGENTS.md
-  that the change violates — including the rules injected into this review,
-  which is where the rules for these exact paths are.
+  stays green without the change protects nothing. Where the precomputed
+  facts already report that test `PROVEN`, take that as the answer instead of
+  building a tree to see it again. Mocks or fixtures that hide the behaviour
+  under test; a test that asserts the implementation instead of the effect;
+  things that pass locally and fail in CI (paths, env vars, ordering,
+  timeouts, ratchet baselines and generated files the PR forgot to update);
+  rules in AGENTS.md and the nearest directory AGENTS.md that the change
+  violates — including the rules injected into this review, which is where the
+  rules for these exact paths are.
 
-Style, naming, and "could be cleaner" are out of scope for both.
+  An auxiliary case that also passes on the baseline is not a finding. A test
+  file may hold boundary cases that are meant to pass either way, and only
+  the case the change was written to make bite counts: report "this test
+  protects nothing" only when that case stays green with the change removed,
+  never when some supporting case does.
+
+Style, naming, and "could be cleaner" are out of scope for both. So is
+anything that would not change the code: the result takes only `blocker` and
+`major` findings, at evidence rung 4 or higher, and `render.py` refuses a
+result that names a `minor`. A latent defect, or a test that does not protect
+what it claims, is counted in `candidates_refuted` and dropped — not filed so
+that it can be ignored.
 
 ## 3. Refute each candidate
 
@@ -126,12 +160,12 @@ a verdict, start the next one over the next most serious candidate still
 unjudged. Every blocker and major candidate is judged; none is dropped for
 want of a session. Only when a candidate was judged and refuted does it go.
 
-Candidates a finder called `minor` or lighter do not get a refuter. Open the
-cited file:line at the pinned SHA yourself and compare it with the candidate:
-keep it when the line says what the finder says, drop it when it does not, and
-count what you dropped in `candidates_refuted` with the rest. A wrong
-file:line or a claim the cited line does not support is the failure mode here,
-and it is cheaper to catch by reading the line than by starting a session.
+Candidates a finder called `minor` or lighter do not get a refuter and do not
+become findings: the result takes only `blocker` and `major`, so count them in
+`candidates_refuted` and move on without opening a session or checking their
+line numbers. The same applies to a blocker or major whose refuter leaves the
+evidence below rung 4: unproven is not a finding, and `render.py` refuses a
+result carrying one.
 
 ## 4. Grade the evidence
 
@@ -143,14 +177,18 @@ Each surviving finding carries the highest rung its refuter reached:
 4. a command was run that would fail loudly if the claim were wrong
 5. reproduced in the running program
 
-Below rung 4 a finding is unverified and must give the exact command (test
-node id, script, request) that would confirm or kill it. A passing test is
-evidence only if it fails with the change removed.
+Only rung 4 and above is filed: a command was run that would fail loudly if
+the claim were wrong, or the failure was reproduced in the running program. A
+candidate below that is counted in `candidates_refuted`, not filed — the
+schema refuses a result with one, however well argued. A passing test is
+evidence only if it fails with the change removed; where the precomputed
+facts already say `PROVEN`, that is rung 4.
 
 Severity is the impact if the finding is true: `blocker` (breaks
-production, loses data, opens a hole), `major` (wrong behaviour on a
-reachable path), `minor` (latent, or a test that does not protect what it
-claims).
+production, loses data, opens a hole) or `major` (wrong behaviour on a
+reachable path). There is no lighter one that gets filed: a latent defect, or
+a test that does not protect what it claims, changes no code the author is
+going to touch and is dropped rather than reported.
 
 ## 5. Now read the PR's own words
 
@@ -159,8 +197,8 @@ Read the PR title and body (the file listed below) and the commit messages
 topology line gives the claim check a subagent of its own, that subagent does
 this and you wait for it; where it does not, do it yourself and say in the
 summary that no subagent saw the PR's own words. Refute each claim as in step
-3 — the `minor` rule there applies as well; survivors are findings of kind
-`claim`.
+3 — the severity and rung rules there apply as well; survivors are findings of
+kind `claim`.
 
 ## 5b. The requirement contract
 
@@ -193,9 +231,10 @@ the same as fine.
 
 Write one JSON object matching the schema file below to the result path:
 the SHA from step 1, a two- or three-sentence summary, how many candidates
-the finders raised and how many did not survive — a refuter's verdict or your
-own reading of a `minor` one (those two numbers are how this method is judged
-over time) — the surviving findings, and what was not covered. English, plain; a reader with no context must understand each
+the finders raised and how many did not survive — a refuter's verdict, or a
+candidate the severity or rung bar dropped (those two numbers are how this
+method is judged over time) — the surviving findings, which are `blocker` and
+`major` at rung 4 or higher, and what was not covered. English, plain; a reader with no context must understand each
 finding on its own. If nothing survives, no findings and one sentence in
 the summary; do not invent feedback. Then run the post command below. It
 checks the result names the pinned commit, writes `REVIEW-RESULT.md` next
