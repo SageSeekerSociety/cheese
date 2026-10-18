@@ -385,11 +385,15 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          REBUILT: ${{ inputs.rebuilt }}
           METERING_ALLOW_INTERRUPT: "1"
         run: |
           set -euo pipefail
           release_sha="$(git rev-parse HEAD)"
-          python3 deploy/check-auto-deploy.py --require-ci "$release_sha"
+          # Explicit manual releases follow the same CI policy as the app release.
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || [ -n "${REBUILT:-}" ]; then
+            python3 deploy/check-auto-deploy.py --require-ci "$release_sha"
+          fi
           bash deploy/release-metering-proxy.sh "$release_sha"
 
       # A commit carrying `Fixes-feedback: FB-<n>` moves that report to 已修复

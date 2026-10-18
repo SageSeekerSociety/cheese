@@ -554,3 +554,85 @@ def test_closing_it_again_stops_the_others_calling_it(client):
 
     after = post_message(client, room_id, "bob", {"content": f"<@{seat}> 再来"})
     assert (after["meta"] or {})["agent_recipient"]["mentioned"] is False
+
+
+ROUTINE = {
+    "title": "每周进展",
+    "instructions": "整理本周的进展",
+    "trigger": "schedule",
+    "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
+    "timezone": "Asia/Shanghai",
+}
+
+
+def _rules_in(client, project_id, room_id, viewer):
+    r = client.get(
+        f"/projects/{project_id}/routines",
+        params={"topic": room_id},
+        headers=session_auth_headers(viewer),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
+def test_a_routine_runs_only_with_an_agent_its_owner_may_use(client):
+    """A routine a person sets is theirs and runs at once, so it runs a
+    member's own agent only when that person is one it answers to."""
+    project_id, room_id = _project_with_bob(client)
+    seat = _bring_in(client, project_id, "alice")
+    post_message(client, room_id, "alice", {"content": f"<@{seat}> 看一下"})
+    joined = client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
+    assert joined.status_code == 200, joined.text
+
+    refused = client.post(
+        f"/topics/{room_id}/routines",
+        json={**ROUTINE, "agent_handle": seat, "owner_handle": "alice"},
+        headers=session_auth_headers("bob"),
+    )
+
+    assert refused.status_code == 403, refused.text
+    rules = _rules_in(client, project_id, room_id, "alice")
+    assert not [r for r in rules if r.get("agent_handle") == seat], rules
+
+    mine = client.post(
+        f"/topics/{room_id}/routines",
+        json={**ROUTINE, "agent_handle": seat},
+        headers=session_auth_headers("alice"),
+    )
+    assert mine.status_code == 200, mine.text
+    assert (
+        mine.json()["data"]["agent_handle"],
+        mine.json()["data"]["owner_handle"],
+    ) == (
+        seat,
+        "alice",
+    )
+
+
+def test_a_routine_naming_no_agent_runs_only_one_its_owner_may_use(client):
+    """With no teammate named, a routine runs the room's first one; when that
+    is a member's own agent, it is still only its owner's to set."""
+    project_id, room_id = _project_with_bob(client)
+    seat = _bring_in(client, project_id, "alice")
+    post_message(client, room_id, "alice", {"content": f"<@{seat}> 看一下"})
+    roster = client.get(
+        f"/topics/{room_id}/members", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    for row in roster:
+        if row["agent"] and row["member_handle"] != seat:
+            gone = client.delete(
+                f"/topics/{room_id}/members/{row['member_handle']}",
+                headers=session_auth_headers("alice"),
+            )
+            assert gone.status_code == 200, gone.text
+    joined = client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
+    assert joined.status_code == 200, joined.text
+
+    refused = client.post(
+        f"/topics/{room_id}/routines",
+        json=ROUTINE,
+        headers=session_auth_headers("bob"),
+    )
+
+    assert refused.status_code == 403, refused.text
+    assert _rules_in(client, project_id, room_id, "alice") == []

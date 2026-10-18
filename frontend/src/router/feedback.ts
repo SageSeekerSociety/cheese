@@ -193,6 +193,13 @@ export default [
         meta: { titleKey: 'navigation.admin.ratchet', isFullPage: true },
       },
       {
+        // Read stored CI and queue metrics without making GitHub requests.
+        path: 'ci-activity',
+        name: 'AdminCiActivity',
+        component: () => import('@/views/admin/AdminCiActivityPage.vue'),
+        meta: { titleKey: 'navigation.admin.ciActivity', isFullPage: true },
+      },
+      {
         // 网关模型管理那一页。和其它分区一样是后台里的一块，不是独立域名。
         path: 'models',
         name: 'AdminModels',
