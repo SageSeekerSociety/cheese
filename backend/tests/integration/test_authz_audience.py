@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import event
 
-from app.auth.project_access import may_read_project, may_read_project_many
+from app.auth import project_access
 from app.domain.identity.models import AgentBinding
 from app.domain.project.models import (
     ProjectMember,
@@ -98,10 +98,8 @@ def _statements(client):
 
 
 def _outsiders(client, project_id: str, room_id: str) -> list[str]:
-    from app.auth.project_access import outsiders_reading
-
     async def _ask(session):
-        return await outsiders_reading(
+        return await project_access.outsiders_reading(
             session,
             project_id=uuid.UUID(project_id),
             room_id=uuid.UUID(room_id),
@@ -112,7 +110,7 @@ def _outsiders(client, project_id: str, room_id: str) -> list[str]:
 
 def _many(client, project_id: str, handles: list[str]) -> dict[str, bool]:
     async def _ask(session):
-        return await may_read_project_many(
+        return await project_access.may_read_project_many(
             session, project_id=uuid.UUID(project_id), handles=handles
         )
 
@@ -122,7 +120,7 @@ def _many(client, project_id: str, handles: list[str]) -> dict[str, bool]:
 def _one_by_one(client, project_id: str, handles: list[str]) -> dict[str, bool]:
     async def _ask(session):
         return {
-            handle: await may_read_project(
+            handle: await project_access.may_read_project(
                 session, project_id=uuid.UUID(project_id), handle=handle
             )
             for handle in handles
@@ -141,9 +139,13 @@ def _project(client) -> dict:
 
 
 def test_the_audience_check_costs_the_same_for_three_seats_and_twenty(client):
-    """A longer roster is not a longer conversation with the database."""
+    """A longer roster is not a longer conversation with the database.
+
+    The seats have no account at all: ``standing`` reads a handle with no user
+    row as not in the project, which is exactly the shape that made the old
+    per-seat loop expensive.
+    """
     project = _project(client)
-    _people(client, *[f"seat-{i:02d}" for i in range(20)])
     short = _room(client, project["id"], "dave", [f"seat-{i:02d}" for i in range(3)])
     long = _room(client, project["id"], "dave", [f"seat-{i:02d}" for i in range(20)])
 

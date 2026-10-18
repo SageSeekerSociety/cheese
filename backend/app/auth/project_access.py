@@ -132,6 +132,7 @@ async def _may_read_project_many(
             .where(
                 TeamUserRelation.team_id == project.team_id,
                 TeamUserRelation.deleted_at.is_(None),
+                User.deleted_at.is_(None),
                 User.username.in_(named),
             )
         )
