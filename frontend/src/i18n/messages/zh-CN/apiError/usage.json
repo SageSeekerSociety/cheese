@@ -1,4 +1,9 @@
 {
+  "creditBudgetInvalidLimit": "额度上限必须是有限的非负数。",
+  "creditBudgetAdminRequired": "只有项目所有者和管理员可以调整额度上限。",
+  "creditBudgetMemberRequired": "只能为本项目中的人员设置任务额度上限。",
+  "projectCreditBudgetSpent": "本项目的额度预算已用完，请联系项目管理员调整上限。",
+  "memberCreditBudgetSpent": "{owner}在本项目的任务额度已达到上限，请联系项目管理员调整。",
   "cloudComputeUnpriced": "平台提供的环境暂时无法启动：平台还没有设定算力价格。对话和平台工具仍可用。",
   "cloudVmUnpriced": "虚拟机沙箱暂时无法启动：平台还没有设定这种规格的价格。对话和平台工具仍可用。",
   "creditsMonthFull": "本月的用量已达上限，{month}月{day}日恢复。",

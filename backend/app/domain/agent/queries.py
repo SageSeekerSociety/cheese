@@ -30,6 +30,7 @@ from app.domain.agent.platform_notices import (
     memory_changed_notice,
 )
 from app.domain.agent.proposals import propose
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent_instance.adapters import named_teammate
 from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.models import AgentInstance
@@ -54,13 +55,36 @@ from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
 from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.room_task.services import TaskService
 from app.domain.run_record.service import record as keep_record
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.services import UsageService
 
 logger = logging.getLogger(__name__)
+
+
+async def task_credit_owner(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    agent_handles: list[str],
+) -> str | None:
+    """The running execution's budget holder, or the next task execution's."""
+    turn = await AgentTurnRepository(session).open_turn_of(
+        conversation_id, agent_handles
+    )
+    owner = await CreditBudgets(session).owner_of(
+        turn.id if turn is not None else None, project_id
+    )
+    if owner is not None:
+        return owner
+    place = await PlaceResolver(session).conversation(conversation_id)
+    if place is not None and place.task is not None:
+        return await TaskService(session).credit_owner(place.task)
+    return None
 
 
 @dataclass(frozen=True, slots=True)

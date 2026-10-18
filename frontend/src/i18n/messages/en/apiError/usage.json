@@ -1,4 +1,9 @@
 {
+  "creditBudgetInvalidLimit": "Credit limits must be finite, non-negative numbers.",
+  "creditBudgetAdminRequired": "Only a project owner or administrator can change credit limits.",
+  "creditBudgetMemberRequired": "A task credit limit can only be assigned to a person in this project.",
+  "projectCreditBudgetSpent": "This project's credit budget is used up. Ask a project administrator to raise its limit.",
+  "memberCreditBudgetSpent": "{owner}'s task credit limit in this project is used up. Ask a project administrator to raise it.",
   "cloudComputeUnpriced": "Environments from the platform can't start yet: the platform hasn't set a price for compute. Chat and platform tools still work.",
   "cloudVmUnpriced": "Cloud VMs can't start yet: the platform hasn't set a price for this size. Chat and platform tools still work.",
   "creditsMonthFull": "This month's usage limit has been reached. It resets on {month}/{day}.",

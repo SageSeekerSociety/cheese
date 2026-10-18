@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.model_access import ModelAccess, model_access
 from app.domain.usage.model_access import overseas_approved as _overseas_approved
@@ -77,12 +78,27 @@ class UsageService:
     async def _summaries(self, payers: dict) -> dict[uuid.UUID, dict]:
         balances = await ledger.Ledger(self._session).balances(payers)
         spent = await self._repo.gateway_spend(list(payers))
+        caps = await CreditBudgets(self._session).project_caps(list(payers))
         out = {}
         for key, balance in balances.items():
             summary = balance.summary()
             summary["gateway_budget_usd"] = _gateway_budget(
                 balance, spent.get(key, 0.0)
             )
+            if key in caps:
+                limit, used = caps[key]
+                remaining = max(0.0, limit - used)
+                if not balance.unlimited:
+                    remaining = min(remaining, max(0.0, balance.credits_remaining))
+                summary.update(
+                    unlimited=False,
+                    credits_total=limit,
+                    credits_used=used,
+                    credits_remaining=remaining,
+                    gateway_budget_usd=round(
+                        spent.get(key, 0.0) + remaining * CREDIT_USD, 4
+                    ),
+                )
             out[key] = summary
         return out
 

@@ -50,6 +50,7 @@ from app.core.db import SessionFactory
 from app.domain.conversation.models import Conversation
 from app.domain.project.repositories import ProjectRepository
 from app.domain.usage import pricing
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, Rates, payer_for_project
 from app.domain.usage.models import IngestCheckpoint
@@ -185,7 +186,9 @@ class WorkIndex:
             return None
         starts = self._starts.get(topic_id)
         if starts is None:
-            starts = list(await self._turn_starts(session, topic_id))
+            starts = await CreditBudgets(session).task_starts(topic_id)
+            if not starts:
+                starts = list(await self._turn_starts(session, topic_id))
             self._starts[topic_id] = starts
         idx = bisect_right([s for s, _ in starts], moment) - 1
         if idx < 0:
@@ -235,6 +238,7 @@ async def _land_row(
     # or a task or thread inside one. The usage row's own reference is to the
     # conversation, so that is where it is looked up.
     topic_id = _uuid_or_none(row.get("topic_id"))
+    logged_topic_id = topic_id
     if topic_id is not None:
         conversation = await session.scalar(
             select(Conversation.id)
@@ -297,7 +301,7 @@ async def _land_row(
         kind=row["kind"] if row.get("kind") in LINE_KINDS else "chat",
         # The proxy log has no work id and one attributed unit can make many
         # /v1/messages calls. Use the nearest block-carried id by timestamp.
-        turn_id=await work_index.work_at(session, topic_id, row.get("ts")),
+        turn_id=await work_index.work_at(session, logged_topic_id, row.get("ts")),
     )
     return LANDED
 

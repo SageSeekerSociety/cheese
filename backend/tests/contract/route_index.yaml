@@ -30,6 +30,7 @@ auth_entries:
   actor.topic.verified: "Room-context ActorResolver.resolve + authorize_topic, plus an explicit authenticated-caller check or require_verified_caller in the cited handler/helper. Topic membership retains the authz_enforce_topic_access setting unless enforce=True is specified there."
   project.manager: "ActorResolver resolves/authorizes project and MemberService.require(project_id, actor, permission) decides it through app.auth.project_roles (the caller's role and that role's permissions in this project; scoped credentials never manage). Source: app/domain/membership/services.py and cited handler."
   project.settings: "Depends(require_project_settings) in projects.py, or require_credential_manager in agent_credential.py: verified actor, not a scoped credential, with Permission.edit_settings per app.auth.project_roles. An agent never has it. Outsiders get NotFound. Source: app/api/routes/projects.py, app/api/routes/agent_credential.py."
+  credit.budget.manager: "ActorResolver authorizes project read and Permission.edit_settings, then project_roles.standing requires the owner or admin seat. Only current human project members can receive a non-null member limit. Source: app/api/routes/project_credit_budgets.py."
   project.owner: "projects._project_owner: require_verified_caller, project_roles.is_owner (the project's owner, or its team's owner); members who are not owners are refused and outsiders get NotFound. Does not use authorize_project, so the one permitted unarchive write can cross the archive guard. Source: app/api/routes/projects.py."
   project.create: "projects.create_project requires an authenticated caller, who becomes the owner (the body has no owner field), checks _require_team_membership and _require_claim before attaching team/task. These association checks are independent of the topic-access kill switch. Source: app/api/routes/projects.py and its two helpers."
   project.list: "projects.list_projects resolves/rejects failed credentials; handles caller-visible project listing or authorize_team for a team filter and require_verified_caller for the self filter. Source: app/api/routes/projects.py. Different query branches are intentional, not a universal public listing."
@@ -601,6 +602,8 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/members/{user_handle}/summary", auth: "actor.project", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/usage", auth: "actor.project", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/credits", auth: "dashboard.team.member", owner: "dashboard"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/credit-budget", auth: "actor.project", owner: "usage"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/credit-budget", auth: "credit.budget.manager", owner: "usage"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/contributions", auth: "actor.project", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/users/{handle}/profile", auth: "dashboard.person", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/users/{handle}/topics", auth: "dashboard.person", owner: "dashboard"}

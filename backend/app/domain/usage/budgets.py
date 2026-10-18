@@ -1,0 +1,241 @@
+"""Project caps and member task caps over the existing credit ledger."""
+
+import math
+import uuid
+from collections.abc import Mapping
+from datetime import UTC, datetime
+
+from sqlalchemy import and_, delete, func, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import BadRequestError
+from app.core.sentences import say
+from app.domain.conversation.models import Conversation, ConversationKind
+from app.domain.project.services import ProjectService
+from app.domain.usage.balance import Refusal
+from app.domain.usage.models import (
+    MemberCreditBudget,
+    ProjectCreditBudget,
+    ResourceUsage,
+    WorkCreditOwner,
+)
+
+
+class CreditBudgets:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def snapshot_owner(
+        self,
+        work_id: uuid.UUID,
+        task_id: uuid.UUID,
+        owner_handle: str,
+        project_id: uuid.UUID,
+        started_at: datetime,
+    ) -> None:
+        """First execution wins, including when a restart opens the same turn."""
+        await self._session.execute(
+            insert(WorkCreditOwner)
+            .values(
+                work_id=work_id,
+                conversation_id=task_id,
+                owner_handle=owner_handle,
+                project_id=project_id,
+                started_at=started_at,
+            )
+            .on_conflict_do_nothing(index_elements=[WorkCreditOwner.work_id])
+        )
+
+    async def owner_of(
+        self, work_id: uuid.UUID | None, project_id: uuid.UUID | None
+    ) -> str | None:
+        if work_id is None or project_id is None:
+            return None
+        return await self._session.scalar(
+            select(WorkCreditOwner.owner_handle).where(
+                WorkCreditOwner.work_id == work_id,
+                WorkCreditOwner.project_id == project_id,
+            )
+        )
+
+    async def task_starts(
+        self, conversation_id: uuid.UUID
+    ) -> list[tuple[datetime, uuid.UUID]]:
+        rows = await self._session.execute(
+            select(WorkCreditOwner.started_at, WorkCreditOwner.work_id)
+            .where(WorkCreditOwner.conversation_id == conversation_id)
+            .order_by(WorkCreditOwner.started_at, WorkCreditOwner.work_id)
+        )
+        return [(at, work) for at, work in rows]
+
+    async def limits(self, project_id: uuid.UUID) -> dict[str, float]:
+        rows = await self._session.execute(
+            select(
+                MemberCreditBudget.owner_handle, MemberCreditBudget.credits_limit
+            ).where(MemberCreditBudget.project_id == project_id)
+        )
+        return {handle: limit for handle, limit in rows}
+
+    async def save(
+        self,
+        project_id: uuid.UUID,
+        *,
+        credits_limit: float | None,
+        set_project_limit: bool,
+        member_limits: Mapping[str, float | None],
+    ) -> dict:
+        if any(
+            amount is not None and (not math.isfinite(amount) or amount < 0)
+            for amount in (credits_limit, *member_limits.values())
+        ):
+            raise BadRequestError(say("creditBudgetInvalidLimit"))
+        project = await ProjectService(self._session).get(project_id)
+        assert project is not None
+        await self._session.execute(
+            insert(ProjectCreditBudget)
+            .values(
+                project_id=project_id,
+                credits_limit=credits_limit if set_project_limit else None,
+                since=project.created_at,
+            )
+            .on_conflict_do_nothing(index_elements=[ProjectCreditBudget.project_id])
+        )
+        budget = await self._session.scalar(
+            select(ProjectCreditBudget)
+            .where(ProjectCreditBudget.project_id == project_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        assert budget is not None
+        if set_project_limit:
+            budget.credits_limit = credits_limit
+        for handle, limit in member_limits.items():
+            if limit is None:
+                await self._session.execute(
+                    delete(MemberCreditBudget).where(
+                        MemberCreditBudget.project_id == project_id,
+                        MemberCreditBudget.owner_handle == handle,
+                    )
+                )
+            else:
+                await self._session.execute(
+                    insert(MemberCreditBudget)
+                    .values(
+                        project_id=project_id, owner_handle=handle, credits_limit=limit
+                    )
+                    .on_conflict_do_update(
+                        index_elements=[
+                            MemberCreditBudget.project_id,
+                            MemberCreditBudget.owner_handle,
+                        ],
+                        set_={"credits_limit": limit, "updated_at": datetime.now(UTC)},
+                    )
+                )
+        await self._session.flush()
+        return await self.report(project_id)
+
+    async def _spending(self, project_id: uuid.UUID, since: datetime) -> list:
+        rows = await self._session.execute(
+            select(
+                ResourceUsage.credit_owner_handle,
+                Conversation.kind,
+                func.coalesce(func.sum(ResourceUsage.credits), 0),
+            )
+            .outerjoin(Conversation, Conversation.id == ResourceUsage.conversation_id)
+            .where(
+                ResourceUsage.project_id == project_id,
+                ResourceUsage.created_at >= since,
+                ResourceUsage.created_at <= datetime.now(UTC),
+            )
+            .group_by(ResourceUsage.credit_owner_handle, Conversation.kind)
+        )
+        return list(rows.all())
+
+    async def report(self, project_id: uuid.UUID) -> dict:
+        project = await ProjectService(self._session).get(project_id)
+        assert project is not None
+        budget = await self._session.get(ProjectCreditBudget, project_id)
+        limit = budget.credits_limit if budget is not None else None
+        since = budget.since if budget is not None else project.created_at
+        limits = await self.limits(project_id)
+        members: dict[str, dict] = {
+            handle: {"credits_limit": cap, "credits_used": 0.0}
+            for handle, cap in limits.items()
+        }
+        total = public = unknown = 0.0
+        for owner, kind, credits in await self._spending(project_id, since):
+            total += credits
+            if owner is not None:
+                member = members.setdefault(
+                    owner, {"credits_limit": None, "credits_used": 0.0}
+                )
+                member["credits_used"] += credits
+            elif kind == ConversationKind.task or kind is None:
+                unknown += credits
+            else:
+                public += credits
+        return {
+            "credits_limit": limit,
+            "credits_used": total,
+            "credits_remaining": max(0.0, limit - total) if limit is not None else None,
+            "public_credits": public,
+            "unattributed_credits": unknown,
+            "members": members,
+            "since": since.isoformat(),
+        }
+
+    async def project_refusal(self, project_id: uuid.UUID) -> Refusal | None:
+        capped = (await self.project_caps([project_id])).get(project_id)
+        if capped is not None and capped[1] >= capped[0]:
+            return Refusal(say("projectCreditBudgetSpent"), None)
+        return None
+
+    async def project_caps(
+        self, project_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[float, float]]:
+        if not project_ids:
+            return {}
+        rows = await self._session.execute(
+            select(
+                ProjectCreditBudget.project_id,
+                ProjectCreditBudget.credits_limit,
+                func.coalesce(func.sum(ResourceUsage.credits), 0),
+            )
+            .outerjoin(
+                ResourceUsage,
+                and_(
+                    ResourceUsage.project_id == ProjectCreditBudget.project_id,
+                    ResourceUsage.created_at >= ProjectCreditBudget.since,
+                    ResourceUsage.created_at <= datetime.now(UTC),
+                ),
+            )
+            .where(
+                ProjectCreditBudget.project_id.in_(project_ids),
+                ProjectCreditBudget.credits_limit.is_not(None),
+            )
+            .group_by(ProjectCreditBudget.project_id)
+        )
+        return {project_id: (limit, spent) for project_id, limit, spent in rows}
+
+    async def member_refusal(
+        self, project_id: uuid.UUID, owner_handle: str | None
+    ) -> Refusal | None:
+        if owner_handle is None:
+            return None
+        cap = await self._session.get(MemberCreditBudget, (project_id, owner_handle))
+        if cap is None:
+            return None
+        budget = await self._session.get(ProjectCreditBudget, project_id)
+        assert budget is not None
+        spent = await self._session.scalar(
+            select(func.coalesce(func.sum(ResourceUsage.credits), 0)).where(
+                ResourceUsage.project_id == project_id,
+                ResourceUsage.credit_owner_handle == owner_handle,
+                ResourceUsage.created_at >= budget.since,
+                ResourceUsage.created_at <= datetime.now(UTC),
+            )
+        )
+        if float(spent or 0) >= cap.credits_limit:
+            return Refusal(say("memberCreditBudgetSpent", owner=owner_handle), None)
+        return None

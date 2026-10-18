@@ -9,6 +9,7 @@ import { useBranchProtection } from '@/composables/useBranchProtection'
 import { useProjectAddress } from '@/composables/useProjectAddress'
 import { useProjectArchive } from '@/composables/useProjectArchive'
 import { useProjectComputeSettings } from '@/composables/useProjectComputeSettings'
+import { useProjectCreditBudget } from '@/composables/useProjectCreditBudget'
 import { useProjectDefaultModelSettings } from '@/composables/useProjectDefaultModelSettings'
 import { useProjectEnvironmentSettings } from '@/composables/useProjectEnvironmentSettings'
 import { useProjectExport } from '@/composables/useProjectExport'
@@ -41,6 +42,7 @@ import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import OwnAgentsSettings from '@/components/settings/OwnAgentsSettings.vue'
 import ProjectAddressSection from '@/components/settings/ProjectAddressSection.vue'
 import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
+import ProjectCreditBudget from '@/components/settings/ProjectCreditBudget.vue'
 import ProjectExportSection from '@/components/settings/ProjectExportSection.vue'
 import ProjectRolesSettings from '@/components/settings/ProjectRolesSettings.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
@@ -81,6 +83,8 @@ const ownsProject = computed(() => projectRead.data.value?.my_role === 'owner')
 const managesChannels = computed(() => mayIn(projectRead.data.value, 'manage_channels'))
 const editsSettings = computed(() => mayIn(projectRead.data.value, 'edit_settings'))
 const changesRoles = computed(() => mayIn(projectRead.data.value, 'change_roles'))
+const creditBudget = useProjectCreditBudget(() => props.projectId)
+const editsCreditBudget = computed(() => ownsProject.value || projectRead.data.value?.my_role === 'admin')
 
 const {
   loading,
@@ -410,6 +414,15 @@ function close() {
             @dismiss="environment.dismissDiagnosis"
           />
           <CreditsPanel :project-id="projectId" />
+          <ProjectCreditBudget
+            :budget="creditBudget.budget.value"
+            :editable="editsCreditBudget"
+            :loading="creditBudget.loading.value"
+            :saving="creditBudget.saving.value"
+            :error="creditBudget.error.value"
+            @save="creditBudget.save"
+            @reload="creditBudget.load"
+          />
         </template>
 
         <!-- 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页的顺序。 -->

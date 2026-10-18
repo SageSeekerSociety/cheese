@@ -22,6 +22,7 @@ Protocol-agnostic on purpose: whatever path the client asks for is forwarded
 as-is, so a client-side protocol change needs no change here.
 """
 
+import json
 import logging
 import uuid
 from collections.abc import Callable
@@ -56,6 +57,7 @@ from app.core.sentences import listing, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.personal.keys import stored_key
+from app.domain.agent.queries import task_credit_owner
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
 from app.domain.agent_instance.services import AgentInstanceService
@@ -64,6 +66,8 @@ from app.domain.memory import dream
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
+from app.domain.usage.balance import Refusal
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.services import UsageService
 
 logger = logging.getLogger("cheesex.llm_proxy")
@@ -239,6 +243,26 @@ async def _projects_own_agent(
     )
 
 
+async def _credit_refusal(db: AsyncSession, project, claims: dict) -> Refusal | None:
+    refused = await UsageService(db).admit_project(project.id)
+    if refused is not None or not claims.get("t"):
+        return refused
+    try:
+        conversation_id = uuid.UUID(claims["t"])
+    except ValueError:
+        return None
+    agents = AgentInstanceService(db)
+    agent = await agents.for_seat_handle(project, claims.get("a"))
+    if agent is None:
+        agent = await agents.for_project(project)
+    handles = [claims.get("a") or ""]
+    if agent is not None:
+        handles.extend([agent.handle, agent_instance_handle(agent.instance_id)])
+    budgets = CreditBudgets(db)
+    owner = await task_credit_owner(db, project.id, conversation_id, handles)
+    return await budgets.member_refusal(project.id, owner)
+
+
 # Registered BEFORE the catch-all below — FastAPI matches in declaration order,
 # and the catch-all would otherwise swallow this path and forward it upstream.
 @router.post("/admission", include_in_schema=False, dependencies=[ROUTE_DECIDES])
@@ -286,7 +310,7 @@ async def admission(
             )
     refused = None
     if project is not None:
-        refused = await UsageService(db).admit_project(project_uuid)
+        refused = await _credit_refusal(db, project, claims)
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
     # it run" and "where does it go" keeps the data plane from needing a second
@@ -511,9 +535,29 @@ async def proxy(
         except ValueError as exc:
             raise NotFoundError("Unknown project") from exc
         await _require_model_caller(db, token, project_uuid)
-        dreaming = await _dreams(
-            db, await ProjectRepository(db).get(project_uuid), claims
-        )
+        project = await ProjectRepository(db).get(project_uuid)
+        if project is not None and request.method == "POST":
+            refused = await _credit_refusal(db, project, claims)
+            if refused is not None:
+                message = "cheese project budget: " + str(refused.message)
+                return StreamingResponse(
+                    iter(
+                        [
+                            json.dumps(
+                                {
+                                    "type": "error",
+                                    "error": {
+                                        "type": "invalid_request_error",
+                                        "message": message,
+                                    },
+                                }
+                            )
+                        ]
+                    ),
+                    status_code=400,
+                    media_type="application/json",
+                )
+        dreaming = await _dreams(db, project, claims)
         # The stream below can hold this request for minutes.
         await release_read_session(db)
         key = await chat.project_gateway_key(project_uuid, dream=dreaming)

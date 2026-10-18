@@ -76,6 +76,7 @@ from app.domain.usage.balance import (  # noqa: F401
     _applies,
     _spendable,
 )
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger_queries import LedgerQueries
 from app.domain.usage.models import ComputeGrant, GrantSource, PlanWindowUse
@@ -301,6 +302,9 @@ class Ledger(LedgerQueries):
             route=route,
             turn_id=turn_id,
             user_id=user_id,
+            credit_owner_handle=await CreditBudgets(self._session).owner_of(
+                turn_id, payer.project_id
+            ),
             team_id=payer.team_id,
             credits=credits,
             metered=metered,

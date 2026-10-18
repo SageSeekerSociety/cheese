@@ -63,6 +63,7 @@ class UsageRepository:
         route: str = "",
         turn_id: uuid.UUID | None = None,
         user_id: int | None = None,
+        credit_owner_handle: str | None = None,
         team_id: int | None = None,
         credits: float = 0.0,
         calls: int = 1,
@@ -88,6 +89,7 @@ class UsageRepository:
         row = ResourceUsage(
             project_id=project_id,
             user_id=user_id,
+            credit_owner_handle=credit_owner_handle,
             conversation_id=conversation_id,
             turn_id=turn_id,
             model=model,
