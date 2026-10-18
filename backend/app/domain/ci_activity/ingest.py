@@ -59,9 +59,10 @@ from app.domain.project.forge import github_read_token_for_repo
 #: How much history is kept and read; older rows are deleted by the sweep.
 WINDOW = timedelta(days=30)
 #: Runs whose jobs one sweep reads (one request each, two for a run of over 100
-#: jobs). Every five minutes that is under 1000 requests an hour while a new
-#: deployment backfills the window (about a day) and about 40 an hour after, out
-#: of the installation's hourly quota every background job shares.
+#: jobs). Every five minutes, with the run listing and the queue search beside
+#: it, that is about 1000-1300 requests an hour while a new deployment backfills
+#: the window (about a day) and under 100 an hour after, out of the
+#: installation's hourly quota every background job shares.
 JOBS_PER_SWEEP = 80
 #: Older run slices one sweep lists while backfilling: a day per sweep.
 BACKFILL_SLICES_PER_SWEEP = 6
