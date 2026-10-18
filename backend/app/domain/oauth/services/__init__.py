@@ -269,10 +269,9 @@ async def get_github_profile_for_handle(
     this domain's repositories for them.
 
     `github_app` is tried first because it is the account the person linked
-    for exactly this (「连接 GitHub 账号」, ``api/routes/github_account_link.py``);
-    PRs themselves are opened with the App's installation token, not with any
-    person's. `github` is the plain login connection, present for people who
-    signed in with GitHub but never linked an account.
+    for exactly this (「连接 GitHub 账号」, ``api/routes/github_account_link.py``).
+    `github` is the plain login connection, present for people who signed in
+    with GitHub but never linked an account.
     """
     # deferred-import: tests replace this name on app.domain.user.repositories
     from app.domain.user.repositories import UserRepository
@@ -307,3 +306,17 @@ __all__ = [
     "open_oauth_token",
     "seal_oauth_token",
 ]
+
+
+async def get_github_user_token_for_handle(session: Any, handle: str) -> str | None:
+    """A usable token of the account this handle linked through 「连接 GitHub
+    账号」, or None. The credential a task owner's PR is opened with."""
+    # deferred-import: tests replace this name on app.domain.user.repositories
+    from app.domain.user.repositories import UserRepository
+
+    user = await UserRepository(session).get_by_handle(handle)
+    if user is None:
+        return None
+    return await OAuthService(OAuthConnectionRepository(session)).get_github_user_token(
+        user.id
+    )

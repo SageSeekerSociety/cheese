@@ -147,46 +147,28 @@ def test_forge_status_uses_binding_and_excludes_credentials(client, kind):
     assert refused.status_code == 409, refused.text
 
 
-def test_requester_credit_setting_can_override_and_restore_deployment_default(
-    client, monkeypatch
-):
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "forge_attribution_default", True)
+def test_a_project_chooses_who_its_commits_are_credited_to(client):
     response = post_project(
         client,
-        json={
-            "name": "Credit policy",
-            "forge_kind": "github_app",
-        },
+        json={"name": "Credit policy", "forge_kind": "github_app"},
         owner="alice",
     )
     project_id = response.json()["data"]["id"]
-    route = f"/projects/{project_id}/forge-attribution"
+    route = f"/projects/{project_id}/commit-credit"
     headers = session_auth_headers("alice")
-    assert client.get(route, headers=headers).json()["data"] == {
-        "requester_coauthor": None,
-        "effective": True,
-        "deployment_default": True,
-    }
-    for override, effective in ((False, False), (True, True), (None, True)):
-        saved = client.put(
-            route, headers=headers, json={"requester_coauthor": override}
-        )
+    assert client.get(route, headers=headers).json()["data"] == {"mode": "owner"}
+    for mode in ("agent", "owner"):
+        saved = client.put(route, headers=headers, json={"mode": mode})
         assert saved.status_code == 200, saved.text
-        assert saved.json()["data"] == {
-            "requester_coauthor": override,
-            "effective": effective,
-            "deployment_default": True,
-        }
+        assert saved.json()["data"] == {"mode": mode}
         assert client.get(route, headers=headers).json() == saved.json()
+    unknown = client.put(route, headers=headers, json={"mode": "someone"})
+    assert unknown.status_code == 400, unknown.text
     refused = client.put(
-        route,
-        headers=session_auth_headers("outsider"),
-        json={"requester_coauthor": False},
+        route, headers=session_auth_headers("outsider"), json={"mode": "agent"}
     )
     assert refused.status_code in (401, 403, 404)
-    assert client.get(route, headers=headers).json()["data"]["effective"] is True
+    assert client.get(route, headers=headers).json()["data"] == {"mode": "owner"}
 
 
 def test_github_repository_selection_uses_project_settings_without_local_git(client):

@@ -661,6 +661,7 @@ class AcceptService:
         protection: BranchProtection,
         chat_service,
         runner,
+        opened_by: str | None = None,
     ) -> None:
         return await merge_queue._merge_armed_card(
             self,
@@ -673,6 +674,7 @@ class AcceptService:
             protection=protection,
             chat_service=chat_service,
             runner=runner,
+            opened_by=opened_by,
         )
 
     async def _note_needs_human(

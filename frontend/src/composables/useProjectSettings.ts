@@ -13,9 +13,9 @@
 // 按钮，共用一条会把一次动作的结果报在另一件事的标题下面（`githubSettingsSections.spec.ts`
 // 钉的就是这件事）。失败也落在自己那一条里，不落进页面级的 `error` —— 那一块会顶掉
 // 整页，上面没有按钮可以再试，也说不清是哪一次动作败了。
-import type { ForgeAttribution, ForgeConnection, OAuthConnectionInfo } from '@/cx_types'
+import type { CommitCredit, CommitCreditMode, ForgeConnection, OAuthConnectionInfo } from '@/cx_types'
 
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { SudoCancelledError, withSudo } from '@/utils/sudo'
@@ -23,12 +23,12 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 import {
   connectGithubRepo as apiConnectGithubRepo,
   deleteOAuthConnection,
-  getForgeAttribution,
+  getCommitCredit,
   getForgeConnection,
   getGithubAccountAuthorizeUrl,
   getUpstream,
   listOAuthConnections,
-  setForgeAttribution,
+  setCommitCredit,
   setUpstream,
 } from '@/api'
 import { t } from '@/i18n'
@@ -57,30 +57,15 @@ export function useProjectSettings(projectId: () => string) {
   // GitHub App install flow (#192): repo connection is read-only status here —
   // connecting/reconnecting happens on github.com, not in this form.
   const forgeConnection = ref<ForgeConnection | null>(null)
-  const attribution = ref<ForgeAttribution | null>(null)
+  const attribution = ref<CommitCredit | null>(null)
   const attributionSaving = ref(false)
   const attributionError = ref<string | null>(null)
-  const attributionChoice = computed(() =>
-    attribution.value?.requester_coauthor == null ? 'default' : attribution.value.requester_coauthor ? 'on' : 'off'
-  )
-  const attributionItems = computed(() => [
-    {
-      title: t('work.projectSettings.repoFlow.followDefault', {
-        state: attribution.value?.deployment_default
-          ? t('work.projectSettings.repoFlow.on')
-          : t('work.projectSettings.repoFlow.off'),
-      }),
-      value: 'default',
-    },
-    { title: t('work.projectSettings.repoFlow.on'), value: 'on' },
-    { title: t('work.projectSettings.repoFlow.off'), value: 'off' },
-  ])
 
-  async function saveAttribution(choice: string) {
+  async function saveAttribution(mode: CommitCreditMode) {
     attributionSaving.value = true
     attributionError.value = null
     try {
-      attribution.value = await setForgeAttribution(projectId(), choice === 'default' ? null : choice === 'on')
+      attribution.value = await setCommitCredit(projectId(), mode)
     } catch (e) {
       attributionError.value = e instanceof Error ? e.message : t('work.projectSettings.repoFlow.saveFailed')
     } finally {
@@ -159,7 +144,7 @@ export function useProjectSettings(projectId: () => string) {
       const [upP, forge, credit] = await Promise.all([
         getUpstream(projectId()),
         getForgeConnection(projectId()),
-        getForgeAttribution(projectId()),
+        getCommitCredit(projectId()),
       ])
       upstreamUrl.value = upP.url ?? ''
       forgeConnection.value = forge
@@ -284,8 +269,6 @@ export function useProjectSettings(projectId: () => string) {
     attribution,
     attributionSaving,
     attributionError,
-    attributionChoice,
-    attributionItems,
     saveAttribution,
     connectingGithubRepo,
     connectingGithubAccount,
