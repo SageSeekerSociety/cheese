@@ -233,7 +233,10 @@ async def sweep_orphans(
     # — a turn that opened while the activity probe awaited is still open,
     # and a running turn no sweep can see is how the next death goes silent
     # again, which is the whole bug.
-    await turn_inputs.close_dead_turns(chat_service.session_factory, orphans)
+    claimed = await turn_inputs.close_dead_turns(chat_service.session_factory, orphans)
+    # Startup and an overdue periodic tick can see the same open intervals.
+    # Only the sweep whose UPDATE closed a turn may arrange its recovery.
+    orphans = {tid: record for tid, record in orphans.items() if tid in claimed}
     for turn_id in orphans:
         # A turn with a coroutine gets its marks dropped by that coroutine's
         # own `finally`; one without (a self-started turn, or anything left

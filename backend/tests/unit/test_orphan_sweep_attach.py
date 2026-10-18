@@ -37,6 +37,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent import turn_inputs
 from app.domain.agent.runtime import AgentWorkRunner
 from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic, open_turn, open_turn_ids
@@ -106,6 +107,37 @@ async def test_replay_protects_only_its_own_conversation_from_the_orphan_sweep(
     finally:
         replay.cancel()
         await asyncio.gather(replay, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_overlapping_sweeps_resend_an_unheard_prompt_only_once(
+    db_factory, monkeypatch
+):
+    _instant_sleep(monkeypatch)
+    topic = await a_topic(db_factory)
+    await open_turn(db_factory, topic, content="Fix the login page", age_s=90)
+    chat = _Chat(db_factory)
+    runner = AgentWorkRunner(InProcessBroker())
+    both_read = asyncio.Event()
+    reads = 0
+    original = turn_inputs.open_turns
+
+    async def read_together(factory):
+        nonlocal reads
+        turns = await original(factory)
+        reads += 1
+        if reads == 2:
+            both_read.set()
+        await both_read.wait()
+        return turns
+
+    monkeypatch.setattr(turn_inputs, "open_turns", read_together)
+    results = await asyncio.wait_for(
+        asyncio.gather(runner.resume_orphans(chat), runner.sweep_orphans(chat)), 5
+    )
+    assert sum(results) == 1
+    await _drain(chat)
+    assert [call["content"] for call in chat.converse_calls] == ["Fix the login page"]
 
 
 # Captured before any test patches `asyncio.sleep` away. `_drain` has to wait on
