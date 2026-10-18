@@ -260,22 +260,25 @@ async def show_waiting(sessions: SessionFactory, row: TurnResume) -> None:
 
 
 async def clear_waiting(
-    sessions: SessionFactory, *, conversation_id: uuid.UUID, seat: str | None
+    sessions: SessionFactory,
+    *,
+    conversation_id: uuid.UUID,
+    seat: str | None,
+    failed_turn_id: uuid.UUID | None = None,
 ) -> None:
     """A newer turn has settled the wait; remove its line from 现场."""
     if seat is None:
         return
+    query = select(RunRecord.id).where(
+        RunRecord.conversation_id == conversation_id,
+        RunRecord.seat == seat,
+        RunRecord.kind == EVENT_TURN_RESUME_WAIT,
+        RunRecord.meta["state"].as_string() == "waiting",
+    )
+    if failed_turn_id is not None:
+        query = query.where(RunRecord.turn_id == failed_turn_id)
     async with sessions() as session:
-        ids = list(
-            await session.scalars(
-                select(RunRecord.id).where(
-                    RunRecord.conversation_id == conversation_id,
-                    RunRecord.seat == seat,
-                    RunRecord.kind == EVENT_TURN_RESUME_WAIT,
-                    RunRecord.meta["state"].as_string() == "waiting",
-                )
-            )
-        )
+        ids = list(await session.scalars(query))
     for record_id in ids:
         await restate_now(
             sessions,
@@ -367,7 +370,7 @@ async def hand_due(
     timed-delivery clock dispatches them (`delivery.timer.deliver_due`)."""
     now = now or _now()
     handed = 0
-    dropped_waits: list[tuple[uuid.UUID, str]] = []
+    settled_waits: list[tuple[uuid.UUID, str, uuid.UUID]] = []
     async with sessions() as session:
         rows = list(
             await session.scalars(
@@ -385,7 +388,9 @@ async def hand_due(
             if dropped is not None:
                 row.dropped_at = now
                 row.dropped_reason = dropped
-                dropped_waits.append((row.conversation_id, row.recipient_handle))
+                settled_waits.append(
+                    (row.conversation_id, row.recipient_handle, row.failed_turn_id)
+                )
                 logger.info(
                     "turn resume: %s in %s not resumed: %s",
                     row.recipient_handle,
@@ -413,6 +418,9 @@ async def hand_due(
                 content=str(RESUME_NOTE),
             )
             row.handed_at = now
+            settled_waits.append(
+                (row.conversation_id, row.recipient_handle, row.failed_turn_id)
+            )
             handed += 1
             logger.info(
                 "turn resume: handed %s in %s its resume (%s, attempt %s)",
@@ -422,8 +430,13 @@ async def hand_due(
                 row.attempt,
             )
         await session.commit()
-    for conversation_id, seat in dropped_waits:
-        await clear_waiting(sessions, conversation_id=conversation_id, seat=seat)
+    for conversation_id, seat, failed_turn_id in settled_waits:
+        await clear_waiting(
+            sessions,
+            conversation_id=conversation_id,
+            seat=seat,
+            failed_turn_id=failed_turn_id,
+        )
     return handed
 
 

@@ -12,8 +12,9 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import SessionFactory
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.notice_meta import EVENT_API_RETRY, EVENT_TURN_RESUME_WAIT
 from app.domain.run_record.models import RunRecord
@@ -71,7 +72,7 @@ async def _thread_room(session: AsyncSession, conversation_id) -> uuid.UUID | No
 
 
 async def record_now(
-    sessions: async_sessionmaker,
+    sessions: SessionFactory,
     *,
     conversation_id: uuid.UUID,
     content: str,
@@ -106,7 +107,7 @@ async def record_now(
 
 
 async def restate_now(
-    sessions: async_sessionmaker,
+    sessions: SessionFactory,
     record_id: uuid.UUID,
     *,
     content: str,

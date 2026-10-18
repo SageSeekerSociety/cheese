@@ -29,9 +29,15 @@ from app.domain.agent.resumable_failures import (
 )
 from app.domain.agent.run_records import for_site
 from app.domain.agent.service import AgentResult
-from app.domain.agent.turn_resume import RESUME_NOTE, after_failure, hand_due
+from app.domain.agent.turn_resume import (
+    RESUME_NOTE,
+    after_failure,
+    hand_due,
+    show_waiting,
+)
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
+from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
@@ -283,6 +289,41 @@ async def test_exhausted_resume_budget_shows_failure_card(
     finally:
         await runner.drain(timeout_s=10)
         await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_a_handed_resume_does_not_leave_a_wait_after_delivery_fails(
+    business_db_factory,
+):
+    factory = business_db_factory
+    project, conversation, seat, _instance = await _room_with_agent(factory)
+    row = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=uuid.uuid4(),
+        result=_failed(RATE_LIMITED),
+        route="subscription",
+    )
+    assert row is not None
+    await show_waiting(factory, row)
+    assert await hand_due(factory, now=row.due_at + timedelta(seconds=1)) == 1
+
+    async with factory() as session:
+        room = await room_of(session, conversation)
+        await TopicMemberService(session).remove(topic_id=room, handle=seat, actor="u")
+        await session.commit()
+
+    assert await dispatch_pending(factory, chat=None, runner=None) == 0
+    async with factory() as session:
+        delivery = await session.scalar(
+            select(Delivery).where(Delivery.event_id == row.id)
+        )
+        visible = await for_site(session, conversation, since=None, until=None)
+    assert delivery is not None
+    assert delivery.state == "failed"
+    assert not [r for r in visible if r["meta"].get("event_type") == "turn_resume_wait"]
 
 
 @pytest.mark.anyio
