@@ -101,7 +101,7 @@ cp "$BEFORE_SLOTS_TREE" "$FIXTURES/aaaaaaa"
 cp "$SLOTS_TREE" "$FIXTURES/bbbbbbb"
 FAKE_BACKEND_SERVICES=backend-b FAKE_COMMITS="aaaaaaa bbbbbbb" run_converge || {
   cat "$RUN_DIR/out"; fail "the cross-slot case did not converge"; }
-[ "$(dispatched)" = "workflow run deploy-dev.yml --ref main -f ref=bbbbbbb" ] \
+[ "$(dispatched)" = "workflow run deploy-dev.yml --ref main -f ref=bbbbbbb -f recovery=true" ] \
   || fail "did not release the slot-bearing commit: $(dispatched)"
 grep -q 'the newest commit on main with the slots' "$RUN_DIR/out" \
   || fail "did not say which commit it released and why"
@@ -133,5 +133,12 @@ FAKE_BACKEND_SERVICES=$'backend\nbackend-b' FAKE_COMMITS="aaaaaaa bbbbbbb" run_c
   || { cat "$RUN_DIR/out"; fail "the in-flight case failed"; }
 [ -z "$(dispatched)" ] || fail "acted while a release was in flight: $(dispatched)"
 grep -q 'in flight' "$RUN_DIR/out" || fail "did not say a release was in flight"
+
+# Without an anchor there is nothing this may release, and the guard has to be
+# the script's own: a default of "" would dispatch `-f ref=` at the empty sha.
+[ -n "$(TARGET_SHA= bash "$SCRIPT" 2>&1 || true)" ] \
+  || fail "an empty TARGET_SHA produced no message at all"
+TARGET_SHA= bash "$SCRIPT" > "$RUN_DIR/out" 2>&1 && fail "converged without an anchor"
+grep -q 'TARGET_SHA' "$RUN_DIR/out" || fail "the missing anchor was not named"
 
 echo "PASS: deploy drift fires the green anchor, or the newest slot-bearing commit across the two-slot boundary, and never re-dispatches a release that would refuse"

@@ -101,4 +101,4 @@ if [ -z "$recovery" ]; then
 fi
 
 echo "releasing $recovery, the newest commit on main with the slots: it moves app-router back to the first slots, and main's next release then goes through"
-gh workflow run deploy-dev.yml --ref main -f "ref=$recovery"
+gh workflow run deploy-dev.yml --ref main -f "ref=$recovery" -f recovery=true

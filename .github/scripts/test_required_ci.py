@@ -1340,14 +1340,16 @@ class WorkflowTextTest(unittest.TestCase):
             # --max-time bounds one attempt and --retry multiplies it: 3x30+4
             # per call keeps update+create+read-back inside this job's five
             # minutes, which a timed-out run would otherwise blow.
-            self.assertIn("--max-time", args)
-            self.assertIn("30", args[args.index("--max-time") + 1])
-            self.assertIn("2", args[args.index("--retry") + 1])
             # Retry-After is served by the server and is not transport, so
             # --max-time does not bound a retry wait; only --retry-max-time
             # does. Without it a 429 that says "wait a minute" sleeps twice.
             self.assertIn("--retry-max-time", args)
-            self.assertIn("60", args[args.index("--retry-max-time") + 1])
+            # Exact values, not substrings: "300" contains "30" and "600"
+            # contains "60", so an assertIn here would pass a budget that
+            # outlasts this job.
+            self.assertEqual(args[args.index("--retry-max-time") + 1], "60")
+            self.assertEqual(args[args.index("--max-time") + 1], "30")
+            self.assertEqual(args[args.index("--retry") + 1], "2")
             self.assertNotIn("--max-time\n60", payload)
 
     def test_a_missing_anchor_is_created_rather_than_left_missing(self):

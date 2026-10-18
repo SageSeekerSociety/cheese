@@ -690,6 +690,24 @@ class CandidateCI(unittest.TestCase):
         self.assertIn('TARGET_SHA="$anchor"', body)
         self.assertNotIn("gh workflow run build.yml", body)
         self.assertNotIn("image-tag.sh origin/main", body)
+        # Everything the build-run lookup asks about has to be the anchor too:
+        # asking main's tip would read "a build is in flight" and skip the hour
+        # while the anchor's own images never arrive.
+        self.assertIn('full_sha="$anchor"', body)
+        self.assertNotIn("rev-parse origin/main", body)
+        # A failed read must not read as "there is no anchor yet".
+        self.assertIn("404", body)
+        self.assertIn("::warning::", body)
+
+    def test_the_bot_check_reads_the_actor_context(self):
+        # The guard is only as good as the context it reads: another actor
+        # expression would leave the bot dispatch looking like a person.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        for job, step_id in (("eligibility", "check"), ("deploy", "release")):
+            step = next(step for step in workflow["jobs"][job]["steps"] if step.get("id") == step_id)
+            self.assertEqual(step["env"]["ACTOR"], "${{ github.actor }}", job)
+            self.assertEqual(step["env"]["REF_INPUT"], "${{ inputs.ref }}", job)
+        self.assertIn("recovery", workflow[True]["workflow_dispatch"]["inputs"])
 
     def test_a_bot_dispatch_takes_the_guard_like_any_automatic_release(self):
         # The drift convergence dispatches this workflow with `-f ref=<anchor>`.
@@ -715,6 +733,38 @@ class CandidateCI(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, "a bot dispatch took the manual bypass")
                 self.assertIn("check-auto-deploy.py", result.stderr)
                 self.assertFalse(output.exists() and output.read_text())
+
+    def test_the_slot_recovery_skips_only_the_backwards_guard(self):
+        # #2770: the box serves the -b slots and main's tree has no slots, so
+        # the only commit that can move it back is older than what it runs. The
+        # convergence names it and sets recovery=true. Required CI is still
+        # required (the eligibility job does not read recovery), and only the
+        # release step's backwards guard is passed over.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        check = next(step for step in workflow["jobs"]["eligibility"]["steps"]
+                     if step.get("id") == "check")
+        release = next(step for step in workflow["jobs"]["deploy"]["steps"]
+                       if step.get("id") == "release")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            result = subprocess.run(
+                ["bash", "-eu", "-c", check["run"]], cwd=directory, capture_output=True, text=True,
+                env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                     "ACTOR": "github-actions[bot]", "REF_INPUT": "a" * 40,
+                     "RECOVERY": "true", "REBUILT": "", "CANDIDATE_SHA": "a" * 40,
+                     "GITHUB_OUTPUT": str(output)})
+            self.assertNotEqual(result.returncode, 0, "a bot recovery skipped the CI check")
+            self.assertIn("check-auto-deploy.py", result.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            result = subprocess.run(
+                ["bash", "-eu", "-c", release["run"]], cwd=ROOT, capture_output=True, text=True,
+                env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                     "ACTOR": "github-actions[bot]", "REF_INPUT": "a" * 40,
+                     "RECOVERY": "true", "REBUILT": "", "CANDIDATE_SHA": "a" * 40,
+                     "GITHUB_OUTPUT": str(output)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(output.read_text(), "skip=false\n")
 
     def test_a_bare_dispatch_is_not_a_manual_release_either(self):
         # No ref names nothing a person chose; releasing the dispatch ref's
