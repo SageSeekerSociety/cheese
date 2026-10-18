@@ -184,7 +184,7 @@ expect(actual).not.toBe("This explanatory sentence should be checked by its impo
             "flex items-center justify-between border-b border-slate-200 bg-white text-sm text-slate-600",
             "px-4 py-2 mb-2 mt-4 flex-1 items-center gap-2",
             "read: documents, write: documents, admin: members, export: all data",
-            "contents: write, issues: read, workflows: write, checks: read",
+            "contents: write, issues: read, workflows: write, checks: read, metadata: read, security_events: read, artifact_metadata: read",
             "Property 'foo' is missing in type 'Bar' but required in type 'Baz'.",
             "Cannot assign to 'x' because it is a read-only property.",
             "Variable 'x' implicitly has an 'any' type.",
@@ -278,12 +278,13 @@ assert actual == "Upload failed: the file is too large: remove it, then try agai
 assert actual == "step one failed, please retry after the environment starts"
 assert actual == "Note: this file is read-only, Action: choose another location and try again"
 assert actual == "Error: read, Note: write, Warning: run, Action: edit"
+assert actual == "Error: read, Note: write, Warning: read, Action: none"
 ''',
             )
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        for line in (*range(2, 18), 20, 21, 22, 23):
+        for line in (*range(2, 18), 20, 21, 22, 23, 24):
             self.assertIn(f"test_copy.py:{line}", result.stderr)
         self.assertNotIn("test_copy.py:18", result.stderr)
         self.assertNotIn("test_copy.py:19", result.stderr)

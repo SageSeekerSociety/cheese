@@ -90,11 +90,23 @@ STRUCTURED_ACTION_LABEL = (
     r"(?:read|write|admin|export|create|update|delete|manage|execute|list|view|invite|approve|"
     r"download|upload|deploy|access|run|edit|review|import|share)"
 )
-STRUCTURED_PERMISSION_LEVEL = r"(?:read|write|admin|none)"
+STRUCTURED_PERMISSION_LEVELS = {"read", "write", "admin", "none"}
+STRUCTURED_PERMISSION_RESOURCES = {
+    "actions", "administration", "attestations", "checks", "code", "code-quality", "code_quality",
+    "codespaces", "contents", "deployments", "discussions", "emails", "environments", "followers",
+    "gpg_keys", "gpg-keys", "id-token", "id_token", "interaction_limits", "interaction-limits",
+    "issues", "keys", "members", "metadata", "models", "organization_administration",
+    "organization_custom_properties", "organization_events", "organization_hooks", "organization_packages",
+    "organization_plan", "organization_projects", "organization_self_hosted_runners",
+    "organization_user_blocking", "packages", "pages", "plan", "pull-requests", "pull_requests",
+    "repository_custom_properties", "repository-custom-properties", "repository_hooks",
+    "repository_projects", "repository-projects", "security_events", "security-events",
+    "secret_scanning_alerts", "secret-scanning-alerts", "statuses", "starring", "team_discussions",
+    "vulnerability_alerts", "vulnerability-alerts", "workflows", "artifact_metadata", "artifact-metadata",
+    "copilot_requests", "copilot-requests",
+}
 STRUCTURED_LABEL_LIST_RE = re.compile(
-    rf"^(?:{STRUCTURED_ACTION_LABEL}:\s*[^,:]+(?:,\s*{STRUCTURED_ACTION_LABEL}:\s*[^,:]+)+|"
-    rf"[\w-]+:\s*{STRUCTURED_PERMISSION_LEVEL}"
-    rf"(?:,\s*[\w-]+:\s*{STRUCTURED_PERMISSION_LEVEL})+)$",
+    rf"^{STRUCTURED_ACTION_LABEL}:\s*[^,:]+(?:,\s*{STRUCTURED_ACTION_LABEL}:\s*[^,:]+)+$",
     re.IGNORECASE,
 )
 IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
@@ -314,6 +326,21 @@ def _is_structured_key_value(value: str) -> bool:
     return len(WORD_RE.findall(remaining)) <= 2 * len(matches)
 
 
+def _is_structured_permission_list(value: str) -> bool:
+    entries = value.split(",")
+    if len(entries) < 2:
+        return False
+    for entry in entries:
+        if ":" not in entry:
+            return False
+        label, level = entry.split(":", 1)
+        if label.strip().lower() not in STRUCTURED_PERMISSION_RESOURCES:
+            return False
+        if level.strip().lower() not in STRUCTURED_PERMISSION_LEVELS:
+            return False
+    return True
+
+
 def _is_route_value(value: str) -> bool:
     return (value.startswith("?") and KEY_VALUE_RE.search(value) is not None) or (
         value.startswith("#/") and not any(char.isspace() for char in value)
@@ -343,6 +370,7 @@ def _is_explanatory_sentence(value: str) -> bool:
         or COMMIT_TITLE_RE.match(value)
         or _is_structured_key_value(value)
         or STRUCTURED_LABEL_LIST_RE.fullmatch(value)
+        or _is_structured_permission_list(value)
         or SHELL_COMMAND_RE.search(value)
         or WORKFLOW_EXPRESSION_RE.fullmatch(value)
         or value.startswith(
