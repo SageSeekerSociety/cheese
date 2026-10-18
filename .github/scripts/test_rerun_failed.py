@@ -503,6 +503,38 @@ class LogSignatureTest(unittest.TestCase):
             with self.subTest(log=log.splitlines()[0]):
                 self.assertIsNone(rerun.flake_log_signature(log))
 
+    def test_playwright_marks_its_step_as_a_test_session(self):
+        """The e2e job's Vite server logs a benign `[WebServer] Error: read
+        ECONNRESET` on every run, so that step must be excluded whole."""
+        step = "job 9\t\t2026-10-18T09:06:04Z "
+        log = "\n".join((
+            step + "##[group]Run bash ./run-isolated.sh --shard 1/5",
+            step + "Running 49 tests using 1 worker",
+            step + "[WebServer] Error: read ECONNRESET",
+            step + "  1 failed",
+        ))
+        self.assertIsNone(rerun.flake_log_signature(log))
+
+    def test_a_runner_lost_annotation_under_a_test_step_is_still_evidence(self):
+        """The runner's message has no `##[group]`, so it inherits the test
+        step's key; it must not be dropped with that step's text."""
+        step = "job 9\t\t2026-10-18T09:06:04Z "
+        log = "\n".join((
+            step + "##[group]Run pytest tests",
+            step + "========================= test session starts =========================",
+            step + "##[error]The runner has received a shutdown signal. This can"
+            " happen when the runner service is stopped.",
+        ))
+        self.assertEqual(rerun.flake_log_signature(log)["id"], "runner-lost")
+
+    def test_an_annotation_without_a_node_id_is_not_evidence(self):
+        """report_failed_cases.py also prints a JUnit tail with no `::`."""
+        log = (
+            "##[error]the shard wrote no JUnit results; pytest output tail:"
+            " Error: read ECONNRESET"
+        )
+        self.assertIsNone(rerun.flake_log_signature(log))
+
     def test_a_runner_lost_annotation_is_still_evidence(self):
         """The runner's own message carries `##[error]`, and is a flake."""
         for text in (
@@ -573,6 +605,8 @@ class LogSignatureTest(unittest.TestCase):
     def test_each_report_marker_starts_the_bound_on_its_own(self):
         flake = "read ECONNRESET"
         for marker in (
+            "--- FAIL: TestClassify (0.00s)",
+            "panic: runtime error: index out of range",
             "Traceback (most recent call last):",
             "FAIL: test_x (__main__.TestX)",
             "ERROR: test_x (__main__.TestX)",
@@ -946,6 +980,20 @@ class GhCallTest(unittest.TestCase):
         # `##[group]` markers in the text name the step, and two jobs are
         # never read as one step.
         self.assertIn("job 7\t\tread ECONNRESET", log)
+
+    def test_the_failed_job_list_is_paged(self):
+        page_one = json.dumps({"jobs": [{"id": n, "conclusion": "failure"} for n in range(100)]})
+        page_two = json.dumps({"jobs": [{"id": 200, "conclusion": "failure"}]})
+
+        def fake(argv, **kwargs):
+            if argv[-1].endswith("page=1"):
+                return subprocess.CompletedProcess([], 0, stdout=page_one, stderr="")
+            if argv[-1].endswith("page=2"):
+                return subprocess.CompletedProcess([], 0, stdout=page_two, stderr="")
+            return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+        with mock.patch.object(rerun.subprocess, "run", side_effect=fake):
+            self.assertEqual(len(rerun._failed_job_ids("42", "o/r")), 101)
 
     def test_no_readable_failed_job_log_is_unreadable_not_clean(self):
         jobs = json.dumps({"jobs": [{"id": 7, "conclusion": "failure"}]})

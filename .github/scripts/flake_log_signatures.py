@@ -7,14 +7,12 @@ TLS handshake, a rate-limited API, a runner that vanished, a tool download that
 timed out. Anything else is left for a person to read — a retry that cures
 nothing costs the failed job set again and delays the real diagnosis.
 
-Each pattern is searched case-insensitively in the output of
-`gh run view <id> --log-failed`. Keep a signature specific: one that also
-matches an ordinary assertion turns the guard off without anything saying so.
-#1797 owns this list.
-
-`pattern` is a regular expression, searched case-insensitively against the whole
-log, so a log line only has to contain it. `validate()` rejects a signature this
-file cannot use.
+`pattern` is a regular expression searched case-insensitively in one line of a
+failed job's log (`GET /actions/jobs/{id}/logs`). rerun-failed.py decides which
+lines count: a step that ran tests, and the text of a failure report, are not
+evidence. Keep a signature specific to an infrastructure failure — one that
+also matches an ordinary assertion reruns a real failure and nothing says so.
+`validate()` rejects a signature this file cannot use, and #1797 owns the list.
 """
 
 import re

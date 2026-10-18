@@ -65,8 +65,8 @@ REQUIRED_KEYS = ("id", "title", "match", "rerun", "action", "symptoms")
 # How long to wait for `gh` before treating the run as unreadable.
 GH_TIMEOUT = 120
 
-# A job log line carries gh's "<job>\t<step>\t<timestamp> " prefix when it
-# came from `gh run view`; the per-job REST logs are prefixed with the job id.
+# A job log line carries gh's "<job>\t<step>\t<timestamp> " prefix when it came
+# from `gh run view`; the per-job REST logs are prefixed "job <id>\t\t".
 _LOG_PREFIX = re.compile(r"^[^\t\n]*\t[^\t\n]*\t(?:\ufeff)?\S+\s")
 
 # A failure report quotes text the test owns — its source, its fixtures and
@@ -101,6 +101,8 @@ _REPORT_START = re.compile(
     r"|\W{3,} (?:Failed Tests|Failed Suites|Unhandled Errors|Unhandled Rejection)"
     r"\b|-{3,} Captured .+ -{3,}"
     r"|_{3,} .+ _{3,}$"
+    r"|--- FAIL: "
+    r"|panic: "
     # vitest indents its per-test line: ` FAIL  src/x.spec.ts > x > fails`.
     r"| *FAIL {2,}\S.* > "
     r"|FAIL: |ERROR: |Traceback \(most recent call last\):$)"
@@ -124,7 +126,8 @@ _TEST_SESSION = re.compile(
     r"^(?: *RUN +v\d"
     r"|TAP version \d+"
     r"|=+ test session starts =+"
-    r"|=== RUN)"
+    r"|=== RUN"
+    r"|Running \d+ tests? using \d+ workers?)"
 )
 # A passing pytest run still prints its `warnings summary` and slowest-durations
 # banners, and either can carry a signature in a test id. Those banners must
@@ -146,6 +149,7 @@ _STEP_START = re.compile(r"^##\[group\](?:Run )?(.*)$")
 # The `##[error]` prefix alone is not the marker — a runner that vanishes
 # writes `##[error]The runner has received a shutdown signal.`, which is one of
 # the flakes this is looking for.
+_ANNOTATION_PREFIX = re.compile(r"^(?:##\[error\]|::error)")
 _ANNOTATION = re.compile(
     r"^(?:##\[error\]|::error(?: file=[^:]*)?:?)"
     r"(?:Process completed with exit code|\S*::\S)"
@@ -250,6 +254,13 @@ def _log_key(line: str) -> tuple[str, str] | None:
     return None
 
 
+def _signature(signature_id: str) -> dict | None:
+    for signature in LOG_SIGNATURES:
+        if signature["id"] == signature_id:
+            return signature
+    return None
+
+
 def flake_log_signature(
     failed_log: str | None, signatures: tuple[dict, ...] | list[dict] | None = None
 ) -> dict | None:
@@ -282,7 +293,19 @@ def flake_log_signature(
         lines.append(((job, step), message))
     test_steps = {key for key, message in lines if _TEST_SESSION.match(message)}
     reported: set[tuple[str, str]] = set()
+    runner_lost = _signature("runner-lost")
     for step, message in lines:
+        if _ANNOTATION_PREFIX.match(message):
+            # GitHub writes the runner's own vanishing message as an
+            # annotation, and it carries no `##[group]`, so it inherits the
+            # test step's key and would be dropped below. It is the one
+            # annotated failure that is evidence; every other annotation
+            # reprints a tool's or a test's text.
+            if runner_lost is not None and re.search(
+                runner_lost["pattern"], message, re.IGNORECASE
+            ):
+                return runner_lost
+            continue
         if step in test_steps or step in reported:
             continue
         if _REPORT_START.match(message):
