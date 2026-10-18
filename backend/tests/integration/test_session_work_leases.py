@@ -621,8 +621,10 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     # machine is a person's: nothing is installed on it for the sandbox.
     assert launch_options == {"sandbox": True, "platform_machine": False}
     assert launch_env["CHEESE_AUTHOR"] == actor_handle
-    assert launch_env["GIT_AUTHOR_NAME"] == actor_handle
-    assert launch_env["GIT_AUTHOR_EMAIL"] == f"{actor_handle}@agent.cheese.local"
+    # Who a commit is by belongs to the task's checkout, not the launch: an
+    # author fixed here would override the one a task's checkout sets.
+    assert "GIT_AUTHOR_NAME" not in launch_env
+    assert "GIT_AUTHOR_EMAIL" not in launch_env
     resource_id = first.json()["data"]["target"]["resource_id"]
     assert hub.exec.await_count == 1
     async with client.test_factory() as db:

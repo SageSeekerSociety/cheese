@@ -11,8 +11,7 @@
   （`ConflictError`），查不到把 `IntegrityError` 放行 —— 并发下先查再写守不住，
   唯一键才是判据。
 - `delete_connection` 不许删掉用户最后一种登录方式：真邮箱、密码、通行密钥和其他
-  非 link-only 连接各算一种，`github_app` 这类只用于绑定的不算，所以它既不被保护
-  也占不了名额。
+  每一个第三方账号各算一种。
 """
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ from app.core.sentences import say
 from app.domain.passkey.services import PasskeyService
 from app.domain.user.models import User
 
-from .providers import LINK_ONLY_PROVIDERS
 from .tokens import seal_oauth_token
 
 if TYPE_CHECKING:
@@ -139,10 +137,9 @@ async def update_connection_tokens(
 async def list_user_connections(svc: pkg.OAuthService, user_id: int) -> list[dict]:
     conns = await svc._repo.list_by_user(user_id)
     provider_names = {
-        "github": "GitHub",
         "google": "Google",
         "ruc": "微人大",
-        "github_app": "GitHub (cheesex-app)",
+        "github_app": "GitHub",
     }
     return [
         {
@@ -175,35 +172,30 @@ async def delete_connection(
     """Remove a connection unless it is the user's last way to sign in.
 
     A real email (codes are mailed to it), a password, a passkey and every
-    other sign-in connection each count as a way in; link-only connections
-    never produce a session, so they neither count nor are ever protected.
-    Raises ``ConflictError`` when refused.
+    other connection each count as a way in. Raises ``ConflictError`` when
+    refused.
     """
 
     conn = await svc._repo.get(connection_id)
     if conn is None or conn.user_id != user_id:
         return False
-    if conn.provider_id not in LINK_ONLY_PROVIDERS:
-        session = svc._repo.session
-        # Row lock: two concurrent unbinds must not each see the other's
-        # connection as the one that remains.
-        user = (
-            await session.execute(
-                select(User).where(User.id == user_id).with_for_update()
-            )
-        ).scalar_one()
-        other_sign_in = any(
-            c.id != connection_id and c.provider_id not in LINK_ONLY_PROVIDERS
-            for c in await svc._repo.list_by_user(user_id)
-        )
-        has_passkey = await PasskeyService.for_session(session).has_passkey(user_id)
-        if not (
-            user.hashed_password
-            or has_passkey
-            or other_sign_in
-            or not is_placeholder_email(user.email)
-        ):
-            raise ConflictError(say("oauthLastSignInMethod"))
+    session = svc._repo.session
+    # Row lock: two concurrent unbinds must not each see the other's
+    # connection as the one that remains.
+    user = (
+        await session.execute(select(User).where(User.id == user_id).with_for_update())
+    ).scalar_one()
+    other_sign_in = any(
+        c.id != connection_id for c in await svc._repo.list_by_user(user_id)
+    )
+    has_passkey = await PasskeyService.for_session(session).has_passkey(user_id)
+    if not (
+        user.hashed_password
+        or has_passkey
+        or other_sign_in
+        or not is_placeholder_email(user.email)
+    ):
+        raise ConflictError(say("oauthLastSignInMethod"))
     return await svc._repo.delete_by_id(connection_id, user_id)
 
 
