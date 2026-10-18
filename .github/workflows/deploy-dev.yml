@@ -132,9 +132,15 @@ jobs:
         if: steps.check.outputs.ready != 'true' && steps.check.outputs.waiting != 'true'
         env:
           CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
+          UNCOVERED: ${{ steps.check.outputs.uncovered }}
         run: |
           live="$(curl -fsS --max-time 10 https://okcheese.com/api/version | jq -r '.data.sha // empty')" || true
           reason="its image build or Required CI has no successful latest attempt"
+          # A cancelled gate run with nothing newer on main is its own case: no
+          # later batch will cover it, so this needs a person, not another wait.
+          if [ "$UNCOVERED" = true ]; then
+            reason="its Required CI run was cancelled and no newer commit on main covers it"
+          fi
           echo "Not deployed \`$CANDIDATE_SHA\`: $reason. dev runs \`${live:-unknown}\`." >> "$GITHUB_STEP_SUMMARY"
           echo "::error::Not deployed $CANDIDATE_SHA: $reason."
           exit 1

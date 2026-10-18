@@ -527,7 +527,13 @@ class CandidateCI(unittest.TestCase):
         replaced = [self.queue_record(conclusion="cancelled")]
         self.assertFalse(self.ready([self.run_record()], replaced, covered=True))
 
-    def waiting(self, runs):
+    def waiting(self, runs, newer=("n" * 40,)):
+        """ci_waiting with the gate's runs and the commits after it on main.
+
+        ``newer`` defaults to one commit: a cancelled run is only a wait when
+        something newer on main can cover it, and every test here but the
+        uncovered one is about that coverable case.
+        """
         def workflow_runs(_repository, workflow, _candidate):
             # Answering every workflow with the same list would hide a lookup
             # pointed at the wrong one: build.yml's runs are not the gate.
@@ -535,7 +541,8 @@ class CandidateCI(unittest.TestCase):
                 return []
             return runs
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), \
-                patch.object(GUARD, "workflow_runs", side_effect=workflow_runs):
+                patch.object(GUARD, "workflow_runs", side_effect=workflow_runs), \
+                patch.object(GUARD, "newer_on_main", return_value=list(newer)):
             return GUARD.ci_waiting(self.candidate)
 
     def test_a_gate_that_has_not_finished_is_waited_for_not_refused(self):
@@ -550,6 +557,12 @@ class CandidateCI(unittest.TestCase):
         # Batched push runs share a concurrency group, so GitHub cancels the
         # older of two queued runs; the newer commit's run covers both.
         self.assertTrue(self.waiting([self.gate_run(conclusion="cancelled")]))
+
+    def test_a_cancelled_run_nothing_newer_covers_is_not_waited_for(self):
+        # A manual or infrastructure cancellation, or a newer batch that itself
+        # failed: no later run can diff over this commit, so treating it as a
+        # wait would leave dev silently behind with no red anywhere.
+        self.assertFalse(self.waiting([self.gate_run(conclusion="cancelled")], newer=()))
 
     def test_a_gate_that_failed_or_never_ran_is_not_waited_for(self):
         for runs in ([self.gate_run(conclusion="failure")],
@@ -601,7 +614,8 @@ class CandidateCI(unittest.TestCase):
             with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GITHUB_OUTPUT": str(output)}), \
                     patch.object(GUARD.sys, "argv", ["check-auto-deploy.py", "--ci-only", self.candidate]), \
                     patch.object(GUARD, "workflow_runs", side_effect=workflow_runs), \
-                    patch.object(GUARD, "newer_on_main", return_value=[]):
+                    patch.object(GUARD, "newer_on_main", return_value=[]), \
+                    patch.object(GUARD, "covered_by_green", return_value=False):
                 GUARD.main()
             return output.read_text(), reads
 
@@ -613,15 +627,24 @@ class CandidateCI(unittest.TestCase):
             with self.subTest(stale=stale[0]):
                 self.clock.now = 0.0
                 output, reads = self.eligibility([stale, stale, settled])
-                self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\n")
+                self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
                 self.assertLessEqual(reads[-1], 60)
 
     def test_a_build_that_really_failed_is_refused_within_a_bounded_wait(self):
         failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
         output, reads = self.eligibility([failed])
-        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\n")
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\n")
         self.assertGreater(len(reads), 1)
         self.assertLessEqual(reads[-1], 180)
+
+    def test_the_entry_point_refuses_a_cancelled_gate_nothing_covers(self):
+        # The other half of the waiting rule, driven end to end: with nothing
+        # newer on main, a cancelled gate is a refusal whose reason the step
+        # summary can name, not a wait that never ends.
+        cancelled = ([self.run_record()], [self.gate_run(conclusion="cancelled")])
+        output, _reads = self.eligibility([cancelled])
+        self.assertEqual(output,
+                         "ready=false\nsuperseded=\nwaiting=false\nuncovered=true\n")
 
     def test_the_entry_point_reports_waiting_while_the_gate_runs(self):
         # The build's completion is usually the first of the two events and the
@@ -631,11 +654,11 @@ class CandidateCI(unittest.TestCase):
         running = ([self.run_record()],
                    [self.gate_run(status="in_progress", conclusion=None)])
         output, _reads = self.eligibility([running])
-        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=true\n")
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=true\nuncovered=false\n")
         # And a gate that really failed is still a refusal, not a wait.
         refused = ([self.run_record()], [self.gate_run(conclusion="failure")])
         output, _reads = self.eligibility([refused])
-        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\n")
+        self.assertEqual(output, "ready=false\nsuperseded=\nwaiting=false\nuncovered=false\n")
 
     def test_workflow_checks_eligibility_before_reserving_deploy_runner(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
@@ -743,6 +766,22 @@ class CandidateCI(unittest.TestCase):
                 self.assertIn(f"::error::Not deployed {self.candidate}", result.stdout)
                 self.assertIn(f"Not deployed `{self.candidate}`", summary.read_text())
                 self.assertIn(f"dev runs `{expected}`", summary.read_text())
+
+    def test_the_refusal_says_when_a_cancelled_gate_nothing_covers(self):
+        # "No successful latest attempt" is true but useless for this case: the
+        # run existed and was cancelled, and no later batch will cover it. The
+        # summary has to name that, or the reader goes looking for a CI bug.
+        step = self.step("eligibility", "Fail when this commit will not be deployed")
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            result = subprocess.run(
+                ["bash", "-e", "-c", step["run"]], capture_output=True, text=True,
+                env={**os.environ, "PATH": self.fake_bin(directory, curl="exit 7"),
+                     "CANDIDATE_SHA": self.candidate, "UNCOVERED": "true",
+                     "GITHUB_STEP_SUMMARY": str(summary)})
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("cancelled", summary.read_text())
+            self.assertIn("no newer commit on main", summary.read_text())
 
     def test_every_deploy_run_names_the_commit_dev_runs(self):
         step = self.step("deploy", "Say which commit dev runs")
@@ -886,27 +925,27 @@ class SupersededRelease(unittest.TestCase):
     def test_an_older_commit_built_after_a_newer_ready_one_steps_aside(self):
         output, printed = self.eligibility([self.newer], {self.candidate: self.runs(self.candidate),
                                                           self.newer: self.runs(self.newer)})
-        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\nwaiting=false\n")
+        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\nwaiting=false\nuncovered=false\n")
         self.assertIn(f"Not deploying {self.candidate}: {self.newer}, newer on main", printed)
 
     def test_the_newest_commit_that_is_ready_is_the_one_named(self):
         output, _ = self.eligibility([self.newer, self.newest], {
             self.candidate: self.runs(self.candidate), self.newer: self.runs(self.newer),
             self.newest: self.runs(self.newest, build=None)})
-        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\nwaiting=false\n")
+        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\nwaiting=false\nuncovered=false\n")
 
     def test_a_newer_commit_that_cannot_be_released_yet_does_not_supersede(self):
         for build, ci in ((None, "success"), ("failure", "success"), ("success", "failure")):
             with self.subTest(build=build, ci=ci):
                 output, printed = self.eligibility([self.newer], {
                     self.candidate: self.runs(self.candidate), self.newer: self.runs(self.newer, build=build, ci=ci)})
-                self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\n")
+                self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
                 # A newer commit's state is not this release's refusal.
                 self.assertNotIn(f"Not deploying {self.newer}", printed)
 
     def test_main_newest_commit_deploys(self):
         output, _ = self.eligibility([], {self.candidate: self.runs(self.candidate)})
-        self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\n")
+        self.assertEqual(output, "ready=true\nsuperseded=\nwaiting=false\nuncovered=false\n")
 
     def test_a_superseded_run_does_not_ask_for_the_deploy_group(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())

@@ -1799,6 +1799,37 @@ class MainCliTest(unittest.TestCase):
             self.assertEqual(written["frontend"], "true")
             self.assertIn("last green gate result", proc.stdout)
 
+    def test_an_anchor_off_the_pushed_history_widens_the_scope(self):
+        # The ref is only ever written from a main push run, so this takes a
+        # rewritten ref. A diff against a commit that is not on this history is
+        # not a diff of what landed, and can miss a change whose content happens
+        # to match — so the run must widen instead of trusting it.
+        scripts = WORKFLOW.parent.parent / "scripts"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+            git = self._push_repo(tmp)
+            git("checkout", "-qb", "side")
+            (tmp / "side.txt").write_text("x\n")
+            git("add", "side.txt")
+            git("commit", "-qm", "a commit that never landed on main")
+            side = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            git("checkout", "-q", "main")
+            git("update-ref", "refs/heads/main-green", side)
+            changed = tmp / "backend/app/api/rooms.py"
+            changed.parent.mkdir(parents=True)
+            changed.write_text("x = 1\n")
+            git("add", "backend/app/api/rooms.py")
+            git("commit", "-qm", "change a backend file")
+
+            proc, written = self._push_scope(tmp, self._event_file(tmp, {}))
+            self.assertEqual(written["base"], "")
+            self.assertIn("is not an ancestor", proc.stdout)
+            self.assertEqual(written["backend"], "true")
+            self.assertEqual(written["e2e"], "true")
+
     def test_a_main_push_without_an_anchor_scopes_every_tracked_path(self):
         # The first push after the gate moved to main has no anchor to diff
         # from; a narrower guess would let a commit no run covered go untested.
@@ -1820,7 +1851,7 @@ class MainCliTest(unittest.TestCase):
             # though nothing says it changed, and paths outside the tree are not.
             self.assertEqual(written["e2e"], "true")
             self.assertEqual(written["frontend"], "false")
-            self.assertIn("no refs/heads/main-green anchor yet", proc.stdout)
+            self.assertIn("no usable refs/heads/main-green anchor", proc.stdout)
 
     def test_an_anchorless_main_push_never_runs_the_api_job_without_a_base(self):
         # Without an anchor every tracked path counts as changed, which selects

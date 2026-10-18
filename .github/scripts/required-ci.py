@@ -267,9 +267,16 @@ def main_green_anchor(attempts=3):
             return ""
         time.sleep(2)
     refspec = f"+{MAIN_GREEN_REF}:{MAIN_GREEN_TRACKING}"
+    # Depth one only where the checkout already is: a full clone (a developer
+    # running this by hand) keeps its history, which is what lets the ancestry
+    # check below answer.
+    shallow = subprocess.check_output(
+        ["git", "rev-parse", "--is-shallow-repository"]
+    ).decode().strip() == "true"
+    depth = ["--depth=1"] if shallow else []
     for attempt in range(1, attempts + 1):
         fetched = subprocess.run(
-            ["git", "fetch", "--no-tags", "--depth=1", "origin", refspec],
+            ["git", "fetch", "--no-tags", *depth, "origin", refspec],
             capture_output=True, text=True,
         )
         if fetched.returncode == 0:
@@ -282,6 +289,27 @@ def main_green_anchor(attempts=3):
             return ""
         time.sleep(2)
     return ""  # pragma: no cover - the loop either returns or returns above
+
+
+def _is_ancestor(ancestor, descendant):
+    """Whether ``ancestor`` is on ``descendant``'s history.
+
+    A depth-one checkout cannot answer this — git sees each fetched commit as
+    its own shallow root and calls two commits on one line unrelated — so a
+    shallow repository is answered "yes": the anchor is only ever written from
+    a main push run, and refusing every batch over a check the clone cannot
+    make would widen the scope of every push to the whole tree.
+    """
+    shallow = subprocess.check_output(
+        ["git", "rev-parse", "--is-shallow-repository"]
+    ).decode().strip()
+    if shallow == "true":
+        print("Shallow checkout: the anchor's ancestry is not checkable here.")
+        return True
+    return subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        capture_output=True,
+    ).returncode == 0
 
 
 def effective_base(event_base, head="HEAD"):
@@ -313,6 +341,13 @@ def effective_base(event_base, head="HEAD"):
         )
     elif event_name == "push":
         base = main_green_anchor()
+        if base and not _is_ancestor(base, head):
+            # The anchor is only ever written from a main push run, so this
+            # should not happen; if it does (a rewritten ref), a diff against it
+            # is not a diff of what landed, so widen instead of guessing.
+            print(f"::warning::{MAIN_GREEN_REF} ({base}) is not an ancestor of "
+                  f"{head}; every tracked path is in scope")
+            base = ""
         if base:
             reason = (
                 f"push uses the last green gate result ({MAIN_GREEN_REF}), so the "
@@ -321,7 +356,7 @@ def effective_base(event_base, head="HEAD"):
             )
         else:
             reason = (
-                f"no {MAIN_GREEN_REF} anchor yet, so every tracked path is in "
+                f"no usable {MAIN_GREEN_REF} anchor, so every tracked path is in "
                 "scope: a commit no run has covered cannot be skipped"
             )
     else:

@@ -207,14 +207,17 @@ def ci_ready_settled(candidate: str) -> bool:
     return True
 
 
-def ci_waiting(candidate: str) -> bool:
-    """Whether Required CI for this commit is still to come rather than failed.
+def waiting_state(candidate: str) -> str:
+    """Why this commit's Required CI may still be to come, as a short state.
 
-    A main push runs the gate after the commit lands, so for a few minutes the
-    only honest reading is "not yet". A cancelled run is that too: the batched
-    push runs share one concurrency group, so a newer push cancels a run that
-    was still queued, and the newer commit's run covers both. The workflow is
-    triggered again by that run's completion, so nothing has to hold here.
+    ``""`` — nothing to wait for (a success, a real failure, or no run at all).
+    ``"running"`` — the gate for this exact commit has not finished.
+    ``"superseded"`` — its run was cancelled, and a newer commit on main can
+    cover it (the batched push runs share one concurrency group, so a newer
+    push cancels a queued one, and the newer commit's run diffs over both).
+    ``"cancelled-uncovered"`` — cancelled with nothing newer on main: a manual
+    or infrastructure cancellation, or a newer batch that itself failed. No run
+    will ever cover this commit, so it is a refusal, not a wait.
     """
     repository = os.environ["GITHUB_REPOSITORY"]
     runs = [run for run in workflow_runs(repository, "required-ci.yml", candidate)
@@ -222,11 +225,26 @@ def ci_waiting(candidate: str) -> bool:
             and (run["head_branch"] or "") == "main"
             and run["head_repository"]["full_name"] == repository]
     if not runs:
-        return False
+        return ""
     if any(run["status"] != "completed" for run in runs):
-        return True
+        return "running"
     latest = max(runs, key=lambda run: (run["updated_at"], run["id"]))
-    return latest["conclusion"] == "cancelled"
+    if latest["conclusion"] != "cancelled":
+        return ""
+    try:
+        newer = newer_on_main(candidate)
+    except ValueError:
+        newer = []
+    return "superseded" if newer else "cancelled-uncovered"
+
+
+#: The waiting states a release can wait out; ``cancelled-uncovered`` is not one.
+WAITABLE = frozenset({"running", "superseded"})
+
+
+def ci_waiting(candidate: str) -> bool:
+    """Whether Required CI for this commit is still to come rather than failed."""
+    return waiting_state(candidate) in WAITABLE
 
 
 def newer_on_main(candidate: str) -> list[str]:
@@ -355,7 +373,9 @@ def main() -> None:
         return
     if sys.argv[1] == "--ci-only":
         ready = ci_ready_settled(sys.argv[2])
-        waiting = not ready and ci_waiting(sys.argv[2])
+        state = waiting_state(sys.argv[2])
+        waiting = not ready and state in WAITABLE
+        uncovered = not ready and state == "cancelled-uncovered"
         newer = superseded_by(sys.argv[2]) if ready else ""
         if newer:
             print(f"Not deploying {sys.argv[2]}: {newer}, newer on main, has its images and Required CI, "
@@ -363,9 +383,12 @@ def main() -> None:
         if waiting:
             print(f"Not deploying {sys.argv[2]} yet: its Required CI run on main has not finished; "
                   "that run's completion releases it.")
+        if uncovered:
+            print(f"Not deploying {sys.argv[2]}: its Required CI run was cancelled and no "
+                  "newer commit on main can cover it, so nothing will release it.")
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
             output.write(f"ready={str(ready).lower()}\nsuperseded={newer}\n"
-                         f"waiting={str(waiting).lower()}\n")
+                         f"waiting={str(waiting).lower()}\nuncovered={str(uncovered).lower()}\n")
         return
     rebuilt = sys.argv[1] == "--rebuilt"
     candidate = sys.argv[2] if rebuilt else sys.argv[1]
