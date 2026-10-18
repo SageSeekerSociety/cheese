@@ -107,8 +107,10 @@ def author_files(repo, base, since, head):
     difference from that automatic merge is authored resolution; a later origin/main
     cannot change the answer. Ordinary commits and non-base merges keep their diff.
     Intersect with the net diff so a change reverted before head needs no review.
+    Keep both paths of a rename: an authored edit may be under the old path
+    while a clean base merge carries it to the new path.
     """
-    net = tiers.paths_of(repo, since, head)
+    net = tiers.paths_of(repo, "--no-renames", since, head)
     commits = tiers._git(repo, "rev-list", "--first-parent", f"{since}..{head}")
     if net is None or commits is None:
         return None

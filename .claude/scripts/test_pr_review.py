@@ -138,7 +138,8 @@ class PrReview(unittest.TestCase):
         (work / ".claude/rules/unscoped.md").write_text("# UNSCOPED RULE TEXT\n")
         (work / "backend").mkdir(parents=True, exist_ok=True)
         (work / "backend/AGENTS.md").write_text("# BACKEND AGENTS TEXT\n")
-        (work / "f.txt").write_text("base\n")
+        (work / "f.txt").write_text(
+            "\n".join(f"value_{n} = 0" for n in range(20)) + "\n")
         # Every commit in this fixture gets a per-run id in its base tree. Two runs started
         # in the same second otherwise produce identical commit hashes, and a test that
         # names a round by PR and SHA (the /tmp compatibility link) would race the other
@@ -1022,6 +1023,33 @@ class PrReview(unittest.TestCase):
             self.assertEqual(ready.returncode, 1, ready.stdout + ready.stderr)
             self.assertIn("缺一次增量审", ready.stdout)
             self.assertIn("f2.py", ready.stdout)
+        finally:
+            git(self.work, "update-ref", "refs/remotes/origin/main", original_main)
+            git(self.work, "checkout", "-q", "main")
+
+    def test_ready_requires_review_when_main_renames_an_edited_file(self):
+        out = self.run_script("prepare", PR_BASE_MERGE, self.base_merge_reviewed)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        d, _ = self.post(Path(out.stdout.strip()))
+        original_main = git(self.work, "rev-parse", "origin/main")
+        try:
+            git(self.work, "checkout", "-q", "-b", "rename-main", "main")
+            git(self.work, "mv", "f.txt", "g.txt")
+            git(self.work, "commit", "-qm", "main renames the file")
+            git(self.work, "update-ref", "refs/remotes/origin/main", "HEAD")
+            git(self.work, "checkout", "-q", "-b", "rename-pr", self.base_merge_reviewed)
+            (self.work / "f.txt").write_text(
+                (self.work / "f.txt").read_text().replace("value_0 = 0", "value_0 = 999"))
+            git(self.work, "commit", "-qam", "edit after review")
+            git(self.work, "merge", "-q", "--no-autostash", "--no-edit", "rename-main")
+            merged = git(self.work, "rev-parse", "HEAD")
+            self.assertIn("value_0 = 999", git(self.work, "show", "HEAD:g.txt"))
+            self.assertIn("R", git(self.work, "diff", "--name-status",
+                                   self.base_merge_reviewed, merged))
+            ready = self.run_script("ready", str(d), env_extra={
+                "PR11_HEAD": merged, "CI_JSON": self.GREEN})
+            self.assertEqual(ready.returncode, 1, ready.stdout + ready.stderr)
+            self.assertIn("缺一次增量审", ready.stdout)
         finally:
             git(self.work, "update-ref", "refs/remotes/origin/main", original_main)
             git(self.work, "checkout", "-q", "main")
