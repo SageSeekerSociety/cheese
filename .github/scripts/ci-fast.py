@@ -55,7 +55,7 @@ import sys
 import tempfile
 import time
 
-from ci_fast_checks import _cores, resolve, test_plan
+from ci_fast_checks import _cores, resolve, test_plan, tree_guard_check
 from ci_fast_process import dependencies, execute
 
 REPO_ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
@@ -617,8 +617,14 @@ def run(args, report, finish, started):
             continue
         hook(identifier)
     if args.tier == "static":
+        if scope.get("backend"):
+            # The whole-tree guards judge the tree, not the diff, and need no
+            # database; a push is the first place a cross-domain import can be
+            # caught before the quick tier on the PR finds it.
+            check = tree_guard_check(Path(REPO_ROOT))
+            invoke(check["id"], check["command"], check["cwd"], None, check["env"])
         report["not_run"].extend([
-            {"id": "pytest", "reason": "static tier only; run task ci:fast for selected pure tests"},
+            {"id": "pytest", "reason": "static tier runs only the whole-tree guards; run task ci:fast for the selected pure tests"},
             {"id": "typecheck", "reason": "static tier only; run task ci:fast for changed-file types"},
             {"id": "build", "reason": "outside this local tier; run full CI"},
             {"id": "e2e", "reason": "outside this local tier; run full CI"},
