@@ -11,6 +11,7 @@
 // 的 stores），这一层据此重读最近一次编辑和修改建议的理由。
 import type { Block, Topic } from '../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
+import type { AuthoredDocument } from '../lib/docAuthors'
 import type { DocEdit } from '../lib/docEdits'
 import type { CanvasData } from '../types/canvas'
 
@@ -38,7 +39,7 @@ import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 
 /** 不在哪个对话里的一份文档（项目资料库里的）：直接给编号，不经对话去问。 */
-export interface PanelDocument {
+export interface PanelDocument extends AuthoredDocument {
   id: string
   projectId: string
   title: string

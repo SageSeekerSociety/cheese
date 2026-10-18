@@ -46,7 +46,7 @@ const listEl = ref<HTMLElement | null>(null)
       busy=""
       :browsing="true"
       :members="members"
-      agent-name=""
+      :agent-name="t('work.room.defaultAgentName')"
       @open-doc="emit('open', $event)"
     />
     <BaseEmptyState v-else size="inline" align="center" :title="t('teams.docs.empty')" />
