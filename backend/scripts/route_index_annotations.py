@@ -123,8 +123,7 @@ def check_annotation_coverage(rows: list[dict], path: str | Path) -> int:
     (WS included), so an address registered twice is one entry, and an
     annotation that no address matches is as loud as an address that no
     annotation covers. Whether an earlier route shadows a later one is a
-    separate check (`route_index.checked_findings`), which identifies a pair by
-    path and handler rather than by registration position.
+    separate check (`route_index --check`).
     """
     annotations = read_annotations(path)
     keys = set()

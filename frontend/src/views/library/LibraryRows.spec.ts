@@ -44,6 +44,7 @@ beforeEach(() => setLocale('zh-CN'))
 function doc(id: string, title: string, author: string): ProjectDocument {
   return {
     id,
+    team_id: 1,
     project_id: 'p1',
     kind: 'doc',
     title,

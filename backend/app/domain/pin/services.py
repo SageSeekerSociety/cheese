@@ -21,7 +21,7 @@ from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
 from app.domain.membership.ports import ProjectTeam
 from app.domain.pin.models import Pin
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic, TopicStatus, is_private_chat
 from app.domain.topic_membership.services import TopicMemberService
 
 #: What can be pinned: what someone said, and the files sent with it.
@@ -69,7 +69,7 @@ class Pins:
         )
 
     async def _may_pin(self, room: Topic, by: str) -> None:
-        if room.is_private:
+        if is_private_chat(room):
             raise ValidationError(say("pinChannelsOnly"))
         if room.status == TopicStatus.archived:
             raise ForbiddenError(say("roomArchivedUnarchiveFirst"))

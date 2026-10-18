@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 from app.domain.conversation.services import room_of_thread
 from app.domain.identity.handles import CHEESE_HANDLE, looks_like_agent_handle
 from app.domain.identity.services import IdentityService
-from app.domain.topic.models import Topic, TopicKind, TopicRole
+from app.domain.topic.models import Topic, TopicKind, TopicRole, is_private_chat
 from app.domain.topic_membership.ports import ProjectTeam
 from app.domain.topic_membership.schemas import TopicMemberOut
 
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 def _public(topic: Topic) -> bool:
     """A channel anyone in the project reads and may join, as opposed to a
     private room of two seats."""
-    return not topic.is_private
+    return not is_private_chat(topic)
 
 
 async def _ensure_member(

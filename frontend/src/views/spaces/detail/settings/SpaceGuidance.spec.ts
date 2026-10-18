@@ -54,7 +54,7 @@ const SAVED = {
   allowedTopics: ['循环', '数组'],
   avoidInCode: ['递归'],
   materialIds: [161],
-  knowledgeIds: [],
+  documentIds: [],
 }
 
 function mountPage(teaching?: Record<string, unknown>) {
@@ -152,7 +152,7 @@ describe('空间设置：给 AI 队友的指导', () => {
           allowedTopics: [],
           avoidInCode: [],
           materialIds: [],
-          knowledgeIds: [],
+          documentIds: [],
         },
       })
     )
@@ -173,7 +173,7 @@ describe('空间设置：给 AI 队友的指导', () => {
         allowedTopics: [],
         avoidInCode: [],
         materialIds: [],
-        knowledgeIds: [],
+        documentIds: [],
       },
     })
   })
