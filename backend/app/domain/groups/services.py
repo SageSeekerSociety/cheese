@@ -82,10 +82,13 @@ class GroupsService:
         group_ids = [row.id for row in rows]
         profiles = await self._profile_repo.get_profiles_by_group_ids(group_ids)
 
+        member_counts = await self._membership_repo.count_members_by_group_ids(
+            group_ids
+        )
         items = []
         for row in rows:
             profile = profiles.get(row.id)
-            member_count = await self._membership_repo.count_members(row.id)
+            member_count = member_counts.get(row.id, 0)
             items.append(_group_to_dto(row, profile, member_count=member_count))
 
         returned = len(items)
