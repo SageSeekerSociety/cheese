@@ -236,7 +236,7 @@ async def update_notification_status(
     return ok({"notification": await _dump(service, notification)})
 
 
-@router.delete("/notifications/{notification_id}")
+@router.delete("/notifications/{notification_id}", dependencies=[ROUTE_DECIDES])
 async def delete_notification(
     notification_id: int, user: AuthUser, db: DbSession
 ) -> Response:

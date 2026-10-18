@@ -241,7 +241,7 @@ async def _projects_own_agent(
 
 # Registered BEFORE the catch-all below — FastAPI matches in declaration order,
 # and the catch-all would otherwise swallow this path and forward it upstream.
-@router.post("/admission", include_in_schema=False)
+@router.post("/admission", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def admission(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
