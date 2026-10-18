@@ -418,6 +418,7 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
         )
         self.body_file.write_text(
             "## 改动原因\n修复问题。\n\n"
+            "独立 review：head 11111111 结论 有 1 条｜档位 B\n"
             "独立 review：head 22222222 结论 无 blocker/major｜档位 B\n",
             encoding="utf-8",
         )
@@ -452,6 +453,30 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
             "独立 review：head 11111111 结论 有 2 条｜档位 B",
             body.read_text(encoding="utf-8"),
         )
+
+    def test_fix_refuses_to_invent_the_round_a_delta_sits_on(self) -> None:
+        """A single delta line may not become round 1 with a made-up verdict."""
+        delta = self.root / "REVIEW-RESULT.md"
+        delta.write_text(
+            "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major｜档位 B\n",
+            encoding="utf-8",
+        )
+        self.body_file.write_text(
+            "## 改动原因\n修复问题。\n\n"
+            "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major｜档位 B\n",
+            encoding="utf-8",
+        )
+        result = self.run_script(
+            "--fix",
+            "--review-result",
+            str(delta),
+            "--text",
+            str(self.body_file),
+            "--out",
+            str(self.body_file),
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("缺那一轮的结论", result.stderr)
 
     def test_removing_last_line_check_makes_not_on_last_line_case_fail(self) -> None:
         """Deliberate violation: strip the last-line check and assert the test goes red."""

@@ -234,8 +234,9 @@ def ensure_round_one(text: str) -> str:
 
     When an earlier round exists, the suffix on the first line is a mistake and
     is dropped. When it is the only line, dropping it would claim the review
-    covered the whole change, so the round the increment came from is written
-    down in front of it instead."""
+    covered the whole change, and writing the round it came from down in front
+    would be inventing that round's verdict — so the repair refuses: the caller
+    has to bring the earlier round's line."""
     lines = text.splitlines()
     hits = _review_lines(text)
     if not hits:
@@ -246,9 +247,9 @@ def ensure_round_one(text: str) -> str:
     if len(hits) > 1:
         lines[hits[0]] = SINCE_SUFFIX.sub(" ", lines[hits[0]], count=1)
     else:
-        serious = int(card.group("serious") or 0)
-        lines.insert(
-            hits[0], card_line(card.group("since"), None, serious, card.group("tier"))
+        raise ValueError(
+            f"正文只有一条增量行（自 {card.group('since')[:8]}），缺那一轮的结论："
+            f"先把 round 1 的结论行补上，或在审查目录里 post 那一轮"
         )
     return "\n".join(lines) + "\n"
 
@@ -284,6 +285,21 @@ def fix_body(
     line = card_line(
         target_head, target_since, source["serious"], tier or source["tier"]
     )
+    if target_since and not _review_lines(text):
+        if source["since"]:
+            # The review itself was a delta: the round it builds on is not ours
+            # to invent, and this line may not be round 1.
+            raise ValueError(
+                f"审查是增量审（自 {source['since'][:8]}），正文里还没有上一轮的结论行："
+                f"先补上那一轮再盖章"
+            )
+        # The review this increment builds on named the reviewed head itself;
+        # writing it down first is what makes the following line round 2.
+        text = body_append(
+            text,
+            card_line(source["head"], None, source["serious"], tier or source["tier"]),
+        )
+        return body_append(text, line)
     return ensure_round_one(body_with_line(text, line))
 
 
@@ -311,6 +327,12 @@ def stamp_body(
     if not hits:
         # A card with no review line yet is round 1: the full review goes down
         # first, and a declaration of the exempt increment is a round after it.
+        # A delta review's own round is not ours to invent.
+        if increment and source["since"]:
+            raise ValueError(
+                f"审查是增量审（自 {source['since'][:8]}），正文里还没有上一轮的结论行："
+                f"先补上那一轮再盖章"
+            )
         if increment:
             text = body_append(
                 text,
