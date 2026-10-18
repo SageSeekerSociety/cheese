@@ -72,6 +72,7 @@ from app.domain.project.protection import (
     github_repo_snapshot,
 )
 from app.domain.project.schemas import (
+    CommitCredit,
     CommitCreditUpdate,
     ProjectCreate,
     ProjectOut,
@@ -728,7 +729,7 @@ async def get_project_forge(
     )
 
 
-@router.get("/{project_id}/commit-credit")
+@router.get("/{project_id}/commit-credit", **typed_response(CommitCredit))
 async def get_commit_credit(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -739,7 +740,11 @@ async def get_commit_credit(
     return ok({"mode": credit_mode(project.settings or {})})
 
 
-@router.put("/{project_id}/commit-credit", dependencies=[ROUTE_DECIDES])
+@router.put(
+    "/{project_id}/commit-credit",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(CommitCredit),
+)
 async def save_commit_credit(
     project_id: uuid.UUID,
     body: CommitCreditUpdate,
