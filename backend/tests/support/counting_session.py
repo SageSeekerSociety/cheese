@@ -8,9 +8,11 @@ fake session and its own name for it, and the name lived in the file name and
 nowhere in the code — which is why the family could not be found by searching
 for it.
 
-Everything that counts now goes through :func:`counting_sql`, or through
+Everything that counts now goes through :func:`counting_sql`, through
 :func:`assert_does_not_scale` when the question is the shape of the growth
-rather than an exact number. The ``reads_once`` marker that lists the family
+rather than an exact number, or through :func:`assert_reads_within_ceiling`
+when the growth is a known N+1 someone has yet to batch. The ``reads_once``
+marker that lists the family
 (`pytest -m reads_once`) is added by the collector in ``tests/conftest.py``
 from :func:`measures_query_counts`, defined here so the marker and the helper
 cannot disagree about what the family is.
@@ -82,10 +84,20 @@ def counting_sql(client: Any) -> Iterator[list[str]]:
 class QueryGrowth(AssertionError):
     """A list's statement count grew with the number of rows it listed.
 
-    Its own type so a caller can say "this endpoint is known to scale" without
-    also excusing a seed that failed, a 500, or a response shape that moved:
-    ``pytest.mark.xfail(raises=QueryGrowth)`` swallows exactly this defect and
-    nothing else.
+    Raised by :func:`assert_growth_within` when a page that must not scale
+    does, and by :func:`assert_reads_within_ceiling` when a page whose debt is
+    recorded goes past the count recorded for it. Its own type in both cases so
+    a caller can tell this defect from an ordinary assertion — a seed that
+    failed, a 500, or a response shape that moved is not this — and so a
+    failure line names the defect rather than a boolean.
+
+    It used to be its own type so that
+    ``pytest.mark.xfail(raises=QueryGrowth)`` could excuse exactly this defect.
+    That has no use in this repository: an ``xfail`` is reported as a *skipped
+    case* and ``scripts/assert_suite_ran.py`` fails the job on a skip,
+    deliberately. Known debt is recorded as a ceiling instead — see
+    :func:`assert_reads_within_ceiling` — and ``tests/unit/test_known_debt_is_not_an_xfail.py``
+    keeps the marker out of the tree.
     """
 
 
@@ -145,8 +157,8 @@ def assert_growth_within(
 
     :func:`assert_does_not_scale` seeds and measures; a test that has to build
     two differently-sized fixtures by hand (a task per submission count, say)
-    measures its own and calls this, so both raise the same :class:`QueryGrowth`
-    and an ``xfail`` can excuse exactly that defect.
+    measures its own and calls this, so a page whose debt is recorded uses the
+    same :class:`QueryGrowth` as one that must not scale at all.
     """
     grew = large_count - small_count
     if grew > allow_growth:
@@ -154,6 +166,44 @@ def assert_growth_within(
             f"{what} grew from {small} to {large} rows and the statement count "
             f"went {small_count} -> {large_count} (+{grew}); something is "
             "querying per row."
+        )
+
+
+def assert_reads_within_ceiling(
+    count: int,
+    *,
+    ceiling: int,
+    what: str,
+    debt: str,
+) -> None:
+    """A list whose N+1 is known and recorded may not read more than ``ceiling``.
+
+    :func:`assert_does_not_scale` is the rule for a page that must not scale.
+    This is for the page that does scale today and whose batching is a separate
+    change: the count measured now becomes a ceiling, so the test is green
+    where it stands, red the moment the endpoint reads even one row more, and
+    green again only after the batch lands and the ceiling comes down with it.
+
+    ``debt`` says which N+1 this is and what pays it off, and goes into the
+    failure message: whoever trips the ceiling needs to know whether they grew
+    the debt or merely met it, and the number alone does not say.
+
+    Why not ``pytest.mark.xfail``. A marker records a debt by *not running the
+    assertion*: pytest reports it as skipped, and
+    ``backend/scripts/assert_suite_ran.py`` fails the job on any skipped case —
+    deliberately, so a suite that cannot meet its environment is loud rather
+    than green. An xfail is therefore not a way to record debt here, and
+    ``tests/unit/test_known_debt_is_not_an_xfail.py`` keeps it out of the tree.
+    A ceiling records the same debt as a number that is compared on every run,
+    which is strictly more information: the endpoint's cost is asserted at the
+    size the test seeds, not excused.
+    """
+    if count > ceiling:
+        raise QueryGrowth(
+            f"{what} read {count} statements, over the {ceiling} recorded for it "
+            f"({debt}). Either something new is querying per row — batch it — or "
+            "the debt was paid off and this ceiling is stale: lower it to the "
+            "count measured now, in the same change."
         )
 
 
