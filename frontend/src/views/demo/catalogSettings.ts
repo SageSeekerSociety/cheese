@@ -228,7 +228,7 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     id: 'settings-github-account',
     title: 'GithubAccountSettings',
     about:
-      '连接 GitHub 账号：App 的 user-to-server 授权，独立于登录用的经典 OAuth，供 credit 归属和以本人身份开 PR 用。',
+      '连接 GitHub 账号：App 的 user-to-server 授权，独立于登录用的经典 OAuth，连接仓库时确认写权限，并供 credit 归属用；PR 由平台的 App 开。',
     file: 'src/components/settings/GithubAccountSettings.vue',
     component: GithubAccountSettings,
     needs: UI_I18N,
@@ -241,13 +241,13 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '连上了',
-        note: '连上之后说清是哪个 GitHub 账号、什么时候连的；「断开」是红的 —— 它会把以你身份开 PR 的能力一起收走。',
+        note: '连上之后说清是哪个 GitHub 账号、什么时候连的；「断开」是红的 —— 断开之后连不了新仓库，署名也退回登录用的账号或平台地址。',
         props: accountProps({ conn: accountConn() }),
         expect: '已连接',
       },
       {
         name: '授权过期了',
-        note: 'user token 过期不等于没连：这里照旧画「已连接」，另加一条说明为什么现在开不了 PR、该点哪里。`tokenExpires` 为 null 是「不过期」，不是「已过期」。',
+        note: 'user token 过期不等于没连：这里照旧画「已连接」，另加一条说明连接仓库失败时该点哪里。`tokenExpires` 为 null 是「不过期」，不是「已过期」。',
         props: accountProps({ conn: accountConn({ tokenExpires: '2026-01-01T00:00:00Z' }) }),
         expect: 'GitHub 授权已过期',
       },
