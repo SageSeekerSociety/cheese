@@ -26,3 +26,15 @@ async def ignores_other_awaited_method(rows, cache):
     for row in rows:
         # ok: row-read-in-loop
         await cache.refresh(row.id)
+
+
+async def reads_via_bare_helper_inside_loop(rows):
+    for row in rows:
+        # ruleid: row-read-in-loop
+        await _people_seated(row.id)
+
+
+async def ignores_other_bare_helper(rows):
+    for row in rows:
+        # ok: row-read-in-loop
+        await _unrelated(row.id)
