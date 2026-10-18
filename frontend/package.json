@@ -17,7 +17,6 @@
     "lint:fix": "eslint . --fix",
     "lint:style": "node scripts/stylelint-ratchet.mjs",
     "lint:style:fix": "stylelint \"src/**/*.{vue,css,scss}\" --fix",
-    "lint:style:update": "node scripts/stylelint-ratchet.mjs --update",
     "lint:boundary": "node scripts/import-boundary-ratchet.mjs",
     "lint:storage": "node scripts/browser-storage-ratchet.mjs",
     "lint:global-fallback": "node scripts/check-global-fallback-ratchet.mjs",
