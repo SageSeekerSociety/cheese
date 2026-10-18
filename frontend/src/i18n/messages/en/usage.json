@@ -9,7 +9,7 @@
     "claimed": "Claimed",
     "teamTitle": "Built for research teams",
     "teamBody": "Share projects and AI teammates with your lab. Manage credits together, track spending by project and task, and set members' task spending limits.",
-    "privacy": "Team content is not used for model training.",
+    "privacy": "We do not use team content to train models.",
     "findTeam": "Choose or create a team",
     "teamApply": "Request a Team plan",
     "managerOnly": "Ask a team administrator to request a plan or top-up.",
