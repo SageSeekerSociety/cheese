@@ -43,7 +43,7 @@ async def _own(
     return agent.id
 
 
-async def test_naming_four_agents_judges_them_in_one_query(db_factory, monkeypatch):
+async def test_naming_several_agents_judges_them_in_one_query(db_factory, monkeypatch):
     topic_id = await a_topic(db_factory)
     seated: list[str] = []
 
@@ -84,7 +84,7 @@ async def test_naming_four_agents_judges_them_in_one_query(db_factory, monkeypat
         try:
             assert await callable_by_many(session, ids, "u") == singly
             assert len(queries) == 1
-            # an agent is never someone an agent answers to, even an open one
+            # "cheese" is an agent handle, so even an open agent refuses it; "芝士" is a person-like handle
             for agent_caller in ("cheese", "芝士"):
                 assert await callable_by_many(session, ids, agent_caller) == {
                     i: await callable_by(session, i, agent_caller) for i in ids
