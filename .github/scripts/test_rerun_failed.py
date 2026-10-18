@@ -486,42 +486,57 @@ class LogSignatureTest(unittest.TestCase):
             ),
             "error summary line": f"ERROR tests/unit/test_x.py::test_x - {flake}",
             "auto marker without a banner": f">       assert {flake}",
+            "summary banner alone": (
+                "============= short test summary info =============\n"
+                "1 failed in 0.05s\n"
+                "read ECONNRESET"
+            ),
+            "unittest multi-line message": (
+                "FAIL: test_x (__main__.TestX)\n"
+                "AssertionError: first line of explanation\n"
+                "read ECONNRESET while reading"
+            ),
+            "traceback continuation": (
+                "Traceback (most recent call last):\n"
+                "read ECONNRESET while reading"
+            ),
         }
         for label, block in blocks.items():
             with self.subTest(shape=label):
                 self.assertIsNone(rerun.flake_log_signature(block))
 
-    def test_a_tool_error_after_a_unittest_traceback_is_still_scanned(self):
-        log = "\n".join(
+    def test_a_report_ends_at_the_step_boundary(self):
+        """The next step's tool output is still scanned, whatever the report left."""
+        for tail in (
+            ("FAIL: test_x (__main__.TestX)", "Traceback (most recent call last):"),
             (
-                "FAIL: test_x (__main__.TestX)",
-                "Traceback (most recent call last):",
-                '  File "test_x.py", line 25, in test_x',
-                '    rerun.flake_log_signature("read econnreset")["id"]',
-                "Ran 1 test in 0.001s",
-                "FAILED (failures=1)",
-                "Error: read ECONNRESET",
-            )
-        )
-        self.assertEqual(rerun.flake_log_signature(log)["id"], "econnreset")
-
-    def test_a_tool_error_after_the_report_is_still_scanned(self):
-        """Both closing shapes end the skip: with `-q` and the decorated one."""
-        for closing in (
-            "1 failed in 0.05s",
-            "============================== 1 failed in 0.05s ==============================",
-            "============================ no tests ran in 0.02s ============================",
+                "=================== FAILURES ===================",
+                "FAILED tests/unit/test_x.py::test_x - AssertionError",
+                "============================== 1 failed in 0.05s ==============================",
+            ),
         ):
-            with self.subTest(closing=closing):
+            with self.subTest(tail=tail):
                 log = "\n".join(
-                    (
-                        "=================== FAILURES ===================",
-                        "FAILED tests/unit/test_x.py::test_x - AssertionError",
-                        closing,
-                        "Error: read ECONNRESET",
-                    )
+                    [
+                        *(f"backend\tRun tests\t2026-10-18T09:06:04Z {line}" for line in tail),
+                        "backend\tInstall dependencies\t2026-10-18T09:07:00Z"
+                        " Error: read ECONNRESET",
+                    ]
                 )
                 self.assertEqual(rerun.flake_log_signature(log)["id"], "econnreset")
+
+    def test_a_tool_error_inside_a_reported_step_is_refused(self):
+        """Deliberate bias: after a report starts, that step's text is not evidence."""
+        log = "\n".join(
+            (
+                "backend\tRun tests\t2026-10-18T09:06:04Z"
+                " =================== FAILURES ===================",
+                "backend\tRun tests\t2026-10-18T09:06:04Z"
+                " upstream_message = 'upstream said: read ECONNRESET'",
+                "backend\tRun tests\t2026-10-18T09:06:04Z Error: read ECONNRESET",
+            )
+        )
+        self.assertIsNone(rerun.flake_log_signature(log))
 
     def test_the_signatures_argument_is_honoured(self):
         custom = (

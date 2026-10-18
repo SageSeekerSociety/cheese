@@ -69,39 +69,37 @@ GH_TIMEOUT = 120
 # line of the job's own output.
 _LOG_PREFIX = re.compile(r"^[^\t\n]*\t[^\t\n]*\t(?:\ufeff)?\S+\s")
 
-# A failure report quotes text the test owns — its source, its expected
-# values, its captured output — and any of those can contain a signature word
-# like `ECONNRESET` or a rate-limit message. Such a line must never be read as
-# evidence of infrastructure flake, so the scan skips the shapes a report
-# writes those lines in:
+# A failure report quotes text the test owns — its source, its fixtures and
+# parameters, its expected values, its captured output — at every indentation
+# level and with no reliable marker: pytest's `--tb=auto` prints `name = repr`
+# lines at column 0, and unittest prints the continuation of a multi-line
+# assertion message at column 0. Enumerating those shapes is what kept leaving
+# a gap, so the rule is a bound instead of a shape list:
 #
-#   * any indented line. pytest reprints the failing statement and the whole
-#     test body indented (`--tb=short` and `--tb=auto` alike), and unittest
-#     reprints its source lines indented; a tool reporting its own failure
-#     writes at column 0.
-#   * a `--- Captured stdout/stderr ... ---` section, whatever its text, until
-#     the next report banner. Its lines are the test's own output at column 0.
-#   * the report's own column-0 markers: the FAILURES/ERRORS/short-summary
-#     banners, the `_ test_x[id] _` header, `FAILED `/`ERROR ` summary lines,
-#     the `>` and `E   ` lines of a `--tb=auto` report, and the introspected
-#     `assert ` lines.
+#   once a step starts printing a test report, nothing later in that step is
+#   flake evidence.
 #
-# The state is dropped whenever the log moves to another job or step: the
-# prefix names both, and a report can only run on inside the step that started
-# it. Without that bound a traceback early in one step would swallow every
-# later step's output, hiding a real flake instead.
+# The gh log names the job and step on every line, so "that step" is exact. A
+# report starts at a FAILURES/ERRORS/short-summary banner, a `_ test_x _`
+# header, a `--- Captured ... ---` section, a unittest `FAIL:`/`ERROR:`
+# header, or a `Traceback (most recent call last):` line. Before that point —
+# setup, install, checkout, the tool's own output — lines are scanned, and so
+# is every other step. Indented lines and column-0 report markers are skipped
+# as well, for output a report leaves before its own banner.
 #
 # The bias is deliberate: an unrecognised line is refused rather than rerun, so
 # a missed flake costs one person a look while a wrong rerun costs the failed
-# job set again and delays the real diagnosis.
-_PYTEST_BANNER = re.compile(
+# job set again and delays the real diagnosis. A test step that crashes after
+# its report began is therefore refused, not rerun.
+_REPORT_START = re.compile(
     r"^(?:=+ (?:FAILURES|ERRORS|short test summary info|warnings summary"
     r"|slowest \d+ durations) =+"
-    r"|-{3,} Captured .+ -{3,}|_{3,} .+ _{3,})$"
+    r"|-{3,} Captured .+ -{3,}"
+    r"|_{3,} .+ _{3,}$"
+    r"|FAIL: |ERROR: |Traceback \(most recent call last\):$)"
 )
-_PYTEST_CAPTURED = re.compile(r"^-{3,} Captured .+ -{3,}$")
 _PYTEST_REPORT = re.compile(
-    r"^(?:FAILED |ERROR |FAIL: |ERROR: |>{1,2}\s|E {2,}|assert |AssertionError)"
+    r"^(?:FAILED |ERROR |>{1,2}\s|E {2,}|assert |AssertionError)"
 )
 
 
@@ -210,24 +208,21 @@ def flake_log_signature(
     """
     if not failed_log:
         return None
-    key: tuple[str, str] | None = None
-    in_captured = False
+    reported: set[tuple[str, str]] = set()
+    step = ("", "")
     for line in failed_log.splitlines():
-        line_key = _log_key(line)
-        if line_key is not None and line_key != key:
-            key = line_key
-            in_captured = False
+        key = _log_key(line)
+        if key is not None:
+            step = key
         message = _message(line)
-        if _PYTEST_CAPTURED.match(message):
-            in_captured = True
+        if step in reported:
             continue
-        if in_captured:
-            if _PYTEST_BANNER.match(message):
-                in_captured = False
+        if _REPORT_START.match(message):
+            reported.add(step)
             continue
         if not message.strip() or message[:1].isspace():
             continue
-        if _PYTEST_BANNER.match(message) or _PYTEST_REPORT.match(message):
+        if _PYTEST_REPORT.match(message):
             continue
         for signature in LOG_SIGNATURES if signatures is None else signatures:
             if re.search(signature["pattern"], message, re.IGNORECASE):
