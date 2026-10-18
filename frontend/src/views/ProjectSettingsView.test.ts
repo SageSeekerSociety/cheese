@@ -278,7 +278,7 @@ describe('project settings', () => {
   it.each([
     ['agents', ['AI 队友', '默认模型', '成员自己的 Claude Code']],
     // 在哪运行、怎么准备、还能跑多久：环境一页说完。
-    ['environment', ['默认环境', '脚本与环境变量', '额度']],
+    ['environment', ['默认环境', '脚本与环境变量', '额度', '项目和成员预算']],
     // 分支保护是合并规则，不是仓库连接。
     ['merge', ['分支保护']],
     ['repository', ['GitHub 仓库地址', '连接 GitHub 仓库', '提交署名']],

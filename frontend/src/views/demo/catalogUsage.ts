@@ -5,6 +5,8 @@
 import type { CreditUsage, UsagePack, UsagePeriod } from '@/lib/creditUsage'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import AdminCreditRequests from '@/components/admin/credits/AdminCreditRequests.vue'
+import CreditOffers from '@/components/usage/CreditOffers.vue'
 import TeamCreditsView from '@/views/teams/detail/CreditsView.vue'
 import UsageSettingsView from '@/views/user/settings/UsageView.vue'
 
@@ -139,6 +141,79 @@ const TEAM: CreditUsage = {
 }
 
 export const USAGE_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'credit-offers',
+    title: 'CreditOffers',
+    about: '内测体验额度、反馈奖励，以及面向科研团队的方案与充值申请。',
+    file: 'src/components/usage/CreditOffers.vue',
+    component: CreditOffers,
+    needs: UI,
+    states: [
+      {
+        name: '个人奖励',
+        note: '每个账号可领取一次；反馈奖励在采纳后入个人额度。',
+        props: { personal: true, beta: { credits: 500, claimed: false, feedback_credits: 100 } },
+        expect: '领取体验额度',
+      },
+      {
+        name: '已领取',
+        note: '领取后按钮停用，仍可通过反馈获得奖励。',
+        props: { personal: true, beta: { credits: 500, claimed: true, feedback_credits: 100 } },
+        expect: '已领取',
+      },
+      {
+        name: '团队管理员',
+        note: '可提交方案申请和充值点数；开通前确认报价，提交不扣款。',
+        props: { canManage: true },
+        expect: '申请充值',
+      },
+      { name: '团队成员', note: '成员看到方案说明，开通和充值由管理员处理。', props: {}, expect: '请联系团队管理员' },
+      {
+        name: '读取失败',
+        note: '保留失败原因和重试入口，奖励按钮不可领取。',
+        props: { personal: true, error: '暂时无法读取奖励' },
+        expect: '重试',
+      },
+    ],
+  },
+  {
+    id: 'admin-credit-requests',
+    title: 'AdminCreditRequests',
+    about: '管理员核对团队申请，确认线下付款或试用安排后开通；拒绝不会发额度。',
+    file: 'src/components/admin/credits/AdminCreditRequests.vue',
+    component: AdminCreditRequests,
+    needs: UI,
+    states: [
+      {
+        name: '充值申请',
+        note: '确认前开通按钮不可用；重复确认由账本去重。',
+        props: {
+          requests: [
+            {
+              id: 'r1',
+              team_id: 3,
+              team_name: '城市数据实验室',
+              kind: 'top_up',
+              credits: 1000,
+              status: 'pending',
+              requester_handle: 'alice',
+              created_at: '2026-10-18T00:00:00Z',
+            },
+          ],
+          plans: [],
+          busy: false,
+          error: null,
+        },
+        expect: '已确认付款或试用安排',
+      },
+      {
+        name: '暂无申请',
+        note: '明确没有待处理申请。',
+        props: { requests: [], plans: [], busy: false, error: null },
+        expect: '暂无待处理申请',
+      },
+    ],
+  },
   {
     id: 'usage-settings-view',
     title: 'UsageSettingsView',
