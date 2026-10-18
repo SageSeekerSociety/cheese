@@ -23,7 +23,6 @@
     "src/components/admin/AdminQueueRow.vue": 11,
     "src/components/admin/AdminShareBar.vue": 2,
     "src/components/admin/AdminSidebar.vue": 5,
-    "src/components/admin/AdminStatusCell.vue": 2,
     "src/components/admin/credits/AdminCreditTeamsTable.vue": 1,
     "src/components/admin/dashboard/AdminDashboardFeedback.vue": 5,
     "src/components/admin/dashboard/AdminDashboardHeader.vue": 6,
