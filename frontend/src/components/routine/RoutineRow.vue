@@ -144,6 +144,7 @@ const actions = computed<MenuAction[]>(() =>
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused controls (the keyboard's Menu key fires it too) -->
   <li class="routine-row" :data-routine="routine.id" @contextmenu="mdAndUp && rowMenu.open('row', $event)">
     <AdaptiveMenu v-if="mdAndUp" v-bind="rowMenu.bind('row')" :actions="actions" :title="routine.title">
       <template #activator />
