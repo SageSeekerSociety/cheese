@@ -29,8 +29,10 @@ its report and its two cursors.
 **A sweep that could not run reports instead of raising**, for the reason the
 ratchet ingest gives: the caller is a periodic job with nowhere to put a
 traceback. No installation, a refused mint, the quota kept for people, a quota
-refusal mid-sweep, a GitHub error — each ends the sweep where it stands, keeps
-what was stored, and says why in ``report["error"]``. Every sweep is recorded,
+refusal mid-sweep, a GitHub error, a database error — each ends the sweep where
+it stands, keeps what was stored, and says why in ``report["error"]``. A run
+GitHub no longer has (404 on its jobs) is marked read with no jobs rather than
+stopping every later sweep at the same place. Every sweep is recorded,
 the ones that read nothing included, so the page can say why its numbers stopped.
 """
 
@@ -40,6 +42,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -124,6 +127,7 @@ async def sweep_once(
         "jobs_owed": 0,
         "queue_events_added": 0,
         "pruned_runs": 0,
+        "gone_runs": 0,
         "truncated": [],
         "error": "",
     }
@@ -189,9 +193,18 @@ async def sweep_once(
             if run.conclusion == "skipped":
                 await store.replace_jobs(run, [], attempt=run.run_attempt)
                 continue
-            listed = await reader.run_jobs(
-                owner=owner, repo=name, token=token, run_id=run.run_id
-            )
+            try:
+                listed = await reader.run_jobs(
+                    owner=owner, repo=name, token=token, run_id=run.run_id
+                )
+            except CiGitHubError as exc:
+                if exc.status != 404:
+                    raise
+                # The run was deleted on GitHub. Left owed, it would be the
+                # newest owed run on every sweep and stop each one here.
+                await store.replace_jobs(run, [], attempt=run.run_attempt)
+                report["gone_runs"] += 1
+                continue
             spent(listed, f"jobs of run {run.run_id}")
             report["jobs_read"] += await store.replace_jobs(
                 run, listed.items, attempt=run.run_attempt
@@ -206,7 +219,7 @@ async def sweep_once(
             spent(listed, f"queue from {cursor.isoformat()}")
             report["queue_events_added"] += await store.add_queue_events(repo, events)
             cursor = queue_read_to = until
-    except (CiGitHubError, httpx.HTTPError) as exc:
+    except (CiGitHubError, httpx.HTTPError, SQLAlchemyError) as exc:
         await session.rollback()
         # i18n-exempt: GitHub's own words, for the admin sweep report
         report["error"] = f"{type(exc).__name__}: {exc}"

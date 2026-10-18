@@ -72,6 +72,10 @@ query($q: String!, $after: String) {
 class CiGitHubError(RuntimeError):
     """GitHub refused, or answered with something this reader cannot read."""
 
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 class CiQuotaRefused(CiGitHubError):
     """GitHub refused because the installation's quota is spent."""
@@ -176,18 +180,25 @@ class GitHubCi:
     async def run_jobs(
         self, *, owner: str, repo: str, token: str, run_id: int
     ) -> Listed:
-        """Every job of every attempt of one run."""
+        """Every job of every attempt of one run.
+
+        Streamed, which `forge_client` sends without `forge_etags`: a run's jobs
+        are read once per attempt, so a kept answer would never be asked for
+        again, and at ~140 KB each they would push the pollers' small, re-read
+        answers (and the free 304s those earn) out of the shared cache.
+        """
         out = Listed(items=[])
         url = f"{self._api_base}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
         async with forge_client(transport=self._transport, timeout=30.0) as client:
             page = 1
             while True:
-                body = await self._get(
-                    client,
-                    url,
-                    token,
-                    {"filter": "all", "per_page": _PAGE, "page": page},
-                )
+                params = {"filter": "all", "per_page": _PAGE, "page": page}
+                async with client.stream(
+                    "GET", url, headers=self._headers(token), params=params
+                ) as resp:
+                    await resp.aread()
+                _raise_for(resp)
+                body = resp.json()
                 out.requests += 1
                 jobs = [j for j in body.get("jobs") or [] if isinstance(j, dict)]
                 out.items.extend(jobs)
@@ -291,4 +302,6 @@ def _raise_for(resp: httpx.Response) -> None:
         # i18n-exempt: GitHub's own words, for the admin sweep report
         raise CiQuotaRefused(f"GitHub quota spent (HTTP {resp.status_code})")
     # i18n-exempt: GitHub's own words, for the admin sweep report
-    raise CiGitHubError(f"GitHub HTTP {resp.status_code}: {resp.text[:300]}")
+    raise CiGitHubError(
+        f"GitHub HTTP {resp.status_code}: {resp.text[:300]}", resp.status_code
+    )

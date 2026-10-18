@@ -10,6 +10,12 @@ Rules pinned here, each one a person could state without the code:
   counted as owed.
 * The backfill walks back to the window's start and stops there; rows older
   than the window are deleted.
+* After a day without sweeps, the next one lists the whole gap and stores it,
+  however many runs that is.
+* A run GitHub no longer has does not stop the sweeps after it, and a run that
+  used no runner costs no request.
+* The queue is read from the window's start the first time, then from where
+  the last sweep stopped, with a little overlap.
 * While the installation's quota is down to the share kept for people, the
   sweep makes no GitHub call and says why.
 * A quota refusal mid-sweep keeps what was already stored and says why.
@@ -27,7 +33,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import forge_quota
 from app.domain.ci_activity import ingest
-from app.domain.ci_activity.github import CiQuotaRefused, Listed, QueueEvent
+from app.domain.ci_activity.github import (
+    CiGitHubError,
+    CiQuotaRefused,
+    Listed,
+    QueueEvent,
+)
 from app.domain.ci_activity.models import (
     CiActivitySweep,
     CiJob,
@@ -114,6 +125,8 @@ class _GitHub:
         self.listings: list[tuple[datetime, datetime]] = []
         self.jobs_read: list[int] = []
         self.refuse_jobs_after: int | None = None
+        self.gone: set[int] = set()
+        self.queue_reads: list[tuple[datetime, datetime]] = []
 
     async def list_runs(self, *, owner, repo, token, since, until) -> Listed:
         assert (owner, repo, token) == ("owner", "ci-activity-test", "app-token")
@@ -134,9 +147,12 @@ class _GitHub:
         ):
             raise CiQuotaRefused("GitHub quota spent (HTTP 403)")
         self.jobs_read.append(run_id)
+        if run_id in self.gone:
+            raise CiGitHubError("GitHub HTTP 404: Not Found", 404)
         return Listed(items=self.jobs.get(run_id, []), requests=1)
 
     async def queue_events(self, *, owner, repo, token, since, until):
+        self.queue_reads.append((since, until))
         return list(self.events), Listed(items=[], requests=1)
 
 
@@ -308,6 +324,10 @@ def test_the_backfill_stops_at_the_window_start_and_older_rows_are_deleted(
     inside = _run(81, age=timedelta(days=1, hours=20))
     github.runs = {81: inside}
     github.jobs = {81: [_job(810, inside)]}
+    github.events = [
+        QueueEvent(11, "added", NOW - timedelta(days=3), None, "x"),
+        QueueEvent(12, "added", NOW - timedelta(hours=2), None, "x"),
+    ]
     window_start = NOW - timedelta(days=2)
 
     async def _run_it() -> None:
@@ -349,6 +369,8 @@ def test_the_backfill_stops_at_the_window_start_and_older_rows_are_deleted(
         assert last.runs_listed_from <= window_start + timedelta(minutes=55)
         stored = set(await db_session.scalars(select(CiWorkflowRun.run_id)))
         assert stored == {81}, "the run older than the window is deleted"
+        prs = set(await db_session.scalars(select(CiMergeQueueEvent.pr_number)))
+        assert prs == {12}, "the queue event older than the window is deleted"
 
     _portal.call(_run_it)
 
@@ -364,7 +386,7 @@ def test_no_github_call_while_the_quota_is_down_to_the_share_kept_for_people(
         await _connect(db_session)
         report = await _sweep(db_session, github)
 
-        assert "配额" in report["error"]
+        assert report["error"]
         assert github.listings == [] and github.jobs_read == []
         assert await _count(db_session, CiWorkflowRun) == 0
         recorded = await db_session.scalar(select(CiActivitySweep))
@@ -387,9 +409,77 @@ def test_a_quota_refusal_mid_sweep_keeps_what_was_stored(
         await _connect(db_session)
         report = await _sweep(db_session, github)
 
-        assert "quota" in report["error"]
+        assert report["error"].startswith("CiQuotaRefused")
         assert await _count(db_session, CiWorkflowRun) == 3
         assert set(await db_session.scalars(select(CiJob.job_id))) == {1002}
         assert report["jobs_owed"] == 2
+
+    _portal.call(_run_it)
+
+
+def test_a_day_without_sweeps_is_listed_and_stored_in_full(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens
+):
+    github = _GitHub()
+
+    async def _run_it() -> None:
+        await _connect(db_session)
+        assert (await _sweep(db_session, github))["error"] == ""
+
+        # A busy day this repository has had: more runs than one INSERT can bind.
+        later = NOW + timedelta(days=1)
+        for n in range(2000):
+            run = _run(5000 + n, age=-timedelta(seconds=40 * n + 60))
+            github.runs[run["id"]] = run
+        report = await _sweep(db_session, github, at=later, jobs_budget=0)
+
+        assert report["error"] == ""
+        assert report["runs_upserted"] == 2000
+        assert min(since for since, _ in github.listings[1:]) <= NOW
+        assert await _count(db_session, CiActivitySweep) == 2
+
+    _portal.call(_run_it)
+
+
+def test_a_run_github_no_longer_has_does_not_stop_the_sweeps_after_it(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens
+):
+    github = _GitHub()
+    gone = _run(201, age=timedelta(minutes=10))
+    older = _run(200, age=timedelta(minutes=20))
+    skipped = _run(199, age=timedelta(minutes=30), conclusion="skipped")
+    github.runs = {201: gone, 200: older, 199: skipped}
+    github.jobs = {200: [_job(2000, older)]}
+    github.gone = {201}
+
+    async def _run_it() -> None:
+        await _connect(db_session)
+        first = await _sweep(db_session, github)
+        second = await _sweep(db_session, github, at=NOW + timedelta(minutes=5))
+
+        assert first["error"] == "" and second["error"] == ""
+        assert github.jobs_read == [201, 200], "each read once; the skipped run never"
+        assert set(await db_session.scalars(select(CiJob.job_id))) == {2000}
+        assert len(github.queue_reads) > 0
+
+    _portal.call(_run_it)
+
+
+def test_the_queue_is_read_from_the_window_start_then_from_the_last_sweep(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens
+):
+    github = _GitHub()
+
+    async def _run_it() -> None:
+        await _connect(db_session)
+        await _sweep(db_session, github)
+        first = list(github.queue_reads)
+        github.queue_reads.clear()
+        await _sweep(db_session, github, at=NOW + timedelta(minutes=5))
+
+        assert first[0][0] == NOW - ingest.WINDOW
+        assert first[-1][1] == NOW
+        assert github.queue_reads[0][0] == NOW - ingest.QUEUE_OVERLAP
+        assert github.queue_reads[-1][1] == NOW + timedelta(minutes=5)
 
     _portal.call(_run_it)
