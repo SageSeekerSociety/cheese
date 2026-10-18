@@ -1,5 +1,6 @@
-"""Links between a project's documents (#3827): a ``<#id>`` in one document's
-text that names another document of the same project.
+"""Links between a team's documents (#3827): a ``<#id>`` in one document's
+text that names another document of the same team — of one of its projects, or
+of the team's own (#3774).
 
 What a document links to is read from its stored text, so it is kept on every
 store (``sync``) rather than asked of the editor. What links *to* a document is
@@ -17,6 +18,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.living_doc.models import Document, DocumentLink
+from app.domain.living_doc.repositories import PROJECTS
 
 #: A ``<#id>`` reference, as a message or a document writes it.
 _REF = re.compile(r"<#([0-9a-fA-F-]{36})>")
@@ -36,27 +38,38 @@ def referenced(text: str) -> list[uuid.UUID]:
 
 
 async def documents_among(
-    db: AsyncSession, project_id: uuid.UUID, ids: Iterable[uuid.UUID]
+    db: AsyncSession, team_id: int, ids: Iterable[uuid.UUID]
 ) -> list[uuid.UUID]:
-    """Which of ``ids`` are documents of this project."""
+    """Which of ``ids`` are documents of this team, its projects' included."""
     wanted = list(dict.fromkeys(ids))
     if not wanted:
         return []
     found = set(
         await db.scalars(
             select(Document.id).where(
-                Document.id.in_(wanted), Document.project_id == project_id
+                Document.id.in_(wanted), Document.team_id == team_id
             )
         )
     )
     return [i for i in wanted if i in found]
 
 
+async def documents_of_projects_team(
+    db: AsyncSession, project_id: uuid.UUID, ids: Iterable[uuid.UUID]
+) -> list[uuid.UUID]:
+    """Which of ``ids`` are documents a text of this project may link to: its
+    team's, the team's own and its projects'."""
+    team_id = await db.scalar(
+        select(PROJECTS.c.team_id).where(PROJECTS.c.id == project_id)
+    )
+    return await documents_among(db, team_id, ids) if team_id is not None else []
+
+
 async def sync(db: AsyncSession, doc: Document, content: str) -> None:
     """Keep what ``doc`` links to as its stored ``content`` says."""
     targets = [
         t
-        for t in await documents_among(db, doc.project_id, referenced(content))
+        for t in await documents_among(db, doc.team_id, referenced(content))
         if t != doc.id
     ]
     await db.execute(delete(DocumentLink).where(DocumentLink.source_id == doc.id))

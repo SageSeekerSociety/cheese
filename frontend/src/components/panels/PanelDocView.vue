@@ -188,6 +188,9 @@ const emit = defineEmits<{
   /** 资料库文档的标题改成了这样。 */
   rename: [title: string]
   delete: []
+  /** 「移动到…」（#3774）。 */
+  move: []
+  share: []
   'mention-outside-add': []
   'mention-outside-dismiss': []
 }>()
@@ -496,6 +499,8 @@ defineExpose({
             :find-open="findOpen"
             :deletable="!!document && !readOnly"
             @delete="emit('delete')"
+            @move="emit('move')"
+            @share="emit('share')"
             @toggle-suggestions="toggleSuggestions"
             @toggle-comments="commentsRef?.toggle()"
             @toggle-editable="toggleEditable"

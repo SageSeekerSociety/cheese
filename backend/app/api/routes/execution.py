@@ -107,7 +107,9 @@ class ExecutionRequest(BaseModel):
     dependencies=[ROUTE_DECIDES],
 )
 @router.post(
-    "/topics/{topic_id}/execution/session-{resource_id}", include_in_schema=False
+    "/topics/{topic_id}/execution/session-{resource_id}",
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
 )
 async def execute(
     topic_id: uuid.UUID,
@@ -136,7 +138,7 @@ async def execute(
     # row would make an unrelated column removal break every tool call on it.
     room = await execution_room(db, room_id)
     if room is None:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     if claims.get("p") != str(room.project_id):
         raise ForbiddenError("Execution belongs to another project")
     # The credential outlives the agent's seat: an agent taken off the room
