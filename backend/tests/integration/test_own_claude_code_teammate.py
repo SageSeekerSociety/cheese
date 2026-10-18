@@ -594,6 +594,20 @@ def test_a_routine_runs_only_with_an_agent_its_owner_may_use(client):
     rules = _rules_in(client, project_id, room_id, "alice")
     assert not [r for r in rules if r.get("agent_handle") == seat], rules
 
+    mine = client.post(
+        f"/topics/{room_id}/routines",
+        json={**ROUTINE, "agent_handle": seat},
+        headers=session_auth_headers("alice"),
+    )
+    assert mine.status_code == 200, mine.text
+    assert (
+        mine.json()["data"]["agent_handle"],
+        mine.json()["data"]["owner_handle"],
+    ) == (
+        seat,
+        "alice",
+    )
+
 
 def test_a_routine_naming_no_agent_runs_only_one_its_owner_may_use(client):
     """With no teammate named, a routine runs the room's first one; when that
