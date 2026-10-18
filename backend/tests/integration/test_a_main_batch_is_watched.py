@@ -134,6 +134,9 @@ def test_failures_that_name_one_lines_files_wake_only_that_line(
     told_second = _told(client, second)
     _red_batch(forge, failing=["backend/tests/test_a.py"])
 
+    # A line whose blamed neighbour has not written its merge commit yet waits
+    # a tick before it is sure that neighbour will hear.
+    watch(client)
     watch(client)
 
     told_first = _told(client, first)
@@ -145,6 +148,32 @@ def test_failures_that_name_one_lines_files_wake_only_that_line(
     )
     assert _landing(client, first).checks.value == "failed"
     assert _landing(client, second).checks.value == "preexisting"
+
+
+def test_failures_that_name_a_commit_nobody_watches_wake_the_lines_that_are(
+    client, app_world, forge
+):
+    """The failed tests point at LINE_TWO's commit, but that merge has no task
+    being watched (a push made by hand, say). Staying quiet because the blame
+    is 'someone else's' would leave a red batch with nobody told."""
+    project = _make_project(client)
+    first = _task(client, app_world, forge, project, pr_number=7, sha=LINE_ONE)
+    told_before = _told(client, first)
+    _red_batch(forge, failing=["backend/tests/test_b.py"])
+
+    watch(client)
+
+    told = _told(client, first)
+    assert told != told_before, "a red batch woke nobody"
+    assert "各自排除" in told
+    assert _landing(client, first).checks.value == "failed"
+
+
+def test_a_cancelled_gate_listed_first_does_not_hide_the_red_one():
+    from app.domain.review.landing_forge import gate_run
+
+    runs = [_gate("cancelled", suite=2), _gate("failure", suite=1)]
+    assert gate_run(runs).conclusion == "failure"
 
 
 def test_failures_that_name_nobody_wake_every_line_in_the_batch(

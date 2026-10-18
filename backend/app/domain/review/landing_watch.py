@@ -30,7 +30,7 @@ Nothing is said while either is still running, or when the watch runs out.
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from sqlalchemy import or_, select
@@ -338,17 +338,29 @@ async def _look(
         landing.merge_sha = sha
         if checks is not None and landing.checks == ChecksOutcome.watching:
             outcome = checks.outcome
+            batch = checks.batch
             if (
                 outcome == ChecksOutcome.failed
-                and checks.batch is not None
-                and checks.batch.blamed not in (None, sha)
+                and batch is not None
+                and batch.blamed not in (None, sha)
             ):
-                # The batch is red, but its failed tests point at another
-                # commit in it: that line's own look wakes it, and this one
-                # stays quiet. Waiting to ask the database whose commit it is
-                # would race the other look, which may not have written its
-                # merge commit yet.
-                outcome = ChecksOutcome.preexisting
+                hears = await _line_will_hear(session, batch.blamed)
+                if hears is None:
+                    # The blamed line may be one whose first look has not
+                    # written its merge commit: decide on the next tick.
+                    await session.commit()
+                    return 1
+                if hears:
+                    # The batch is red, but its failed tests point at another
+                    # commit in it: that line's own look wakes it, and this
+                    # one stays quiet.
+                    outcome = ChecksOutcome.preexisting
+                else:
+                    # Nobody is watching the blamed commit (a push made by
+                    # hand, a merge whose watch ran out): staying quiet here
+                    # would leave the red batch with no one told. Every line
+                    # in the batch hears and rules itself out.
+                    batch = replace(batch, blamed=None)
             landing.checks = outcome
             if outcome == ChecksOutcome.failed:
                 await _checks_failed(
@@ -356,7 +368,7 @@ async def _look(
                     task,
                     sha,
                     list(checks.failed),
-                    batch=checks.batch,
+                    batch=batch,
                     announce=announce,
                     record_instruction=record_instruction,
                     task_teammate=task_teammate,
@@ -376,6 +388,35 @@ async def _look(
                 )
         await session.commit()
     return 1
+
+
+async def _line_will_hear(session, blamed: str) -> bool | None:
+    """Whether a landing still waiting on the checks of ``blamed`` exists, so
+    that its own look will tell its task. None while a landing has no merge
+    commit written yet (its first look writes it): the blamed line may be that
+    one, so the answer waits for the next tick."""
+    now = datetime.now(UTC)
+    live = TaskLanding.watch_until > now
+    if await session.scalar(
+        select(TaskLanding.id)
+        .where(
+            live,
+            TaskLanding.merge_sha == blamed,
+            TaskLanding.checks.in_((ChecksOutcome.watching, ChecksOutcome.failed)),
+        )
+        .limit(1)
+    ):
+        return True
+    unread = await session.scalar(
+        select(TaskLanding.id)
+        .where(
+            live,
+            TaskLanding.merge_sha.is_(None),
+            TaskLanding.checks == ChecksOutcome.watching,
+        )
+        .limit(1)
+    )
+    return None if unread is not None else False
 
 
 def _stop_watching(
