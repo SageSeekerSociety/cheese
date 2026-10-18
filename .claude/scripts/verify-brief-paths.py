@@ -37,6 +37,7 @@ NEW_MARKER = re.compile(
 )
 FILE_SUFFIXES = frozenset(
     {
+        ".a",
         ".avif",
         ".bat",
         ".bmp",
@@ -89,6 +90,7 @@ FILE_SUFFIXES = frozenset(
         ".sql",
         ".svg",
         ".swift",
+        ".tar",
         ".toml",
         ".ts",
         ".tsx",
@@ -363,7 +365,7 @@ def extract_brief_paths(
             ):
                 continue
             if "/" not in token and before and not before.isascii() and not (
-                marker_applies or counted_list_applies
+                descriptor or marker_applies or counted_list_applies
             ):
                 continue
             if _is_path_token(token, known_paths) or marker_applies or counted_list_applies:

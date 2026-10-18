@@ -51,7 +51,7 @@ class VerifyBriefPathsTests(unittest.TestCase):
         (self.root / "Makefile").write_text("all:\n\ttrue\n", encoding="utf-8")
         root_extensions = (
             "data.parquet", "settings.cjs", "vite.config.mts", "schema.proto",
-            "release.zip", "archive.gz", "video.mp4", "root-font.woff2",
+            "release.zip", "archive.gz", "backup.tar", "video.mp4", "root-font.woff2",
             "root-openapi.sha256", "image.bmp", "archive.mkv", "movie.mov",
             "runtime.wasm", "stream.webm",
         )
@@ -228,17 +228,23 @@ class VerifyBriefPathsTests(unittest.TestCase):
                 self.assertIn("path does not exist", errors)
 
     def test_root_extensionless_paths_are_extracted_and_checked(self):
-        result, _, errors = self.run_tool("Update Makefile\n")
-        self.assertEqual(result, 0, errors)
-        result, _, errors = self.run_tool(
-            "Update Makefile\n", "--in-flight-actual", "Makefile"
-        )
-        self.assertEqual(result, 1)
-        self.assertIn("overlaps in-flight", errors)
-        self.assertIn("Makefile", errors)
+        for brief in ("Update Makefile\n", "更新 接口Makefile\n"):
+            with self.subTest(brief=brief):
+                result, _, errors = self.run_tool(brief)
+                self.assertEqual(result, 0, errors)
+                result, _, errors = self.run_tool(
+                    brief, "--in-flight-actual", "Makefile"
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("overlaps in-flight", errors)
+                self.assertIn("Makefile", errors)
 
     def test_root_filename_with_extension_is_not_truncated(self):
-        for brief in ("Update README.md\n", "Update README.md中的引用。\n"):
+        for brief in (
+            "Update README.md\n",
+            "Update README.md中的引用。\n",
+            "Update 接口README.md中的引用。\n",
+        ):
             with self.subTest(brief=brief):
                 result, output, errors = self.run_tool(brief)
                 self.assertEqual(result, 0, errors)
@@ -259,7 +265,7 @@ class VerifyBriefPathsTests(unittest.TestCase):
                 self.assertIn("verified 0 brief path", output)
 
     def test_dotted_prose_is_not_a_root_path(self):
-        for brief in ("Update example.com configuration\n", "Update object.a description\n"):
+        for brief in ("Update example.com configuration\n",):
             with self.subTest(brief=brief):
                 result, output, errors = self.run_tool(brief)
                 self.assertEqual(result, 0, errors)
