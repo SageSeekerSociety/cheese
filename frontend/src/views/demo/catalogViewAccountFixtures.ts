@@ -42,7 +42,7 @@ export const CONSENT_DOCUMENTS: AcceptedDocuments = {
   privacy: '2026-01-01',
 }
 
-/** 这台浏览器上真会出现在登录页的那个第三方提供方。 */
+/** 这台浏览器上真会出现在登录页的第三方提供方之一。 */
 const OAUTH_PROVIDER_ID = 'ruc'
 
 /**
@@ -55,6 +55,11 @@ export const SIGN_IN_WAYS: SignInWay[] = [
     key: `oauth:${OAUTH_PROVIDER_ID}`,
     label: t('account.signIn.withProvider', { provider: oauthProviderName(OAUTH_PROVIDER_ID) }),
     icon: oauthProviderIcon(OAUTH_PROVIDER_ID),
+  },
+  {
+    key: 'oauth:github_app',
+    label: t('account.signIn.withProvider', { provider: oauthProviderName('github_app') }),
+    icon: oauthProviderIcon('github_app'),
   },
   { key: 'passkey', label: t('account.signIn.passkey'), icon: 'mdi-key-chain' },
   { key: 'email_code', label: t('account.signIn.emailCode'), icon: 'mdi-email-outline' },

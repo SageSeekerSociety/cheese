@@ -458,13 +458,13 @@ class TestOAuthRespectsTwoFactor:
         TOTP secret."""
         from app.domain.oauth.services import GitHubProvider, OAuthUserInfo
 
-        monkeypatch.setattr(settings, "oauth_enabled_providers", "github")
-        monkeypatch.setattr(settings, "oauth_github_client_id", "test-client-id")
-        monkeypatch.setattr(settings, "oauth_github_client_secret", "test-secret")
+        monkeypatch.setattr(settings, "oauth_enabled_providers", "github_app")
+        monkeypatch.setattr(settings, "oauth_github_app_client_id", "test-client-id")
+        monkeypatch.setattr(settings, "oauth_github_app_client_secret", "test-secret")
         monkeypatch.setattr(
             settings,
-            "oauth_github_redirect_url",
-            "http://testserver/users/auth/oauth/callback/github",
+            "oauth_github_app_redirect_url",
+            "http://testserver/users/me/github-account/callback",
         )
 
         async def fake_exchange_code(self, code):
@@ -479,7 +479,7 @@ class TestOAuthRespectsTwoFactor:
         user = user_client.create_user()
         linked = _bind(
             client,
-            state_token("github", id="gh-2fa-uid"),
+            state_token("github_app", id="gh-2fa-uid"),
             user.username,
             user.password,
         )
@@ -487,10 +487,10 @@ class TestOAuthRespectsTwoFactor:
         return user, _enable_2fa(client, user)
 
     def _github_sign_in(self, client: TestClient):
-        start = client.get("/users/auth/oauth/login/github", follow_redirects=False)
+        start = client.get("/users/auth/oauth/login/github_app", follow_redirects=False)
         state = _q(start.headers["location"])["state"]
         return client.get(
-            "/users/auth/oauth/callback/github",
+            "/users/me/github-account/callback",
             params={"code": "c", "state": state},
             follow_redirects=False,
         )
