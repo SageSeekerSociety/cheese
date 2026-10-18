@@ -409,6 +409,35 @@ class TaskSubmissionEntryRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_by_submission_ids(
+        self,
+        submission_ids: Sequence[int],
+    ) -> dict[int, list[TaskSubmissionEntry]]:
+        """一次取回多份提交的条目，按提交分组（组内仍按 ``index`` 排）。
+
+        提交列表一屏就要给一整页提交配条目，逐条各发一条就是 20 条查询；这条是
+        ``list_by_submission_id`` 的批量版本，过滤条件与排序逐字一致。没有条目的
+        提交不在结果里。
+        """
+        if not submission_ids:
+            return {}
+        stmt: Select[tuple[TaskSubmissionEntry]] = (
+            select(TaskSubmissionEntry)
+            .where(
+                TaskSubmissionEntry.task_submission_id.in_(submission_ids),
+                TaskSubmissionEntry.deleted_at.is_(None),
+            )
+            .order_by(
+                TaskSubmissionEntry.task_submission_id.asc(),
+                TaskSubmissionEntry.index.asc(),
+            )
+        )
+        result = await self._session.execute(stmt)
+        grouped: dict[int, list[TaskSubmissionEntry]] = {}
+        for entry in result.scalars().all():
+            grouped.setdefault(entry.task_submission_id, []).append(entry)
+        return grouped
+
     async def create_entries(
         self,
         *,
@@ -468,6 +497,24 @@ class TaskSubmissionReviewRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_submission_ids(
+        self,
+        submission_ids: Sequence[int],
+    ) -> dict[int, TaskSubmissionReview]:
+        """一次取回多份提交的评审，按提交 id 归位。
+
+        ``get_by_submission_id`` 的批量版本，条件与它逐字一致：一版提交至多一条
+        live 评审。没有评审的提交不在结果里。
+        """
+        if not submission_ids:
+            return {}
+        stmt: Select[tuple[TaskSubmissionReview]] = select(TaskSubmissionReview).where(
+            TaskSubmissionReview.submission_id.in_(submission_ids),
+            TaskSubmissionReview.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return {review.submission_id: review for review in result.scalars().all()}
 
     async def exists_by_submission_id(self, submission_id: int) -> bool:
         stmt = select(TaskSubmissionReview.id).where(

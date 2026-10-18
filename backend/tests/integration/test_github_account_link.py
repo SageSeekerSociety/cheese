@@ -168,6 +168,7 @@ class TestAccountLinkTokenPersistence:
                 "access_token": "gh-live-token",
                 "expires_in": 28800,
                 "refresh_token": "gh-refresh-token",
+                "refresh_token_expires_in": 15897600,
             }
 
         async def fake_get_user_info(self, access_token):
@@ -195,6 +196,12 @@ class TestAccountLinkTokenPersistence:
         assert conn.refresh_token is not None
         assert _open(conn, "refresh_token") == "gh-refresh-token"
         assert conn.token_expires is not None
+        assert conn.refresh_token_expires is not None
+        assert (
+            datetime.now(UTC) + timedelta(seconds=15897500)
+            < conn.refresh_token_expires
+            < datetime.now(UTC) + timedelta(seconds=15897700)
+        )
 
     def test_callback_persists_a_non_ascii_profile_name(self, client, monkeypatch):
         """The first GitHub profile with a Chinese display name 500'd the
@@ -246,7 +253,11 @@ class TestAccountLinkTokenPersistence:
         user_id = verify_access_token(token).user_id
 
         async def fake_exchange_1(self, code):
-            return {"access_token": "gh-token-1"}
+            return {
+                "access_token": "gh-token-1",
+                "refresh_token": "gh-refresh-1",
+                "refresh_token_expires_in": 60,
+            }
 
         monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_1)
         r1 = client.get(
@@ -260,9 +271,14 @@ class TestAccountLinkTokenPersistence:
         assert "github_account=success" in r1.headers["location"]
         first = _fetch_connection(client, user_id)
         assert _open(first) == "gh-token-1"
+        assert first.refresh_token_expires is not None
 
         async def fake_exchange_2(self, code):
-            return {"access_token": "gh-token-2"}
+            return {
+                "access_token": "gh-token-2",
+                "refresh_token": "gh-refresh-2",
+                "refresh_token_expires_in": 15897600,
+            }
 
         monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_2)
         r2 = client.get(
@@ -278,6 +294,7 @@ class TestAccountLinkTokenPersistence:
         second = _fetch_connection(client, user_id)
         assert second.id == first.id  # updated in place, no duplicate row
         assert _open(second) == "gh-token-2"
+        assert second.refresh_token_expires > datetime.now(UTC) + timedelta(days=180)
 
     def test_exchange_missing_access_token_redirects_to_error(
         self, client, monkeypatch
