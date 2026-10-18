@@ -194,10 +194,12 @@ def meta_of(directory):
     return out
 
 
-def gather(directory, repo, root):
+def gather(directory, repo, root, head=None):
+    """`head` is the sha `POST /topics/<id>/ready` answered with (it already counts a
+    rebase); given, the PR's head is not read from GitHub a second time."""
     meta = meta_of(directory)
     f = {"head": None, "ci": None, "review": review_from(directory), "error": None}
-    got = gh(f"repos/{repo}/pulls/{meta['pr']}", "--jq", ".head.sha")
+    got = head or gh(f"repos/{repo}/pulls/{meta['pr']}", "--jq", ".head.sha")
     if got is None:
         f["error"] = "GitHub 读不到这个 PR"
         return f
@@ -222,6 +224,7 @@ def main(argv=None):
     p.add_argument("--dir", dest="directory")
     p.add_argument("--root", default=None, help="the repository the commits live in")
     p.add_argument("--repo", default=DEFAULT_REPO)
+    p.add_argument("--head", default=None, help="the head sha /ready answered with")
     p.add_argument("--self-test", action="store_true")
     args = p.parse_args(argv)
     if args.self_test:
@@ -234,7 +237,7 @@ def main(argv=None):
         print(f"ready: {directory} 没有 meta；先跑 prepare", file=sys.stderr)
         return 2
     root = resolve_root(args.root, directory)
-    ready, lines = verdict(gather(directory, args.repo, root))
+    ready, lines = verdict(gather(directory, args.repo, root, args.head))
     print("\n".join(lines))
     return 0 if ready else 1
 

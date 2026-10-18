@@ -17,6 +17,16 @@ The assertion is on the **difference**, never on either absolute count. The
 absolute number is a property of the endpoint — a route that has to check a
 permission costs one more statement forever — and pinning it would make every
 unrelated change to the session cost a test edit. Growth is the bug.
+
+Three endpoints below are the exception, and say so where they stand: their
+N+1 is known and batching it is a separate change, so they assert an absolute
+ceiling measured at 30 rows (:func:`assert_reads_within_ceiling`) instead of
+the difference. The difference cannot record debt that is already there — a
+growth that never went away is not a change — and an ``xfail`` cannot record it
+either: pytest reports one as a *skipped case*, and
+``backend/scripts/assert_suite_ran.py`` fails the job on any skip, by design. A
+ceiling is the debt written as a number, compared on every run; it only ever
+comes down.
 """
 
 import time
@@ -26,9 +36,8 @@ from sqlalchemy import text
 
 from tests.integration.conftest import create_approved_space, unique_int
 from tests.support.counting_session import (
-    QueryGrowth,
     assert_does_not_scale,
-    assert_growth_within,
+    assert_reads_within_ceiling,
     count_sql,
 )
 
@@ -46,6 +55,26 @@ def _auth(client, handle: str) -> dict[str, str]:
 
 def _rows(response, key: str) -> int:
     return len(response.json()["data"][key])
+
+
+#: A full page. Thirty rows is where a per-row read shows up as a number no
+#: constant can hide, which is why the three ceilings below are measured here.
+_FULL_PAGE = 30
+
+
+def _count_at_full_page(client, seed, request):
+    """What the list costs at a full page.
+
+    ``assert_does_not_scale`` takes two counts, at 3 and then at 30, and judges
+    the difference. The three known-N+1 endpoints below pin the second count
+    instead, so it is taken here through the same ``count_sql``: the ceiling is
+    the number the difference-based helper would have measured, not a second
+    count taken another way.
+    """
+    seed(_FULL_PAGE)
+    count, response = count_sql(client, request)
+    assert response.status_code == 200, response.text
+    return count, response
 
 
 # --------------------------------------------------------------------------
@@ -82,15 +111,6 @@ def test_the_tag_list_does_not_scale(client) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=QueryGrowth,
-    reason=(
-        "known N+1, measured 13 -> 121 statements for 3 -> 30 teams: the route "
-        "reads each team's members and their user maps in turn. Batch both "
-        "across the page; when that lands this XPASSes and the marker must go."
-    ),
-)
 def test_the_team_list_does_not_scale(client) -> None:
     headers = _auth(client, OWNER)
     word = f"zz{unique_int()}"[:8]
@@ -113,8 +133,19 @@ def test_the_team_list_does_not_scale(client) -> None:
             headers=headers,
         )
 
-    assert_does_not_scale(client, seed=seed, request=request, what="GET /teams")
-    assert _rows(request(), "teams") >= 30
+    count, response = _count_at_full_page(client, seed, request)
+    assert _rows(response, "teams") >= 30
+    assert_reads_within_ceiling(
+        count,
+        ceiling=121,
+        what="GET /teams at 30 rows",
+        debt=(
+            "known N+1, measured 13 -> 121 statements for 3 -> 30 teams: the "
+            "route reads each team's members and their user maps in turn. Batch "
+            "both across the page, then lower this ceiling to the constant it "
+            "settles at"
+        ),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -122,16 +153,6 @@ def test_the_team_list_does_not_scale(client) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=QueryGrowth,
-    reason=(
-        "known N+1, measured 15 -> 123 statements for 3 -> 30 spaces: the route "
-        "asks for each space's admins, then each admin's user and profile. "
-        "Batch all three across the page; when that lands this XPASSes and the "
-        "marker must go."
-    ),
-)
 def test_the_space_list_does_not_scale(client) -> None:
     headers = _auth(client, OWNER)
     suffix = unique_int()
@@ -150,8 +171,19 @@ def test_the_space_list_does_not_scale(client) -> None:
     def request():
         return client.get("/spaces", params={"pageSize": 100}, headers=headers)
 
-    assert_does_not_scale(client, seed=seed, request=request, what="GET /spaces")
-    assert _rows(request(), "spaces") >= 30
+    count, response = _count_at_full_page(client, seed, request)
+    assert _rows(response, "spaces") >= 30
+    assert_reads_within_ceiling(
+        count,
+        ceiling=123,
+        what="GET /spaces at 30 rows",
+        debt=(
+            "known N+1, measured 15 -> 123 statements for 3 -> 30 spaces: the "
+            "route asks for each space's admins, then each admin's user and "
+            "profile. Batch all three across the page, then lower this ceiling "
+            "to the constant it settles at"
+        ),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -243,15 +275,6 @@ def _participant(client, owner: dict, submitter: dict, task_id: int) -> int:
     return participant_id
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=QueryGrowth,
-    reason=(
-        "known N+1, measured 9 -> 36 statements for 3 -> 30 submissions: one "
-        "statement per row in the list's hydration. Batch it; when that lands "
-        "this XPASSes and the marker must go."
-    ),
-)
 def test_the_submission_list_does_not_scale(client) -> None:
     owner = _auth(client, OWNER)
     submitter = _auth(client, SUBMITTER)
@@ -271,8 +294,8 @@ def test_the_submission_list_does_not_scale(client) -> None:
             sent.append(r.json()["data"]["submission"]["id"])
         return task_id, participant, sent
 
-    small_task, small_participant, _ = seeded(3)
-    large_task, large_participant, _ = seeded(30)
+    small_task, small_participant, _ = seeded(_FULL_PAGE // 10)
+    large_task, large_participant, _ = seeded(_FULL_PAGE)
 
     def up_to(task_id: int, participant: int):
         return client.get(
@@ -281,8 +304,9 @@ def test_the_submission_list_does_not_scale(client) -> None:
             headers=submitter,
         )
 
-    small, large = 3, 30
-
+    # Both sizes are requested — the route builds a task and a participant per
+    # size, and the small one is what makes the debt visible in the failure
+    # message below. Only the full page's count is pinned.
     small_count, small_response = count_sql(
         client, lambda: up_to(small_task, small_participant)
     )
@@ -291,10 +315,17 @@ def test_the_submission_list_does_not_scale(client) -> None:
         client, lambda: up_to(large_task, large_participant)
     )
     assert large_response.status_code == 200, large_response.text
-    assert _rows(large_response, "submissions") >= large
+    assert _rows(large_response, "submissions") >= _FULL_PAGE
 
-    assert_growth_within(
-        small, large, small_count, large_count, what="the submission list"
+    assert_reads_within_ceiling(
+        large_count,
+        ceiling=36,
+        what=f"the submission list at {_FULL_PAGE} rows ({small_count} at 3)",
+        debt=(
+            "known N+1, measured 9 -> 36 statements for 3 -> 30 submissions: one "
+            "statement per row in the list's hydration. Batch it, then lower this "
+            "ceiling to the constant it settles at"
+        ),
     )
 
 
