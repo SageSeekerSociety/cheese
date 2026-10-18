@@ -486,9 +486,10 @@ keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
 heartbeat, backup checks) — its single slot used to serialize every heavy job
 (measured: 61% of CI time was queueing).
 
-- **Serial aggregation jobs run here too** (2026-10-17): `scope`, `CI required`
-  and `CI required (draft quick)` take `[self-hosted, cheese-ci]` for same-repo
-  PRs and the merge queue, and stay on `ubuntu-latest` for fork PRs. Required
+- **Serial aggregation jobs run here too** (2026-10-17): `scope`, `CI required`,
+  `CI required (draft quick)` and main pushes' `Mark main green` take
+  `[self-hosted, cheese-ci]` for main pushes, same-repo PRs and the merge queue,
+  and stay on `ubuntu-latest` for fork PRs. Required
   CI's backend suite runs no `Backend coverage complete` job: `CI required`
   runs that shard-coverage check itself, one hop fewer. They run seconds of work and used to wait 3-20
   min (#4101) in the shared hosted queue. The boxes have python3, git and curl but no

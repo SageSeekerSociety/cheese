@@ -85,6 +85,48 @@ def workflow_runs(repository: str, workflow: str, candidate: str) -> list[dict]:
         page += 1
 
 
+#: The branch a passing push run of Required CI points at its own head. A push
+#: run diffs from it, so a green anchor proves its commit and every commit
+#: behind it since the previous anchor.
+GREEN_REF = "refs/heads/main-green"
+
+#: Outcomes of a Required CI run a later push in the batch supersedes. A commit
+#: whose own run ended this way is still proved by the run that covered it.
+SUPERSEDED_CONCLUSIONS = frozenset({"cancelled", "skipped"})
+
+
+def green_anchor(repository: str) -> str:
+    """The last commit Required CI proved green on main, or ``""`` if none."""
+    try:
+        # `heads/<branch>`, not `refs/heads/<branch>`: GET /git/ref/{ref} takes
+        # the short form (the full spelling belongs to the create endpoint), and
+        # the long form 404s — which would read here as "no anchor yet".
+        return github_json(
+            f"https://api.github.com/repos/{repository}/git/ref/heads/{GREEN_REF.removeprefix('refs/heads/')}"
+        )["object"]["sha"]
+    except HTTPError as error:
+        # No push run has passed yet: nothing to compare against.
+        if error.code == 404:
+            return ""
+        raise
+
+
+def covered_by_green(candidate: str, repository: str) -> bool:
+    """Whether a run that passed covered this commit.
+
+    A green anchor is the head of a run whose diff started at the previous
+    anchor, so it proves every commit between the two — including one whose own
+    run a later push replaced. The compare answers ancestor-or-equal.
+    """
+    anchor = green_anchor(repository)
+    if not anchor:
+        return False
+    comparison = github_json(
+        f"https://api.github.com/repos/{repository}/compare/{candidate}...{anchor}?per_page=1"
+    )
+    return comparison["status"] in ("ahead", "identical")
+
+
 #: Where one candidate's required evidence comes from, per workflow. A workflow
 #: is satisfied by any one of its routes: Required CI reports the gate on the
 #: push that landed the commit on main, and on a merge-queue entry for the same
@@ -117,11 +159,32 @@ def ci_ready(candidate: str, say=print) -> bool:
         # A rerun keeps its run ID. Its latest update must supersede an older
         # success, including when another run for the same SHA was created later.
         latest = max(runs, key=lambda run: (run["updated_at"], run["id"]), default=None)
-        if (latest is None or any(run["status"] != "completed" for run in runs)
-                or latest["conclusion"] != "success"):
-            seen = ", ".join(f"{run['id']} {run['status']}/{run['conclusion']}" for run in runs) or "none"
-            say(f"Not deploying {candidate}: {workflow} has no successful latest attempt (runs: {seen}).")
-            ready = False
+        if (latest is not None and all(run["status"] == "completed" for run in runs)
+                and latest["conclusion"] == "success"):
+            continue
+        if workflow == "required-ci.yml" and runs:
+            # Nothing here says the gate failed: every run is either a queue
+            # entry that passed (it proves this exact commit) or a batched push
+            # run a later push replaced. A failed run, or one still going, falls
+            # out of this and refuses below.
+            settled = all(
+                (run["event"] == "push" and run["status"] == "completed"
+                 and run["conclusion"] in SUPERSEDED_CONCLUSIONS)
+                or (run["event"] == "merge_group" and run["status"] == "completed"
+                    and run["conclusion"] == "success")
+                for run in runs
+            )
+            # A passing queue run proves the commit by itself. A replaced push
+            # run needs the later batch that covered it — there must be one, so
+            # a commit with no run at all never lands here.
+            if settled and (any(run["event"] == "merge_group" for run in runs)
+                            or covered_by_green(candidate, repository)):
+                say(f"{candidate} has no Required CI result of its own: a queue"
+                    " entry or a later batch run passed and covered it.")
+                continue
+        seen = ", ".join(f"{run['id']} {run['status']}/{run['conclusion']}" for run in runs) or "none"
+        say(f"Not deploying {candidate}: {workflow} has no successful latest attempt (runs: {seen}).")
+        ready = False
     return ready
 
 
