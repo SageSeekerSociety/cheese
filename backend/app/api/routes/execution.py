@@ -107,7 +107,9 @@ class ExecutionRequest(BaseModel):
     dependencies=[ROUTE_DECIDES],
 )
 @router.post(
-    "/topics/{topic_id}/execution/session-{resource_id}", include_in_schema=False
+    "/topics/{topic_id}/execution/session-{resource_id}",
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
 )
 async def execute(
     topic_id: uuid.UUID,

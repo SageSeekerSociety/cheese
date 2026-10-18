@@ -129,6 +129,8 @@ def failures(needs, expected_tier, event_name=""):
     In the full tier a selected suite must be ``success`` and an unselected one
     ``skipped`` (on ``pull_request``, :data:`QUEUE_ONLY_SUITES` are always
     ``skipped`` and left to ``merge_group``); the fast job must be ``skipped``.
+    The frontend suite is also due when the ``api`` job saw the OpenAPI document
+    move (:func:`api_failures`).
     In the quick tier every
     suite must be ``skipped`` and the fast job must be ``success`` — a green
     product suite on a draft is a failure, not a convenience, because it would
@@ -158,7 +160,7 @@ def failures(needs, expected_tier, event_name=""):
                     f"scope branch_heavy {branch_heavy!r} does not match "
                     f"the event's {expected_heavy!r}"
                 ]
-    errors = []
+    errors, api_moved = api_failures(needs, outputs, tier)
     for suite in PATHS:
         selected = outputs.get(suite)
         if selected not in ("true", "false"):
@@ -168,7 +170,7 @@ def failures(needs, expected_tier, event_name=""):
         # a pull_request run leaves e2e and remote to merge_group.
         should_run = (
             tier == "full"
-            and selected == "true"
+            and (selected == "true" or (suite == "frontend" and api_moved))
             and (branch_heavy_for(event_name) or suite not in QUEUE_ONLY_SUITES)
         )
         expected = "success" if should_run else "skipped"
@@ -180,6 +182,46 @@ def failures(needs, expected_tier, event_name=""):
     if fast_actual != fast_expected:
         errors.append(f"fast: expected {fast_expected}, got {fast_actual}")
     return errors
+
+
+def api_selected(outputs, tier):
+    """Whether the ``api`` job must run: a full run whose diff reached the
+    backend, where the paths alone have not already brought the frontend suite.
+
+    The frontend compiles against the backend's OpenAPI document, and the
+    document is a function of backend files the path map cannot tell apart from
+    any other backend file. So the paths select the frontend suite for frontend
+    files, and for a backend change the ``api`` job answers instead: it prints
+    the document at the base and at the change and says whether they differ.
+    The same condition is the job's ``if:`` in required-ci.yml.
+    """
+    return (
+        tier == "full"
+        and outputs.get("backend") == "true"
+        and outputs.get("frontend") != "true"
+    )
+
+
+def api_failures(needs, outputs, tier):
+    """What is wrong with the ``api`` job's result, and whether it saw a move.
+
+    Returns ``(errors, moved)``. When the job is due it must succeed with a
+    ``moved`` of ``"true"`` or ``"false"``: a job that failed, or answered
+    something else, has not said the surface stayed put, so the frontend suite
+    it would have started is not excused. When it is not due it must be skipped.
+    """
+    api = needs.get("api", {})
+    actual = api.get("result", "missing")
+    if not api_selected(outputs, tier):
+        if actual != "skipped":
+            return [f"api: expected skipped, got {actual}"], False
+        return [], False
+    if actual != "success":
+        return [f"api: expected success, got {actual}"], False
+    moved = api.get("outputs", {}).get("moved")
+    if moved not in ("true", "false"):
+        return [f"api: moved output missing or invalid: {moved!r}"], False
+    return [], moved == "true"
 
 
 def effective_base(event_base, head="HEAD"):
@@ -247,6 +289,9 @@ def main():
         outputs = {suite: str(sel).lower() for suite, sel in selected.items()}
         outputs["tier"] = tier
         outputs["branch_heavy"] = str(branch_heavy_for(event_name)).lower()
+        # The commit the ``api`` job prints the base document from: the same
+        # base this diff was taken against, so the two answer one question.
+        outputs["base"] = event_base
         print(f"Event base: {sys.argv[2]}")
         print(f"Effective base: {event_base}")
         print(f"Base reason: {reason}")

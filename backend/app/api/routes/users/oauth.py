@@ -837,6 +837,7 @@ async def oauth_create_user(
 @router.post(
     "/oauth/bind",
     summary="Bind OAuth to an existing account (decision page, form post)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def oauth_bind_user(
     request: Request,

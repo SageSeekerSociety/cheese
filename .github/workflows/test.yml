@@ -158,14 +158,13 @@ jobs:
       # Building the document is also the smoke test that the app can produce
       # one at all: the frontend no longer finds a committed copy, it asks for
       # the document just before type-checking (frontend/scripts/typecheck.mjs).
-      # Two one-line files beside it stay committed and this run holds both —
-      # the digest, because it is the path the frontend suite is selected by and
-      # a commit that moved the API surface without moving it would ship
-      # unjudged; and the ratchet, backend/openapi-untyped.json, which only
-      # shrinks, so a new route declares what it returns. A step, not a test:
+      # It also holds the ratchet beside it, backend/openapi-untyped.json, which
+      # only shrinks, so a new route declares what it returns. Whether the
+      # document moved, which decides whether the frontend suite runs, is the
+      # `api` job's question in required-ci.yml, not this one's. A step, not a test:
       # building takes about 25 s, longer than the pure layer's per-test
       # ceiling. See scripts/export_openapi.py.
-      - name: OpenAPI document builds, digest and untyped ratchet hold
+      - name: OpenAPI document builds and untyped ratchet holds
         run: uv run python -m scripts.export_openapi --check
 
       - name: Independently collect every required backend case
