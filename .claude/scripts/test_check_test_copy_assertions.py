@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -378,6 +379,23 @@ expect(actual).toBe(mapping["{LONG_COPY}"]);
         self.assertNotEqual(result.returncode, 0, result.stdout)
         for scan_root in roots:
             self.assertIn(f"{scan_root}/test_copy.py:1", result.stderr)
+
+    def test_github_permission_resource_allowlist_is_pinned(self) -> None:
+        guard = runpy.run_path(str(SCRIPT), run_name="copy_assertion_guard")
+        resources = guard["STRUCTURED_PERMISSION_RESOURCES"]
+
+        self.assertEqual(len(resources), 107)
+        self.assertTrue(
+            {
+                "actions",
+                "contents",
+                "metadata",
+                "organization_secrets",
+                "pull_requests",
+                "workflows",
+                "enterprise_sso",
+            }.issubset(resources)
+        )
 
     def test_all_test_filename_patterns_are_scanned(self) -> None:
         paths = (

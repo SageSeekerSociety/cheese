@@ -91,20 +91,10 @@ STRUCTURED_ACTION_LABEL = (
     r"download|upload|deploy|access|run|edit|review|import|share)"
 )
 STRUCTURED_PERMISSION_LEVELS = {"read", "write", "admin", "none"}
-STRUCTURED_PERMISSION_RESOURCES = {
-    "actions", "administration", "attestations", "checks", "code", "code-quality", "code_quality",
-    "codespaces", "contents", "deployments", "discussions", "emails", "environments", "followers",
-    "gpg_keys", "gpg-keys", "id-token", "id_token", "interaction_limits", "interaction-limits",
-    "issues", "keys", "members", "metadata", "models", "organization_administration",
-    "organization_custom_properties", "organization_events", "organization_hooks", "organization_packages",
-    "organization_plan", "organization_projects", "organization_self_hosted_runners",
-    "organization_user_blocking", "packages", "pages", "plan", "pull-requests", "pull_requests",
-    "repository_custom_properties", "repository-custom-properties", "repository_hooks",
-    "repository_projects", "repository-projects", "security_events", "security-events",
-    "secret_scanning_alerts", "secret-scanning-alerts", "statuses", "starring", "team_discussions",
-    "vulnerability_alerts", "vulnerability-alerts", "workflows", "artifact_metadata", "artifact-metadata",
-    "copilot_requests", "copilot-requests",
-}
+# InstallationPermissions keys plus common workflow/PAT spelling variants.
+STRUCTURED_PERMISSION_RESOURCES = frozenset(
+    ["actions", "actions_variables", "administration", "attestations", "checks", "codespaces", "codespaces_lifecycle_admin", "codespaces_metadata", "codespaces_secrets", "contents", "content_references", "copilot_messages", "dependabot_secrets", "deployments", "discussions", "emails", "environments", "issues", "metadata", "members", "merge_queues", "packages", "pages", "plan", "pull_requests", "repository_advisories", "repository_custom_properties", "repository_hooks", "repository_projects", "repository_pre_receive_hooks", "secrets", "secret_scanning_alerts", "security_events", "single_file", "statuses", "team_discussions", "vulnerability_alerts", "workflows", "blocking", "codespaces_user_secrets", "followers", "gists", "git_signing_ssh_public_keys", "gpg_keys", "interaction_limits", "keys", "profile", "starring", "user_events", "watching", "organization_actions_variables", "organization_administration", "organization_announcement_banners", "organization_api_insights", "organization_codespaces", "organization_codespaces_secrets", "organization_codespaces_settings", "organization_copilot_metrics", "organization_copilot_seat_management", "organization_custom_properties", "organization_custom_roles", "organization_custom_org_roles", "organization_dependabot_secrets", "organization_events", "organization_hooks", "organization_knowledge_bases", "organization_packages", "organization_personal_access_tokens", "organization_personal_access_token_requests", "organization_plan", "organization_pre_receive_hooks", "organization_private_registries", "organization_projects", "organization_secrets", "organization_self_hosted_runners", "organization_user_blocking", "enterprise_ai_controls", "enterprise_copilot_metrics", "enterprise_credentials", "enterprise_custom_enterprise_roles", "enterprise_custom_org_roles", "enterprise_custom_properties", "enterprise_custom_properties_for_organizations", "enterprise_organizations", "enterprise_organization_installations", "enterprise_organization_installation_repositories", "enterprise_people", "enterprise_sso", "enterprise_teams", "artifact_metadata", "artifact-metadata", "code", "code-quality", "code_quality", "copilot_requests", "copilot-requests", "gpg-keys", "id-token", "id_token", "interaction-limits", "models", "pull-requests", "repository-custom-properties", "repository-projects", "security-events", "secret-scanning-alerts", "vulnerability-alerts"]
+)
 STRUCTURED_LABEL_LIST_RE = re.compile(
     rf"^{STRUCTURED_ACTION_LABEL}:\s*[^,:]+(?:,\s*{STRUCTURED_ACTION_LABEL}:\s*[^,:]+)+$",
     re.IGNORECASE,
