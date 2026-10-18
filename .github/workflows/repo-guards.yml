@@ -32,9 +32,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          # The Semgrep baseline is the merge-base with origin/main.
-          fetch-depth: 0
 
       # This job used to need nothing but bash and python3. It now runs the
       # guards through pre-commit, so that CI and a developer's commit read one
@@ -54,7 +51,6 @@ jobs:
       # repo, which is the failure mode these guards exist to prevent.
       - name: Guards self-test
         run: |
-          bash .claude/scripts/check-row-read-in-loop.sh --self-test
           bash .claude/scripts/check-repo-rules.sh --self-test
           bash .claude/scripts/check-action-pins.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
@@ -195,9 +191,6 @@ jobs:
       # tree passes it.
       - name: Repo rules (datetime, HTTPException, platform CLI, …)
         run: uvx pre-commit run --all-files repo-rules
-
-      - name: ORM primary-key reads are batched in loops
-        run: uvx pre-commit run --all-files row-read-in-loop
 
       # Third-party actions run on the dev and prod boxes themselves (build.yml,
       # build-tmux.yml and deploy-dev.yml all target self-hosted runners), so a

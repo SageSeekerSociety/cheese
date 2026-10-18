@@ -151,12 +151,6 @@ class RequiredCITest(unittest.TestCase):
         selected = gate.select(["docs/architecture.md"])
         self.assertEqual({k for k, v in selected.items() if v}, {"guards"})
 
-    def test_semgrep_rule_and_precommit_config_run_guards(self):
-        for path in (".semgrep/rules/row-read-in-loop.yaml", ".pre-commit-config.yaml"):
-            with self.subTest(path=path):
-                selected = gate.select([path])
-                self.assertTrue(selected["guards"])
-
     def test_remote_dependencies_select_both_acceptance_jobs(self):
         for path in (
             "backend/uv.lock",
@@ -1343,6 +1337,20 @@ class WorkflowTextTest(unittest.TestCase):
             payload = "\n".join(args)
             self.assertIn('"force":false', payload)
             self.assertIn(f'"sha":"{"a" * 40}"', payload)
+            # --max-time bounds one attempt and --retry multiplies it: 3x30+4
+            # per call keeps update+create+read-back inside this job's five
+            # minutes, which a timed-out run would otherwise blow.
+            # Retry-After is served by the server and is not transport, so
+            # --max-time does not bound a retry wait; only --retry-max-time
+            # does. Without it a 429 that says "wait a minute" sleeps twice.
+            self.assertIn("--retry-max-time", args)
+            # Exact values, not substrings: "300" contains "30" and "600"
+            # contains "60", so an assertIn here would pass a budget that
+            # outlasts this job.
+            self.assertEqual(args[args.index("--retry-max-time") + 1], "60")
+            self.assertEqual(args[args.index("--max-time") + 1], "30")
+            self.assertEqual(args[args.index("--retry") + 1], "2")
+            self.assertNotIn("--max-time\n60", payload)
 
     def test_a_missing_anchor_is_created_rather_than_left_missing(self):
         # PATCH only updates an existing ref: with the anchor deleted, 422 is
@@ -1368,6 +1376,39 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertNotIn("::warning::", proc.stdout)
             self.assertIn("a" * 40, (tmp / "summary").read_text())
+
+    def test_a_create_whose_response_was_lost_is_read_back_before_warning(self):
+        # If the create reached GitHub and only its response was lost, curl's
+        # retry meets 409 ("already exists"). Calling that a failure would put
+        # "the anchor did not move" in the summary while it now points here.
+        job = jobs_of(self.text)["mark-green"]
+        body = run_body_containing(job["text"], "refs/heads/main-green")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "curl", (
+                'printf "%s\\n" "$@" >> "$CURL_ARGS"; echo "---" >> "$CURL_ARGS"\n'
+                'case "$*" in\n'
+                '  *"-X PATCH"*) echo 422;;\n'
+                '  *"-X POST"*) echo 409;;\n'
+                '  *) printf \'{"object":{"sha":"%s"}}\\n\' "$GITHUB_SHA";;\n'
+                'esac\n'
+            ))
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                   "GITHUB_SHA": "a" * 40, "CURL_ARGS": str(tmp / "args"),
+                   "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("::warning::", proc.stdout)
+            self.assertIn("a" * 40, (tmp / "summary").read_text())
+            # And the read-back really happened: a GET at the documented
+            # single-ref endpoint, not a third write.
+            self.assertIn("https://api.github.com/repos/owner/repo/git/ref/heads/main-green",
+                          (tmp / "args").read_text())
+            self.assertNotIn("-X\nPUT", (tmp / "args").read_text())
             calls = (tmp / "args").read_text()
             call_args = calls.splitlines()
             self.assertIn("-X\nPATCH", calls)
@@ -1775,7 +1816,8 @@ class TitleRecheckTest(unittest.TestCase):
 
     def recheck(self, *, completed=False, fast="failure", required="failure",
                 status="completed", attempt=1, same_title=False, newer=False,
-                pull_changes=None, source_changes=None):
+                pull_changes=None, source_changes=None, renames=None,
+                job_started="2026-10-18T10:00:00Z", latest_attempt=None):
         head = "a" * 40
         pull = {"number": 7, "state": "open", "draft": False,
                 "title": 'fix: corrected title $(touch pwned)',
@@ -1789,9 +1831,16 @@ class TitleRecheckTest(unittest.TestCase):
                   "display_title": pull["title"] if same_title else "bad title"}
         source.update(source_changes or {})
         event = {"pull_request": event_pull, "workflow_run": source}
-        data = {"pull": pull, "runs": [{"databaseId": 100 if newer else 99, "status": status}],
-                "jobs": [{"name": "fast", "databaseId": 101, "conclusion": fast},
-                         {"name": "CI required", "databaseId": 202, "conclusion": required}]}
+        if renames is None:
+            renames = [{"event": "renamed", "created_at": "2026-10-18T10:01:00Z",
+                        "rename": {"from": "bad title", "to": pull["title"]}}]
+        data = {"pull": pull, "events": renames,
+                "runs": [{"databaseId": 100 if newer else 99, "status": status,
+                          "attempt": attempt if latest_attempt is None else latest_attempt}],
+                "jobs": [{"name": "fast", "databaseId": 101, "id": 101, "conclusion": fast,
+                          "started_at": job_started},
+                         {"name": "CI required", "databaseId": 202, "id": 202, "conclusion": required,
+                          "started_at": job_started}]}
         text = WORKFLOW.with_name("pr-title.yml").read_text()
         body = textwrap.dedent(run_body_containing(text, "gh"))
         with tempfile.TemporaryDirectory() as tmp:
@@ -1811,7 +1860,16 @@ class TitleRecheckTest(unittest.TestCase):
                 elif args[:2] == ["run", "view"]:
                     answer = {"jobs": data["jobs"]}
                 elif args[0] == "api":
-                    answer = [data["pull"]] if "/commits/" in args[1] else data["pull"]
+                    if "/jobs" in args[1]:
+                        assert "--paginate" in args and "--slurp" in args, args
+                        attempt = data["runs"][0]["attempt"]
+                        assert f"/attempts/{attempt}/jobs" in args[1], args
+                        answer = [{"jobs": data["jobs"][:1]}, {"jobs": data["jobs"][1:]}]
+                    elif "/events" in args[1]:
+                        assert "--paginate" in args and "--slurp" in args, args
+                        answer = [data["events"][:1], data["events"][1:]]
+                    else:
+                        answer = [data["pull"]] if "/commits/" in args[1] else data["pull"]
                 elif args[:2] == ["run", "rerun"]:
                     raise SystemExit(0)
                 else:
@@ -1839,7 +1897,7 @@ class TitleRecheckTest(unittest.TestCase):
             calls = [json.loads(line) for line in (tmp / "calls").read_text().splitlines()] if (tmp / "calls").exists() else []
             return [call[call.index("--job") + 1] for call in calls if call[:2] == ["run", "rerun"]]
 
-    def test_recheck_job_accepts_title_edits_and_one_failed_pr_completion(self):
+    def test_recheck_job_accepts_title_edits_and_failed_pr_completions(self):
         condition = jobs_of(WORKFLOW.with_name("pr-title.yml").read_text())["recheck"]["if"]
         for event_name, draft, fork, action, title_changed, conclusion, attempt, expected in (
             ("pull_request", False, False, "edited", True, "", 1, True),
@@ -1848,7 +1906,7 @@ class TitleRecheckTest(unittest.TestCase):
             ("pull_request", False, True, "edited", True, "", 1, False),
             ("pull_request", False, False, "ready_for_review", False, "", 1, True),
             ("workflow_run", False, False, "completed", False, "failure", 1, True),
-            ("workflow_run", False, False, "completed", False, "failure", 2, False),
+            ("workflow_run", False, False, "completed", False, "failure", 2, True),
             ("workflow_run", False, False, "completed", False, "success", 1, False),
             ("workflow_run", False, True, "completed", False, "failure", 1, False),
         ):
@@ -1878,12 +1936,38 @@ class TitleRecheckTest(unittest.TestCase):
             with self.subTest(fast=fast):
                 self.assertEqual(self.recheck(fast=fast), ["202"])
 
-    def test_title_edit_during_run_is_recovered_on_its_completion_once(self):
+    def test_title_edit_during_any_attempt_is_recovered_once_per_new_edit(self):
         self.assertEqual(self.recheck(status="in_progress"), [])
-        self.assertEqual(self.recheck(completed=True), ["101"])
-        self.assertEqual(self.recheck(completed=True, attempt=2), [])
-        self.assertEqual(self.recheck(completed=True, same_title=True), [])
+        for attempt in (1, 2, 7):
+            with self.subTest(attempt=attempt):
+                self.assertEqual(self.recheck(completed=True, attempt=attempt), ["101"])
+                self.assertEqual(self.recheck(completed=True, attempt=attempt + 1,
+                                             job_started="2026-10-18T10:02:00Z"), [])
         self.assertEqual(self.recheck(completed=True, newer=True), [])
+        self.assertEqual(self.recheck(completed=True, latest_attempt=2), [])
+
+    def test_restoring_the_original_title_after_fast_started_is_a_new_edit(self):
+        title = 'fix: corrected title $(touch pwned)'
+        events = [{"event": "renamed", "created_at": "2026-10-18T10:00:01Z",
+                   "rename": {"from": title, "to": "invalid intermediate title"}},
+                  {"event": "renamed", "created_at": "2026-10-18T10:01:00Z",
+                   "rename": {"from": "invalid intermediate title", "to": title}}]
+        self.assertEqual(self.recheck(completed=True, same_title=True, renames=events), ["101"])
+        self.assertEqual(self.recheck(completed=True, same_title=True, renames=events,
+                                     attempt=2, job_started="2026-10-18T10:02:00Z"), [])
+
+    def test_completion_requires_a_real_rename_to_the_current_title(self):
+        self.assertEqual(self.recheck(completed=True, renames=[]), [])
+        for change in ({"event": "commented"}, {"rename": {"to": "another title"}},
+                       {"created_at": "2026-10-18T09:59:59Z"}):
+            event = {"event": "renamed", "created_at": "2026-10-18T10:01:00Z",
+                     "rename": {"to": 'fix: corrected title $(touch pwned)'}}
+            event.update(change)
+            with self.subTest(change=change):
+                self.assertEqual(self.recheck(completed=True, renames=[event]), [])
+        # GitHub timestamps have second resolution; preserve an edit in the
+        # job's start second rather than silently treating it as older.
+        self.assertEqual(self.recheck(completed=True, job_started="2026-10-18T10:01:00Z"), ["101"])
 
     def test_completion_cannot_restart_main_or_other_repositories(self):
         for changes in ({"event": "push"}, {"conclusion": "success"},

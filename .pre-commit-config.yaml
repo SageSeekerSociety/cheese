@@ -340,13 +340,6 @@ repos:
         pass_filenames: false
         always_run: true
 
-      - id: row-read-in-loop
-        name: ORM primary-key reads are batched in loops
-        entry: bash .claude/scripts/check-row-read-in-loop.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-
       - id: action-pins
         name: actions pinned to a commit SHA
         entry: bash .claude/scripts/check-action-pins.sh

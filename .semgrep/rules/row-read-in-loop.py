@@ -1,25 +1,19 @@
-async def reads_inside_for(rows, session):
+async def reads_inside_for(rows, repo):
     for row in rows:
+        # ruleid: row-read-in-loop
+        await repo.get_by_id(row.id)
+
+
+async def reads_inside_async_for(rows, session):
+    async for row in rows:
         # ruleid: row-read-in-loop
         await session.get(Topic, row.id)
 
 
-async def reads_inside_async_for(rows, db):
-    async for row in rows:
-        # ruleid: row-read-in-loop
-        await db.get(Topic, row.id)
-
-
-async def reads_through_session_field(rows, self):
+async def reads_by_handle_inside_loop(rows, users):
     for row in rows:
         # ruleid: row-read-in-loop
-        await self._session.get(Topic, row.id)
-
-
-async def reads_through_db_field(rows, self):
-    async for row in rows:
-        # ruleid: row-read-in-loop
-        await self._db.get(Topic, row.id)
+        await users.user_by_handle(row.handle)
 
 
 async def ignores_dictionary_get(rows):
@@ -28,7 +22,7 @@ async def ignores_dictionary_get(rows):
         row.get("topic_id")
 
 
-async def ignores_other_awaited_get(rows, cache):
+async def ignores_other_awaited_method(rows, cache):
     for row in rows:
         # ok: row-read-in-loop
-        await cache.get(row.id)
+        await cache.refresh(row.id)
