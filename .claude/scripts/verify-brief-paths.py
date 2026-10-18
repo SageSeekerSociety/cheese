@@ -154,7 +154,9 @@ def _is_root_filename(token: str) -> bool:
     )
 
 
-def _attached_descriptor(token: str) -> str:
+def _attached_descriptor(token: str, known_paths: set[str]) -> str:
+    if token in known_paths:
+        return ""
     for word in ("文件", "接口", "模块", "路径"):
         if not token.startswith(word):
             continue
@@ -187,7 +189,11 @@ def _trim_trailing_prose(token: str, known_paths: set[str]) -> str:
         return token
     for path in sorted(known_paths, key=len, reverse=True):
         suffix = token[len(path):] if token.startswith(path) else ""
-        if suffix.startswith(("中的", "里的", "上的", "下的", "内的")):
+        if (
+            suffix.startswith(("中的", "里的", "上的", "下的", "内的"))
+            and "/" not in suffix
+            and "." not in suffix
+        ):
             return path
     lowered = token.lower()
     for suffix in sorted(FILE_SUFFIXES, key=len, reverse=True):
@@ -297,11 +303,12 @@ def extract_brief_paths(
             if not match:
                 continue
             token = _trim_trailing_prose(match.group().rstrip(".,;:!?"), known_paths)
-            descriptor = _attached_descriptor(token)
+            descriptor = _attached_descriptor(token, known_paths)
             if descriptor:
                 start = marker.start()
                 ignored_unicode_spans.append((start, marker.end() + start_offset + len(token)))
                 token = token[len(descriptor):]
+                token = _trim_trailing_prose(token, known_paths)
                 start_offset += len(descriptor)
             if (
                 descriptor
@@ -324,10 +331,11 @@ def extract_brief_paths(
                 continue
             token = raw_token
             token_start = match.start()
-            descriptor = _attached_descriptor(token)
+            descriptor = _attached_descriptor(token, known_paths)
             if descriptor:
                 ignored_unicode_spans.append((match.start(), raw_end))
                 token = token[len(descriptor):]
+                token = _trim_trailing_prose(token, known_paths)
                 token_start += len(descriptor)
             end = token_start + len(token)
             before = line[token_start - 1] if token_start else ""
