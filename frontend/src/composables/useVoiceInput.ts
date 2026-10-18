@@ -19,7 +19,7 @@ export type VoiceTrouble = { kind: 'denied' } | { kind: 'failed'; message: strin
 
 export const VOICE_RATE = 16000
 /** 声波条有几根。 */
-export const VOICE_BARS = 40
+export const VOICE_BARS = 56
 
 /** 把几段浮点采样编成 16 位单声道 WAV。 */
 export function encodeWav(chunks: Float32Array[], rate: number): Blob {

@@ -472,7 +472,8 @@ function landVoice(text: string, raw: string) {
   const exact = expandMentions(raw.trim())
   if (!polished) return
   writeAt(at, '', polished)
-  composerInput.value?.voiceMarks({ slot: null, landed: [at, at + polished.length] })
+  // 记号按编辑器里的正文算位置，要等它把这段字放进去之后再标。
+  void nextTick(() => composerInput.value?.voiceMarks({ slot: null, landed: [at, at + polished.length] }))
   landed = { at, polished, raw: exact, showing: 'polished' }
   showSwap(polished !== exact ? 'raw' : null)
   composerInput.value?.focus()
@@ -492,7 +493,8 @@ function swapVoice() {
   if (draft.value.slice(landed.at, landed.at + shown.length) !== shown) return showSwap(null)
   writeAt(landed.at, shown, next)
   landed.showing = landed.showing === 'polished' ? 'raw' : 'polished'
-  composerInput.value?.voiceMarks({ landed: [landed.at, landed.at + next.length] })
+  const at = landed.at
+  void nextTick(() => composerInput.value?.voiceMarks({ landed: [at, at + next.length] }))
   showSwap(landed.showing === 'polished' ? 'raw' : 'polished')
   composerInput.value?.focus()
 }
@@ -653,41 +655,43 @@ defineExpose({
       />
       <!-- 录音时动作行换成录音条：同一个位置，先让旧的一行快速退下，新的一行减速进来。 -->
       <Transition name="voice-row" mode="out-in">
-        <ComposerVoiceBar
-          v-if="voiceOpen"
-          :state="voice.state.value"
-          :elapsed="voice.elapsed.value"
-          :levels="voice.levels.value"
-          :max-seconds="VOICE_MAX_SECONDS"
-          @cancel="voice.cancel()"
-          @done="voice.finish()"
-        />
-        <ComposerActions
-          v-else
-          :guided="!!guided"
-          :uploading="attsUploading"
-          :can-send="canSend"
-          :show-image-picker="!mdAndUp"
-          :enter-sends="enterSends"
-          :always-summon="alwaysSummon"
-          :summon-on="summonOn"
-          :summon-ready="summonReady"
-          :agent-name="agentName"
-          :can-checklist="!!postChecklist"
-          :can-remind="!!topic"
-          :collapse-extras="!mdAndUp"
-          :can-voice="canVoice"
-          :voice-swap="voiceSwap"
-          @files="emit('files', $event)"
-          @checklist="checklistOpen = true"
-          @toggle-summon="toggleSummon"
-          @remind="reminderOpen = true"
-          @send="sendDraft()"
-          @voice="onVoice"
-          @voice-swap="swapVoice"
-        >
-          <template #chips><slot name="composer-chips" /></template>
-        </ComposerActions>
+        <div v-if="voiceOpen" key="voice">
+          <ComposerVoiceBar
+            :state="voice.state.value"
+            :elapsed="voice.elapsed.value"
+            :levels="voice.levels.value"
+            :max-seconds="VOICE_MAX_SECONDS"
+            @cancel="voice.cancel()"
+            @done="voice.finish()"
+          />
+        </div>
+        <div v-else key="actions">
+          <ComposerActions
+            :guided="!!guided"
+            :uploading="attsUploading"
+            :can-send="canSend"
+            :show-image-picker="!mdAndUp"
+            :enter-sends="enterSends"
+            :always-summon="alwaysSummon"
+            :summon-on="summonOn"
+            :summon-ready="summonReady"
+            :agent-name="agentName"
+            :can-checklist="!!postChecklist"
+            :can-remind="!!topic"
+            :collapse-extras="!mdAndUp"
+            :can-voice="canVoice"
+            :voice-swap="voiceSwap"
+            @files="emit('files', $event)"
+            @checklist="checklistOpen = true"
+            @toggle-summon="toggleSummon"
+            @remind="reminderOpen = true"
+            @send="sendDraft()"
+            @voice="onVoice"
+            @voice-swap="swapVoice"
+          >
+            <template #chips><slot name="composer-chips" /></template>
+          </ComposerActions>
+        </div>
       </Transition>
       <ComposerChecklistDialog v-if="postChecklist" v-model="checklistOpen" :post="postChecklist" />
     </div>

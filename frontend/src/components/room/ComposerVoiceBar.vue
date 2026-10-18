@@ -120,15 +120,14 @@ const clock = computed(() => {
   height: 24px;
   display: flex;
   align-items: center;
-  gap: 2px;
+  justify-content: space-between;
   padding: 0 6px;
   overflow: hidden;
 }
 /* 每根条只变 scaleY：不碰布局，一帧几十根也不重排。 */
 .voice-bar__wave i {
-  flex: 1;
-  min-width: 2px;
-  max-width: 3px;
+  flex: none;
+  width: 3px;
   height: 100%;
   border-radius: 2px;
   background: var(--muted);
