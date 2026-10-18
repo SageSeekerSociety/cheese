@@ -46,3 +46,12 @@ def test_ten_ordinary_hosts_still_fill_the_pool(monkeypatch):
 def test_idle_sandboxes_are_reclaimed_after_three_minutes():
     assert Settings.model_fields["cloud_sandbox_idle_stop_s"].default == 180
     assert Settings.model_fields["cloud_sandbox_background_cap_s"].default == 900
+
+
+def test_a_whole_machine_request_still_counts_the_machines(monkeypatch):
+    monkeypatch.setattr(settings, "cloud_pool_max_hosts", 10)
+    hosts = [_host() for _ in range(8)] + [_host(whole_machine=True) for _ in range(2)]
+    with pytest.raises(CloudPoolFull):
+        asyncio.run(
+            HostPool._require_room_to_grow(_PoolWith(hosts), whole_machine=True)
+        )

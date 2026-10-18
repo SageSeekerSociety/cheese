@@ -422,7 +422,8 @@ class HostPool(PoolSweep):
         if failures:
             raise CloudKeepsFailing(failures, whole_machine=whole_machine)
         hosts = await self._repo.live()
-        if sum(_counts_toward_cap(h) for h in hosts) >= settings.cloud_pool_max_hosts:
+        counted = sum(_counts_toward_cap(h, for_vm=whole_machine) for h in hosts)
+        if counted >= settings.cloud_pool_max_hosts:
             raise CloudPoolFull(whole_machine=whole_machine)
 
     async def _host_body(self) -> dict:
