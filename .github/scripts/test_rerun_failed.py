@@ -241,7 +241,7 @@ class PushToMainTest(unittest.TestCase):
         reason = rerun.refusal(
             self.push(), REPO, failed_log="AssertionError: 'open' != 'closed'"
         )
-        self.assertIn("no known flake signature was found outside a test step", reason)
+        self.assertIn("no known flake signature was found in the steps", reason)
 
     def test_a_push_to_main_without_a_readable_log_is_refused(self):
         reason = rerun.refusal(self.push(), REPO, failed_log=None)
@@ -475,7 +475,19 @@ class LogSignatureTest(unittest.TestCase):
                 step + "# Error: read ECONNRESET",
                 step + "not ok 1 - a test",
             )),
-            # unittest's header alone marks the step as a test step too.
+            # go test: the session marker is the per-test RUN line.
+            "\n".join((
+                step + "=== RUN   TestClassify",
+                step + "Error: read ECONNRESET",
+                step + "--- FAIL: TestClassify (0.00s)",
+            )),
+            # vitest with the session banner cut off (a truncated job log).
+            "\n".join((
+                step + "⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯",
+                step + "Error: read ECONNRESET while connecting to the fixture",
+            )),
+            # unittest buffers a test's output and prints it after its header,
+            # so the report bound covers the whole of it.
             "\n".join((
                 step + "FAIL: test_x (__main__.TestX)",
                 step + "read ECONNRESET while reading",
@@ -490,6 +502,33 @@ class LogSignatureTest(unittest.TestCase):
         ):
             with self.subTest(log=log.splitlines()[0]):
                 self.assertIsNone(rerun.flake_log_signature(log))
+
+    def test_a_job_annotation_that_reprints_a_case_is_not_evidence(self):
+        """report_failed_cases.py prints `##[error]<node id> — <message>`."""
+        for log in (
+            "##[error]tests/contract/test_x.py::test_y — AssertionError: read ECONNRESET",
+            "::error file=backend/x.py::read ECONNRESET while connecting",
+            "##[error]Process completed with exit code 1.",
+        ):
+            with self.subTest(log=log):
+                self.assertIsNone(rerun.flake_log_signature(log))
+
+    def test_a_non_test_step_marker_does_not_exclude_the_whole_step(self):
+        """`ERROR: ` and a traceback alone are not a test session."""
+        log = "\n".join((
+            "backend\tInstall dependencies\t2026-10-18T09:06:04Z Error: read ECONNRESET",
+            "backend\tInstall dependencies\t2026-10-18T09:06:05Z ERROR: sync failed",
+        ))
+        self.assertEqual(rerun.flake_log_signature(log)["id"], "econnreset")
+
+    def test_osc_sequences_are_stripped_before_matching(self):
+        esc = "\x1b"
+        log = "\n".join((
+            "frontend\tUnit tests\t2026-10-18T09:06:04Z "
+            + esc + "]8;;https://example/" + esc + "\\ RUN  v5.0.3 /app",
+            "frontend\tUnit tests\t2026-10-18T09:06:04Z Error: read ECONNRESET",
+        ))
+        self.assertIsNone(rerun.flake_log_signature(log))
 
     def test_ansi_colour_is_stripped_before_matching(self):
         esc = "\x1b["
@@ -841,14 +880,51 @@ class GhCallTest(unittest.TestCase):
         ):
             self.assertIsNone(rerun._gh("run", "view", "1", "--log-failed"))
 
-    def test_the_log_command_names_the_run_and_the_repository(self):
-        completed = subprocess.CompletedProcess([], 0, stdout="x", stderr="")
-        with mock.patch.object(rerun.subprocess, "run", return_value=completed) as run:
-            rerun.fetch_failed_logs("42", "o/r")
-        self.assertEqual(
-            run.call_args.args[0],
-            ["gh", "run", "view", "42", "--repo", "o/r", "--log-failed"],
+    def test_the_log_is_read_per_failed_job_by_rest(self):
+        """`gh run view --log-failed` cannot match a reusable-workflow job name
+        (`backend / contract (0/1)` here, `backend  contract (01)` there), so
+        every product suite's log would be missing from its output."""
+        jobs = json.dumps(
+            {"jobs": [
+                {"id": 7, "conclusion": "failure"},
+                {"id": 8, "conclusion": "success"},
+                {"id": 9, "conclusion": "failure"},
+            ]}
         )
+        calls = []
+
+        def fake(argv, **kwargs):
+            calls.append(tuple(argv[1:]))
+            if argv[-1].startswith("repos/o/r/actions/runs/"):
+                return subprocess.CompletedProcess([], 0, stdout=jobs, stderr="")
+            if argv[-1] == "repos/o/r/actions/jobs/7/logs":
+                return subprocess.CompletedProcess([], 0, stdout="read ECONNRESET", stderr="")
+            return subprocess.CompletedProcess([], 0, stdout="other", stderr="")
+
+        with mock.patch.object(rerun.subprocess, "run", side_effect=fake):
+            log = rerun.fetch_failed_logs("42", "o/r")
+        self.assertIn(("api", "repos/o/r/actions/runs/42/jobs?filter=latest&per_page=100"), calls)
+        self.assertIn(("api", "repos/o/r/actions/jobs/7/logs"), calls)
+        self.assertIn(("api", "repos/o/r/actions/jobs/9/logs"), calls)
+        self.assertNotIn(("api", "repos/o/r/actions/jobs/8/logs"), calls)
+        self.assertIsNotNone(log)
+        self.assertIn("read ECONNRESET", log)
+        # Each job's lines are keyed by that job, so two jobs are never one step.
+        self.assertIn("job 7\tjob 7\t", log)
+
+    def test_no_readable_failed_job_log_is_unreadable_not_clean(self):
+        jobs = json.dumps({"jobs": [{"id": 7, "conclusion": "failure"}]})
+
+        def fake(argv, **kwargs):
+            if argv[-1].startswith("repos/o/r/actions/runs/"):
+                return subprocess.CompletedProcess([], 0, stdout=jobs, stderr="")
+            return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+        with (
+            mock.patch.object(rerun.subprocess, "run", side_effect=fake),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertIsNone(rerun.fetch_failed_logs("42", "o/r"))
 
     def test_the_rerun_command_only_reruns_failed_jobs(self):
         completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")

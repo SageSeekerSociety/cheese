@@ -14,9 +14,9 @@ Two kinds of run may be rerun:
   job log carries a signature from flake_log_signatures.py — a connection the
   peer reset, a lost runner and the like. A real failure is left for a person to
   read: a retry that cures nothing costs the failed job set again and only
-  delays the diagnosis. The log is read with `gh run view --log-failed` when the
-  run is a push, so the workflow passes only the run object; GH_TOKEN is already
-  in the step's environment.
+  delays the diagnosis. The failed jobs' logs are read per job id when the run
+  is a push, so the workflow passes only the run object; GH_TOKEN is already in
+  the step's environment.
 
 The same run is rerun at most twice: MAX_ATTEMPTS counts the first run, and a
 case still red on the third attempt is not a flake a retry will cure.
@@ -65,8 +65,8 @@ REQUIRED_KEYS = ("id", "title", "match", "rerun", "action", "symptoms")
 # How long to wait for `gh` before treating the run as unreadable.
 GH_TIMEOUT = 120
 
-# `gh run view --log-failed` puts "<job>\t<step>\t<timestamp> " before each
-# line of the job's own output.
+# A job log line carries gh's "<job>\t<step>\t<timestamp> " prefix when it
+# came from `gh run view`; the per-job REST logs are prefixed with the job id.
 _LOG_PREFIX = re.compile(r"^[^\t\n]*\t[^\t\n]*\t(?:\ufeff)?\S+\s")
 
 # A failure report quotes text the test owns — its source, its fixtures and
@@ -111,6 +111,10 @@ _REPORT_START = re.compile(
 # `gh run view` both colour their output and every marker above is anchored at
 # the start of the line.
 #
+# unittest is covered by its `FAIL:`/`ERROR:` header in _REPORT_START instead:
+# it buffers a test's own output and prints it after the header, so the report
+# bound already covers the whole of what it writes.
+#
 # A step that matches one is a test step: every line in it is test-owned text,
 # before and after the failure report alike — console output the runner echoes
 # live (`stderr | ...`, node's `# Error: ...`), failed suites, unhandled
@@ -120,9 +124,7 @@ _TEST_SESSION = re.compile(
     r"^(?: *RUN +v\d"
     r"|TAP version \d+"
     r"|=+ test session starts =+"
-    r"|=== RUN"
-    r"|(?:FAIL|ERROR): "
-    r"|Traceback \(most recent call last\):$)"
+    r"|=== RUN)"
 )
 # A passing pytest run still prints its `warnings summary` and slowest-durations
 # banners, and either can carry a signature in a test id. Those banners must
@@ -131,6 +133,15 @@ _TEST_SESSION = re.compile(
 _PYTEST_REPORT = re.compile(
     r"^(?:FAILED |ERROR |>{1,2}\s|E {2,}|assert |AssertionError)"
 )
+# A job's own failure summary, which reprints the failing case's id and message
+# at column 0 (`##[error]tests/... — AssertionError: ...` from the repo's own
+# report_failed_cases.py, and GitHub's `##[error]Process completed with exit
+# code 1.`). The message can quote any test text, so it is not flake evidence.
+_ANNOTATION = re.compile(r"^(?:##\[error\]|::error)")
+# OSC sequences (hyperlinks, window titles) and CSI codes with private or
+# intermediate bytes: `\x1b]...BEL` and `\x1b[?...h`.
+_ANSI_OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?")
+_ANSI_CSI = re.compile(r"\x1b\[[0-9;?<=>]*[ -/]*[@-~]")
 
 
 def load_patterns(path: Path = PATTERNS) -> list[dict]:
@@ -212,16 +223,15 @@ def diagnosis(run: dict, pattern: dict) -> str:
     )
 
 
-_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-
-
 def _message(line: str) -> str:
-    """One log line without gh's prefixes or ANSI colour codes."""
-    return _ANSI.sub("", _LOG_PREFIX.sub("", line, count=1))
+    """One log line without gh's prefixes or any ANSI escape sequence."""
+    message = _LOG_PREFIX.sub("", line, count=1)
+    message = _ANSI_OSC.sub("", message)
+    return _ANSI_CSI.sub("", message)
 
 
 def _log_key(line: str) -> tuple[str, str] | None:
-    """The job and step a `gh run view --log-failed` line belongs to, if named."""
+    """The job and step a log line belongs to, if its prefix names them."""
     fields = line.split("\t", 3)
     if len(fields) >= 3:
         return fields[0], fields[1]
@@ -254,7 +264,7 @@ def flake_log_signature(
             continue
         if not message.strip() or message[:1].isspace():
             continue
-        if _PYTEST_REPORT.match(message):
+        if _PYTEST_REPORT.match(message) or _ANNOTATION.match(message):
             continue
         for signature in LOG_SIGNATURES if signatures is None else signatures:
             if re.search(signature["pattern"], message, re.IGNORECASE):
@@ -310,7 +320,8 @@ def _reason(
             )
         return (
             f"run {run.get('id')} is a push to main and no known flake signature"
-            " was found outside a test step's report; read it and decide by hand"
+            " was found in the steps that could hold one; read the failed jobs'"
+            " logs and decide by hand"
         )
     return None
 
@@ -399,23 +410,69 @@ def fetch_run(run_id: str, repository: str) -> dict | None:
         return None
 
 
-def fetch_failed_logs(run_id: str, repository: str) -> str | None:
-    """The failed jobs' log of ``run_id``, or None when it could not be read.
-
-    Empty stdout is "could not be read", not "read and clean": `gh` exits 0
-    with no output when a run's logs are no longer available, and the refusal
-    should name that rather than claim the log matched no signature.
-    """
-    result = _gh("run", "view", str(run_id), "--repo", repository, "--log-failed")
-    if result is None or result.returncode != 0 or not result.stdout.strip():
+def _failed_job_ids(run_id: str, repository: str) -> list[int] | None:
+    """The failed jobs of ``run_id``, or None when the run could not be read."""
+    result = _gh(
+        "api",
+        f"repos/{repository}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",
+    )
+    if result is None or result.returncode != 0:
         detail = result.stderr.strip() if result is not None else "gh could not run"
         print(
-            f"::warning::could not read the failed job log of run {run_id}:"
-            f" {detail or 'empty output'}",
+            f"::warning::could not read run {run_id}'s jobs: {detail}",
             file=sys.stderr,
         )
         return None
-    return result.stdout
+    try:
+        jobs = json.loads(result.stdout).get("jobs") or []
+    except json.JSONDecodeError as error:
+        print(f"::warning::run {run_id}'s jobs are not JSON: {error}", file=sys.stderr)
+        return None
+    return [
+        job["id"]
+        for job in jobs
+        if job.get("conclusion") == "failure" and isinstance(job.get("id"), int)
+    ]
+
+
+def fetch_failed_logs(run_id: str, repository: str) -> str | None:
+    """The failed jobs' logs of ``run_id``, or None when none could be read.
+
+    One REST call per failed job: `gh run view --log-failed` matches the job
+    names it sees in the log archive against the run's job list, and a
+    reusable-workflow job is named `backend / contract (0/1)` here but
+    `backend  contract (01)` there, so those jobs — every product suite a main
+    push runs — never match and their logs are silently missing from its
+    output.
+
+    A job whose log cannot be read is named and skipped; the rest still count.
+    None, not "", when nothing could be read: the refusal should say so rather
+    than claim the logs matched no signature.
+    """
+    job_ids = _failed_job_ids(run_id, repository)
+    if job_ids is None:
+        return None
+    logs = []
+    for job_id in job_ids:
+        result = _gh("api", f"repos/{repository}/actions/jobs/{job_id}/logs")
+        if result is None or result.returncode != 0 or not result.stdout.strip():
+            detail = result.stderr.strip() if result is not None else "gh could not run"
+            print(
+                f"::warning::could not read the log of job {job_id} in run"
+                f" {run_id}: {detail or 'empty output'}",
+                file=sys.stderr,
+            )
+            continue
+        # The job's own name and step are not in this text, only its
+        # timestamped lines; naming the job keeps the (job, step) bound from
+        # treating two jobs' logs as one step.
+        logs.append(
+            "\n".join(
+                f"job {job_id}\tjob {job_id}\t{line}"
+                for line in result.stdout.splitlines()
+            )
+        )
+    return "\n".join(logs) if logs else None
 
 
 def rerun_failed_jobs(run_id: str, repository: str) -> str | None:
