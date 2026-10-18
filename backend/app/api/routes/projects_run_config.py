@@ -86,7 +86,7 @@ from app.domain.agent.environment import (
     parse,
     project_default,
 )
-from app.domain.agent_instance.configuration import model_choices
+from app.domain.agent.model_catalog import model_choices
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.environments import check_allowed, offered_specs
