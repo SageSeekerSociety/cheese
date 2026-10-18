@@ -478,6 +478,32 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("缺那一轮的结论", result.stderr)
 
+    def test_stamp_and_fix_refuse_a_delta_review_on_an_empty_card(self) -> None:
+        """Both paths must refuse rather than invent the round the delta sits on."""
+        delta = self.root / "REVIEW-RESULT.md"
+        delta.write_text(
+            "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major｜档位 B\n",
+            encoding="utf-8",
+        )
+        for flag in ("--stamp", "--fix"):
+            with self.subTest(flag=flag):
+                body = self.root / f"empty-{flag.strip('-')}.md"
+                body.write_text("## 改动原因\n修复问题。\n", encoding="utf-8")
+                result = self.run_script(
+                    flag,
+                    "--review-result",
+                    str(delta),
+                    "--head",
+                    "22222222",
+                    "--text",
+                    str(body),
+                    "--out",
+                    str(body),
+                )
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("先补上那一轮再盖章", result.stderr)
+                self.assertNotIn("独立 review：", body.read_text(encoding="utf-8"))
+
     def test_removing_last_line_check_makes_not_on_last_line_case_fail(self) -> None:
         """Deliberate violation: strip the last-line check and assert the test goes red."""
         source = REAL_SCRIPT.read_text(encoding="utf-8")
