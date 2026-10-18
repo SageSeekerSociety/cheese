@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -1659,6 +1660,139 @@ class WorkflowTextTest(unittest.TestCase):
                     ["-m", "scripts.assert_shards_complete",
                      f"{tmp}/backend-artifacts", "--plan", "backend-expected"],
                 )
+
+
+class TitleRecheckTest(unittest.TestCase):
+    """Run the real recheck shell; only GitHub responses are substituted."""
+
+    def recheck(self, *, completed=False, fast="failure", required="failure",
+                status="completed", attempt=1, same_title=False, newer=False,
+                pull_changes=None, source_changes=None):
+        head = "a" * 40
+        pull = {"number": 7, "state": "open", "draft": False,
+                "title": 'fix: corrected title $(touch pwned)',
+                "head": {"sha": head, "repo": {"full_name": "owner/repo"}},
+                "base": {"ref": "main"}}
+        event_pull = json.loads(json.dumps(pull))
+        pull.update(pull_changes or {})
+        source = {"id": 99, "head_sha": head, "event": "pull_request",
+                  "conclusion": "failure", "run_attempt": attempt,
+                  "head_repository": {"full_name": "owner/repo"},
+                  "display_title": pull["title"] if same_title else "bad title"}
+        source.update(source_changes or {})
+        event = {"pull_request": event_pull, "workflow_run": source}
+        data = {"pull": pull, "runs": [{"databaseId": 100 if newer else 99, "status": status}],
+                "jobs": [{"name": "fast", "databaseId": 101, "conclusion": fast},
+                         {"name": "CI required", "databaseId": 202, "conclusion": required}]}
+        text = WORKFLOW.with_name("pr-title.yml").read_text()
+        body = textwrap.dedent(run_body_containing(text, "gh"))
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            stub = bindir / "gh"
+            stub.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
+                import json, os, subprocess, sys
+                from pathlib import Path
+                args = sys.argv[1:]
+                data = json.loads(Path(os.environ["STUB_DATA"]).read_text())
+                with open(os.environ["STUB_CALLS"], "a") as log:
+                    print(json.dumps(args), file=log)
+                if args[:2] == ["run", "list"]:
+                    answer = data["runs"]
+                elif args[:2] == ["run", "view"]:
+                    answer = {"jobs": data["jobs"]}
+                elif args[0] == "api":
+                    answer = [data["pull"]] if "/commits/" in args[1] else data["pull"]
+                elif args[:2] == ["run", "rerun"]:
+                    raise SystemExit(0)
+                else:
+                    raise AssertionError(args)
+                if "--jq" in args:
+                    # The pre-fix workflow uses gh's jq projection. This path
+                    # lets the same fixture exercise that old shell in a red run.
+                    subprocess.run(["jq", "-r", args[args.index("--jq") + 1]],
+                                   input=json.dumps(answer), text=True, check=True)
+                else:
+                    print(json.dumps(answer))
+                '''))
+            stub.chmod(0o755)
+            (tmp / "event.json").write_text(json.dumps(event))
+            (tmp / "data.json").write_text(json.dumps(data))
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GITHUB_REPOSITORY": "owner/repo", "HEAD_SHA": head,
+                   "GITHUB_EVENT_NAME": "workflow_run" if completed else "pull_request",
+                   "GITHUB_EVENT_PATH": str(tmp / "event.json"),
+                   "STUB_DATA": str(tmp / "data.json"), "STUB_CALLS": str(tmp / "calls")}
+            result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", body],
+                                    cwd=tmp, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse((tmp / "pwned").exists())
+            calls = [json.loads(line) for line in (tmp / "calls").read_text().splitlines()] if (tmp / "calls").exists() else []
+            return [call[call.index("--job") + 1] for call in calls if call[:2] == ["run", "rerun"]]
+
+    def test_recheck_job_accepts_title_edits_and_one_failed_pr_completion(self):
+        condition = jobs_of(WORKFLOW.with_name("pr-title.yml").read_text())["recheck"]["if"]
+        for event_name, draft, fork, action, title_changed, conclusion, attempt, expected in (
+            ("pull_request", False, False, "edited", True, "", 1, True),
+            ("pull_request", False, False, "edited", False, "", 1, False),
+            ("pull_request", True, False, "edited", True, "", 1, False),
+            ("pull_request", False, True, "edited", True, "", 1, False),
+            ("pull_request", False, False, "ready_for_review", False, "", 1, True),
+            ("workflow_run", False, False, "completed", False, "failure", 1, True),
+            ("workflow_run", False, False, "completed", False, "failure", 2, False),
+            ("workflow_run", False, False, "completed", False, "success", 1, False),
+            ("workflow_run", False, True, "completed", False, "failure", 1, False),
+        ):
+            repo = "fork/repo" if fork else "owner/repo"
+            context = {"event_name": event_name, "repository": "owner/repo", "event": {
+                "action": action, "changes": {"title": title_changed},
+                "pull_request": {"draft": draft, "head": {"repo": {"full_name": repo}}},
+                "workflow_run": {"event": "pull_request", "conclusion": conclusion,
+                                 "run_attempt": attempt, "head_repository": {"full_name": repo}}}}
+
+            def value(match):
+                found = context
+                for key in match.group().split(".")[1:]:
+                    found = found[key]
+                return repr(found)
+
+            expression = re.sub(r"github(?:\.\w+)+", value, condition)
+            expression = expression.replace("&&", " and ").replace("||", " or ").replace("!", "not ")
+            with self.subTest(context=context):
+                self.assertEqual(bool(eval(expression, {"__builtins__": {}}, {})), expected)  # noqa: S307
+
+    def test_title_edit_restarts_failed_fast_and_its_downstream_gate(self):
+        self.assertEqual(self.recheck(), ["101"])
+
+    def test_title_edit_keeps_successful_quick_or_legacy_full_evidence(self):
+        for fast in ("success", "skipped"):
+            with self.subTest(fast=fast):
+                self.assertEqual(self.recheck(fast=fast), ["202"])
+
+    def test_title_edit_during_run_is_recovered_on_its_completion_once(self):
+        self.assertEqual(self.recheck(status="in_progress"), [])
+        self.assertEqual(self.recheck(completed=True), ["101"])
+        self.assertEqual(self.recheck(completed=True, attempt=2), [])
+        self.assertEqual(self.recheck(completed=True, same_title=True), [])
+        self.assertEqual(self.recheck(completed=True, newer=True), [])
+
+    def test_completion_cannot_restart_main_or_other_repositories(self):
+        for changes in ({"event": "push"}, {"conclusion": "success"},
+                        {"head_repository": {"full_name": "fork/repo"}}):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.recheck(completed=True, source_changes=changes), [])
+
+    def test_only_the_current_ready_same_repository_pr_can_be_rechecked(self):
+        for completed in (False, True):
+            for changes in ({"state": "closed"}, {"draft": True}, {"base": {"ref": "release"}},
+                            {"head": {"sha": "b" * 40, "repo": {"full_name": "owner/repo"}}},
+                            {"head": {"sha": "a" * 40, "repo": {"full_name": "fork/repo"}}}):
+                with self.subTest(completed=completed, changes=changes):
+                    self.assertEqual(self.recheck(completed=completed, pull_changes=changes), [])
+        for required in ("skipped", "cancelled"):
+            with self.subTest(required=required):
+                self.assertEqual(self.recheck(required=required), [])
 
 
 class MainCliTest(unittest.TestCase):
