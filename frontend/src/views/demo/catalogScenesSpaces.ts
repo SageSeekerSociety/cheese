@@ -241,7 +241,7 @@ export const SCENES_SPACES_ENTRIES: CatalogEntry[] = [
     id: 'manage-topics-view',
     title: 'ManageTopicsView',
     about:
-      '「分类话题」那一屏的画面：一列已经在用的话题（每行一颗移除），和一根「添加话题」打开的选择器弹窗。搜索与新建由容器通过 `searchTopics` / `createTopic` 两个回调传进来，画面在原时机调它们。读 store、真增删归容器 `ManageTopics.vue`。',
+      '「分类标签」那一屏的画面：一列已经在用的标签（每行一颗移除），和一根「添加标签」打开的选择器弹窗。搜索与新建由容器通过 `searchTopics` / `createTopic` 两个回调传进来，画面在原时机调它们。读 store、真增删归容器 `ManageTopics.vue`。',
     file: 'src/views/spaces/detail/ManageTopicsView.vue',
     component: ManageTopicsView,
     needs: UI_T,
@@ -253,14 +253,14 @@ export const SCENES_SPACES_ENTRIES: CatalogEntry[] = [
     },
     states: [
       {
-        name: '还没有话题',
-        note: '一个话题都没加：就地说一句「暂无话题」，并摆着「添加话题」那颗按钮。',
+        name: '还没有标签',
+        note: '一个标签都没加：就地说一句「暂无标签」，并摆着「添加标签」那颗按钮。',
         props: {},
-        expect: '暂无话题',
+        expect: '暂无标签',
       },
       {
-        name: '列着话题',
-        note: '两个分类话题，各一行，右边一颗移除。',
+        name: '列着标签',
+        note: '两个分类标签，各一行，右边一颗移除。',
         props: { classificationTopics: [topic(), topic({ id: 2, name: '图论' })] },
         expect: '动态规划',
       },
@@ -270,7 +270,7 @@ export const SCENES_SPACES_ENTRIES: CatalogEntry[] = [
     id: 'topic-selector-view',
     title: 'TopicSelectorView',
     about:
-      '分类话题选择器「画 + 交互」的那一半：一个可多选、可现造的话题输入框，搜什么、选了什么、要不要新建都在这里，真正的搜索与新建由 `searchTopics` / `createTopic` 两个回调给出（原件 `TopicSelector.vue` 自己连接口，这一半只认 props，于是场景里能单独画它）。',
+      '分类标签选择器「画 + 交互」的那一半：一个可多选、可现造的标签输入框，搜什么、选了什么、要不要新建都在这里，真正的搜索与新建由 `searchTopics` / `createTopic` 两个回调给出（原件 `TopicSelector.vue` 自己连接口，这一半只认 props，于是场景里能单独画它）。',
     file: 'src/components/common/TopicSelectorView.vue',
     component: TopicSelectorView,
     needs: UI_T,
@@ -278,9 +278,9 @@ export const SCENES_SPACES_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '还没选',
-        note: '空的输入框：写着它的标签和「搜索已有话题或创建新话题」这一行提示。',
+        note: '空的输入框：写着「添加标签」和「搜索已有标签或创建新标签」这一行提示。',
         props: {},
-        expect: '添加话题',
+        expect: '添加标签',
       },
     ],
   },
