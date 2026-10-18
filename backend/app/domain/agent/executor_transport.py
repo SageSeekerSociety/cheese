@@ -1287,9 +1287,15 @@ class RemoteClient:
                         params[field] = to_machine(
                             params[field], original_workspace, workspace
                         )
-                params["env"] = respell_working_directory(
-                    params.get("env"), original_workspace, workspace
-                )
+                # Only where the request carried one, the way the three path
+                # fields above are only rewritten where they are strings: a
+                # `tool_hooks` or `files` request through this branch names no
+                # environment, and an `env` invented here would be a field its
+                # executor does not read.
+                if "env" in params:
+                    params["env"] = respell_working_directory(
+                        params["env"], original_workspace, workspace
+                    )
             target_file = self.config.get("target_file")
             if target_file and changed_lease:
                 tree = self.call("context_fs", {"operation": "tree"})
