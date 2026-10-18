@@ -10,11 +10,16 @@
 告` 和 `结题报告` 都合法），把它变成一次当场的报错正是这两个动作存在的理由。
 """
 
+import asyncio
 import uuid
 
 import pytest
+from sqlalchemy import event
 
+from app.core.errors import UnprocessableEntityError
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.deliverables import artifacts
+from app.domain.project.models import ProjectArtifact
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
@@ -115,6 +120,71 @@ def _notice_detail(client, room_id: str, needle: str) -> str:
         if needle in (block.get("content") or ""):
             return (block.get("meta") or {}).get("detail") or ""
     raise AssertionError(f"任务里没有说 {needle} 的那一行")
+
+
+def _seed_listed_artifacts(client, project_id: str, room_id: str, count: int) -> None:
+    """把一个「清单上已经有 `count` 件」的项目直接建出来：一项一行，各有一张在飞
+    的卡，所以每一件都算在清单上。
+
+    不经过 HTTP 建这 20 张卡：一张卡要一个自己的任务（同一个任务只允许一张待处理
+    的卡），而这里要的不是卡怎么递，是清单有多长。
+    """
+    from app.domain.review.models import AcceptCard
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            for i in range(count):
+                artifact = ProjectArtifact(
+                    project_id=uuid.UUID(project_id), name=f"产物{i:02d}"
+                )
+                session.add(artifact)
+                await session.flush()
+                session.add(
+                    AcceptCard(
+                        topic_id=uuid.UUID(room_id),
+                        reviewer_handle="alice",
+                        artifact_id=artifact.id,
+                    )
+                )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def _reuse_directly(client, project_id: str, artifact_id: str, hidden=()):
+    """直接调 `reuse`，数它读出来的产物行和发出去的语句。
+
+    走 HTTP 那条路上还有卡、通知、清单那一行，读了多少行产物会被别的东西搅在一起。
+    `reuse` 自己的代价在这里量 —— 它要问的本来就是「是不是这一件」。
+    """
+    reads: list[uuid.UUID] = []
+    statements: list[str] = []
+
+    def _loaded(target, _context):
+        reads.append(target.id)
+
+    def _statement(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    async def _run():
+        async with client.test_request_factory() as session:
+            engine = session.get_bind()
+            engine = getattr(engine, "sync_engine", engine)
+            event.listen(ProjectArtifact, "load", _loaded)
+            event.listen(engine, "before_cursor_execute", _statement)
+            try:
+                return await artifacts.reuse(
+                    session,
+                    project_id=uuid.UUID(project_id),
+                    artifact_id=artifact_id,
+                    hidden=hidden,
+                )
+            finally:
+                event.remove(ProjectArtifact, "load", _loaded)
+                event.remove(engine, "before_cursor_execute", _statement)
+
+    found = client.portal.call(_run)
+    return found, statements, reads
 
 
 # --- 生：只有交付能创建一项 -------------------------------------------------
@@ -232,6 +302,24 @@ def test_a_rejected_delivery_leaves_nothing_on_the_list(client):
     assert _manifest(client, pid) == []
 
 
+def test_reusing_the_id_of_a_rejected_delivery_is_refused(client):
+    """那一行还在（同一个名字再声明时落回它），但它已经不在清单上了。
+
+    `artifact` 只认清单上的 id，所以「别处遗留的一行」不能从这里被沿用回来。
+    """
+    pid = _project(client)
+    rid = _room(client, pid)
+    declared = _file_card(client, rid, new_artifact="结题报告").json()["data"]
+    _decide(client, declared["id"], "reject")
+
+    r = _file_card(
+        client, _room(client, pid, "第二轮"), artifact=declared["artifact"]["id"]
+    )
+
+    assert r.status_code == 422
+    assert _manifest(client, pid) == []
+
+
 def test_the_same_name_declared_again_lands_on_the_same_item(client):
     """驳回之后重来一次，是同一项的第一版，不是另一项。"""
     pid = _project(client)
@@ -273,6 +361,52 @@ def test_reusing_an_id_the_list_does_not_have_is_refused(client):
     assert "《结题报告》" in message
     assert declared["artifact"]["id"] in message
     assert "new_artifact" in message
+
+
+def test_reusing_an_id_reads_only_that_one_artifact(client):
+    """清单上已经有 20 件时，沿用一件读的就是那一件。
+
+    原来那一版为了认出 id 先 `list_for_project`：也是一条语句，但它把清单上每一
+    行的产物都读了出来。这里数的是读出来的产物行 —— 20 件和 1 件都只读 1 行；把
+    `list_for_project` 放回去，这个数就跟着清单变长。
+    """
+    pid = _project(client)
+    _seed_listed_artifacts(client, pid, _room(client, pid, "第一轮"), 20)
+    listed = _manifest_rows(client, pid)
+    assert len(listed) == 20
+
+    found, statements, reads = _reuse_directly(client, pid, listed[0]["id"])
+
+    assert str(found.id) == listed[0]["id"]
+    assert len(reads) == 1, f"沿用一件产物却读了 {len(reads)} 行产物"
+    assert len(statements) == 1, statements
+
+
+def test_reusing_an_item_from_another_project_is_refused(client):
+    """别的项目那一项的 id，在这个项目里就是没有这一项。"""
+    mine, theirs = _project(client), _project(client)
+    _file_card(client, _room(client, theirs), new_artifact="结题报告")
+    theirs_id = _manifest_rows(client, theirs)[0]["id"]
+    second = _room(client, mine, "第二轮")
+
+    r = _file_card(client, second, artifact=theirs_id)
+
+    assert r.status_code == 422
+    assert "清单上没有" in r.json()["message"]
+    assert _manifest(client, mine) == []
+    assert _manifest(client, theirs) == [("结题报告", 0)]
+
+
+def test_an_item_delivered_in_a_hidden_room_is_not_reused_elsewhere(client):
+    """看不见的那个频道里交付过的一项，在这个房间的清单上不存在 —— 按 id 也不行。"""
+    pid = _project(client)
+    secret = _room(client, pid, "私下")
+    declared = _file_card(client, secret, new_artifact="结题报告").json()["data"]
+
+    with pytest.raises(UnprocessableEntityError):
+        _reuse_directly(
+            client, pid, declared["artifact"]["id"], hidden=[uuid.UUID(secret)]
+        )
 
 
 def test_declaring_a_name_the_list_already_has_is_refused(client):

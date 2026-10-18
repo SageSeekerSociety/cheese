@@ -19,11 +19,11 @@
   "overlay": "空间设置",
   "sections": {
     "categories": "分类",
-    "topics": "话题"
+    "topics": "标签"
   },
   "tabs": {
     "basic": "基本信息",
-    "categories": "分类与话题",
+    "categories": "分类与标签",
     "domainGroups": "邮箱域名组",
     "guidance": "给 AI 队友的指导",
     "inviteCodes": "邀请码",
