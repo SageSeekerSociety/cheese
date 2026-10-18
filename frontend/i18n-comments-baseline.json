@@ -187,7 +187,6 @@
     "src/views/spaces/detail/MembersView.vue": 3,
     "src/views/spaces/detail/PublishTaskView.vue": 1,
     "src/views/spaces/detail/settings/BasicInfoView.vue": 6,
-    "src/views/spaces/detail/settings/Index.vue": 1,
     "src/views/spaces/detail/settings/SpaceGuidanceView.vue": 3,
     "src/views/spaces/detail/settings/SpaceMaterialsView.vue": 6,
     "src/views/spaces/detail/TasksView.vue": 4,

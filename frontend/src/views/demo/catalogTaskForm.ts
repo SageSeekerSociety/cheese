@@ -214,16 +214,16 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-form-classify',
     title: 'TaskFormClassify',
-    about: '「分类与话题」那一节：侧栏哪个分类下（必选），带哪些话题（可多选）。',
+    about: '「分类与标签」那一节：侧栏哪个分类下（必选），带哪些标签（可多选）。',
     file: 'src/components/tasks/form/TaskFormClassify.vue',
     component: TaskFormClassify,
     needs: UI_T,
     states: [
       {
         name: '选好了',
-        note: '分类只能一个，话题可以几个。',
+        note: '分类只能一个，标签可以几个。',
         props: classify(),
-        expect: '分类与话题',
+        expect: '分类与标签',
       },
       {
         name: '没选分类（标红）',
