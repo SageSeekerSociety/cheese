@@ -52,9 +52,6 @@ export function setForgeAttribution(projectId: string, requesterCoauthor: boolea
 export function getGithubConnection(projectId: string): Promise<GithubConnection> {
   return request(`/projects/${encodeURIComponent(projectId)}/github/connection`)
 }
-export function getGithubInstallUrl(projectId: string): Promise<{ url: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/github/install-url`)
-}
 // Connect via an existing cheesex-app installation when one already covers the
 // upstream repo; {connected:false, install_url} means "go through GitHub".
 // (GitHub's install page never fires the callback when the App is already
