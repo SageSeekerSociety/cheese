@@ -1,12 +1,10 @@
 /**
- * 第三批「拆出来的半张画面」（管理员看板告警、小队知识库、后台成员管理）在预览站里吃的
+ * 第三批「拆出来的半张画面」（管理员看板告警、后台成员管理）在预览站里吃的
  * 数据。
  *
  * 形状照抄类型叶子里的声明（`types/spaces.ts` 的 `SpaceAnalyticsAlerts`、
  * `types/admin.ts` 的 `PlatformAdminsPayload` / `AdminCandidate`），少一个键多一个键都在
- * `vue-tsc` 那里当场红。知识库那几件复用 `catalogKnowledgeFixtures.ts` 的
- * `KNOWLEDGE_ROWS` / `KNOWLEDGE_TAGS`（网格和列表看的是同一份），所以这里只补告警与成员
- * 两块。
+ * `vue-tsc` 那里当场红。
  *
  * 时间戳写死而不是 `Date.now()`：`relTime` 要的是稳定的那几格字，跟着当天变的话这一份就
  * 不叫「真会出现的形状」了。单独一份文件，是因为条目已经在 `catalogScenesMisc2.ts` 里

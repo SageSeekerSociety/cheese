@@ -84,7 +84,12 @@ async def document_named(session: AsyncSession, name: str) -> Document | None:
 
 
 def sign_ticket(
-    *, document_id: uuid.UUID, handle: str, agent: bool, read_only: bool
+    *,
+    document_id: uuid.UUID,
+    handle: str,
+    agent: bool,
+    read_only: bool,
+    suggest_only: bool,
 ) -> str:
     return jwt.encode(
         {
@@ -92,6 +97,7 @@ def sign_ticket(
             "sub": handle,
             "agent": agent,
             "ro": read_only,
+            "sg": suggest_only,
             "exp": int(time.time()) + TICKET_TTL_S,
         },
         _key("ticket"),

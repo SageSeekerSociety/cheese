@@ -369,7 +369,7 @@ async def check_my_sandbox(
     return sandbox.status(await service.sandbox_check(device_id))
 
 
-@router.patch("/my/devices/{device_id}")
+@router.patch("/my/devices/{device_id}", dependencies=[ROUTE_DECIDES])
 async def rename_my_device(
     device_id: str,
     body: RenameDeviceRequest,
@@ -383,7 +383,7 @@ async def rename_my_device(
     return await _device_view(db, device, _screens_by_device().get(device_id, []))
 
 
-@router.delete("/my/devices/{device_id}")
+@router.delete("/my/devices/{device_id}", dependencies=[ROUTE_DECIDES])
 async def unbind_my_device(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep
 ) -> dict[str, Any]:

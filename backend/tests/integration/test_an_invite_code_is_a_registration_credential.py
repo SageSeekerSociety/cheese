@@ -23,10 +23,9 @@
 `require_auth_user` 的 401（`test_questions.py::test_cancel_invitation_no_auth`），
 这里跟这一族走。
 
-`GET /users/invite-codes`（列表）**今天打不到**：`GET /users/{userId}`（`users.py`
-里更早注册）先接住 `invite-codes`，落到 int 转换上回 400。它也被补上了同一道门
-—— 万一有人把路由顺序改回来，它一出生就是管理员专有的 —— 但那件事属于路由顺序，
-不在这个文件的断言里（见 `test_the_list_route_is_unreachable_today`）。
+列表（`GET /users/invite-codes`）是同一道门：码的值就是注册门票，陌生人读不到，
+管理员读得到。它曾被更早注册的 `GET /users/{userId}` 接住、落到 int 转换上回 400，
+所以这两条也钉着「这个路径真的走到列表那条路由」。
 """
 
 import pytest
@@ -223,28 +222,31 @@ def test_the_platform_admin_can_deactivate_an_invite_code(
     assert _is_active(db_session, _portal, code.id) is False
 
 
-# --- 列表那条打不到 ---------------------------------------------------------
+# --- 列表 -------------------------------------------------------------------
 
 
-def test_the_list_route_is_unreachable_today(
+def test_a_logged_in_stranger_cannot_list_invite_codes(
+    api_client: TestClient,
+    stranger: CreatedUser,
+    db_session: AsyncSession,
+    _portal,
+):
+    """读到码的值就能拿它注册：陌生人被拒，回的 body 里也没有那个码。"""
+    code = _an_existing_code(db_session, _portal)
+
+    response = api_client.get("/users/invite-codes", headers=_headers(stranger))
+
+    assert response.status_code == 403, response.text
+    assert code.code not in response.text
+
+
+def test_the_platform_admin_can_list_invite_codes(
     api_client: TestClient, as_admin: CreatedUser, db_session: AsyncSession, _portal
 ):
-    """`GET /users/invite-codes` 今天被 `GET /users/{userId}` 挡住，谁调都是 400。
-
-    这条用例记的是一个**已知的坏形状**，不是想要的行为：`invite-codes` 落到
-    `{userId}` 的 int 转换上，回的是 `int_parsing`。它记在这儿，是因为
-    「邀请码的值能不能被任意登录用户读到」这个问题的答案就藏在这条路由能不能被
-    命中里 —— 今天不能，所以那半条不成立。
-
-    哪天有人把路由顺序改对（或者把这条挪到 `/{userId}` 前面），这条会变红：那不是
-    回归，是提醒 —— 改对之后 `GET` 必须仍然是管理员专有的（路由上已经挂了
-    `PlatformAdminDep`），把这个断言改成「管理员 200 / 陌生人 403」再提交。
-    """
+    """对照组：管理员拿到列表，已经发出去的那个码就在里面。"""
     code = _an_existing_code(db_session, _portal)
 
     response = api_client.get("/users/invite-codes", headers=_headers(as_admin))
 
-    assert response.status_code == 400, response.text
-    # 400 的 body 是校验错误的信封，它会把**路径**原样抄回来（"input":"invite-codes"），
-    # 所以不能断言「body 里没有 invite 这个词」—— 要断言的是没有**码的值**。
-    assert code.code not in response.text
+    assert response.status_code == 200, response.text
+    assert code.code in [row["code"] for row in response.json()["data"]["codes"]]

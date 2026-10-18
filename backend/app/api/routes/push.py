@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -48,7 +49,7 @@ async def push_public_key() -> dict:
     )
 
 
-@router.put("/subscriptions")
+@router.put("/subscriptions", dependencies=[ROUTE_DECIDES])
 async def save_subscription(
     body: PushSubscriptionIn,
     db: DbSession,
@@ -70,7 +71,7 @@ async def save_subscription(
     return ok({"saved": True})
 
 
-@router.post("/subscriptions/delete")
+@router.post("/subscriptions/delete", dependencies=[ROUTE_DECIDES])
 async def drop_subscription(
     body: PushEndpointIn,
     db: DbSession,

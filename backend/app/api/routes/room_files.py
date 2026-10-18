@@ -441,7 +441,7 @@ _MUST_SAVE = (2, 6)
 _SAVE_FAILED = (3, 7)
 
 
-@router.post("/office-editor/callback/{link}")
+@router.post("/office-editor/callback/{link}", dependencies=[ROUTE_DECIDES])
 async def editor_saves_file(
     link: str,
     request: Request,

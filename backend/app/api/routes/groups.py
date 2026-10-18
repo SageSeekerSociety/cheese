@@ -64,11 +64,7 @@ async def list_groups(
     return ok({"groups": groups, "page": page})
 
 
-@router.post(
-    "",
-    summary="Create Group",
-    status_code=201,
-)
+@router.post("", summary="Create Group", status_code=201, dependencies=[ROUTE_DECIDES])
 async def create_group(
     payload: dict = Body(...),
     auth_user: AuthUserInfo = Depends(require_auth_user),
