@@ -80,3 +80,12 @@ def test_a_batch_whose_commits_were_not_all_read_says_at_least():
     )
     assert "至少 3 个提交" in prompt
     assert "各自排除" in prompt
+
+
+def test_a_neutral_run_counts_as_a_pass():
+    """`merge_state` treats neutral as passing; the watcher reads it the same."""
+    runs = [
+        Check("shell-tests", "completed", "neutral", "", suite=1),
+        Check("shell-tests", "completed", "failure", "", suite=1),
+    ]
+    assert _red_checks(runs) == []

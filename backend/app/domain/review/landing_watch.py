@@ -78,6 +78,9 @@ logger = logging.getLogger("cheesex.review.landing_watch")
 #: the branch cancels the run it superseded.
 _FAILED = frozenset({"failure", "timed_out", "startup_failure"})
 
+#: A completed check that passed, as `merge_state` reads it.
+_PASS = frozenset({"success", "neutral"})
+
 #: How many merges are looked at at once. What a look mostly waits on is the
 #: forge, asked with no session open (`_look`) — but it does hold a connection
 #: while it reads and writes, so this is a bound on pooled connections as well
@@ -422,9 +425,7 @@ def _red_checks(runs: list[Check]) -> list[Check]:
         by_name.setdefault(run.name, []).append(run)
     red: list[Check] = []
     for group in by_name.values():
-        if any(
-            run.status == "completed" and run.conclusion == "success" for run in group
-        ):
+        if any(run.status == "completed" and run.conclusion in _PASS for run in group):
             continue
         if any(run.status != "completed" for run in group):
             continue
@@ -465,7 +466,7 @@ async def _judge_checks(
         return await _judge_batch(
             reads, sha, head=sha, head_checks=own, project_id=project_id, memo=memo
         )
-    if gate is not None and gate.conclusion == "success":
+    if gate is not None and gate.conclusion in _PASS:
         # Its own batch passed; a red left here is another workflow's, and the
         # old rule judges it.
         if red:
@@ -663,7 +664,7 @@ async def _walk_back(reads: LandingReads, project_id, head: str, memo: dict):
             break
         gate = gate_run(await _checks(reads, project_id, parent, memo))
         if gate is not None and gate.status == "completed":
-            if gate.conclusion == "success":
+            if gate.conclusion in _PASS:
                 complete = True
                 break
         current = parent
@@ -994,27 +995,26 @@ async def _withdraw_passed(
             except Exception:  # a forge read that fails withdraws nothing
                 continue
             gate = gate_run(runs)
-            red = _red_checks(runs)
-            if gate is None:
-                # No gate of its own was left behind; if something else on the
-                # commit is red, the blame may have been that, and it is not
-                # the batch's to take back.
-                if red:
-                    continue
-            else:
-                # Only a red check in the batch's own workflow run is taken
-                # back: a workflow that runs beside it (an image build, say)
-                # is another suite, and Required CI going green says nothing
-                # about it.
-                still_red = [
-                    run
-                    for run in red
-                    if run.suite is None
+            # Only a red check in the batch's own workflow run is taken back:
+            # a workflow that runs beside it (an image build, say) is another
+            # suite, and Required CI going green says nothing about it. A
+            # completed red counts even while a re-run of it is in flight: the
+            # failure has not been settled yet.
+            still_red = [
+                run
+                for run in runs
+                if run is not gate
+                and run.status == "completed"
+                and run.conclusion in _FAILED
+                and (
+                    gate is None
+                    or run.suite is None
                     or gate.suite is None
                     or run.suite != gate.suite
-                ]
-                if still_red:
-                    continue
+                )
+            ]
+            if still_red:
+                continue
             async with sessions() as session:
                 landing = await session.get(
                     TaskLanding, landing_id, with_for_update=True

@@ -280,6 +280,9 @@ def test_a_red_check_the_batch_does_not_rerun_is_not_withdrawn(
     forge.ran[HEAD] = [
         _gate("success"),
         _gate("success", "backend tests (unit)"),
+        # build.yml runs on every main push, so the green head reports it too;
+        # excluding by name would withdraw the build failure with it.
+        _gate("success", "build-gateway", suite=2),
     ]
     forge.green = HEAD
     forge.ahead = {(LINE_ONE, HEAD)}

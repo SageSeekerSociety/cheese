@@ -195,6 +195,9 @@ _TEST_PATH = re.compile(
 #: main cancels the run it superseded.
 _RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
 
+#: A completed check that passed, as `merge_state` reads it.
+_PASS_CONCLUSIONS = frozenset({"success", "neutral"})
+
 
 def gate_run(runs: list[Check]) -> Check | None:
     """The batched gate's own check run among a commit's checks, if any.
@@ -206,7 +209,7 @@ def gate_run(runs: list[Check]) -> Check | None:
     if not gates:
         return None
     for run in gates:
-        if run.status == "completed" and run.conclusion == "success":
+        if run.status == "completed" and run.conclusion in _PASS_CONCLUSIONS:
             return run
     for run in gates:
         if run.status != "completed":
