@@ -195,8 +195,12 @@ class _Tokens:
 
     def __init__(self, remaining: int = 4000, limit: int = 5000) -> None:
         self.quota = (remaining, limit)
+        # Counted so a test can tell "no token was ever minted" from "a token
+        # was minted and the reader then chose to stop".
+        self.token_calls = 0
 
     async def installation_token(self) -> tuple[str, str]:
+        self.token_calls += 1
         forge_quota.own("app-token", self.installation_id, time.time() + 3600)
         return "app-token", "2026-10-17T13:00:00+00:00"
 
@@ -829,8 +833,9 @@ def test_reporting_yields_at_35_percent_without_advancing_coverage(
         report = await _sweep(db_session, remote.reader(), backfill_slices=0)
         assert remote.requests == []
         assert report["error"]
-        # No token this round: the id comes from the current binding, not the
-        # stale one the older report carried (a rebind could have changed it).
+        # 35% is above the 20% stop: the credential WAS minted; it is the
+        # reader's own 50% yield that stopped the sweep before any request.
+        assert tokens.token_calls == 1
         assert report["installation_id"] == 9917
         latest = await CiActivityStore(db_session).last_sweep(REPO)
         assert latest.runs_listed_to == NOW - timedelta(minutes=5)
@@ -838,6 +843,43 @@ def test_reporting_yields_at_35_percent_without_advancing_coverage(
             db_session, REPO, board.Window(NOW - ingest.WINDOW, NOW, [NOW.date()])
         )
         assert not status["complete"]
+        assert status["request_counts"]["http_attempts"] == 0
+
+    _portal.call(run)
+
+
+def test_a_tokenless_sweep_reports_the_current_binding_not_the_old_report(
+    db_session, _portal, tokens
+):
+    remote = _NativeGitHub()
+    # 10% is below the 20% stop: background work gets no token at all.
+    tokens.quota = (500, 5000)
+
+    async def run():
+        await _connect(db_session)
+        await CiActivityStore(db_session).record_sweep(
+            REPO,
+            started_at=NOW - timedelta(minutes=5),
+            runs_listed_from=NOW - ingest.WINDOW,
+            runs_listed_to=NOW - timedelta(minutes=5),
+            queue_read_to=NOW - timedelta(minutes=5),
+            report={"error": "", "installation_id": 3},
+        )
+        report = await _sweep(db_session, remote.reader(), backfill_slices=0)
+        assert report["error"]
+        # The entry really is tokenless: nothing was minted, and no data
+        # request was attempted.
+        assert tokens.token_calls == 0
+        assert remote.requests == []
+        # The stale id from the older report (3) is not carried; the current
+        # binding's id is what the sweep and the board report.
+        assert report["installation_id"] == 9917
+        latest = await CiActivityStore(db_session).last_sweep(REPO)
+        assert latest.report["installation_id"] == 9917
+        status = await board._sweep_status(
+            db_session, REPO, board.Window(NOW - ingest.WINDOW, NOW, [NOW.date()])
+        )
+        assert status["installation_id"] == 9917
         assert status["request_counts"]["http_attempts"] == 0
 
     _portal.call(run)
