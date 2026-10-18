@@ -600,7 +600,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' }}
     permissions:
       contents: write
-    runs-on: ${{ fromJSON('["self-hosted","cheese-ci"]') }}
+    runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 5
     steps:
       # The Refs API, not `git push`: the cheese-ci boxes have no `gh`, and

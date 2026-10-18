@@ -13,10 +13,14 @@ run-name: Deploy ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.h
 # prod runs: pull the per-commit images, migrate, up, health-check. The frontend
 # image bundles its own nginx; the ghg edge terminates TLS and hits :80.
 
-# Triggered by the image build finishing for a main commit. Required CI for that
-# commit ran in the merge queue before the commit reached main, so it has already
-# finished by then; the eligibility job still checks both for the candidate SHA
-# without occupying the deployment runner.
+# Triggered by either half of a main commit finishing: its image build, or the
+# Required CI push run that proves it. Those finish in either order — the build
+# in minutes, the full suite in tens of minutes — so the first to arrive records
+# what it is waiting for and the second releases; a test run that does not pass
+# is the one that fails the eligibility job. A commit whose own push run was
+# replaced by a later push in the batch is released by that later commit's run,
+# and its own release steps aside. The eligibility job checks both halves for the
+# candidate SHA without occupying the deployment runner.
 # A release of a commit from before the two slots per service
 # (deploy/deploy-docker.sh, "Two slots"), a revert or a manual dispatch, runs
 # that commit's own script. It installs its own app-router.conf and reloads —
@@ -60,7 +64,7 @@ on:
         type: string
         default: ""
   workflow_run:
-    workflows: ["Build and Push Docker Image"]
+    workflows: ["Build and Push Docker Image", "Required CI"]
     types: [completed]
     branches: [main]
 
@@ -97,8 +101,35 @@ jobs:
           fi
       # A refused release skips the deploy job, and a run whose only skipped job
       # is the deploy concludes success, which reads as "this commit is on dev".
-      - name: Fail when this commit will not be deployed
+      # A refused release skips the deploy job, and a run whose only skipped job
+      # is the deploy concludes success, which reads as "this commit is on dev".
+      # So anything that will never deploy fails here — but a half that the other
+      # half has not caught up with is a wait, not a refusal: the build finishes
+      # in minutes and the full suite in tens of minutes, in either order.
+      - name: Decide whether this is a refusal or a wait
+        id: wait
         if: steps.check.outputs.ready != 'true'
+        env:
+          TRIGGER: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          # A Required CI run that has finished without passing (failure,
+          # timed_out, startup_failure) is the verdict this gate exists to
+          # enforce. Everything else that is not ready may still become ready:
+          # the build first waits for the suite, a cancelled batch run left the
+          # commit to a later one, and a passing suite whose images are still
+          # building waits for the build.
+          waiting=true
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ] \
+             && [ "$TRIGGER" = "Required CI" ] \
+             && [ "$CONCLUSION" != "success" ] \
+             && [ "$CONCLUSION" != "cancelled" ] \
+             && [ "$CONCLUSION" != "skipped" ]; then
+            waiting=false
+          fi
+          echo "waiting=$waiting" >> "$GITHUB_OUTPUT"
+      - name: Fail when this commit will not be deployed
+        if: steps.check.outputs.ready != 'true' && steps.wait.outputs.waiting != 'true'
         env:
           CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
         run: |
@@ -107,6 +138,13 @@ jobs:
           echo "Not deployed \`$CANDIDATE_SHA\`: $reason. dev runs \`${live:-unknown}\`." >> "$GITHUB_STEP_SUMMARY"
           echo "::error::Not deployed $CANDIDATE_SHA: $reason."
           exit 1
+      - name: Say what this commit is waiting for
+        if: steps.check.outputs.ready != 'true' && steps.wait.outputs.waiting == 'true'
+        env:
+          CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
+          TRIGGER: ${{ github.event.workflow_run.name }}
+        run: |
+          echo "Not released yet \`$CANDIDATE_SHA\`: \`$TRIGGER\` finished, its other half has not passed. That half's own completion releases the newest commit it covers; a later batch run releases this commit too when its own run was replaced." >> "$GITHUB_STEP_SUMMARY"
       # A newer commit that can be released already is, by its own run; this
       # one skips its deploy job rather than wait for the deploy-dev group,
       # where it would cancel that newer run if it is still waiting
