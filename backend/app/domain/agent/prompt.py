@@ -278,12 +278,22 @@ async def model_images(
     """
     images: dict[str, Image] = {}
     undecodable: set[str] = set()
+    wanted: list[tuple[str, bool]] = []
     for path, media_type in files:
         claimed = is_inline_image(media_type)
         suffix = path[path.rfind(".") :].lower() if "." in path else ""
         if not claimed and suffix not in raster_images.SUFFIX_MEDIA_TYPE:
             continue
-        data = await library_records.read_attachment(session, project_id, room_id, path)
+        wanted.append((path, claimed))
+    if not wanted:
+        return images, undecodable
+    # One read for the whole message: a path the message does not call a picture
+    # and whose name does not say one needs no bytes at all (`wanted`).
+    stored = await library_records.read_attachments(
+        session, project_id, room_id, [path for path, _ in wanted]
+    )
+    for path, claimed in wanted:
+        data = stored[path]
         decoded = await asyncio.to_thread(model_media_type, data)
         if decoded is None:
             undecodable.add(path)
@@ -309,14 +319,13 @@ async def offered_attachments(
     says it is gone (`prompt_line(gone=True)`) and the turn goes on.
     """
     attachments = [b for b in pending if b.kind == BlockKind.attachment and b.content]
-    gone = {
-        b.id
-        for b in attachments
-        if not await library_records.attachment_exists(
-            session, project_id, room_id, b.content
-        )
-    }
-    present = [b for b in attachments if b.id not in gone]
+    # One answer for the whole message: asking per attachment was a query and a
+    # disk call each, on the first-byte path of every turn.
+    present_paths = await library_records.attachments_present(
+        session, project_id, room_id, [b.content for b in attachments]
+    )
+    gone = {b.id for b in attachments if b.content not in present_paths}
+    present = [b for b in attachments if b.content in present_paths]
     images, undecodable = await model_images(
         session,
         project_id,

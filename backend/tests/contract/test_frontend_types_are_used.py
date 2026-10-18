@@ -17,6 +17,9 @@ count cannot tell apart from dead code.
 
 ``_KNOWN`` freezes today's dead types by file. It may only shrink: delete a
 type and drop its entry; never add one.
+
+Deleting a type can leave another type it referenced with no reader, so
+a PR that deletes types reruns this test after merging main.
 """
 
 from __future__ import annotations
@@ -43,23 +46,12 @@ _KNOWN: set[tuple[str, str]] = {
     ("cx_types.ts", "ProjectMember"),
     ("cx_types.ts", "SpaceDashboard"),
     ("lib/docBubble.ts", "SelectionTarget"),
-    ("types/apiNotifications.ts", "BulkUpdateRequest"),
-    ("types/apiNotifications.ts", "BulkUpdateResponse"),
     ("types/apiSpaces.ts", "PublisherParticipation"),
     ("types/apiSpaces.ts", "SpaceAnalyticsTasksData"),
-    ("types/apiUsers.ts", "OAuthBindUserResponse"),
-    ("types/apiUsers.ts", "OAuthCreateUserResponse"),
-    ("types/apiUsers.ts", "OAuthVerifyRequest"),
-    ("types/apiUsers.ts", "PasskeyAuthenticationOptionsResponse"),
-    ("types/apiUsers.ts", "PasskeyRegistrationOptionsResponse"),
     ("types/canvas.ts", "CanvasTask"),
     ("types/groups.ts", "GroupMemberInvitation"),
     ("types/groups.ts", "GroupSettings"),
     ("types/groups.ts", "GroupTargetCheckIn"),
-    ("types/insights.ts", "InsightMediaImage"),
-    ("types/insights.ts", "InsightMediaVideo"),
-    ("types/ownAgents.ts", "MyOwnAgentConnection"),
-    ("types/ownAgents.ts", "OwnAgentRow"),
     ("views/demo/demoCatalogStudio.ts", "FrameMessage"),
 }
 
