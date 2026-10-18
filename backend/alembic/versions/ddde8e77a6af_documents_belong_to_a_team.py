@@ -1,7 +1,7 @@
 """Documents belong to a team; the team knowledge base becomes documents
 
 Revision ID: ddde8e77a6af
-Revises: 1478f65e1004
+Revises: c245f89aa6d7
 Create Date: 2026-10-18
 
 A document belonged to a project. It now belongs to a team — a person's own to
@@ -32,7 +32,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "ddde8e77a6af"
-down_revision: str | Sequence[str] | None = "1478f65e1004"
+down_revision: str | Sequence[str] | None = "c245f89aa6d7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
