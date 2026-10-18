@@ -67,7 +67,7 @@ def pr_review_dir() -> Path:
     if named:
         return Path(named)
     for base in (SCRIPTS_DIR, Path.cwd()):
-        for parent in (base.parent, *base.parents):
+        for parent in (base, base.parent, *base.parents):
             candidate = parent / ".claude" / "pr-review"
             if (candidate / "render.py").exists():
                 return candidate
@@ -211,10 +211,7 @@ def body_append(text: str, line: str) -> str:
 
 
 def body_with_line(text: str, new_line: str) -> str:
-    """`text` with its latest review line replaced by `new_line`, on the last line.
-
-    A first round that wrongly carries `（增量自 …）` loses it: the check rejects
-    that, and a first round has no earlier round to be an increment of."""
+    """`text` with its latest review line replaced by `new_line`, on the last line."""
     lines = text.splitlines()
     hits = _review_lines(text)
     if hits:
@@ -229,23 +226,65 @@ def body_with_line(text: str, new_line: str) -> str:
     while lines and not lines[-1].strip():
         lines.pop()
     lines.append(new_line)
-
-    first = next(i for i, line in enumerate(lines) if REVIEW_LINE.search(line))
-    if REVIEW_LINE.search(lines[first]).group(2) is not None:  # type: ignore[union-attr]
-        lines[first] = SINCE_SUFFIX.sub(" ", lines[first], count=1)
     return "\n".join(lines) + "\n"
 
 
+def ensure_round_one(text: str) -> str:
+    """Repair a first review line that carries `（增量自 …）`, which the check rejects.
+
+    When an earlier round exists, the suffix on the first line is a mistake and
+    is dropped. When it is the only line, dropping it would claim the review
+    covered the whole change, so the round the increment came from is written
+    down in front of it instead."""
+    lines = text.splitlines()
+    hits = _review_lines(text)
+    if not hits:
+        return text
+    card = _review_render().CARD_LINE.search(lines[hits[0]])
+    if card is None or not card.group("since"):
+        return text
+    if len(hits) > 1:
+        lines[hits[0]] = SINCE_SUFFIX.sub(" ", lines[hits[0]], count=1)
+    else:
+        serious = int(card.group("serious") or 0)
+        lines.insert(
+            hits[0], card_line(card.group("since"), None, serious, card.group("tier"))
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _refuse_unreviewed_head(reviewed: str, head: str, root: str, base: str) -> None:
+    """Raise unless `head` may carry the verdict given for `reviewed`."""
+    allowed, detail = exempt_increment(root, base, reviewed, head)
+    if not allowed:
+        raise ValueError(
+            f"审查是 {reviewed[:8]} 的，之后又推了提交（{detail}），"
+            f"缺一次增量审：prepare <PR> --since {reviewed[:8]}"
+        )
+
+
 def fix_body(
-    text: str, source: dict, head: str | None, since: str | None, tier: str | None
+    text: str,
+    source: dict,
+    head: str | None,
+    tier: str | None,
+    root: str,
+    base: str,
 ) -> str:
-    """Rewrite the card body's latest review line from `source`'s facts."""
+    """Rewrite the card body's latest review line from `source`'s facts.
+
+    A head other than the one the review names is only stamped when the
+    increment from the review is one §4 does not re-review — the same gate
+    `--stamp` applies. `--head` is a convenience, not a way around it."""
     target_head = head or source["head"]
-    target_since = since if since is not None else source["since"]
+    target_since = source["since"]
+    if not same_head(target_head, source["head"]):
+        _refuse_unreviewed_head(source["head"], target_head, root, base)
+        target_since = source["head"]
     line = card_line(
         target_head, target_since, source["serious"], tier or source["tier"]
     )
-    return body_with_line(text, line)
+    return ensure_round_one(body_with_line(text, line))
 
 
 def stamp_body(
@@ -254,23 +293,17 @@ def stamp_body(
     head: str,
     root: str,
     base: str,
-    since: str | None,
     tier: str | None,
 ) -> str:
     """The delivery-time rewrite: pin `head`, and declare the increment when §4 lets
     the earlier review still cover it."""
     reviewed = source["head"]
     if same_head(head, reviewed):
-        increment = None
-    elif since is not None:
-        increment = since
+        # A delta review keeps its own scope: the line must still say where it
+        # started, or the card claims coverage the reviewer never gave.
+        increment = source["since"]
     else:
-        allowed, detail = exempt_increment(root, base, reviewed, head)
-        if not allowed:
-            raise ValueError(
-                f"审查是 {reviewed[:8]} 的，之后又推了提交（{detail}），"
-                f"缺一次增量审：prepare <PR> --since {reviewed[:8]}"
-            )
+        _refuse_unreviewed_head(reviewed, head, root, base)
         increment = reviewed
     line = card_line(head, increment, source["serious"], tier or source["tier"])
 
@@ -288,7 +321,7 @@ def stamp_body(
     last = text.splitlines()[hits[-1]]
     m = REVIEW_LINE.search(last)
     if m is not None and same_head(m.group(1), head):
-        return body_with_line(text, line)
+        return ensure_round_one(body_with_line(text, line))
     return body_append(text, line)
 
 
@@ -413,7 +446,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--base", default="main", help="base branch for the increment check"
     )
-    parser.add_argument("--since", help="override the increment base sha")
     parser.add_argument("--tier", help="override the review tier A-G")
     parser.add_argument(
         "--out", type=Path, help="write the fixed body here instead of stdout"
@@ -459,17 +491,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if source is None:
         # Without a rendered review, repair from the line the body already carries.
-        m = None
-        for m in REVIEW_LINE.finditer(body):
-            pass
-        if m is None:
+        # CARD_LINE, not REVIEW_LINE: the tier is part of the line and a repair
+        # must not quietly drop it.
+        found = _review_render().CARD_LINE.findall(body)
+        if not found:
             print("没有审查结论可以钉：请传 --review-result", file=sys.stderr)
             return 2
+        head_part, since_part, _, serious, tier = found[-1]
         source = {
-            "head": m.group(1),
-            "since": m.group(2),
-            "serious": int(m.group(4) or 0),
-            "tier": "",
+            "head": head_part,
+            "since": since_part,
+            "serious": int(serious or 0),
+            "tier": tier,
         }
 
     try:
@@ -479,11 +512,11 @@ def main(argv: list[str] | None = None) -> int:
                 print("读不到当前 head：请传 --head", file=sys.stderr)
                 return 2
             fixed = stamp_body(
-                body, source, head, args.root or ".", args.base, args.since, args.tier
+                body, source, head, args.root or ".", args.base, args.tier
             )
         else:
             head = args.head or source["head"]
-            fixed = fix_body(body, source, head, args.since, args.tier)
+            fixed = fix_body(body, source, head, args.tier, args.root or ".", args.base)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1

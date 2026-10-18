@@ -141,7 +141,7 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
         return path
 
     def run_script(
-        self, *args: str, script: Path = SCRIPT
+        self, *args: str, script: Path = SCRIPT, cwd: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(script), *args],
@@ -149,6 +149,7 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
             capture_output=True,
             text=True,
             env=self.env,
+            cwd=None if cwd is None else str(cwd),
             timeout=60,
         )
 
@@ -296,12 +297,21 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
         self.assertIn("缺一次增量审", result.stderr)
 
     def test_fixing_to_an_old_head_makes_the_check_red(self) -> None:
-        """Deliberate violation: pin the old sha instead of the delivery head."""
+        """Deliberate violation: pin the old sha instead of the delivery head.
+
+        A --fix that both pins a fixed head and skips the increment gate is what
+        a careless implementation looks like; the check has to catch the line it
+        writes."""
         target = 'head = args.head or source["head"]'
+        gate = '_refuse_unreviewed_head(source["head"], target_head, root, base)'
         source = REAL_SCRIPT.read_text(encoding="utf-8")
         self.assertIn(target, source)
+        self.assertIn(gate, source)
         mutant = self.root / "check-review-card-body-old-head.py"
-        mutant.write_text(source.replace(target, 'head = "12345678"'), encoding="utf-8")
+        mutant.write_text(
+            source.replace(target, 'head = "12345678"').replace(gate, "pass"),
+            encoding="utf-8",
+        )
 
         body = self.root / "mutant-body.md"
         body.write_text("## 改动原因\n修复问题。\n", encoding="utf-8")
@@ -314,6 +324,10 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
             "--out",
             str(body),
             script=mutant,
+            # CI runs the helper tests from the repository root, not from
+            # .claude/scripts; a copied script has to find the review method
+            # from there too.
+            cwd=SCRIPTS_DIR.parents[1],
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("head 12345678", body.read_text(encoding="utf-8"))
@@ -321,6 +335,65 @@ class ReviewCardBodyGuardTests(unittest.TestCase):
         check = self.run_script("--head", "11111111", "--text", str(body))
         self.assertEqual(check.returncode, 1, check.stdout + check.stderr)
         self.assertIn("不是当前 head", check.stderr)
+
+    def test_fix_refuses_a_head_the_review_did_not_cover(self) -> None:
+        self.body_file.write_text("## 改动原因\n修复问题。\n", encoding="utf-8")
+        result = self.run_script(
+            "--fix",
+            "--review-result",
+            str(self.review_result("11111111")),
+            "--head",
+            "22222222",
+            "--text",
+            str(self.body_file),
+            "--out",
+            str(self.body_file),
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("缺一次增量审", result.stderr)
+
+    def test_stamp_keeps_a_delta_reviews_scope_when_the_head_did_not_move(self) -> None:
+        result_file = self.root / "REVIEW-RESULT.md"
+        result_file.write_text(
+            "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major｜档位 B\n",
+            encoding="utf-8",
+        )
+        self.body_file.write_text(
+            "## 改动原因\n修复问题。\n\n"
+            "独立 review：head 22222222 结论 无 blocker/major｜档位 B\n",
+            encoding="utf-8",
+        )
+        result = self.run_script(
+            "--stamp",
+            "--review-result",
+            str(result_file),
+            "--head",
+            "22222222",
+            "--text",
+            str(self.body_file),
+            "--out",
+            str(self.body_file),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = self.body_file.read_text(encoding="utf-8")
+        self.assertIn("head 22222222（增量自 11111111）", text)
+        check = self.run_script("--head", "22222222", "--text", str(self.body_file))
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+
+    def test_fix_without_a_review_file_keeps_the_tier(self) -> None:
+        body = self.root / "solo" / "body.md"
+        body.parent.mkdir()
+        body.write_text(
+            "## 改动原因\n修复问题。\n\n"
+            "独立 review：head 11111111 结论 有 2 条｜档位 B\n",
+            encoding="utf-8",
+        )
+        result = self.run_script("--fix", "--text", str(body), "--out", str(body))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(
+            "独立 review：head 11111111 结论 有 2 条｜档位 B",
+            body.read_text(encoding="utf-8"),
+        )
 
     def test_removing_last_line_check_makes_not_on_last_line_case_fail(self) -> None:
         """Deliberate violation: strip the last-line check and assert the test goes red."""
