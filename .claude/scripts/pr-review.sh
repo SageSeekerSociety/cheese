@@ -79,10 +79,13 @@ fi
 usage() { sed -n '/^#   \.claude/,/^# Exit status/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "pr-review: $*" >&2; exit 1; }
 
-# The round for PR $1 at $2 (a 12-char prefix; empty for the newest one). Look under the
-# current root first, then /tmp: rounds made before the default moved are still there, and
-# the compatibility symlink keeps the new ones reachable by their old path too. Prints the
-# .input directory; fails when there is none.
+# The round for PR $1 at $2 (a 12-char prefix; empty for the newest one). The current root
+# is searched first and /tmp only when it has nothing: /tmp is shared with every other seat
+# on the machine (same uid, different HOME), and a newer round of theirs must not answer
+# for this seat's. With a prefix the same order applies: the first root holding that round
+# wins. Newest first within a root, skipping a path that is not a directory — a
+# compatibility symlink whose target is gone is not a round. Prints the .input directory;
+# fails when there is none.
 round_input() {
   local pr=$1 want=${2:-} root d
   if [ -n "$want" ]; then
@@ -92,13 +95,11 @@ round_input() {
     done
     return 1
   fi
-  # Newest first, skipping a path that is not a directory: a compatibility symlink whose
-  # target is gone is not a round, and returning it would hide an older one that still is.
-  local globs=()
-  for root in "${REVIEW_ROOTS[@]}"; do globs+=("$root"/pr-review-"$pr"-*.input); done
-  while IFS= read -r d; do
-    [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
-  done < <(ls -dt "${globs[@]}" 2>/dev/null)
+  for root in "${REVIEW_ROOTS[@]}"; do
+    while IFS= read -r d; do
+      [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
+    done < <(ls -dt "$root"/pr-review-"$pr"-*.input 2>/dev/null)
+  done
   return 1
 }
 
@@ -145,20 +146,21 @@ prepare() {
 
   tree=$REVIEW_ROOT/pr-review-$pr-${sha:0:12}
   dir=$tree.input
-  # What a second prepare of the same commit must not throw away: the conclusion (and the
-  # result behind it) still covers that commit, and losing it is what made a re-prepare
-  # after a machine change cost a whole review. A real /tmp directory from before the
-  # default moved holds the same round for this same commit; read it before the
-  # compatibility symlink below replaces it. Only the default root looks there — an
-  # explicit PR_REVIEW_DIR owns its files and must not read or delete another root's round.
+  # What a second prepare of the same commit must not throw away: the conclusion, the
+  # result behind it, and the requirement contract the review was handed all still belong
+  # to that commit, and losing them is what made a re-prepare after a machine change cost
+  # a whole review. A real /tmp directory from before the default moved holds the same
+  # round for this same commit; read it before the compatibility symlink below replaces it.
+  # Only the default root looks there — an explicit PR_REVIEW_DIR owns its files and must
+  # not read or delete another root's round.
   local keep="" old_tmp=""
   keep=$(mktemp -d "${TMPDIR:-/tmp}/pr-review-keep.XXXXXX") || die "could not make a temporary directory"
   [ -n "${PR_REVIEW_DIR:-}" ] || old_tmp=/tmp/pr-review-$pr-${sha:0:12}.input
-  for cand in "$dir/REVIEW-RESULT.md" "$dir/result.json"; do
+  for cand in "$dir/REVIEW-RESULT.md" "$dir/result.json" "$dir/spec.md"; do
     [ -f "$cand" ] && cp "$cand" "$keep/"
   done
   if [ -n "$old_tmp" ]; then
-    for cand in "$old_tmp/REVIEW-RESULT.md" "$old_tmp/result.json"; do
+    for cand in "$old_tmp/REVIEW-RESULT.md" "$old_tmp/result.json" "$old_tmp/spec.md"; do
       [ -f "$cand" ] && [ ! -f "$keep/${cand##*/}" ] && cp "$cand" "$keep/"
     done
   fi
@@ -169,7 +171,7 @@ prepare() {
     rm -rf "$old_tmp"
   fi
   rm -rf "$dir"; mkdir -p "$dir"
-  for f in REVIEW-RESULT.md result.json; do
+  for f in REVIEW-RESULT.md result.json spec.md; do
     [ ! -f "$keep/$f" ] || cp "$keep/$f" "$dir/$f"
   done
   rm -rf "$keep"
@@ -269,6 +271,9 @@ prepare() {
   elif [ -n "$since" ] && prev_round=$(round_input "$pr" "$since") \
     && [ -f "$prev_round/spec.md" ]; then
     spec_from=$prev_round/spec.md
+  elif [ -f "$dir/spec.md" ]; then
+    # A second prepare of this same commit carried its contract over above.
+    spec_from=$dir/spec.md
   fi
   if [ -n "$spec_from" ]; then
     [ -s "$spec_from" ] || die "--spec $spec_from is empty; that is not a contract to check"
