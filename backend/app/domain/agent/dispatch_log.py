@@ -70,12 +70,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Uuid, select, update
+from sqlalchemy import DateTime, ForeignKey, Index, String, Uuid, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import UuidPk
+from app.domain.agent_session.models import AgentSession
 
 
 def _now() -> datetime:
@@ -214,7 +215,11 @@ async def settle(
 
 
 async def unsettled(
-    session: AsyncSession, place_id: uuid.UUID, *, since: datetime
+    session: AsyncSession,
+    place_id: uuid.UUID,
+    *,
+    since: datetime,
+    session_refs: set[tuple[str, str]] | None = None,
 ) -> list[Dispatch]:
     """这个地点里 ``since`` 之后派出去、而没有人写回来的那些，最早的在前。
 
@@ -229,21 +234,25 @@ async def unsettled(
     用方给出这次要收拾的那几轮里最早的开始时刻：这一行是在**发出之前**写的，属于那
     几轮的调用不可能早于它们开始。
     """
-    rows = (
-        (
-            await session.execute(
-                select(DispatchRow)
-                .where(
-                    DispatchRow.place_id == place_id,
-                    DispatchRow.outcome.is_(None),
-                    DispatchRow.dispatched_at >= since,
+    # During replay, only the named (agent, resume token) pairs are terminal;
+    # another seat's unfinished call must still accept its eventual result.
+    query = select(DispatchRow).where(
+        DispatchRow.place_id == place_id,
+        DispatchRow.outcome.is_(None),
+        DispatchRow.dispatched_at >= since,
+    )
+    if session_refs is not None:
+        query = query.where(
+            DispatchRow.session_id.in_(
+                select(AgentSession.id).where(
+                    AgentSession.conversation_id == place_id,
+                    tuple_(AgentSession.agent_handle, AgentSession.resume_token).in_(
+                        session_refs
+                    ),
                 )
-                .order_by(DispatchRow.dispatched_at)
             )
         )
-        .scalars()
-        .all()
-    )
+    rows = (await session.scalars(query.order_by(DispatchRow.dispatched_at))).all()
     return [_read(row) for row in rows]
 
 

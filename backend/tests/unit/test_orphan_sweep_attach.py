@@ -37,8 +37,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.domain.agent.realtime.broker import InProcessBroker
-from app.domain.agent import turn_inputs
+from app.domain.agent import dispatch_log, turn_inputs
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent_session.models import AgentSession
 from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic, open_turn, open_turn_ids
 
@@ -112,19 +114,70 @@ async def test_replay_protects_only_its_own_conversation_from_the_orphan_sweep(
 @pytest.mark.anyio
 async def test_exact_terminal_evidence_is_consumed_while_the_room_replays(db_factory):
     topic = await a_topic(db_factory)
-    await open_turn(db_factory, topic, delivered=True, session_id="gone")
-    unknown = await open_turn(
-        db_factory, topic, delivered=True, session_id="unanswered"
-    )
+    now = datetime.now(UTC)
+    turns = {token: uuid.uuid4() for token in ("gone", "unanswered")}
+    dispatches = {}
+    async with db_factory() as session:
+        for token, turn in turns.items():
+            sid = uuid.uuid4()
+            session.add(
+                AgentSession(
+                    id=sid,
+                    conversation_id=topic,
+                    agent_handle=token,
+                    harness="claude-code",
+                    resume_token=token,
+                )
+            )
+            await AgentTurnRepository(session).open(
+                turn_id=turn,
+                conversation_id=topic,
+                continuation_id=turn,
+                author="u",
+                content="Run tests",
+                is_resume=False,
+                resendable=True,
+                started_at=now - timedelta(seconds=60),
+                delivered_at=now - timedelta(seconds=59),
+                agent_handle=token,
+                session_id=token,
+            )
+            dispatches[token] = dispatch_log.record(
+                session,
+                place_id=topic,
+                key=token + "-call",
+                tool="Bash",
+                session_id=sid,
+                lease_generation=uuid.uuid4(),
+            )
+        await session.commit()
     chat = _Chat(db_factory)
     replay = asyncio.create_task(asyncio.Event().wait())
     chat.replaying = lambda room: replay
     chat.row_is_dead = lambda room, agent, sid: sid == "gone"
+    chat.has_live_screen = lambda room, agent=None: agent == "unanswered"
     runner = AgentWorkRunner(InProcessBroker())
     try:
         await runner.resume_orphans(chat)
-        assert await open_turn_ids(db_factory) == {unknown}
+        assert await open_turn_ids(db_factory) == {turns["unanswered"]}
         assert not chat.converse_calls
+        async with db_factory() as session:
+            gone = await session.get(dispatch_log.DispatchRow, dispatches["gone"])
+            healthy = await session.get(
+                dispatch_log.DispatchRow, dispatches["unanswered"]
+            )
+            assert gone.outcome == "unknown"
+            assert healthy.outcome is None
+            await dispatch_log.settle(session, healthy.id, dispatch_log.Outcome.done)
+            await session.commit()
+        async with db_factory() as session:
+            healthy = await session.get(
+                dispatch_log.DispatchRow, dispatches["unanswered"]
+            )
+            assert healthy.outcome == "done"
+        assert len(chat.notices) == 1
+        assert "gone-call" in chat.notices[0][1]
+        assert "unanswered-call" not in chat.notices[0][1]
     finally:
         replay.cancel()
         await asyncio.gather(replay, return_exceptions=True)
