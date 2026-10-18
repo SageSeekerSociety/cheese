@@ -15,11 +15,13 @@ import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getTopicEnvironment = vi.fn()
+const getProject = vi.fn()
 const archiveTopic = vi.fn(async (id: string) => ({ id, status: 'archived' }))
 const unarchiveTopic = vi.fn(async (id: string) => ({ id, status: 'active' }))
 
 vi.mock('@/api', () => ({
   getTopicEnvironment: (...args: unknown[]) => getTopicEnvironment(...args),
+  getProject: (...args: unknown[]) => getProject(...args),
   listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })),
   getTopicUsage: vi.fn(async () => null),
   getProjectUsage: vi.fn(async () => null),
@@ -29,7 +31,7 @@ vi.mock('@/api', () => ({
 
 import TopicHeader from './TopicHeader.vue'
 
-import { setLocale } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 
 const Header = TopicHeader as unknown as Component
 
@@ -267,5 +269,26 @@ describe('手机上话题头的 ⋯', () => {
 
     expect(unarchiveTopic).toHaveBeenCalledWith('topic-1')
     expect(screen.queryByRole('menuitem', { name: '重命名' })).toBeNull()
+  })
+})
+
+describe('频道成员名单里的添加', () => {
+  // 每个用例一个项目：项目那一份读进共享的查询缓存里，换个角色得换个项目。
+  async function openRosterAs(projectId: string, permissions: string[]) {
+    getTopicEnvironment.mockResolvedValue(profile())
+    getProject.mockResolvedValue({ id: projectId, name: 'P', my_permissions: permissions })
+    mountHeader({ project_id: projectId, joined: true })
+    await fireEvent.click(bar().querySelector('.members-mini') as HTMLElement)
+    await screen.findByPlaceholderText(t('work.room.roster.addPlaceholder')).catch(() => null)
+  }
+
+  it('角色允许拉人进频道的人，在自己所在的频道里能添加', async () => {
+    await openRosterAs('p-member', ['speak', 'create_channels'])
+    expect(await screen.findByRole('button', { name: t('work.room.roster.add') })).toBeTruthy()
+  })
+
+  it('角色不允许的人，人在频道里也添加不了', async () => {
+    await openRosterAs('p-mentor', ['speak', 'ask_agent', 'comment'])
+    await waitFor(() => expect(screen.queryByRole('button', { name: t('work.room.roster.add') })).toBeNull())
   })
 })
