@@ -637,16 +637,14 @@ const { saving, saved, dirty, error, run } = useSaveState({
 
 | 闸门 | 拦什么 | 在哪 |
 |---|---|---|
-| stylelint 颜色规则 | 新增的写死颜色（hex / rgb / hsl / 颜色名），包括文档站的 `docs/site/src/style.css` | `frontend/stylelint.config.cjs` |
+| stylelint 颜色规则 | 写死颜色（hex / rgb / hsl / 颜色名），一处就红，包括文档站的 `docs/site/src/style.css` | `frontend/stylelint.config.cjs` |
 | 固定调色板闸门 | 模板和 script 里的 `color="grey-*"` / `bg-white` / `text-grey-*` | `.claude/scripts/check-repo-rules.sh` |
 | 组件闸门 | 裸 `<v-btn>`（§3.6）和裸 `<v-empty-state>`（§3.12）；每一处例外都要上一行带原因的 `eslint-disable-next-line`。它只看得见 `.vue` 模板里带前缀的裸标签名，所以 `.ts` 的 `template:` 字符串、`<VDialog>` 这类别名、以及不带原因的 disable 注释都拦不到——那三种情况靠 review | `frontend/eslint.config.mjs` |
-| 存量棘轮 | stylelint 颜色规则只拦**新增**；存量冻结在基线里，只能减少。固定调色板闸门没有基线，一处就红 | `frontend/stylelint-baseline.json` |
 
 ```bash
 cd frontend
 pnpm run lint:style          # 检查（CI 跑的就是它，只读）
 pnpm run lint:style:fix      # 自动修可修的部分
-pnpm run lint:style:update   # 修好一批后把基线降下来并提交
 
 cd ..
 bash .claude/scripts/check-repo-rules.sh              # 检查固定调色板

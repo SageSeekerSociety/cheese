@@ -194,15 +194,6 @@ CHECKS: tuple[Check, ...] = (
         ledger=True,
     ),
     Check(
-        id="harness-boundary",
-        area=BOUNDARY,
-        argv=("python", "-m", "pytest", "tests/unit/test_harness_boundary.py", "-q"),
-        cwd="backend",
-        rules=("backend/tests/unit/test_harness_boundary.py",),
-        baseline="_LEDGER",
-        ledger=True,
-    ),
-    Check(
         id="file-sizes",
         area=SIZE,
         argv=("python", ".claude/scripts/check-file-sizes.py", "--json", "--base", "origin/main"),
@@ -246,7 +237,6 @@ CHECKS: tuple[Check, ...] = (
             "frontend/stylelint.config.cjs",
             "frontend/scripts/stylelint-ratchet.mjs",
             "frontend/scripts/stylelint-ratchet-core.mjs",
-            "frontend/scripts/tsc-ratchet-core.mjs",
             "frontend/scripts/ratchet-report.mjs",
         ),
     ),
@@ -597,9 +587,6 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
             "not read: the checker asks whether app/__init__.py exists under the "
             "root it is given, and the bare one beside the script is not that file"
         ),
-    },
-    "stylelint-tokens": {
-        "frontend/stylelint-baseline.json": "baseline: the frozen token counts",
     },
 }
 
