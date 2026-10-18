@@ -306,15 +306,15 @@ async def get_github_profile_for_handle(
 ) -> tuple[str, dict] | None:
     """This handle's connected GitHub account as ``(provider_user_id, profile)``.
 
-    The read behind commit/PR attribution (``workspace/identity.py``), which
+    The read behind commit/PR attribution (``repository/identity.py``), which
     needs the numeric GitHub id and the login and has no business reaching into
     this domain's repositories for them.
 
-    `github_app` is tried first because it is the connection the accept flow
-    already pushes and opens PRs with, so preferring it keeps commit authorship
-    and PR authorship pointing at the same account; `github` is the plain login
-    connection, present for people who signed in with GitHub but never
-    authorized the App.
+    `github_app` is tried first because it is the account the person linked
+    for exactly this (「连接 GitHub 账号」, ``api/routes/github_account_link.py``);
+    PRs themselves are opened with the App's installation token, not with any
+    person's. `github` is the plain login connection, present for people who
+    signed in with GitHub but never linked an account.
     """
     # deferred-import: tests replace this name on app.domain.user.repositories
     from app.domain.user.repositories import UserRepository
