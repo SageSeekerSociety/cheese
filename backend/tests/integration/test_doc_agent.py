@@ -473,7 +473,11 @@ def test_a_thread_is_stopped_only_through_its_own_document(client, sessions):
 
     async def their_document() -> str:
         async with client.test_factory() as db:
-            doc = Document(project_id=uuid.UUID(theirs["id"]), content="自己的文档")
+            doc = Document(
+                project_id=uuid.UUID(theirs["id"]),
+                team_id=theirs["team_id"],
+                content="自己的文档",
+            )
             db.add(doc)
             await db.commit()
             return str(doc.id)
