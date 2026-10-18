@@ -27,6 +27,7 @@
     "ask_agent": "Use {agent}",
     "tasks": "Create and review tasks",
     "edit_content": "Edit documents and files",
+    "share_documents": "Share documents",
     "comment": "Comment",
     "configure_agents": "Configure AI teammates"
   },
@@ -41,6 +42,7 @@
     "ask_agent": "Have {agent} answer questions, write documents and do work",
     "tasks": "Hand work to {agent} as tasks and review what they return",
     "edit_content": "Create, edit and delete documents and files, and save them to the library",
+    "share_documents": "Create and take back a document's read-only link, which people outside the project can read",
     "comment": "Comment on documents",
     "configure_agents": "Add and retire AI teammates, and manage skills, MCP servers and shared memory"
   }

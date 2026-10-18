@@ -8,6 +8,7 @@ import type { ListedDocument } from '@/api/projectDocuments'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { LibraryRow } from '@/composables/useLibraryPages'
 import type { ProjectMemberRow } from '@/cx_types'
+import type { DocAuthor } from '@/lib/docAuthors'
 import type { LibraryFile, LibraryFolder } from '@/lib/libraryApi'
 
 import { useRowMenu } from '@/composables/useRowMenu'
@@ -15,10 +16,10 @@ import { useRowMenu } from '@/composables/useRowMenu'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import VirtualList from '@/components/common/VirtualList.vue'
+import DocAuthors from '@/components/library/DocAuthors.vue'
 import { t } from '@/i18n'
-import { memberName } from '@/lib/agentNames'
-import { isAgentHandle } from '@/lib/authorship'
 import { fmtBytes } from '@/lib/changesTree'
+import { docAuthors } from '@/lib/docAuthors'
 import { leafOf } from '@/lib/libraryFolders'
 import { KIND_ICONS, kindOf } from '@/lib/libraryKinds'
 import { relTime } from '@/lib/relTime'
@@ -74,10 +75,8 @@ function docName(doc: { title: string | null }): string {
   return doc.title || t('work.room.doc.untitled')
 }
 
-function docMeta(doc: ListedDocument): string {
-  const row = props.members.find((m) => m.user_handle === doc.author)
-  const who = isAgentHandle(doc.author) ? props.agentName : memberName(row) || doc.author
-  return t('work.library.docMeta', { who, when: relTime(doc.updated_at) })
+function authorsOf(doc: ListedDocument): DocAuthor[] {
+  return docAuthors(doc, props.members, props.agentName)
 }
 
 function folderActions(folder: LibraryFolder): MenuAction[] {
@@ -202,7 +201,11 @@ function entryKey(row: unknown): string {
             <v-icon icon="mdi-file-document-edit-outline" size="20" class="library-row__icon" />
             <span class="library-row__id">
               <span class="library-row__name t-body" data-user-content>{{ docName(item.doc) }}</span>
-              <span class="t-meta c-faint">{{ docMeta(item.doc) }}</span>
+              <span class="library-row__meta t-meta c-faint">
+                <span>{{ t('work.library.docKind') }}</span>
+                <DocAuthors :authors="authorsOf(item.doc)" />
+                <span>{{ relTime(item.doc.updated_at) }}</span>
+              </span>
             </span>
           </button>
           <AdaptiveMenu v-bind="rowMenu.bind(item.key)" :actions="docActions(item.doc)" :title="docName(item.doc)">
@@ -300,6 +303,14 @@ function entryKey(row: unknown): string {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+}
+
+/* 文档那一行的小字：哪种东西、作者、最后一次改动的时间，各占一格，靠间距分开。 */
+.library-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
