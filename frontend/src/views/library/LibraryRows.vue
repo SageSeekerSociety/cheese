@@ -13,7 +13,6 @@ import type { LibraryFile, LibraryFolder } from '@/lib/libraryApi'
 
 import { useRowMenu } from '@/composables/useRowMenu'
 
-import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import VirtualList from '@/components/common/VirtualList.vue'
 import DocAuthors from '@/components/library/DocAuthors.vue'
@@ -183,16 +182,7 @@ function entryKey(row: unknown): string {
             </span>
           </button>
           <AdaptiveMenu v-bind="rowMenu.bind(item.key)" :actions="folderActions(item.folder)" :title="item.folder.name">
-            <template #activator="{ props: menuProps }">
-              <BaseButton
-                v-bind="menuProps"
-                icon="mdi-dots-horizontal"
-                size="sm"
-                class="tap-target"
-                :loading="props.busy === item.folder.path"
-                :aria-label="t('work.library.actionsOf', { name: item.folder.name })"
-              />
-            </template>
+            <template #activator />
           </AdaptiveMenu>
         </div>
         <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused controls (the keyboard's Menu key fires it too); the row's ⋯ button opens the same menu -->
@@ -209,15 +199,7 @@ function entryKey(row: unknown): string {
             </span>
           </button>
           <AdaptiveMenu v-bind="rowMenu.bind(item.key)" :actions="docActions(item.doc)" :title="docName(item.doc)">
-            <template #activator="{ props: menuProps }">
-              <BaseButton
-                v-bind="menuProps"
-                icon="mdi-dots-horizontal"
-                size="sm"
-                class="tap-target"
-                :aria-label="t('work.library.actionsOf', { name: docName(item.doc) })"
-              />
-            </template>
+            <template #activator />
           </AdaptiveMenu>
         </div>
         <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused controls (the keyboard's Menu key fires it too); the row's ⋯ button opens the same menu -->
@@ -235,16 +217,7 @@ function entryKey(row: unknown): string {
             </span>
           </button>
           <AdaptiveMenu v-bind="rowMenu.bind(item.key)" :actions="fileActions(item.file)" :title="fileName(item.file)">
-            <template #activator="{ props: menuProps }">
-              <BaseButton
-                v-bind="menuProps"
-                icon="mdi-dots-horizontal"
-                size="sm"
-                class="tap-target"
-                :loading="props.busy === item.file.path"
-                :aria-label="t('work.library.actionsOf', { name: fileName(item.file) })"
-              />
-            </template>
+            <template #activator />
           </AdaptiveMenu>
         </div>
       </template>

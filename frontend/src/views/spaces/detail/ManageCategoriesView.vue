@@ -57,15 +57,7 @@
           />
 
           <AdaptiveMenu v-bind="rowMenu.bind(category.id)" :actions="categoryActions(category)" :title="category.name">
-            <template #activator="{ props }">
-              <BaseButton
-                v-bind="props"
-                kind="ghost"
-                icon="mdi-dots-horizontal"
-                size="sm"
-                :aria-label="t('navigation.shell.more')"
-              />
-            </template>
+            <template #activator />
           </AdaptiveMenu>
         </template>
       </v-list-item>

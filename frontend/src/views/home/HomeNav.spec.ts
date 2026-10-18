@@ -143,9 +143,9 @@ describe('首页目录的画面', () => {
     ['ADMIN', ['邀请成员', '编辑团队资料', '退出团队']],
     ['MEMBER', ['退出团队']],
     ['OWNER', ['邀请成员', '编辑团队资料', '转让团队', '解散团队']],
-  ] as const)('%s 在团队那一行的 ⋯ 里看到的操作', async (role, labels) => {
+  ] as const)('%s 在团队那一行的右键菜单里看到的操作', async (role, labels) => {
     await mount({ teams: [team('crew', '知是开发组', role)] })
-    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'), { clientX: 40, clientY: 80 })
     await screen.findByText(labels[0])
     expect(menuLabels()).toEqual(labels)
   })
@@ -155,10 +155,10 @@ describe('首页目录的画面', () => {
     ['OWNER', '解散团队', 'openDisband'],
     ['OWNER', '转让团队', 'openTransfer'],
     ['MEMBER', '退出团队', 'leave'],
-  ] as const)('从 ⋯ 里选「%s」只是把这件事报上去', async (role, label, event) => {
+  ] as const)('从团队操作的右键菜单里选「%s」只是把这件事报上去', async (role, label, event) => {
     const crew = team('crew', '知是开发组', role)
     const { view } = await mount({ teams: [crew] })
-    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'), { clientX: 40, clientY: 80 })
     await fireEvent.click(await screen.findByText(label))
     await waitFor(() => expect(view.emitted(event)).toEqual([[crew]]))
   })
@@ -184,7 +184,15 @@ describe('首页目录的画面', () => {
     const text = document.body.textContent ?? ''
     expect(text.indexOf('林夏')).toBeLessThan(text.indexOf('团队'))
     expect(text.indexOf('团队')).toBeLessThan(text.indexOf('知是开发组'))
-    expect(screen.getAllByLabelText('团队操作')).toHaveLength(1)
+    // 右键自己那一行什么都不弹；团队那一行才弹。
+    const opens = async (teamName: string) => {
+      const row = (await screen.findByText(teamName)).closest('.v-list-item') as HTMLElement
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 80 })
+      row.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    expect(await opens('林夏')).toBe(false)
+    expect(await opens('知是开发组')).toBe(true)
   })
 
   it('团队展开后有「额度」一页', async () => {

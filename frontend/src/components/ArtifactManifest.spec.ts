@@ -118,9 +118,9 @@ function dialogButton(label: string): HTMLElement | undefined {
 }
 
 async function openMenu(container: Element, name: string) {
-  const activator = container.querySelector<HTMLElement>(`button[aria-label="${name} 的操作"]`)
-  expect(activator).toBeTruthy()
-  await fireEvent.click(activator!)
+  const row = Array.from(container.querySelectorAll('.made-row')).find((el) => el.textContent?.includes(name))
+  expect(row).toBeTruthy()
+  await fireEvent.contextMenu(row as HTMLElement, { clientX: 40, clientY: 60 })
 }
 
 // These assertions read the Chinese copy; the English rendering is checked in its own case.

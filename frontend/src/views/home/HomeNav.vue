@@ -263,18 +263,7 @@ const transferModel = computed({
               :actions="teamActions(team)"
               :title="team.name"
             >
-              <template #activator="{ props }">
-                <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
-                <v-btn
-                  v-bind="props"
-                  icon="mdi-dots-horizontal"
-                  size="x-small"
-                  variant="text"
-                  class="home-nav__more"
-                  :aria-label="t('home.nav.teamActions')"
-                  @click.stop
-                />
-              </template>
+              <template #activator />
             </AdaptiveMenu>
           </template>
         </v-list-item>

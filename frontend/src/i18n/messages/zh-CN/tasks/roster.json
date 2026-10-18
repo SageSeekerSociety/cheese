@@ -37,7 +37,6 @@
   "loadFailed": "领取者名单没读出来",
   "loading": "加载中",
   "memberWithId": "{name}（{id}）",
-  "more": "更多",
   "noMatch": "暂无符合条件的领取者",
   "passed": "已通过",
   "reject": "拒绝",

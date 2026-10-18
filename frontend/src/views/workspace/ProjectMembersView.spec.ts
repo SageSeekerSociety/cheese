@@ -165,14 +165,20 @@ async function settled() {
   await new Promise((resolve) => setTimeout(resolve))
 }
 
-const MENU = '[aria-label="管理成员"]'
-
-/** 打开某一行的 ⋯ 菜单，返回菜单里各项的文字。 */
+/** 右键某一行的卡片，返回菜单里各项的文字。 */
 async function openMenu(container: Element, handle: string): Promise<string[]> {
-  await waitFor(() => expect(rowFor(container, handle).querySelector(MENU)).toBeTruthy())
-  await fireEvent.click(rowFor(container, handle).querySelector(MENU) as Element)
-  await screen.findByText('移出项目')
+  await settled()
+  await fireEvent.contextMenu(rowFor(container, handle), { clientX: 40, clientY: 60 })
+  await waitFor(() => expect(document.body.querySelector('.v-overlay .v-list-item')).toBeTruthy())
   return Array.from(document.body.querySelectorAll('.v-overlay .v-list-item'), (el) => el.textContent?.trim() ?? '')
+}
+
+/** 右键这一行会不会弹出菜单：这一行没有能做的事时，右键留给浏览器（不拦截）。 */
+async function opensMenu(container: Element, handle: string): Promise<boolean> {
+  await settled()
+  const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 })
+  rowFor(container, handle).dispatchEvent(event)
+  return event.defaultPrevented
 }
 
 function section(container: Element, key: string): Element | null {
@@ -233,9 +239,9 @@ describe('成员页：只往下管', () => {
   it('所有者对除自己以外的每个人都有管理菜单', async () => {
     const { container } = mount()
     for (const handle of ['dora', 'ligan', 'mentor1']) {
-      await waitFor(() => expect(rowFor(container, handle).querySelector(MENU), handle).toBeTruthy())
+      expect(await opensMenu(container, handle), handle).toBe(true)
     }
-    expect(rowFor(container, 'alice').querySelector(MENU)).toBeNull()
+    expect(await opensMenu(container, 'alice')).toBe(false)
   })
 
   it('所有者能把成员设为管理员或导师，也能移出', async () => {
@@ -272,11 +278,11 @@ describe('成员页：只往下管', () => {
   it('管理员只管成员和导师：所有者、别的管理员、自己都没有菜单，也设不了管理员', async () => {
     as('dora', 'admin', MANAGER)
     const { container } = mount()
-    await waitFor(() => expect(rowFor(container, 'ligan').querySelector(MENU)).toBeTruthy())
-    expect(rowFor(container, 'mentor1').querySelector(MENU)).toBeTruthy()
-    expect(rowFor(container, 'alice').querySelector(MENU)).toBeNull()
-    expect(rowFor(container, 'boss').querySelector(MENU)).toBeNull()
-    expect(rowFor(container, 'dora').querySelector(MENU)).toBeNull()
+    expect(await opensMenu(container, 'ligan')).toBe(true)
+    expect(await opensMenu(container, 'mentor1')).toBe(true)
+    expect(await opensMenu(container, 'alice')).toBe(false)
+    expect(await opensMenu(container, 'boss')).toBe(false)
+    expect(await opensMenu(container, 'dora')).toBe(false)
 
     const items = await openMenu(container, 'ligan')
     expect(items).toContain('设为导师')
@@ -287,7 +293,7 @@ describe('成员页：只往下管', () => {
     as('ligan', 'member', PLAIN)
     const { container, queryByText } = mount()
     await settled()
-    expect(container.querySelectorAll(MENU).length).toBe(0)
+    expect(await opensMenu(container, 'mentor1')).toBe(false)
     expect(queryByText('邀请')).toBeNull()
   })
 

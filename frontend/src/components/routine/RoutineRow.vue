@@ -168,15 +168,7 @@ const rowMenu = useRowMenu<'row'>()
         {{ stateLabel }}
       </v-chip>
       <AdaptiveMenu v-if="routine.can_manage && inMenu.length" :actions="inMenu" :title="routine.title">
-        <template #activator="{ props: menuProps }">
-          <BaseButton
-            v-bind="menuProps"
-            icon="mdi-dots-horizontal"
-            size="sm"
-            class="tap-target"
-            :aria-label="t('routines.action.more')"
-          />
-        </template>
+        <template #activator />
       </AdaptiveMenu>
     </div>
 

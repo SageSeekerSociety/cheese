@@ -16,7 +16,6 @@
     "mergeFailed": "Couldn't merge",
     "deleteFailed": "Couldn't delete",
     "empty": "No artifacts yet",
-    "actionsOf": "Actions for {name}",
     "collapse": "Show less",
     "expand": "Show {count} more",
     "nameLabel": "Name",
