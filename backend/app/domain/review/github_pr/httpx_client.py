@@ -7,12 +7,15 @@ bookkeeping on `self` that outlives a poll.
 """
 
 import asyncio
+import hashlib
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 import httpx
+from cachetools import TTLCache
 
+from app.core import forge_quota
 from app.core.config import settings
 from app.core.forge_http import forge_client
 from app.core.sentences import say
@@ -99,6 +102,8 @@ def _is_pr_already_exists(resp: httpx.Response) -> bool:
 _ZERO_CHECKS_GRACE_SECONDS = 120.0
 
 _GITHUB_ACTIONS_APP_SLUG = "github-actions"
+_FAILURE_LOG_CACHE_SECONDS = 300.0
+_FAILURE_LOG_CACHE_ENTRIES = 256
 
 
 class HttpxGitHubPrClient:
@@ -132,6 +137,13 @@ class HttpxGitHubPrClient:
         # period start over, never shortens it, so it can't cause a
         # premature "success".
         self._zero_checks_first_seen: dict[tuple[str, str, str], float] = {}
+        # The process-wide client owns these bounded excerpts. Check-runs are
+        # still read live; rerunning a job gives its new log a different key.
+        self._job_logs = TTLCache(
+            maxsize=_FAILURE_LOG_CACHE_ENTRIES,
+            ttl=_FAILURE_LOG_CACHE_SECONDS,
+            timer=clock,
+        )
 
     def _headers(self, token: str) -> dict[str, str]:
         return {
@@ -322,13 +334,24 @@ class HttpxGitHubPrClient:
     async def _job_log_excerpt(
         self, *, owner: str, repo: str, job_id: int, token: str
     ) -> str:
-        """The error slice of one Actions job's log, or "" if unreachable."""
+        """The error slice of one completed job's log, or "" if unreachable."""
+        url = f"{self._api_base}/repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
+        headers = self._headers(token)
+        installation = forge_quota.installation_of(
+            httpx.Request("GET", url, headers=headers)
+        )
+        # Unlike an ETag read, a cache hit asks no authorization question.
+        # Keep excerpts credential-scoped even within the same installation.
+        key = (
+            (installation, owner, repo, job_id, hashlib.sha256(token.encode()).digest())
+            if installation is not None
+            else None
+        )
+        if key is not None and (kept := self._job_logs.get(key)) is not None:
+            return kept
         try:
             async with forge_client(transport=self._transport, timeout=30.0) as client:
-                resp = await client.get(
-                    f"{self._api_base}/repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
-                    headers=self._headers(token),
-                )
+                resp = await client.get(url, headers=headers)
                 if resp.status_code in (301, 302, 303, 307, 308):
                     # GitHub answers with a 302 to a pre-signed blob URL on a
                     # THIRD-PARTY host (`*.blob.core.windows.net`). The
@@ -347,7 +370,10 @@ class HttpxGitHubPrClient:
         except (httpx.HTTPError, ValueError, OSError) as exc:
             logger.info("could not read job %s log: %s", job_id, exc)
             return ""
-        return _error_excerpt([_clean_log_line(ln) for ln in text.splitlines()])
+        excerpt = _error_excerpt([_clean_log_line(ln) for ln in text.splitlines()])
+        if key is not None and excerpt:
+            self._job_logs[key] = excerpt
+        return excerpt
 
     async def _resolve_zero_checks(
         self, *, owner: str, repo: str, ref: str, token: str
