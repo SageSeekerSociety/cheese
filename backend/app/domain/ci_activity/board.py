@@ -616,11 +616,16 @@ async def _sweep_status(session, repo, w: Window) -> dict[str, Any] | None:
         "at": last.finished_at.isoformat(),
         "error": str(last.report.get("error") or ""),
         "jobs_owed": int(last.report.get("jobs_owed") or 0),
+        "request_counts": last.report.get("request_counts", {}),
+        "request_scope": last.report.get("request_scope"),
         "covered_from": last.runs_listed_from.isoformat()
         if last.runs_listed_from
         else None,
+        "covered_to": last.runs_listed_to.isoformat() if last.runs_listed_to else None,
         "complete": last.runs_listed_from is not None
-        and last.runs_listed_from <= w.since,
+        and last.runs_listed_from <= w.since
+        and not last.report.get("error")
+        and not last.report.get("truncated"),
     }
 
 

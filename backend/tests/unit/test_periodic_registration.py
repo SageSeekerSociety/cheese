@@ -480,8 +480,18 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("task deadline sweep", 116),
         ("memory dream", 117),
         ("ratchet ingest", 118),
-        ("ci activity sweep", 122),
+        ("ci activity sweep", 300),
         ("wake watch", 119),
     ]
     assert all(job.owner_only for job in world.jobs.values())
     world.get_runner.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("interval", "expected"), [(0, 0), (60, 300), (300, 300), (900, 900)]
+)
+def test_ci_reporting_never_polls_faster_than_five_minutes(
+    monkeypatch, interval, expected
+):
+    monkeypatch.setattr(settings, "ci_activity_sweep_interval_s", interval)
+    assert _world().jobs["ci activity sweep"].interval_seconds == expected
