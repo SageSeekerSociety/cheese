@@ -15,8 +15,10 @@ describe('/teams/…', () => {
     expect(to.matched.at(-1)?.name).toBe('TeamsDetailDefault')
   })
 
-  it.each(named.map((r) => [String(r.name)]))('a link to %s lands on a page', (name) => {
-    const to = router.resolve({ name, params: { handle: 'zhishi' } })
+  it.each(named.map((r) => [String(r.name), r.path]))('a link to %s lands on a page', (name, path) => {
+    // The params its address names: a team's handle, and a document's id where it opens one.
+    const params = { handle: 'zhishi', ...(path.includes(':docId') ? { docId: 'd1' } : {}) }
+    const to = router.resolve({ name, params })
     const landed = to.matched.at(-1)
     expect(landed?.children.some((child) => child.path === '')).toBe(false)
   })

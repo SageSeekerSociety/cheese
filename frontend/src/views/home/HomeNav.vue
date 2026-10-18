@@ -126,7 +126,7 @@ const isOpen = (team: Team) => open.value.some((h) => h.toLowerCase() === team.h
 const TEAM_PAGES = [
   { name: 'TeamsDetailDefault', label: 'home.nav.teamProjects', exact: true },
   { name: 'TeamsDetailMembers', label: 'home.nav.teamMembers', exact: false },
-  { name: 'TeamsDetailKnowledge', label: 'home.nav.teamKnowledge', exact: false },
+  { name: 'TeamsDetailDocs', label: 'home.nav.teamDocs', exact: false },
   { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute', exact: false },
   { name: 'TeamsDetailCredits', label: 'home.nav.teamCredits', exact: false },
 ] as const

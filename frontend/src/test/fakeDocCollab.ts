@@ -66,6 +66,7 @@ export function useFakeDocCollab(room: () => string | null) {
   const connection = ref<DocConnection>('connecting')
   const synced = ref(false)
   const readOnly = ref(false)
+  const suggestOnly = ref(false)
   const peers = shallowRef<DocPeer[]>([])
   const error = ref<string | null>(null)
   const outdated = ref(false)
@@ -125,6 +126,7 @@ export function useFakeDocCollab(room: () => string | null) {
     connection,
     synced,
     readOnly,
+    suggestOnly,
     peers,
     error,
     outdated,

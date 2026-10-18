@@ -111,6 +111,26 @@ export const DOC_PANEL_ENTRIES_A: CatalogEntry[] = [
         props: topBarProps({ editable: false, readOnly: true }),
         expect: '只读',
       },
+      {
+        get name() {
+          return t('catalog.panelDocTopBar.s4.name')
+        },
+        get note() {
+          return t('catalog.panelDocTopBar.s4.note')
+        },
+        props: topBarProps({ suggesting: true, suggestionCount: 3 }),
+        expect: '建议',
+      },
+      {
+        get name() {
+          return t('catalog.panelDocTopBar.s5.name')
+        },
+        get note() {
+          return t('catalog.panelDocTopBar.s5.note')
+        },
+        props: topBarProps({ suggestOnly: true, suggesting: true }),
+        expect: '建议',
+      },
     ],
   },
   {
