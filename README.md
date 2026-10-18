@@ -76,7 +76,8 @@ cheese/
 task                         # show all available commands
 task setup                   # first-time setup (install deps + infra + migrations)
 task dev                     # start backend + frontend in parallel
-task check                   # run all checks (backend + frontend)
+task check                   # run all checks (backend + frontend); needs go-task
+./scripts/check.sh           # quick scoped check without go-task (what a work machine runs)
 
 # Backend
 task be:check                # ruff + pyright + pytest
