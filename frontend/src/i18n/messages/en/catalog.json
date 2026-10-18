@@ -12,6 +12,14 @@
     "s3": {
       "name": "Read-only",
       "note": "No edit permission: a single 'Read-only' on the left, no toggling back to editable."
+    },
+    "s4": {
+      "name": "Suggesting",
+      "note": "Someone who can edit switches to Suggesting: what they type becomes suggestions, and the bar counts them."
+    },
+    "s5": {
+      "name": "A mentor opens it",
+      "note": "Someone who can only suggest stays in Suggesting with no switch; hovering says who accepts."
     }
   },
   "panelDocOutline": {

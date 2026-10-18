@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import forge_quota
 from app.core.config import settings
 from app.core.forge_http import forge_client
+from app.core.github_headers import github_headers
 from app.domain.project.models import ProjectGitInstallation
 from app.domain.project.repositories import ProjectGitInstallationRepository
 
@@ -216,10 +217,7 @@ class GitHubAppTokens:
         async with forge_client(transport=self._transport, timeout=20.0) as client:
             resp = await client.get(
                 f"{self._api_base}/app/installations/{self._installation_id}",
-                headers={
-                    "Authorization": f"Bearer {self._app_jwt()}",
-                    "Accept": "application/vnd.github+json",
-                },
+                headers=github_headers(self._app_jwt()),
             )
         if resp.status_code != 200:
             raise GitHubAppError(
@@ -238,10 +236,7 @@ class GitHubAppTokens:
         async with forge_client(transport=self._transport, timeout=10.0) as client:
             resp = await client.get(
                 f"{self._api_base}/rate_limit",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                },
+                headers=github_headers(token),
             )
         if resp.status_code != 200:
             if _unreadable_quota.get(self._installation_id) != resp.status_code:
@@ -284,10 +279,7 @@ class GitHubAppTokens:
                     f"{self._api_base}/app/installations/"
                     f"{self._installation_id}/access_tokens",
                     json={"permissions": permissions} | self._scope(),
-                    headers={
-                        "Authorization": f"Bearer {self._app_jwt()}",
-                        "Accept": "application/vnd.github+json",
-                    },
+                    headers=github_headers(self._app_jwt()),
                 )
             if resp.status_code != 201:
                 raise GitHubAppError(
@@ -436,10 +428,7 @@ async def _describe(
     ) as client:
         resp = await client.get(
             f"{minter.api_base}{path}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-            },
+            headers=github_headers(token),
         )
     if resp.status_code == 404:
         return None
@@ -480,10 +469,7 @@ async def _user_installation_items(token: str, path: str, key: str) -> list[dict
             response = await client.get(
                 f"https://api.github.com{path}",
                 params={"per_page": 100, "page": page},
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                },
+                headers=github_headers(token),
             )
             if response.status_code != 200:
                 raise GitHubAppError(

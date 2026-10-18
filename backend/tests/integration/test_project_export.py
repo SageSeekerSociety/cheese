@@ -88,14 +88,20 @@ def exported_project(client, monkeypatch, tmp_path):
             binding.default_branch = "main"
             # Each a task's living document: one in the public room, one in
             # the private room.
+            team = await db.scalar(select(Project.team_id).where(Project.id == pid))
             doc = Document(
                 project_id=pid,
+                team_id=team,
                 author="export-owner",
                 content="# Offline document\n",
                 version=1,
             )
             secret = Document(
-                project_id=pid, author="other", content="PRIVATE-SECRET", version=1
+                project_id=pid,
+                team_id=team,
+                author="other",
+                content="PRIVATE-SECRET",
+                version=1,
             )
             db.add_all([doc, secret])
             await db.flush()
@@ -205,9 +211,13 @@ def _select_count_of_export(client, data, extra_tasks: int, first: int = 0) -> i
 
     async def seed():
         async with client.test_factory() as db:
+            team = await db.scalar(
+                select(Project.team_id).where(Project.id == data["pid"])
+            )
             for i in range(first, first + extra_tasks):
                 doc = Document(
                     project_id=data["pid"],
+                    team_id=team,
                     author="export-owner",
                     content=f"# Extra {i}\n",
                     version=1,
