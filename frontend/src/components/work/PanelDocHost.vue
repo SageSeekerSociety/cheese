@@ -67,6 +67,8 @@ const emit = defineEmits<{
   (e: 'delete'): void
   /** 「移动到…」：挪到自己名下、团队或团队的一个项目（#3774）。 */
   (e: 'move'): void
+  /** 「分享…」：给这份文档一条只读链接（#3774）。 */
+  (e: 'share'): void
 }>()
 
 const docRef = ref<InstanceType<typeof PanelDoc> | null>(null)
@@ -105,6 +107,7 @@ defineExpose({
     @titled="emit('titled', $event)"
     @delete="emit('delete')"
     @move="emit('move')"
+    @share="emit('share')"
   >
     <template #lead><slot name="lead" /></template>
   </PanelDoc>

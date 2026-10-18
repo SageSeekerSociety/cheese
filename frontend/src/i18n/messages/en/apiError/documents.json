@@ -87,5 +87,9 @@
   "docNotMovable": "A task's or a conversation's document and the project goals can't be moved",
   "docMoveAuthorOrAdmin": "Only the author and the team's admins can move this document",
   "docMoveNoSuchPlace": "There is no such team or project",
-  "docMoveArchivedProject": "Documents can't be moved to an archived project"
+  "docMoveArchivedProject": "Documents can't be moved to an archived project",
+  "docShareNotAllowed": "A project's document is shared by whoever may publish the project's site; a team's or a person's own, by its author or a team admin",
+  "docShareGone": "This share link no longer works",
+  "docShareAppElsewhere": "This mini app belongs to another document and is not shared with this one",
+  "docShareImageUnavailable": "This image is not shared with the document"
 }
