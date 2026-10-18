@@ -49,18 +49,24 @@ Each row carries waiting_on; --skip leaves out tasks deliberately on hold.
 The default output is that text list, unchanged. The same sweep in other shapes:
   --json       every class's rows — task, topic, seat, PR, head, CI state, the head its
                independent review covers (read from the card body), minutes waited, whom it waits on, the PR's two core
-               sections and its failed checks and cases — plus that UTC day's metrics.
-               Fixed shape, for tools.
+               sections and its failed checks, each as {name, url}, and cases — plus that UTC
+               day's metrics. Fixed shape, for tools.
   --render     the same data as Markdown, one line per signal, for a person to read;
                under the table, one block per task with what its PR changed, how it was
-               verified, and (when it is red) which checks are red and which cases the
-               logs name. A section the description never wrote says so rather than
-               being filled in.
+               verified, and (when it is red) which checks are red, each naming its log's
+               page, and which cases the logs name. A section the description never wrote
+               says so rather than being filled in.
   --sync-doc D write the rendered board into document D between <!-- board:start --> and
                <!-- board:end -->; when the markers are not there yet, append a marked
                section by naming a trailing passage and putting the board after it, and
                refuse when no such passage can be named. One of these three, not two at
                once.
+
+A failed check is written as a Markdown link after its name, so a reader of either text
+form can open the log. Names and URLs land inside the text list's `[<class>] <name>｜<detail>`
+line and the auto-accept block's `…｜<code>: <detail>；…` lines; `｜` and `；` are the
+separators other code splits those lines on (orchestrator_autoaccept._flat strips them),
+so neither a check name nor a URL may carry either character.
 
 --auto-accept-check and --auto-accept add the dispatcher's own adopt decision to the run.
 Every 可采纳未采纳 card is handed to orchestrator_autoaccept.py, which reads the card, the
@@ -856,7 +862,9 @@ def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, re
         "detail": text,
         "changed": changed,
         "verified": verified,
-        "checks": [c["name"] for c in (pr.get("checks") or [])] if good else [],
+        # 名字和链接一起留在行里：看板要能点到失败日志，--json 的消费方要的是两者。
+        "checks": [{"name": c.get("name") or "?", "url": c.get("url") or ""}
+                   for c in (pr.get("checks") or [])] if good else [],
         "cases": (pr.get("cases") or []) if good else [],
         "last_event_at": pulse.get("last_event_at"),
         "last_message_at": pulse.get("last_message_at"),
@@ -1086,7 +1094,7 @@ def sweep(tok, room, silent, skip, want_facts, adopt=None, only=None, stopped_mi
             w = age(red[-1]["created_at"])
             where = ""
             if want_facts and pr is not None and "error" not in pr:
-                names = [c["name"] for c in (pr.get("checks") or [])]
+                names = [check_link(c) for c in (pr.get("checks") or [])]
                 where = "，红的是 " + "、".join(names) if names else ""
             add("红了没人修", f"{red[-1]['content'][:50]}{where}，{w:.0f} 分钟线上没新消息", w)
 
@@ -1245,6 +1253,14 @@ def review_cell(r):
     return f"{rev[:8]}{moved} {'增量 ' if r['review_since'] else ''}{r['review_verdict']}{tier}"
 
 
+def check_link(c):
+    """A failed check as both text forms write it: its name, and after it the page its log
+    can be read from. GitHub sometimes gives no page for a check; the name then stands
+    alone rather than becoming a link to nowhere."""
+    name, url = c.get("name") or "?", c.get("url") or ""
+    return f"[{name}]({url})" if url else name
+
+
 def render(rows, metrics, silent, now, room, stopped_min=3):
     out = ["## 调度看板", "",
            f"UTC {now:%Y-%m-%d %H:%M}｜静默阈值 {silent} 分钟｜已停轮 {stopped_min} 分钟｜"
@@ -1292,7 +1308,7 @@ def details(rows):
                     out.append(f"{label}：PR 正文里没写这一节")
                 out.append("")
         if r["checks"]:
-            out.append("红的是：" + "、".join(r["checks"]))
+            out.append("红的是：" + "、".join(check_link(c) for c in r["checks"]))
         if r["cases"]:
             out += ["失败用例："] + ["> " + ln for ln in r["cases"]]
         if r["checks"] or r["cases"]:
@@ -1824,13 +1840,27 @@ def _self_test_board():
         ("每个待判 PR：GitHub 上查不到的那条说「GitHub 上看不到」",
          detail([_self_row(pr={"error": "boom"})]),
          "**#1 甲**｜可采纳未采纳｜GitHub 查不到\n\nPR 正文：GitHub 上看不到"),
-        ("每个待判 PR：红在哪个检查、哪些用例都摆出来",
+        ("每个待判 PR：红在哪个检查、它的日志在哪、哪些用例都摆出来",
          detail([_self_row(pr=_self_pr("改动：A。\n\n**Tests.** 全过。",
-                                       checks=[{"name": "guards / guards", "url": "u"},
-                                               {"name": "unit", "url": "u"}],
+                                       checks=[{"name": "guards / guards", "url": "https://gh/run/1"},
+                                               {"name": "unit", "url": "https://gh/run/2"}],
                                        cases=["tests/a.py::b", "tests/c.py::d"]))]),
          one + "\n\n改了什么：\n> 改动：A。\n\n怎么验证的：\n> 全过。\n"
-         "\n红的是：guards / guards、unit\n失败用例：\n> tests/a.py::b\n> tests/c.py::d"),
+         "\n红的是：[guards / guards](https://gh/run/1)、[unit](https://gh/run/2)"
+         "\n失败用例：\n> tests/a.py::b\n> tests/c.py::d"),
+        # 名字后面跟的就是那个能点开的页面：只留名字时这条红，`--json` 也就没有 url。
+        ("每个待判 PR：没有页面的检查只写名字，不留空链接",
+         detail([_self_row(pr=_self_pr("改动：A。\n\n**Tests.** 全过。",
+                                       checks=[{"name": "unit", "url": ""}]))]),
+         one + "\n\n改了什么：\n> 改动：A。\n\n怎么验证的：\n> 全过。\n\n红的是：unit"),
+        ("JSON 看板：失败检查带名字和 url",
+         board_json([_self_row(pr=_self_pr("改动：A。\n\n**Tests.** 全过。",
+                                          checks=[{"name": "unit",
+                                                   "url": "https://gh/run/2"}],
+                                          cases=[]))],
+                    _SELF_TEST_METRICS, "room", 60, set(),
+                    datetime(2026, 10, 13, 5, 0))["classes"]["可采纳未采纳"][0]["checks"],
+         [{"name": "unit", "url": "https://gh/run/2"}]),
         ("每个待判 PR：同一个任务在两类里只说一次",
          detail([_self_row(), _self_row(kind="长时间无动静")]).count("**#1 甲**"), 1),
         ("表格：CI 用字、审查对的不是现在的 head 标「（旧）」、增量标出来、没在等的写「—」",
