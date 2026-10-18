@@ -235,6 +235,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "agent-seat",  # an AI teammate, not on the roster
         "nobody-0000",  # no account at all
         "retired",  # a retired account still on the team's relations
+        "",  # a seat with no handle is nobody
     ]
     batch = _many(client, pid, handles)
     each = _one_by_one(client, pid, handles)
@@ -256,4 +257,5 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "agent-seat": False,
         "nobody-0000": False,
         "retired": False,
+        "": False,
     }

@@ -106,10 +106,12 @@ async def _may_read_project_many(
     """
     asked = list(dict.fromkeys(handles))
     # No handle is nobody, and nobody reads nothing — the answer
-    # ``may_read_project`` gives ``None``.
+    # ``may_read_project`` gives ``None``. Every handle asked about gets a key,
+    # so a caller can index the answer with what it passed in.
     named = [handle for handle in asked if handle]
     if project is None or not named:
         return {handle: False for handle in asked}
+    out: dict[str, bool] = {handle: False for handle in asked if not handle}
     if agents is None:
         agents = await IdentityService(session).agents_among(named)
     owner = await owner_of(session, project)
@@ -137,7 +139,6 @@ async def _may_read_project_many(
             )
         )
         team_roles = {name: role for name, role in rows.all()}
-    out: dict[str, bool] = {}
     for handle in named:
         if handle in agents:
             # An AI teammate sits only where the project put it on the roster.
