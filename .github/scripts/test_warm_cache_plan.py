@@ -15,14 +15,20 @@ test rather than passing it.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import importlib.util
+import io
 import os
 import pathlib
 import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
+from types import ModuleType, SimpleNamespace
+from unittest.mock import patch
 
 HERE = pathlib.Path(__file__).resolve().parent
 PLANNER = HERE / "warm-cache-plan.py"
@@ -544,6 +550,96 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn(".github/workflows/warm-caches.yml", watched)
         self.assertIn(".github/scripts/warm-cache-plan.py", watched)
         self.assertIn(".github/scripts/test_warm_cache_plan.py", watched)
+
+
+class HarnessCacheIdentityTest(unittest.TestCase):
+    """A verified build is reusable after a code-only launcher change."""
+
+    def jobs(self):
+        tests = WORKFLOW.with_name("test.yml").read_text()
+        warm = WORKFLOW.read_text()
+        return [
+            job_block(warm, "harness-bins"),
+            *[
+                block
+                for name in re.findall(r"^  ([\w-]+):$", tests, re.M)
+                if "id: harness-bins" in (block := job_block(tests, name))
+            ],
+        ]
+
+    def key(
+        self,
+        job,
+        *,
+        source="original launcher",
+        pins=("2.1.299", "0.154.0", "1.0.0"),
+        arch="ARM64",
+    ):
+        cache = next(block for block in steps(job) if "id: harness-bins" in block)
+        expression = step_field(cache, "key")
+        outputs = {}
+        for block in steps(job):
+            if "id: harness-pins" not in block:
+                continue
+            # Execute the workflow's pin reader against declared versions.
+            # Nothing here reproduces how that reader constructs its output.
+            code = re.search(r"<<'PY'[^\n]*\n(.*?)\n          PY", block, re.S)
+            self.assertIsNotNone(code, "the pin reader has no Python body")
+            matrix = ModuleType("app.domain.agent.capability.matrix")
+            harness = ModuleType("app.domain.agent.harness")
+            harness.CLAUDE_CODE, harness.CODEX, harness.PI = "claude", "codex", "pi"
+            matrix.written = lambda: {
+                name: SimpleNamespace(pinned_version=version)
+                for name, version in zip(("claude", "codex", "pi"), pins)
+            }
+            printed = io.StringIO()
+            with (
+                patch.dict(
+                    sys.modules, {matrix.__name__: matrix, harness.__name__: harness}
+                ),
+                contextlib.redirect_stdout(printed),
+            ):
+                exec(textwrap.dedent(code.group(1)), {})
+            outputs = dict(
+                line.split("=", 1) for line in printed.getvalue().splitlines()
+            )
+
+        def value(match):
+            term = match.group(1).strip()
+            if term == "runner.os":
+                return "Linux"
+            if term == "runner.arch":
+                return arch
+            if term.startswith("hashFiles("):
+                # hashFiles changes when launcher code changes even if its pin does not.
+                return hashlib.sha256((source + str(pins)).encode()).hexdigest()
+            if term.startswith("steps.harness-pins.outputs."):
+                return outputs[term.rsplit(".", 1)[-1]]
+            self.fail(f"unjudged cache key expression: {term}")
+
+        return re.sub(r"\$\{\{(.*?)\}\}", value, expression)
+
+    def test_launcher_edits_do_not_discard_verified_pinned_builds(self):
+        for job in self.jobs():
+            with self.subTest(job=job.splitlines()[0]):
+                self.assertEqual(
+                    self.key(job), self.key(job, source="launcher refactored")
+                )
+
+    def test_each_pin_and_the_architecture_select_a_new_build(self):
+        for job in self.jobs():
+            original = self.key(job)
+            for pins in [
+                ("2.1.300", "0.154.0", "1.0.0"),
+                ("2.1.299", "0.155.0", "1.0.0"),
+                ("2.1.299", "0.154.0", "1.0.1"),
+            ]:
+                self.assertNotEqual(original, self.key(job, pins=pins))
+            self.assertNotEqual(original, self.key(job, arch="X64"))
+
+    def test_shards_restore_the_same_build_the_warmer_saved(self):
+        keys = {self.key(job) for job in self.jobs()}
+        self.assertEqual(len(keys), 1, keys)
 
 
 if __name__ == "__main__":
