@@ -84,9 +84,11 @@ func (winSystem) running(pid int, started int64) bool {
 const endWait = 10 * time.Second
 
 // end ends the process tree: the launch script, the runner and the agent it
-// holds. taskkill only asks for the end; a process that is told to end still
-// holds its files until it is gone. So end waits for every process of the tree
-// to be gone before it returns, and the screen's log can be removed after it.
+// holds. taskkill only asks for the end, and walks the tree through live
+// parents only, so it misses a process whose parent has already exited. end
+// also ends every process it holds itself, and waits for each to be gone before
+// it returns: a process told to end holds its files until it is gone, and the
+// screen's log is removed after end.
 func (winSystem) end(pid int) error {
 	tree := openTree(uint32(pid))
 	defer func() {
@@ -97,6 +99,9 @@ func (winSystem) end(pid int) error {
 	cmd := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	_ = cmd.Run()
+	for _, h := range tree {
+		_ = windows.TerminateProcess(h, 1)
+	}
 	deadline := time.Now().Add(endWait)
 	for _, h := range tree {
 		left := max(time.Until(deadline), 0)
@@ -108,8 +113,8 @@ func (winSystem) end(pid int) error {
 }
 
 // openTree holds a handle to pid and to every process it started, theirs in
-// turn, so that waiting on them waits for the very processes taskkill ends,
-// even once their pids are free for others. A process counts as started by a
+// turn, so that ending and waiting on them reaches the very processes of the
+// tree, even once their pids are free for others. A process counts as started by a
 // parent only if it began after it: a parent pid can be one reused since.
 func openTree(pid uint32) []windows.Handle {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
@@ -127,9 +132,13 @@ func openTree(pid uint32) []windows.Handle {
 	var held []windows.Handle
 	var visit func(pid uint32, parentStart int64)
 	visit = func(pid uint32, parentStart int64) {
-		h, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+		const wait = windows.SYNCHRONIZE | windows.PROCESS_QUERY_LIMITED_INFORMATION
+		h, err := windows.OpenProcess(wait|windows.PROCESS_TERMINATE, false, pid)
 		if err != nil {
-			return
+			// One that may not be ended from here is still waited for.
+			if h, err = windows.OpenProcess(wait, false, pid); err != nil {
+				return
+			}
 		}
 		start := handleStart(h)
 		if start < parentStart {
