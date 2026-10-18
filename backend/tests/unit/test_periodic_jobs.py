@@ -76,7 +76,7 @@ async def test_a_job_without_a_recorded_run_waits_one_interval():
     assert not await _runs_within(0.2, 3600, None, _Runs())
 
 
-async def test_interval_policy_controls_tick_spacing_and_lease():
+async def test_interval_policy_slows_ticks_without_extending_the_lease():
     ran_twice = asyncio.Event()
     started = []
 
@@ -100,7 +100,44 @@ async def test_interval_policy_controls_tick_spacing_and_lease():
         await runner.stop()
 
     assert started[1] - started[0] >= 0.06
-    assert runs.intervals[:2] == [0.07, 0.07]
+    assert runs.intervals[:2] == [0.01, 0.01]
+
+
+async def test_a_slow_tick_then_pause_keeps_base_leases_after_recovery():
+    ran_twice = asyncio.Event()
+    state = ["slow"]
+    runs = _Runs()
+
+    def policy(base):
+        if state[0] == "paused":
+            return None
+        return 0.3 if state[0] == "slow" else base
+
+    def resume_wait():
+        state[0] = "recovered"
+        return 0.1
+
+    async def job():
+        if len(runs.claims) == 1:
+            state[0] = "paused"
+        else:
+            ran_twice.set()
+
+    runner = PeriodicRunner(
+        "slow then paused",
+        0.01,
+        job,
+        interval_policy=policy,
+        pause_wait=resume_wait,
+    )
+    runner.start(runs, datetime.now(UTC) - timedelta(seconds=1))
+    try:
+        await asyncio.wait_for(ran_twice.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+    assert state[0] == "recovered"
+    assert runs.intervals == [0.01, 0.01]
 
 
 async def test_a_paused_job_does_not_run_again_before_quota_recovers():
@@ -413,17 +450,30 @@ def test_forge_accounts_left_by_failed_creations_are_swept():
     assert any(job.name == "forge orphan account sweep" for job in _jobs())
 
 
-def test_every_periodic_job_uses_the_shared_quota_interval_policy():
-    from app.domain.project.forge import (
-        background_interval_seconds,
-        background_resume_after,
-    )
+@pytest.mark.parametrize(
+    ("remaining", "floor"), [(4000, 0), (2500, 180), (1100, 300), (999, None)]
+)
+def test_every_periodic_job_uses_the_shared_quota_interval_policy(
+    monkeypatch, remaining, floor
+):
+    import time
 
-    assert all(
-        job._interval_policy is background_interval_seconds
-        and job._pause_wait is background_resume_after
-        for job in _jobs()
-    )
+    from app.core import forge_quota
+
+    monkeypatch.setattr(forge_quota, "_readings", {})
+    monkeypatch.setattr(forge_quota, "_refused_until", {})
+    forge_quota.record(152342238, remaining, 5000, time.time() + 600)
+
+    jobs = _jobs()
+    assert jobs
+    for job in jobs:
+        if job.interval_seconds <= 0:
+            assert job._next_interval_seconds() == 0, job.name
+            continue
+        expected = None if floor is None else max(job.interval_seconds, floor)
+        assert job._next_interval_seconds() == expected, job.name
+        if floor is None:
+            assert 590 < job._pause_wait_seconds() <= 600, job.name
 
 
 def test_every_job_is_named_once():

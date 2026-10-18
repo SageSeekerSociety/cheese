@@ -36,14 +36,10 @@ OTHER_INSTALLATION = INSTALLATION + 1
 def clock(monkeypatch):
     """The quota memory's clock, starting now and moved by hand."""
     now = [time.time()]
-    for installation in (INSTALLATION, OTHER_INSTALLATION):
-        forge_quota._readings.pop(installation, None)
-        forge_quota._refused_until.pop(installation, None)
+    monkeypatch.setattr(forge_quota, "_readings", {})
+    monkeypatch.setattr(forge_quota, "_refused_until", {})
     monkeypatch.setattr(forge_quota, "time", SimpleNamespace(time=lambda: now[0]))
-    yield now
-    for installation in (INSTALLATION, OTHER_INSTALLATION):
-        forge_quota._readings.pop(installation, None)
-        forge_quota._refused_until.pop(installation, None)
+    return now
 
 
 @pytest.fixture
@@ -147,6 +143,21 @@ def test_background_wait_tracks_the_lowest_known_quota(
     assert background_interval_seconds(60.0) == expected_interval
     if expected_interval is None:
         assert background_resume_after() == reset - clock[0]
+
+
+@pytest.mark.parametrize("remaining", [2500, 1100])
+def test_throttling_never_shortens_a_longer_base_interval(clock, remaining):
+    forge_quota.record(INSTALLATION, remaining, 5000, clock[0] + 600)
+
+    assert background_interval_seconds(900.0) == 900.0
+
+
+def test_a_reset_restores_the_base_interval(clock):
+    forge_quota.record(INSTALLATION, 1100, 5000, clock[0] + 60)
+    assert background_interval_seconds(60.0) == 300.0
+
+    clock[0] += 61
+    assert background_interval_seconds(60.0) == 60.0
 
 
 def test_background_wait_uses_the_lowest_installation_reading(clock):

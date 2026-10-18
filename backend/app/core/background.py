@@ -235,7 +235,7 @@ class PeriodicRunner:
                 await self._task
             self._task = None
 
-    async def _take_tick(self, runs: "RunRecord", interval_s: float) -> bool:
+    async def _take_tick(self, runs: "RunRecord") -> bool:
         """Whether this tick is this process's to run.
 
         The lease is one row per job, taken for one interval: whichever process
@@ -255,7 +255,9 @@ class PeriodicRunner:
         try:
             return await runs.claim(
                 self._name,
-                interval_s=interval_s,
+                # Throttling changes the wait, not the lease: a recovered quota
+                # must not remain blocked by the previous slower interval.
+                interval_s=self._interval,
                 who=_PROCESS,
                 now=datetime.now(UTC),
             )
@@ -291,7 +293,7 @@ class PeriodicRunner:
                 if due_at > loop.time():
                     continue
             assert interval is not None
-            if not await self._take_tick(runs, interval):
+            if not await self._take_tick(runs):
                 cycle_started = loop.time()
                 interval = self._next_interval_seconds()
                 if interval is None:
