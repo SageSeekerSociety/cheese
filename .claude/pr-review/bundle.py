@@ -60,7 +60,7 @@ TS_DEF = re.compile(
 
 
 def git(repo, *args):
-    p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, errors="replace")
     return p.stdout if p.returncode == 0 else None
 
 
@@ -174,7 +174,7 @@ def call_sites(repo, head, name, own_path):
     (path, line, snippet). None when the name is too common to be a useful slice."""
     p = subprocess.run(["git", "-C", str(repo), "grep", "-n", "-I", "-w", "-F", "-e", name, head,
                         "--", "*.py", "*.ts", "*.tsx", "*.js", "*.vue"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, errors="replace")
     pre = head + ":"
     hits = []
     for line in p.stdout.splitlines():
@@ -289,7 +289,7 @@ def section_pyright(repo, tree, base, head, given=None):
         cwd = Path(tree) / root if root else Path(tree)
         rel = [p[len(root) + 1:] if root else p for p in paths]
         try:
-            proc = subprocess.run([*cmd, "--outputjson", *rel], cwd=cwd, capture_output=True, text=True, timeout=600)
+            proc = subprocess.run([*cmd, "--outputjson", *rel], cwd=cwd, capture_output=True, text=True, errors="replace", timeout=600)
         except (OSError, subprocess.TimeoutExpired) as exc:
             out.append(f"- `{root or '.'}` 下没跑成：{exc}")
             continue
