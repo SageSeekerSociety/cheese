@@ -92,6 +92,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.mentions import mentioned_outside
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent.turn.store.human import HumanHandoff
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_identity import InputReconciliationPending
@@ -102,6 +103,7 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.project.reads import load_project
 from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.thread.services import answered_in
@@ -159,7 +161,7 @@ async def send_chat_message(
         # An agent credential whose seat in this room was revoked. The seat is
         # the grant, so it may not go on writing here under a person's rules.
         raise ForbiddenError("An agent must hold a seat in this room to write here")
-    await require_person_speaks(db, actor, place)
+    members = await require_person_speaks(db, actor, place)
     content = body.content.strip()
     attachments = [
         {"path": a.path, "mime": a.mime}
@@ -180,6 +182,11 @@ async def send_chat_message(
         else None,
         client_id=str(body.request_id),
         may_summon=await may(db, place.project_id, actor.handle, Permission.ask_agent),
+        # The writer opens its own session; what this request already read of
+        # the project goes with the message instead of being read there again.
+        handoff=HumanHandoff(
+            project=await load_project(db, place.project_id), roster=members
+        ),
     )
     stored = await BlockRepository(db).get(anchor_id)
     sent = BlockOut.model_validate(stored).model_dump(mode="json")

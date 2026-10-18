@@ -90,6 +90,16 @@ class CiFastTest(unittest.TestCase):
         # store. The hooks here are local stubs that install nothing, so each
         # test gets a store of its own.
         self.env = {**os.environ, "PRE_COMMIT_HOME": str(self.tmp / "pre-commit-home")}
+        # The static tier runs the whole-tree guards through `uv run pytest`;
+        # a stub `uv` stands in for it so no fixture needs a real backend.
+        # TREE_GUARD_EXIT makes it fail, and every argv is logged.
+        self.uv_log = self.tmp / "uv-argv"
+        stub = self.tmp / "uvstub"
+        stub.mkdir()
+        (stub / "uv").write_text(
+            f"#!/bin/sh\necho \"$@\" >> {self.uv_log}\nexit ${{TREE_GUARD_EXIT:-0}}\n")
+        (stub / "uv").chmod(0o755)
+        self.env["PATH"] = str(stub) + os.pathsep + self.env["PATH"]
         self.repo = self.tmp / "repo"
         self.repo.mkdir()
         git(self.repo, "init", "-b", "main")
@@ -483,6 +493,34 @@ class CiFastTest(unittest.TestCase):
         proc = self.run_ci_fast("--pre-push")
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertFalse(PRE_PUSH_HOOKS & self.ran_hooks())
+
+    # --- the whole-tree guards are pytest tests that read the source tree, so
+    # --- the static tier has to run them itself or a push never meets them
+    def test_static_runs_every_tree_guard_on_a_backend_push(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        from ci_fast_backend import TREE_GUARDS
+        argv = self.uv_log.read_text()
+        for name in TREE_GUARDS:
+            self.assertIn(f"tests/unit/{name}", argv)
+        self.assertIn("test_domain_import_guard.py", argv)
+        self.assertIn("tree-guards", {r["id"] for r in self.report()["ran"]})
+
+    def test_a_failing_tree_guard_fails_the_static_tier(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--pre-push", env_extra={"TREE_GUARD_EXIT": "1"})
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("tree-guards", proc.stdout)
+
+    def test_tree_guards_follow_the_backend_scope(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertFalse(self.uv_log.exists())
 
     # --- a plain run is untouched: the node hooks are selected and executed
     # --- exactly as before (the narrowing belongs to the flag, not the tool)

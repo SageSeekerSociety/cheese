@@ -283,7 +283,9 @@ def test_direct_proxy_requests_obey_member_limits_before_calling_the_provider(
         llm_proxy.settings, "anthropic_base_url", "https://model.invalid"
     )
 
-    async def key(self, project_id, *, dream=False):
+    async def key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return "test-key"
 
     monkeypatch.setattr(ChatService, "project_gateway_key", key)

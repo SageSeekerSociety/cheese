@@ -212,11 +212,13 @@ def cheese_source() -> Path:
 
 
 # `WORKING_DIRECTORY` — the fixed name this session's working directory also
-# goes by — is imported from `executor_transport`: the transport is what
-# respells it where the command's other paths are, so the name and its value are
-# one thing to that module and not a second declaration here. The line is told
-# about it in its prompt (`harness.prompt.WORKING_DIRECTORY`) and the shell
-# prefix carries it across (`shell_prefix.FORWARDED_ENV`).
+# goes by — is imported from `executor_transport`: the name and the way its value
+# crosses to the executor are one thing to that module, not a second declaration
+# here. The line is told about it in its prompt
+# (`harness.prompt.WORKING_DIRECTORY`), and the shell prefix binds it in the
+# command's own shell (`shell_prefix.bind_working_directory`): it is set on this
+# process so the prefix can read it, and deliberately not exported to the
+# executor, where a native session has no such variable.
 
 
 def prepare(
@@ -459,7 +461,10 @@ def prepare(
         "HOME": str(home),
         # The same short name in every session, and this session's own project
         # under it: what the line can type instead of the path it would
-        # otherwise spell out in every Bash command.
+        # otherwise spell out in every Bash command. It stays on this host — the
+        # shell prefix reads it here and binds it in each command's shell
+        # (`shell_prefix.bind_working_directory`); the executor's environment is
+        # what a native session there would have, with no such variable.
         WORKING_DIRECTORY: seen,
         "CLAUDE_CONFIG_DIR": str(config),
         "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
