@@ -1,12 +1,42 @@
 <script setup lang="ts">
+import type { CreditRequest } from '@/types/creditOffers'
+
+import { onMounted, ref } from 'vue'
+
 import { useAdminCredits } from '@/composables/useAdminCredits'
 
 import AdminCreditsPageView from './AdminCreditsPageView.vue'
+
+import { getPendingCreditRequests, handleCreditRequest } from '@/api/creditOffers'
 
 // 方案与额度（`/admin/credits`）。取数与写在 `useAdminCredits`，画法在 `AdminCreditsPageView`。
 defineOptions({ name: 'AdminCreditsPage' })
 
 const credits = useAdminCredits()
+const requests = ref<CreditRequest[]>([])
+const requestsBusy = ref(false)
+const requestsError = ref<string | null>(null)
+async function loadRequests() {
+  try {
+    requests.value = (await getPendingCreditRequests()).items
+    requestsError.value = null
+  } catch (e) {
+    requestsError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+async function handleRequest(id: string, approve: boolean, confirmed: boolean, planKey?: string) {
+  requestsBusy.value = true
+  try {
+    await handleCreditRequest(id, approve, confirmed, planKey)
+    await loadRequests()
+    await credits.loadTeams()
+  } catch (e) {
+    requestsError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    requestsBusy.value = false
+  }
+}
+onMounted(loadRequests)
 
 function dismissPlanError() {
   credits.teamPlanError.value = null
@@ -19,6 +49,9 @@ function dismissOverseasError() {
 
 <template>
   <AdminCreditsPageView
+    :requests="requests"
+    :requests-busy="requestsBusy"
+    :requests-error="requestsError"
     :plans="credits.plans.value"
     :plans-loading="credits.plansLoading.value"
     :plans-error="credits.plansError.value"
@@ -47,6 +80,8 @@ function dismissOverseasError() {
     :grant-open="credits.grantOpen.value"
     :grant-saving="credits.grantSaving.value"
     :grant-error="credits.grantError.value"
+    @handle-request="handleRequest"
+    @retry-requests="loadRequests"
     @retry-plans="credits.loadPlans"
     @open-plan="credits.openPlan"
     @update:plan-dialog-open="credits.planDialogOpen.value = $event"

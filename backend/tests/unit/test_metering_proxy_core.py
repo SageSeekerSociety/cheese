@@ -28,6 +28,57 @@ spec.loader.exec_module(core)
 SECRET = "test-sandbox-token"
 
 
+def test_task_admissions_refresh_execution_and_receipts_record_it(tmp_path):
+    calls = []
+
+    def admit(*args, **kwargs):
+        calls.append(1)
+        return core.Verdict(True, "", work_id=f"execution-{len(calls)}")
+
+    gate = core.AdmissionGate("http://fixture/admission", post=admit)
+    first = gate.check("p", "t", "token")
+    second = gate.check("p", "t", "token")
+    assert (first.work_id, second.work_id) == ("execution-1", "execution-2")
+    meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
+    meter.record("p", "t", {"input_tokens": 1}, "m", work_id=first.work_id)
+    [line] = (tmp_path / "usage.jsonl").read_text().splitlines()
+    assert json.loads(line)["work_id"] == "execution-1"
+
+
+def test_admission_reads_execution_from_backend_supply():
+    response = io.BytesIO(b'{"data":{"allow":true,"supply":{"work_id":"work-a"}}}')
+    with mock.patch.object(core.urllib.request, "urlopen", return_value=response):
+        assert (
+            core._post_admission("http://fixture/admission", "token", 3).work_id
+            == "work-a"
+        )
+
+
+def test_task_outage_waits_for_fresh_billing_owner():
+    calls = []
+
+    def admit(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise core.urllib.error.URLError("backend restart")
+        return core.Verdict(
+            True,
+            "",
+            pool="gateway",
+            key="task-key",
+            model="kimi-k3",
+            work_id=f"work-{len(calls)}",
+        )
+
+    gate = core.AdmissionGate("http://fixture/admission", post=admit)
+    assert gate.check("p", "t", "token").work_id == "work-1"
+    outage = gate.check("p", "t", "token")
+    assert not outage.allow
+    assert outage.reason_kind == "unavailable"
+    assert outage.key is None
+    assert gate.check("p", "t", "token").work_id == "work-3"
+
+
 def test_native_child_admission_does_not_reuse_its_parents_cached_supply():
     calls = []
 

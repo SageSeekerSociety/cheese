@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import type { CreditUsage } from '@/lib/creditUsage'
+import type { CreditRequest } from '@/types/creditOffers'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import CreditOffers from '@/components/usage/CreditOffers.vue'
 import UsageDailyChart from '@/components/usage/UsageDailyChart.vue'
 import UsagePackList from '@/components/usage/UsagePackList.vue'
 import UsagePeriodCard from '@/components/usage/UsagePeriodCard.vue'
@@ -18,9 +20,13 @@ const props = defineProps<{
   usage: CreditUsage | null
   loading: boolean
   error: string | null
+  canManage?: boolean
+  requests?: CreditRequest[]
+  offersBusy?: boolean
+  offersError?: string | null
 }>()
 
-const emit = defineEmits<{ retry: [] }>()
+const emit = defineEmits<{ retry: []; request: [kind: CreditRequest['kind'], credits?: number]; 'retry-offers': [] }>()
 
 const { t, locale } = useI18n()
 
@@ -40,6 +46,14 @@ const otherCredits = computed(() => (props.usage?.packs ?? []).reduce((sum, p) =
 
 <template>
   <div class="tcv">
+    <CreditOffers
+      :can-manage="canManage"
+      :requests="requests"
+      :busy="offersBusy"
+      :error="offersError"
+      @request="(kind, credits) => emit('request', kind, credits)"
+      @retry="emit('retry-offers')"
+    />
     <v-skeleton-loader v-if="loading && !usage" type="article, image" />
 
     <AdminEmptyState
