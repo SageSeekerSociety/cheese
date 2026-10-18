@@ -22,7 +22,7 @@ changes. Do not independently regenerate the snapshots just to settle a merge:
 parallel snapshots conflict without changing the code's merge eligibility.
 
 Read live debt from the owning baselines or the checker output, with
-`.claude/scripts/ratchet-snapshot.py`'s `CHECKS` as the inventory. Do not copy a
+`backend/app/domain/ratchet/registry.py`'s `CHECKS` as the inventory. Do not copy a
 fixed number of checks or exceptions into a new instruction: the frontend JSON
 baselines, deferred-import JSON and unit-test ledgers are different accounts, and
 their counts change independently. The backend contracts are a third shape

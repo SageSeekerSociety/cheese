@@ -187,6 +187,12 @@ async def _link_account(
         datetime.now(UTC) + timedelta(seconds=expires_in) if expires_in else None
     )
     refresh_token = token_data.get("refresh_token")
+    refresh_expires_in = token_data.get("refresh_token_expires_in")
+    refresh_token_expires = (
+        datetime.now(UTC) + timedelta(seconds=refresh_expires_in)
+        if refresh_expires_in is not None
+        else None
+    )
 
     # `login` is what a person recognises; `id` is a number only GitHub means
     # anything by. The connections serializer reads the login out of here
@@ -223,6 +229,7 @@ async def _link_account(
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires=token_expires,
+            refresh_token_expires=refresh_token_expires,
             # 只有真拿到 login 才覆盖已存的 profile。某次交换没带 login 就照写，
             # 会把一个已经好了的名字降级回 None——正是这个 PR 要修的毛病反着来
             # 一遍，而且是在用户主动点「重新连接」想修好它的时候发生。
@@ -243,6 +250,7 @@ async def _link_account(
                 access_token=access_token,
                 refresh_token=refresh_token,
                 token_expires=token_expires,
+                refresh_token_expires=refresh_token_expires,
             )
         except ConflictError:
             # Linked by a concurrent flow since the lookup above.

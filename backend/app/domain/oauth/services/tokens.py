@@ -9,13 +9,14 @@
 
 - 同一条连接的两个刷新者，本进程内只发一次请求：第二个在 `_refresh_locks` 上排队，
   排队时不占数据库连接 —— 行锁跨着网络调用会把连接池和 dev 一起拖下去。
-- 解不开的密文降级成 None，但必须出声：`_decrypt_stored_token` 的每个例外都记日志，
-  `test_oauth_service.py` 盯着这条日志。
+- Unreadable ciphertext degrades to None, with one warning per stored token
+  and owner in each backend process.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import NotFoundError
+from app.core.logging import warning_once
 from app.domain.oauth.repositories import OAuthConnectionRepository
 
 from .providers import GitHubProvider
@@ -70,19 +72,22 @@ def _decrypt_stored_token(
     under a key no longer configured makes decryption raise. That must not blow up
     the caller (the repository-connect route treats None as "link the account
     first", it does not handle exceptions from here) — but it must never be
-    silent either: an unnoticed token problem is exactly how the "returns raw
-    ciphertext" bug survived, so this always logs.
+    silent either: warn once per stored token in this backend process.
     """
     try:
         return open_oauth_token(
             stored, user_id=user_id, provider_id=provider_id, field=field
         )
     except Exception:
-        logger.exception(
+        warning_once(
+            __name__,
             "github account link: stored token for user %s could not be "
             "decrypted (was its key removed from DATA_ENCRYPTION_KEY?) — "
-            "treating the account link as unavailable",
+            "treating the account link as unavailable (provider=%s, field=%s)",
             user_id,
+            provider_id,
+            field,
+            event_key=hashlib.sha256(stored.encode()).hexdigest(),
         )
         return None
 
@@ -195,6 +200,12 @@ async def _refresh_and_persist_token(
                     else None
                 )
             seen_refresh = conn.refresh_token
+            seen_refresh_expires = conn.refresh_token_expires
+            if (
+                seen_refresh_expires is not None
+                and seen_refresh_expires <= datetime.now(UTC)
+            ):
+                return None
             user_id, owner_provider = conn.user_id, conn.provider_id
         stored_refresh = (
             svc._decrypt_stored_token(
@@ -247,6 +258,14 @@ async def _refresh_and_persist_token(
             datetime.now(UTC) + timedelta(seconds=expires_in) if expires_in else None
         )
         new_refresh_token = token_data.get("refresh_token")
+        refresh_expires_in = token_data.get("refresh_token_expires_in")
+        new_refresh_expires = (
+            datetime.now(UTC) + timedelta(seconds=refresh_expires_in)
+            if refresh_expires_in is not None
+            else None
+            if new_refresh_token
+            else seen_refresh_expires
+        )
         async with AsyncSession(bind=bind, expire_on_commit=False) as session:
             replaced = await OAuthConnectionRepository(
                 session
@@ -266,6 +285,7 @@ async def _refresh_and_persist_token(
                     field="refresh_token",
                 ),
                 token_expires=new_expires,
+                refresh_token_expires=new_refresh_expires,
             )
             await session.commit()
         if replaced:
