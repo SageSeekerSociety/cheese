@@ -40,6 +40,7 @@
     "integrations": "飞书应用",
     "featureStats": "功能数据",
     "ratchet": "棘轮",
+    "ciActivity": "CI 与合并队列",
     "credits": "方案与额度",
     "runRecords": "运行记录",
     "machines": "机器",

@@ -33,7 +33,7 @@ router = APIRouter(
 
 async def _current_board(db) -> dict:
     store = RatchetSnapshots(db)
-    repo = settings.ratchet_repository
+    repo = settings.platform_repository
     rows = await store.newest(repo, settings.ratchet_series_points)
     return build_board(
         rows,
