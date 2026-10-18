@@ -480,6 +480,26 @@ class CandidateCI(unittest.TestCase):
         self.assertTrue(self.ready([self.run_record()], replaced, covered=True))
         self.assertFalse(self.ready([self.run_record()], replaced, covered=False))
 
+    def test_the_call_site_asks_about_the_candidate_commit(self):
+        # Every test above replaces covered_by_green with a constant, so a
+        # swapped call-site argument would stay green while in production the
+        # anchor were looked up in a repository named after the commit (404 →
+        # "no anchor") and no superseded run were ever excused. Drive the real
+        # wiring and read the two URLs it asks for.
+        for conclusion in ("cancelled", "skipped"):
+            with self.subTest(conclusion=conclusion):
+                replaced = [self.gate_run(conclusion=conclusion)]
+                github, reads = self.github({"object": {"sha": "b" * 40}},
+                                            {"status": "ahead"})
+                with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app",
+                                             "GH_TOKEN": "t"}), \
+                        patch.object(GUARD, "workflow_runs", side_effect=lambda _r, workflow, _c: (
+                            [self.run_record()] if workflow == "build.yml" else replaced)), github:
+                    self.assertTrue(GUARD.ci_ready(self.candidate))
+                self.assertEqual(reads[0],
+                                 "https://api.github.com/repos/example/app/git/ref/heads/main-green")
+                self.assertIn(f"compare/{self.candidate}...{'b' * 40}", reads[1])
+
     def test_a_run_that_failed_is_not_excused_by_a_later_green_batch(self):
         # Its change did fail here; the later run tested it together with a fix,
         # which is not the same commit to release.

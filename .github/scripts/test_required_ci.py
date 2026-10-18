@@ -1328,31 +1328,44 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertIn("anchor", (tmp / "summary").read_text())
 
     def _title_step(self, tmp, event_name, env_extra):
-        """Run the commit-title step's real shell against a stubbed curl."""
+        """Run the commit-title step's real shell against a stubbed curl.
+
+        The stub records the URL it was asked for, so a test can tell which base
+        the step compared against — a stub answering every URL with the same
+        body would stay green through a step pointed at the wrong variable.
+        """
         body = run_body_containing(self.text, "api()")
         bindir = Path(tmp) / "bin"
         bindir.mkdir()
         _stub(bindir, "curl", (
-            'out=""\nprev=""\nfor a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+            'out=""\nprev=""\nfor a in "$@"; do\n'
+            '  case "$a" in https://*) printf "%s\\n" "$a" >> "$CURL_URLS";; esac\n'
+            '  [ "$prev" = "-o" ] && out="$a"; prev="$a"\n'
+            'done\n'
             'printf "%s" \'{"commits":[{"commit":{"message":"update stuff\\nfiller"}}]}\' > "$out"\n'
             'printf 200\n'
         ))
+        urls = Path(tmp) / "curl_urls"
         env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
                "RUNNER_TEMP": str(tmp), "GITHUB_EVENT_NAME": event_name,
                "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
-               "GITHUB_SHA": "h" * 40, **env_extra}
-        return subprocess.run(["bash", "-e", "-c", body],
+               "GITHUB_SHA": "h" * 40, "CURL_URLS": str(urls), **env_extra}
+        proc = subprocess.run(["bash", "-e", "-c", body],
                               cwd=WORKFLOW.parent.parent.parent,
                               env=env, capture_output=True, text=True)
+        return proc, (urls.read_text() if urls.exists() else "")
 
     def test_a_landed_title_is_reported_and_does_not_fail_the_gate(self):
         # The title is already on main and nobody can retitle it, so a red here
         # would hold back a validated commit (and dev) over formatting.
         with tempfile.TemporaryDirectory() as tmp:
-            proc = self._title_step(tmp, "push", {"PUSH_BASE_SHA": "b" * 40})
+            proc, urls = self._title_step(tmp, "push", {"PUSH_BASE_SHA": "b" * 40})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("::warning::", proc.stdout)
         self.assertNotIn("::error::", proc.stdout)
+        # The batch base is the anchor this run resolved, not the merge_group
+        # variable (empty on a push) and not an empty string.
+        self.assertIn(f"compare/{'b' * 40}...{'h' * 40}", urls, urls)
 
     def test_a_landed_title_without_an_anchor_is_reported_the_same_way(self):
         # The first push after the gate moved to main has no anchor; it checks
@@ -1360,16 +1373,19 @@ class WorkflowTextTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             payload = Path(tmp) / "event.json"
             payload.write_text('{"commits": [{"message": "update stuff\\nfiller"}]}')
-            proc = self._title_step(tmp, "push", {"PUSH_BASE_SHA": "", "GITHUB_EVENT_PATH": str(payload)})
+            proc, urls = self._title_step(tmp, "push", {"PUSH_BASE_SHA": "", "GITHUB_EVENT_PATH": str(payload)})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("::warning::", proc.stdout)
+        # No anchor: it must not try to compare against an empty base.
+        self.assertEqual(urls, "")
 
     def test_a_title_about_to_land_is_still_fatal(self):
         # In the merge queue the author can still fix it: that one is refused.
         with tempfile.TemporaryDirectory() as tmp:
-            proc = self._title_step(tmp, "merge_group", {"BASE_SHA": "b" * 40, "HEAD_SHA": "h" * 40})
+            proc, urls = self._title_step(tmp, "merge_group", {"BASE_SHA": "b" * 40, "HEAD_SHA": "h" * 40})
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("::error::", proc.stdout)
+        self.assertIn(f"compare/{'b' * 40}...{'h' * 40}", urls, urls)
 
     def test_a_moved_anchor_is_silent(self):
         job = jobs_of(self.text)["mark-green"]
