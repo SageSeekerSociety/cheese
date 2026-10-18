@@ -139,12 +139,15 @@ def deliver_send_user_file(client, config, payload, args, invoke):
             path.replace("\\", "/").rsplit("/", 1)[-1] or "file"
         )
         preexisting = item.get("upload_error")
-        # Only a file read from the machine needs the session's own directory,
-        # and asking for it can take the machine's hands (a lease that is still
-        # being prepared); these two entries deliver without a machine at all.
+        # Only a file read from the machine needs its directory asked for, and
+        # asking can take the machine's hands (a lease still being prepared).
+        # The other two deliver without a machine, and the launch already
+        # recorded where the session started: no call, same answer.
         anchor = None
         if not preexisting and not item.get("data_b64"):
             anchor = client.working_directory()
+        else:
+            anchor = config.get("start_directory")
         machine, rel = send_user_file_paths(path, config, anchor=anchor)
         if preexisting:
             attachments.append(

@@ -143,6 +143,34 @@ def test_a_relative_file_path_is_anchored_at_the_checkout(monkeypatch):
     assert entry["path"] == CHECKOUT + "/docs/report.pdf"
 
 
+def test_bytes_already_in_hand_do_not_ask_the_machine(monkeypatch):
+    """An entry the plugin already read, or already refused, is anchored at the
+    launch's recorded start; asking the machine could wait on a lease."""
+    from app.domain.agent.harness.claude_code.remote_execution import send_user_file
+
+    monkeypatch.setenv("CHEESE_TOPIC", TASK)
+
+    class Client:
+        def working_directory(self):
+            raise AssertionError("the machine must not be asked")
+
+        def platform_request(self, args):
+            raise AssertionError("nothing to publish")
+
+        def publish_message(self, payload, args):
+            raise AssertionError("nothing to caption")
+
+    result = send_user_file.deliver_send_user_file(
+        Client(),
+        {"workspace": ROOM, "start_directory": CHECKOUT},
+        {"id": "pre-read"},
+        {"files": [{"path": "docs/report.pdf", "data_b64": "aGk="}]},
+        lambda call, args: None,
+    )
+    entry = result["value"]["attachments"][0]
+    assert entry["path"] == CHECKOUT + "/docs/report.pdf"
+
+
 def test_the_checkout_is_opened_on_the_machine(
     tmp_path, pinned, machine, monkeypatch
 ):

@@ -407,7 +407,14 @@ def run_on_the_machine(target, command):
     short_name = os.environ.get(WORKING_DIRECTORY)
     spelled_later = target.get("workspace") == DEFERRED_WORKSPACE
     client = RemoteClient(target)
-    if short_name is not None and not spelled_later:
+    resolved = target.get("working_directory")
+    if short_name is not None and resolved:
+        # The target file keeps the answer (`working_directory`): either the
+        # launch's name was the placeholder, or the launch could not ask and a
+        # later command did. It is the session's directory from now on.
+        short_name = resolved
+        spelled_later = False
+    elif short_name is not None and not spelled_later:
         placeholder = target.get("virtual_workspace")
         if short_name == DEFERRED_WORKSPACE or (
             placeholder and short_name == placeholder != target.get("workspace")
@@ -428,6 +435,14 @@ def run_on_the_machine(target, command):
             short_name = client.working_directory(notice=False)
         else:
             short_name = outward(short_name)
+    if resolved and os.path.normpath(cwd) == os.path.normpath(
+        target.get("workspace") or ""
+    ):
+        # The build still stands at the project view while the session's own
+        # directory is somewhere else (a launch whose lookup failed, or a
+        # placeholder session just resolved): the command starts where the
+        # session is, as it would once it had cd'ed there itself.
+        cwd = resolved
     merge = _same_file(1, 2)
     command_id = "shell-" + uuid.uuid4().hex
 
