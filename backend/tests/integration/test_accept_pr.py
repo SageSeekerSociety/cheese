@@ -3226,6 +3226,8 @@ def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
 
 
 def _sweep(client) -> dict:
+    """每 300 秒那一拍：只扫活动窗口里动过的活。"""
+    from app.core.config import settings
     from app.domain.review import pr_publish
 
     return client.portal.call(
@@ -3233,6 +3235,7 @@ def _sweep(client) -> dict:
             client.test_request_factory,
             announce=announce,
             record_instruction=record_task_instruction,
+            quiet_window_s=settings.draft_pr_sweep_activity_window_s,
         )
     )
 
@@ -3398,6 +3401,135 @@ def test_a_batch_left_open_in_an_archived_room_gets_no_pr(client, sweeping):
     assert sweeping["opened"] == []
 
 
+def test_a_branch_quiet_for_hours_is_not_asked_about(client, sweeping):
+    """草稿扫描只看最近动过的活。
+
+    每个候选每扫一遍要问 GitHub 两次（分支头 + 比较）。一条几小时没人碰过的
+    分支不会有人在往上推：等它再有人说活时再扫，而不是每一拍都花这两次。
+    """
+    from app.domain.room_task.models import Task
+
+    fresh = _room_with_work(client)  # 刚刚建出来 = 10 分钟内动过
+    three_hours = _room_with_work(client)
+    two_days = _room_with_work(client)
+
+    def backdate(room, ago):
+        task_id = _uuid.UUID(str(delivery_task_id(client, room[1])))
+        at = datetime.now(UTC) - ago
+
+        async def _do() -> None:
+            async with client.test_factory() as s:
+                task = await s.get(Task, task_id)
+                task.created_at = at
+                await s.commit()
+
+        asyncio.run(_do())
+
+    backdate(three_hours, timedelta(hours=3))
+    backdate(two_days, timedelta(days=2))
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    [opened] = sweeping["opened"]
+    assert opened["head"] == _disk_branch(client, fresh[1])
+    # 只有那一条被问过：另外两条一次 GitHub 请求都没花。一条被开出来的活
+    # 会被问两次（锁外看一眼、锁内再确认），所以数的是被问过的分支头。
+    assert len({head for _, head in sweeping["fake"].compare_status_calls}) == 1
+
+
+def test_a_task_that_spoke_recently_is_swept_even_when_it_is_old(client, sweeping):
+    """「最近动过」看的是最后一次说话，不是建这条活的时刻：一条开了两天的活，
+    十分钟前还在说，就说明有人在推它的分支。"""
+    from app.domain.block.models import AuthorType, Block, BlockKind
+    from app.domain.room_task.models import Task
+
+    pid, tid = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, tid)))
+
+    async def seed() -> None:
+        async with client.test_factory() as s:
+            task = await s.get(Task, task_id)
+            task.created_at = datetime.now(UTC) - timedelta(days=2)
+            s.add(
+                Block(
+                    project_id=_uuid.UUID(pid),
+                    conversation_id=task_id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.platform,
+                    author="cheese",
+                    content="还在推",
+                    created_at=datetime.now(UTC) - timedelta(minutes=10),
+                )
+            )
+            await s.commit()
+
+    asyncio.run(seed())
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    assert len({head for _, head in sweeping["fake"].compare_status_calls}) == 1
+
+
+def test_a_catch_up_sweep_still_asks_about_a_quiet_branch(client, sweeping):
+    """掉线重连、丢了事件时的那次补扫不带窗口。
+
+    被漏掉的那次「有提交」只能在这里补上；任务已经安静下来也一样 —— 分支上确实
+    有东西。窗口是给每 300 秒那一拍省请求用的，不是「这条活不用再开 PR 了」。
+    """
+    from app.domain.review import pr_publish
+    from app.domain.room_task.models import Task
+
+    _, tid = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, tid)))
+
+    async def backdate() -> None:
+        async with client.test_factory() as s:
+            task = await s.get(Task, task_id)
+            task.created_at = datetime.now(UTC) - timedelta(days=2)
+            await s.commit()
+
+    asyncio.run(backdate())
+
+    counts = client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+        )
+    )
+
+    assert counts["opened"] == 1, counts
+    [opened] = sweeping["opened"]
+    assert opened["draft"] is True
+
+
+@pytest.mark.parametrize("window", [0, -3600])
+def test_a_window_of_zero_or_less_sweeps_every_open_branch(
+    client, sweeping, monkeypatch, window
+):
+    """窗口配成 0 或负数就是不设窗口 —— 顺带钉住扫的是这个设置，不是写死的数。"""
+    from app.core.config import settings
+    from app.domain.room_task.models import Task
+
+    monkeypatch.setattr(settings, "draft_pr_sweep_activity_window_s", window)
+    _, tid = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, tid)))
+
+    async def backdate() -> None:
+        async with client.test_factory() as s:
+            task = await s.get(Task, task_id)
+            task.created_at = datetime.now(UTC) - timedelta(days=2)
+            await s.commit()
+
+    asyncio.run(backdate())
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+
+
 def test_push_fix_can_drop_dependency_before_filing_a_card(client, sweeping):
     from app.domain.room_task.models import Task, TaskStatus
 
@@ -3468,8 +3600,8 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
     task_id = delivery_task_id(client, tid)
     original = TaskService.open_without_pr
 
-    async def _list_then_merge(self):
-        trees = await original(self)
+    async def _list_then_merge(self, **kwargs):
+        trees = await original(self, **kwargs)
 
         async def _merge_it() -> None:
             async with client.test_request_factory() as s:
