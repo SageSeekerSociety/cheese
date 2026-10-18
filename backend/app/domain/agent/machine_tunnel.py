@@ -44,7 +44,6 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger("cheese.tunnel")
 
-_OP_CONT = 0x0
 _OP_BIN = 0x2
 _OP_CLOSE = 0x8
 _OP_PING = 0x9

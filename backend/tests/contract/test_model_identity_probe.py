@@ -14,6 +14,8 @@ import pytest
 
 from scripts.model_identity_probe import battery
 from scripts.model_identity_probe import reference as reference_mod
+from scripts.model_identity_probe import stats as stats_mod
+from scripts.model_identity_probe import verdict as verdict_mod
 from scripts.model_identity_probe.binding import (
     SeatCheck,
     check_seat,
@@ -252,6 +254,28 @@ def test_split_half_mean_averages_over_cells_not_the_max() -> None:
 )
 def test_decide_jsd_verdict_bands(mean, cells, expected) -> None:
     assert decide_jsd_verdict(mean, cells) == expected
+
+
+def test_the_verdict_reads_two_thresholds_and_no_paper_baseline() -> None:
+    """The paper baselines are quoted, never read.
+
+    The paper's three median baselines used to sit beside the thresholds as
+    module constants, and a ranking table sat beside the four verdicts. Neither
+    was read anywhere, and both read like inputs to the verdict -- a reader
+    could believe a result was checked against the baselines. The numbers stay
+    quoted in ``stats``'s docstring so a band can still be interpreted; this
+    test keeps them from creeping back as apparent inputs, and pins the two
+    thresholds that do decide.
+    """
+    assert JSD_MATCH_THRESHOLD == 0.25
+    assert JSD_MISMATCH_THRESHOLD == 0.35
+    for name in (
+        "JSD_BASELINE_SELF",
+        "JSD_BASELINE_CROSS_PROVIDER",
+        "JSD_BASELINE_DIFFERENT_MODEL",
+    ):
+        assert not hasattr(stats_mod, name), f"{name} is back in stats"
+    assert not hasattr(verdict_mod, "_RANK"), "the verdict ranking table is back"
 
 
 def test_a_wire_name_that_is_not_the_claim_is_a_mismatch_on_its_own() -> None:
