@@ -78,3 +78,10 @@ def histogram(values: list[int], bins: int = 10) -> list[dict]:
         index = min(bins - 1, int(value / width))
         out[index]["count"] += 1
     return out
+
+
+def ratio(numerator: int | None, denominator: int | None) -> float | None:
+    """``None`` when the denominator is empty — a rate with no base is not 0."""
+    if not denominator or numerator is None:
+        return None
+    return numerator / denominator
