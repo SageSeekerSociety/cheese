@@ -3,6 +3,7 @@ revoke, void, mark-ready, redescribe, push-fix and force-merge."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -31,7 +32,8 @@ from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
-    pass
+    from app.domain.review.github_pr_status import PullRequestStatus
+    from app.domain.room_task.models import Task
 
 from app.domain.project.protection import branch_protection_of
 from app.domain.review import github_pr
@@ -53,6 +55,7 @@ from app.domain.review.services._shared import (
     logger,
     notice,
 )
+from app.domain.review.services.polling.card_poll import _rebase_onto_base
 
 
 async def approve(
@@ -103,6 +106,15 @@ async def mark_ready(
             node_id = str(view.get("node_id") or "")
             if not node_id:
                 raise ValidationError(say("githubNoPrNodeId"))
+            refused = await _rebase_behind_before_ready(
+                self, client=client, topic=topic, task=task, number=task.pr_number
+            )
+            if refused is not None:
+                return refused
+            # `view` was read before the rebase on purpose: the merge commit
+            # an update-branch lands becomes the head, and its subject is
+            # 「Merge branch 'main' into …」, not the line this work belongs
+            # under. The title must come from the commit the task wrote.
             title = await _ready_title(client, view)
             if title is not None:
                 await client.update_pr(task.pr_number, title=title)
@@ -120,6 +132,148 @@ async def mark_ready(
         "pr_number": task.pr_number,
         "pr_url": task.pr_url,
     }
+
+
+#: What `mark_ready` answers when the branch cannot be brought current.
+#: A branch's CI runs the workflows on its own head, so flipping a behind
+#: branch to ready would spend a whole round on the check set it was cut
+#: from — and the merge into main would run the current one again anyway.
+_READY_CONFLICT = "分支与目标分支冲突，先在分支上解掉冲突再转可评审"
+_READY_REBASE_REFUSED = (
+    "分支落后于目标分支，自动更新分支被拒：可能撞了冲突，也可能稍后重试即可"
+)
+
+
+#: How long to wait for an accepted update-branch to land. GitHub answers 202
+#: and merges in the background (`"Updating pull request branch."`), so the
+#: head read right after the call can still be the old one; flipping the ready
+#: flag then starts the full CI on the head we are replacing. Bounded — a miss
+#: only costs the wait, never the delivery.
+_UPDATE_BRANCH_WAITS_S = (0.0, 1.0, 2.0)
+
+
+def _conflicts_with_base(status: PullRequestStatus) -> bool:
+    """The forge's own word that the two sides cannot merge.
+
+    `draft` is checked first, like `merge_state.compute_merge_state` does:
+    Forgejo reports `mergeable: false` for every work-in-progress PR (its
+    draft flag IS the `WIP:` title there), and GitHub reports no mergeability
+    at all until the PR is ready. Reading either raw `False` as a conflict
+    would refuse to mark any draft ready."""
+    if status.draft:
+        return status.mergeable_state == "dirty"
+    return status.mergeable is False or status.mergeable_state == "dirty"
+
+
+async def _head_after_update(
+    client: GitHubPRClient | ForgejoPRClient, number: int, old_head: str
+) -> PullRequestStatus | None:
+    """The PR's status once its head has moved, or None if it has not."""
+    for wait in _UPDATE_BRANCH_WAITS_S:
+        if wait:
+            await asyncio.sleep(wait)
+        try:
+            status = await client.pr_status(number)
+        except Exception:  # 读不到就当没动，照旧翻
+            return None
+        if status.head_sha and status.head_sha != old_head:
+            return status
+    return None
+
+
+async def _rebase_behind_before_ready(
+    self: pkg.AcceptService,
+    *,
+    client: GitHubPRClient | ForgejoPRClient,
+    topic: Topic,
+    task: Task,
+    number: int,
+) -> dict | None:
+    """Bring a draft's branch onto its current base before the ready flag.
+
+    `mark_ready` is the last moment the head may move on its own: after
+    acceptance a new commit makes the platform's merge call 409 and voids the
+    approval the person gave for the sha they saw.
+
+    Returns the answer to hand back when the branch cannot be brought current
+    (it conflicts). None when it is current or was just updated. Every other
+    failure degrades to None — a forge hiccup here must not stop a delivery,
+    it only costs the old check set one more round.
+    """
+    # deferred-import: tests replace these names on app.domain.project.forge
+    from app.domain.project.forge import binding_for_project, default_branch
+
+    try:
+        binding = await binding_for_project(topic.project_id, self._session)
+        base = task.base_branch or await default_branch(topic.project_id, self._session)
+    except Exception:  # 连仓库都读不出来时照旧翻，不卡交付
+        logger.warning("ready: cannot resolve the repository", exc_info=True)
+        return None
+    if binding is None:
+        return None
+    try:
+        status = await client.pr_status(number)
+    except Exception:  # 读不到合并态就照旧翻，不卡交付
+        logger.warning("ready: cannot read PR %s's status", number, exc_info=True)
+        return None
+    if _conflicts_with_base(status):
+        return {"ready": False, "reason": _READY_CONFLICT}
+
+    try:
+        creds, _reason = await self._app_credentials(topic)
+        owner, repo = binding.repo.split("/", 1)
+        forge = await self._status_client(topic.project_id)
+    except Exception:  # 拿不到凭据/客户端就没有换基，照旧翻
+        logger.warning("ready: no forge client to rebase with", exc_info=True)
+        return None
+    if creds is None:
+        return None
+    try:
+        ancestry = await forge.compare_status(
+            owner=owner, repo=repo, base=base, head=status.head_sha, token=creds.read
+        )
+    except Exception:  # ancestry 读不到不拦（merge_state 的规矩）
+        logger.warning("ready: cannot compare %s with %s", status.head_sha, base)
+        ancestry = None
+    if ancestry not in ("behind", "diverged"):
+        return None
+
+    try:
+        updated = await _rebase_onto_base(
+            client=forge,
+            owner=owner,
+            repo=repo,
+            number=number,
+            token=creds.write,
+        )
+    except Exception:  # 换基失败不卡交付
+        logger.warning("ready: update-branch refused for #%s", number, exc_info=True)
+        return None
+    if updated:
+        after = await _head_after_update(client, number, status.head_sha)
+        if after is not None and _conflicts_with_base(after):
+            return {"ready": False, "reason": _READY_CONFLICT}
+        return None
+
+    # Refused. That is a conflict, somebody moved the branch under us a moment
+    # ago (GitHub answers 422 for "already up to date" too), or the forge
+    # cannot update this branch. Read once more so the three do not share one
+    # sentence, and let the already-current case through.
+    try:
+        after = await client.pr_status(number)
+    except Exception:  # 见上
+        return {"ready": False, "reason": _READY_REBASE_REFUSED}
+    if _conflicts_with_base(after):
+        return {"ready": False, "reason": _READY_CONFLICT}
+    try:
+        still_behind = await forge.compare_status(
+            owner=owner, repo=repo, base=base, head=after.head_sha, token=creds.read
+        )
+    except Exception:  # 见上
+        still_behind = ancestry
+    if still_behind not in ("behind", "diverged"):
+        return None
+    return {"ready": False, "reason": _READY_REBASE_REFUSED}
 
 
 async def _ready_title(
