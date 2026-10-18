@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.addressing import Addressed
 from app.domain.agent.turn.state.live import LiveWork
+from app.domain.agent.turn.store.human import HumanHandoff
 from app.domain.delivery.input_identity import InputReconciliationPending
 
 
@@ -28,6 +29,7 @@ class HumanWriter(Protocol):
         attachments: list[dict] | None = None,
         client_id: str | None = None,
         quoted_context: dict | None = None,
+        handoff: HumanHandoff | None = None,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]: ...
 
 

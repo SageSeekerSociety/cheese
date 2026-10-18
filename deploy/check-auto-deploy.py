@@ -197,14 +197,63 @@ SETTLE_SECONDS = 120
 SETTLE_INTERVAL = 15
 
 
-def ci_ready_settled(candidate: str) -> bool:
+def ci_ready_settled(candidate: str, until: float | None = None) -> bool:
+    """Whether the candidate's runs are ready, re-reading while the run list may
+    still be catching up. `until` caps this settle at a caller's deadline, so a
+    settle inside a wait cannot push the total past the job's budget."""
     deadline = time.monotonic() + SETTLE_SECONDS
+    if until is not None:
+        deadline = min(deadline, until)
     while not ci_ready(candidate):
         if time.monotonic() + SETTLE_INTERVAL > deadline:
             return False
         print(f"Reading {candidate}'s runs again in {SETTLE_INTERVAL} s.")
         time.sleep(SETTLE_INTERVAL)
     return True
+
+
+#: How long the entry point waits for an image build that is still running.
+#: Required CI is the only release event now, and it outlasts the build in the
+#: normal case, so a build still running when the gate finishes is the rare
+#: ordering; giving up on it would leave the commit unreleased until the next
+#: merge. The eligibility job's timeout is sized for this window plus the
+#: initial settle (see deploy-dev.yml).
+BUILD_WAIT_SECONDS = 600
+BUILD_POLL_SECONDS = 15
+
+
+def build_running(candidate: str) -> bool:
+    """Whether this commit's image build has a run that has not finished."""
+    repository = os.environ["GITHUB_REPOSITORY"]
+    runs = [run for run in workflow_runs(repository, "build.yml", candidate)
+            if run["head_sha"] == candidate
+            and run["event"] in ("push", "workflow_dispatch")
+            and (run["head_branch"] or "") == "main"
+            and run["head_repository"]["full_name"] == repository]
+    if not runs:
+        return False
+    latest = max(runs, key=lambda run: (run["updated_at"], run["id"]))
+    return latest["status"] != "completed"
+
+
+def wait_for_build(candidate: str, say=print) -> bool:
+    """Wait out a running image build, then re-check; False when it never fits.
+
+    The settle is capped at this wait's deadline: without that cap it could run
+    its own two minutes past it, and the eligibility job would be killed by its
+    timeout instead of refusing."""
+    deadline = time.monotonic() + BUILD_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        if ci_ready_settled(candidate, until=deadline):
+            return True
+        if not build_running(candidate):
+            return False
+        if time.monotonic() + BUILD_POLL_SECONDS > deadline:
+            return False
+        say(f"{candidate}'s image build is still running; checking again in"
+            f" {BUILD_POLL_SECONDS} s.")
+        time.sleep(BUILD_POLL_SECONDS)
+    return False
 
 
 def waiting_state(candidate: str) -> str:
@@ -376,6 +425,17 @@ def main() -> None:
         return
     if sys.argv[1] == "--ci-only":
         ready = ci_ready_settled(sys.argv[2])
+        # Required CI is the only release event. It outlasts the image build in
+        # the normal case; when it does not, the build is still running here and
+        # no later event will come, so wait for it rather than give up.
+        build_pending = False
+        if not ready and build_running(sys.argv[2]):
+            ready = wait_for_build(sys.argv[2])
+            # The wait gave up while the build was still going. No later event
+            # will release this commit, so the refusal is real; but it cures
+            # itself when the build finishes, and the message has to say that
+            # instead of claiming the build has no successful attempt.
+            build_pending = not ready and build_running(sys.argv[2])
         # Only a release that was refused asks why it might still come:
         # a ready one must not pay another run-list read (and must not
         # fail when that read fails) before its deploy starts.
@@ -392,9 +452,13 @@ def main() -> None:
         if uncovered:
             print(f"Not deploying {sys.argv[2]}: its Required CI run was cancelled and no "
                   "newer commit on main can cover it, so nothing will release it.")
+        if build_pending:
+            print(f"Not deploying {sys.argv[2]}: its image build was still running when the wait "
+                  f"ended ({BUILD_WAIT_SECONDS // 60} min). Re-run this workflow once it finishes.")
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
             output.write(f"ready={str(ready).lower()}\nsuperseded={newer}\n"
-                         f"waiting={str(waiting).lower()}\nuncovered={str(uncovered).lower()}\n")
+                         f"waiting={str(waiting).lower()}\nuncovered={str(uncovered).lower()}\n"
+                         f"build_pending={str(build_pending).lower()}\n")
         return
     rebuilt = sys.argv[1] == "--rebuilt"
     candidate = sys.argv[2] if rebuilt else sys.argv[1]
