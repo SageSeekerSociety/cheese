@@ -33,24 +33,49 @@ jobs:
     # a slow one from cancelling the job and losing every probe after it.
     timeout-minutes: 10
     steps:
+      # Clear the sparse state this workflow left in the shared workspace before
+      # the checkout below. The old non-cone sparse checkout wrote
+      # `.git/info/sparse-checkout` and `core.sparseCheckout=true` into
+      # `_work/cheese/cheese/.git`; `git sparse-checkout disable` — what
+      # actions/checkout runs when no pattern is asked for — clears the config
+      # but NOT that file, so the `git checkout --force` right after it
+      # re-applies the old pattern and deletes every file it excludes. That is
+      # the Deploy failure in runs 39120411594 (10:44) and 39121017323 (10:53):
+      # the checkout succeeds, and deploy/check-auto-deploy.py is simply gone.
+      # Nothing here creates that state any more (see the next comment), so this
+      # only ever runs against the damage already on the box; it is idempotent
+      # and exits without touching anything when the workspace is clean.
+      - name: Clear a stale sparse checkout left in the shared workspace
+        run: |
+          ws="$GITHUB_WORKSPACE"
+          if [ ! -f "$ws/.git/info/sparse-checkout" ]; then
+            echo "no stale sparse pattern in $ws; nothing to clear"
+            exit 0
+          fi
+          echo "stale pattern in $ws/.git/info/sparse-checkout:"
+          cat "$ws/.git/info/sparse-checkout"
+          # Order matters. `sparse-checkout disable` is what clears the index's
+          # skip-worktree bits and restores the files; removing the pattern file
+          # alone leaves those bits set, and the next `checkout --force` keeps
+          # the tree sparse. Then the pattern file goes, so the next checkout
+          # does not re-apply it, and the config key with it.
+          git -C "$ws" sparse-checkout disable 2>&1 || true
+          rm -f "$ws/.git/info/sparse-checkout"
+          git -C "$ws" config --local --unset core.sparseCheckout 2>/dev/null || true
+          echo "cleared: skip-worktree entries now $(git -C "$ws" ls-files -v | grep -c '^S' || true)"
+          test -f "$ws/deploy/check-auto-deploy.py" \
+            && echo "deploy/check-auto-deploy.py is back in the worktree" \
+            || echo "WORKTREE STILL MISSING deploy/check-auto-deploy.py"
       # Its OWN directory, never the workspace Deploy uses. cheese-dev runs one
       # job at a time in ONE workspace (_work/cheese/cheese), and whichever job
       # touched it last decides what the next checkout finds.
       #
-      # Two Deploys have now failed on a tree missing deploy/check-auto-deploy.py
-      # right after a box-diag run in that workspace: 09:44 box-diag -> 09:46
-      # Deploy (run 39116642574), and 10:09 box-diag -> 10:44 Deploy (run
-      # 39120411594, which was already running this workflow's full-checkout
-      # version). Trading sparse-checkout for a full checkout did not end it:
-      # both jobs still write the same .git — branches, clean, reset, and the
-      # sparse settings actions/checkout toggles — and Deploy's own checkout
-      # then produced a worktree the script was missing from.
-      #
-      # So the probe stops touching that workspace at all. It checks out into
-      # .box-diag/ (~110MB: .git packs to 76MB) and every step that needs a file
-      # from the tree says so by path. Deploy's `git clean -ffdx` removes the
-      # directory between runs, so nothing accumulates; a probe must not be able
-      # to change the thing it is probing.
+      # The probe used to check out in that workspace (with or without sparse);
+      # now it takes `.box-diag/` there — one depth-1 checkout, ~145MB (105MB
+      # worktree + 40MB .git) — and every step that needs a file from the tree
+      # says so by path. Deploy's `git clean -ffdx` removes the directory
+      # between runs, so nothing accumulates; a probe must not be able to change
+      # the thing it is probing.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: .box-diag
