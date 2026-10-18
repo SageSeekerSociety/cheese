@@ -174,22 +174,26 @@ async def _required_runs(session: AsyncSession, repo: str, since: datetime, unti
     )
 
 
-async def _first_attempt_jobs(session: AsyncSession, run_row_ids: list) -> dict:
+async def _first_attempt_jobs(
+    session: AsyncSession, run_row_ids: list
+) -> dict[Any, tuple[set[str], datetime | None]]:
     """Per run row: (names of its first attempt's jobs, last completion among them)."""
-    out: dict = defaultdict(lambda: [set(), None])
-    if not run_row_ids:
-        return out
-    rows = await session.execute(
-        select(CiJob.run_row_id, CiJob.name, CiJob.completed_at).where(
-            CiJob.run_row_id.in_(run_row_ids), CiJob.run_attempt == 1
+    names: dict[Any, set[str]] = defaultdict(set)
+    last: dict[Any, datetime | None] = {}
+    if run_row_ids:
+        rows = await session.execute(
+            select(CiJob.run_row_id, CiJob.name, CiJob.completed_at).where(
+                CiJob.run_row_id.in_(run_row_ids), CiJob.run_attempt == 1
+            )
         )
+        for run_row_id, name, completed in rows:
+            names[run_row_id].add(name)
+            seen = last.get(run_row_id)
+            if completed is not None and (seen is None or completed > seen):
+                last[run_row_id] = completed
+    return defaultdict(
+        lambda: (set(), None), {k: (v, last.get(k)) for k, v in names.items()}
     )
-    for run_row_id, name, completed in rows:
-        entry = out[run_row_id]
-        entry[0].add(name)
-        if completed is not None and (entry[1] is None or completed > entry[1]):
-            entry[1] = completed
-    return out
 
 
 async def _failed_before_last(session: AsyncSession, run_row_ids: list) -> dict:
@@ -275,7 +279,7 @@ async def build_board(
     wait_by_day: dict[tuple[str, date], list[float]] = defaultdict(list)
     machines: dict[str, dict[str, Any]] = {}
     spans: dict[str, list[tuple[datetime, datetime]]] = defaultdict(list)
-    busy_seconds: Counter = Counter()
+    busy_seconds: dict[str, float] = defaultdict(float)
     for job in jobs:
         wait = _seconds(job.created_at, job.started_at)
         took = _seconds(job.started_at, job.completed_at)
@@ -422,7 +426,7 @@ async def build_board(
     }
 
 
-def _shares(seconds: Counter) -> dict[str, float | None]:
+def _shares(seconds: dict[str, float]) -> dict[str, float | None]:
     total = sum(seconds.values())
     return {cls: (seconds[cls] / total if total else None) for cls in CLASSES}
 
