@@ -209,23 +209,11 @@ async def sweep_orphans(
     if silence_s is None:
         silence_s = self.SILENT_TURN_S
     now = utcnow()
-    replaying = {
-        record.topic_id
-        for record in open_turns.values()
-        if chat_service.replaying(record.topic_id) is not None
-    }
     old_enough = {
         tid: record
         for tid, record in open_turns.items()
         if record.age_s(now) >= min_age_s
-        and (
-            record.topic_id not in replaying
-            # Another seat can still replay after this exact session ended.
-            or (
-                record.delivered
-                and not death_evidence.unknown_row(chat_service, record)
-            )
-        )
+        and chat_service.replaying(record.topic_id) is None
     }
     wedged = await self._wedged_turns(old_enough, last_activity, silence_s, now)
     # A row the process cannot judge is not a dead row (FB-56 legacy③):
@@ -319,12 +307,7 @@ async def sweep_orphans(
     # 轮次也算进来：机器死在它手上，它正是那些悬着的调用的来源。
     by_topic: dict[uuid.UUID, list[TurnRecord]] = {}
     since: dict[uuid.UUID, datetime] = {}
-    session_refs: dict[uuid.UUID, set[tuple[str, str]]] = {}
     for turn_id, record in orphans.items():
-        if record.topic_id in replaying:
-            refs = session_refs.setdefault(record.topic_id, set())
-            if record.agent_handle is not None and record.session_id is not None:
-                refs.add((record.agent_handle, record.session_id))
         entries = by_topic.setdefault(record.topic_id, [])
         if turn_id not in wedged:
             entries.append(record)
@@ -338,8 +321,6 @@ async def sweep_orphans(
             entries,
             now,
             since=since[topic_id],
-            # Other seats can still have calls in flight during room replay.
-            session_refs=session_refs.get(topic_id),
             # A topic the wedged branch already remedied gets no second
             # action — its restart orphans are folded in, loudly.
             allow_actions=topic_id not in wedged_topics,

@@ -689,7 +689,6 @@ class AgentWorkRunner:
         *,
         since: datetime,
         allow_actions: bool = True,
-        session_refs: set[tuple[str, str]] | None = None,
     ) -> int:
         """One topic's remedy for turns that reached nobody.
 
@@ -739,9 +738,7 @@ class AgentWorkRunner:
         `since` 是这个话题里最早那个孤儿轮次的开始时刻，读只读那之后派出去的
         （`dispatch_log.unsettled`）。"""
         async with chat_service.session_factory() as ledger:
-            unknown = await dispatch_log.unsettled(
-                ledger, topic_id, since=since, session_refs=session_refs
-            )
+            unknown = await dispatch_log.unsettled(ledger, topic_id, since=since)
 
             delivery_attempts = set(
                 await ledger.scalars(
