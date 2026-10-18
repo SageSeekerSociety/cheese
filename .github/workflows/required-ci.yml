@@ -609,14 +609,25 @@ jobs:
         # retry budget would put this job past its five minutes — a timed-out
         # run is a failed run to the deploy gate, which is the one outcome this
         # job must never cause.
+        #
+        # Every call below is bounded so the whole step fits in five minutes on
+        # its worst path. --max-time bounds one attempt and --retry 2 makes
+        # three, but a retry wait is not transport: curl sleeps for the
+        # server's Retry-After when it sends one, which --retry-delay and
+        # --max-time do not cap (a 429 that says "wait a minute" sleeps a
+        # minute, twice). --retry-max-time is the only knob that caps the whole
+        # call, waiting included. So one call is at most 60s, and update +
+        # create + the 15s read-back is 135s, plus a checkout.
+        # (The old 60s/per-call numbers let a PATCH that timed out twice and
+        # then answered 422 stack two 246s budgets: 492s.)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
+          ref_url="https://api.github.com/repos/$GITHUB_REPOSITORY/git/ref/heads/main-green"
           update_ref() {
-            curl -sS --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
-              -o /dev/null -w '%{http_code}' \
-              -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-              "$@"
+            curl -sS --retry 2 --retry-delay 2 --retry-max-time 60 --max-time 30 \
+              -o /dev/null -w '%{http_code}' "${auth[@]}" "$@"
           }
           url="https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/heads/main-green"
           moved=""
@@ -630,6 +641,14 @@ jobs:
                    "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs")" \
                && [ "${post_code:0:1}" = 2 ]; then
               moved=1
+            elif [ "$post_code" = 409 ]; then
+              # "Reference already exists": either the create really landed
+              # and only its response was lost (the retry met the new ref), or
+              # someone else made it point elsewhere. Read it back before
+              # saying the anchor did not move.
+              if curl -sS --max-time 15 "${auth[@]}" "$ref_url" | grep -q "$GITHUB_SHA"; then
+                moved=1
+              fi
             fi
           fi
           if [ -n "$moved" ]; then

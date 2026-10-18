@@ -54,7 +54,7 @@ async def load_environment_project(
 ) -> EnvironmentProject:
     project = await session.get(Project, project_id)
     if project is None:
-        raise NotFoundError("Project not found")
+        raise NotFoundError(say("projectNotFound"))
     return EnvironmentProject(project.id, project.settings)
 
 
@@ -65,7 +65,7 @@ async def save_project_environment(
         select(Project).where(Project.id == project_id).with_for_update(key_share=True)
     )
     if project is None:
-        raise NotFoundError("Project not found")
+        raise NotFoundError(say("projectNotFound"))
     project.settings = {**(project.settings or {}), "environment": config}
     await session.flush()
 
@@ -210,7 +210,7 @@ async def pin_environment(
     if topic.environment is None:
         project = await session.get(Project, project_id)
         if project is None:
-            raise NotFoundError("Project not found")
+            raise NotFoundError(say("projectNotFound"))
         topic.environment = project_environment(project.settings)
         await session.flush()
     return dict(topic.environment)
