@@ -95,7 +95,7 @@ def _github(
                 422,
                 json={
                     "message": "The permissions requested are not granted to "
-                    f"this installation: {', '.join(refused)}"
+                    "this installation."
                 },
             )
         mints.append({"claims": claims, "body": body, "url": str(request.url)})
@@ -270,7 +270,7 @@ async def test_write_token_asks_for_actions_write_once_the_installation_holds_it
 
 
 @pytest.mark.anyio
-async def test_write_token_with_a_revoked_accept_grant_is_refused_naming_it(
+async def test_write_token_with_a_revoked_accept_grant_is_refused_at_the_mint(
     rsa_key_pem,
 ):
     """The grant map does not narrow the accept set: a revoked `contents:
@@ -286,7 +286,7 @@ async def test_write_token_with_a_revoked_accept_grant_is_refused_naming_it(
             granted=_CHEESEX_APP_GRANTS | {"actions": "write", "contents": "read"},
         ),
     )
-    with pytest.raises(GitHubAppError, match="422.*contents"):
+    with pytest.raises(GitHubAppError, match="422.*not granted"):
         await minter.write_token()
 
 

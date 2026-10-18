@@ -135,9 +135,10 @@ class _GitHubCredentials:
     个人 token 那条路上它们是同一个字符串（一个 OAuth token 什么都能干）。App
     这条路上它们不是，而且分不开就会坏：`GitHubAppTokens.write_token()` 逐项写死了
     `contents:write` + `pull_requests:write` + `workflows:write` + `metadata:read`
-    （`_WRITE_PERMISSIONS`，为的是某项被撤销时在铸币那一刻就报出来），**里面没有
-    `checks`**。拿它去读 `/commits/{ref}/check-runs` 会 403 —— 而轮询器把它当成一次
-    GitHub 抖动，下一轮再来，于是卡永远推不动，卡面上什么都不会写。
+    （`_WRITE_PERMISSIONS`，为的是某项被撤销时在铸币那一刻就报出来；安装授予了
+    `actions: write` 时再加这一项），**里面没有 `checks`**。拿它去读
+    `/commits/{ref}/check-runs` 会 403 —— 而轮询器把它当成一次 GitHub 抖动，
+    下一轮再来，于是卡永远推不动，卡面上什么都不会写。
 
     所以：GET 用 `read`（`installation_token()`，带 `checks:read`），推分支和合并用
     `write`。
