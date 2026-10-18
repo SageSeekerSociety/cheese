@@ -89,15 +89,26 @@ _LOG_PREFIX = re.compile(r"^[^\t\n]*\t[^\t\n]*\t(?:\ufeff)?\S+\s")
 #
 # The bias is deliberate: an unrecognised line is refused rather than rerun, so
 # a missed flake costs one person a look while a wrong rerun costs the failed
-# job set again and delays the real diagnosis. A test step that crashes after
-# its report began is therefore refused, not rerun.
+# job set again and delays the real diagnosis. The refusal side is not free and
+# the reader is told which case it is: a flake printed in a step after that
+# step's own report began is refused, and the run it happened on still counts
+# against MAX_ATTEMPTS, so the commit has one fewer retry left. The refusal
+# says "read it and decide by hand" — it does not claim there was no flake.
 _REPORT_START = re.compile(
     r"^(?:=+ (?:FAILURES|ERRORS|short test summary info|warnings summary"
     r"|slowest \d+ durations) =+"
+    r"|(?:=+ )?\d+ (?:failed|passed|error|skipped)\b[^\n]* =+"
+    r"|\W{3,} Failed Tests\b"
     r"|-{3,} Captured .+ -{3,}"
     r"|_{3,} .+ _{3,}$"
+    # vitest indents its per-test line: ` FAIL  src/x.spec.ts > x > fails`.
+    r"| *FAIL {2,}\S.* > "
     r"|FAIL: |ERROR: |Traceback \(most recent call last\):$)"
 )
+# A passing pytest run still prints its `warnings summary` and slowest-durations
+# banners, and either can carry a signature in a test id. Those banners must
+# start the bound too, so the tests below pin each banner name separately: with
+# any one of them dropped, a passing shard's log can match as a flake.
 _PYTEST_REPORT = re.compile(
     r"^(?:FAILED |ERROR |>{1,2}\s|E {2,}|assert |AssertionError)"
 )

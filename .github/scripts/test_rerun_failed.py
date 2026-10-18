@@ -417,6 +417,41 @@ class LogSignatureTest(unittest.TestCase):
         )
         self.assertEqual(rerun.flake_log_signature(log)["id"], "econnreset")
 
+    # Every banner a report can start at, alone, with the test text right under
+    # it at column 0. One row per name, because dropping a name from the
+    # alternation is otherwise invisible: a passing run prints the warnings and
+    # durations banners too, and a test id in either can carry a signature.
+    BANNERS = (
+        "=============================== FAILURES ===============================",
+        "================================ ERRORS ================================",
+        "======================== short test summary info ======================",
+        "=========================== warnings summary ==========================",
+        "===================== slowest 10 durations =====================",
+        "=============== 2 failed, 8 passed, 1 warning in 3.04s ===============",
+    )
+    UNICODE_BANNERS = (
+        "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯",  # vitest
+    )
+
+    def test_each_report_banner_starts_the_bound_on_its_own(self):
+        flake = "read ECONNRESET"
+        for banner in self.BANNERS + self.UNICODE_BANNERS:
+            with self.subTest(banner=banner):
+                self.assertIsNone(rerun.flake_log_signature(f"{banner}\n{flake}"))
+
+    def test_each_report_marker_starts_the_bound_on_its_own(self):
+        flake = "read ECONNRESET"
+        for marker in (
+            "Traceback (most recent call last):",
+            "FAIL: test_x (__main__.TestX)",
+            "ERROR: test_x (__main__.TestX)",
+            " FAIL  src/x.spec.ts > x > fails",
+            "______ test_x ______",
+            "----------------------------- Captured stdout call -----------------------------",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIsNone(rerun.flake_log_signature(f"{marker}\n{flake}"))
+
     def test_every_pytest_report_shape_is_skipped(self):
         """Each shape is a separate row so deleting one branch reddens a test."""
         flake = "read ECONNRESET"
