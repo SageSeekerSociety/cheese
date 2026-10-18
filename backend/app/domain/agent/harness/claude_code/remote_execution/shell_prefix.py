@@ -107,11 +107,12 @@ def bind_working_directory(body, value, *, spelled_later=False):
     """
     if value is None:
         return body
+    # Stay on the body's first line so Bash diagnostics keep their line numbers.
     if spelled_later:
         if "'" in value:
             return body
-        return f"{WORKING_DIRECTORY}='{value}'\n{body}"
-    return f"{WORKING_DIRECTORY}={shlex.quote(value)}\n{body}"
+        return f"{WORKING_DIRECTORY}='{value}'; {body}"
+    return f"{WORKING_DIRECTORY}={shlex.quote(value)}; {body}"
 
 
 # The build wraps each Bash command as

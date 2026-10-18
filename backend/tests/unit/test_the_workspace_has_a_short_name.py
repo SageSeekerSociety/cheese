@@ -8,6 +8,9 @@ session sees, so two sessions on one machine never mean each other's directory.
 """
 
 import shlex
+import subprocess
+
+import pytest
 
 from app.domain.agent.executor_transport import to_machine
 from app.domain.agent.harness import CLAUDE_CODE, CODEX
@@ -75,7 +78,7 @@ def test_the_name_is_short_and_reaches_the_command():
     assert len(WORKING_DIRECTORY) <= 2
     assert (
         bind_working_directory('cd "$T" && pwd', "/the project")
-        == "T='/the project'\ncd \"$T\" && pwd"
+        == "T='/the project'; cd \"$T\" && pwd"
     )
 
 
@@ -89,6 +92,27 @@ def test_the_machines_environment_does_not_carry_the_name():
     assert bind_working_directory("pwd", None) == "pwd"
 
 
+@pytest.mark.parametrize("spelled_later", [False, True])
+def test_the_binding_preserves_bash_error_line_numbers(tmp_path, spelled_later):
+    missing = shlex.quote(str(tmp_path / "missing-command"))
+    body = "eval " + shlex.quote(missing)
+    native = subprocess.run(
+        ["bash", "-c", body], capture_output=True, text=True, check=False
+    )
+    remote = subprocess.run(
+        [
+            "bash",
+            "-c",
+            bind_working_directory(body, "/project", spelled_later=spelled_later),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert native.returncode == remote.returncode == 127
+    assert remote.stderr == native.stderr
+
+
 def test_a_placeholder_is_quoted_for_the_substitution_that_spells_it():
     """A session started before its machine is rented names a placeholder, and
     the transport replaces it inside the body after this point, textually. The
@@ -98,7 +122,7 @@ def test_a_placeholder_is_quoted_for_the_substitution_that_spells_it():
         'cd "$T" && pwd', "/unavailable-project", spelled_later=True
     )
     spelled = to_machine(bound, "/unavailable-project", "/home/First Last/project")
-    assert spelled.splitlines()[0] == "T='/home/First Last/project'"
+    assert spelled.split("; ", 1)[0] == "T='/home/First Last/project'"
     # A placeholder with a quote cannot be spelled that way: nothing is bound
     # rather than a value that would break the shell.
     assert (
@@ -112,8 +136,8 @@ def test_a_path_with_spaces_and_quotes_is_bound_whole():
     # and `cd "$T"` would name a part of it.
     path = "/the project/it's here"
     body = bind_working_directory("pwd", path)
-    assert body.splitlines()[0] == "T=" + shlex.quote(path)
-    assert shlex.split(body.splitlines()[0]) == ["T=" + path]
+    assert body.split("; ", 1)[0] == "T=" + shlex.quote(path)
+    assert shlex.split(body.split("; ", 1)[0]) == ["T=" + path]
 
 
 def test_the_line_is_told_the_name_only_on_the_harness_that_has_it():
