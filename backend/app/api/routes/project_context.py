@@ -121,7 +121,7 @@ async def _readable_rooms(
     if topic is not None:
         place = await place_or_404(db, topic)
         if place.project_id != project_id:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         actor = await resolver.resolve(project_id=project_id, topic_id=topic)
         if resolver.turn_conversation(actor) is not None:
             # An agent's results end up in that room: the same rule as any of

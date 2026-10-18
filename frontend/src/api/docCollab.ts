@@ -15,6 +15,8 @@ export interface DocTicket {
   document: string
   ticket: string
   read_only: boolean
+  /** 只能提修改建议：能评论、不能改正文的人（导师）。 */
+  suggest_only: boolean
 }
 
 export function getDocTicket(documentId: string): Promise<DocTicket> {

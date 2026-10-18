@@ -25,6 +25,8 @@ from typing import Any
 
 import httpx
 
+from app.core.github_headers import github_headers
+
 #: Snapshot shapes this reader understands. `ratchet-snapshot.py`'s
 #: SNAPSHOT_VERSION is the other side of this pair; the version exists so that a
 #: shape change is a refusal here, not a misread number on the page.
@@ -104,11 +106,7 @@ class GitHubArtifacts:
         self._transport = transport
 
     def _headers(self, token: str) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
+        return github_headers(token, api_version=True)
 
     async def list(
         self, *, owner: str, repo: str, token: str, limit: int
