@@ -434,7 +434,12 @@ class LogSignatureTest(unittest.TestCase):
         "================= 3 skipped in 0.10s =================",
     )
     UNICODE_BANNERS = (
-        "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯",  # vitest
+        # vitest, one row per report kind: each is a separate alternative in
+        # `_REPORT_START`, and dropping one is invisible unless a row pins it.
+        "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯",
+        "⎯⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯",
+        "⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯",
+        "⎯⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯",
     )
 
     def test_each_report_banner_starts_the_bound_on_its_own(self):
@@ -541,9 +546,24 @@ class LogSignatureTest(unittest.TestCase):
             "##[error]The runner has received a shutdown signal. This can happen"
             " when the runner service is stopped.",
             "##[error]The hosted runner lost communication with the server.",
+            "::error::The runner has received a shutdown signal.",
         ):
             with self.subTest(text=text):
                 self.assertEqual(rerun.flake_log_signature(text)["id"], "runner-lost")
+
+    def test_a_runner_lost_phrase_reprinted_by_a_case_is_not_evidence(self):
+        """An annotation reprints a case's own message, which can quote the
+        runner's wording anywhere; only the runner's message starts with it."""
+        for log in (
+            "##[error]tests/unit/test_runner.py::test_reports_lost — "
+            "AssertionError: 'The runner has received a shutdown signal.' != 'ok'",
+            "::error file=backend/tests/unit/test_runner.py,line=5::"
+            "test_reports_lost — the hosted runner lost communication with the server",
+            "::error::the shard wrote no JUnit results; pytest output tail:"
+            " The runner has received a shutdown signal.",
+        ):
+            with self.subTest(log=log):
+                self.assertIsNone(rerun.flake_log_signature(log))
 
     def test_a_step_boundary_is_the_group_marker_not_the_job(self):
         """A setup failure earlier in a job must not be swallowed by a later

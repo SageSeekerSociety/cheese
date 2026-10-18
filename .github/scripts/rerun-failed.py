@@ -140,19 +140,24 @@ _PYTEST_REPORT = re.compile(
 # The per-job REST logs have no job/step prefix of their own, so this is what
 # keeps the (job, step) bound at step granularity.
 _STEP_START = re.compile(r"^##\[group\](?:Run )?(.*)$")
-# A job's own failure summary, which reprints the failing case's id and message
-# at column 0 (`##[error]tests/... — AssertionError: ...` from the repo's own
-# report_failed_cases.py, and GitHub's `##[error]Process completed with exit
-# code 1.`). The message can quote any test text, so it is not flake evidence.
-# Only the annotations that reprint a test case: `##[error]<path>::<test> —
-# <message>` and GitHub's own `##[error]Process completed with exit code N`.
-# The `##[error]` prefix alone is not the marker — a runner that vanishes
-# writes `##[error]The runner has received a shutdown signal.`, which is one of
-# the flakes this is looking for.
-_ANNOTATION_PREFIX = re.compile(r"^(?:##\[error\]|::error)")
-_ANNOTATION = re.compile(
-    r"^(?:##\[error\]|::error(?: file=[^:]*)?:?)"
-    r"(?:Process completed with exit code|\S*::\S)"
+# Annotations are the job's failure summary, not the failing step's output.
+# Most reprint a case or a tool's text and are never evidence:
+# `##[error]tests/...::test_x — AssertionError: ...` and
+# `::error file=...,line=N::<node id> — <message>` from the repo's own
+# report_failed_cases.py, GitHub's `##[error]Process completed with exit
+# code N`. The text they reprint can quote any test wording, including a
+# flake's, so containment in one of them says nothing.
+# The runner's own vanishing message is the exception, and GitHub writes it as
+# an annotation whose body is that message:
+# `##[error]The runner has received a shutdown signal.`,
+# `##[error]The hosted runner lost communication with the server.` It carries
+# no `##[group]`, so it inherits the test step's key and would be dropped with
+# that step's text; only a body that starts with it is evidence.
+_ANNOTATION_PREFIX = re.compile(
+    r"^(?:##\[error\]|::error(?: file=[^:]*)?:?:?)\s*"
+)
+_RUNNER_ANNOTATION = re.compile(
+    r"^(?:The\s+)?(?:hosted\s+|self-hosted\s+)?runner\b", re.IGNORECASE
 )
 # OSC sequences (hyperlinks, window titles) and CSI codes with private or
 # intermediate bytes: `\x1b]...BEL` and `\x1b[?...h`.
@@ -296,14 +301,9 @@ def flake_log_signature(
     runner_lost = _signature("runner-lost")
     for step, message in lines:
         if _ANNOTATION_PREFIX.match(message):
-            # GitHub writes the runner's own vanishing message as an
-            # annotation, and it carries no `##[group]`, so it inherits the
-            # test step's key and would be dropped below. It is the one
-            # annotated failure that is evidence; every other annotation
-            # reprints a tool's or a test's text.
-            if runner_lost is not None and re.search(
-                runner_lost["pattern"], message, re.IGNORECASE
-            ):
+            body = _ANNOTATION_PREFIX.sub("", message)
+            if (runner_lost is not None and _RUNNER_ANNOTATION.match(body)
+                    and re.search(runner_lost["pattern"], body, re.IGNORECASE)):
                 return runner_lost
             continue
         if step in test_steps or step in reported:
@@ -313,7 +313,7 @@ def flake_log_signature(
             continue
         if not message.strip() or message[:1].isspace():
             continue
-        if _PYTEST_REPORT.match(message) or _ANNOTATION.match(message):
+        if _PYTEST_REPORT.match(message):
             continue
         for signature in LOG_SIGNATURES if signatures is None else signatures:
             if re.search(signature["pattern"], message, re.IGNORECASE):
