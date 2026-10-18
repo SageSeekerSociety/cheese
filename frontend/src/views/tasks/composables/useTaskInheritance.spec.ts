@@ -30,7 +30,7 @@ function payload(taskId: number): TaskInheritanceData {
       allowedTopics: [],
       avoidInCode: [],
       materialIds: [],
-      knowledgeIds: [],
+      documentIds: [],
       source: null,
     },
     materials: [],

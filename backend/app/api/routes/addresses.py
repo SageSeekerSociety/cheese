@@ -25,6 +25,7 @@ from app.api.doc_access import reach
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.topics_deps import _actor_in_place
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     BaseError,
     ConflictError,
@@ -233,7 +234,7 @@ class SlugIn(BaseModel):
     slug: str
 
 
-@projects.put("/{project_id}/slug")
+@projects.put("/{project_id}/slug", dependencies=[ROUTE_DECIDES])
 async def set_project_slug(
     project_id: uuid.UUID, body: SlugIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

@@ -89,9 +89,7 @@ async def _ensure_may_read(
 
 
 @router.post(
-    "",
-    summary="Upload Attachment",
-    status_code=201,
+    "", summary="Upload Attachment", status_code=201, dependencies=[ROUTE_DECIDES]
 )
 async def upload_attachment(
     file: UploadFile = File(...),

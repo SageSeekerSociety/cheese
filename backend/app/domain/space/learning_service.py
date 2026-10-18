@@ -48,7 +48,7 @@ from app.domain.project.models import Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, not_a_private_chat
 from app.domain.user.models import User, UserProfile
 
 # 一条「提问」在界面上占多少字。摘要是给人扫一眼的，完整的原文点回去看。
@@ -263,7 +263,7 @@ class SpaceLearningService:
                 )
                 .exists(),
                 # 私聊和私密频道都不属于管理员看板：说话的人只给在场的人看。
-                Topic.is_private.is_(False),
+                not_a_private_chat(),
                 Topic.members_only.is_(False),
             )
             .order_by(Block.created_at.desc())

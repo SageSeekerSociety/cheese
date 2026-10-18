@@ -1,7 +1,7 @@
 """Calls ``user`` makes that only a higher layer can answer.
 
 The account dto carries six counts — the teams a person joined, the tasks they
-took part in, the knowledge entries, questions and answers they wrote, the
+took part in, the questions and answers they wrote, the
 submissions they handed in. Each one is a row count over another domain's
 table, and those four packages sit *above* this one in the layer table
 (``docs/manual/dev/architecture.md``), so ``app.domain.user`` may not read
@@ -22,7 +22,7 @@ class UserStatistics(Protocol):
     """The per-person counters the account dto carries."""
 
     async def aggregate(self, user_id: int) -> dict[str, int]:
-        """``teamCount``, ``taskParticipationCount``, ``knowledgeCount``,
+        """``teamCount``, ``taskParticipationCount``,
         ``submissionCount``, ``questionCount``, ``answerCount`` — zeros, not
         ``None``, for a person with nothing."""
         ...

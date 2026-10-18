@@ -46,6 +46,7 @@ async def get_user_auth_service(db=Depends(get_db)) -> UserAuthService:
 @router.post(
     "/{commentId}/attitudes",
     summary="Update Attitude To Comment",
+    dependencies=[ROUTE_DECIDES],
 )
 async def update_attitude_to_comment(
     commentId: Annotated[int, Path(ge=0)],

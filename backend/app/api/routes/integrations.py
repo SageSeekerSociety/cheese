@@ -218,7 +218,7 @@ async def feishu_availability(db: DbSession, resolver: ActorResolverDep) -> dict
     )
 
 
-@router.post("/me/integrations/feishu")
+@router.post("/me/integrations/feishu", dependencies=[ROUTE_DECIDES])
 async def connect_feishu(db: DbSession, resolver: ActorResolverDep) -> dict:
     """「连接飞书」按下的第一步：先有自己那一行，再跳去飞书授权页。
 
@@ -235,7 +235,7 @@ async def connect_feishu(db: DbSession, resolver: ActorResolverDep) -> dict:
     return ok(public(row))
 
 
-@router.patch("/me/integrations/{integration_id}")
+@router.patch("/me/integrations/{integration_id}", dependencies=[ROUTE_DECIDES])
 async def update_integration(
     integration_id: uuid.UUID,
     body: IntegrationPatch,
@@ -274,7 +274,7 @@ async def check_integration(
     return ok(public(row))
 
 
-@router.delete("/me/integrations/{integration_id}")
+@router.delete("/me/integrations/{integration_id}", dependencies=[ROUTE_DECIDES])
 async def delete_integration(
     integration_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -677,7 +677,7 @@ async def feishu_read(
     return ok(doc)
 
 
-@router.post("/integrations/{integration_id}/feishu/docs")
+@router.post("/integrations/{integration_id}/feishu/docs", dependencies=[ROUTE_DECIDES])
 async def feishu_create(
     integration_id: uuid.UUID,
     body: FeishuDocIn,
@@ -693,7 +693,10 @@ async def feishu_create(
     return ok(created)
 
 
-@router.patch("/integrations/{integration_id}/feishu/docs/{document_id}")
+@router.patch(
+    "/integrations/{integration_id}/feishu/docs/{document_id}",
+    dependencies=[ROUTE_DECIDES],
+)
 async def feishu_edit(
     integration_id: uuid.UUID,
     document_id: str,
