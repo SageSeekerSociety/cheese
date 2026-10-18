@@ -503,6 +503,31 @@ class LogSignatureTest(unittest.TestCase):
             with self.subTest(log=log.splitlines()[0]):
                 self.assertIsNone(rerun.flake_log_signature(log))
 
+    def test_a_runner_lost_annotation_is_still_evidence(self):
+        """The runner's own message carries `##[error]`, and is a flake."""
+        for text in (
+            "##[error]The runner has received a shutdown signal. This can happen"
+            " when the runner service is stopped.",
+            "##[error]The hosted runner lost communication with the server.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(rerun.flake_log_signature(text)["id"], "runner-lost")
+
+    def test_a_step_boundary_is_the_group_marker_not_the_job(self):
+        """A setup failure earlier in a job must not be swallowed by a later
+        test step: the per-job REST logs have no step field of their own, so
+        the `##[group]` markers are what name the step."""
+        step = "job 7\t\t2026-10-18T09:06:04Z "
+        log = "\n".join((
+            step + "##[group]Run uv sync",
+            step + "Failed to download uv-0.5.0: connect ETIMEDOUT",
+            step + "##[endgroup]",
+            step + "##[group]Run pytest tests",
+            step + "=============== test session starts ===============",
+            step + "Error: read ECONNRESET",
+        ))
+        self.assertEqual(rerun.flake_log_signature(log)["id"], "setup-uv-timeout")
+
     def test_a_job_annotation_that_reprints_a_case_is_not_evidence(self):
         """report_failed_cases.py prints `##[error]<node id> — <message>`."""
         for log in (
@@ -824,6 +849,14 @@ class RunIdEntryTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(calls, [])
 
+    def test_a_duplicated_dry_run_is_a_usage_error(self):
+        code, _, calls, fetches = self.call(
+            ["--run", "42", REPO, "--dry-run", "--dry-run"], run()
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [])
+        self.assertEqual(fetches, [])
+
     def test_extra_arguments_are_a_usage_error(self):
         code, _, calls, fetches = self.call(["--run", "42", REPO, "extra"], run())
         self.assertEqual(code, 2)
@@ -903,14 +936,16 @@ class GhCallTest(unittest.TestCase):
 
         with mock.patch.object(rerun.subprocess, "run", side_effect=fake):
             log = rerun.fetch_failed_logs("42", "o/r")
-        self.assertIn(("api", "repos/o/r/actions/runs/42/jobs?filter=latest&per_page=100"), calls)
+        self.assertIn(("api", "repos/o/r/actions/runs/42/jobs?filter=latest&per_page=100&page=1"), calls)
         self.assertIn(("api", "repos/o/r/actions/jobs/7/logs"), calls)
         self.assertIn(("api", "repos/o/r/actions/jobs/9/logs"), calls)
         self.assertNotIn(("api", "repos/o/r/actions/jobs/8/logs"), calls)
         self.assertIsNotNone(log)
         self.assertIn("read ECONNRESET", log)
-        # Each job's lines are keyed by that job, so two jobs are never one step.
-        self.assertIn("job 7\tjob 7\t", log)
+        # Each job's lines carry that job's id and an empty step field: the
+        # `##[group]` markers in the text name the step, and two jobs are
+        # never read as one step.
+        self.assertIn("job 7\t\tread ECONNRESET", log)
 
     def test_no_readable_failed_job_log_is_unreadable_not_clean(self):
         jobs = json.dumps({"jobs": [{"id": 7, "conclusion": "failure"}]})

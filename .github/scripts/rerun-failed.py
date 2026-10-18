@@ -133,11 +133,23 @@ _TEST_SESSION = re.compile(
 _PYTEST_REPORT = re.compile(
     r"^(?:FAILED |ERROR |>{1,2}\s|E {2,}|assert |AssertionError)"
 )
+# GitHub's runner wraps each step's output in `##[group]<step>` ... endgroup.
+# The per-job REST logs have no job/step prefix of their own, so this is what
+# keeps the (job, step) bound at step granularity.
+_STEP_START = re.compile(r"^##\[group\](?:Run )?(.*)$")
 # A job's own failure summary, which reprints the failing case's id and message
 # at column 0 (`##[error]tests/... — AssertionError: ...` from the repo's own
 # report_failed_cases.py, and GitHub's `##[error]Process completed with exit
 # code 1.`). The message can quote any test text, so it is not flake evidence.
-_ANNOTATION = re.compile(r"^(?:##\[error\]|::error)")
+# Only the annotations that reprint a test case: `##[error]<path>::<test> —
+# <message>` and GitHub's own `##[error]Process completed with exit code N`.
+# The `##[error]` prefix alone is not the marker — a runner that vanishes
+# writes `##[error]The runner has received a shutdown signal.`, which is one of
+# the flakes this is looking for.
+_ANNOTATION = re.compile(
+    r"^(?:##\[error\]|::error(?: file=[^:]*)?:?)"
+    r"(?:Process completed with exit code|\S*::\S)"
+)
 # OSC sequences (hyperlinks, window titles) and CSI codes with private or
 # intermediate bytes: `\x1b]...BEL` and `\x1b[?...h`.
 _ANSI_OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?")
@@ -252,8 +264,22 @@ def flake_log_signature(
     if not failed_log:
         return None
     lines = []
+    job = ""
+    step = ""
+    step_no = 0
     for line in failed_log.splitlines():
-        lines.append((_log_key(line) or ("", ""), _message(line)))
+        key = _log_key(line)
+        message = _message(line)
+        if key is not None:
+            job, named_step = key
+            # An unnamed step field (the per-job REST format) keeps the step
+            # from the last `##[group]`; a named one is that step.
+            step = named_step or step
+        start = _STEP_START.match(message)
+        if start is not None:
+            step_no += 1
+            step = f"{step_no} {start.group(1).strip()}"
+        lines.append(((job, step), message))
     test_steps = {key for key, message in lines if _TEST_SESSION.match(message)}
     reported: set[tuple[str, str]] = set()
     for step, message in lines:
@@ -411,28 +437,42 @@ def fetch_run(run_id: str, repository: str) -> dict | None:
 
 
 def _failed_job_ids(run_id: str, repository: str) -> list[int] | None:
-    """The failed jobs of ``run_id``, or None when the run could not be read."""
-    result = _gh(
-        "api",
-        f"repos/{repository}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",
-    )
-    if result is None or result.returncode != 0:
-        detail = result.stderr.strip() if result is not None else "gh could not run"
-        print(
-            f"::warning::could not read run {run_id}'s jobs: {detail}",
-            file=sys.stderr,
+    """The failed jobs of ``run_id``, or None when the run could not be read.
+
+    Every page: a run with more than a hundred jobs would otherwise hide the
+    failed ones past the first page, and their flake lines with them.
+    """
+    ids: list[int] = []
+    page = 1
+    while True:
+        result = _gh(
+            "api",
+            f"repos/{repository}/actions/runs/{run_id}/jobs"
+            f"?filter=latest&per_page=100&page={page}",
         )
-        return None
-    try:
-        jobs = json.loads(result.stdout).get("jobs") or []
-    except json.JSONDecodeError as error:
-        print(f"::warning::run {run_id}'s jobs are not JSON: {error}", file=sys.stderr)
-        return None
-    return [
-        job["id"]
-        for job in jobs
-        if job.get("conclusion") == "failure" and isinstance(job.get("id"), int)
-    ]
+        if result is None or result.returncode != 0:
+            detail = result.stderr.strip() if result is not None else "gh could not run"
+            print(
+                f"::warning::could not read run {run_id}'s jobs: {detail}",
+                file=sys.stderr,
+            )
+            return None
+        try:
+            jobs = json.loads(result.stdout).get("jobs") or []
+        except json.JSONDecodeError as error:
+            print(
+                f"::warning::run {run_id}'s jobs are not JSON: {error}",
+                file=sys.stderr,
+            )
+            return None
+        ids.extend(
+            job["id"]
+            for job in jobs
+            if job.get("conclusion") == "failure" and isinstance(job.get("id"), int)
+        )
+        if len(jobs) < 100:
+            return ids
+        page += 1
 
 
 def fetch_failed_logs(run_id: str, repository: str) -> str | None:
@@ -463,12 +503,14 @@ def fetch_failed_logs(run_id: str, repository: str) -> str | None:
                 file=sys.stderr,
             )
             continue
-        # The job's own name and step are not in this text, only its
-        # timestamped lines; naming the job keeps the (job, step) bound from
-        # treating two jobs' logs as one step.
+        # The log text has no job or step of its own, so the job id goes in
+        # the job field and the step field is left empty: the `##[group]`
+        # markers in the text then name the step, and the (job, step) bound
+        # stays at step granularity — a setup failure earlier in a job is not
+        # swallowed by a test step later in it.
         logs.append(
             "\n".join(
-                f"job {job_id}\tjob {job_id}\t{line}"
+                f"job {job_id}\t\t{line}"
                 for line in result.stdout.splitlines()
             )
         )
@@ -491,8 +533,13 @@ def _usage(entry: str) -> int:
 
 
 def main() -> int:
-    arguments = [argument for argument in sys.argv[1:] if argument != "--dry-run"]
-    dry_run = len(arguments) != len(sys.argv) - 1
+    argv = sys.argv[1:]
+    # `--dry-run` is a flag, not an argument: exactly one, anywhere, and every
+    # other token is a real argument.
+    dry_run = "--dry-run" in argv
+    arguments = [argument for argument in argv if argument != "--dry-run"]
+    if dry_run and argv.count("--dry-run") != 1:
+        return _usage("usage: rerun-failed.py --run <run id> <owner/repo> [--dry-run]")
     try:
         validate_log_signatures()
     except ValueError as error:
