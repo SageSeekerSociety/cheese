@@ -24,7 +24,8 @@ WHAT IT REJECTS. `frontend/` 下的测试文件（`*.spec.ts(x)`、`*.test.ts(x)
 
 `toBe` / `toEqual` / `toStrictEqual` 都算，`.not.`、`.resolves.`、
 `.rejects.` 也认；引号单双都认，不带 `${}` 的模板字面量同样是整句，也认。
-一行里有多条断言时逐条看。注释里的断言不算：`//` 和 `/* */` 里的不报。
+一行里有多条断言时逐条看。注释里的断言不算：`//` 和 `/* */` 里的不报；
+落在另一个字符串里的断言文本也不算（比如测试自己拼的一段源码）。
 
 WHAT IT ACCEPTS. 钉部件：
 
@@ -180,9 +181,30 @@ def reads_copy(subject: str) -> bool:
     return bool(read_names(subject) & COPY_NAMES)
 
 
-def mask_comments(line: str, in_block: bool) -> tuple[str, bool]:
-    """把注释换成等长空格，字符串原样保留；返回（遮罩后的行、是否还在块注释里）。"""
+def closes_on_line(line: str, start: int, quote: str) -> bool:
+    """这一行里 start 之后还有没有配对的同种引号。"""
+    index = start + 1
+    while index < len(line):
+        if line[index] == "\\":
+            index += 2
+            continue
+        if line[index] == quote:
+            return True
+        index += 1
+    return False
+
+
+def mask_comments(
+    line: str, in_block: bool, in_template: bool
+) -> tuple[str, bool, bool, list[bool]]:
+    """遮罩注释和字符串。
+
+    返回（遮罩后的行、是否还在块注释里、是否还在多行模板里、每个字符是否在
+    字符串里）。注释换成等长空格，所以位置与原文对齐；字符串本身保留，只在
+    `in_string` 里标出来——断言必须落在代码上，不能落在另一个字符串里。
+    """
     masked = list(line)
+    in_string = [False] * len(line)
     index = 0
     quote: str | None = None
     while index < len(line):
@@ -196,16 +218,33 @@ def mask_comments(line: str, in_block: bool) -> tuple[str, bool]:
             masked[index] = " "
             index += 1
             continue
-        if quote is not None:
+        if in_template or quote is not None:
             if char == "\\":
+                in_string[index] = True
+                if index + 1 < len(line):
+                    in_string[index + 1] = True
                 index += 2
                 continue
-            if char == quote:
+            in_string[index] = True
+            if in_template:
+                if char == "`":
+                    in_template = False
+            elif char == quote:
                 quote = None
             index += 1
             continue
-        if char in "'\"`":
-            quote = char
+        if char == "`":
+            # 模板可以跨行，状态带在调用方那里。
+            in_template = True
+            in_string[index] = True
+            index += 1
+            continue
+        if char in "'\"":
+            # 这一行找不到配对的右引号时，它更可能是 JSX 里的撇号或正则里的
+            # 引号，不当作字符串开头：否则后面的代码会被当成字符串吞掉。
+            if closes_on_line(line, index, char):
+                quote = char
+                in_string[index] = True
             index += 1
             continue
         if line.startswith("//", index):
@@ -214,10 +253,11 @@ def mask_comments(line: str, in_block: bool) -> tuple[str, bool]:
             break
         if line.startswith("/*", index):
             in_block = True
+            masked[index] = masked[index + 1] = " "
             index += 2
             continue
         index += 1
-    return "".join(masked), in_block
+    return "".join(masked), in_block, in_template, in_string
 
 
 def exempted(lines: list[str], index: int) -> bool:
@@ -233,9 +273,14 @@ def scan_file(path: Path, root: Path) -> list[Finding]:
     relative = path.relative_to(root).as_posix()
     found: list[Finding] = []
     in_block = False
+    in_template = False
     for index, line in enumerate(lines):
-        code, in_block = mask_comments(line, in_block)
+        code, in_block, in_template, in_string = mask_comments(
+            line, in_block, in_template
+        )
         for match in CALL.finditer(code):
+            if in_string[match.start()]:
+                continue
             literal = match.group("literal")
             if match.group("quote") == "`" and "${" in literal:
                 continue
@@ -376,6 +421,9 @@ def main() -> int:
     report_unreadable(unreadable)
 
     new, stale = compare(findings, baseline)
+    if unreadable:
+        # 读不了的树不是「少了几处」，别让人照着把基线删掉。
+        stale = []
     if args.json:
         print(
             json.dumps(
@@ -400,6 +448,11 @@ def main() -> int:
         for path, literal in stale:
             print(
                 f"{path}: 「{literal}」已经不在树里了，从 BASELINE 删掉这一行",
+                file=sys.stderr,
+            )
+        if unreadable and (new or baseline):
+            print(
+                "有目录或文件读不了，这次不判基线是否过期；先让它们可读再跑。",
                 file=sys.stderr,
             )
         if not new and not stale and not unreadable:

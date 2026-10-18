@@ -55,6 +55,52 @@ EXAMPLES: tuple[tuple[str, str, bool], ...] = (
         True,
     ),
     (
+        "not.toBe 也是相等断言",
+        "expect(notice).not.toBe('本月的芝士额度已用完，11月1日重置。')",
+        True,
+    ),
+    (
+        "toStrictEqual 也认",
+        "expect(notice.textContent).toStrictEqual('Only platform admins can do this')",
+        True,
+    ),
+    (
+        "innerText 也在名单里",
+        "expect(el.innerText).toBe('Only platform admins can do this')",
+        True,
+    ),
+    (
+        "placeholder 也在名单里",
+        "expect(field.placeholder).toBe('Only platform admins can do this')",
+        True,
+    ),
+    (
+        "断言中间夹一段块注释",
+        "expect(notice) /* 为什么 */ .toBe('Only platform admins can do this')",
+        True,
+    ),
+    (
+        "多行模板里的 /* 不吞掉后面的断言",
+        "const css = `\n.card {\n  /* color: red;\n}\n`;\n"
+        "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')",
+        True,
+    ),
+    (
+        "字符串里的断言文本不算断言",
+        'const sample = "expect(notice).toBe(\'Only platform admins can do this\')"',
+        False,
+    ),
+    (
+        "正则里的撇号不吞掉后面的注释",
+        "const re = /it's/; // expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')",
+        False,
+    ),
+    (
+        "两个词的英文不是一句话",
+        "expect(notice).toBe('Application initialization')",
+        False,
+    ),
+    (
         "同一行第二条断言也看",
         "expect(label.textContent).toBe('保存'); "
         "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')",
@@ -166,6 +212,18 @@ class CopyAssertionGuardTests(unittest.TestCase):
             result = self._run(SCRIPT, root)
             self.assertEqual(result.returncode, 1, result.stderr)
 
+    def test_scope_is_the_frontend_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "frontend").mkdir()
+            self._write(
+                root,
+                "e2e/tests/thing.spec.ts",
+                "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')",
+            )
+            result = self._run(SCRIPT, root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_only_test_files_under_frontend_are_read(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -246,6 +304,16 @@ class CopyAssertionGuardTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn("新增 1 处", result.stderr)
 
+            # 反过来：基线里同一句写了两遍、树里只有一处，多出来的那条是过期。
+            self._write(root, FIXTURE, "expect(notice).toBe('本月的芝士额度已用完，11月1日重置。')")
+            baseline.write_text(
+                json.dumps([[FIXTURE, sentence], [FIXTURE, sentence]], ensure_ascii=False),
+                encoding="utf-8",
+            )
+            result = self._run(SCRIPT, root, "--baseline", str(baseline))
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("删掉这一行", result.stderr)
+
     def test_json_names_the_new_findings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._fixture(
@@ -258,6 +326,24 @@ class CopyAssertionGuardTests(unittest.TestCase):
             self.assertEqual(len(payload["new"]), 1)
             self.assertEqual(payload["new"][0]["path"], FIXTURE)
             self.assertEqual(payload["stale"], [])
+
+            baseline = Path(directory) / "baseline.json"
+            baseline.write_text(
+                json.dumps(
+                    [
+                        [FIXTURE, "本月的芝士额度已用完，11月1日重置。"],
+                        ["frontend/src/gone.spec.ts", "已经删掉的那一句。"],
+                    ],
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            result = self._run(SCRIPT, root, "--json", "--baseline", str(baseline))
+            self.assertEqual(result.returncode, 1, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["stale"], [["frontend/src/gone.spec.ts", "已经删掉的那一句。"]]
+            )
 
     @unittest.skipIf(
         hasattr(os, "geteuid") and os.geteuid() == 0,
@@ -334,8 +420,7 @@ class CopyAssertionGuardTests(unittest.TestCase):
                 root = self._fixture(directory, source)
                 result = self._run(guard, root)
                 if result.returncode not in (0, 1):
-                    # 变异把守卫弄崩了，那不算「判对了」，也不算「判错了」。
-                    wrong += 1
+                    # 变异把守卫弄崩了：既不是判对也不是判错，不计入 wrong。
                     continue
                 if (result.returncode == 1) != should_report:
                     wrong += 1
