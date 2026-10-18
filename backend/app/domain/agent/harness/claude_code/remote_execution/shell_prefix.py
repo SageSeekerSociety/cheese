@@ -94,6 +94,7 @@ def bind_working_directory(body, value, *, spelled_later=False):
     has no variable there, and a room's command must see exactly the environment
     that one sees (the equivalence check holds the two equal). Bound as a shell
     variable it is still there for what the line is told to write, `cd "$T"`.
+    The assignment stays on the same line so Bash reports the command's original line numbers.
     ``value`` is the directory as the machine holds it (`outward`), so the line
     bound here is the one the command's other paths are spelled with.
 
@@ -110,8 +111,8 @@ def bind_working_directory(body, value, *, spelled_later=False):
     if spelled_later:
         if "'" in value:
             return body
-        return f"{WORKING_DIRECTORY}='{value}'\n{body}"
-    return f"{WORKING_DIRECTORY}={shlex.quote(value)}\n{body}"
+        return f"{WORKING_DIRECTORY}='{value}'; {body}"
+    return f"{WORKING_DIRECTORY}={shlex.quote(value)}; {body}"
 
 
 # The build wraps each Bash command as
