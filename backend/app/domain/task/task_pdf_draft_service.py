@@ -190,32 +190,6 @@ class TaskPdfDraftService:
             return selected
         return {}
 
-    async def generate_task_payload_from_pdf(
-        self,
-        *,
-        pdf_bytes: bytes,
-        template: dict[str, Any],
-        space_id: int,
-        category_id: int | None,
-        forced_submitter_type: str | None,
-        user_id: int,
-        default_topic_ids: list[int] | None = None,
-    ) -> tuple[dict[str, Any], int]:
-        """Convenience wrapper: return a single task payload from a PDF."""
-        payloads, token_used, _ = await self.generate_task_payloads_from_pdf(
-            pdf_bytes=pdf_bytes,
-            template=template,
-            space_id=space_id,
-            category_id=category_id,
-            forced_submitter_type=forced_submitter_type,
-            user_id=user_id,
-            default_topic_ids=default_topic_ids,
-            max_tasks=1,
-        )
-        if not payloads:
-            raise BadRequestError("No task payload extracted from PDF")
-        return payloads[0], token_used
-
     def _validate_page_count(self, page_count: int) -> None:
         if page_count == 0:
             raise BadRequestError("PDF has no pages")

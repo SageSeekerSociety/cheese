@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -529,3 +530,241 @@ async def test_reconnect_to_preparing_process_never_probes_it_as_dead(monkeypatc
     )
     assert actual is screen
     channel.confirm_alive.assert_not_awaited()
+
+
+def _fake_uv(tmp_path, *, fail_export=False):
+    """A `uv` that records what it was given, and writes the export it is asked
+    for, instead of touching a network.
+
+    Both halves matter. The export's `-o` path is where the install reads its
+    requirements from, so a double that never writes it would leave the real
+    failure — an install with no requirements — untestable. And the arguments,
+    the environment and the working directory are the change's contract with
+    uv: a mirror that is configured but not passed, or a project that is not
+    the working directory, is the bug this whole change exists to avoid.
+    """
+    calls = tmp_path / "uv-calls"
+    script = tmp_path / "uv"
+    script.write_text(
+        "#!/bin/sh\n"
+        'req="$PWD/../.no-requirements"\n'
+        'prev=""\n'
+        'for a in "$@"; do\n'
+        '  [ "$prev" = "-o" ] && req="$a"\n'
+        '  [ "$prev" = "-r" ] && req="$a"\n'
+        '  prev="$a"\n'
+        "done\n"
+        f'printf \'%s\\t%s\\t%s\\t%s\\n\' "$*" "${{UV_INDEX-}}" "$PWD" '
+        f'"$([ -f "$req" ] && echo file || echo missing)" >> "{calls}"\n'
+        + (
+            'if [ "$1" = export ]; then echo broken lock >&2; exit 2; fi\n'
+            if fail_export
+            else 'if [ "$1" = export ]; then : > "$req"; fi\n'
+        )
+        + "exit 0\n"
+    )
+    script.chmod(0o755)
+    return calls
+
+
+def _calls(calls):
+    """(argv, UV_INDEX, cwd, requirements-file-seen) for each recorded call."""
+    return [tuple(line.split("\t")) for line in calls.read_text().splitlines()]
+
+
+def _uv_project(tmp_path, *, venv=True):
+    work = tmp_path / "work"
+    project = work / "backend"
+    project.mkdir(parents=True)
+    (project / "uv.lock").write_text("version = 1\n")
+    (project / "pyproject.toml").write_text("[project]\nname = 'probe'\n")
+    if venv:
+        (project / ".venv/bin").mkdir(parents=True)
+        (project / ".venv/bin/python").write_text("")
+    return work, project
+
+
+def _mirror_env(tmp_path, **extra):
+    return {
+        "UV_INDEX": "https://mirror.test/simple",
+        "UV_DEFAULT_INDEX": "https://pypi.org/simple",
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        **extra,
+    }
+
+
+def _mirror(tmp_path, work, **extra):
+    log = (tmp_path / "runner.log").open("w")
+    try:
+        environment_runner.mirror_install(work, _mirror_env(tmp_path, **extra), log)
+    finally:
+        log.close()
+    return (tmp_path / "runner.log").read_text()
+
+
+def test_mirror_install_fetches_the_locked_versions_through_the_mirror(tmp_path):
+    """The lock's own URLs are what make an install go abroad; the export is
+    the same lock, installed through the mirror the room was given."""
+    work, project = _uv_project(tmp_path)
+    calls = _fake_uv(tmp_path)
+    _mirror(tmp_path, work)
+    export, install = _calls(calls)[:2]
+    assert export[0].startswith("export --frozen --format requirements-txt")
+    assert install[0].startswith("pip install --quiet")
+    assert f"--python {project / '.venv/bin/python'}" in install[0]
+    # The requirements the install is handed are the ones the export wrote, and
+    # both ran in the project, with the mirror in the environment.
+    assert install[3] == "file"
+    assert export[2] == install[2] == str(project)
+    assert export[1] == install[1] == "https://mirror.test/simple"
+    assert "sync" not in calls.read_text()
+    # Scratch, not something the checkout keeps or the next run inherits.
+    exported = Path(export[0].split(" -o ", 1)[1])
+    assert not exported.is_relative_to(project)
+    assert not exported.exists()
+
+
+def test_mirror_install_creates_the_environment_before_installing(tmp_path):
+    work, project = _uv_project(tmp_path, venv=False)
+    calls = _fake_uv(tmp_path)
+    _mirror(tmp_path, work)
+    export, venv, install = _calls(calls)[:3]
+    assert export[0].startswith("export --frozen")
+    assert venv[0].startswith("venv --quiet")
+    assert str(project / ".venv") in venv[0]
+    assert install[0].startswith("pip install")
+
+
+def test_mirror_install_uses_the_environment_the_caller_configured(tmp_path):
+    """A project that put its venv elsewhere keeps uv's own answer to that."""
+    work, project = _uv_project(tmp_path, venv=False)
+    calls = _fake_uv(tmp_path)
+    _mirror(tmp_path, work, UV_PROJECT_ENVIRONMENT="elsewhere/venv")
+    export, venv, install = _calls(calls)[:3]
+    assert str(project / "elsewhere/venv") in venv[0]
+    assert f"--python {project / 'elsewhere/venv/bin/python'}" in install[0]
+
+
+def test_mirror_install_does_nothing_without_a_mirror(tmp_path):
+    """`UV_INDEX` is exported only for a mirror that answered this machine."""
+    work, _ = _uv_project(tmp_path)
+    calls = _fake_uv(tmp_path)
+    _mirror_without_index = (tmp_path / "runner.log").open("w")
+    try:
+        environment_runner.mirror_install(
+            work, {"PATH": f"{tmp_path}:{os.environ['PATH']}"}, _mirror_without_index
+        )
+    finally:
+        _mirror_without_index.close()
+    assert not calls.exists()
+
+
+def test_mirror_install_leaves_the_install_to_the_script_when_the_lock_will_not_export(
+    tmp_path,
+):
+    """A lock this uv cannot export must cost the checkout nothing, and say so
+    in the one place anyone can see it afterwards: the runner's log."""
+    work, _ = _uv_project(tmp_path)
+    calls = _fake_uv(tmp_path, fail_export=True)
+    log = _mirror(tmp_path, work)
+    lines = _calls(calls)
+    assert len(lines) == 1 and lines[0][0].startswith("export --frozen")
+    assert "mirror: backend:" in log and "exited 2" in log
+    assert "the startup script installs" in log
+
+
+def test_mirror_install_without_uv_says_so_and_install_nothing(tmp_path):
+    work, _ = _uv_project(tmp_path)
+    calls = _fake_uv(tmp_path)
+    log = (tmp_path / "runner.log").open("w")
+    try:
+        environment_runner.mirror_install(
+            work,
+            {"UV_INDEX": "https://mirror.test/simple", "PATH": str(tmp_path / "none")},
+            log,
+        )
+    finally:
+        log.close()
+    assert not calls.exists()
+    assert "uv is not on PATH" in (tmp_path / "runner.log").read_text()
+
+
+def test_mirror_install_ignores_a_directory_that_is_not_a_uv_project(tmp_path):
+    work = tmp_path / "work"
+    (work / "backend").mkdir(parents=True)
+    (work / "backend/uv.lock").write_text("version = 1\n")
+    calls = _fake_uv(tmp_path)
+    _mirror(tmp_path, work)
+    assert not calls.exists()
+
+
+def test_task_preparation_installs_through_the_mirror_before_the_script(
+    tmp_path, monkeypatch
+):
+    """The pre-install is part of preparing a checkout, and it runs first.
+
+    The setup stage of a room is not that place: a checkout's dependencies are
+    the startup stage's, and installing them during setup would spend a machine
+    wide install on behalf of one checkout. The startup script writes to the
+    same file the double does, so the order is visible and not inferred.
+    """
+    work, _ = _uv_project(tmp_path)
+    calls = _fake_uv(tmp_path)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    monkeypatch.delenv("UV_PROJECT_ENVIRONMENT", raising=False)
+    config = EnvironmentConfig(
+        variables={"UV_INDEX": "https://mirror.test/simple"},
+        startup_script=f'echo startup >> "{calls}"',
+    )
+    assert launch(tmp_path, config).wait(timeout=5) == 0
+    assert not calls.exists()
+    assert launch_task(tmp_path).returncode == 0
+    lines = calls.read_text().splitlines()
+    assert lines[0].split("\t")[0].startswith("export --frozen")
+    assert lines[-1] == "startup"
+
+
+def test_task_with_no_startup_script_installs_nothing(tmp_path, monkeypatch):
+    """A project that starts nothing is not one whose dependencies were asked
+    for; the mirror install is the startup script's own work, done early."""
+    work, _ = _uv_project(tmp_path)
+    calls = _fake_uv(tmp_path)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    config = EnvironmentConfig(
+        variables={"UV_INDEX": "https://mirror.test/simple"}, startup_script=""
+    )
+    assert launch(tmp_path, config).wait(timeout=5) == 0
+    assert launch_task(tmp_path).returncode == 0
+    assert not calls.exists()
+
+
+def test_task_startup_runs_after_a_failed_mirror_install(tmp_path, monkeypatch):
+    """A mirror install that fails must not cost the checkout its startup."""
+    work, _ = _uv_project(tmp_path)
+    _fake_uv(tmp_path, fail_export=True)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    monkeypatch.delenv("UV_PROJECT_ENVIRONMENT", raising=False)
+    config = EnvironmentConfig(
+        variables={"UV_INDEX": "https://mirror.test/simple"},
+        startup_script="touch startup-ran",
+    )
+    assert launch(tmp_path, config).wait(timeout=5) == 0
+    assert launch_task(tmp_path).returncode == 0
+    assert (work / "startup-ran").exists()
+
+
+def test_mirror_install_survives_output_that_is_not_utf8(tmp_path):
+    """uv echoing a path it could not encode must cost the checkout nothing.
+
+    Two protections cover this: `errors="replace"` keeps the message, and the
+    caller's catch names ValueError, which is what a decode error is. Either
+    one alone is enough, so the test is red only when both are gone — which is
+    the state this change found the code in.
+    """
+    work, _ = _uv_project(tmp_path)
+    script = tmp_path / "uv"
+    script.write_text('#!/bin/sh\nprintf "boom \\377\\n" >&2\nexit 2\n')
+    script.chmod(0o755)
+    log = _mirror(tmp_path, work)
+    assert "mirror: backend:" in log
+    assert "the startup script installs" in log

@@ -334,3 +334,84 @@ def test_applying_holds_no_room_lock_while_the_machine_is_reset(client, monkeypa
     assert outcome["response"].status_code == 422, outcome["response"].text
     after = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
     assert after["pinned_revision"] == before["pinned_revision"]
+
+
+def test_offered_specs_select_count_does_not_scale_with_owners(client, monkeypatch):
+    from types import SimpleNamespace
+
+    from sqlalchemy import event, select
+
+    from app.domain.agent.environment import devices_of
+    from app.domain.machine import environments
+    from app.domain.user.models import User
+
+    for i in range(10):
+        seed_user(client, f"spec-owner-{i}")
+
+    async def get_owner_ids():
+        async with client.test_factory() as db:
+            return dict(
+                (
+                    await db.execute(
+                        select(User.id, User.username).where(
+                            User.username.in_([f"spec-owner-{i}" for i in range(10)])
+                        )
+                    )
+                ).all()
+            )
+
+    owner_names = client.portal.call(get_owner_ids)
+    owner_ids = list(owner_names)
+    assert len(owner_ids) == 10
+    owners = owner_ids[:2]
+
+    async def people_with_sandboxes(_db, _project_id):
+        return owners
+
+    monkeypatch.setattr(environments, "_people_with_sandboxes", people_with_sandboxes)
+
+    async def offered_spec_query_count():
+        count = 0
+
+        def record(_conn, _cursor, statement: str, *_rest) -> None:
+            nonlocal count
+            normalized = statement.lower()
+            if normalized.lstrip().startswith("select") and 'from "user"' in normalized:
+                count += 1
+
+        async with client.test_factory() as db:
+            target = db.sync_session.bind
+            event.listen(target, "before_cursor_execute", record)
+            try:
+                specs = await environments.offered_specs(
+                    db, SimpleNamespace(id=uuid.uuid4())
+                )
+            finally:
+                event.remove(target, "before_cursor_execute", record)
+        return count, specs
+
+    small_count, small_specs = client.portal.call(offered_spec_query_count)
+    owners = owner_ids
+    large_count, large_specs = client.portal.call(offered_spec_query_count)
+
+    small_devices = [
+        spec for spec in small_specs if spec["spec"].startswith("devices_of:")
+    ]
+    large_devices = [
+        spec for spec in large_specs if spec["spec"].startswith("devices_of:")
+    ]
+    small_by_spec = {spec["spec"]: spec["label"] for spec in small_devices}
+    large_by_spec = {spec["spec"]: spec["label"] for spec in large_devices}
+    assert len(small_devices) == len(small_by_spec) == 2
+    assert len(large_devices) == len(large_by_spec) == 10
+    assert set(small_by_spec) == {devices_of(user_id) for user_id in owner_ids[:2]}
+    assert set(large_by_spec) == {devices_of(user_id) for user_id in owner_ids}
+    assert all(
+        owner_names[user_id] in small_by_spec[devices_of(user_id)]
+        for user_id in owner_ids[:2]
+    )
+    assert all(
+        owner_names[user_id] in large_by_spec[devices_of(user_id)]
+        for user_id in owner_ids
+    )
+    assert small_count == large_count == 1
