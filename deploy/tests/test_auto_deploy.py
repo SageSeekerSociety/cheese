@@ -682,10 +682,12 @@ class CandidateCI(unittest.TestCase):
         self.assertEqual(triggers["push"]["branches"], ["main"])
         self.assertIn("merge_group", triggers)
 
-    def test_only_a_passing_main_push_gate_run_reaches_the_eligibility_job(self):
+    def test_only_a_main_push_gate_run_that_could_release_reaches_eligibility(self):
         """The Required CI completion now triggers this workflow, so the job's
         own condition is what keeps a failed or unrelated gate run from turning
-        into a red deploy run."""
+        into a red deploy run. A cancelled one is admitted on purpose: the
+        entry point tells "a newer batch will cover it" from "nothing will",
+        and the second has to reach the refusal to be said at all."""
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
         condition = workflow["jobs"]["eligibility"]["if"]
 
@@ -704,11 +706,11 @@ class CandidateCI(unittest.TestCase):
             return bool(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307
 
         self.assertTrue(holds("workflow_run", "Required CI", "push", "main", "success"))
+        self.assertTrue(holds("workflow_run", "Required CI", "push", "main", "cancelled"))
         self.assertTrue(holds("workflow_run", "Build and Push Docker Image", "push", "main", "success"))
         self.assertTrue(holds("workflow_dispatch"))
         for named in (
             ("Required CI", "push", "main", "failure"),
-            ("Required CI", "push", "main", "cancelled"),
             # A pull request whose head branch is called main is admitted by
             # `branches: [main]` too, and its commit is not one to release.
             ("Required CI", "pull_request", "main", "success"),
@@ -772,16 +774,26 @@ class CandidateCI(unittest.TestCase):
         # run existed and was cancelled, and no later batch will cover it. The
         # summary has to name that, or the reader goes looking for a CI bug.
         step = self.step("eligibility", "Fail when this commit will not be deployed")
-        with tempfile.TemporaryDirectory() as directory:
-            summary = Path(directory) / "summary"
-            result = subprocess.run(
-                ["bash", "-e", "-c", step["run"]], capture_output=True, text=True,
-                env={**os.environ, "PATH": self.fake_bin(directory, curl="exit 7"),
-                     "CANDIDATE_SHA": self.candidate, "UNCOVERED": "true",
-                     "GITHUB_STEP_SUMMARY": str(summary)})
-            self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertIn("cancelled", summary.read_text())
-            self.assertIn("no newer commit on main", summary.read_text())
+        # The value comes from the check step's own output, not from a test's
+        # environment: read the wiring here, or a step pointed at the wrong
+        # output stays green.
+        self.assertEqual(step["env"]["UNCOVERED"],
+                         "${{ steps.check.outputs.uncovered }}")
+        # ...and the script that runs there is the one that writes it.
+        self.assertIn("uncovered=",
+                      (ROOT / "deploy" / "check-auto-deploy.py").read_text())
+        for uncovered, expected in (("true", True), ("false", False)):
+            with self.subTest(uncovered=uncovered), tempfile.TemporaryDirectory() as directory:
+                summary = Path(directory) / "summary"
+                result = subprocess.run(
+                    ["bash", "-e", "-c", step["run"]], capture_output=True, text=True,
+                    env={**os.environ, "PATH": self.fake_bin(directory, curl="exit 7"),
+                         "CANDIDATE_SHA": self.candidate, "UNCOVERED": uncovered,
+                         "GITHUB_STEP_SUMMARY": str(summary)})
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual("no newer commit on main" in summary.read_text(), expected)
+                if expected:
+                    self.assertIn("cancelled", summary.read_text())
 
     def test_every_deploy_run_names_the_commit_dev_runs(self):
         step = self.step("deploy", "Say which commit dev runs")

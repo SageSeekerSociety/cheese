@@ -629,7 +629,12 @@ jobs:
   # hold four of the pool's six slots the aggregators need.
   fail-fast:
     name: Fail fast
-    if: github.event_name == 'merge_group'
+    # A main push is the post-submit gate; failing it early costs the same as
+    # the merge queue did, and holding the red until the slowest suite is over
+    # delays the next batch's view of main for no benefit. Not on a pull
+    # request: its `CI required` is the merge gate, and a run there is cheap to
+    # leave to the aggregator.
+    if: ${{ github.event_name == 'merge_group' || github.event_name == 'push' }}
     permissions:
       contents: read
       actions: read
@@ -643,7 +648,7 @@ jobs:
       - name: Fail CI required on this run's first failed job
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
         run: python3 .github/scripts/merge-group-fail-fast.py
 
   required-draft:
