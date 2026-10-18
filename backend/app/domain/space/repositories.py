@@ -183,7 +183,7 @@ class SpaceCategoryRepository:
         category_id: int,
         space_id: int,
     ) -> SpaceCategory | None:
-        """Return category by id and space id (including archived ones, excluding deleted)."""  # noqa: E501
+        """Return category by id and space id (including archived ones, excluding deleted)."""
         stmt: Select[tuple[SpaceCategory]] = select(SpaceCategory).where(
             SpaceCategory.id == category_id,
             SpaceCategory.space_id == space_id,

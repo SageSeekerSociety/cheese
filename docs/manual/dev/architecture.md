@@ -5,7 +5,6 @@ summary: 后端和前端要长成什么样：领域包分几层、按什么方�
 covers:
   - backend/app/
   - backend/.importlinter
-  - backend/scripts/check_deferred_imports.py
   - backend/app/domain/agent/runtime.py
   - backend/app/domain/machine/session_work.py
   - backend/app/domain/machine/lease_claim.py
@@ -29,7 +28,7 @@ covers:
 | 线 | 今天 | 终点 | 看住它的检查 |
 |---|---|---|---|
 | [领域分层](#backend) | 89 个领域包有 448 条跨包边，22 个包在同一个环里，双向依赖 15 对；向上的包级边 5 条（14 条 import 语句）是基准里压着的债 | 七层，跨层只向下；同层无环；「让高层去做事」只走事件 | `.importlinter` 的 C1–C3、C5 分层契约；债不写在文件里，检查时从合并基准那棵树量出来 |
-| [函数内导入](#deferred-imports) | 850 条，没有一条写明原因 | 没写原因的为 0 | `backend/scripts/check_deferred_imports.py` |
+| [函数内导入](#deferred-imports) | 850 条，没有一条写明原因 | 没写原因的为 0 | 没有闸门；看板 `arch-metrics.py` 计数 |
 | [变更推送](#realtime) | 写入后手写通知（`announce_stale`、`tell_project`），只说哪样变了，前端重读；漏写没有检查 | 写入钩子按一张映射表在提交后推，没有手写的通知 | 「不许新增 `announce_stale`」守卫，之后是「面板读到的模型都有变更映射」 |
 | [工作租约与后台任务](#work) | 工作租约是一个 JSON 列，按各进程自己的时钟判过期；一把全局锁下跑 29 个周期任务 | 租约是一张表，四条带条件的 SQL 领取回收；周期任务按任务各自租；全局锁最后退役 | 租约写入只经一个模块；周期任务逐个迁出的清单 |
 | [前端数据层](#frontend-data) | 四份手写缓存、两套请求栈 | 一个查询缓存，推送说哪样变了就重读哪样；请求类型由后端声明生成 | 缓存、轮询、请求栈各一道「只许减少」的守卫 |
@@ -125,9 +124,8 @@ app/domain/<包>/
 函数体里的 `import` 只有带着原因才合法：同一行或上一行写 `# deferred-import: <原因>`。它把依赖藏到运行时，读代码的人和多数工具都看不见；仓库里有的是为了躲环，有的只是拆文件时原样搬过来的（`api/routes/users/` 的 77 条就是，上提后没有一条成环）。
 
 - 合法的原因：打破一个还没还的环（写明环的另一端）、可选依赖、启动开销、测试替身要在调用时取模块属性。
-- 没写原因的按文件冻结在 `backend/deferred-import-baseline.json`：旧文件只许减少，新文件必须为 0。检查是 `backend/scripts/check_deferred_imports.py`，看板 `arch-metrics.py` 用的是同一个计数函数。
+- 这条约定不再有闸门，靠 review；看板 `arch-metrics.py` 仍按 `backend/scripts/check_deferred_imports.py` 的计数函数报数。
 - 为躲环而写的那一类，随分层契约的冻结条目一起还：环解开，它就能上提。
-- 没有直接用 ruff 的 `PLC0415`：ruff 没有基线，接入就要在几百处各加一个不说原因的 `noqa`。基线降到 0 之后换成 `PLC0415`，`noqa` 后面写原因。
 
 ## 变更推送：写入时登记，提交后推失效帧 {#realtime}
 
@@ -351,7 +349,7 @@ frontend/src/
 | 线 | 算完的条件 | 怎么验 |
 |---|---|---|
 | 领域分层 | 分层契约和 C3 的冻结条目都是 0；领域包之间没有强连通分量 | `cd backend && uv run lint-imports`；看板上的强连通分量大小 |
-| 函数内导入 | 基线文件里每个文件都是 0，换成 ruff `PLC0415` | `uv run python scripts/check_deferred_imports.py` |
+| 函数内导入 | 没写原因的为 0 | 看板 `backend.deferred_imports` |
 | 路由边界 | C2 扩到 `repository` 后冻结条目为 0；每个路由都声明响应模型 | `lint-imports`；响应模型守卫 |
 | 变更推送 | 后端没有手写的推送调用（`announce_stale`、`tell_project`）；面板读到的每个模型在映射表里；断线重连后不用整页刷新就能对齐 | 守卫测试；端到端测试：断网期间改数据，重连后列表一致 |
 | 运行态 | 没有任何请求从进程内存回答「谁在跑」 | 守卫测试；起两个后端进程，任一个答「运行中」结果相同 |
@@ -359,7 +357,7 @@ frontend/src/
 | 后台任务 | `core/ownership.py` 删除；两个副本同时跑，没有重复副作用 | 文件不存在；双进程集成测试 |
 | 前端数据层 | 没有手写缓存和取数轮询；只有一套传输层；请求类型来自生成文件 | 守卫：`network/`、`api.ts` 不存在，取数用的 `setInterval` 为 0 |
 | 组件分级 | `components/` 下 C、D 为 0；场景 debt 和组件边界违规为 0 | `pnpm --dir frontend run lint:scenes`、`lint:boundary`；`arch-metrics.py` |
-| 文件大小 | 前后端都没有超上限的文件 | `.claude/scripts/check-file-sizes.py` 对全树 |
+| 文件大小 | 前后端都没有超上限的文件 | 看板 `size.offenders` |
 
 ## 和其他工作的边界 {#boundaries}
 

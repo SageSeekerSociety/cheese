@@ -74,6 +74,7 @@ RELEASE_FILES = {
     },
     "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
     "remote-execution/package_mirrors.py": "app/domain/agent/package_mirrors.py",
+    "remote-execution/worker_quota.py": "app/domain/agent/worker_quota.py",
     "remote-execution/raster_images.py": "app/core/raster_images.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
     "cheese": "sandbox/cheese",

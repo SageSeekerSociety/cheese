@@ -25,8 +25,7 @@ path the tree imports these names by, and a missing name is an ImportError at
 load time, not at call time — the caller cannot even start. So every name the
 module used to answer with is re-exported below as an explicit `X as X`: not a
 second definition, but the same object under the path that always named it.
-This is `review/services`' shape; the guard is
-``tests/unit/test_own_module_exports_what_the_tree_imports.py``.
+This is `review/services`' shape.
 
 The submodules only import downward — ``connections`` below everything,
 ``ownership`` and ``settings`` above it, then ``naming``, then ``membership``

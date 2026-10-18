@@ -161,7 +161,7 @@ async def _redis_call(fn: Callable[..., object], *args, **kwargs) -> object:
     """A Valkey call that never fails the caller: naming is best effort."""
     try:
         return await fn(*args, **kwargs)  # type: ignore[misc]
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.info("task naming could not reach valkey", exc_info=True)
         return None
 
@@ -516,7 +516,7 @@ async def _run_quietly(
             conversation_id = await _task_of_document(document_id)
         if conversation_id is not None:
             await run(conversation_id, reason)
-    except Exception:  # noqa: BLE001 — naming never surfaces to anyone
+    except Exception:  # naming never surfaces to anyone
         logger.warning(
             "task naming failed for %s", conversation_id or document_id, exc_info=True
         )

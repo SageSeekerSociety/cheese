@@ -103,7 +103,7 @@ async def _call_summon(
         return None
     try:
         return await summon(beat, ticking, since, at)
-    except Exception:  # noqa: BLE001 — 补跳的错不该带走这一遍的判据
+    except Exception:  # 补跳的错不该带走这一遍的判据
         logger.exception("wake watch: %s 补跳这一步出错，这一遍只判不补", beat.name)
         return None
 

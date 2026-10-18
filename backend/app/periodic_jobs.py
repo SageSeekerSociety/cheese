@@ -20,6 +20,7 @@ from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent_instance.adapters import task_teammate
 from app.domain.block.queries import turn_starts
 from app.domain.block.services import last_block_at
+from app.domain.ci_activity import periodic as ci_activity_periodic
 from app.domain.delivery import periodic as delivery_periodic
 from app.domain.delivery.agent import (
     dispatch_pending as dispatch_pending_work,
@@ -77,6 +78,7 @@ PERIODIC_JOB_NAMES = (
     "task deadline sweep",
     "memory dream",
     "ratchet ingest",
+    "ci activity sweep",
     "wake watch",
 )
 
@@ -192,6 +194,7 @@ def periodic_jobs(
     )
     task_periodic.register_periodic_jobs(jobs, sessions=sessions)
     ratchet_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
     wake_watch_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)
 

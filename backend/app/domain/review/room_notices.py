@@ -461,7 +461,7 @@ async def _note_outside_accept_txn(
                 return
             notes.record(fresh, code, note)
             await session.commit()
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("could not record the PR-open failure on card %s", card_id)
 
 
@@ -493,7 +493,7 @@ async def tell_room_undelivered(
                     detail_label=say("labelDetails"),
                 ),
             )
-    except Exception:  # noqa: BLE001 — a courtesy line never undoes a close
+    except Exception:  # a courtesy line never undoes a close
         logger.warning(
             "could not tell task %s's room what it left", closed.task.id, exc_info=True
         )

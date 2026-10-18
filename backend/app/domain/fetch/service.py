@@ -132,7 +132,7 @@ async def _distill(
     except TimeoutError:
         logger.warning("fetch distillation timed out after %.0fs", timeout)
         return None
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("fetch distillation failed", exc_info=True)
         return None
 

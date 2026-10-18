@@ -100,7 +100,7 @@ async def _renew(bind, session_id, claim: str, since: datetime) -> None:
                     return
                 row.work_lease = {**lease, "claim_until": until.isoformat()}
                 await db.commit()
-        except Exception:  # noqa: BLE001 — the next beat tries again
+        except Exception:  # the next beat tries again
             # One missed beat is not the installation's death; a database that
             # stays away for the whole TTL lets the claim lapse, as it should.
             logger.warning("could not renew the claim of session %s", session_id)

@@ -70,7 +70,7 @@ def apply_pdf_task_options(
     ]
     if missing_content_fields:
         raise BadRequestError(
-            f"Draft missing required content fields: {', '.join(sorted(missing_content_fields))}"  # noqa: E501
+            f"Draft missing required content fields: {', '.join(sorted(missing_content_fields))}"
         )
 
     merged = dict(task_options)

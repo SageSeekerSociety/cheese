@@ -32,8 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.addressing import Event, address
 from app.domain.agent.chat import ChatService
 from app.domain.agent.liveness import last_output_at, running_tasks
+from app.domain.agent.model_catalog import catalog
 from app.domain.agent.opening import opening_state
-from app.domain.agent_instance.configuration import catalog
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository

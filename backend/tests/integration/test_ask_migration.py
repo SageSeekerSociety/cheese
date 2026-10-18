@@ -95,7 +95,7 @@ class _Capture:
     def __init__(self):
         self.statements: list[str] = []
 
-    def execute(self, sql):  # noqa: ANN001 - alembic passes text()/raw strings
+    def execute(self, sql):  # alembic passes text()/raw strings
         self.statements.append(str(sql))
 
 

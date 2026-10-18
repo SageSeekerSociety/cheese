@@ -1,4 +1,3 @@
-# ruff: noqa: E501 — the requests are prose a model reads, kept one line per sentence.
 """Measure whether 芝士 loads a skill when a request calls for one, so a change
 to the system prompt, a skill's description or the loading instructions can be
 checked against the last run.
@@ -411,7 +410,7 @@ def run(models: list[str]) -> None:
                 started = time.monotonic()
                 try:
                     result = run_case(model, case)
-                except Exception as error:  # noqa: BLE001 — one failed call must not lose the rest
+                except Exception as error:  # one failed call must not lose the rest
                     result = {"error": str(error)[:300]}
                 result.update(
                     model=model,

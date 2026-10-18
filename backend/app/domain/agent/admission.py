@@ -76,7 +76,7 @@ async def _shared_reading(host: str) -> int | None | _NoReading:
         return _UNUSABLE
     try:
         raw = await redis.get(_SHARED_KEY.format(host=host))
-    except Exception:  # noqa: BLE001 — Valkey down: the local reading stands
+    except Exception:  # Valkey down: the local reading stands
         logger.warning("shared host memory reading unavailable", exc_info=True)
         return _UNUSABLE
     if raw is None:
@@ -101,7 +101,7 @@ async def _publish_reading(host: str, value: int | None) -> None:
             _UNREAD if value is None else str(value).encode(),
             px=int(READING_TTL_S * 1000),
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("shared host memory reading not published", exc_info=True)
 
 
@@ -225,7 +225,7 @@ class HostMemory:
                 if result.get("exit") == 0
                 else None
             )
-        except Exception:  # noqa: BLE001 — an unread host holds nobody
+        except Exception:  # an unread host holds nobody
             logger.warning("session host memory unreadable", exc_info=True)
             return None
 
@@ -398,7 +398,7 @@ class Slot:
                     await self._redis.eval(  # type: ignore[misc]
                         _RENEW_HOLD, 1, self._hold[0], self._hold[1], _ms(LEASE_S)
                     )
-            except Exception:  # noqa: BLE001 — the next renewal tries again
+            except Exception:  # the next renewal tries again
                 logger.warning("renewing slot %s failed", self._ticket, exc_info=True)
 
     async def release(self) -> None:
@@ -415,7 +415,7 @@ class Slot:
                     await redis.zrem(key, self._ticket)
             if self._hold is not None:
                 await redis.eval(_DROP_HOLD, 1, *self._hold)  # type: ignore[misc]
-        except Exception:  # noqa: BLE001 — what is not released lapses by itself
+        except Exception:  # what is not released lapses by itself
             logger.warning("releasing slot %s failed", self._ticket, exc_info=True)
 
     def leave(self) -> None:

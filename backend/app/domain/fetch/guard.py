@@ -82,7 +82,7 @@ async def public_address(host: str, port: int) -> str:
     if needs_real_addresses(addresses):
         try:
             addresses = await _resolve_over_https(host)
-        except Exception as exc:  # noqa: BLE001 — unknown means refused
+        except Exception as exc:  # unknown means refused
             raise NotPublic(f"{host} could not be resolved to a real address") from exc
     return vetted(host, addresses)[0]
 

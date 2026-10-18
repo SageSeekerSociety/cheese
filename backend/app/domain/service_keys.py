@@ -121,7 +121,7 @@ async def service_key(
             )
             r.raise_for_status()
             key = r.json().get("key")
-    except Exception:  # noqa: BLE001 — see the docstring
+    except Exception:  # see the docstring
         logger.warning("minting the %s gateway key failed", spec.alias, exc_info=True)
         return None
     if not isinstance(key, str) or not key:

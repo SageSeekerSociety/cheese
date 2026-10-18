@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: E501  (usage docstrings show JSON and command lines that read worse wrapped)
+
 """把一段内容片段拼进模板，直接产出可以 `cheese show` 的完整 HTML。
 
 为什么要有它：一份页面模板里，`<head>`（全部 CSS 与 `--cx-*` token）和末尾的脚本

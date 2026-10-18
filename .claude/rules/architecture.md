@@ -48,7 +48,7 @@ Conventions no contract sees:
 - **A deferred import's reason names the cycle** it breaks (or an optional
   dependency, a start-up cost, a test double). "Avoid circular import" with no
   cycle named is not a reason — check whether the cycle still exists first.
-  `check_deferred_imports.py` asks for a reason; only a reader can judge it.
+  No check asks for the reason; a reader does.
 
 ## Frontend: a component does not fetch
 
@@ -77,13 +77,6 @@ come back. The four principles, in the order they matter:
 Going through the facade puts the call inside whatever a test mocked `@/api`
 with. Some older modules still do, and changing one changes what its tests
 intercept, so it is its own change.
-
-## Files have a size cap
-
-Judged against the merge base. Split the file: `check-file-sizes.py`'s failure
-names the cap and its reason, and `EXEMPT` is the one considered exception. A
-file over its cap is a prompt to split, not a defect; raising the cap helps
-nothing.
 
 Scenes and the catalog live in `frontend/AGENTS.md` and
 `docs/manual/dev/scenes.md`.

@@ -39,12 +39,12 @@ from app.core.sentences import say
 from app.domain.agent.admission import Hold, Pool, Slot, enter, holding
 from app.domain.agent.document.machine import machine_to_read
 from app.domain.agent.harness.prompt import WRITING
+from app.domain.agent.model_catalog import catalog
 from app.domain.agent.session_host.consumptions import Consumption
 from app.domain.agent.session_host.contract import SessionRef
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent.skills import load_skills
 from app.domain.agent.supply import GATEWAY
-from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository

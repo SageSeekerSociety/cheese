@@ -102,7 +102,7 @@ def _open_renderer(path: Path):
             return None, "缺 pymupdf（uv run --with pymupdf 重新运行即可渲染）"
     try:
         return fitz.open(str(path)), None
-    except Exception as exc:  # noqa: BLE001 — say so, don't crash the read
+    except Exception as exc:  # say so, don't crash the read
         return None, f"渲染库打不开这份文件（{type(exc).__name__}: {exc}）"
 
 
@@ -117,7 +117,7 @@ def _ocr_page(image: Path, number: int, out: Out) -> None:
             timeout=120,
         )
         text = result.stdout.strip()
-    except Exception as exc:  # noqa: BLE001 — OCR is a bonus, not a blocker
+    except Exception as exc:  # OCR is a bonus, not a blocker
         out.miss(f"第 {number} 页：tesseract 识别失败（{type(exc).__name__}: {exc}）")
         return
     if text:
@@ -175,7 +175,7 @@ def read_pdf(path: Path, out: Out, args) -> None:
             target = render_dir / f"page-{number}.png"
             pix = renderer[number - 1].get_pixmap(dpi=150)
             pix.save(str(target))
-        except Exception as exc:  # noqa: BLE001 — one bad page must not kill the read
+        except Exception as exc:  # one bad page must not kill the read
             out.miss(
                 f"第 {number} 页：扫描/图片页，渲染成图片失败"
                 f"（{type(exc).__name__}: {exc}），内容没有读到"
@@ -393,7 +393,7 @@ def read_pptx(path: Path, out: Out, args) -> None:
                     for series in chart.series:
                         values = ", ".join(str(v) for v in series.values)
                         lines.append(f"系列「{series.name}」：{values}")
-                except Exception as exc:  # noqa: BLE001 — reported, not hidden
+                except Exception as exc:  # reported, not hidden
                     out.miss(f"幻灯片 {number} 的图表「{name}」：数据没读出来（{exc}）")
                 out.add("\n".join(lines))
             elif shape.shape_type == 13:  # picture
@@ -558,7 +558,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         try:
             reader(path, out, args)
-        except Exception as exc:  # noqa: BLE001 — the reader of a corrupt file must say so
+        except Exception as exc:  # the reader of a corrupt file must say so
             summary.append(f"- 《{path.name}》：打不开（{type(exc).__name__}: {exc}）")
             failed = True
             continue

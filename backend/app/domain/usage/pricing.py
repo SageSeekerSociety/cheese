@@ -193,7 +193,7 @@ async def model_rates(
             )
             response.raise_for_status()
             rates = _rates_from_info(response.json())
-    except Exception:  # noqa: BLE001 — an unreachable gateway is unknown, not free
+    except Exception:  # an unreachable gateway is unknown, not free
         logger.warning("reading model rates from the gateway failed", exc_info=True)
         return None
     _cache = (time.monotonic(), rates)

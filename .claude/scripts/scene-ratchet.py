@@ -105,8 +105,8 @@ WHAT THIS CHECK DOES NOT ASK: whether a standalone-ready scene is in the
 preview site (`/demo/catalog`). That used to be a warning here, counted
 against `catalog.ts` alone — it missed the entries split into the sibling
 `catalog*.ts` files, and it only looked at scenes when every grade-A component
-is a candidate. It is its own ratchet now, `.claude/scripts/catalog-ratchet.py`
-(`pnpm run lint:catalog`), over every component rather than every scene.
+is a candidate. No check asks it now; `docs/site/gen/catalog_reach.py` reads
+which components the site shows, for the docs' components page.
 
 Exit codes: 0 nothing to report, 1 a scene regressed or a new scene is not
 standalone-ready, 2 could not judge (no `frontend/src/` under `--root`, no

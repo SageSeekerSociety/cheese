@@ -532,7 +532,7 @@ def test_every_preset_samples_25_per_cell() -> None:
 def test_the_probe_sends_temperature_and_a_16_token_budget(monkeypatch) -> None:
     seen: dict = {}
 
-    def fake_stream(self, client, body):  # noqa: ANN001
+    def fake_stream(self, client, body):
         seen.update(body)
         return Completion("42", "m", {}, {}, 0.0)
 
@@ -547,7 +547,7 @@ def test_the_probe_sends_temperature_and_a_16_token_budget(monkeypatch) -> None:
 def test_the_reasoning_disable_field_reaches_the_body(monkeypatch) -> None:
     seen: dict = {}
 
-    def fake_stream(self, client, body):  # noqa: ANN001
+    def fake_stream(self, client, body):
         seen.update(body)
         return Completion("1", "m", {}, {}, 0.0)
 
@@ -572,7 +572,7 @@ def test_the_openai_reasoning_field_is_offered_first() -> None:
 def test_complete_omits_temperature_when_asked(monkeypatch) -> None:
     seen: dict = {}
 
-    def fake_stream(self, client, body):  # noqa: ANN001
+    def fake_stream(self, client, body):
         seen.update(body)
         return Completion("1", "m", {}, {}, 0.0)
 
@@ -586,7 +586,7 @@ def test_detect_adapter_drops_temperature_when_the_upstream_rejects_it(
 ) -> None:
     calls: list[dict] = []
 
-    def fake_complete(self, system, prompt, **kwargs):  # noqa: ANN001
+    def fake_complete(self, system, prompt, **kwargs):
         calls.append(kwargs)
         if kwargs.get("temperature") == 1.0:
             return Completion(
@@ -605,7 +605,7 @@ def test_detect_adapter_drops_temperature_when_the_upstream_rejects_it(
 def test_detect_adapter_picks_the_first_field_that_works(monkeypatch) -> None:
     calls: list[dict] = []
 
-    def fake_complete(self, system, prompt, **kwargs):  # noqa: ANN001
+    def fake_complete(self, system, prompt, **kwargs):
         body = kwargs.get("extra_body") or {}
         calls.append(body)
         if body.get("reasoning_effort") == "none":

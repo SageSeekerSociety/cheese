@@ -7,16 +7,15 @@
 // 谁建编辑器谁得拿着这几个回调。
 import type { SuggestionProps } from '@tiptap/suggestion'
 import type { SlashItem } from '../lib/docSlashMenu'
+import type { CaretMenuPos } from './useDocRefMenu'
 
 import { ref } from 'vue'
 
-import { caretMenuPos } from './useDocRefMenu'
+import { caretMenuPos, menuRowHeight } from './useDocRefMenu'
 
-export interface SlashMenuState {
+export interface SlashMenuState extends CaretMenuPos {
   items: SlashItem[]
   index: number
-  top: number
-  left: number
 }
 
 export function useDocSlashMenu() {
@@ -31,13 +30,13 @@ export function useDocSlashMenu() {
 
   function show(p: SuggestionProps<SlashItem, SlashItem>) {
     current = p
-    const pos = caretMenuPos(p.clientRect, Math.min(p.items.length, 8) * 33 + 10)
+    const pos = caretMenuPos(p, Math.min(p.items.length, 8) * menuRowHeight(36) + 10)
     if (!pos || p.items.length === 0) {
       menu.value = null // no matches → menu hides, "/query" stays as text
       return
     }
     // Selection resets to the top on every keystroke (Notion behaviour).
-    menu.value = { items: p.items, index: 0, top: pos.top, left: pos.left }
+    menu.value = { items: p.items, index: 0, ...pos }
   }
 
   function run(item: SlashItem) {
