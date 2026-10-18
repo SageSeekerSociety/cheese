@@ -507,7 +507,7 @@ class TestBundleServiceGetBundleDetail:
 
         mat1 = _make_material(id=1, name="File1")
         mat2 = _make_material(id=2, name="File2")
-        material_repo.get_by_id.side_effect = [mat1, mat2]
+        material_repo.get_by_ids.return_value = {1: mat1, 2: mat2}
 
         dto = await svc.get_bundle_detail(10)
 
@@ -524,11 +524,10 @@ class TestBundleServiceGetBundleDetail:
         repo.get_by_id.return_value = bundle
         repo.get_materials_for_bundle.return_value = [1, 2, 3]
 
-        material_repo.get_by_id.side_effect = [
-            _make_material(id=1),
-            None,
-            _make_material(id=3),
-        ]
+        material_repo.get_by_ids.return_value = {
+            1: _make_material(id=1),
+            3: _make_material(id=3),
+        }
 
         dto = await svc.get_bundle_detail(10)
 
@@ -550,6 +549,7 @@ class TestBundleServiceGetBundleDetail:
         bundle = _make_bundle(id=10, creator_id=42)
         repo.get_by_id.return_value = bundle
         repo.get_materials_for_bundle.return_value = []
+        material_repo.get_by_ids.return_value = {}
 
         dto = await svc.get_bundle_detail(10)
 
