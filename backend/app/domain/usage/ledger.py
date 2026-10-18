@@ -282,6 +282,7 @@ class Ledger(LedgerQueries):
         user_id: int | None = None,
         metered: bool = True,
         calls: int = 1,
+        attribute_to_work: bool = True,
     ) -> float:
         """Write one usage row, naming the team that paid and the credits it
         cost, and charge those credits: the row and the deduction cannot come
@@ -304,7 +305,9 @@ class Ledger(LedgerQueries):
             user_id=user_id,
             credit_owner_handle=await CreditBudgets(self._session).owner_of(
                 turn_id, payer.project_id
-            ),
+            )
+            if attribute_to_work
+            else None,
             team_id=payer.team_id,
             credits=credits,
             metered=metered,

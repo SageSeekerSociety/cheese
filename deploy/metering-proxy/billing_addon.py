@@ -202,7 +202,7 @@ def load(loader):
     CLAUDE_ACCOUNTS.snapshot()
 
 
-def _record_usage(project_id, topic_id, usage, model, kind="", account=""):
+def _record_usage(project_id, topic_id, usage, model, kind="", account="", work_id=""):
     """Meter a turn, then refresh the pool the board reads.
 
     The two belong together: the snapshot's `retry_after` is a countdown, so it
@@ -210,7 +210,7 @@ def _record_usage(project_id, topic_id, usage, model, kind="", account=""):
     happens on every served turn. Cooldown changes publish on their own (every
     state change writes through `ClaudeAccounts._save`).
     """
-    METER.record(project_id, topic_id, usage, model, kind, account)
+    METER.record(project_id, topic_id, usage, model, kind, account, work_id)
     CLAUDE_ACCOUNTS.snapshot()
 
 
@@ -1217,10 +1217,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
 async def _admit(
     flow, project_id, topic_id, bearer, *, subagent, requested_model="", child_model=""
 ):
-    """One admission call, off the event loop and timed.
-
-    Cheap: verdicts are cached per (project, topic).
-    """
+    """Admit off-loop, with a fresh execution identity for task requests."""
     # Off-loop: urllib blocks, and one slow admission call must not stall
     # every other flow through the proxy.
     admission_started = time.perf_counter()
@@ -1249,6 +1246,7 @@ async def _admit(
     # Read back when the response is metered: the kind admission named for
     # this call (`Verdict.usage_kind`), the dream's while one runs.
     flow.metadata["cheese_usage_kind"] = verdict.usage_kind
+    flow.metadata["cheese_work_id"] = verdict.work_id
     flow.metadata["cheese_admission_ms"] = (
         admission_finished - admission_started
     ) * 1000
@@ -1714,6 +1712,7 @@ def _meter_subscription_stream(
             extractor.model,
             flow.metadata.get("cheese_usage_kind", ""),
             flow.metadata.get("cheese_claude_account", ""),
+            flow.metadata.get("cheese_work_id", ""),
         )
         if interrupted:
             logger.warning(
@@ -2333,4 +2332,5 @@ def response(flow: http.HTTPFlow) -> None:
     if usage:
         kind = flow.metadata.get("cheese_usage_kind", "")
         account = flow.metadata.get("cheese_claude_account", "")
-        _record_usage(project_id, topic_id, usage, model, kind, account)
+        work_id = flow.metadata.get("cheese_work_id", "")
+        _record_usage(project_id, topic_id, usage, model, kind, account, work_id)

@@ -18,6 +18,11 @@ const updatePlan = vi.fn()
 const deletePlan = vi.fn()
 const listPlanModels = vi.fn()
 
+vi.mock('@/api/creditOffers', () => ({
+  getPendingCreditRequests: () => Promise.resolve({ items: [] }),
+  handleCreditRequest: vi.fn(),
+}))
+
 vi.mock('@/api/adminCredits', () => ({
   listPlans: (...a: unknown[]) => listPlans(...a),
   listCreditTeams: (...a: unknown[]) => listCreditTeams(...a),

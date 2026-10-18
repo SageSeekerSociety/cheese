@@ -1,4 +1,12 @@
 {
+  "creditSharedTeamRequired": "请选择一个共享团队申请 Team 方案。",
+  "creditRequestPending": "该团队已有一条同类型的待处理申请。",
+  "creditRequestMissing": "未找到这条额度申请。",
+  "creditRequestPlanRequired": "请先选择已约定的团队方案。",
+  "creditAmountRequired": "请选择需要申请的点数。",
+  "creditPaymentRequired": "请先确认付款或已约定的试用安排，再开通。",
+  "feedbackRewardDeclined": "未采纳的反馈不能发放奖励。",
+  "feedbackRewardHuman": "这条反馈没有可接收奖励的提交者。",
   "creditBudgetInvalidLimit": "额度上限必须是有限的非负数。",
   "creditBudgetAdminRequired": "只有项目所有者和管理员可以调整额度上限。",
   "creditBudgetMemberRequired": "只能为本项目中的人员设置任务额度上限。",

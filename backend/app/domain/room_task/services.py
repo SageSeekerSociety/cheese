@@ -38,12 +38,11 @@ class TaskService:
 
     async def credit_owner(self, task: Task) -> str | None:
         """A human owner pays for work; an AI's work stays with its requester."""
-        identity = IdentityService(self._session)
         for handle in (task.owner_handle, task.created_by):
             if (
                 handle
                 and names_a_person(handle)
-                and not await identity.is_agent(handle)
+                and not await IdentityService(self._session).is_agent(handle)
             ):
                 return handle
         project = await self._session.get(Project, task.project_id)
@@ -52,7 +51,7 @@ class TaskService:
         if (
             project.owner_handle
             and names_a_person(project.owner_handle)
-            and not await identity.is_agent(project.owner_handle)
+            and not await IdentityService(self._session).is_agent(project.owner_handle)
         ):
             return project.owner_handle
         return await self._session.scalar(

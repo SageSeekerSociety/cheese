@@ -461,7 +461,12 @@ class ChatService(
         )
 
     async def project_gateway_key(
-        self, project_id: uuid.UUID, *, dream: bool = False
+        self,
+        project_id: uuid.UUID,
+        *,
+        dream: bool = False,
+        task_id: uuid.UUID | None = None,
+        credit_owner_handle: str | None = None,
     ) -> str | None:
         """The project's virtual gateway key, minted on first use; with
         ``dream``, the key its memory consolidation runs on (gateway_usage.py)."""
@@ -471,6 +476,8 @@ class ChatService(
             self._gateway,
             project_id,
             dream=dream,
+            task_id=task_id,
+            credit_owner_handle=credit_owner_handle,
         )
 
     async def _gateway_budget_target(

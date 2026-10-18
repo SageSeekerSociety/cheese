@@ -25,6 +25,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -100,6 +101,50 @@ class PlanWindowUse(Base):
     window: Mapped[str] = mapped_column(String(16), primary_key=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     credits_used: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class CreditReward(Timestamps, Base):
+    """One campaign participation or accepted feedback can issue one pack."""
+
+    __tablename__ = "credit_rewards"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "team.id", ondelete="CASCADE", name="fk_credit_rewards_team_id_team"
+        ),
+        index=True,
+    )
+    credits: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(String(128))
+    actor_handle: Mapped[str] = mapped_column(String(64))
+
+
+class CreditRequest(UuidPk, Timestamps, Base):
+    """A team asks for a plan or top-up; no payment occurs on submission."""
+
+    __tablename__ = "credit_requests"
+    __table_args__ = (
+        Index(
+            "uq_credit_requests_pending",
+            "team_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "team.id", ondelete="CASCADE", name="fk_credit_requests_team_id_team"
+        ),
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(String(16))
+    credits: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    requester_handle: Mapped[str] = mapped_column(String(64))
+    handled_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class OverseasModelApproval(Timestamps, Base):
@@ -257,6 +302,26 @@ class WorkCreditOwner(Base):
     conversation_id: Mapped[uuid.UUID] = mapped_column(index=True)
     owner_handle: Mapped[str] = mapped_column(String(64))
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TaskGatewayAccount(Base):
+    """One gateway meter for a task's human budget holder, retained after deletion."""
+
+    __tablename__ = "task_gateway_accounts"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    owner_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_task_gateway_accounts_project_id_projects",
+        ),
+        index=True,
+    )
+    gateway_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    checkpoint: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class ResourceUsage(UuidPk, Timestamps, Base):

@@ -1,4 +1,12 @@
 {
+  "creditSharedTeamRequired": "Choose a shared team for a Team plan.",
+  "creditRequestPending": "This team already has a pending request of this kind.",
+  "creditRequestMissing": "Credit request not found.",
+  "creditRequestPlanRequired": "Choose the agreed team plan before confirming.",
+  "creditAmountRequired": "Choose how many credits to request.",
+  "creditPaymentRequired": "Confirm the payment or agreed trial before activating.",
+  "feedbackRewardDeclined": "Declined feedback is not eligible for a reward.",
+  "feedbackRewardHuman": "This feedback has no human submitter to reward.",
   "creditBudgetInvalidLimit": "Credit limits must be finite, non-negative numbers.",
   "creditBudgetAdminRequired": "Only a project owner or administrator can change credit limits.",
   "creditBudgetMemberRequired": "A task credit limit can only be assigned to a person in this project.",

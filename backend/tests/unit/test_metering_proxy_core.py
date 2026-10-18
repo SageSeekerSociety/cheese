@@ -28,6 +28,32 @@ spec.loader.exec_module(core)
 SECRET = "test-sandbox-token"
 
 
+def test_task_admissions_refresh_execution_and_receipts_record_it(tmp_path):
+    calls = []
+
+    def admit(*args, **kwargs):
+        calls.append(1)
+        return core.Verdict(True, "", work_id=f"execution-{len(calls)}")
+
+    gate = core.AdmissionGate("http://fixture/admission", post=admit)
+    first = gate.check("p", "t", "token")
+    second = gate.check("p", "t", "token")
+    assert (first.work_id, second.work_id) == ("execution-1", "execution-2")
+    meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
+    meter.record("p", "t", {"input_tokens": 1}, "m", work_id=first.work_id)
+    [line] = (tmp_path / "usage.jsonl").read_text().splitlines()
+    assert json.loads(line)["work_id"] == "execution-1"
+
+
+def test_admission_reads_execution_from_backend_supply():
+    response = io.BytesIO(b'{"data":{"allow":true,"supply":{"work_id":"work-a"}}}')
+    with mock.patch.object(core.urllib.request, "urlopen", return_value=response):
+        assert (
+            core._post_admission("http://fixture/admission", "token", 3).work_id
+            == "work-a"
+        )
+
+
 def test_native_child_admission_does_not_reuse_its_parents_cached_supply():
     calls = []
 

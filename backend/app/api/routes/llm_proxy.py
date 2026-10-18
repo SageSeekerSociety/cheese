@@ -57,7 +57,7 @@ from app.core.sentences import listing, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.personal.keys import stored_key
-from app.domain.agent.queries import task_credit_owner
+from app.domain.agent.queries import TaskCreditContext, task_credit_context
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
 from app.domain.agent_instance.services import AgentInstanceService
@@ -243,10 +243,11 @@ async def _projects_own_agent(
     )
 
 
-async def _credit_refusal(db: AsyncSession, project, claims: dict) -> Refusal | None:
-    refused = await UsageService(db).admit_project(project.id)
-    if refused is not None or not claims.get("t"):
-        return refused
+async def _task_credit_context(
+    db: AsyncSession, project, claims: dict
+) -> TaskCreditContext | None:
+    if not claims.get("t"):
+        return None
     try:
         conversation_id = uuid.UUID(claims["t"])
     except ValueError:
@@ -258,9 +259,16 @@ async def _credit_refusal(db: AsyncSession, project, claims: dict) -> Refusal | 
     handles = [claims.get("a") or ""]
     if agent is not None:
         handles.extend([agent.handle, agent_instance_handle(agent.instance_id)])
-    budgets = CreditBudgets(db)
-    owner = await task_credit_owner(db, project.id, conversation_id, handles)
-    return await budgets.member_refusal(project.id, owner)
+    return await task_credit_context(db, project.id, conversation_id, handles)
+
+
+async def _credit_refusal(
+    db: AsyncSession, project, context: TaskCreditContext | None
+) -> Refusal | None:
+    refused = await UsageService(db).admit_project(project.id)
+    if refused is not None or context is None:
+        return refused
+    return await CreditBudgets(db).member_refusal(project.id, context.owner_handle)
 
 
 # Registered BEFORE the catch-all below — FastAPI matches in declaration order,
@@ -309,8 +317,10 @@ async def admission(
                 }
             )
     refused = None
+    credit_context = None
     if project is not None:
-        refused = await _credit_refusal(db, project, claims)
+        credit_context = await _task_credit_context(db, project, claims)
+        refused = await _credit_refusal(db, project, credit_context)
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
     # it run" and "where does it go" keeps the data plane from needing a second
@@ -428,6 +438,10 @@ async def admission(
     # the catalogue is the only thing that knows, so the translation lives on
     # the binding (`WorkBinding.wire_model`) rather than here.
     supply: dict = {"pool": pool, "model": bound.wire_model}
+    if credit_context is not None:
+        supply["work_id"] = (
+            str(credit_context.work_id) if credit_context.work_id else ""
+        )
     if dreaming:
         supply["kind"] = dream.DREAM_KIND
 
@@ -460,7 +474,14 @@ async def admission(
     ):
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
-        supply["key"] = await chat.project_gateway_key(project_uuid, dream=dreaming)
+        if credit_context is not None:
+            supply["key"] = await chat.project_gateway_key(
+                project_uuid,
+                task_id=credit_context.task_id,
+                credit_owner_handle=credit_context.owner_handle,
+            )
+        else:
+            supply["key"] = await chat.project_gateway_key(project_uuid, dream=dreaming)
 
     return ok(
         {
@@ -536,8 +557,13 @@ async def proxy(
             raise NotFoundError("Unknown project") from exc
         await _require_model_caller(db, token, project_uuid)
         project = await ProjectRepository(db).get(project_uuid)
+        credit_context = (
+            await _task_credit_context(db, project, claims)
+            if project is not None
+            else None
+        )
         if project is not None and request.method == "POST":
-            refused = await _credit_refusal(db, project, claims)
+            refused = await _credit_refusal(db, project, credit_context)
             if refused is not None:
                 message = "cheese project budget: " + str(refused.message)
                 return StreamingResponse(
@@ -560,7 +586,14 @@ async def proxy(
         dreaming = await _dreams(db, project, claims)
         # The stream below can hold this request for minutes.
         await release_read_session(db)
-        key = await chat.project_gateway_key(project_uuid, dream=dreaming)
+        if credit_context is not None:
+            key = await chat.project_gateway_key(
+                project_uuid,
+                task_id=credit_context.task_id,
+                credit_owner_handle=credit_context.owner_handle,
+            )
+        else:
+            key = await chat.project_gateway_key(project_uuid, dream=dreaming)
     if not key:
         # Same rule as a local turn: refuse rather than fall back to the pool's
         # own credential, which would bill every project to one bucket.

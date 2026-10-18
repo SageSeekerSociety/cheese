@@ -50,24 +50,20 @@ class CreditBudgets:
     async def owner_of(
         self, work_id: uuid.UUID | None, project_id: uuid.UUID | None
     ) -> str | None:
+        execution = await self.execution(work_id, project_id)
+        return execution.owner_handle if execution is not None else None
+
+    async def execution(
+        self, work_id: uuid.UUID | None, project_id: uuid.UUID | None
+    ) -> WorkCreditOwner | None:
         if work_id is None or project_id is None:
             return None
         return await self._session.scalar(
-            select(WorkCreditOwner.owner_handle).where(
+            select(WorkCreditOwner).where(
                 WorkCreditOwner.work_id == work_id,
                 WorkCreditOwner.project_id == project_id,
             )
         )
-
-    async def task_starts(
-        self, conversation_id: uuid.UUID
-    ) -> list[tuple[datetime, uuid.UUID]]:
-        rows = await self._session.execute(
-            select(WorkCreditOwner.started_at, WorkCreditOwner.work_id)
-            .where(WorkCreditOwner.conversation_id == conversation_id)
-            .order_by(WorkCreditOwner.started_at, WorkCreditOwner.work_id)
-        )
-        return [(at, work) for at, work in rows]
 
     async def limits(self, project_id: uuid.UUID) -> dict[str, float]:
         rows = await self._session.execute(
@@ -221,6 +217,14 @@ class CreditBudgets:
     async def member_refusal(
         self, project_id: uuid.UUID, owner_handle: str | None
     ) -> Refusal | None:
+        remaining = await self.member_remaining(project_id, owner_handle)
+        if remaining is not None and remaining <= 0:
+            return Refusal(say("memberCreditBudgetSpent", owner=owner_handle), None)
+        return None
+
+    async def member_remaining(
+        self, project_id: uuid.UUID, owner_handle: str | None
+    ) -> float | None:
         if owner_handle is None:
             return None
         cap = await self._session.get(MemberCreditBudget, (project_id, owner_handle))
@@ -236,6 +240,4 @@ class CreditBudgets:
                 ResourceUsage.created_at <= datetime.now(UTC),
             )
         )
-        if float(spent or 0) >= cap.credits_limit:
-            return Refusal(say("memberCreditBudgetSpent", owner=owner_handle), None)
-        return None
+        return cap.credits_limit - float(spent or 0)

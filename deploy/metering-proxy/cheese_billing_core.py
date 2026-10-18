@@ -318,6 +318,7 @@ class Meter:
         model: str,
         kind: str = "",
         account: str = "",
+        work_id: str = "",
     ) -> None:
         total = (
             int(usage.get("input_tokens", 0))
@@ -340,6 +341,8 @@ class Meter:
             "total_tokens": total,
             "provider": "subscription",
         }
+        if work_id:
+            rec["work_id"] = work_id
         if kind:
             # What admission said the call was for, when it was not a room
             # turn (`Verdict.usage_kind`); the backend's ingest keeps it.
@@ -419,6 +422,7 @@ class Verdict:
     # than merely where to send a turn) must check this first: fail-open means
     # `pool` reads SUBSCRIPTION for a project that may well be on the gateway.
     fail_open: bool = True
+    work_id: str | None = None
 
 
 def _post_admission(
@@ -470,33 +474,27 @@ def _post_admission(
         usage_kind=usage_kind if isinstance(usage_kind, str) else "",
         # The backend answered; `pool` below is its word, not a default.
         fail_open=False,
+        work_id=supply.get("work_id")
+        if isinstance(supply.get("work_id"), str)
+        else None,
     )
 
 
 class AdmissionGate:
-    """Per-project cached yes/no from the backend's /llm/admission.
+    """Admission and model supply from the backend's /llm/admission.
 
     Fail-open by design: an unreachable backend logs and allows — the rolling
     token cap stays as the deployment-wide backstop, and a brake that can take
-    the platform down is worse than the overspend it prevents. Verdicts cache
-    for ``cache_s`` so a chatty session asks once, not per request.
+    the platform down is worse than the overspend it prevents.
 
-    The same answer also carries the SUPPLY decision (#243): which pool serves
-    this project and which model goes into the body. Fail-open therefore has a
-    direction. A session the backend has answered for within ``stale_s`` keeps
-    the pool, key and model of that last answer: a session bound to a gateway
-    model carries that model's name in its body, and sending it to the
-    subscription instead gets a 404 model_not_found, which Claude Code does not
-    retry, so every backend restart killed the gateway turns and subagents that
-    were mid-request. A session with no answer on record falls back to the
-    subscription, the destination this proxy has always had, rather than to a
-    gateway whose per-project key it would not have.
+    A cached public verdict within ``stale_s`` retains its pool, key and model
+    during backend outages. Sending a gateway model to the subscription instead
+    causes a non-retryable 404 model_not_found. Without a cached answer, fail-open
+    routes to the subscription: it has no gateway credential to use.
 
-    Cached per (project, topic), not per project. The budget half of the answer
-    is the project's, but the model it binds comes from the topic's card, and a
-    project-wide key would hand the second topic the first one's binding for the
-    rest of the window. The extra key costs one admission call per topic per
-    window, which is what the endpoint was already sized for.
+    Public conversations cache per (project, topic) for ``cache_s``: each card
+    can bind a different model. Task verdicts stay fresh because their execution
+    identity changes at handover and must accompany each usage receipt.
     """
 
     def __init__(
@@ -577,7 +575,8 @@ class AdmissionGate:
             # miss.
             cutoff = now - self._stale_s
             self._cache = {k: v for k, v in self._cache.items() if v[0] >= cutoff}
-            self._cache[key] = (now, verdict)
+            if verdict.work_id is None:
+                self._cache[key] = (now, verdict)
         return verdict
 
 

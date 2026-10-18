@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import type { CreditUsage, UsageTeam } from '@/lib/creditUsage'
+import type { BetaCredits } from '@/types/creditOffers'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import CreditOffers from '@/components/usage/CreditOffers.vue'
 import UsageDailyChart from '@/components/usage/UsageDailyChart.vue'
 import UsagePackList from '@/components/usage/UsagePackList.vue'
 import UsagePeriodCard from '@/components/usage/UsagePeriodCard.vue'
@@ -20,9 +22,12 @@ const props = defineProps<{
   usage: CreditUsage | null
   loading: boolean
   error: string | null
+  beta?: BetaCredits | null
+  offersBusy?: boolean
+  offersError?: string | null
 }>()
 
-const emit = defineEmits<{ retry: [] }>()
+const emit = defineEmits<{ retry: []; claim: []; 'retry-offers': [] }>()
 
 const { t, locale } = useI18n()
 
@@ -47,6 +52,15 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
     <header>
       <h1 class="t-page-title">{{ t('usage.title') }}</h1>
     </header>
+
+    <CreditOffers
+      personal
+      :beta="beta"
+      :busy="offersBusy"
+      :error="offersError"
+      @claim="emit('claim')"
+      @retry="emit('retry-offers')"
+    />
 
     <v-skeleton-loader v-if="loading && !usage" type="article, image" />
 

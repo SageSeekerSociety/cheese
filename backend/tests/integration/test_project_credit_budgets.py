@@ -11,9 +11,12 @@ from app.api.routes import llm_proxy
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.repositories import AgentTurnRepository
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.models import Conversation
 from app.domain.project.models import ProjectMember
+from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.repositories import TaskRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.ledger import Ledger, payer_for_project
 from tests.conftest import seed_user
 from tests.integration.conftest import free_plan_credits, post_project
@@ -56,7 +59,9 @@ def _spend(client, project, credits, *, task_id=None, turn_id=None):
     asyncio.run(run())
 
 
-def _open_task(client, project, owner="budget-owner", creator="budget-owner"):
+def _open_task(
+    client, project, owner="budget-owner", creator="budget-owner", agent=None
+):
     async def run():
         async with client.test_factory() as session:
             task = await TaskRepository(session).add(
@@ -76,6 +81,7 @@ def _open_task(client, project, owner="budget-owner", creator="budget-owner"):
                 is_resume=False,
                 resendable=True,
                 started_at=datetime.now(UTC),
+                agent_handle=agent,
             )
             await session.commit()
             return task.id, turn_id
@@ -91,6 +97,30 @@ def test_public_spending_uses_only_the_project_budget(client, project):
     assert data["public_credits"] == pytest.approx(30)
     assert data["members"]["budget-owner"]["credits_used"] == 0
     assert data["credits_remaining"] == pytest.approx(70)
+
+
+def test_admission_issues_the_requesting_tasks_execution_id(client, project):
+    async def agent_handle():
+        async with client.test_factory() as session:
+            row = await ProjectRepository(session).get(uuid.UUID(project["id"]))
+            agent = await AgentInstanceService(session).for_project(row)
+            await TopicMemberService(session).seed(
+                uuid.UUID(project["root_topic_id"]),
+                owner_handle="budget-owner",
+                agent_handle=agent.handle,
+            )
+            await session.commit()
+            return agent.handle
+
+    handle = asyncio.run(agent_handle())
+    task_id, turn_id = _open_task(client, project, agent=handle)
+    token = mint_scoped_token(
+        project_id=project["id"], topic_id=str(task_id), agent_handle=handle
+    )
+    result = client.post("/llm/admission", headers={"Authorization": f"Bearer {token}"})
+    assert result.status_code == 200, result.text
+    assert result.json()["data"]["allow"] is True, result.text
+    assert result.json()["data"]["supply"]["work_id"] == str(turn_id)
 
 
 def test_task_spending_counts_once_against_its_owner_and_project(client, project):
@@ -185,6 +215,7 @@ def test_a_project_member_can_read_but_cannot_change_budgets(client, project):
 
 
 def test_a_project_budget_cannot_be_changed_by_an_outsider(client, project):
+    _save(client, project)
     outsider = seed_user(client, "budget-outsider")
     response = client.put(
         f"/projects/{project['id']}/credit-budget",

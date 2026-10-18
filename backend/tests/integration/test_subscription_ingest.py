@@ -85,13 +85,16 @@ def _row(
     model=None,
     split: tuple[int, int] | None = None,
     ts: float = 1786000000.0,
+    work_id: uuid.UUID | None = None,
 ):
     """One proxy log line; ``split`` is its (5-minute, 1-hour) cache writes,
     absent on lines the proxy wrote before it logged the split."""
     total = inp + out + cache_read + cache_write
     extra = {}
+    if work_id is not None:
+        extra["work_id"] = str(work_id)
     if split is not None:
-        extra = {
+        extra |= {
             "cache_creation_5m_input_tokens": split[0],
             "cache_creation_1h_input_tokens": split[1],
         }
@@ -555,7 +558,12 @@ async def test_delayed_task_receipts_keep_their_owner_after_task_deletion(
         await session.commit()
     log = tmp_path / "usage.jsonl"
     log.write_text(
-        _row(pid, task_id, ts=(started_at + timedelta(seconds=1)).timestamp())
+        _row(
+            pid,
+            task_id,
+            ts=(started_at + timedelta(seconds=1)).timestamp(),
+            work_id=work_id,
+        )
     )
     assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
         "landed": 1,

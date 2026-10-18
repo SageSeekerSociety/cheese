@@ -66,13 +66,23 @@ from app.domain.usage.services import UsageService
 logger = logging.getLogger(__name__)
 
 
-async def task_credit_owner(
+@dataclass(frozen=True)
+class TaskCreditContext:
+    task_id: uuid.UUID
+    owner_handle: str
+    work_id: uuid.UUID | None
+
+
+async def task_credit_context(
     session: AsyncSession,
     project_id: uuid.UUID,
     conversation_id: uuid.UUID,
     agent_handles: list[str],
-) -> str | None:
+) -> TaskCreditContext | None:
     """The running execution's budget holder, or the next task execution's."""
+    place = await PlaceResolver(session).conversation(conversation_id)
+    if place is None or place.task is None or place.project_id != project_id:
+        return None
     turn = await AgentTurnRepository(session).open_turn_of(
         conversation_id, agent_handles
     )
@@ -80,11 +90,9 @@ async def task_credit_owner(
         turn.id if turn is not None else None, project_id
     )
     if owner is not None:
-        return owner
-    place = await PlaceResolver(session).conversation(conversation_id)
-    if place is not None and place.task is not None:
-        return await TaskService(session).credit_owner(place.task)
-    return None
+        return TaskCreditContext(conversation_id, owner, turn.id if turn else None)
+    owner = await TaskService(session).credit_owner(place.task)
+    return TaskCreditContext(conversation_id, owner, None) if owner else None
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,6 +8,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from migration_helpers import with_lock_retries
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -96,6 +97,27 @@ def upgrade() -> None:
     )
     op.create_index(
         "ix_work_credit_owners_project_id", "work_credit_owners", ["project_id"]
+    )
+    op.create_table(
+        "task_gateway_accounts",
+        sa.Column("conversation_id", sa.Uuid(), nullable=False),
+        sa.Column("owner_handle", sa.String(64), nullable=False),
+        sa.Column("project_id", sa.Uuid(), nullable=False),
+        sa.Column("gateway_key", sa.String(512), nullable=True),
+        sa.Column("checkpoint", postgresql.JSONB(), nullable=True),
+        sa.Column("budget_usd", sa.Float(), nullable=True),
+        sa.PrimaryKeyConstraint(
+            "conversation_id", "owner_handle", name="pk_task_gateway_accounts"
+        ),
+        sa.ForeignKeyConstraint(
+            ["project_id"],
+            ["projects.id"],
+            ondelete="CASCADE",
+            name="fk_task_gateway_accounts_project_id_projects",
+        ),
+    )
+    op.create_index(
+        "ix_task_gateway_accounts_project_id", "task_gateway_accounts", ["project_id"]
     )
     op.add_column(
         "resource_usage", sa.Column("credit_owner_handle", sa.String(64), nullable=True)

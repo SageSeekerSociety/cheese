@@ -186,9 +186,7 @@ class WorkIndex:
             return None
         starts = self._starts.get(topic_id)
         if starts is None:
-            starts = await CreditBudgets(session).task_starts(topic_id)
-            if not starts:
-                starts = list(await self._turn_starts(session, topic_id))
+            starts = list(await self._turn_starts(session, topic_id))
             self._starts[topic_id] = starts
         idx = bisect_right([s for s, _ in starts], moment) - 1
         if idx < 0:
@@ -286,6 +284,20 @@ async def _land_row(
         cost = rates.cost_usd(
             input_tokens, output_tokens, cache_read, cache_write, cache_write_1h
         )
+    execution = None
+    try:
+        logged_work_id = uuid.UUID(str(row.get("work_id")))
+    except ValueError:
+        logged_work_id = None
+    if logged_work_id is not None:
+        execution = await CreditBudgets(session).execution(logged_work_id, project_id)
+        if execution is not None and execution.conversation_id != logged_topic_id:
+            execution = None
+    work_id = (
+        execution.work_id
+        if execution is not None
+        else await work_index.work_at(session, logged_topic_id, row.get("ts"))
+    )
     await Ledger(session).record(
         await payer_for_project(session, project_id),
         credits=spend_to_credits(cost),
@@ -299,9 +311,9 @@ async def _land_row(
         cost_usd=cost,
         route="subscription",
         kind=row["kind"] if row.get("kind") in LINE_KINDS else "chat",
-        # The proxy log has no work id and one attributed unit can make many
-        # /v1/messages calls. Use the nearest block-carried id by timestamp.
-        turn_id=await work_index.work_at(session, logged_topic_id, row.get("ts")),
+        turn_id=work_id,
+        # Timestamp matching can group old calls, but cannot authorize a member charge.
+        attribute_to_work=execution is not None,
     )
     return LANDED
 

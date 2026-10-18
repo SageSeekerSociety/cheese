@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_roles import standing
 from app.core.errors import ForbiddenError, UnprocessableEntityError
@@ -17,6 +17,7 @@ from app.domain.agent_instance.adapters import project_team
 from app.domain.membership.roster import roster
 from app.domain.project_permissions import Permission, Seat
 from app.domain.usage.budgets import CreditBudgets
+from app.domain.usage.schemas import ProjectCreditBudgetOut
 
 router = APIRouter(prefix="/projects", tags=["credits"])
 
@@ -45,7 +46,7 @@ async def _named(db: DbSession, project_id: uuid.UUID, report: dict) -> dict:
     return report
 
 
-@router.get("/{project_id}/credit-budget")
+@router.get("/{project_id}/credit-budget", **typed_response(ProjectCreditBudgetOut))
 async def project_credit_budget(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -53,7 +54,11 @@ async def project_credit_budget(
     return ok(await _named(db, project_id, await CreditBudgets(db).report(project_id)))
 
 
-@router.put("/{project_id}/credit-budget", dependencies=[ROUTE_DECIDES])
+@router.put(
+    "/{project_id}/credit-budget",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ProjectCreditBudgetOut),
+)
 async def set_project_credit_budget(
     project_id: uuid.UUID, body: BudgetUpdate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
