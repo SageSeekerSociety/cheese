@@ -41,12 +41,12 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import ActorResolverDep
+from app.api.deps import get_user_realname_service
 from app.api.response import ok
 from app.api.space_deps import (
     _ensure_space_admin,
     _ensure_space_visible,
     get_space_analytics_view_service,
-    get_space_user_realname_service,
     require_reviewed_space,
 )
 from app.api.task_deps import get_task_submission_service
@@ -227,7 +227,7 @@ async def export_space_analytics_participants(
     realName: str = Query(default="all"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
-    realname_service: UserRealNameService = Depends(get_space_user_realname_service),
+    realname_service: UserRealNameService = Depends(get_user_realname_service),
     db=Depends(get_db),
 ) -> Response:
     """Export participant analytics as CSV (22 columns, NT-aligned).
