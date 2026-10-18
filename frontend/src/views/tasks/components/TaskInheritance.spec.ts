@@ -27,7 +27,7 @@ function payload(overrides: Partial<TaskInheritanceData> = {}): TaskInheritanceD
       allowedTopics: ['循环', '数组'],
       avoidInCode: ['递归'],
       materialIds: [],
-      knowledgeIds: [],
+      documentIds: [],
       source: 'task',
     },
     materials: [],

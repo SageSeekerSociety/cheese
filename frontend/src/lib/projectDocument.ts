@@ -4,7 +4,10 @@
 /** 一份文档，不含正文。 */
 export interface ProjectDocument {
   id: string
-  project_id: string
+  /** 它所属的团队；自己名下的文档属于自己的个人团队（#3774）。 */
+  team_id: number
+  /** 它所属的项目；团队自己的文档（和自己名下的）是 null。 */
+  project_id: string | null
   kind: string
   title: string | null
   doc_version: number
