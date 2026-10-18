@@ -21,10 +21,18 @@ if [[ "${1:-}" == "--self-test" ]]; then
   git -C "$TMP" update-ref refs/remotes/origin/main HEAD
   mkdir -p "$TMP/backend/app"
   printf 'async def f(rows, repo):\n    for r in rows:\n        await repo.get_by_id(r.id)\n' > "$TMP/backend/app/x.py"
-  if ROW_READ_ROOT="$TMP" bash "${BASH_SOURCE[0]}" >/dev/null 2>&1; then
-    echo "self-test FAILED: dirty tree with a violation was accepted" >&2
-    exit 1
-  fi
+  # Exit 2 exactly: a missing script (127) or a semgrep failure must not pass
+  # for "the guard refused the dirty tree". Run it from the repo root and from
+  # a subdirectory, with the absolute path of this script.
+  SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+  for dir in "$TMP" "$TMP/backend"; do
+    rc=0
+    (cd "$dir" && ROW_READ_ROOT="$TMP" bash "$SELF" >/dev/null 2>&1) || rc=$?
+    if [[ $rc -ne 2 ]]; then
+      echo "self-test FAILED: dirty tree run from $dir exited $rc, expected 2" >&2
+      exit 1
+    fi
+  done
   echo "dirty-tree self-test ok"
   exit 0
 fi
