@@ -561,7 +561,9 @@ def test_a_ref_that_names_nothing_is_refused_before_it_can_crash(client):
     _, _, _, canvas = _task_canvas(client)
     _change(client, canvas, [{"op": "add", "content": "第一张"}])
 
-    for ref in ("①", "9999999999"):
+    # "①" passes isdigit but no int(); 2**31 is one past what the number
+    # column holds — the smallest ref a wrong bound would let through.
+    for ref in ("①", str(2**31), "9999999999"):
         refused = _change(
             client,
             canvas,
