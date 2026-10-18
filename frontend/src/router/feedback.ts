@@ -193,8 +193,7 @@ export default [
         meta: { titleKey: 'navigation.admin.ratchet', isFullPage: true },
       },
       {
-        // 平台自己仓库的 CI 与合并队列（`/admin/ci-activity`）：作业等机器多久、每台机器上
-        // 每个作业跑多久、PR 在队列里等多久。读后端扫描进库的表，不碰 GitHub。
+        // Read stored CI and queue metrics without making GitHub requests.
         path: 'ci-activity',
         name: 'AdminCiActivity',
         component: () => import('@/views/admin/AdminCiActivityPage.vue'),

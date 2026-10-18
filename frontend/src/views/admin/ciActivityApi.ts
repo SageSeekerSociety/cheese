@@ -1,11 +1,8 @@
-// 「CI 与合并队列」页（`/admin/ci-activity`）的 HTTP 层与形状。
-//
-// 和 `ratchetApi.ts` 同一个理由单独一个文件：这一片跟着服务端自己的目录走
-// （`app/domain/ci_activity/`）。这一层**一个数都不算**：每个数的口径都在服务端的
-// `board.py` 文件头写着，前端只换单位、排版。`null` 是「没有可算的」，不是 0。
+// The CI activity API returns metrics computed by domain/ci_activity/board.py.
+// The frontend changes units and presentation only; null means no sample.
 import { request } from '@/api'
 
-/** 一组值的概括。`n` 是算进去的样本数；没有样本时其余全是 `null`。 */
+/** An empty sample has n=0 and null statistics. */
 export interface CiSummary {
   n: number
   mean: number | null
@@ -21,7 +18,7 @@ export interface CiSweepStatus {
   error: string
   jobs_owed: number
   covered_from: string | null
-  /** 运行列表已经回填到窗口起点。`false` 时页面上的数只覆盖 `covered_from` 之后。 */
+  /** Whether run-list backfill reaches the requested window's beginning. */
   complete: boolean
 }
 
@@ -65,7 +62,7 @@ export interface CiRunner {
   jobs: number
   failed: number
   busy_hours: number
-  /** 只有自托管机器有：忙的时间占窗口的比例。GitHub 托管的是一池机器，没有这个比例。 */
+  /** Busy fraction for one self-hosted runner; hosted pools have no fixed capacity. */
   utilisation: number | null
   wait_p50_s: number | null
   duration_p50_s: number | null
@@ -94,6 +91,8 @@ export interface CiBoard {
       queue_rounds: CiSummary
       more_than_one: number | null
       histogram: { rounds: number; prs: number }[]
+      covered_from: string | null
+      incomplete_prs: number
     }
     fail_then_pass: { runs: number; of: number; share: number | null }
     busy_runners: CiSummary & { share: Record<CiEventClass, number | null> }

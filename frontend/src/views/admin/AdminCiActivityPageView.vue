@@ -1,20 +1,8 @@
 <script setup lang="ts">
 /**
- * 后台「CI 与合并队列」这一屏的画面：只收结果，不取数、不读地址。
- *
- * 路由页 `AdminCiActivityPage.vue` 取数（`ciActivityApi`），这一层画。它回答的是
- * 「CI 和合并队列为什么慢」：PR 在队列里等多久、作业等机器多久、`CI required` 跑多久、
- * 一个 PR 要几轮、机器一天里有多忙、队列为什么把 PR 踢出去，以及每台机器上每个作业、
- * 每一步花了多久。
- *
- * 三条画法：
- *
- * 1. **没有可算的就是「—」，不是 0。** 服务端对没有样本的那一格回 `null`；0 分钟读起来
- *    是「队列一点没等」，而事实是那天没人合并。折线在那一天断开。
- * 2. **每个数都带口径。** KPI 卡上的 info 写着这个数从哪一刻量到哪一刻、算进去几个样本；
- *    口径本身在服务端 `domain/ci_activity/board.py` 的文件头。
- * 3. **回填没完成时直说。** 新部署的头一天，扫描还在把 30 天的历史一段段补进来；那时
- *    页面上的数只覆盖 `covered_from` 之后，页头那一行说清楚，不让一半的数据冒充全部。
+ * Render CI and queue metrics supplied by the container page. Empty samples
+ * remain gaps, each headline states its measurement window, and incomplete
+ * backfill stays visible so partial history cannot read as a complete period.
  */
 import type { ChartSeries } from '@/components/admin/AdminLineChart.vue'
 import type { CiBoard, CiJobRow, CiStepRow, CiSummary } from '@/views/admin/ciActivityApi'
@@ -34,7 +22,7 @@ import { fmtNum } from '@/lib/usageFormat'
 
 defineOptions({ name: 'AdminCiActivityPageView' })
 
-/** 页头的窗口档。服务端最多留 30 天（`ci_activity.ingest.WINDOW`）。 */
+/** Match the backend's 30-day retention window. */
 const WINDOWS = [1, 7, 14, 30] as const
 
 const props = withDefaults(
@@ -45,11 +33,11 @@ const props = withDefaults(
     failed?: boolean
     jobs?: CiJobRow[]
     jobsLoading?: boolean
-    /** 作业表只看这一台机器；`null` = 所有机器。 */
+    /** Null selects all runners. */
     runner?: string | null
     steps?: CiStepRow[]
     stepsLoading?: boolean
-    /** 展开了哪一个作业的步骤；`null` = 没有。 */
+    /** The job whose steps are expanded, or null. */
     job?: string | null
   }>(),
   {
@@ -81,7 +69,7 @@ const windowOptions = computed(() =>
   WINDOWS.map((d) => ({ value: String(d), label: t('ciActivity.window.days', { n: d }) }))
 )
 
-/** 一位小数，`null` 进 `null` 出。 */
+/** Round without converting an absent sample to zero. */
 const round1 = (v: number | null | undefined): number | null =>
   v === null || v === undefined ? null : Math.round(v * 10) / 10
 
@@ -90,7 +78,7 @@ function minutes(v: number | null | undefined): string {
   return r === null ? '' : t('ciActivity.unit.minutes', { n: fmtNum(r) })
 }
 
-/** 秒数：一分钟以内说秒，往上说分钟 —— 「772 秒」比「12.9 分钟」难读。 */
+/** Show short durations in seconds and longer ones in minutes. */
 function seconds(v: number | null | undefined): string {
   if (v === null || v === undefined) return ''
   if (v < 90) return t('ciActivity.unit.seconds', { n: fmtNum(Math.round(v)) })
@@ -103,7 +91,7 @@ function percent(v: number | null | undefined): string {
 
 const dash = (s: string): string => s || '—'
 
-/** 一组值的口径句：几个样本、p50/p90/最长各多少。 */
+/** Include sample count and distribution beside each headline. */
 function spread(s: CiSummary | undefined, fmt: (v: number | null) => string): string {
   if (!s || s.n === 0) return t('ciActivity.note.noSample')
   return t('ciActivity.note.spread', {
@@ -223,7 +211,7 @@ const waitSeries = computed<ChartSeries[]>(() => {
   ]
 })
 
-/** 逐小时那张图的横轴：「10-17 08」。一天的窗口画 24 个点，30 天画 720 个。 */
+/** Keep the date when an hourly series spans multiple days. */
 const hourLabels = computed(() =>
   (props.board?.hourly ?? []).map((h) => `${h.hour.slice(5, 10)} ${h.hour.slice(11, 13)}`)
 )
@@ -313,6 +301,16 @@ const hostedLabel = (runner: string) => runner.replace(/^hosted: /, t('ciActivit
 
       <template v-else>
         <p class="aci__prov t-meta-read">{{ sweepLine }}</p>
+        <p v-if="headline?.rounds.incomplete_prs" class="aci__prov t-meta-read">
+          {{
+            headline.rounds.covered_from
+              ? t('ciActivity.note.roundsIncomplete', {
+                  n: fmtNum(headline.rounds.incomplete_prs),
+                  from: headline.rounds.covered_from.slice(0, 16).replace('T', ' ') + 'Z',
+                })
+              : t('ciActivity.note.historyUnknown')
+          }}
+        </p>
         <AdminFlash
           v-if="board?.sweep?.error"
           tone="error"

@@ -79,6 +79,24 @@ describe('AdminCiActivityPageView', () => {
     expect(view.emitted('setRunner')?.[1]).toEqual([null])
   })
 
+  it('does not present a partial CI history as a complete round count', () => {
+    const board: CiBoard = {
+      ...CRV_CI_BOARD,
+      headline: {
+        ...CRV_CI_BOARD.headline,
+        rounds: { ...CRV_CI_BOARD.headline.rounds, incomplete_prs: 2, covered_from: '2026-10-10T00:00:00Z' },
+      },
+    }
+    const { getByText } = mount({ board })
+
+    getByText(
+      (text) =>
+        text.includes('ciActivity.note.roundsIncomplete') &&
+        text.includes('2026-10-10 00:00Z') &&
+        text.includes('"n":"2"')
+    )
+  })
+
   it('shows the steps of the job that was opened', async () => {
     const view = mount({ board: CRV_CI_BOARD, jobs: CRV_CI_JOBS })
 

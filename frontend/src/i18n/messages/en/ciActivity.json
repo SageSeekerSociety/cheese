@@ -39,6 +39,8 @@
     "wait": "From a job being created (everything it needs has finished) to it starting on a runner.",
     "ci": "The first attempt of a full-tier Required CI run: from the run being created to its last job finishing. Draft-tier and cancelled runs are left out, and so is the wait before a re-run.",
     "rounds": "Across {prs} merged PRs, the mean number of Required CI runs on pull_request events that reached a result (success or failure); {more} needed more than one. In the merge queue: {queue} runs on average.",
+    "roundsIncomplete": "CI history starts at {from}; {n} merged PRs may have earlier CI rounds missing from these counts.",
+    "historyUnknown": "CI history coverage has not been recorded; the round counts may be incomplete.",
     "flaky": "{runs} of {of} Required CI runs with a result: the latest attempt passed after an earlier attempt on the same commit had a failed job.",
     "busy": "Mean of per-minute samples; peak {peak}. Of busy runner time, PR CI took {pr}, the merge queue {queue}, builds and deploys on main {main}.",
     "busyChart": "Mean of per-minute samples within each hour.",

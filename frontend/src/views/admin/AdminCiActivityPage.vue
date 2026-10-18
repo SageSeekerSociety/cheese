@@ -1,12 +1,8 @@
 <script setup lang="ts">
 /**
- * 后台的「CI 与合并队列」（`/admin/ci-activity`）：平台自己的 Actions 机器和合并队列
- * 这段时间在做什么。
- *
- * 这一层是**容器**：取数，画面在 `AdminCiActivityPageView.vue`（配对视图的名字由
- * `pnpm run lint:scenes` 按页面文件名机械算出）。三份数各取各的：整页的数随窗口换；
- * 作业表随窗口和选中的机器换；步骤表随选中的作业换。三份都只读后端的表，不碰 GitHub
- * —— 后端每几分钟扫一次（`domain/ci_activity/ingest.py`），这一页没有刷新按钮。
+ * Fetch the platform repository's stored CI metrics. The paired view renders
+ * them without fetching. Board, job and step requests have separate selection
+ * keys; the backend sweep handles GitHub requests independently of this page.
  */
 import type { CiBoard, CiJobRow, CiStepRow } from '@/views/admin/ciActivityApi'
 
@@ -28,7 +24,7 @@ const job = ref<string | null>(null)
 const steps = ref<CiStepRow[]>([])
 const stepsLoading = ref(false)
 
-/** 每一次读都带一个序号：窗口连点两下时，先发的那次晚回来不能盖掉后发的。 */
+/** An older response cannot replace the result of a newer selection. */
 let boardSeq = 0
 let jobsSeq = 0
 let stepsSeq = 0

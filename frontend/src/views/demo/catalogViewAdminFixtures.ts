@@ -520,8 +520,7 @@ export const CRV_MACHINES: MachinesOverview = {
   },
 }
 
-/** 「CI 与合并队列」这一屏的一份板子：两天、四个小时、一台自托管机器加一池托管机器。
- *  第一天没有合并，所以那天的中位数是 `null`（折线在那里断开，不是落到 0）。 */
+/** Two days with one empty merge day, hourly samples and both runner kinds. */
 const CI_EMPTY = { n: 0, mean: null, p50: null, p90: null, max: null }
 export const CRV_CI_BOARD: CiBoard = {
   repo: 'SageSeekerSociety/cheese',
@@ -548,6 +547,8 @@ export const CRV_CI_BOARD: CiBoard = {
       merge_group: { n: 160, mean: 17.3, p50: 12.1, p90: 37.5, max: 85 },
     },
     rounds: {
+      covered_from: '2026-09-18T00:00:00+00:00',
+      incomplete_prs: 0,
       prs: 140,
       pr_rounds: { n: 140, mean: 2.1, p50: 1, p90: 4, max: 15 },
       queue_rounds: { n: 140, mean: 1.1, p50: 1, p90: 1, max: 6 },

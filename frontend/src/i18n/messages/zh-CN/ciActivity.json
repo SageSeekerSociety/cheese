@@ -39,6 +39,8 @@
     "wait": "作业被创建（它依赖的作业都跑完了）到拿到机器开始跑。",
     "ci": "Required CI 完整档的第一次尝试：从运行创建到最后一个作业结束。草稿档和被取消的运行不算，重跑的等待也不算。",
     "rounds": "合并的 {prs} 个 PR 上，PR 事件里有结论（成功或失败）的 Required CI 运行平均几次；{more} 的 PR 不止一轮。合并队列里平均跑 {queue} 次。",
+    "roundsIncomplete": "CI 历史从 {from} 开始，{n} 个已合并 PR 可能缺少更早的 CI 轮数",
+    "historyUnknown": "暂无 CI 历史覆盖记录，轮数可能不完整",
     "flaky": "{runs} / {of} 次有结论的 Required CI 运行：最后一次尝试通过，之前的尝试里有作业失败，同一个提交。",
     "busy": "按分钟采样的平均值；峰值 {peak}。忙的机器时间里 PR 的 CI 占 {pr}，合并队列 {queue}，main 上的构建和部署 {main}。",
     "busyChart": "每小时内按分钟采样的平均值。",
