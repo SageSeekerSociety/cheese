@@ -9,6 +9,7 @@ does; the board then reads the canvas again.
 """
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
@@ -19,11 +20,7 @@ from app.api.doc_access import Reached, frozen, reach, require_writable
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import (
-    AuthenticationRequiredError,
-    NotFoundError,
-    UnprocessableEntityError,
-)
+from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.canvas.block import blocks
@@ -38,7 +35,7 @@ from app.domain.canvas.schemas import (
 )
 from app.domain.canvas.services import Board, Canvas, Canvases
 from app.domain.living_doc import collab
-from app.domain.project.address import Numbered, thing_by_id, thing_by_number
+from app.domain.project.address import Numbered, things_by_ref
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.room_task import presentation
 from app.domain.room_task.canvas_text import (
@@ -48,6 +45,7 @@ from app.domain.room_task.canvas_text import (
     visible_tasks,
 )
 from app.domain.room_task.services import TaskService
+from app.domain.topic.services import TopicService
 
 # Every route asks the document (`app.api.doc_access`) who may read or write.
 router = APIRouter(tags=["canvases"], dependencies=[ROUTE_DECIDES])
@@ -73,21 +71,25 @@ async def _canvas(
     return canvas, reached
 
 
-def _readable(resolver: ActorResolver, reached: Reached) -> RoomFilter:
-    """The channels whose tasks this reader may see named on a card."""
+def _readable(
+    db: AsyncSession, resolver: ActorResolver, reached: Reached
+) -> RoomFilter:
+    """The channels whose tasks this reader may see named on a card.
+
+    Answered for however many rooms are asked about at once: one roster read
+    and one membership check for all of them, not a round of each per room.
+    A board asks about one room per card that names a task."""
 
     async def readable(rooms: set[uuid.UUID]) -> set[uuid.UUID]:
         project_id = reached.doc.project_id
-        if project_id is None:
+        if project_id is None or not rooms:
             # A team's own document is in no channel's project.
             return set()
-        return {
-            room
-            for room in rooms
-            if await resolver.can_access_topic(
-                reached.actor, project_id=project_id, topic_id=room
-            )
-        }
+        return await resolver.readable_topic_ids(
+            reached.actor,
+            project_id=project_id,
+            topics=await TopicService(db).get_many(rooms),
+        )
 
     return readable
 
@@ -125,7 +127,7 @@ async def _board_out(
     tasks = await visible_tasks(
         db,
         [c.task_id for c in board.cards if c.task_id is not None],
-        _readable(resolver, reached),
+        _readable(db, resolver, reached),
     )
     columns = await _columns(db, list(tasks))
     return {
@@ -203,7 +205,7 @@ async def document_canvases(
     """The canvases the document's text names, each as text, in order."""
     reached = await reach(db, resolver, document_id)
     texts = await document_canvas_texts(
-        db, reached.doc, readable=_readable(resolver, reached)
+        db, reached.doc, readable=_readable(db, resolver, reached)
     )
     return ok(
         [
@@ -243,7 +245,7 @@ async def canvas_text(
         db,
         await Canvases(db).board(canvas),
         title=title,
-        readable=_readable(resolver, reached),
+        readable=_readable(db, resolver, reached),
         positions=positions,
     )
     return ok({"id": str(canvas.id), "text": text})
@@ -258,32 +260,28 @@ async def change_canvas(
     cards got by their ``ref`` (``refs``)."""
     canvas, reached = await _canvas(db, resolver, canvas_id, write=True)
     project_id = reached.doc.project_id
-    readable = _readable(resolver, reached)
+    readable = _readable(db, resolver, reached)
 
-    async def task_of(ref: str) -> uuid.UUID:
-        flat = ref.strip().lstrip("#")
-        found = None
+    async def tasks_of(refs: Sequence[str]) -> dict[str, uuid.UUID]:
+        """The tasks these refs name, by the ref as it was written: the refs
+        every change names read at once. A ref naming no task, or one in a
+        channel this reader may not see, is left out — the change that named
+        it is the one refused."""
         if project_id is None:
             # A task is a project's; a team's own document names none.
-            found = None
-        elif flat.isdigit():
-            found = await thing_by_number(db, project_id, Numbered.task, int(flat))
-        else:
-            try:
-                found = await thing_by_id(db, Numbered.task, uuid.UUID(flat))
-            except ValueError:
-                found = None
-        if (
-            found is None
-            or found.project_id != project_id
-            or found.room_id is None
-            or found.room_id not in await readable({found.room_id})
-        ):
-            raise UnprocessableEntityError(say("canvasTaskNotFound", task=ref))
-        return found.id
+            return {}
+        found = await things_by_ref(db, project_id, Numbered.task, refs)
+        seen = await readable(
+            {thing.room_id for thing in found.values() if thing.room_id is not None}
+        )
+        return {
+            ref: thing.id
+            for ref, thing in found.items()
+            if thing.room_id is not None and thing.room_id in seen
+        }
 
     applied = await Canvases(db).apply(
-        canvas.id, body.changes, actor=reached.actor.handle, resolve_task=task_of
+        canvas.id, body.changes, actor=reached.actor.handle, resolve_tasks=tasks_of
     )
     await db.commit()
     await _told(canvas)
