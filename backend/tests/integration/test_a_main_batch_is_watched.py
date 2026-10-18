@@ -166,6 +166,7 @@ def test_failures_that_name_a_commit_nobody_watches_wake_the_lines_that_are(
     told = _told(client, first)
     assert told != told_before, "a red batch woke nobody"
     assert "各自排除" in told
+    assert "没有哪条在看的线能单独认领" in told
     assert _landing(client, first).checks.value == "failed"
 
 
