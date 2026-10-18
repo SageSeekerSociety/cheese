@@ -5,7 +5,8 @@ lookup while batch reads were hand-rolled per repository under dozens of names.
 This module makes a single ``IN`` query the shortest path and standardizes the
 repository method name and signature on ``get_by_ids(ids) -> dict[id, row]``.
 
-新仓储的单条 ``get_by_id`` 必须有同名批量兄弟 ``get_by_ids``（下一条 L4 守卫会强制）。
+A repository that offers a single-row ``get_by_id`` should offer the batch
+sibling ``get_by_ids`` built on this primitive, with the same filters.
 """
 
 from __future__ import annotations
