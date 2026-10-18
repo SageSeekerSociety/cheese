@@ -46,4 +46,24 @@ describe('signup store invite-code flow', () => {
       })
     )
   })
+
+  it('always sends the email code and resend, ignoring VITE_DISABLE_EMAIL_VERIFY', async () => {
+    vi.stubEnv('VITE_DISABLE_EMAIL_VERIFY', 'true')
+    try {
+      const store = useSignupStore()
+
+      await store.startSignup({
+        username: 'cheese-user',
+        nickname: '芝士用户',
+        email: 'user@example.com',
+        password: 'Secret#123',
+        consent: { documents: { terms: '1.0', privacy: '1.0' }, method: 'dialog' },
+      })
+      await store.resendCode()
+
+      expect(UserAuthApi.sendEmailCode).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
 })
