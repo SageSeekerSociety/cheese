@@ -83,7 +83,11 @@ def _two_lines(client, app_world, forge) -> tuple[str, str]:
 
 
 def _red_batch(forge, *, failing: list[str]) -> None:
-    """One batch (ANCHOR, HEAD] with commits B and C in it, red at HEAD."""
+    """One batch (ANCHOR, HEAD] with commits B and C in it, red at HEAD.
+
+    HEAD is the commit the gate ran on; B and C are inside the batch and have
+    only the cancelled runs their superseded pushes left.
+    """
     forge.green = ANCHOR
     forge.ran[ANCHOR] = [_gate("success")]
     # The pushes at B and C were superseded by a newer one in the concurrency
