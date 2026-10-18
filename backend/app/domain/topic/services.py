@@ -350,15 +350,10 @@ class TopicService:
         )
         topics = [topic for topic, _ in rows]
         last_activity = {topic.id: last for topic, last in rows}
-        # `total` counts what the caller got: a filtered page whose total still
-        # said "all topics" would tell a paging client to keep asking for rows
-        # that do not exist.
-        total = (
-            len(topics)
-            if active_since is not None
-            else await self._repo.count_for_project(project_id, viewer=viewer)
-        )
-        return topics, last_activity, total
+        # `list_for_project_with_activity` takes no limit, so `rows` is already
+        # the whole visible set (or the whole `active_since`-filtered set): a
+        # second `count_for_project` round-trip would re-run the same predicate.
+        return topics, last_activity, len(topics)
 
     async def last_activity_for_topics(
         self, topic_ids: list[uuid.UUID]

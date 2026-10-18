@@ -695,10 +695,11 @@ export interface ForgeConnection {
   url: string | null
 }
 
-export interface ForgeAttribution {
-  requester_coauthor: boolean | null
-  effective: boolean
-  deployment_default: boolean
+/** Who a project's deliveries are credited to: the task owner, or the AI teammate. */
+export type CommitCreditMode = 'owner' | 'agent'
+
+export interface CommitCredit {
+  mode: CommitCreditMode
 }
 
 // A user's OAuth/App connections — GET /users/{userId}/oauth/connections

@@ -37,7 +37,13 @@ class _Session:
 
     async def commit(self) -> None: ...
 
-    async def execute(self, _statement):
+    async def execute(self, statement):
+        # The tick asks two questions of this session: which merges are still
+        # watched (two columns, the rows this fake hands back), and which
+        # blamed merges a later green batch has taken back (four). Nothing in
+        # these tests is blamed, so only the first has an answer.
+        if len(statement.selected_columns) != 2:
+            return []
         return list(self._rows)
 
 

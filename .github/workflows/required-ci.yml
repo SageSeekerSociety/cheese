@@ -9,13 +9,11 @@ name: Required CI
 #
 # Two tiers, decided by the event (.github/scripts/required-ci.py: tier_for):
 #
-# - DRAFT pull request → the fast tier only: one inline job runs
-#   `ci-fast.py --tier quick`, and every product suite is skipped. Its
-#   aggregating job is named `CI required (draft quick)`, so a draft's green is
-#   never the check branch protection requires. A draft is work in progress.
-# - merge_group entry, or any pull_request that is not a draft (including the
-#   `ready_for_review` that promotes a draft) → the full tier: every suite the
-#   merge diff selects, aggregated under the required check name `CI required`.
+# - Every pull request (draft or ready) runs `ci-fast.py --tier quick` only;
+#   all full suites are skipped. Drafts aggregate as `CI required (draft quick)`;
+#   ready PRs aggregate as `CI required` and check the commit title.
+# - A push to main or merge_group entry runs the full tier: every suite the
+#   cumulative diff selects, aggregated as `CI required` before deployment.
 #
 # The two aggregating jobs are separate jobs with literal names (`required` and
 # `required-draft`), each gated by an `if` on the event. Not one job with a
@@ -23,21 +21,10 @@ name: Required CI
 # cancelled run, which reads as a red check named
 # `github.event_name == 'pull_request' && ...`.
 #
-# A tier's job that the event does not select reports `skipped`, and GitHub
-# counts a skipped required check as satisfied — so on a draft PR `CI required`
-# is a skipped check rather than an absent one. That is not a way through: a
-# draft cannot be merged, the platform reads `skipped`/absent as "did not run"
-# (backend/app/domain/review/merge_state.py), and the merge queue re-runs the
-# full tier on `merge_group`, which is the result the queue and the deploy gates
-# read. What the two names keep is that a draft never produces a *green*
-# `CI required`.
-#
-# `ready_for_review` is listed explicitly so promoting a draft starts a fresh
-# FULL run. The concurrency group below (cancel-in-progress) stops a superseded
-# draft-quick run only while it is still in flight; a draft-quick run that
-# already completed is NOT revoked, and does not need to be — it left
-# `CI required` skipped, which does not stand in for the full run's result on
-# that commit.
+# On a draft PR `CI required` is skipped, not absent; drafts cannot merge and
+# the platform treats skipped as "did not run". `ready_for_review` starts a new
+# quick run under `CI required`, including the title check. Branch green allows
+# merging, not deployment: only the full landed-code gate can authorize that.
 on:
   push:
     branches: [main]
@@ -114,13 +101,10 @@ jobs:
           fi
           python3 .github/scripts/required-ci.py scope "$EVENT_BASE"
 
-  # The DRAFT tier: a bounded local-evidence run, inline so a draft adds no
-  # reusable workflow to enumerate (and a draft must not exercise the docs
-  # site's workflow-name reading of a `uses:` suite). It runs the SAME tool a
-  # developer runs before pushing — `ci-fast.py --tier quick` — never a trimmed
-  # full CI. Product suites are skipped on a draft (their `if` also requires
-  # tier == 'full'), and the aggregating job's own name is what keeps a draft's
-  # green from ever being read as `CI required`.
+  # The branch tier: draft and ready PRs run the same bounded local-evidence
+  # tool developers run before pushing — `ci-fast.py --tier quick`. Full suites
+  # all require tier == 'full', so none runs here. Readiness changes only the
+  # aggregator's name and enables its title check, not the selected suites.
   #
   # What this tier does NOT have, it must not judge. Two things follow from
   # that, and both are the difference between a draft that reports a verdict on
@@ -229,16 +213,13 @@ jobs:
       # thing:
       #
       #   0  every check the tier selected passed.
-      #   1  a check failed. The draft goes red — a real red, which is the whole
-      #      point of the tier.
+      #   1  a check failed. Both draft and ready PRs go red.
       #   2  unknown, 3 blocked: the tier could not judge — the budget ran out,
-      #      a check had no input, or this job was not given something a check
-      #      needs. A draft is work in progress, `CI required (draft quick)` is
-      #      not the check branch protection reads, and the merge queue runs the
-      #      full tier on the same commit: so this does not turn the draft red.
-      #      It does NOT pass either — every unjudged item is written into the
-      #      step summary and a warning annotation, so the green is never read as
-      #      "this was fully judged".
+      #      a check had no input, or this job lacked something a check needs.
+      #      Keep the quick tier's warning-only handling for unjudged evidence;
+      #      the full post-submit gate remains responsible for deployment.
+      #      Every unjudged item is written into the step summary and warning
+      #      annotation; branch green does not mean "this was fully judged".
       #   any other exit: no verdict at all — ci-fast never got to judge. A red,
       #      since an `unknown` green would be indistinguishable from the case
       #      above. What separates the two is the report ci-fast writes on every
@@ -277,7 +258,7 @@ jobs:
             exit 0
           fi
           if [ "$status" -eq 1 ]; then
-            echo "::error::ci:fast quick tier found a failure: this draft's change is red."
+            echo "::error::ci:fast quick tier found a failure: this PR's change is red."
             exit 1
           fi
           # Any other exit counts as "could not judge" only if ci-fast's own
@@ -297,13 +278,12 @@ jobs:
               ;;
           esac
           {
-            echo "### Draft quick tier: what it could not judge"
+            echo "### Branch quick tier: what it could not judge"
             echo
             echo "ci:fast exited $status (2 = unknown, 3 = blocked) and said which parts of"
             echo "this change it did not judge: the list below is what this green does NOT"
-            echo "cover. That is not a failure of the draft — \`CI required (draft quick)\` is"
-            echo "not the check branch protection reads, and the merge queue runs the full"
-            echo "Required CI on this same commit; that run is the one to look at."
+            echo "cover. This branch result permits merging, not deployment. The full"
+            echo "Required CI on main must pass before landed code can be deployed."
             echo
             if [ -f "$report" ]; then
               # Rendering the report is not allowed to fail the step: this shell
@@ -316,7 +296,7 @@ jobs:
               echo "ci:fast wrote no report at $report: nothing in this tier was judged."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning::ci:fast quick tier could not judge everything (exit $status). See this run's step summary; this draft check is not the required gate."
+          echo "::warning::ci:fast quick tier could not judge everything (exit $status). See this run's step summary; branch green is not deployment approval."
           exit 0
 
   backend:
@@ -603,20 +583,79 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Point main-green at this commit
-        # A plain push, not a force: this ref only moves forward along main, and
-        # a push the server refuses (a rewritten main) leaves the anchor where
-        # it was — a wider diff, never a hidden commit.
+        # The REST call, not a `git push`: this job checks out at depth 1, so the
+        # client cannot see that the anchor's tip is an ancestor of this commit
+        # and rejects the push as non-fast-forward even though it fast-forwards
+        # (2026-10-18: two green batches in a row left the anchor behind). The
+        # server can see the ancestry; force=false keeps that judgement there,
+        # so a rewritten main is still refused.
+        #
+        # curl, not gh: the cheese-ci boxes have no gh (same reason the title
+        # step below spells its calls out in curl).
+        #
+        # PATCH only updates an existing ref, so when the anchor is gone (deleted
+        # by hand, or the very first landing on a repository that never had one)
+        # it answers 422 and the anchor would never come back. POST creates it —
+        # no fast-forward question to ask about a ref that does not exist.
         #
         # A refusal here must not fail the run. The deploy gate reads this run's
-        # conclusion, so a network error on this one push would hold a commit
+        # conclusion, so a network error on this one call would hold a commit
         # off dev — while an anchor that did not move is safe by construction:
         # the next run diffs from the older commit, which covers more, never
         # less. It is loud instead, so a stuck anchor gets noticed.
+        #
+        # Only a definite "no such ref" answer earns the create call. A timeout
+        # or a 5xx says nothing about whether the ref exists, and a second full
+        # retry budget would put this job past its five minutes — a timed-out
+        # run is a failed run to the deploy gate, which is the one outcome this
+        # job must never cause.
+        #
+        # Every call below is bounded so the whole step fits in five minutes on
+        # its worst path. --max-time bounds one attempt and --retry 2 makes
+        # three, but a retry wait is not transport: curl sleeps for the
+        # server's Retry-After when it sends one, which --retry-delay and
+        # --max-time do not cap (a 429 that says "wait a minute" sleeps a
+        # minute, twice). --retry-max-time is the only knob that caps the whole
+        # call, waiting included. So one call is at most 60s, and update +
+        # create + the 15s read-back is 135s, plus a checkout.
+        # (The old 60s/per-call numbers let a PATCH that timed out twice and
+        # then answered 422 stack two 246s budgets: 492s.)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if git push origin "HEAD:refs/heads/main-green"; then
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
+          ref_url="https://api.github.com/repos/$GITHUB_REPOSITORY/git/ref/heads/main-green"
+          update_ref() {
+            curl -sS --retry 2 --retry-delay 2 --retry-max-time 60 --max-time 30 \
+              -o /dev/null -w '%{http_code}' "${auth[@]}" "$@"
+          }
+          url="https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/heads/main-green"
+          moved=""
+          post_code=""
+          if code="$(update_ref -X PATCH --data "{\"sha\":\"$GITHUB_SHA\",\"force\":false}" "$url")" \
+             && [ "${code:0:1}" = 2 ]; then
+            moved=1
+          elif [ "$code" = 422 ] || [ "$code" = 404 ]; then
+            if post_code="$(update_ref -X POST \
+                   --data "{\"ref\":\"refs/heads/main-green\",\"sha\":\"$GITHUB_SHA\"}" \
+                   "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs")" \
+               && [ "${post_code:0:1}" = 2 ]; then
+              moved=1
+            elif [ "$post_code" = 409 ]; then
+              # "Reference already exists": either the create really landed
+              # and only its response was lost (the retry met the new ref), or
+              # someone else made it point elsewhere. Read it back before
+              # saying the anchor did not move.
+              if curl -sS --max-time 15 "${auth[@]}" "$ref_url" | grep -q "$GITHUB_SHA"; then
+                moved=1
+              fi
+            fi
+          fi
+          if [ -n "$moved" ]; then
+            echo "Main green anchor moved to $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          echo "::warning::could not move refs/heads/main-green to $GITHUB_SHA; it still points at the previous anchor, so the next main run diffs from there and covers this batch too."
+          echo "::warning::could not move refs/heads/main-green to $GITHUB_SHA (update HTTP ${code:-none}, create HTTP ${post_code:-not tried}); the next main run starts from the older anchor or the full tree, so it covers this batch too."
           echo "Main green anchor not moved: the next run covers this batch as well." >> "$GITHUB_STEP_SUMMARY"
 
   # Merge queue only: fails `CI required` on the entry's sha as soon as any job

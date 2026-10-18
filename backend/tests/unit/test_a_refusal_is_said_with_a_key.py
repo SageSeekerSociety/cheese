@@ -428,9 +428,9 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/session_host/starting.py": 7,
     "app/domain/agent_credential/services.py": 1,
     "app/domain/agent_type/library.py": 11,
-    "app/domain/answers/services.py": 10,
+    "app/domain/answers/services.py": 9,
     "app/domain/attachment/services.py": 5,
-    "app/domain/avatars/services.py": 3,
+    "app/domain/avatars/services.py": 1,
     "app/domain/block/documents.py": 1,
     "app/domain/block/editing.py": 3,
     "app/domain/comments/services.py": 7,
@@ -481,7 +481,10 @@ _BASELINE: dict[str, int] = {
     "app/domain/project/room_files.py": 1,
     "app/domain/project/services.py": 1,
     "app/domain/project_skill/blobs.py": 1,
-    "app/domain/questions/services.py": 30,
+    # 2026-10-18 抽公共函数：这份拒答从 `questions/services.py` 搬进
+    # `questions/lookup.py`，句子还是那一句 —— 30 -> 29，另起一格记 1。
+    "app/domain/questions/lookup.py": 1,
+    "app/domain/questions/services.py": 29,
     "app/domain/repository/service.py": 2,
     "app/domain/review/events.py": 1,
     #: 2026-10-16 拆包：#1666 把 `review/github_pr.py` 分成同名包，

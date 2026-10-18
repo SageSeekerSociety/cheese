@@ -431,7 +431,7 @@ _BOLD_NAME = re.compile(r"(?:verif|valid|test|check)(?:s|es|ed|ing|ied|ication|a
                         r"|验证|怎么验|测试|自测", re.I)
 _COMMENT_OPEN, _COMMENT_CLOSE = "<!--", "-->"
 #: Everything from the first of these lines down is the platform's, not the author's.
-_TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by"
+_TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by|Link"
                            r"|Reviewed-by|Reported-by|Fixes-feedback):", re.M | re.I)
 _AGENT_MARK = re.compile(r"^[ \t]*AGENT:[ \t]*$", re.M)
 #: The lines a runner prints to name a case that failed — pytest's summary, the

@@ -237,6 +237,13 @@ const stopPageMotion = router.afterEach((to, from, failure) => {
   })
 })
 onBeforeUnmount(stopPageMotion)
+
+// 外框挂着的时候整页不滚，滚的是内容区（#app-scrollable）；规则在 styles/common.scss。
+// 由外框自己加、自己摘，所以不进外框的页面（门口页、法律文本、分享页）照常整页滚动，
+// 不用各自去解锁。
+onMounted(() => document.documentElement.classList.add('app-shell-open'))
+onBeforeUnmount(() => document.documentElement.classList.remove('app-shell-open'))
+
 function endPageMotion(event: AnimationEvent) {
   if (event.target === contentRef.value) contentRef.value?.classList.remove(...MOTION_CLASSES)
 }

@@ -12,6 +12,7 @@ to the other shape, and the two are unrelated siblings.
 """
 
 import functools
+import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +32,8 @@ from app.domain.review.github_pr_status import (
     parse_pull_request_status,
 )
 from app.domain.review.superseded_runs import drop_superseded
+
+logger = logging.getLogger("cheesex.review.github_pr")
 
 
 class GitHubPRError(RuntimeError):
@@ -121,6 +124,7 @@ class GitHubPRClient:
         title: str,
         body: str,
         draft: bool = False,
+        as_user_token: str | None = None,
     ) -> OpenedPR:
         """Open (or find the already-open) PR for a branch.
 
@@ -134,7 +138,12 @@ class GitHubPRClient:
         argument describes the PR being CREATED, and re-deriving the state of
         one that already exists is `mark_ready_for_review`'s job.
 
-        The App opens the PR; requester credit lives in contribution trailers.
+        `as_user_token` is the task owner's own user-to-server token. GitHub
+        credits a PR to whoever's credential opened it, and its squash commit
+        too, so this decides whose name the change lands under; an App cannot
+        open a PR as anybody else. When their token cannot open it (no write
+        access, authorization revoked) the App opens it, and the trailers credit
+        the owner as a co-author instead (`credit.attribution`).
         """
         app_token, _ = await self._tokens.write_token()
         payload: dict[str, object] = {
@@ -146,9 +155,24 @@ class GitHubPRClient:
         if draft:
             payload["draft"] = True
         async with forge_client(transport=self._transport, timeout=30.0) as client:
-            resp = await client.post(
-                self._url("/pulls"), json=payload, headers=self._headers(app_token)
-            )
+
+            async def create(token: str) -> httpx.Response:
+                return await client.post(
+                    self._url("/pulls"), json=payload, headers=self._headers(token)
+                )
+
+            resp = await create(as_user_token) if as_user_token else None
+            if resp is not None and resp.status_code != 201:
+                if resp.status_code != 422 or "already exist" not in resp.text:
+                    logger.info(
+                        "the task owner's token could not open a PR on %s "
+                        "(HTTP %s); the App opens it",
+                        head,
+                        resp.status_code,
+                    )
+                    resp = None
+            if resp is None:
+                resp = await create(app_token)
             if resp.status_code == 201:
                 return OpenedPR(resp.json())
             if resp.status_code == 422 and "already exist" in resp.text:

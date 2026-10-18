@@ -59,19 +59,6 @@ export interface ListNotificationsResponse {
   page: EncodedCursorPage
 }
 
-export interface NotificationUpdate {
-  id: number
-  read: boolean
-}
-
-export interface BulkUpdateRequest {
-  updates: NotificationUpdate[]
-}
-
-export interface BulkUpdateResponse {
-  updatedIds: number[]
-}
-
 export interface MarkAllAsReadResponse {
   count: number
 }
