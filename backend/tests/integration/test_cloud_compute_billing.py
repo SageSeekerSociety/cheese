@@ -338,7 +338,8 @@ async def test_a_persons_own_device_is_never_charged(client, monkeypatch):
 
 def test_whole_vms_are_opened_with_one_read_of_their_homes_however_many(cloud):
     """Opening the runs of new whole VMs reads their homes once, not once per
-    VM, and each run still names its own VM's room and session."""
+    VM, and not at all when none is new; each run still names its own VM's
+    room and session."""
     from sqlalchemy import event
 
     from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
@@ -405,7 +406,10 @@ def test_whole_vms_are_opened_with_one_read_of_their_homes_however_many(cloud):
 
     opened3, reads3, got3, want3 = run(cloud, lambda: observe_new(3, homeless=1))
     opened12, reads12, got12, want12 = run(cloud, lambda: observe_new(12))
+    # A sweep with every VM already open reads no homes at all.
+    opened0, reads0, _, _ = run(cloud, lambda: observe_new(0))
 
-    assert (opened3, opened12) == (4, 12)
+    assert (opened3, opened12, opened0) == (4, 12, 0)
     assert got3 == want3 and got12 == want12
     assert reads3 == reads12 == 1
+    assert reads0 == 0
