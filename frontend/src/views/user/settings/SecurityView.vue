@@ -112,9 +112,9 @@
           v-if="conn.providerId === GITHUB_APP_PROVIDER_ID && githubExpired(conn)"
           kind="primary"
           size="sm"
-          @click="emit('relink-github')"
+          @click="emit('sign-in-github')"
         >
-          {{ t('account.security.githubRelink') }}
+          {{ t('account.security.githubSignInAgain') }}
         </BaseButton>
         <BaseButton kind="ghost" size="sm" :loading="unbinding === conn.id" @click="emit('unbind', conn)">
           {{ t('account.security.unlink') }}
@@ -357,7 +357,7 @@ const emit = defineEmits<{
   'change-password': [password: string]
   unbind: [conn: OAuthConnectionInfo]
   /** GitHub's authorization ran out: authorize cheesex-app again. */
-  'relink-github': []
+  'sign-in-github': []
   'sign-out-device': [sessionId: string]
   'sign-out-others': []
   copy: [text: string]

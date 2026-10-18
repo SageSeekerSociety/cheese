@@ -207,7 +207,7 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '署名给任务负责人',
-        note: '默认的那一种。下面那句说清这一种落下去之后 PR 由谁开、谁是作者，以及负责人没连接 GitHub 时会怎样。',
+        note: '默认的那一种。下面那句说清这一种落下去之后 PR 由谁开、谁是作者，以及负责人没用 GitHub 登录时会怎样。',
         props: {
           mode: 'owner',
           agentName: '芝士',
@@ -216,11 +216,11 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
           github: { state: 'linked', login: 'HuanCheng65' },
           manageTo: '/users/settings/security',
         },
-        expect: '用任务负责人的 GitHub 账号创建 PR',
+        expect: '用任务负责人登录时的 GitHub 账号创建 PR',
       },
       {
-        name: '还没关联 GitHub',
-        note: '署名给任务负责人时，下面那一行说看的人自己的账号：没关联就给一个就地关联的入口，不用先跑去账号安全。',
+        name: '还没用 GitHub 登录',
+        note: '署名给任务负责人时，下面那一行说看的人自己的账号：还没登录就给一个就地登录的入口。',
         props: {
           mode: 'owner',
           agentName: '芝士',
@@ -229,11 +229,11 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
           github: { state: 'none' },
           manageTo: '/users/settings/security',
         },
-        expect: '关联后，你负责的任务用你的账号创建 PR',
+        expect: '登录后，你负责的任务用你的账号创建 PR',
       },
       {
         name: 'GitHub 授权失效',
-        note: '没有能续期的 token 才算失效：这时他负责的任务改由 AI 队友创建 PR，这一行说清，并给「重新授权」。',
+        note: '没有能续期的 token 才算失效：这时他负责的任务改由 AI 队友创建 PR，这一行提示重新用 GitHub 登录。',
         props: {
           mode: 'owner',
           agentName: '芝士',

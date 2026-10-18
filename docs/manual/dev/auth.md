@@ -24,6 +24,8 @@ covers:
 
 刷新令牌每次刷新都轮换。cookie 带 `Secure`（开发和测试环境除外）和 `SameSite=Lax`，并且带 `Max-Age`：否则浏览器关掉会话就删掉它，而 `localStorage` 里的访问令牌还在，下一次刷新就会把用户登出（`backend/app/api/routes/users/auth.py`）。
 
+用 GitHub 登录经过 cheesex-app 的用户授权。登录回调保存一条 `github_app` 用户连接；连接项目仓库时，平台用这条连接确认安装和仓库权限，任务负责人署名也读取同一条连接。用户授权过期且无法刷新时，重新用 GitHub 登录。GitHub App 的用户授权不请求 OAuth scopes；读取已验证的邮箱依赖 App 的 `Email addresses: Read-only` 权限。
+
 ## 芝士和机器 {#agents}
 
 - **会话令牌**：每个会话一张平台签发的短期令牌（`CHEESE_TOKEN`），声明里带项目、话题和作者。它用来调用平台 API、通过模型准入，也用来换 GitHub 安装令牌。

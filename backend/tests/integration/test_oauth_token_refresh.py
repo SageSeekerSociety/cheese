@@ -7,8 +7,8 @@ used to run its update inside whatever transaction the caller (typically
 `AcceptService.accept()`) happened to be mid-way through. Two problems
 followed: a later, unrelated failure in that SAME transaction rolled the
 refreshed token back too (leaving the DB holding a refresh_token GitHub had
-already invalidated — the account link then stays broken until the user
-manually reconnects), and two concurrent refreshers of the same connection
+already invalidated — the GitHub connection then stays broken until the user
+signs in with GitHub again), and two concurrent refreshers of the same connection
 could race and clobber each other.
 
 The fix (`OAuthService._refresh_and_persist_token`, `app/domain/oauth/

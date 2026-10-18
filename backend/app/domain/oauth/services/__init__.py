@@ -10,8 +10,8 @@
 「子指向祖先」那条边在 C3（`app.domain` 下的同级包不许成环）上本来就不算环；三个同级
 模块互相引用会凭空多出环来。形状和 `app/domain/feedback/repositories/` 一样。
 
-**这一面的名字和对象一个都没变。** 路由（`app/api/routes/users/oauth.py`、
-`users/github_account.py`、`github_install.py`、`users/connections.py`）、
+路由（`app/api/routes/users/oauth.py`、
+`github_install.py`、`users/connections.py`）、
 `app/api/deps.py`、`app/domain/repository/identity.py` 里的函数内导入、以及单测都按
 `from app.domain.oauth.services import …` 取名字，这里逐个再导出；`settings` 也仍
 从这里读，所以按 `app.domain.oauth.services.settings` 打的补丁照旧生效（读 settings
@@ -107,9 +107,9 @@ class OAuthService:
                 scope=["profile", "userinfo"],
             )
         elif provider_id == "github_app":
-            # cheesex-app's own user-to-server authorization, for signing in
-            # and for 关联 GitHub alike. A GitHub App takes no scopes: what the
-            # token may do is the App's permissions on the repositories it is
+            # cheesex-app's user-to-server authorization. A GitHub App takes
+            # no scopes: what the token may do is the App's permissions on
+            # the repositories it is
             # installed on, intersected with the person's own.
             return OAuthProviderConfig(
                 id=provider_id,
@@ -119,7 +119,7 @@ class OAuthService:
                 authorization_url="https://github.com/login/oauth/authorize",
                 token_url="https://github.com/login/oauth/access_token",
                 redirect_url=redirect_url,
-                scope=["read:user", "user:email"],
+                scope=[],
             )
 
         return None
@@ -242,8 +242,7 @@ class OAuthService:
 async def get_github_profile_for_handle(
     session: Any, handle: str
 ) -> tuple[str, dict] | None:
-    """This handle's GitHub account as ``(provider_user_id, profile)``: the one
-    it signed in with or 关联 to cheesex-app.
+    """This handle's GitHub sign-in as ``(provider_user_id, profile)``.
 
     The read behind commit/PR attribution (``repository/identity.py``), which
     needs the numeric GitHub id and the login and has no business reaching into
@@ -297,10 +296,10 @@ async def get_github_user_token_for_handle(session: Any, handle: str) -> str | N
     )
 
 
-async def github_link_state(session: Any, handle: str) -> str:
+async def github_sign_in_state(session: Any, handle: str) -> str:
     """Whether this handle's GitHub account can open a PR in its name, read
-    from what is stored and never by asking GitHub: ``"none"`` (not linked),
-    ``"expired"`` (linked, but its token has run out and nothing renews it) or
+    from what is stored and never by asking GitHub: ``"none"`` (no GitHub sign-in),
+    ``"expired"`` (its token has run out and nothing renews it) or
     ``"ok"``. Cheap enough for a page that polls."""
     # deferred-import: tests replace this name on app.domain.user.repositories
     from app.domain.user.repositories import UserRepository

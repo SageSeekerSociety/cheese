@@ -3,7 +3,6 @@ import type { OAuthConnectionInfo } from '../cx_types'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import {
-  explainAccountLinkFailure,
   explainRepoInstallFailure,
   findGithubAccountConnection,
   isGithubAccountTokenExpired,
@@ -61,38 +60,6 @@ describe('isGithubAccountTokenExpired', () => {
   })
 })
 
-describe('explainAccountLinkFailure', () => {
-  it('turns every code the account callback can emit into a sentence', () => {
-    // The full set, read off users/github_account.py — a code missing here is a
-    // user staring at an English identifier (the #222 incident).
-    for (const code of ['already_linked', 'oauth_failed', 'github_unreachable', 'invalid_state']) {
-      const text = explainAccountLinkFailure(code)
-      expect(text).not.toContain(code)
-      expect(text.length).toBeGreaterThan('连接 GitHub 账号失败：'.length + 8)
-    }
-  })
-
-  it('says what to do, not just what broke', () => {
-    expect(explainAccountLinkFailure('already_linked')).toContain('断开')
-    expect(explainAccountLinkFailure('invalid_state')).toContain('重新点')
-  })
-
-  it('does not blame the person when our server could not reach GitHub', () => {
-    const text = explainAccountLinkFailure('github_unreachable')
-    expect(text).toContain('与你的操作无关')
-    expect(text).not.toContain('没点完')
-  })
-
-  it('still names an unrecognised code rather than hiding it', () => {
-    // 「原因未知」 alone loses the one clue anyone could act on.
-    expect(explainAccountLinkFailure('brand_new_code')).toContain('brand_new_code')
-  })
-
-  it('handles a missing reason', () => {
-    expect(explainAccountLinkFailure(undefined)).toContain('原因未知')
-  })
-})
-
 describe('explainRepoInstallFailure', () => {
   it('turns every code the install callback can emit into a sentence', () => {
     // Read off github_install.py.
@@ -126,8 +93,7 @@ describe('explainRepoInstallFailure', () => {
     expect(text).toContain('无权查看')
   })
 
-  it('is about the repo, not the account — the two flows have separate copy', () => {
+  it('explains an expired repository install link', () => {
     expect(explainRepoInstallFailure('invalid_state')).toContain('仓库')
-    expect(explainAccountLinkFailure('invalid_state')).toContain('账号')
   })
 })

@@ -4,13 +4,13 @@
   "expired": "授权已失效，你负责的任务暂由 {agent} 创建 PR",
   "hint": "已有提交不受影响",
   "label": "署名给",
-  "link": "关联 GitHub 账号",
-  "linkHint": "关联后，你负责的任务用你的账号创建 PR",
+  "signIn": "用 GitHub 登录",
+  "signInHint": "登录后，你负责的任务用你的账号创建 PR",
   "manage": "在账号安全中管理",
   "owner": "任务负责人",
-  "ownerHint": "用任务负责人的 GitHub 账号创建 PR，提交作者为负责人，{agent} 列为共同作者。负责人未关联 GitHub 账号时，PR 由 {agent} 创建，负责人列为共同作者",
-  "relink": "重新授权",
+  "ownerHint": "用任务负责人登录时的 GitHub 账号创建 PR，提交作者为负责人，{agent} 列为共同作者。负责人未用 GitHub 登录时，PR 由 {agent} 创建，负责人列为共同作者",
+  "signInAgain": "重新用 GitHub 登录",
   "title": "提交署名",
-  "unlinked": "未关联",
+  "unlinked": "未用 GitHub 登录",
   "yourGithub": "你的 GitHub 账号"
 }

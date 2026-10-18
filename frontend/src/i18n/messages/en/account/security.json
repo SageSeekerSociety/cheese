@@ -18,7 +18,7 @@
   "deviceName": "{browser} on {os}",
   "done": "Done",
   "githubExpired": "Authorization expired: the AI teammate opens the PRs for the tasks you own for now",
-  "githubRelink": "Authorize again",
+  "githubSignInAgain": "Sign in with GitHub again",
   "githubUnlinkBody": "You won't be able to sign in with GitHub, and the AI teammate will open the PRs for the tasks you own. Unlink it?",
   "githubUse": "Used to sign in, and to open PRs in your name for the tasks you own",
   "lastActive": "Last active {date}",

@@ -11,10 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Security from './Security.vue'
 
-import { getGithubAccountAuthorizeUrl, listOAuthConnections } from '@/api'
+import { listOAuthConnections } from '@/api'
+import { UserAuthApi } from '@/api/userAuth'
 import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
-import { goAuthorize } from '@/lib/desktopApp'
 
 const CHROME_ON_WINDOWS =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
@@ -46,11 +46,9 @@ vi.mock('@/api/users', () => ({
 vi.mock('@/api', () => ({
   listOAuthConnections: vi.fn().mockResolvedValue({ connections: [] }),
   deleteOAuthConnection: vi.fn(),
-  getGithubAccountAuthorizeUrl: vi.fn().mockResolvedValue({ url: 'https://github.com/login/oauth/authorize?x' }),
 }))
-vi.mock('@/lib/desktopApp', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/desktopApp')>()),
-  goAuthorize: vi.fn(() => true),
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: { redirectToOAuthLogin: vi.fn() },
 }))
 vi.mock('@/services/account', () => ({ currentUserId: ref(7) }))
 vi.mock('@/plugins/dialog', () => ({
@@ -144,16 +142,15 @@ function github(over: Record<string, unknown> = {}) {
 }
 
 describe('the linked GitHub account', () => {
-  it('asks to authorize again when nothing can renew it, and comes back to this page', async () => {
+  it('asks for GitHub sign-in again when nothing can renew it', async () => {
     vi.mocked(listOAuthConnections).mockResolvedValue({
       connections: [github({ tokenExpires: '2026-01-01T00:00:00Z', hasRefreshToken: false })],
     })
     const { findByRole } = await renderPage()
 
-    await fireEvent.click(await findByRole('button', { name: 'Authorize again' }))
+    await fireEvent.click(await findByRole('button', { name: 'Sign in with GitHub again' }))
 
-    await waitFor(() => expect(goAuthorize).toHaveBeenCalledWith('https://github.com/login/oauth/authorize?x'))
-    expect(getGithubAccountAuthorizeUrl).toHaveBeenCalledWith('/users/settings/security')
+    await waitFor(() => expect(UserAuthApi.redirectToOAuthLogin).toHaveBeenCalledWith('github_app'))
   })
 
   it('asks nothing while a renewal token can still refresh it', async () => {
@@ -163,6 +160,6 @@ describe('the linked GitHub account', () => {
     const { findByText, queryByRole } = await renderPage()
 
     await findByText('@octocat')
-    expect(queryByRole('button', { name: 'Authorize again' })).toBeNull()
+    expect(queryByRole('button', { name: 'Sign in with GitHub again' })).toBeNull()
   })
 })

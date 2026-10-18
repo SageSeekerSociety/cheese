@@ -12,7 +12,7 @@
  *      输入一个请求都不发，和两个开关各自 PUT 自己那一项；
  *   3. 连接仓库的回跳（`?github_install=`）落在仓库那一块的提示里，且查询串读过就
  *      被摘掉；
- *   4. 连接仓库和关联 GitHub 两个入口把授权地址交给 `goAuthorize`。
+ *   4. 连接仓库打开安装页，署名入口重新发起 GitHub 登录。
  *
  * 链子和 `ProjectSettingsView.test.ts` 同一条：mock 掉 `../api`，不 mock store。
  * 绿在拆之前的旧文件上；拆完必须原样绿。
@@ -28,6 +28,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
+import { UserAuthApi } from '@/api/userAuth'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
@@ -47,11 +48,12 @@ const router = vi.hoisted(() => ({
 const goAuthorize = vi.hoisted(() => vi.fn(() => true))
 
 vi.mock('../api')
+vi.mock('@/api/userAuth', () => ({ UserAuthApi: { redirectToOAuthLogin: vi.fn() } }))
 vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
   default: { template: '<section>运行环境</section>' },
 }))
 vi.mock('../me', () => ({ myHandle: () => 'alice', myId: () => me.id }))
-vi.mock('../lib/desktopApp', () => ({ goAuthorize }))
+vi.mock('../lib/desktopApp', () => ({ desktopCan: () => false, goAuthorize }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
 
 /** 分支保护的 GET 形状：可写的那几项 + 两块只读附注。 */
@@ -303,19 +305,13 @@ describe('两个「连接」入口', () => {
     expect(section(container, '连接 GitHub 仓库').textContent).toContain('acme/code')
   })
 
-  it('关联 GitHub：授权完回到这一页', async () => {
-    vi.mocked(api.getGithubAccountAuthorizeUrl).mockResolvedValue({
-      url: 'https://github.com/login/oauth/authorize?client_id=x',
-    })
+  it('没有 GitHub 登录时，从署名设置发起 GitHub 登录', async () => {
     const { container } = await openSettings('repository')
-    await waitFor(() => expect(button(container, '关联 GitHub 账号')).toBeTruthy())
+    await waitFor(() => expect(button(container, '用 GitHub 登录')).toBeTruthy())
 
-    await fireEvent.click(button(container, '关联 GitHub 账号'))
+    await fireEvent.click(button(container, '用 GitHub 登录'))
 
-    await waitFor(() =>
-      expect(goAuthorize).toHaveBeenCalledWith('https://github.com/login/oauth/authorize?client_id=x')
-    )
-    expect(api.getGithubAccountAuthorizeUrl).toHaveBeenCalledWith('/projects/project/settings')
+    await waitFor(() => expect(UserAuthApi.redirectToOAuthLogin).toHaveBeenCalledWith('github_app'))
   })
 
   it('署名给 AI 队友时，用不到看的人自己的 GitHub 账号', async () => {

@@ -102,7 +102,7 @@ def _oauth_frontend_url(path: str, **params: str | None) -> str:
 _OAUTH_STATE_TTL_S = 15 * 60
 
 
-#: cheesex-app's own user authorization: 关联 GitHub, and signing in with GitHub.
+#: cheesex-app's own user authorization for signing in with GitHub.
 GITHUB_APP_PROVIDER = "github_app"
 
 
@@ -242,8 +242,8 @@ async def _hold_oauth_tokens(
 ) -> None:
     """Keep a provider's tokens server-side until the identity is bound.
 
-    Signing in with GitHub has to leave behind the same connection 关联 GitHub
-    does — with tokens, so the account's PRs open in its own name. Between the
+    Signing in with GitHub stores tokens on the connection used for repository
+    access and PRs in the person's name. Between the
     callback and the binding the person may pass through the decision or the
     verify page, and the tokens must not ride along to the browser on either:
     they wait here, sealed, keyed by the identity they belong to."""
@@ -984,14 +984,7 @@ async def sign_in_with_github(
     oauth_service: OAuthService,
     auth_service: UserAuthService,
 ) -> RedirectResponse:
-    """The sign-in half of cheesex-app's one callback.
-
-    GitHub sends every authorization of the App back to the one URL it has
-    registered, which is 关联 GitHub's (`github_account.py`); a state that is
-    not a link state is a sign-in started at `/auth/oauth/login/github_app`,
-    and lands here. One authorization serves both: what it lets the App do is
-    bounded by the repositories the App is installed on, not by which button
-    started it."""
+    """Complete a GitHub sign-in at the App's registered callback URL."""
     provider_id = GITHUB_APP_PROVIDER
     if not await _spend_oauth_login_state(
         provider_id, state, request.cookies.get(_OAUTH_LOGIN_STATE_COOKIE)
@@ -1023,4 +1016,24 @@ async def sign_in_with_github(
     }
     return await _resolve_oauth_identity(
         request, session, oauth_service, auth_service, provider_id, user_info, tokens
+    )
+
+
+@router.get("/me/github-account/callback")
+async def github_sign_in_callback(
+    request: Request,
+    code: str = Query(...),
+    state: str = Query(default=""),
+    session: AsyncSession = Depends(get_db),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> RedirectResponse:
+    """The App's registered URL completes the same GitHub sign-in as login."""
+    return await sign_in_with_github(
+        request,
+        code=code,
+        state=state,
+        session=session,
+        oauth_service=oauth_service,
+        auth_service=auth_service,
     )

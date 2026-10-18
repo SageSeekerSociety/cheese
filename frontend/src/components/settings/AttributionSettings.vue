@@ -3,7 +3,7 @@
 //
 // 两种：任务负责人（默认），或者 AI 队友。选中哪种、存没存上由页面管，这一件只画、
 // 只把选中的那一种报上去。署名给任务负责人时，下面多一行看的人自己的 GitHub 账号：
-// 他负责的任务用它创建 PR。账号在账号安全里管，这里只说状态、给一个就地关联的入口。
+// 他负责的任务用它创建 PR。账号在账号安全里管，这里只说状态、给一个登录入口。
 import type { CommitCreditMode } from '@/cx_types'
 import type { OwnGithub } from '@/lib/githubAccount'
 import type { NavTarget } from '@/lib/navTarget'
@@ -31,8 +31,8 @@ defineProps<{
 
 const emit = defineEmits<{
   save: [mode: CommitCreditMode]
-  /** 去 GitHub 关联（或重新授权）看的人自己的账号。 */
-  link: []
+  /** 再次用 GitHub 登录，刷新看的人自己的授权。 */
+  signInGithub: []
 }>()
 
 const items = [
@@ -76,18 +76,18 @@ const items = [
             {{ t('work.projectSettings.attribution.unlinked') }}
           </span>
           <span v-else class="t-body own-github__value own-github__login">@{{ github.login }}</span>
-          <BaseButton v-if="github.state === 'none'" kind="secondary" size="sm" @click="emit('link')">
-            {{ t('work.projectSettings.attribution.link') }}
+          <BaseButton v-if="github.state === 'none'" kind="secondary" size="sm" @click="emit('signInGithub')">
+            {{ t('work.projectSettings.attribution.signIn') }}
           </BaseButton>
-          <BaseButton v-else-if="github.state === 'expired'" kind="secondary" size="sm" @click="emit('link')">
-            {{ t('work.projectSettings.attribution.relink') }}
+          <BaseButton v-else-if="github.state === 'expired'" kind="secondary" size="sm" @click="emit('signInGithub')">
+            {{ t('work.projectSettings.attribution.signInAgain') }}
           </BaseButton>
           <NavLink v-else :to="manageTo" class="t-body own-github__manage">
             {{ t('work.projectSettings.attribution.manage') }}
           </NavLink>
         </div>
         <span v-if="github.state === 'none'" class="t-body c-muted settings-hint">
-          {{ t('work.projectSettings.attribution.linkHint') }}
+          {{ t('work.projectSettings.attribution.signInHint') }}
         </span>
         <span v-else-if="github.state === 'expired'" class="t-body settings-hint own-github__expired">
           {{ t('work.projectSettings.attribution.expired', { agent: agentName }) }}

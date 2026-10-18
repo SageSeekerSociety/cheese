@@ -1,6 +1,4 @@
-"""Signing in with GitHub goes through cheesex-app's own authorization, and
-leaves behind the same connection 关联 GitHub does: one that can open the
-person's PRs in their own name.
+"""Signing in with GitHub creates the connection used for PR credit and repos.
 
 The exchange with GitHub is faked; the callback, the state, the binding and
 the stored, encrypted tokens are real.
@@ -19,6 +17,7 @@ from app.domain.oauth.services import (
     OAuthUserInfo,
     get_github_profile_for_handle,
 )
+from tests.integration.conftest import post_project, session_auth_headers
 
 _CALLBACK = "http://testserver/users/me/github-account/callback"
 
@@ -98,6 +97,58 @@ def test_binding_an_account_through_github_sign_in_lets_its_prs_open_as_it(
     assert token == "ghu_first"
 
 
+def test_github_sign_in_alone_can_connect_a_repository(
+    api_client: TestClient, user_client, github, monkeypatch
+):
+    from app.api.routes import github_install
+
+    user = user_client.create_user()
+    back = _sign_in_with_github(api_client)
+    bound = api_client.post(
+        "/users/oauth/bind",
+        data={
+            "stateToken": _q(back.headers["location"])["stateToken"],
+            "username": user.username,
+            "password": user.password,
+        },
+        follow_redirects=False,
+    )
+    assert _q(bound.headers["location"]).get("bound") == "true"
+
+    project = post_project(
+        api_client,
+        json={"name": "GitHub sign-in repo", "forge_kind": "github_app"},
+        owner=user.username,
+    ).json()["data"]["id"]
+    headers = session_auth_headers(user.username)
+    upstream = api_client.put(
+        f"/projects/{project}/upstream",
+        json={"url": "https://github.com/acme/widgets"},
+        headers=headers,
+    )
+    assert upstream.status_code == 200, upstream.text
+
+    async def installations(token):
+        assert token == "ghu_first"
+        return [{"id": 77}]
+
+    async def repos(token, installation_id):
+        assert (token, installation_id) == ("ghu_first", 77)
+        return [
+            {
+                "full_name": "acme/widgets",
+                "owner": {"login": "acme"},
+                "permissions": {"push": True},
+            }
+        ]
+
+    monkeypatch.setattr(github_install, "list_user_installations", installations)
+    monkeypatch.setattr(github_install, "fetch_user_installation_repos", repos)
+    connected = api_client.post(f"/projects/{project}/github/connect", headers=headers)
+    assert connected.status_code == 200, connected.text
+    assert connected.json()["data"]["repo"] == "acme/widgets"
+
+
 def test_signing_in_again_renews_the_stored_authorization(
     api_client: TestClient, user_client, db_session, _portal, github
 ):
@@ -124,11 +175,10 @@ def test_signing_in_again_renews_the_stored_authorization(
     assert token == "ghu_second"
 
 
-def test_a_sign_in_state_never_links_an_account(
+def test_a_sign_in_state_without_its_cookie_is_refused(
     api_client: TestClient, user_client, db_session, _portal, github
 ):
-    """The callback tells sign-in from 关联 by the state's shape; a sign-in state
-    sent without its browser cookie is refused, never treated as a link."""
+    """A sign-in state sent without its browser cookie is refused."""
     user = user_client.create_user()
     start = api_client.get("/users/auth/oauth/login/github_app", follow_redirects=False)
     state = _q(start.headers["location"])["state"]
