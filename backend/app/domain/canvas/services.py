@@ -82,6 +82,18 @@ class Canvases:
     async def get(self, canvas_id: uuid.UUID) -> Canvas | None:
         return await self._session.get(Canvas, canvas_id)
 
+    async def get_many_with_projects(
+        self, canvas_ids: set[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[Canvas, uuid.UUID | None]]:
+        if not canvas_ids:
+            return {}
+        rows = await self._session.execute(
+            select(Canvas, Document.project_id)
+            .outerjoin(Document, Document.id == Canvas.document_id)
+            .where(Canvas.id.in_(canvas_ids))
+        )
+        return {canvas.id: (canvas, project_id) for canvas, project_id in rows}
+
     async def get_or_404(self, canvas_id: uuid.UUID) -> Canvas:
         canvas = await self.get(canvas_id)
         if canvas is None:
@@ -340,23 +352,29 @@ async def settle(
     pasting a block does. A canvas of another project, or of a document the
     caller may not read, is refused rather than copied."""
     canvases = Canvases(session)
+    parsed = blocks(text)
+    canvas_rows = await canvases.get_many_with_projects(
+        {block.canvas_id for block in parsed if block.canvas_id is not None}
+    )
     left = Counter(keep)
     refs: list[uuid.UUID | None] = []
     made: list[tuple[uuid.UUID, str]] = []
-    for block in blocks(text):
+    for block in parsed:
         if block.canvas_id is None:
             canvas = await canvases.create(document_id=document_id, actor=actor)
             made.append((canvas.id, block.title))
             refs.append(canvas.id)
             continue
-        canvas = await canvases.get(block.canvas_id)
+        canvas_and_project = canvas_rows.get(block.canvas_id)
+        canvas = canvas_and_project[0] if canvas_and_project is not None else None
+        canvas_project = canvas_and_project[1] if canvas_and_project is not None else None
         if canvas is not None and canvas.document_id == document_id and left[canvas.id]:
             left[canvas.id] -= 1
             refs.append(canvas.id)
             continue
         if (
             canvas is None
-            or await canvases.project_of(canvas) != project_id
+            or canvas_project != project_id
             or not await readable(canvas.document_id)
         ):
             raise UnprocessableEntityError(
