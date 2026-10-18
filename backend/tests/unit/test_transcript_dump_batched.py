@@ -10,10 +10,14 @@ yield to the event loop. It now calls ``dump_blocks_json`` (one TypeAdapter per
 Two halves are pinned here:
 
 * the page is byte-identical to the per-row expression it replaced, and
-* the batch path is what actually runs. The second test counts the dumper's
-  ``asyncio.sleep(0)`` yields across a whole-history page: 1,200 rows are three
-  chunks and therefore two yields, while a per-row body yields none. Putting the
-  list comprehension back turns that count red.
+* the batch path is what actually runs, on both the paged branch and the
+  whole-history branch. Both tests record the page handed to the dumper, so a
+  body that batches only one of the two branches fails: per-row and batched
+  payloads are equal by design, and a paged page (limit ≤ 200) is always a
+  single 500-row chunk, so values alone cannot tell them apart. The second test
+  also counts the dumper's ``asyncio.sleep(0)`` yields across a whole-history
+  page: 1,200 rows are three chunks and therefore two yields, while a per-row
+  body yields none.
 """
 
 import asyncio
@@ -119,16 +123,35 @@ def _call_route(blocks: list[Block], *, limit: int | None) -> dict[str, Any]:
     return asyncio.run(run())
 
 
+def _record_batches(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record each page handed to the dumper, still dumping it for real."""
+    real = topics_transcript.dump_blocks_json
+    sizes: list[int] = []
+
+    async def recording(blocks, *args, **kwargs):
+        sizes.append(len(blocks))
+        return await real(blocks, *args, **kwargs)
+
+    monkeypatch.setattr(topics_transcript, "dump_blocks_json", recording)
+    return sizes
+
+
 def test_120_step_page_is_byte_identical_to_the_per_row_expression(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     blocks = _blocks(120, with_output=True)
     _patch_route_dependencies(monkeypatch, blocks)
+    batches = _record_batches(monkeypatch)
 
     payload = _call_route(blocks, limit=120)
     actual = payload["data"]["data"]
     expected = _per_row_reference(blocks)
 
+    # The paged branch — the 120-step page this change is about — goes through
+    # the dumper as one page. Without this a regression that batches only the
+    # whole-history branch (limit=None) would still pass, because per-row and
+    # batched payloads are equal by design.
+    assert batches == [120]
     assert payload["data"]["total"] == 120
     assert actual == expected
     assert _json_bytes(actual) == _json_bytes(expected)
@@ -142,6 +165,7 @@ def test_whole_history_page_yields_between_batches(
 ) -> None:
     blocks = _blocks(1_200)
     _patch_route_dependencies(monkeypatch, blocks)
+    batches = _record_batches(monkeypatch)
 
     real_sleep = asyncio.sleep
     yields = 0
@@ -159,6 +183,7 @@ def test_whole_history_page_yields_between_batches(
     # 1,200 rows / 500 per chunk = three chunks -> two inter-chunk yields. The
     # per-row list comprehension this replaced yields none, so a revert fails
     # here rather than passing silently.
+    assert batches == [1_200]
     assert yields == 2
     assert payload["data"]["total"] == 1_200
     assert payload["data"]["data"] == _per_row_reference(blocks)
