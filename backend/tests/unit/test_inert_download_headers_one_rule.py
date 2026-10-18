@@ -7,10 +7,14 @@ document do anything". The defence is only as good as its weakest copy: a
 response that carries its own copy of the pair stops moving when the shared one
 learns something new, and nothing points at the copy it left behind.
 
-The first two tests drive each exit and read the response it actually builds;
-the third reads the modules and fails if the values are spelled out there again.
-That third rule is what catches the copy coming back — the responses stay
-correct while a copy exists, which is exactly why nobody notices it.
+The tests below drive each response exit this change touches and read what it
+actually sends, including the HTML preview, whose policy is its own but whose
+`nosniff` now comes from the shared module. The last test reads the two modules
+this change owns and fails if the values are spelled out there again — the
+responses stay correct while a copy exists, which is exactly why nobody would
+notice one coming back. It is deliberately scoped to those two modules: other
+route modules still carry the same pair, and a guard over all of them belongs
+to the change that converts them.
 """
 
 import ast
@@ -110,6 +114,43 @@ def test_the_pdf_exit_sends_the_inert_pair(monkeypatch):
 
     assert response.headers["x-content-type-options"] == NOSNIFF
     assert response.headers["content-security-policy"] == INERT_CSP
+
+
+def test_the_html_preview_keeps_its_nosniff_alongside_its_own_policy(monkeypatch):
+    """The preview page is allowed its own scripts, but not a re-guess at its type.
+
+    Its CSP is not the inert pair — the page has to run its own inline script —
+    so this exit takes `NO_SNIFF` from the shared module and adds that policy.
+    Nothing else notices the header going missing: the page still renders, the
+    browser just becomes free to reinterpret it.
+    """
+
+    async def source_bytes(_db, _project_id, _topic_id, _clean, _task, _source):
+        return b"a docx, in principle"
+
+    async def render_to_html(_data, _clean, _endpoint):
+        return b"<!DOCTYPE html>\n<html><head><title>x</title></head></html>"
+
+    async def place_or_404(_db, _topic_id):
+        return type("Placed", (), {"room": _Room()})()
+
+    monkeypatch.setattr(topics_attachments, "place_or_404", place_or_404)
+    monkeypatch.setattr(topics_attachments, "source_bytes", source_bytes)
+    monkeypatch.setattr(topics_attachments, "render_to_html", render_to_html)
+
+    response = asyncio.run(
+        topics_attachments.attachment_as_html(
+            topic_id=uuid.uuid4(),
+            path="成果.docx",
+            db=object(),
+            resolver=_Resolver(),
+        )
+    )
+
+    assert response.headers["x-content-type-options"] == NOSNIFF
+    policy = response.headers["content-security-policy"]
+    assert policy != INERT_CSP
+    assert "script-src 'unsafe-inline'" in policy
 
 
 def _written_strings(module) -> set[str]:
