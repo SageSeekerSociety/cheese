@@ -168,7 +168,7 @@ def test_the_audience_check_costs_the_same_for_three_seats_and_twenty(client):
     )
     # Per seat this room cost one project read plus ~8 reads per handle (~160).
     # The batched answer is a handful of reads whatever the roster holds.
-    assert len(large_seen) <= 20, large_seen
+    assert len(large_seen) <= 12, large_seen
 
 
 def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
@@ -183,6 +183,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "roster-out",
         "stranger",
         "agent-seat",
+        "agent-rostered",
         "retired",
     )
 
@@ -193,6 +194,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
                 ProjectMember(project_id=project_id, user_handle="rostered"),
                 ProjectMember(project_id=project_id, user_handle="roster-out"),
                 ProjectMember(project_id=project_id, user_handle="mentor"),
+                ProjectMember(project_id=project_id, user_handle="agent-rostered"),
                 ProjectRole(project_id=project_id, user_handle="mentor", role="mentor"),
                 ProjectRoleGrant(
                     project_id=project_id,
@@ -204,9 +206,12 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
             ]
         )
         await session.flush()
-        agent = await UserRepository(session).get_by_username("agent-seat")
-        assert agent is not None
-        session.add(AgentBinding(user_id=agent.id))
+        agents = [
+            await UserRepository(session).get_by_username(handle)
+            for handle in ("agent-seat", "agent-rostered")
+        ]
+        assert all(agent is not None for agent in agents)
+        session.add_all([AgentBinding(user_id=agent.id) for agent in agents])
         await session.flush()
 
     _on_the_app_loop(client, _relationships)
@@ -233,6 +238,7 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "roster-out",  # a roster row the project also excluded
         "stranger",  # a registered person in neither
         "agent-seat",  # an AI teammate, not on the roster
+        "agent-rostered",  # an AI teammate the project did seat
         "nobody-0000",  # no account at all
         "retired",  # a retired account still on the team's relations
         "",  # a seat with no handle is nobody
@@ -255,7 +261,25 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
         "roster-out": True,
         "stranger": False,
         "agent-seat": False,
+        "agent-rostered": True,
         "nobody-0000": False,
         "retired": False,
         "": False,
     }
+
+    # The room's own answer, which is the path the work-lease authorization
+    # takes: everyone on the roster that is a person and cannot read the
+    # project. Agents are not people a room's answer reaches, so they are left
+    # out even where they read the project.
+    room = _room(
+        client,
+        pid,
+        "dave",
+        [handle for handle in handles if handle and handle != "dave"],
+    )
+    agents = {"agent-seat", "agent-rostered"}
+    assert _outsiders(client, pid, room) == [
+        handle
+        for handle in handles
+        if handle and handle not in agents and not each[handle]
+    ]
