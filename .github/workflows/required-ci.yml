@@ -597,7 +597,10 @@ jobs:
   main-green:
     name: Record the green main commit
     needs: [required]
-    if: ${{ !cancelled() && github.event_name == 'push' }}
+    # `needs.required.result` is explicit because `!cancelled()` would run this
+    # job after a RED aggregation too (a status check function lifts the implicit
+    # success() gate): the anchor must never move past a failure.
+    if: ${{ github.event_name == 'push' && needs.required.result == 'success' }}
     permissions:
       contents: write
     runs-on: [self-hosted, cheese-ci]

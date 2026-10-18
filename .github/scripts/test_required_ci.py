@@ -929,6 +929,34 @@ def condition_holds(expression, event_name, draft, cancelled=False):
     return bool(eval(py, {"__builtins__": {}}, {"cancelled": cancelled}))  # noqa: S307
 
 
+def job_runs(expression, event_name, draft, needs, cancelled=False):
+    """Whether a job whose ``needs`` have these results runs.
+
+    :func:`condition_holds` evaluates the expression alone. A job also answers
+    its dependencies: GitHub applies an implicit ``success()`` gate unless the
+    condition contains a status check function, and a status function
+    (``!cancelled()`` included) *lifts* that gate — so `!cancelled()` runs the
+    job even when a needed job failed. Both halves are modelled here.
+    """
+    match = re.fullmatch(r"\$\{\{(.*)\}\}", expression.strip(), re.S)
+    if not match:
+        raise AssertionError(f"not a workflow expression: {expression!r}")
+    py = match.group(1).strip()
+    py = py.replace("github.event.pull_request.draft", repr(draft))
+    py = py.replace("github.event_name", repr(event_name))
+    for job, result in needs.items():
+        py = py.replace(f"needs.{job}.result", repr(result))
+    status_function = "cancelled()" in py or "always()" in py
+    py = py.replace("!cancelled()", "not cancelled")
+    py = py.replace("&&", " and ").replace("||", " or ").replace("!(", "not (")
+    if re.search(r"[!&|]", py):
+        raise AssertionError(f"unsupported operator in {expression!r}: {py}")
+    holds = bool(eval(py, {"__builtins__": {}}, {"cancelled": cancelled}))  # noqa: S307
+    if status_function:
+        return holds
+    return holds and all(result == "success" for result in needs.values())
+
+
 def run_body_containing(text, needle):
     """The single ``run:`` body whose shell contains ``needle``.
 
@@ -1576,13 +1604,16 @@ class PushBatchTest(unittest.TestCase):
 
     def test_only_a_passing_push_run_moves_the_green_anchor(self):
         job = jobs_of(WORKFLOW.read_text())["main-green"]
-        # `required` is the aggregation: a job that needs it runs only when it
-        # passed, so a red batch leaves the anchor where it was and the next
-        # batch covers the failure too. push only: a PR run proves a branch,
-        # not main.
-        self.assertIn("required", job["text"])
-        self.assertIn("github.event_name == 'push'", job["text"])
         self.assertIn("contents: write", job["text"])
+        # A red batch leaves the anchor where it was, so the next batch covers
+        # the failure too. `!cancelled()` alone would NOT do that: it is a
+        # status check function, so it lifts the implicit success() gate and the
+        # job would run after a failed aggregation.
+        self.assertTrue(job_runs(job["if"], "push", None, {"required": "success"}))
+        self.assertFalse(job_runs(job["if"], "push", None, {"required": "failure"}))
+        self.assertFalse(job_runs(job["if"], "push", None, {"required": "skipped"}))
+        # Only a main push proves main; a PR run proves a branch.
+        self.assertFalse(job_runs(job["if"], "pull_request", False, {"required": "success"}))
 
     def _run_anchor_step(self, tmp, statuses, sha):
         bindir = Path(tmp) / "bin"
