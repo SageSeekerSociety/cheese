@@ -139,7 +139,9 @@ async def mark_ready(
 #: branch to ready would spend a whole round on the check set it was cut
 #: from — and the merge into main would run the current one again anyway.
 _READY_CONFLICT = "分支与目标分支冲突，先在分支上解掉冲突再转可评审"
-_READY_REBASE_REFUSED = "分支落后于目标分支，自动更新分支被拒；请稍后重试"
+_READY_REBASE_REFUSED = (
+    "分支落后于目标分支，自动更新分支被拒：可能撞了冲突，也可能稍后重试即可"
+)
 
 
 #: How long to wait for an accepted update-branch to land. GitHub answers 202

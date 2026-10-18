@@ -32,10 +32,24 @@ PROJECT = uuid.uuid4()
 class _World:
     """Two fakes share one head, and a successful update-branch moves it —
     the way the forge does. GitHub accepts the call with 202 first, so the
-    code re-reads until the head it asked to replace is gone."""
+    code re-reads until the head it asked to replace is gone.
 
-    def __init__(self) -> None:
+    `lag` models that background apply: the first read after the call still
+    sees the old head, the second sees the new one (and the code waits)."""
+
+    def __init__(self, *, lag: bool = False) -> None:
         self.head = "sha-1"
+        self.pending: str | None = None
+        self.pending_reads = 0
+        self.lag = lag
+
+    def settle(self) -> None:
+        """Apply a pending head move — late, when the forge is lagging."""
+        if self.pending is None:
+            return
+        self.pending_reads += 1
+        if not self.lag or self.pending_reads > 1:
+            self.head, self.pending = self.pending, None
 
 
 def _status(**fields) -> PullRequestStatus:
@@ -80,6 +94,7 @@ class _Publisher:
 
     async def pr_status(self, number):
         self.events.append("pr_status")
+        self.world.settle()
         template = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
         return replace(template, head_sha=self.world.head)
 
@@ -121,7 +136,7 @@ class _Forge:
         self.events.append("update_branch")
         self.update_calls.append((number, token))
         if self.updated:
-            self.world.head = f"{self.world.head}-rebased"
+            self.world.pending = f"{self.world.head}-rebased"
         return self.updated
 
 
@@ -140,12 +155,12 @@ def _task(**fields) -> SimpleNamespace:
 
 
 async def _ready(
-    *, statuses, ancestry=("diverged",), updated=True, error=None, task=None
+    *, statuses, ancestry=("diverged",), updated=True, error=None, task=None, lag=False
 ):
     """Call `mark_ready` with every forge side faked; returns what the caller
     sees plus the two fakes and the shared event log."""
     events: list[str] = []
-    world = _World()
+    world = _World(lag=lag)
     publisher = _Publisher(events, world, statuses=statuses)
     forge = _Forge(events, world, ancestry=ancestry, updated=updated, error=error)
     service = AcceptService(MagicMock())
@@ -251,6 +266,44 @@ async def test_ready_reports_a_refused_rebase_instead_of_flipping_anyway():
     assert forge.update_calls == [(7, "ghs_write")]
     assert "mark_ready_for_review" not in events
     assert events.count("pr_status") == 2
+
+
+@pytest.mark.anyio
+async def test_ready_waits_for_a_background_update_to_land():
+    """GitHub 的 202 是「受理」，head 还没动。翻 ready 前必须等到新 head，
+    否则全量 CI 起在旧 head 上、再在新 head 上重跑一遍 —— 又白跑一轮。"""
+    answer, _publisher, _forge, events = await _ready(statuses=[_status()], lag=True)
+
+    assert answer["ready"] is True
+    # 初始读 + 换基后两次读（第一次仍是旧 head，第二次才动）
+    assert events.count("pr_status") == 3
+    assert events.index("update_branch") < events.index("mark_ready_for_review")
+
+
+@pytest.mark.anyio
+async def test_ready_does_not_flip_when_the_updated_head_conflicts():
+    """换基落地后新 head 撞冲突 → 不翻。"""
+    answer, _publisher, _forge, events = await _ready(
+        statuses=[_status(), _status(mergeable_state="dirty")],
+        lag=True,
+    )
+
+    assert answer["ready"] is False
+    assert "冲突" in answer["reason"]
+    assert "mark_ready_for_review" not in events
+
+
+@pytest.mark.anyio
+async def test_ready_keeps_refusing_when_the_branch_is_still_behind():
+    """换基被拒、重读后仍然落后 → 不翻，把「可能撞冲突」说清楚。"""
+    answer, _publisher, _forge, events = await _ready(
+        statuses=[_status()], ancestry=("diverged", "diverged"), updated=False
+    )
+
+    assert answer["ready"] is False
+    assert "自动更新分支被拒" in answer["reason"]
+    assert "冲突" in answer["reason"]
+    assert "mark_ready_for_review" not in events
 
 
 @pytest.mark.anyio
