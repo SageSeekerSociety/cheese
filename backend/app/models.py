@@ -64,6 +64,7 @@ from app.domain.team import models as team  # noqa: F401
 from app.domain.thread import models as thread  # noqa: F401
 from app.domain.topic import models as topic  # noqa: F401
 from app.domain.usage import models as usage  # noqa: F401
+from app.domain.voice import models as voice  # noqa: F401
 from app.domain.user import models as user  # noqa: F401
 from app.domain.web_snippet import models as web_snippet  # noqa: F401
 from app.domain.webhook import models as webhook  # noqa: F401

@@ -590,7 +590,7 @@ layers =
     platform_stats : feature_stats : dashboard : project_progress : project_situation : onboarding
     routine : task_quiet : admin : room_cleanup : wake_watch
     agent : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
-    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material
+    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material : voice
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet : ci_activity
     common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : project_material_rows : event_about : event_author : project_permissions

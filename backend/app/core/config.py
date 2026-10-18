@@ -450,6 +450,18 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
+    # --- Voice input (app/domain/voice) ---
+    # The composer's microphone: a speech model through the gateway, then a
+    # small model that tidies the transcript into a message. Recorded per
+    # person in voice_inputs and per project in resource_usage; while
+    # voice_input_charged is off the rows cost the project no credits.
+    voice_asr_model: str = "qwen-audio-asr"
+    voice_polish_model: str = "deepseek-flash"
+    voice_input_charged: bool = False
+    voice_max_seconds: int = 60
+    voice_daily_seconds: int = 3600
+    voice_asr_timeout_seconds: float = 30.0
+    voice_polish_timeout_seconds: float = 15.0
     # 项目总览上的「现状」：读项目材料写几句现状的那一问（用项目自己的模型）。
     # 大项目要想一两分钟。
     project_situation_timeout_seconds: float = 240.0
