@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
-// questions / answers / legal / attachments / knowledges / tags 六域：逐个方法钉住它发出去
+// questions / answers / legal / attachments / tags 五域：逐个方法钉住它发出去
 // 的浏览器请求（方法、地址与查询、鉴权头、JSON/多分体正文），并核对载荷契约 —— JSON 调用
-// 直接给 payload，无载荷命令给显式成功值。knowledges 走新 origin（newer），其余五域走老
-// origin（primary）。钉的是浏览器可见的请求，不是 axios 配置或包装源码。
+// 直接给 payload，无载荷命令给显式成功值。五域都走老 origin（primary）。钉的是浏览器可见的请求，不是 axios 配置或包装源码。
 import type { InternalAxiosRequestConfig } from 'axios'
 
 import { http, HttpResponse } from 'msw'
@@ -13,7 +12,6 @@ import {
   contractEnvironment,
   contractRequest,
   envelope,
-  newer,
   primary,
   server,
   uploadFile,
@@ -100,31 +98,6 @@ const legal: Record<string, ContractCase> = {
     args: [{ terms: '1.0', privacy: '2.0' }],
     body: { documents: { terms: '1.0', privacy: '2.0' } },
   },
-}
-
-const knowledges: Record<string, ContractCase> = {
-  create: {
-    method: 'POST',
-    path: '/knowledge',
-    args: [{ name: '设计规范', type: 'TEXT', content: '{}', teamId: 7 }],
-    body: { name: '设计规范', type: 'TEXT', content: '{}', teamId: 7 },
-  },
-  list: {
-    method: 'GET',
-    path: '/knowledge',
-    args: [{ teamId: 7, type: 'TEXT', labels: ['a', 'b'], pageStart: 0, sort_by: 'createdAt', projectId: undefined }],
-    query: [
-      ['teamId', '7'],
-      ['type', 'TEXT'],
-      ['labels', 'a'],
-      ['labels', 'b'],
-      ['pageStart', '0'],
-      ['sort_by', 'createdAt'],
-    ],
-  },
-  getDetail: { method: 'GET', path: '/knowledge/9', args: [9] },
-  update: { method: 'PATCH', path: '/knowledge/9', args: [9, { name: '新名字' }], body: { name: '新名字' } },
-  deleteKnowledge: { method: 'DELETE', path: '/knowledge/9', args: [9] },
 }
 
 const tags: Record<string, ContractCase> = {
@@ -236,14 +209,4 @@ describe('primary-origin domains browser contract', () => {
     expect(timeouts).toEqual([60000])
     expect(progress.length).toBeGreaterThan(0)
   })
-})
-
-describe('new-origin domain browser contract', () => {
-  it.each(Object.entries(knowledges))(
-    'knowledges.%s preserves the request and returns the payload',
-    async (name, test) => {
-      const { KnowledgesApi: next } = await import('./knowledges')
-      await contractRequest(test, () => (next[name as keyof typeof next] as Callable)(...test.args), newer)
-    }
-  )
 })

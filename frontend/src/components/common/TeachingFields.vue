@@ -152,12 +152,12 @@ function useDefaultTemplate() {
             class="mb-4"
           />
           <v-text-field
-            v-model="draft.knowledgeIds"
+            v-model="draft.documentIds"
             autocomplete="off"
             variant="outlined"
             density="compact"
-            data-testid="teaching-knowledge-ids"
-            :label="t('spaces.teaching.fields.knowledgeIds')"
+            data-testid="teaching-document-ids"
+            :label="t('spaces.teaching.fields.documentIds')"
             :hint="t('spaces.teaching.fields.listHint')"
             persistent-hint
           />

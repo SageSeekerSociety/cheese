@@ -309,7 +309,7 @@ async def list_routines(
     if topic is not None:
         place = await place_or_404(db, topic)
         if place.project_id != project_id:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         actor = await _viewer(db, resolver, project_id, place.room_id)
         rows = await RoutineService(db).list(project_id, topic_id=place.room_id)
     else:
@@ -329,7 +329,7 @@ async def create_routine(
     actor = await _viewer(db, resolver, place.project_id, topic_id)
     room = await TopicService(db).get(place.room_id)
     if room is None:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     await _own_agent_works_for(
         db,
         place.project_id,
@@ -365,7 +365,7 @@ async def get_routine(
     return ok({**presented, "runs": [_run(r) for r in runs]})
 
 
-@router.patch("/routines/{routine_id}")
+@router.patch("/routines/{routine_id}", dependencies=[ROUTE_DECIDES])
 async def update_routine(
     routine_id: uuid.UUID, body: RoutinePatch, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -450,7 +450,7 @@ async def run_routine_now(
     return ok(_run(run))
 
 
-@router.delete("/routines/{routine_id}")
+@router.delete("/routines/{routine_id}", dependencies=[ROUTE_DECIDES])
 async def delete_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -471,7 +471,7 @@ async def list_runs(
     return ok(page(items, len(items)))
 
 
-@router.post("/routine-runs/{run_id}/report")
+@router.post("/routine-runs/{run_id}/report", dependencies=[ROUTE_DECIDES])
 async def report_run(
     run_id: uuid.UUID, body: ReportIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

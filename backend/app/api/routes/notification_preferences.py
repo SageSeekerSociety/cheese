@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ValidationError
 from app.domain.notification.preferences import (
     ChannelChoice,
@@ -82,7 +83,7 @@ async def get_preferences(db: DbSession, auth_user: AuthUser) -> dict:
     return ok(to_dict(pref))
 
 
-@router.put("")
+@router.put("", dependencies=[ROUTE_DECIDES])
 async def save_preferences(
     body: PreferencesIn, db: DbSession, auth_user: AuthUser
 ) -> dict:

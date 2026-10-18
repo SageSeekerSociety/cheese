@@ -14,15 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own.connections import _connection_key, logins
 from app.domain.agent_instance.own.ownership import (
-    _nickname,
-    connection_of,
-    owned_in_project,
-    owned_instance,
+    connections_of,
+    owned_rows_in_project,
 )
 from app.domain.agent_instance.own.settings import allows
-from app.domain.device.models import DeviceRow
+from app.domain.device.mcp_machines import names as device_names
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.user.models import User
+from app.domain.user.services import faces_by_handle
 
 
 async def listing(
@@ -39,29 +38,55 @@ async def listing(
     whether it is online, only its owner reads (``machine`` is None for
     everyone else)."""
 
+    active = [
+        (instance, owned)
+        for instance, owned in await owned_rows_in_project(db, project_id)
+        if instance.is_active
+    ]
+    if not active:
+        return []
+    connections = await connections_of(db, [owned for _, owned in active])
+    # Unlike the user repository's live-user reads, this preserves the handle
+    # of a soft-deleted owner, as the former primary-key lookup did.
+    owners = {
+        user.id: user
+        for user in await db.scalars(
+            select(User).where(
+                User.id.in_({owned.owner_user_id for _, owned in active})
+            )
+        )
+    }
+    faces = await faces_by_handle(db, [owner.username for owner in owners.values()])
+    machines = await device_names(
+        db,
+        [
+            owned.device_id
+            for _, owned in active
+            if viewer_user_id == owned.owner_user_id and owned.device_id is not None
+        ],
+    )
     rows = []
-    for instance, owner_user_id, callers in await owned_in_project(db, project_id):
-        if not instance.is_active:
-            continue
-        owned = await owned_instance(db, instance.id)
-        login = await connection_of(db, owned) if owned is not None else None
-        owner = await db.get(User, owner_user_id)
-        mine = viewer_user_id is not None and viewer_user_id == owner_user_id
+    for instance, owned in active:
+        login = connections[instance.id]
+        owner = owners.get(owned.owner_user_id)
+        mine = viewer_user_id is not None and viewer_user_id == owned.owner_user_id
         machine = None
-        if mine and owned is not None and owned.device_id is not None:
-            device = await db.get(DeviceRow, owned.device_id)
-            if device is not None:
-                machine = {
-                    "name": device.name,
-                    "online": bool(is_online(device.device_id)),
-                }
+        if mine and owned.device_id is not None and owned.device_id in machines:
+            machine = {
+                "name": machines[owned.device_id],
+                "online": bool(is_online(owned.device_id)),
+            }
         rows.append(
             {
                 "handle": agent_instance_handle(instance.id),
                 "name": instance.display_name,
-                "callers": callers.value,
+                "callers": owned.callers.value,
                 "owner_handle": owner.username if owner else None,
-                "owner_name": await _nickname(db, owner.username) if owner else None,
+                "owner_name": (
+                    faces.get(owner.username, (None, None))[0] or owner.username
+                )
+                if owner
+                else None,
                 "connection": {
                     "kind": login.kind.value,
                     "plan": login.plan,

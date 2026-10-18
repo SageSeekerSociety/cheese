@@ -41,13 +41,6 @@ router = APIRouter(prefix="/users", tags=["Users"])
 #     是 Integer），那个 id 只有这层有。列表和停用这两条用不到它，它在那儿是为了
 #     让「匿名 401」在三条上是同一个答案 —— 同 `admin_models.py` 那句「这层用不到，
 #     但它必须出现」。
-#
-# `GET /users/invite-codes` **今天打不到**：`GET /users/{userId}` 在本文件里更早注册
-# （`/{userId}` 在 1722 行附近，这里在 4560 之后），`invite-codes` 落到那条的 int
-# 转换上回 400 int_parsing。它也被装上同一道门 —— 谁哪天把顺序改对，这条一出生就是
-# 管理员专有的，不会再有一个「登录即可读全部邀请码」的窗口。改顺序不在这次改动里：
-# `/{userId}` 那一大家子（`/{userId}/questions`、`/{userId}/identity`……）都靠着它
-# 现在的位置，动它要单独一轮。
 
 
 @router.get(
@@ -112,6 +105,7 @@ async def create_invite_code(
 @router.delete(
     "/invite-codes/{code_id}",
     summary="Deactivate invite code (admin)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def deactivate_invite_code(
     code_id: int,
