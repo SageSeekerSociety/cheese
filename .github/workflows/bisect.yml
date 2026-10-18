@@ -1,0 +1,133 @@
+name: Bisect a red batch
+
+# The landing watch cannot always tell which commit of a red main batch broke
+# it: the failing test's file may match no commit, or several. When the batch
+# is long enough to be worth it, the platform dispatches this workflow with
+# the batch's range and the failing test files; it checks out midpoints and
+# runs only those tests, then writes the commit it found as a `bisect-culprit`
+# check run on the batch head. The landing watch reads that check.
+#
+# It runs only when dispatched; nothing triggers it on a push. `main` is the
+# ref because that is where the batch's commits are and where this workflow
+# lives after it merges.
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: The commit the batch starts after (the main-green anchor)
+        required: true
+      head:
+        description: The batch head the red gate ran on
+        required: true
+      tests:
+        description: The failing test files, one per line
+        required: true
+
+permissions:
+  contents: read
+  # The result is a check run on the batch head; the landing watch reads it.
+  checks: write
+
+# One bisect per batch head: two dispatches for the same head would check out
+# the tree under each other and race the same files.
+concurrency:
+  group: bisect-${{ inputs.head }}
+  cancel-in-progress: true
+
+jobs:
+  bisect:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    env:
+      REDIS_URL: redis://localhost:6389/0
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      OPENAI_API_KEY: test-key
+      ANTHROPIC_AUTH_TOKEN: test-token
+    services:
+      postgres:
+        image: mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cheese_test
+        ports:
+          - 5442:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 1s
+          --health-timeout 5s --health-retries 60
+      valkey:
+        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
+        ports:
+          - 6389:6379
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 1s
+          --health-timeout 5s --health-retries 60
+    steps:
+      # The whole history: the batch is a range of commits, and each step
+      # checks one of them out.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Scope this run to its runner slot
+        run: |
+          slot="${CHEESE_CI_SLOT:-0}"
+          echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
+          echo "CHEESE_CI_REDIS_BASE_DB=$((slot * 16))" >> "$GITHUB_ENV"
+          root="postgresql+asyncpg://postgres:postgres@localhost:5442"
+          echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
+
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          save-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        working-directory: backend
+
+      - name: Give this run an empty database
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
+            "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
+
+      - name: Run database migrations
+        run: uv run alembic upgrade head
+        working-directory: backend
+
+      # Only when the failing tests are frontend files: the bisect re-checks
+      # out commits, but node_modules is not tracked, so it is installed once
+      # here and reused for every step.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install frontend dependencies
+        if: ${{ contains(inputs.tests, '.ts') || contains(inputs.tests, '.js') || contains(inputs.tests, '.vue') }}
+        run: corepack enable && pnpm install --frozen-lockfile
+        working-directory: frontend
+
+      - name: Bisect the failing tests
+        env:
+          TESTS: ${{ inputs.tests }}
+        run: |
+          python3 .github/scripts/bisect-culprit.py \
+            --base "${{ inputs.base }}" \
+            --head "${{ inputs.head }}" \
+            --tests "$TESTS"
