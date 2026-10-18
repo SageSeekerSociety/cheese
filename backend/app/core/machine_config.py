@@ -110,6 +110,13 @@ class MachineSettings(BaseModel):
     # its session has asked for no tool for this long; the next tool call gets
     # a new one (`machine/lifecycle.py`).
     cloud_sandbox_idle_stop_s: int = Field(default=600, ge=60, le=86400)
+    # When the pool is pressed — no host that may take a sandbox has a free
+    # slot, or a session is waiting on its sandbox — an idle sandbox on a
+    # platform host is destroyed after this much instead, freeing its slot for
+    # the session waiting on it (`machine/lifecycle.py`). A person's own
+    # computer keeps the idle time above, and a whole cloud VM is released on
+    # its own clock (`cloud_vm_idle_release_s`).
+    cloud_sandbox_idle_stop_pressed_s: int = Field(default=180, ge=1, le=86400)
     # A command the executor still runs for the session (a Bash call sent to the
     # background) keeps an otherwise idle sandbox up, but no longer than this
     # after the session's last activity.
