@@ -17,10 +17,11 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Uuid, any_, bindparam, func, select
 from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.orm import defer
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic, TopicStatus, not_a_private_chat
 from app.domain.topic.repositories.statements import (
     _last_activity,
     _order_by,
@@ -128,7 +129,7 @@ async def visible_unarchived_ids_for_projects(
         return []
     stmt = select(Topic.id).where(
         Topic.project_id.in_(project_ids),
-        Topic.is_private.is_(False),
+        not_a_private_chat(),
         Topic.deleted_at.is_(None),
         Topic.status != TopicStatus.archived,
         seen_by(viewer),
@@ -207,7 +208,7 @@ def _project_topics_stmt(
     # from every list the moment it is deleted.
     stmt = select(Topic).where(
         Topic.project_id.in_(project_ids),
-        Topic.is_private.is_(False),
+        not_a_private_chat(),
         Topic.deleted_at.is_(None),
     )
     if seen is not None:
@@ -256,15 +257,25 @@ async def list_for_project_with_activity(
     Separate from ``list_for_project`` rather than replacing it: that one's
     ``list[Topic]`` is what mentions, the agent's context builders and the
     dashboard want, and none of them look at last activity.
+
+    ``Topic.environment`` and ``Topic.default_environment`` are deferred:
+    the list endpoint (``TopicOut``) and ``readable_rooms`` never read sandbox
+    environment documents, so pulling and deserialising both JSON columns on
+    every row is wasted work. Callers that need those columns must load a
+    full row (``get`` or ``list_for_project``).
     """
-    stmt = _project_topics_stmt(
-        repo,
-        [project_id],
-        sort=sort,
-        order=order,
-        active_since=active_since,
-        seen=seen_by(viewer),
-    ).add_columns(_last_activity())
+    stmt = (
+        _project_topics_stmt(
+            repo,
+            [project_id],
+            sort=sort,
+            order=order,
+            active_since=active_since,
+            seen=seen_by(viewer),
+        )
+        .options(defer(Topic.environment), defer(Topic.default_environment))
+        .add_columns(_last_activity())
+    )
     rows = (await repo._session.execute(stmt)).all()
     return [(topic, last) for topic, last in rows]
 
@@ -330,7 +341,7 @@ async def count_for_project(
         .select_from(Topic)
         .where(
             Topic.project_id == project_id,
-            Topic.is_private.is_(False),
+            not_a_private_chat(),
             Topic.deleted_at.is_(None),
             seen_by(viewer),
         )

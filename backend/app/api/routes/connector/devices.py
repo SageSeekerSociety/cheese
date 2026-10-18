@@ -224,7 +224,7 @@ async def device_start(
     return {"device_code": code, "approve_url": approve_url, "interval": 2}
 
 
-@router.post("/auth/device/poll")
+@router.post("/auth/device/poll", dependencies=[ROUTE_DECIDES])
 async def device_poll(
     body: DevicePollRequest, service: DeviceServiceDep
 ) -> dict[str, Any]:
