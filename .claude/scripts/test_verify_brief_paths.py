@@ -404,6 +404,30 @@ class VerifyBriefPathsTests(unittest.TestCase):
                 self.assertIn("docs/a.ver2", errors)
                 self.assertNotIn(prose, errors)
 
+    def test_dotted_prose_after_known_path_is_trimmed(self):
+        for brief, path in (
+            ("更新 docs/a.ver2中的v2.0说明。\n", "docs/a.ver2"),
+            ("更新 docs/config.md中的第1.2节。\n", "docs/config.md"),
+            ("检查 README.md中的v2.0说明。\n", "README.md"),
+        ):
+            with self.subTest(brief=brief):
+                result, output, errors = self.run_tool(brief)
+                self.assertEqual(result, 0, errors)
+                self.assertIn("verified 1 brief path", output)
+                result, _, errors = self.run_tool(
+                    brief, "--in-flight-actual", path
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("overlaps in-flight", errors)
+                self.assertIn(path, errors)
+
+    def test_unknown_extension_longer_path_is_not_trimmed(self):
+        path = "docs/a.ver2中的说明.xyz"
+        result, _, errors = self.run_tool(f"更新 {path}\n")
+        self.assertEqual(result, 1)
+        self.assertIn("path does not exist", errors)
+        self.assertIn(path, errors)
+
     def test_known_path_prefix_does_not_hide_longer_path(self):
         path = "docs/a.ver2中的说明.md"
         result, _, errors = self.run_tool(f"更新 {path}\n")

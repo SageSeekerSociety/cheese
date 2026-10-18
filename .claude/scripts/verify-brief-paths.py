@@ -189,12 +189,15 @@ def _trim_trailing_prose(token: str, known_paths: set[str]) -> str:
         return token
     for path in sorted(known_paths, key=len, reverse=True):
         suffix = token[len(path):] if token.startswith(path) else ""
-        if (
-            suffix.startswith(("中的", "里的", "上的", "下的", "内的"))
-            and "/" not in suffix
-            and "." not in suffix
-        ):
-            return path
+        if not suffix.startswith(("中的", "里的", "上的", "下的", "内的")):
+            continue
+        # Prose may continue a known path with a version number or a ratio
+        # ("中的第1.2节"); a longer real path carries a separator or ends in a
+        # file extension. Trim only when it does neither, so a nonexistent
+        # longer path is never silently rewritten to this prefix.
+        if "/" in suffix or re.search(r"\.[A-Za-z0-9]{1,10}$", token):
+            continue
+        return path
     lowered = token.lower()
     for suffix in sorted(FILE_SUFFIXES, key=len, reverse=True):
         end = lowered.rfind(suffix) + len(suffix)
