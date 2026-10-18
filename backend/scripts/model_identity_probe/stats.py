@@ -11,7 +11,9 @@ Baselines from the paper, kept here for interpreting a result:
   different models                             median JSD ~= 0.463
   equal error rate                             10.6% at 8 cells, 7.3% at 40
 
-Thresholds are heuristics sitting between those medians, not proofs.
+Thresholds are heuristics sitting between those medians, not proofs. The
+baseline figures above are quoted only to interpret a band: no code reads
+them, and only the two thresholds below decide a verdict.
 
 The equal-error-rate figure is a *paper* baseline (arXiv:2607.10252), quoted
 here only so a reader can interpret a band; it is NOT reproduced by this
@@ -29,9 +31,6 @@ from dataclasses import dataclass, field
 # --- thresholds (llm-fingerprint-detector constants.ts) -----------------------
 JSD_MATCH_THRESHOLD = 0.25
 JSD_MISMATCH_THRESHOLD = 0.35
-JSD_BASELINE_SELF = 0.140
-JSD_BASELINE_CROSS_PROVIDER = 0.227
-JSD_BASELINE_DIFFERENT_MODEL = 0.463
 MIN_VALID_SAMPLES_PER_CELL = 10
 MIN_COMPARABLE_CELLS = 4
 MIN_SPLIT_HALF_SAMPLES = 5
