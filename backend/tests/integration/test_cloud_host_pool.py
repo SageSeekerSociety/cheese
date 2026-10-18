@@ -1062,3 +1062,46 @@ def test_rooms_whose_host_came_up_are_settled_in_one_transaction(pool):
             )
 
     assert pool.run(still_waiting) == [coming]
+
+
+def test_a_home_another_transaction_holds_is_left_for_the_next_sweep(pool):
+    """A tool call holding its own home (``place`` locks it, then may delete
+    the rest of its host's) is not waited on: the batch settles the others,
+    and that one on a later sweep."""
+    sessions = pool.room("alice", 2)
+    [host_id] = {pool.place("alice", session) for session in sessions}
+    for session in sessions:
+        pool.pool("tell_waiting", session)
+    pool.up(host_id)
+
+    async def settle_while_one_is_held():
+        async with pool.client.test_request_factory() as held:
+            home_id = await held.scalar(
+                select(SandboxHome.id)
+                .where(SandboxHome.session_id == sessions[0])
+                .with_for_update()
+            )
+            async with pool.client.test_request_factory() as db:
+                await asyncio.wait_for(
+                    HostPool(db, pool.cloud).settle_waiting(), timeout=10
+                )
+            await held.rollback()
+            return home_id
+
+    held_id = pool.run(settle_while_one_is_held)
+
+    async def waiting():
+        async with pool.client.test_request_factory() as db:
+            return list(
+                await db.scalars(
+                    select(SandboxHome.id).where(SandboxHome.waiting_since.is_not(None))
+                )
+            )
+
+    assert pool.run(waiting) == [held_id]
+    assert pool.room_lines("alice").count("环境已就绪") == 1
+
+    pool.pool("settle_waiting")
+
+    assert pool.run(waiting) == []
+    assert pool.room_lines("alice").count("环境已就绪") == 2

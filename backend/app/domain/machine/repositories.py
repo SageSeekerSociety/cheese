@@ -105,14 +105,17 @@ class CloudHostRepository:
         )
 
     async def lock_homes(self, home_ids: list[uuid.UUID]) -> list[SandboxHome]:
-        """The homes, locked in one statement and in id order, so two sweeps
-        locking overlapping batches take them in the same order."""
+        """Those of the homes nobody else holds, locked in one statement.
+
+        One another transaction holds is skipped, not waited on: a tool call
+        that locked its own home and then deletes the rest of its host's
+        (``HostPool.place`` giving up on a host) would otherwise wait on a
+        home this batch holds while the batch waits on its home."""
         return list(
             await self._session.scalars(
                 select(SandboxHome)
                 .where(SandboxHome.id.in_(home_ids))
-                .order_by(SandboxHome.id)
-                .with_for_update()
+                .with_for_update(skip_locked=True)
                 .execution_options(populate_existing=True)
             )
         )

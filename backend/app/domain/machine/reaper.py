@@ -454,9 +454,10 @@ class PoolSweep:
         """Tell every room still waiting on a sandbox whose host is up now.
 
         The homes on hosts that are up are locked together and settled in one
-        transaction. Each is read again under the lock: a tool call may have
-        closed its line (``HostPool.tell_ready``), or a sweep removed the home,
-        since ``waiting_homes`` read it."""
+        transaction. One another transaction holds is left for the next sweep
+        (``lock_homes``). Each is read again under the lock: a tool call may
+        have closed its line (``HostPool.tell_ready``), or a sweep removed the
+        home, since ``waiting_homes`` read it."""
         whole_machine = {
             home.id: host.whole_machine
             for home, host in await self._repo.waiting_homes()
