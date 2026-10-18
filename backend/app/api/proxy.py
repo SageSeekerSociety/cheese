@@ -9,7 +9,6 @@ than in each surface that asks it.
 
 import uuid
 
-from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.websockets import WebSocket
@@ -19,10 +18,6 @@ from app.auth.project_access import may_read_project
 from app.common.auth import verify_access_token
 from app.core.config import GATEWAY_MOUNT
 from app.domain.topic.services import TopicService
-
-# How long the path-scoped sub-request cookie stays valid. Short: it only has to
-# outlive one open drawer, and it is re-issued on every page load.
-COOKIE_TTL_S = 8 * 3600
 
 # Hop-by-hop headers a proxy must not forward (RFC 7230 §6.1) plus length/type,
 # which the Response recomputes from the body it actually sends.
@@ -86,45 +81,3 @@ async def may_view_topic(
     if project_id is None:
         return False
     return await may_read_project(session, project_id=project_id, handle=handle)
-
-
-def attach_cookie(
-    response: Response, request: Request, *, cookie_name: str, cookie_path: str
-) -> Response:
-    """Re-issue the sub-request cookie from the credential this request proved.
-
-    Only ever mirrors a token the caller already presented, so it grants nothing
-    new — it just carries the same proof to the requests the browser makes on its
-    own (assets, HMR), which cannot carry the query string.
-    """
-    token = credential(request, cookie_name)
-    if token:
-        response.set_cookie(
-            cookie_name,
-            token,
-            path=cookie_path,
-            max_age=COOKIE_TTL_S,
-            httponly=True,
-            samesite="lax",
-        )
-    return response
-
-
-def forwardable_request_headers(conn: Request | WebSocket) -> list[tuple[str, str]]:
-    """Pass the browser's content negotiation upstream (a dev server serves very
-    different bytes for ``Accept: text/html`` than for a module request) while
-    dropping hop-by-hop headers, our own Host, and the cookie — upstream has no
-    business seeing the session token, and what it serves is written by the agent.
-
-    ``accept-encoding`` goes too: the machine helper hands back a body its own
-    HTTP client already decoded, so asking for a compressed one only risks a
-    content-encoding mismatch for zero gain.
-    """
-    drop = DROP_HEADERS | {
-        "host",
-        "cookie",
-        "authorization",
-        "content-length",
-        "accept-encoding",
-    }
-    return [(k, v) for k, v in conn.headers.items() if k.lower() not in drop]

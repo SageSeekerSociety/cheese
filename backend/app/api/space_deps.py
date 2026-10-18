@@ -16,13 +16,11 @@ from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.review_service import SpaceReviewService
-from app.domain.space.services import SpaceLabels, SpaceService
+from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
-from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
-    UserRealNameRepository,
     UserRepository,
 )
 
@@ -95,21 +93,6 @@ async def get_space_topics_service(
     db=Depends(get_db),
 ) -> SpaceTagsService:
     return SpaceTagsService(session=db)
-
-
-async def get_space_user_realname_service(
-    db=Depends(get_db),
-) -> UserRealNameService:
-    user_repo = UserRepository(session=db)
-    profile_repo = UserProfileRepository(session=db)
-    realname_repo = UserRealNameRepository(session=db)
-    return UserRealNameService(
-        session=db,
-        user_repo=user_repo,
-        profile_repo=profile_repo,
-        realname_repo=realname_repo,
-        space_labels=SpaceLabels(session=db),
-    )
 
 
 async def _ensure_space_visible(*, db, space_id: int, user_id: int) -> None:
