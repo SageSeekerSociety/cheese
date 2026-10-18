@@ -37,7 +37,7 @@ from app.domain.review import archive, landing_watch, pr_publish
 from app.domain.review.github_pr import _NO_VERDICT_CONCLUSIONS
 from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.merge_state import RED_CONCLUSIONS
-from app.domain.review.models import AcceptCard
+from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.ports import (
     Announce,
     Chat,
@@ -70,15 +70,6 @@ _transient_misses: dict[uuid.UUID, int] = {}
 # Keep the one-minute sweep within the forge API quota while covering old tasks.
 UNCARDED_TASKS_PER_TICK = 10
 _uncarded_task_cursor: uuid.UUID | None = None
-
-#: Last check state seen for each uncarded task PR: ``(head_sha, state)``. A
-#: card is filed only after CI is green, and until then no card poller watches
-#: the PR — so the one word 「检查全绿，可以递卡了」 has to come from here. It is
-#: said once per head, on the tick where the state goes running → green; the
-#: module-level dict makes a restart forget the previous tick, so the first
-#: green a new process sees is not a transition and wakes nobody (a wake per
-#: deploy for every open green PR would be noise, not news).
-_uncarded_checks_seen: dict[uuid.UUID, tuple[str, str]] = {}
 
 #: The three words `_checks_state` folds a PR's check runs into.
 CHECKS_RUNNING = "running"
@@ -228,9 +219,13 @@ async def poll_uncarded_task_prs(
             or_(Task.delivered_head.is_(None), Task.status == TaskStatus.open),
             Task.closing_since.is_(None),
             Topic.status != TopicStatus.archived,
+            # A card that is still waiting for its reviewer keeps the task in
+            # this poll: its checks turning green is news to the line too.
             ~select(AcceptCard.id)
             .where(
-                AcceptCard.task_id == Task.id, AcceptCard.pr_number == Task.pr_number
+                AcceptCard.task_id == Task.id,
+                AcceptCard.pr_number == Task.pr_number,
+                AcceptCard.status != AcceptStatus.pending,
             )
             .exists(),
         )
@@ -270,6 +265,7 @@ async def poll_uncarded_task_prs(
                         return checked, merged, None
                     number, project = task.pr_number, task.project_id
                     room_id, pr_url = task.room_id, task.pr_url
+                    previous = (task.pr_checks_head, task.pr_checks_state)
                     quota = await background_quota(project, session)
                     client = await proposal_client(project, session)
                 # Asked once the session is closed, so no connection waits on it.
@@ -288,6 +284,7 @@ async def poll_uncarded_task_prs(
                         room_id=room_id,
                         project_id=project,
                         pr_url=pr_url,
+                        previous=previous,
                         announce=announce,
                         record_instruction=record_instruction,
                         sessions=sessions,
@@ -365,6 +362,7 @@ async def _wake_when_checks_pass(
     room_id: uuid.UUID,
     project_id: uuid.UUID,
     pr_url: str | None,
+    previous: tuple[str | None, str | None],
     announce: Announce,
     record_instruction: RecordInstruction,
     sessions,
@@ -406,16 +404,31 @@ async def _wake_when_checks_pass(
         return
     state = _checks_state(await check_runs(status.head_sha))
     head = status.head_sha
-    previous = _uncarded_checks_seen.get(task_id)
     if previous != (head, CHECKS_RUNNING) or state != CHECKS_GREEN:
-        _uncarded_checks_seen[task_id] = (head, state)
+        if previous != (head, state):
+            await _remember_checks(sessions, task_id, head, state)
         return
-    content = say("checksPassed", pr=number)
     async with sessions() as session:
         task = await session.get(Task, task_id)
         if task is None or task.status is not TaskStatus.open:
-            _uncarded_checks_seen[task_id] = (head, state)
+            if task is not None:
+                _set_checks(task, head, state)
+                await session.commit()
             return
+        # With a card waiting, the line has nothing to file: it waits for the
+        # reviewer, so the sentence says that instead.
+        waiting = await session.scalar(
+            select(AcceptCard.id)
+            .where(
+                AcceptCard.task_id == task_id,
+                AcceptCard.pr_number == number,
+                AcceptCard.status == AcceptStatus.pending,
+            )
+            .limit(1)
+        )
+        content = say(
+            "checksPassedAwaitingReview" if waiting else "checksPassed", pr=number
+        )
         await record_instruction(
             session,
             DeliveryEvent(
@@ -442,10 +455,23 @@ async def _wake_when_checks_pass(
                 detail=pr_url or "",
             ),
         )
+        # Written with the sentence in one commit: a failed wake leaves the
+        # stored state at «running», so the next tick says it again.
+        _set_checks(task, head, state)
         await session.commit()
-    # Only after both were written: a failed wake is retried on the next tick
-    # instead of being remembered as «已经说过了».
-    _uncarded_checks_seen[task_id] = (head, state)
+
+
+def _set_checks(task: Task, head: str, state: str) -> None:
+    task.pr_checks_head = head
+    task.pr_checks_state = state
+
+
+async def _remember_checks(sessions, task_id: uuid.UUID, head: str, state: str) -> None:
+    async with sessions() as session:
+        task = await session.get(Task, task_id)
+        if task is not None:
+            _set_checks(task, head, state)
+            await session.commit()
 
 
 async def watch_landings(

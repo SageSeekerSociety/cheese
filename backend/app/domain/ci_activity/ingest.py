@@ -1,40 +1,16 @@
-"""One sweep: bring the CI activity tables up to date with GitHub.
+"""Bring the CI activity tables up to date without spending people's quota.
 
-Four steps, each bounded so one sweep spends a predictable number of requests
-out of the installation's hourly quota (the quota every other background job
-and every person delivering a card share):
+New runs are discovered in fixed five-minute creation-time windows. The same
+windows are revalidated across the existing three-hour range, extended to old
+open runs up to a day back: completion and reruns do not change created_at.
+Their stable URLs can earn free 304s instead of re-downloading a rolling list.
+Reruns outside that existing range remain outside this collector's coverage.
 
-1. **Recent runs.** List the runs created since the earliest of: `RECENT` ago,
-   the oldest stored run that has not completed (up to `OPEN_LOOKBACK` back),
-   and where the last sweep's listing ended (`runs_listed_to`) — and upsert
-   them. A run changes after it is first listed (it starts, finishes, is
-   re-run), almost always within the hour, so re-listing a trailing window is
-   what keeps status, conclusion and attempt current; reaching back to the
-   last listing is what keeps a deployment that was down from leaving a hole.
-   A run re-run after it fell out of that window keeps its older figures.
-2. **Backfill.** Walk the listing back from where the last sweep left it
-   (`runs_listed_from`) towards the window's start, `BACKFILL_SLICE` at a time,
-   at most `backfill_slices` per sweep. A new deployment fills the window over
-   its first sweeps; after that this step does nothing.
-3. **Jobs.** Read the jobs of completed runs whose stored jobs are behind the
-   run's attempt, newest first, at most `jobs_budget` runs per sweep. A run
-   whose conclusion is `skipped` used no runner; its jobs are not read.
-4. **Pull requests and merge queue.** Read merge facts and queue events of
-   every PR updated since the last sweep's `queue_read_to` (the window's start
-   on the first sweep), one
-   `QUEUE_SLICE` of update time per search.
-
-Then everything older than the window is pruned and the sweep is recorded with
-its report and its two cursors.
-
-**A sweep that could not run reports instead of raising**, for the reason the
-ratchet ingest gives: the caller is a periodic job with nowhere to put a
-traceback. No installation, a refused mint, the quota kept for people, a quota
-refusal mid-sweep, a GitHub error, a database error — each ends the sweep where
-it stands, keeps what was stored, and says why in ``report["error"]``. A run
-GitHub no longer has (404 on its jobs) is marked read with no jobs rather than
-stopping every later sweep at the same place. Every sweep is recorded,
-the ones that read nothing included, so the page can say why its numbers stopped.
+Historical backfill and the per-run jobs-attempt ledger are preserved. PR merge
+facts still advance by update time, without fetching queue timelines. A failed,
+truncated or deferred read never advances a cursor beyond an unfinished unit;
+previously committed units survive and the next sweep retries the gap. Every
+sweep, including a deferred one, records its reason and actual reader counts.
 """
 
 from __future__ import annotations
@@ -48,44 +24,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.ci_activity.github import (
-    CiGitHubError,
-    GitHubCi,
-    Listed,
-    QueueEvent,
-)
+from app.domain.ci_activity.github import CiGitHubError, GitHubCi, Listed
 from app.domain.ci_activity.store import CiActivityStore
 from app.domain.project.forge import github_read_token_for_repo
 
-#: How much history is kept and read; older rows are deleted by the sweep.
 WINDOW = timedelta(days=30)
-#: Runs whose jobs one sweep reads (one request each, two for a run of over 100
-#: jobs). Every five minutes, with the run listing and the queue search beside
-#: it, that is about 1000-1300 requests an hour while a new deployment backfills
-#: the window (about a day) and under 100 an hour after, out of the
-#: installation's hourly quota every background job shares.
+#: This bounds runs, not HTTP pages: a large all-attempts jobs read can page.
 JOBS_PER_SWEEP = 80
-#: Older run slices one sweep lists while backfilling: a day per sweep.
 BACKFILL_SLICES_PER_SWEEP = 6
-#: How far back every sweep re-lists runs to catch their status changing.
-#: `rerun-failed.yml` re-runs a failed run within minutes, inside this.
 RECENT = timedelta(hours=3)
-#: How old a still-open run may be and still pull the listing back to it. A
-#: job cannot run longer than six hours; a run open past a day is stuck, and
-#: re-listing a day of runs every sweep for it is not worth it.
 OPEN_LOOKBACK = timedelta(hours=24)
-#: One backfill listing's span of run-creation time. Four hours held under
-#: GitHub's 1000-run cap on this repository's busiest day (~2000 runs);
-#: `list_runs` splits a span that does not.
+RUN_SLICE = timedelta(minutes=5)
 BACKFILL_SLICE = timedelta(hours=4)
-#: One queue search's span of PR-update time.
-QUEUE_SLICE = timedelta(days=1)
-#: How far before the last sweep's queue cursor the next one starts, so a PR
-#: updated while the previous sweep was reading is not missed.
-QUEUE_OVERLAP = timedelta(minutes=10)
+MERGED_PRS_SLICE = timedelta(days=1)
+MERGED_PRS_OVERLAP = timedelta(minutes=10)
 
 
 class CiSource(Protocol):
+    @property
+    def request_counts(self) -> dict[str, Any]: ...
+
+    def check_quota(self, token: str) -> None: ...
+
     async def list_runs(
         self, *, owner: str, repo: str, token: str, since: datetime, until: datetime
     ) -> Listed: ...
@@ -94,9 +54,29 @@ class CiSource(Protocol):
         self, *, owner: str, repo: str, token: str, run_id: int
     ) -> Listed: ...
 
-    async def queue_events(
+    async def merged_pull_requests(
         self, *, owner: str, repo: str, token: str, since: datetime, until: datetime
-    ) -> tuple[list[QueueEvent], Listed]: ...
+    ) -> Listed: ...
+
+
+def _slice_start(moment: datetime) -> datetime:
+    width = int(RUN_SLICE.total_seconds())
+    seconds = int(moment.timestamp())
+    return datetime.fromtimestamp(seconds - seconds % width, UTC)
+
+
+def _request_delta(start: dict[str, Any], end: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        key: value - start.get(key, 0)
+        for key, value in end.items()
+        if key != "by_endpoint"
+    }
+    before = start.get("by_endpoint", {})
+    result["by_endpoint"] = {
+        endpoint: count - before.get(endpoint, 0)
+        for endpoint, count in end.get("by_endpoint", {}).items()
+    }
+    return result
 
 
 async def sweep(sessions: SessionFactory) -> dict[str, Any]:
@@ -121,9 +101,17 @@ async def sweep_once(
         BACKFILL_SLICES_PER_SWEEP if backfill_slices is None else backfill_slices
     )
     window_start = now - WINDOW
+    reader: CiSource = source or GitHubCi()
+    before = reader.request_counts
     report: dict[str, Any] = {
         "repo": repo,
+        # Which installation's quota this sweep's requests were counted against.
+        # The public forge connection names a repo, never this id, so a sampler
+        # could not otherwise tell which installation to read from /metrics.
+        "installation_id": None,
         "requests": 0,
+        "request_counts": _request_delta(before, before),
+        "request_scope": "reader",
         "runs_upserted": 0,
         "jobs_read": 0,
         "jobs_owed": 0,
@@ -144,9 +132,15 @@ async def sweep_once(
     last = await store.last_sweep(repo)
     runs_listed_from = last.runs_listed_from if last else None
     runs_listed_to = last.runs_listed_to if last else None
+    # The existing PR-update cursor is shared with historical queue records;
+    # only merge facts, not queue timelines, are read past it now.
     queue_read_to = last.queue_read_to if last else None
     credential = await github_read_token_for_repo(repo, session, background=True)
     if credential.token is None:
+        # No token this round. Report the id the current binding resolves to
+        # (the quota-closed branch still fills it) or None — never a previous
+        # sweep's id, which a re-install or rebind may have made stale.
+        report["installation_id"] = credential.installation_id
         report["error"] = credential.reason
         await store.record_sweep(
             repo,
@@ -158,39 +152,55 @@ async def sweep_once(
         )
         return report
     token = credential.token
-    reader: CiSource = source or GitHubCi()
+    # The id came back with the credential, read off the binding and token
+    # objects already resolved — no extra request, no stored token.
+    report["installation_id"] = credential.installation_id
 
-    def spent(listed: Listed, what: str) -> None:
-        report["requests"] += listed.requests
+    def complete(listed: Listed, what: str) -> None:
         if listed.truncated:
             report["truncated"].append(what)
+            # i18n-exempt: internal admin report about incomplete source coverage
+            raise CiGitHubError(f"Truncated {what}; coverage cursor was not advanced")
+
+    async def read_runs(since: datetime, until: datetime) -> None:
+        nonlocal runs_listed_from, runs_listed_to
+        listed = await reader.list_runs(
+            owner=owner, repo=name, token=token, since=since, until=until
+        )
+        complete(listed, f"runs from {since.isoformat()}")
+        report["runs_upserted"] += await store.upsert_runs(repo, listed.items)
+        covered_to = min(until, now)
+        runs_listed_to = (
+            max(runs_listed_to, covered_to) if runs_listed_to else covered_to
+        )
+        if runs_listed_from is None or runs_listed_from > since:
+            runs_listed_from = since
 
     try:
+        reader.check_quota(token)
         recent_from = now - RECENT
         oldest_open = await store.oldest_open_run(repo, now - OPEN_LOOKBACK)
-        for earlier in (oldest_open, runs_listed_to):
-            if earlier is not None:
-                recent_from = min(recent_from, earlier)
-        recent_from = max(window_start, recent_from)
-        listed = await reader.list_runs(
-            owner=owner, repo=name, token=token, since=recent_from, until=now
-        )
-        spent(listed, "recent runs")
-        report["runs_upserted"] += await store.upsert_runs(repo, listed.items)
-        runs_listed_to = now
-        if runs_listed_from is None or runs_listed_from > recent_from:
-            runs_listed_from = recent_from
+        if oldest_open is not None:
+            recent_from = min(recent_from, oldest_open)
+        cursor = _slice_start(max(window_start, recent_from))
+        if runs_listed_to is not None and runs_listed_to < cursor:
+            # A downtime gap older than the revalidation range is read once,
+            # in bounded bulk slices, rather than hundreds of empty windows.
+            missing = _slice_start(max(window_start, runs_listed_to))
+            while missing < cursor:
+                until = min(cursor, missing + BACKFILL_SLICE)
+                await read_runs(missing, until)
+                missing = until
+        while cursor < now:
+            until = cursor + RUN_SLICE
+            await read_runs(cursor, until)
+            cursor = until
 
         for _ in range(backfill_slices):
-            if runs_listed_from <= window_start:
+            if runs_listed_from is None or runs_listed_from <= window_start:
                 break
             since = max(window_start, runs_listed_from - BACKFILL_SLICE)
-            listed = await reader.list_runs(
-                owner=owner, repo=name, token=token, since=since, until=runs_listed_from
-            )
-            spent(listed, f"runs from {since.isoformat()}")
-            report["runs_upserted"] += await store.upsert_runs(repo, listed.items)
-            runs_listed_from = since
+            await read_runs(since, runs_listed_from)
 
         for run in await store.runs_owing_jobs(repo, jobs_budget):
             if run.conclusion == "skipped":
@@ -203,36 +213,34 @@ async def sweep_once(
             except CiGitHubError as exc:
                 if exc.status != 404:
                     raise
-                # The run was deleted on GitHub. Left owed, it would be the
-                # newest owed run on every sweep and stop each one here.
                 await store.replace_jobs(run, [], attempt=run.run_attempt)
                 report["gone_runs"] += 1
                 continue
-            spent(listed, f"jobs of run {run.run_id}")
+            complete(listed, f"jobs of run {run.run_id}")
             report["jobs_read"] += await store.replace_jobs(
                 run, listed.items, attempt=run.run_attempt
             )
 
-        cursor = max(window_start, (queue_read_to or window_start) - QUEUE_OVERLAP)
+        cursor = max(window_start, (queue_read_to or window_start) - MERGED_PRS_OVERLAP)
         while cursor < now:
-            until = min(now, cursor + QUEUE_SLICE)
-            events, listed = await reader.queue_events(
+            until = min(now, cursor + MERGED_PRS_SLICE)
+            listed = await reader.merged_pull_requests(
                 owner=owner, repo=name, token=token, since=cursor, until=until
             )
-            spent(listed, f"queue from {cursor.isoformat()}")
+            complete(listed, f"merged PRs from {cursor.isoformat()}")
             report["merged_prs_upserted"] += await store.upsert_merged_pull_requests(
                 repo, listed.items
             )
-            report["queue_events_added"] += await store.add_queue_events(repo, events)
             cursor = queue_read_to = until
     except (CiGitHubError, httpx.HTTPError, SQLAlchemyError) as exc:
         await session.rollback()
         # i18n-exempt: GitHub's own words, for the admin sweep report
         report["error"] = f"{type(exc).__name__}: {exc}"
 
+    report["request_counts"] = _request_delta(before, reader.request_counts)
+    report["requests"] = report["request_counts"]["http_attempts"]
     report["pruned_runs"] = await store.prune(repo, window_start)
     if runs_listed_from is not None:
-        # Pruning removes coverage even when backfill once reached further back.
         runs_listed_from = max(window_start, runs_listed_from)
     report["jobs_owed"] = await store.count_runs_owing_jobs(repo)
     await store.record_sweep(
