@@ -373,7 +373,7 @@ async def redescribe(
                 view,
                 title=pr_text.change_subject(card, topic),
                 body=await pr_publish.pr_body_for(
-                    self._session, client, topic, card=card, opened_by=pr_opener(view)
+                    self._session, topic, card=card, opened_by=pr_opener(view)
                 ),
             )
     # 留痕：谁在什么时候把描述从什么改成了什么。这条入口的存在本身需要可追溯，
@@ -678,7 +678,6 @@ async def _override_github_checks(
         card=card,
         decided_by=decided_by,
         opened_by=status.opened_by,
-        token=creds.read,
     )
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email

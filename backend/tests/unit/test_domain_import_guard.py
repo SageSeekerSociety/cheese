@@ -323,7 +323,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.dashboard", "app.domain.project.repositories"),
         ("app.api.routes.dashboard", "app.domain.usage.repositories"),
         ("app.api.routes.feedback_proposals", "app.domain.block.repositories"),
-        ("app.api.routes.github_account_link", "app.domain.oauth.repositories"),
+        ("app.api.routes.users.github_account", "app.domain.oauth.repositories"),
         ("app.api.routes.github_install", "app.domain.oauth.repositories"),
         ("app.api.routes.github_install", "app.domain.project.repositories"),
         ("app.api.routes.github_install", "app.domain.user.repositories"),

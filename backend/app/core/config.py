@@ -934,20 +934,16 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared
     # env vars are silently dropped and the feature can never be configured) ---
-    oauth_enabled_providers: str = ""  # comma-separated: "github,google,ruc"
-    oauth_github_client_id: str | None = None
-    oauth_github_client_secret: str | None = None
-    oauth_github_redirect_url: str | None = None
+    oauth_enabled_providers: str = ""  # comma-separated: "github_app,google,ruc"
     oauth_google_client_id: str | None = None
     oauth_google_client_secret: str | None = None
     oauth_google_redirect_url: str | None = None
     oauth_ruc_client_id: str | None = None
     oauth_ruc_client_secret: str | None = None
     oauth_ruc_redirect_url: str | None = None
-    # #192 "连接 GitHub 账号": the cheesex-app GitHub App's own user-to-server
-    # OAuth credential — deliberately separate from oauth_github_client_id
-    # (the login provider above), even though it's the same authorize/token
-    # endpoints. Add "github_app" to oauth_enabled_providers to turn this on.
+    # cheesex-app's own user authorization: signing in with GitHub, and 关联
+    # GitHub. Its redirect URL is `/users/me/github-account/callback`, the one
+    # callback registered on the App, which serves both.
     oauth_github_app_client_id: str | None = None
     oauth_github_app_client_secret: str | None = None
     oauth_github_app_redirect_url: str | None = None
