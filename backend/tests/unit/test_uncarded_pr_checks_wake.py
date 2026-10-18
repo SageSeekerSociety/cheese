@@ -55,6 +55,9 @@ class _Session:
     async def get(self, _model, _ident):
         return self.task
 
+    async def scalar(self, _query):
+        return getattr(self.task, "pending_card", None)
+
     async def commit(self):
         return None
 
@@ -88,6 +91,8 @@ def said(monkeypatch):
         room_id=uuid.uuid4(),
         pr_url="https://github.com/acme/widgets/pull/1542",
         status=TaskStatus.open,
+        pr_checks_head=None,
+        pr_checks_state=None,
     )
     session = _Session(task)
     said: list[str] = []
@@ -108,7 +113,6 @@ def said(monkeypatch):
         raise AssertionError("an unmerged PR must not settle the task")
 
     monkeypatch.setattr(pr_poll, "background_quota", no_shared_quota)
-    pr_poll._uncarded_checks_seen.clear()
 
     def run(client):
         async def fake_client(_project, _session):
@@ -128,7 +132,6 @@ def said(monkeypatch):
         return said[before:]
 
     yield run, task
-    pr_poll._uncarded_checks_seen.clear()
 
 
 def test_running_twice_then_green_wakes_the_line_exactly_once(said):
@@ -143,10 +146,9 @@ def test_running_twice_then_green_wakes_the_line_exactly_once(said):
 
 
 def test_the_first_green_a_restarted_process_sees_wakes_nobody(said):
-    """重启后字典是空的：第一次就看到 green 不是「刚转绿」，叫醒等于每次部署
-    把每张已经绿了的未递卡 PR 都叫一遍。"""
+    """库里没有记录（新任务、第一次观察）：第一次就看到 green 不是「刚转绿」，
+    叫醒等于每张已经绿了的未递卡 PR 都叫一遍。"""
     run, _task = said
-    pr_poll._uncarded_checks_seen.clear()
     assert run(_Client([GREEN])) == []
     # 再来一次全绿也不叫：上一轮已经不是 running 了。
     assert run(_Client([GREEN])) == []
@@ -184,9 +186,7 @@ def test_a_pushed_head_starts_over(said):
 
     class _Moved(_Client):
         async def pr_status(self, number):
-            return PullRequestStatus(
-                head_sha="f" * 40, state="open", merged=False
-            )
+            return PullRequestStatus(head_sha="f" * 40, state="open", merged=False)
 
     assert run(_Client([RUNNING])) == []
     assert run(_Moved([GREEN])) == []
@@ -208,6 +208,35 @@ def test_a_closed_task_is_not_told_to_file_a_card(said):
     assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，可以递卡了"]
 
 
+def test_a_restart_keeps_the_last_state_so_the_flip_is_not_lost(said):
+    """状态落在任务行上：「重启」（轮询器重新跑一遍，进程内什么都不带）之后
+    仍从库里的 running 接着判，转绿那一次不丢。把落库改回进程内存，这条就红。"""
+    run, task = said
+    assert run(_Client([RUNNING])) == []
+    assert (task.pr_checks_head, task.pr_checks_state) == (HEAD, "running")
+    assert not hasattr(pr_poll, "_uncarded_checks_seen")
+    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，可以递卡了"]
+    assert task.pr_checks_state == "green"
+
+
+def test_a_carded_task_waiting_for_review_is_woken_once(said):
+    """已递卡、卡还 pending 的任务也在轮询范围里，转绿说的是「等验收」，
+    翻第二次（同一 head 再绿一次）不重复。"""
+    run, task = said
+    task.pending_card = uuid.uuid4()
+    assert run(_Client([RUNNING])) == []
+    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，等待验收"]
+    assert run(_Client([GREEN])) == []
+
+
+def test_the_poll_query_keeps_tasks_with_a_pending_card():
+    """范围只排除已有「非 pending」卡的任务；改回「有卡就排除」，这条红。"""
+    import inspect
+
+    source = inspect.getsource(pr_poll.poll_uncarded_task_prs)
+    assert "AcceptCard.status != AcceptStatus.pending" in source
+
+
 @pytest.mark.parametrize(
     ("runs", "expected"),
     [
@@ -217,10 +246,16 @@ def test_a_closed_task_is_not_told_to_file_a_card(said):
         (GREEN, "green"),
         (GREEN + RUNNING, "running"),
         (GREEN + RED, "red"),
-        (GREEN + [{"name": "b", "status": "completed", "conclusion": "skipped"}], "green"),
+        (
+            GREEN + [{"name": "b", "status": "completed", "conclusion": "skipped"}],
+            "green",
+        ),
         # 没有裁决的 run 不是绿：被顶替的那次以 cancelled 收场，读成全绿就会对着
         # 一个还没人跑完的 head 说「可以递卡了」。
-        (GREEN + [{"name": "c", "status": "completed", "conclusion": "cancelled"}], "running"),
+        (
+            GREEN + [{"name": "c", "status": "completed", "conclusion": "cancelled"}],
+            "running",
+        ),
         (CANCELLED, "running"),
         (STALE, "running"),
         (GREEN + STALE, "running"),

@@ -47,6 +47,7 @@ from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.util import LRUCache
 
 from scripts.assert_suite_ran import SuiteDidNotRun, read_quarantine
+from tests.support.counting_session import measures_query_counts
 
 # Strip inherited git env. When the suite runs from the pre-commit HOOK it executes
 # DURING `git commit`, which exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE for
@@ -2201,9 +2202,25 @@ def _layer_of(item: pytest.Item) -> str:
     return "integration"
 
 
+_READS_ONCE = pytest.mark.reads_once
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Give every collected test exactly one layer marker, and that layer's
     time ceiling unless the test is in the slow baseline.
+
+    Also give every test that counts SQL statements the ``reads_once`` marker,
+    derived from the file's name *or its code* (see
+    ``tests/support/counting_session.py``). Deriving it is the whole point: the
+    family had eighteen members under twelve different names and no marker, so
+    "where is the test that proves this endpoint reads once" was a search across
+    three different keyword spellings. A marker is one readable name for the
+    family: ``pytest -m reads_once``.
+
+    Content is checked as well as the name because the next test in the family
+    will be written by someone who did not know there was a naming convention.
+    The file read is per path, not per item, so the cost is one pass over the
+    test tree.
 
     The CI selections are the whole suite only if every test carries one and
     only one of the three markers: a test carrying none runs in no selection
@@ -2234,6 +2251,13 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             continue
         layer = _layer_of(item)
         item.add_marker(layer)
+        path = os.fspath(item.path) if item.path is not None else ""
+        if (
+            path
+            and item.get_closest_marker("reads_once") is None
+            and measures_query_counts(path)
+        ):
+            item.add_marker(_READS_ONCE)
         if item.nodeid in quarantine:
             # The gate accepts this xfail only when its nodeid and issue
             # match the same quarantine list; other skips still fail.

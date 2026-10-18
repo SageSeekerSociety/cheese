@@ -48,7 +48,7 @@ Code 那句「Invalid API key」。
 ## 时限只记录，不结束
 
 `agent_turn_hard_ceiling_s`（3 小时）是一个指标，不是闸门。过线时轮次记录里写
-`ceiling_crossed_s`、打一条带话题的 warning，然后继续；没有任何东西因此结束。runtime 的外层
+`ceiling_crossed_s`、打一条带频道的 warning，然后继续；没有任何东西因此结束。runtime 的外层
 包装通过 `turn_ceiling` 帧拿到这个数。理由是墙钟分不出「重构到第三小时」和「卡住了」，而三条
 判定各抓一种卡法之后，墙钟单独还能结束的只剩下正在干活、只是没干完的那一轮，那不是故障。
 

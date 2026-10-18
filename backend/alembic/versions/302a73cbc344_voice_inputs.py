@@ -1,7 +1,7 @@
 """Voice inputs: each recording a person turned into text at the composer.
 
 Revision ID: 302a73cbc344
-Revises: cf05a4b9127e
+Revises: b4d7e19a3c58
 """
 
 import sqlalchemy as sa
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "302a73cbc344"
-down_revision = "cf05a4b9127e"
+down_revision = "b4d7e19a3c58"
 branch_labels = None
 depends_on = None
 

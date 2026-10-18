@@ -218,6 +218,11 @@ class Task(UuidPk, Timestamps, Base):
     pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pr_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     delivered_head: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The last check state the PR poll saw on this task's PR: the head and
+    # ``running`` / ``green`` / ``red``. Kept in the row so a restart still
+    # knows the previous tick and the running → green step is not lost.
+    pr_checks_head: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pr_checks_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_check_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

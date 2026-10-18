@@ -24,19 +24,25 @@ GitHub is a fake `CiSource`; the credential lookup is real down to the App's
 token, which is a fake with a quota the test sets.
 """
 
+import hashlib
+import json
+import time
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 from anyio.from_thread import BlockingPortal
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import forge_quota
+from app.core import forge_etags, forge_quota
 from app.domain.ci_activity import board, ingest
 from app.domain.ci_activity.github import (
     CiGitHubError,
     CiQuotaRefused,
+    GitHubCi,
     Listed,
     QueueEvent,
 )
@@ -127,9 +133,10 @@ class _GitHub:
         self.events: list[QueueEvent] = []
         self.listings: list[tuple[datetime, datetime]] = []
         self.jobs_read: list[int] = []
+        self.jobs_attempted: list[int] = []
         self.refuse_jobs_after: int | None = None
         self.gone: set[int] = set()
-        self.queue_reads: list[tuple[datetime, datetime]] = []
+        self.pull_reads: list[tuple[datetime, datetime]] = []
         self.pulls: list[dict] = []
 
     async def list_runs(self, *, owner, repo, token, since, until) -> Listed:
@@ -145,6 +152,7 @@ class _GitHub:
         return Listed(items=found, requests=1)
 
     async def run_jobs(self, *, owner, repo, token, run_id) -> Listed:
+        self.jobs_attempted.append(run_id)
         if (
             self.refuse_jobs_after is not None
             and len(self.jobs_read) >= self.refuse_jobs_after
@@ -155,9 +163,31 @@ class _GitHub:
             raise CiGitHubError("GitHub HTTP 404: Not Found", 404)
         return Listed(items=self.jobs.get(run_id, []), requests=1)
 
-    async def queue_events(self, *, owner, repo, token, since, until):
-        self.queue_reads.append((since, until))
-        return list(self.events), Listed(items=list(self.pulls), requests=1)
+    async def merged_pull_requests(self, *, owner, repo, token, since, until):
+        self.pull_reads.append((since, until))
+        return Listed(items=list(self.pulls), requests=1)
+
+    def check_quota(self, token):
+        GitHubCi().check_quota(token)
+
+    @property
+    def request_counts(self):
+        rest = len(self.listings) + len(self.jobs_attempted)
+        graphql = len(self.pull_reads)
+        by_endpoint = {
+            "GET /actions/runs": len(self.listings),
+            "GET /actions/runs/{id}/jobs": len(self.jobs_attempted),
+            "POST /graphql": graphql,
+        }
+        return {
+            "http_attempts": rest + graphql,
+            "rest_attempts": rest,
+            "graphql_attempts": graphql,
+            "not_modified": 0,
+            "rest_non_304_responses": rest,
+            "unanswered": 0,
+            "by_endpoint": {key: n for key, n in by_endpoint.items() if n},
+        }
 
 
 class _Tokens:
@@ -165,11 +195,17 @@ class _Tokens:
 
     def __init__(self, remaining: int = 4000, limit: int = 5000) -> None:
         self.quota = (remaining, limit)
+        # Counted so a test can tell "no token was ever minted" from "a token
+        # was minted and the reader then chose to stop".
+        self.token_calls = 0
 
     async def installation_token(self) -> tuple[str, str]:
+        self.token_calls += 1
+        forge_quota.own("app-token", self.installation_id, time.time() + 3600)
         return "app-token", "2026-10-17T13:00:00+00:00"
 
     async def core_quota(self) -> tuple[int, int]:
+        forge_quota.record(self.installation_id, *self.quota, time.time() + 3600)
         return self.quota
 
 
@@ -181,8 +217,10 @@ def tokens(monkeypatch: pytest.MonkeyPatch) -> _Tokens:
         return fake
 
     monkeypatch.setattr(project_forge, "github_app_tokens_for_project", _for_project)
+    monkeypatch.setattr(forge_quota, "_owners", {})
     monkeypatch.setattr(forge_quota, "_readings", {})
     monkeypatch.setattr(forge_quota, "_refused_until", {})
+    monkeypatch.setattr(forge_etags, "_kept", OrderedDict())
     monkeypatch.setattr(ingest, "WINDOW", timedelta(days=2))
     return fake
 
@@ -248,8 +286,10 @@ def test_each_run_job_step_and_queue_event_is_stored_once(
 
     async def _run_it() -> None:
         await _connect(db_session)
+        await CiActivityStore(db_session).add_queue_events(REPO, github.events)
         first = await _sweep(db_session, github)
         assert first["error"] == ""
+        assert first["queue_events_added"] == 0
         second = await _sweep(db_session, github, at=NOW + timedelta(minutes=5))
         assert second["error"] == ""
 
@@ -412,6 +452,7 @@ def test_the_backfill_stops_at_the_window_start_and_older_rows_are_deleted(
 
     async def _run_it() -> None:
         await _connect(db_session)
+        await CiActivityStore(db_session).add_queue_events(REPO, github.events)
         db_session.add(
             CiWorkflowRun(
                 **{
@@ -540,12 +581,12 @@ def test_a_run_github_no_longer_has_does_not_stop_the_sweeps_after_it(
         assert first["error"] == "" and second["error"] == ""
         assert github.jobs_read == [201, 200], "each read once; the skipped run never"
         assert set(await db_session.scalars(select(CiJob.job_id))) == {2000}
-        assert len(github.queue_reads) > 0
+        assert len(github.pull_reads) > 0
 
     _portal.call(_run_it)
 
 
-def test_the_queue_is_read_from_the_window_start_then_from_the_last_sweep(
+def test_merged_pr_updates_are_read_from_the_window_start_then_last_sweep(
     db_session: AsyncSession, _portal: BlockingPortal, tokens
 ):
     github = _GitHub()
@@ -553,19 +594,19 @@ def test_the_queue_is_read_from_the_window_start_then_from_the_last_sweep(
     async def _run_it() -> None:
         await _connect(db_session)
         await _sweep(db_session, github)
-        first = list(github.queue_reads)
-        github.queue_reads.clear()
+        first = list(github.pull_reads)
+        github.pull_reads.clear()
         await _sweep(db_session, github, at=NOW + timedelta(minutes=5))
 
         assert first[0][0] == NOW - ingest.WINDOW
         assert first[-1][1] == NOW
-        assert github.queue_reads[0][0] == NOW - ingest.QUEUE_OVERLAP
-        assert github.queue_reads[-1][1] == NOW + timedelta(minutes=5)
+        assert github.pull_reads[0][0] == NOW - ingest.MERGED_PRS_OVERLAP
+        assert github.pull_reads[-1][1] == NOW + timedelta(minutes=5)
 
     _portal.call(_run_it)
 
 
-def test_a_busy_day_of_queue_events_is_stored_in_full(
+def test_existing_queue_history_is_kept_after_live_collection_stops(
     db_session: AsyncSession, _portal: BlockingPortal, tokens
 ):
     github = _GitHub()
@@ -577,9 +618,11 @@ def test_a_busy_day_of_queue_events_is_stored_in_full(
 
     async def _run_it() -> None:
         await _connect(db_session)
+        await CiActivityStore(db_session).add_queue_events(REPO, github.events)
         report = await _sweep(db_session, github)
 
         assert report["error"] == ""
+        assert report["queue_events_added"] == 0
         assert await _count(db_session, CiMergeQueueEvent) == 6000
 
     _portal.call(_run_it)
@@ -590,11 +633,19 @@ def test_a_database_error_ends_the_sweep_with_a_recorded_reason(
 ):
     github = _GitHub()
     github.runs = {301: _run(301, age=timedelta(minutes=10))}
+    github.pulls = [
+        {
+            "number": 301,
+            "headRefName": "feat/301",
+            "createdAt": _iso(NOW - timedelta(hours=1)),
+            "mergedAt": _iso(NOW - timedelta(minutes=1)),
+        }
+    ]
 
     async def _refused(self, repo, events):
         raise DBAPIError("INSERT ...", {}, Exception("disk full"))
 
-    monkeypatch.setattr(CiActivityStore, "add_queue_events", _refused)
+    monkeypatch.setattr(CiActivityStore, "upsert_merged_pull_requests", _refused)
 
     async def _run_it() -> None:
         await _connect(db_session)
@@ -606,3 +657,350 @@ def test_a_database_error_ends_the_sweep_with_a_recorded_reason(
         assert await _count(db_session, CiWorkflowRun) == 1
 
     _portal.call(_run_it)
+
+
+class _NativeGitHub:
+    """Real reader and conditional transport, with mutable GitHub snapshots."""
+
+    def __init__(self):
+        self.runs = {}
+        self.jobs = {}
+        self.pulls = []
+        self.gone = set()
+        self.requests = []
+        self.responses = []
+
+    def __call__(self, request):
+        self.requests.append(request)
+        response = self._answer(request)
+        self.responses.append((request, response.status_code))
+        return response
+
+    def _answer(self, request):
+        if request.url.path == "/graphql":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "search": {
+                            "issueCount": len(self.pulls),
+                            "nodes": self.pulls,
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        }
+                    }
+                },
+            )
+        page = int(request.url.params.get("page", "1"))
+        per_page = int(request.url.params.get("per_page", "100"))
+        if request.url.path.endswith("/jobs"):
+            run_id = int(request.url.path.split("/")[-2])
+            if run_id in self.gone:
+                return httpx.Response(404, json={"message": "gone"})
+            items = self.jobs.get(run_id, [])
+            payload = {
+                "total_count": len(items),
+                "jobs": items[(page - 1) * per_page : page * per_page],
+            }
+        else:
+            a, b = request.url.params["created"].split("..")
+            since, until = (
+                datetime.fromisoformat(t.replace("Z", "+00:00")) for t in (a, b)
+            )
+            items = sorted(
+                (
+                    r
+                    for r in self.runs.values()
+                    if since
+                    <= datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+                    <= until
+                ),
+                key=lambda r: r["created_at"],
+                reverse=True,
+            )
+            payload = {
+                "total_count": len(items),
+                "workflow_runs": items[:1000][(page - 1) * per_page : page * per_page],
+            }
+        body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+        if request.headers.get("if-none-match") == etag:
+            return httpx.Response(304, headers={"etag": etag})
+        return httpx.Response(
+            200,
+            content=body,
+            headers={"etag": etag, "content-type": "application/json"},
+        )
+
+    def reader(self, handler=None):
+        return GitHubCi(
+            api_base="https://api.invalid",
+            transport=httpx.MockTransport(handler or self),
+        )
+
+
+def test_fixed_windows_keep_old_open_runs_and_reruns_current(
+    db_session, _portal, tokens
+):
+    remote = _NativeGitHub()
+    first = _run(61, age=timedelta(hours=1), conclusion="failure")
+    old = _run(62, age=timedelta(hours=23), status="in_progress", conclusion=None)
+    remote.runs = {61: first, 62: old}
+    remote.jobs = {61: [_job(610, first, conclusion="failure")]}
+    reader = remote.reader()
+
+    async def run():
+        await _connect(db_session)
+        await CiActivityStore(db_session).upsert_runs(REPO, [old])
+        assert (await _sweep(db_session, reader, backfill_slices=0))["error"] == ""
+        remote.runs[61] = {**first, "run_attempt": 2, "conclusion": "success"}
+        remote.runs[62] = {**old, "status": "completed", "conclusion": "success"}
+        remote.jobs[61] = [
+            _job(610, first, conclusion="failure"),
+            _job(611, first, attempt=2),
+        ]
+        assert (
+            await _sweep(
+                db_session, reader, at=NOW + timedelta(minutes=5), backfill_slices=0
+            )
+        )["error"] == ""
+        rows = {r.run_id: r for r in await db_session.scalars(select(CiWorkflowRun))}
+        assert rows[62].status == "completed"
+        assert (rows[61].run_attempt, rows[61].jobs_attempt) == (2, 2)
+        assert {
+            (j.run_attempt, j.conclusion)
+            for j in await db_session.scalars(select(CiJob))
+        } == {(1, "failure"), (2, "success")}
+        for request in remote.requests:
+            if "created" in request.url.params:
+                a, b = request.url.params["created"].split("..")
+                start, end = (
+                    datetime.fromisoformat(t.replace("Z", "+00:00")) for t in (a, b)
+                )
+                assert end - start < timedelta(minutes=5)
+                assert start.second == 0 and start.minute % 5 == 0
+
+    _portal.call(run)
+
+
+def test_no_queue_timeline_is_requested_but_direct_merges_still_arrive(
+    db_session, _portal, tokens
+):
+    remote = _NativeGitHub()
+    remote.pulls = [
+        {
+            "number": 71,
+            "headRefName": "feat/direct",
+            "createdAt": _iso(NOW - timedelta(days=1)),
+            "mergedAt": _iso(NOW - timedelta(minutes=1)),
+        }
+    ]
+
+    async def run():
+        await _connect(db_session)
+        assert (await _sweep(db_session, remote.reader(), backfill_slices=0))[
+            "error"
+        ] == ""
+        queries = [
+            json.loads(r.content)["query"]
+            for r in remote.requests
+            if r.method == "POST"
+        ]
+        assert queries and all(
+            "timelineItems" not in q and "MERGE_QUEUE" not in q for q in queries
+        )
+        assert (await db_session.scalar(select(CiMergedPullRequest))).pr_number == 71
+        assert await _count(db_session, CiMergeQueueEvent) == 0
+
+    _portal.call(run)
+
+
+def test_reporting_yields_at_35_percent_without_advancing_coverage(
+    db_session, _portal, tokens
+):
+    remote = _NativeGitHub()
+    tokens.quota = (1750, 5000)
+
+    async def run():
+        await _connect(db_session)
+        await CiActivityStore(db_session).record_sweep(
+            REPO,
+            started_at=NOW - timedelta(minutes=5),
+            runs_listed_from=NOW - ingest.WINDOW,
+            runs_listed_to=NOW - timedelta(minutes=5),
+            queue_read_to=NOW - timedelta(minutes=5),
+            report={"error": "", "installation_id": 3},
+        )
+        report = await _sweep(db_session, remote.reader(), backfill_slices=0)
+        assert remote.requests == []
+        assert report["error"]
+        # 35% is above the 20% stop: the credential WAS minted; it is the
+        # reader's own 50% yield that stopped the sweep before any request.
+        assert tokens.token_calls == 1
+        assert report["installation_id"] == 9917
+        latest = await CiActivityStore(db_session).last_sweep(REPO)
+        assert latest.runs_listed_to == NOW - timedelta(minutes=5)
+        status = await board._sweep_status(
+            db_session, REPO, board.Window(NOW - ingest.WINDOW, NOW, [NOW.date()])
+        )
+        assert not status["complete"]
+        assert status["request_counts"]["http_attempts"] == 0
+
+    _portal.call(run)
+
+
+def test_a_tokenless_sweep_reports_the_current_binding_not_the_old_report(
+    db_session, _portal, tokens
+):
+    remote = _NativeGitHub()
+    # 10% is below the 20% stop: background work gets no token at all.
+    tokens.quota = (500, 5000)
+
+    async def run():
+        await _connect(db_session)
+        await CiActivityStore(db_session).record_sweep(
+            REPO,
+            started_at=NOW - timedelta(minutes=5),
+            runs_listed_from=NOW - ingest.WINDOW,
+            runs_listed_to=NOW - timedelta(minutes=5),
+            queue_read_to=NOW - timedelta(minutes=5),
+            report={"error": "", "installation_id": 3},
+        )
+        report = await _sweep(db_session, remote.reader(), backfill_slices=0)
+        assert report["error"]
+        # The entry really is tokenless: nothing was minted, and no data
+        # request was attempted.
+        assert tokens.token_calls == 0
+        assert remote.requests == []
+        # The stale id from the older report (3) is not carried; the current
+        # binding's id is what the sweep and the board report.
+        assert report["installation_id"] == 9917
+        latest = await CiActivityStore(db_session).last_sweep(REPO)
+        assert latest.report["installation_id"] == 9917
+        status = await board._sweep_status(
+            db_session, REPO, board.Window(NOW - ingest.WINDOW, NOW, [NOW.date()])
+        )
+        assert status["installation_id"] == 9917
+        assert status["request_counts"]["http_attempts"] == 0
+
+    _portal.call(run)
+
+
+def test_mid_page_yield_preserves_completed_windows_and_recovers_the_gap(
+    db_session, _portal, tokens
+):
+    remote = _NativeGitHub()
+    first = _run(1, age=timedelta(hours=2, minutes=59))
+    remote.runs = {
+        1: first,
+        **{n: _run(n, age=timedelta(hours=2, minutes=54)) for n in range(2, 152)},
+    }
+    drop = [True]
+
+    def handler(request):
+        response = remote(request)
+        if drop[0] and request.url.params.get("created", "").startswith(
+            _iso(NOW - timedelta(hours=2, minutes=55))
+        ):
+            response.headers.update(
+                {
+                    "x-ratelimit-limit": "5000",
+                    "x-ratelimit-remaining": "1750",
+                    "x-ratelimit-reset": str(int(time.time() + 3600)),
+                }
+            )
+        return response
+
+    reader = remote.reader(handler)
+
+    async def run():
+        await _connect(db_session)
+        report = await _sweep(db_session, reader, backfill_slices=0, jobs_budget=0)
+        assert report["error"]
+        latest = await CiActivityStore(db_session).last_sweep(REPO)
+        assert latest.runs_listed_to == NOW - timedelta(hours=2, minutes=55)
+        assert await _count(db_session, CiWorkflowRun) == 1
+        assert report["request_counts"]["rest_attempts"] == 2
+        drop[0] = False
+        before = len(remote.requests)
+        recovered = await _sweep(
+            db_session,
+            reader,
+            at=NOW + timedelta(minutes=5),
+            backfill_slices=0,
+            jobs_budget=0,
+        )
+        assert recovered["error"] == ""
+        assert await _count(db_session, CiWorkflowRun) == 151
+        assert recovered["requests"] == len(remote.requests) - before
+        assert (
+            await CiActivityStore(db_session).last_sweep(REPO)
+        ).runs_listed_to == NOW + timedelta(minutes=5)
+
+    _portal.call(run)
+
+
+def test_failed_requests_and_304s_are_in_each_sweeps_own_counts(
+    db_session, _portal, tokens
+):
+    remote = _NativeGitHub()
+    remote.runs = {71: _run(71, age=timedelta(hours=1))}
+    remote.gone = {71}
+    reader = remote.reader()
+
+    async def run():
+        await _connect(db_session)
+        first = await _sweep(db_session, reader, backfill_slices=0)
+        assert first["gone_runs"] == 1
+        assert first["requests"] == len(remote.requests)
+        counts = first["request_counts"]
+        assert counts["by_endpoint"]["GET /actions/runs/{id}/jobs"] == 1
+        assert counts["rest_attempts"] + counts["graphql_attempts"] == first["requests"]
+        before = len(remote.requests)
+        second = await _sweep(
+            db_session, reader, at=NOW + timedelta(minutes=5), backfill_slices=0
+        )
+        assert second["requests"] == len(remote.requests) - before
+        assert second["request_counts"]["not_modified"] > 0
+
+    _portal.call(run)
+
+
+def test_the_sweep_names_the_installation_its_requests_were_counted_against(
+    db_session, _portal, tokens
+):
+    remote = _NativeGitHub()
+    remote.runs = {81: _run(81, age=timedelta(hours=1))}
+
+    async def run():
+        await _connect(db_session)
+        report = await _sweep(db_session, remote.reader(), backfill_slices=0)
+        assert report["installation_id"] == 9917
+        # Reading the id back off the token in hand sends nothing: the reader's
+        # own request count and the transport's still agree.
+        assert report["requests"] == len(remote.requests)
+        status = await board._sweep_status(
+            db_session, REPO, board.Window(NOW - ingest.WINDOW, NOW, [NOW.date()])
+        )
+        assert status["installation_id"] == 9917
+
+    _portal.call(run)
+
+
+def test_a_truncated_window_does_not_claim_complete_coverage(
+    db_session, _portal, tokens
+):
+    remote = _NativeGitHub()
+    remote.runs = {n: _run(n, age=timedelta(minutes=1)) for n in range(1001)}
+
+    async def run():
+        await _connect(db_session)
+        report = await _sweep(
+            db_session, remote.reader(), backfill_slices=0, jobs_budget=0
+        )
+        assert report["truncated"] and report["error"]
+        assert (
+            await CiActivityStore(db_session).last_sweep(REPO)
+        ).runs_listed_to == NOW - timedelta(minutes=5)
+        assert await _count(db_session, CiWorkflowRun) == 0
+
+    _portal.call(run)
