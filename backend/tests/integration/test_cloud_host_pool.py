@@ -984,6 +984,41 @@ def test_a_host_given_up_loses_its_homes_in_one_statement(pool, monkeypatch):
     assert pool.run(left) == []
 
 
+def test_a_vanished_host_still_counted_as_failed_drops_its_homes_at_once(
+    pool, monkeypatch
+):
+    """The provider forgot a host it failed minutes ago: its row stays for the
+    failure count, and every home on it goes in one statement."""
+    monkeypatch.setattr(settings, "microcloud_reconcile_interval_s", 0)
+    sessions = pool.room("alice", 2)
+    [host_id] = {pool.place("alice", session) for session in sessions}
+
+    async def failed_just_now():
+        async with pool.client.test_request_factory() as db:
+            row = await db.get(CloudHost, host_id)
+            row.failed_at = datetime.now(UTC)
+            row.released_at = datetime.now(UTC)
+            await db.commit()
+            return row.machine_id
+
+    pool.cloud.machines.pop(pool.run(failed_just_now))
+    with _statements(pool, "DELETE FROM SANDBOX_HOMES") as deletes:
+        pool.pool("refresh_due")
+
+    assert len(deletes) == 1
+    assert pool.host(host_id) is not None
+
+    async def left():
+        async with pool.client.test_request_factory() as db:
+            return list(
+                await db.scalars(
+                    select(SandboxHome).where(SandboxHome.host_id == host_id)
+                )
+            )
+
+    assert pool.run(left) == []
+
+
 def test_rooms_whose_host_came_up_are_settled_in_one_transaction(pool):
     """The homes waiting on hosts that are up are locked together and committed
     once; one on a host still coming up keeps waiting."""
