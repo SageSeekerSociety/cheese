@@ -1,5 +1,5 @@
-// 连接 GitHub 账号 (#192 user-to-server link, github_account_link.py) — pure
-// helpers kept out of the view so they're testable without mounting Vuetify.
+// 关联 GitHub (#192 user-to-server link, `api/routes/users/github_account.py`) —
+// pure helpers kept out of the view so they're testable without mounting Vuetify.
 import type { OAuthConnectionInfo } from '../cx_types'
 
 import { t } from '@/i18n'
@@ -21,7 +21,7 @@ export function findGithubAccountConnection(connections: OAuthConnectionInfo[]):
 // happened AND what to do about it; an unknown code still names itself, since
 // a code we can't explain is more useful than 「原因未知」.
 //
-// Sources: `github_account_link.py` (account) and `github_install.py` (repo).
+// Sources: `users/github_account.py` (account) and `github_install.py` (repo).
 const ACCOUNT_LINK_REASONS = ['already_linked', 'oauth_failed', 'github_unreachable', 'invalid_state']
 
 const REPO_INSTALL_REASONS = [
@@ -86,4 +86,22 @@ export function isGithubAccountTokenExpired(conn: OAuthConnectionInfo, now: Date
 // anyone about.
 export function githubAccountNeedsReconnect(conn: OAuthConnectionInfo, now: Date = new Date()): boolean {
   return isGithubAccountTokenExpired(conn, now) && !conn.hasRefreshToken
+}
+
+/** The viewer's own GitHub account, as a row about it shows it. `unknown`: it
+ * could not be read, which is not the same as not linked. */
+export type OwnGithub =
+  | { state: 'unknown' }
+  | { state: 'none' }
+  | { state: 'expired'; login: string }
+  | { state: 'linked'; login: string }
+
+/** Expired means nothing can renew it: an expired access token with a refresh
+ * token behind it is renewed the next time it is used. */
+export function ownGithub(conn: OAuthConnectionInfo | null, loaded: boolean, now: Date = new Date()): OwnGithub {
+  if (!loaded) return { state: 'unknown' }
+  if (!conn) return { state: 'none' }
+  const login = conn.login ?? conn.providerUserId
+  if (isGithubAccountTokenExpired(conn, now) && !conn.hasRefreshToken) return { state: 'expired', login }
+  return { state: 'linked', login }
 }

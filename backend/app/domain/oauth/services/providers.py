@@ -10,14 +10,8 @@
 哪些 settings 读，在 `OAuthService._get_provider_config`（包的 `__init__.py`）—— 前者
 不随部署变，后者随。
 
-`PROVIDER_CLASSES` 里 `github_app` 与 `github` 共用 `GitHubProvider` 是有意的：
-#192 的 user-to-server 授权和普通登录是同一套 OAuth 2.0 动作，只是凭据与
-redirect_url 不同。
-
-`github_app` 又是唯一一个 `LINK_ONLY_PROVIDERS`：它的 redirect_url 只认平台给已
-登录用户签发的 state，当作登录入口永远换不出会话，所以登录页不能列它。
-`OAuthService.get_providers_config` 与 `connections.delete_connection` 都读这个
-名字，判据只有这一份。
+`github_app` 是 cheesex-app 自己的用户授权：用 GitHub 登录和关联 GitHub 走的都是
+它，回调只有一个（`api/routes/users/github_account.py`），按 state 分给两头。
 """
 
 from __future__ import annotations
@@ -257,16 +251,7 @@ class RUCProvider(OAuthProvider):
 
 
 PROVIDER_CLASSES = {
-    "github": GitHubProvider,
     "google": GoogleProvider,
     "ruc": RUCProvider,
     "github_app": GitHubProvider,
 }
-
-# `github_app` is the account-LINK provider: its redirect_url is the
-# `/users/me/github-account/callback` handler, which only accepts a state the
-# platform minted for a signed-in user. Offered as a way to sign in it can never
-# produce a session, so the sign-in page must not list it. Both flows share
-# OAuthService because they share the same GitHub OAuth dance; only the purpose
-# differs (config.py keeps their settings deliberately separate for the same reason).
-LINK_ONLY_PROVIDERS = frozenset({"github_app"})
