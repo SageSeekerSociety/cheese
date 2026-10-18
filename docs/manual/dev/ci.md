@@ -37,7 +37,7 @@ covers:
 | remote | `remote-execution.yml` | 远端执行验收 |
 | cifast | `ci-fast.yml` | `ci:fast` 本地快检的黑盒测试，驱动真实 pre-commit |
 
-最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）；后端套件选中时，它还核对每个分片跑过的用例加起来正好是独立收集出来的那份（`assert_shards_complete`）。改到这套检查本身时，所有套件都会跑。`required` 要等最慢的套件跑完才能开始，所以合并队列的 run 里另有一个 `Fail fast` job：这个 run 里任何一个 job 失败，它马上在这个条目的 commit 上发一条失败的 `CI required`，队列当场把条目移出去、重建排在后面的条目，不用等剩下的套件（`.github/scripts/merge-group-fail-fast.py`）。剩下的套件照常跑完，`required` 最后照样列出全部原因。PR 上没有这个 job。两个档各有一个聚合 job：`required`（`name: CI required`）跑完整档，`required-draft`（`name: CI required (draft quick)`）跑快检档，名字都写死在 workflow 里，不是用表达式拼的（表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示）。
+最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）；后端套件选中时，它还核对每个分片跑过的用例加起来正好是独立收集出来的那份（`assert_shards_complete`）。改到这套检查本身时，所有套件都会跑。`required` 要等最慢的套件跑完才能开始，所以合并队列的条目和主干 push 的批次里另有一个 `Fail fast` job：这个 run 里任何一个 job 失败，它马上在这个 commit 上发一条失败的 `CI required`——队列当场把条目移出去、重建排在后面的条目，主干则立刻读到红，都不用等剩下的套件（`.github/scripts/merge-group-fail-fast.py`）。剩下的套件照常跑完，`required` 最后照样列出全部原因。PR 上没有这个 job。两个档各有一个聚合 job：`required`（`name: CI required`）跑完整档，`required-draft`（`name: CI required (draft quick)`）跑快检档，名字都写死在 workflow 里，不是用表达式拼的（表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示）。
 
 前端套件还有一个不看路径的入口：前端的类型是从后端的 OpenAPI 文档生成的，后端改动可能改了这份文档，而没有哪个文件能说明它变没变。所以路径选中了后端、没选中前端时，`api` job 在这次 diff 的基点和这次提交上各打印一次文档（`export_openapi --stdout`）逐字节比较，不同就跑前端套件。`required` 按它的回答要求前端套件成功或跳过；`api` 自己没给出回答（失败、取消、输出缺失）也判失败。这件事原来靠仓库里提交的一行文档摘要 `backend/openapi.sha256`：每个改 API 的 PR 都要改这一行，任意两个这样的 PR 都会在这一行上冲突，合并队列里尤其多。
 
