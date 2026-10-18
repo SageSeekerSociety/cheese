@@ -89,13 +89,16 @@ async def offered_specs(db: AsyncSession, project) -> list[dict]:
         out.append(_spec(VM, say("specVm")))
     user_ids = await _people_with_sandboxes(db, project.id)
     if user_ids:
-        users = dict(
+        rows = (
             (
                 await db.execute(
                     select(User.id, User.username).where(User.id.in_(user_ids))
                 )
-            ).all()
+            )
+            .tuples()
+            .all()
         )
+        users: dict[int, str] = {user_id: username for user_id, username in rows}
         for user_id in user_ids:
             if (username := users.get(user_id)) is not None:
                 out.append(
