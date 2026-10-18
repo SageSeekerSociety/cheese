@@ -27,7 +27,6 @@ const CHECK_KEYS: Record<string, string> = {
   'be-contracts': 'ratchet.check.beContracts',
   'be-deferred-imports': 'ratchet.check.beDeferredImports',
   'domain-import-guard': 'ratchet.check.domainImportGuard',
-  'harness-boundary': 'ratchet.check.harnessBoundary',
   'file-sizes': 'ratchet.check.fileSizes',
   'vue-tsc': 'ratchet.check.vueTsc',
   'stylelint-tokens': 'ratchet.check.stylelintTokens',

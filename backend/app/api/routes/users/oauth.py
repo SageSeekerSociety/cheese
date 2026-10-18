@@ -269,8 +269,8 @@ async def _take_oauth_tokens(provider_id: str, provider_user_id: str) -> dict | 
     return json.loads(decrypt(Purpose.OAUTH_TOKEN, sealed, bound_to=f"held:{key}"))
 
 
-def _token_expiry(tokens: dict) -> datetime | None:
-    raw = tokens.get("token_expires")
+def _token_expiry(tokens: dict, field: str = "token_expires") -> datetime | None:
+    raw = tokens.get(field)
     return datetime.fromisoformat(raw) if raw else None
 
 
@@ -553,6 +553,9 @@ async def _resolve_oauth_identity(
                     access_token=tokens["access_token"],
                     refresh_token=tokens.get("refresh_token"),
                     token_expires=_token_expiry(tokens),
+                    refresh_token_expires=_token_expiry(
+                        tokens, "refresh_token_expires"
+                    ),
                     raw_profile=_github_profile(user_info),
                 )
             return await _oauth_login_redirect(
@@ -707,6 +710,9 @@ async def _complete_oauth_binding(
                 access_token=tokens["access_token"] if tokens else None,
                 refresh_token=tokens.get("refresh_token") if tokens else None,
                 token_expires=_token_expiry(tokens) if tokens else None,
+                refresh_token_expires=_token_expiry(tokens, "refresh_token_expires")
+                if tokens
+                else None,
             )
         except ConflictError:
             # Linked by a concurrent request since the lookup above.
@@ -1012,12 +1018,18 @@ async def sign_in_with_github(
     # Only present when the App expires its user tokens; otherwise the token
     # is long-lived and both are absent.
     expires_in = token_data.get("expires_in")
+    refresh_expires_in = token_data.get("refresh_token_expires_in")
     tokens = {
         "access_token": access_token,
         "refresh_token": token_data.get("refresh_token"),
         "token_expires": (
             (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
             if expires_in
+            else None
+        ),
+        "refresh_token_expires": (
+            (datetime.now(UTC) + timedelta(seconds=refresh_expires_in)).isoformat()
+            if refresh_expires_in is not None
             else None
         ),
     }
