@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 WATCH = ROOT / ".claude/scripts/pr-watch.sh"
 
 # Commits on main, oldest first. The PR merged as MERGE.
-EARLIER, MIDDLE, MERGE, LATER = ("1" * 40, "2" * 40, "3" * 40, "4" * 40)
-ORDER = [EARLIER, MIDDLE, MERGE, LATER]
+EARLIER, MIDDLE, MERGE, LATER, LATEST = ("1" * 40, "2" * 40, "3" * 40, "4" * 40, "5" * 40)
+ORDER = [EARLIER, MIDDLE, MERGE, LATER, LATEST]
 
 FAKE_GH = r"""#!/usr/bin/env bash
 # Answers the calls pr-watch.sh makes, from files in $FAKE.
@@ -183,6 +183,18 @@ class DeployRunForAMergedPR(unittest.TestCase):
                                  "headSha": MERGE}])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("main Required CI run 102: completed success", result.stdout)
+
+    def test_a_later_red_batch_does_not_revoke_an_earlier_green_containing_batch(self):
+        result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER,
+                            ci=[{"databaseId": 103, "status": "completed", "conclusion": "failure",
+                                 "headSha": LATEST},
+                                {"databaseId": 102, "status": "completed", "conclusion": "success",
+                                 "headSha": LATER},
+                                {"databaseId": 100, "status": "completed", "conclusion": "cancelled",
+                                 "headSha": MERGE}])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("main Required CI run 102: completed success", result.stdout)
+        self.assertIn(f"live on dev at {LATER[:9]}", result.stdout)
 
     def test_a_cancelled_deploy_waits_for_the_next_converging_release(self):
         result = self.watch([run(10, "completed", "success", f"Deploy {LATER}")], live=LATER,

@@ -85,16 +85,22 @@ contains() {
   gh api "repos/$REPO/compare/$1...$2" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$'
 }
 
-main_ci_of() { # exact merge's newest run, or a containing batch if absent/cancelled
-  local merge=$1 id st co sha newest=
+main_ci_of() { # exact merge's run, or a successful containing batch if it was cancelled
+  local merge=$1 id st co sha newest= passed=
   while read -r id st co sha; do
     [ "$sha" = "$merge" ] || contains "$merge" "$sha" || continue
     [ "$co" = cancelled ] && continue
     [ -n "$newest" ] || newest="$st $co $id"
     if [ "$sha" = "$merge" ]; then echo "$st $co $id"; return; fi
+    # A later failed batch does not revoke an earlier green batch containing
+    # this merge; keep the newest such success for a watcher that restarts.
+    if [ "$st $co" = "completed success" ] && [ -z "$passed" ]; then
+      passed="$st $co $id"
+    fi
   done < <(gh run list -R "$REPO" --workflow required-ci.yml --event push --branch main --limit 30 \
              --json databaseId,status,conclusion,headSha \
              -q '.[]|"\(.databaseId) \(.status) \(.conclusion // "" | if . == "" then "none" else . end) \(.headSha)"')
+  [ -z "$passed" ] || { echo "$passed"; return; }
   [ -z "$newest" ] || echo "$newest"
 }
 
