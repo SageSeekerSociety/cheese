@@ -21,6 +21,7 @@ from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.identity.services import IdentityService
 from app.domain.membership.ports import ProjectTeam, TeammateSeat
 from app.domain.membership.repositories import MemberRepository
@@ -115,6 +116,26 @@ class Member:
         return row
 
 
+# Semantic dependencies of people, exclusions, bindings and the ProjectTeam
+# port. Include identity-map reads (notably Project and Team), not just SQL
+# emitted on a cache miss. The provider's seat fields depend on own_agents too.
+_ROSTER_TABLES = frozenset(
+    {
+        "projects",
+        "project_members",
+        "project_member_exclusions",
+        "user",
+        "user_profile",
+        "avatar",
+        "team",
+        "team_user_relation",
+        "agent_bindings",
+        "agent_instances",
+        "own_agents",
+    }
+)
+
+
 async def roster(
     session: AsyncSession, project_id: uuid.UUID, *, team: ProjectTeam
 ) -> tuple[Member, ...]:
@@ -141,6 +162,21 @@ async def roster(
     队友那一半由调用方递进来的 ``team`` 读（`ports.py` 的 ``ProjectTeam``）：实例和
     它们在项目里该不该在列，都是第 5 层 ``agent_instance`` 的一行，本包够不着。
     """
+    # A cache hit must not skip the autoflush the SELECT would have triggered.
+    if session.autoflush:
+        await session.flush()
+    key = ("roster", project_id, team)
+    found, members = recall(session, key)
+    if found:
+        return members
+    members = await _read_roster(session, project_id, team=team)
+    remember(session, key, members, tables=_ROSTER_TABLES)
+    return members
+
+
+async def _read_roster(
+    session: AsyncSession, project_id: uuid.UUID, *, team: ProjectTeam
+) -> tuple[Member, ...]:
     projects = ProjectService(session)
     project = await projects.get(project_id)
     rows = [
