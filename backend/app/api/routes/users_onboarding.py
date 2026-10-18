@@ -54,7 +54,7 @@ from app.domain.project.protection import BRANCH_PROTECTION_KEY
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.user.about import WorkRole, record_guide_answers
-from app.domain.user.services import lookup_account
+from app.domain.user.repositories import UserRepository
 
 # The signed-in user answers for themselves and makes their own project:
 # `require_auth_user` is the whole check.
@@ -132,15 +132,19 @@ async def finish_onboarding(
         session, deliver=deliver, settle=settle, team=project_team
     )
     not_invited: list[str] = []
-    for asked in dict.fromkeys(q.strip() for q in payload.invitees if q.strip()):
-        account = await lookup_account(session, asked)
-        if account is None:
+    asked_for = list(dict.fromkeys(q.strip() for q in payload.invitees if q.strip()))
+    # Everyone named is found in one statement before any invitation is
+    # written, not one lookup per person.
+    handles = await UserRepository(session).lookup_accounts(asked_for)
+    for asked in asked_for:
+        handle = handles.get(asked.lower())
+        if handle is None:
             not_invited.append(asked)
             continue
         try:
             async with session.begin_nested():
                 await invitations.invite(
-                    project_id=project.id, invitee_handle=account["handle"], actor=me
+                    project_id=project.id, invitee_handle=handle, actor=me
                 )
         except BaseError:
             not_invited.append(asked)
