@@ -60,3 +60,18 @@ def test_the_copies_say_the_real_table_names() -> None:
     """表名也要对得上：抄成另一张表的列名，SQL 会静默读到别处。"""
     for name, bare, model in COPIES:
         assert bare.name == model.__tablename__, name
+
+
+def test_the_spelled_out_status_values_are_the_models_own() -> None:
+    """两个状态是手抄的字符串 —— 枚举改了名，裸表读法会静默答错。
+
+    `status` 存的是枚举成员的名字（`Enum(native_enum=False)`），而副本认不出那个
+    枚举，只能把值写死。这正是**最**安静的一类漂移：列名和类型都没变，只有那一个
+    字符串的意思变了，读出来的「做完了没有」悄悄反过来。所以这里也钉一下。
+    """
+    from app.domain.project_material_rows import STATUS_ACCEPTED, STATUS_OPEN
+    from app.domain.review.models import AcceptStatus
+    from app.domain.room_task.models import TaskStatus
+
+    assert STATUS_OPEN == TaskStatus.open.value
+    assert STATUS_ACCEPTED == AcceptStatus.accepted.value
