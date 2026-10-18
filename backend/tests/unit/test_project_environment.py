@@ -4,8 +4,10 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -529,3 +531,157 @@ async def test_reconnect_to_preparing_process_never_probes_it_as_dead(monkeypatc
     )
     assert actual is screen
     channel.confirm_alive.assert_not_awaited()
+
+
+def _fake_uv(tmp_path, *, fail_export=False):
+    """A `uv` that records its arguments instead of touching a network.
+
+    `export` writes the file it was asked for, because the install after it
+    reads that file: a double that only records would make the install's input
+    untestable, and a mirror install that never had a requirements file to
+    install from is exactly the failure worth catching.
+    """
+    calls = tmp_path / "uv-calls"
+    script = tmp_path / "uv"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> "{calls}"\n'
+        + (
+            'if [ "$1" = export ]; then echo broken lock >&2; exit 2; fi\n'
+            if fail_export
+            else 'if [ "$1" = export ]; then : > "$5"; fi\n'
+        )
+        + "exit 0\n"
+    )
+    script.chmod(0o755)
+    return calls
+
+
+def _uv_project(tmp_path, *, venv=True):
+    work = tmp_path / "work"
+    project = work / "backend"
+    project.mkdir(parents=True)
+    (project / "uv.lock").write_text("version = 1\n")
+    (project / "pyproject.toml").write_text("[project]\nname = 'probe'\n")
+    if venv:
+        (project / ".venv/bin").mkdir(parents=True)
+        (project / ".venv/bin/python").write_text("")
+    return work, project
+
+
+def _mirror_env(tmp_path, **extra):
+    return {
+        "UV_INDEX": "https://mirror.test/simple",
+        "UV_DEFAULT_INDEX": "https://pypi.org/simple",
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        **extra,
+    }
+
+
+def test_mirror_install_fetches_the_locked_versions_through_the_mirror(tmp_path):
+    """The lock's own URLs are what make an install go abroad; the export is
+    the same lock with the mirror as its source."""
+    work, project = _uv_project(tmp_path)
+    calls = _fake_uv(tmp_path)
+    log = (tmp_path / "runner.log").open("w")
+    try:
+        environment_runner.mirror_install(work, _mirror_env(tmp_path), log)
+    finally:
+        log.close()
+    lines = calls.read_text().splitlines()
+    assert lines[0].startswith("export --frozen --format requirements-txt")
+    assert lines[1].startswith("pip install --quiet")
+    assert f"--python {project / '.venv/bin/python'}" in lines[1]
+    # The export is scratch: written where the checkout is not, and gone with
+    # the run that made it.
+    exported = Path(lines[0].split("-o ", 1)[1])
+    assert exported.parent.parent == Path(tempfile.gettempdir())
+    assert not exported.exists()
+    assert "sync" not in calls.read_text()
+    # The export is scratch, not something the checkout keeps.
+    exported = lines[0].split("-o ")[1]
+    assert not Path(exported).parent.is_relative_to(project)
+    assert not Path(exported).exists()
+
+
+def test_mirror_install_creates_the_environment_before_installing(tmp_path):
+    work, project = _uv_project(tmp_path, venv=False)
+    calls = _fake_uv(tmp_path)
+    log = (tmp_path / "runner.log").open("w")
+    try:
+        environment_runner.mirror_install(work, _mirror_env(tmp_path), log)
+    finally:
+        log.close()
+    lines = calls.read_text().splitlines()
+    assert lines[0].startswith("export --frozen")
+    assert lines[1].startswith("venv --quiet")
+    assert str(project / ".venv") in lines[1]
+    assert lines[2].startswith("pip install")
+
+
+def test_mirror_install_does_nothing_without_a_mirror(tmp_path):
+    """`UV_INDEX` is exported only for a mirror that answered this machine."""
+    work, _ = _uv_project(tmp_path)
+    calls = _fake_uv(tmp_path)
+    log = (tmp_path / "runner.log").open("w")
+    try:
+        environment_runner.mirror_install(
+            work, {"PATH": f"{tmp_path}:{os.environ['PATH']}"}, log
+        )
+    finally:
+        log.close()
+    assert not calls.exists()
+
+
+def test_mirror_install_leaves_the_install_to_the_script_when_the_lock_will_not_export(
+    tmp_path,
+):
+    """A lock this uv cannot export must cost the checkout nothing."""
+    work, _ = _uv_project(tmp_path)
+    calls = _fake_uv(tmp_path, fail_export=True)
+    log = (tmp_path / "runner.log").open("w")
+    try:
+        environment_runner.mirror_install(work, _mirror_env(tmp_path), log)
+    finally:
+        log.close()
+    lines = calls.read_text().splitlines()
+    assert len(lines) == 1 and lines[0].startswith("export --frozen")
+
+
+def test_task_preparation_installs_through_the_mirror_before_the_script(
+    tmp_path, monkeypatch
+):
+    """The pre-install is part of preparing a checkout.
+
+    Without this, the two above would still pass with nothing calling them —
+    which is what the whole change comes down to: a locked install that goes
+    through the mirror because the pre-install ran, and the project's own
+    `uv sync --frozen` afterwards, which is still the script's to run.
+    """
+    work, _ = _uv_project(tmp_path)
+    calls = _fake_uv(tmp_path)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    config = EnvironmentConfig(
+        variables={"UV_INDEX": "https://mirror.test/simple"},
+        startup_script="echo startup-ran",
+    )
+    assert launch(tmp_path, config).wait(timeout=5) == 0
+    assert launch_task(tmp_path).returncode == 0
+    assert calls.read_text().splitlines()[0].startswith("export --frozen")
+    task_logs = (tmp_path / "home/.cheese-environment/tasks/work").glob("*.log")
+    lines = [line for log in task_logs for line in log.read_text().splitlines()]
+    assert any("startup: started" in line for line in lines)
+
+
+def test_task_startup_runs_after_a_failed_mirror_install(tmp_path, monkeypatch):
+    """A mirror install that fails must not cost the checkout its startup."""
+    work, _ = _uv_project(tmp_path)
+    _fake_uv(tmp_path, fail_export=True)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    config = EnvironmentConfig(
+        variables={"UV_INDEX": "https://mirror.test/simple"},
+        startup_script="touch startup-ran",
+    )
+    assert launch(tmp_path, config).wait(timeout=5) == 0
+    assert launch_task(tmp_path).returncode == 0
+    assert (work / "startup-ran").exists()
