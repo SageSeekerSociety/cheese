@@ -274,15 +274,20 @@ async def reuse(
 
     `hidden` 是递卡这个房间看不见的私密频道（见 `list_for_project`）：清单在这里
     是那个房间里的人读得到的那一份，报错里列出来的也是。
+
+    点名的 id 落在清单上，这一次就只读那一件（一次查询）。清单只在要报错时才拉：
+    那两句话都要说清「清单上有什么」，还要认出「送进来的是名字，不是 id」，两件事
+    都得看整张清单。
     """
-    listed = await list_for_project(session, project_id, hidden=hidden)
     wanted = (artifact_id or "").strip()
     asked = parse_work_id(wanted)
-    for row in listed:
-        if row.id == asked:
-            found = await session.get(ProjectArtifact, row.id)
-            if found is not None:
-                return found
+    if asked is not None:
+        found = await _listed_by_id(
+            session, project_id=project_id, artifact_id=asked, hidden=hidden
+        )
+        if found is not None:
+            return found
+    listed = await list_for_project(session, project_id, hidden=hidden)
     same_name = next((row for row in listed if row.name == _unwrap(wanted)), None)
     if same_name is not None:
         raise ValidationError(
@@ -291,6 +296,34 @@ async def reuse(
     raise ValidationError(
         say("artifactIdNotListed", id=wanted, listed=_what_the_list_has(listed))
     )
+
+
+async def _listed_by_id(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    hidden: Collection[uuid.UUID],
+) -> ProjectArtifact | None:
+    """这一项在不在这个项目的清单上 —— 问的是点名的这一件，所以读的就是它一行。
+
+    判据和 `list_for_project` 是同一句话（见模块开头）：交付落地过，或者有一张在
+    飞的卡正在交付它；`hidden` 里那些房间递的卡不算，全在那边交付过的在这里就是
+    不存在。项目也是同一个条件：别的项目的 id 在这里就是没这一项。
+
+    一次查询、最多一行 —— 清单上有多少件都不改变这里读了多少。
+    """
+    claims = _claims(hidden)
+    found = await session.execute(
+        select(ProjectArtifact)
+        .join(claims, claims.c.artifact_id == ProjectArtifact.id)
+        .where(
+            ProjectArtifact.id == artifact_id,
+            ProjectArtifact.project_id == project_id,
+            (claims.c.landed > 0) | (claims.c.live > 0),
+        )
+    )
+    return found.scalars().first()
 
 
 async def claim(
