@@ -34,6 +34,7 @@ _CHEESEX_APP_GRANTS = {
     "pull_requests": "write",
     "workflows": "write",
 }
+_LEVELS = {"read": 1, "write": 2, "admin": 3}
 
 
 @pytest.fixture
@@ -67,7 +68,9 @@ def _github(
     Both endpoints verify the app JWT. `mints` records each mint body, and
     `grant_lookups` (when passed) records each "what does this installation
     hold" call, so the caching of both is observable. Flipping `outage["on"]`
-    makes the describe call start failing mid-test.
+    makes the describe call start failing mid-test. Like GitHub, it refuses the
+    whole mint with 422 when any permission asked for is above what the
+    installation holds.
     """
     grants = _CHEESEX_APP_GRANTS if granted is None else granted
 
@@ -82,6 +85,19 @@ def _github(
                 return httpx.Response(500, text="upstream hiccup")
             return httpx.Response(200, json={"permissions": grants})
         body = json.loads(request.content)
+        refused = [
+            key
+            for key, level in body.get("permissions", {}).items()
+            if _LEVELS[level] > _LEVELS.get(grants.get(key, ""), 0)
+        ]
+        if refused:
+            return httpx.Response(
+                422,
+                json={
+                    "message": "The permissions requested are not granted to "
+                    f"this installation: {', '.join(refused)}"
+                },
+            )
         mints.append({"claims": claims, "body": body, "url": str(request.url)})
         return httpx.Response(
             201,
@@ -193,33 +209,85 @@ async def test_reported_permissions_match_what_was_minted(rsa_key_pem):
     assert len(lookups) == 1
 
 
+_ACCEPT_SET = {
+    "contents": "write",
+    "metadata": "read",
+    "pull_requests": "write",
+    # Without workflows:write GitHub rejects pushing any branch that
+    # touches .github/workflows/* — the accept-blocking 422 of ee17b136.
+    "workflows": "write",
+}
+
+
 @pytest.mark.anyio
-async def test_write_token_is_sent_unnarrowed(rsa_key_pem):
-    """The write mint names its permissions instead of taking the grant map, so
-    that a revoked one fails loudly at GitHub rather than quietly coming back
-    weaker and dying later at `git push`."""
+@pytest.mark.parametrize(
+    "granted",
+    [
+        _CHEESEX_APP_GRANTS,
+        {k: v for k, v in _CHEESEX_APP_GRANTS.items() if k != "actions"},
+    ],
+    ids=["actions-read", "no-actions"],
+)
+async def test_write_token_without_actions_write_mints_the_accept_set(
+    rsa_key_pem, granted
+):
+    """An installation whose owner has not accepted `actions: write` keeps
+    minting: asking it for that grant would make GitHub refuse the whole
+    mint, and accept with it."""
     key_path, public = rsa_key_pem
     mints: list[dict] = []
-    lookups: list[str] = []
+    minter = GitHubAppTokens(
+        app_id=1,
+        private_key_path=key_path,
+        installation_id=3,
+        transport=_github(mints, public, granted=granted),
+    )
+    token, _ = await minter.write_token()
+
+    assert token == "ghs_test_1"
+    assert mints[0]["body"] == {"permissions": _ACCEPT_SET}
+
+
+@pytest.mark.anyio
+async def test_write_token_asks_for_actions_write_once_the_installation_holds_it(
+    rsa_key_pem,
+):
+    """With `actions: write` accepted, the write token can re-run a PR's
+    failed workflow runs."""
+    key_path, public = rsa_key_pem
+    mints: list[dict] = []
+    minter = GitHubAppTokens(
+        app_id=1,
+        private_key_path=key_path,
+        installation_id=152342238,
+        transport=_github(
+            mints, public, granted=_CHEESEX_APP_GRANTS | {"actions": "write"}
+        ),
+    )
+    await minter.write_token()
+
+    assert mints[0]["body"] == {"permissions": _ACCEPT_SET | {"actions": "write"}}
+
+
+@pytest.mark.anyio
+async def test_write_token_with_a_revoked_accept_grant_is_refused_naming_it(
+    rsa_key_pem,
+):
+    """The grant map does not narrow the accept set: a revoked `contents:
+    write` fails at the mint with GitHub's reason, not later at `git push`."""
+    key_path, public = rsa_key_pem
     minter = GitHubAppTokens(
         app_id=1,
         private_key_path=key_path,
         installation_id=2,
-        transport=_github(mints, public, grant_lookups=lookups),
+        transport=_github(
+            [],
+            public,
+            granted=_CHEESEX_APP_GRANTS | {"actions": "write", "contents": "read"},
+        ),
     )
-    await minter.write_token()
-
-    assert mints[0]["body"] == {
-        "permissions": {
-            "contents": "write",
-            "metadata": "read",
-            "pull_requests": "write",
-            # Without workflows:write GitHub rejects pushing any branch that
-            # touches .github/workflows/* — the accept-blocking 422 of ee17b136.
-            "workflows": "write",
-        }
-    }
-    assert lookups == []  # nothing to intersect against
+    with pytest.raises(GitHubAppError, match="422.*contents"):
+        await minter.write_token()
 
 
 @pytest.mark.anyio
