@@ -1,7 +1,7 @@
 """UUID text keeps its meaning in work attribution, credential scope and reuse."""
 
 import uuid
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -53,15 +53,20 @@ async def test_reuse_resolves_only_a_listed_uuid(monkeypatch, raw):
     )
     monkeypatch.setattr(artifacts, "list_for_project", AsyncMock(return_value=[listed]))
     session = AsyncMock()
-    session.get.return_value = row
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = row
+    session.execute.return_value = result
 
     if raw in {"not-a-uuid", ""}:
         with pytest.raises(UnprocessableEntityError):
             await artifacts.reuse(session, project_id=project_id, artifact_id=raw)
-        session.get.assert_not_awaited()
+        # 不是 id 的文字没走到「按这一件取」，清单也没被拉来判对错。
+        session.execute.assert_not_awaited()
     else:
         assert (
             await artifacts.reuse(session, project_id=project_id, artifact_id=raw)
             is row
         )
-        session.get.assert_awaited_once_with(ProjectArtifact, _ID)
+        # 认出一件产物只发一条查询，不是先拉清单、再按 id 取一次。
+        session.execute.assert_awaited_once()
+        session.get.assert_not_awaited()
