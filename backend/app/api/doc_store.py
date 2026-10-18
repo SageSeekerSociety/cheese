@@ -126,7 +126,10 @@ async def store(
             conversation_id=conversation_id,
             actor=actors[0],
         )
-        if conversation_id is not None and actors and not quiet
+        if conversation_id is not None
+        and doc.project_id is not None
+        and actors
+        and not quiet
         else None
     )
     if suggested:
@@ -249,7 +252,11 @@ async def tell_origin_room(
     (`announce`); a change made from no conversation (a person's, or 芝士
     answering on the document itself) is in the document's history and
     nowhere else."""
-    if conversation_id is None or await whose_document(db, doc) != (None, None):
+    if (
+        conversation_id is None
+        or doc.project_id is None
+        or await whose_document(db, doc) != (None, None)
+    ):
         return
     place = await PlaceResolver(db).conversation(conversation_id)
     if place is None:

@@ -25,6 +25,7 @@ import {
   docThreadStateEmpty,
 } from './catalogPanelsDocFixtures'
 
+import DocMoveDialog from '@/components/library/DocMoveDialog.vue'
 import DocAgentBox from '@/components/panels/doc/DocAgentBox.vue'
 import DocAgentResult from '@/components/panels/doc/DocAgentResult.vue'
 import DocBacklinks from '@/components/panels/doc/DocBacklinks.vue'
@@ -682,6 +683,44 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
           ],
         },
         expect: '被引用',
+      },
+    ],
+  },
+  {
+    id: 'library-doc-move-dialog',
+    title: 'DocMoveDialog · 移动到…',
+    about:
+      '文档「⋯」里的「移动到…」（#3774）：能去的地方摆成一列，自己名下、每个团队和它的项目；点一行选中，底下一句说明挪过去以后谁能读。',
+    file: 'src/components/library/DocMoveDialog.vue',
+    component: DocMoveDialog,
+    needs: UI,
+    teleport: true,
+    args: {
+      modelValue: true,
+      title: '标注规范 v2',
+      places: [
+        { teamId: 1, name: '张华', personal: true, projects: [] },
+        {
+          teamId: 2,
+          name: '视觉课题组',
+          personal: false,
+          projects: [
+            { id: 'p1', name: '标注工具选型' },
+            { id: 'p2', name: '课堂提问分析' },
+          ],
+        },
+        { teamId: 3, name: '深度学习研究组', personal: false, projects: [{ id: 'p3', name: '论文复现' }] },
+      ],
+      current: { teamId: 2, projectId: 'p1' },
+      saving: false,
+      error: '',
+    },
+    states: [
+      {
+        name: '刚打开',
+        note: '现在所在的项目写着「当前位置」，还没选时「移动」是灰的。',
+        props: {},
+        expect: '当前位置',
       },
     ],
   },

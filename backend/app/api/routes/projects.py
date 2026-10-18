@@ -225,7 +225,7 @@ async def resource_limits() -> dict:
     return ok({"max_concurrent_turns": settings.max_concurrent_turns})
 
 
-@router.post("")
+@router.post("", dependencies=[ROUTE_DECIDES])
 async def create_project(
     body: ProjectCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

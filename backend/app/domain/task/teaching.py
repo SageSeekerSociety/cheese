@@ -5,8 +5,8 @@
 `harness.prompt.teaching_section` 去说。取数和措辞分开，是因为两者失败的方式
 不一样：这里失败是查不到东西，那里失败是话说错了。
 
-**引用，不是拷贝。** `material_ids` / `knowledge_ids` 存的是指向现成
-`Material` / `Knowledge` 的 id，不是内容的副本。一个课件改了名、一个链接换掉
+**引用，不是拷贝。** `material_ids` / `document_ids` 存的是指向现成
+`Material` / 团队文档（#3774）的 id，不是内容的副本。一个课件改了名、一个链接换掉
 了，课程不必重新保存配置就跟着变；存副本的话，课程配置会慢慢长成资料库的第二
 份，而两份不会同时更新。
 
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.knowledge.services import KnowledgeService
+from app.domain.living_doc.models import Document
 from app.domain.materials.services import MaterialService
 from app.domain.project.models import Project
 from app.domain.space.material_service import member_readable_material_ids
@@ -62,13 +62,11 @@ class TeachingContext:
     #: `{id, name, url, type}`. A 课件 locked to「仅管理员」on every board that
     #: lists it is dropped before it gets here — see `for_project`.
     materials: list[dict] = field(default_factory=list)
-    #: The 知识 entries that are still readable: `{id, name, description}`.
-    #:
-    #: Name and 描述 only — the `content` blob stays behind the knowledge API.
-    #: A 项目集 is allowed to point at material of any size, and a prompt that
-    #: grows with someone else's uploads is a prompt that eventually does not
-    #: fit; an entry the agent wants in full it can fetch by id.
-    knowledge: list[dict] = field(default_factory=list)
+    #: The documents the course points its AI teammates at that still exist:
+    #: `{id, title}`. Title only — the text stays behind the document routes,
+    #: which let this project's agents read these (`api.doc_access`); a
+    #: document the agent wants in full it reads by id.
+    documents: list[dict] = field(default_factory=list)
 
 
 async def for_project(
@@ -117,9 +115,18 @@ async def for_project(
     materials = await MaterialService.for_lookup(session).get_many(
         [mid for mid in teaching.material_ids if mid in readable]
     )
-    knowledge = await KnowledgeService.for_lookup(session).get_many(
-        teaching.knowledge_ids
+    documents = (
+        list(
+            await session.execute(
+                select(Document.id, Document.title).where(
+                    Document.id.in_(teaching.document_ids)
+                )
+            )
+        )
+        if teaching.document_ids
+        else []
     )
+    titles = {str(i): title for i, title in documents}
     return TeachingContext(
         course=category.name if category is not None else None,
         teaching=teaching,
@@ -127,9 +134,10 @@ async def for_project(
             {"id": m.id, "name": m.name, "url": m.url, "type": m.type}
             for m in materials
         ],
-        knowledge=[
-            {"id": k.id, "name": k.name, "description": k.description}
-            for k in knowledge
+        documents=[
+            {"id": i, "title": titles[i] or ""}
+            for i in teaching.document_ids
+            if i in titles
         ],
     )
 

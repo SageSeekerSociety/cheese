@@ -529,6 +529,9 @@ async def announce_comment_mentions(
     # nobody (its answer is read where it was asked).
     if await IdentityService(session).is_agent(author):
         return CommentMentions([], None)
+    if doc.project_id is None:
+        # A team's own document tells nobody yet (`api.doc_mentions`).
+        return CommentMentions([], None)
     members = TopicMemberService(session)
     people = set(await members.project_people(doc.project_id, team=project_team))
     named = [

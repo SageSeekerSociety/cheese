@@ -13,6 +13,7 @@ from app.api.deps import get_chat_service
 from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.caller import may_access_project
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
@@ -192,7 +193,9 @@ async def read_file_raw(
     )
 
 
-@router.put("/{project_id}/file", dependencies=[Depends(require_project_access)])
+@router.put(
+    "/{project_id}/file", dependencies=[ROUTE_DECIDES, Depends(require_project_access)]
+)
 async def write_file(
     project_id: uuid.UUID,
     body: dict,
