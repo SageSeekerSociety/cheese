@@ -1,5 +1,4 @@
 {
-  "backToEdit": "Back to editing",
   "blockHandle": "Drag to move, click to change the style or delete",
   "blockType": "Paragraph style",
   "close": "Close",
@@ -53,7 +52,6 @@
   "restore": "Restore this version",
   "restoreFailed": "Restore failed",
   "selectionToolbar": "Selection actions",
-  "setReadOnly": "Make read-only",
   "suggestionCount": "Suggestions: {n}",
   "titleLabel": "Doc title",
   "titlePlaceholder": "Title",
@@ -99,6 +97,8 @@
     "editHint": "Change the text directly",
     "suggest": "Suggesting",
     "suggestHint": "Changes become suggestions others accept or reject",
+    "read": "Read-only",
+    "readHint": "Read without changing the text",
     "suggestOnly": "You can only suggest changes; someone who can edit this document accepts or rejects them",
     "blockRefused": "Whole paragraphs can't be added or removed as suggestions; change the text inside a paragraph"
   }

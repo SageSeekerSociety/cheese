@@ -291,7 +291,7 @@ export const DOC_PANEL_ENTRIES_A: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocSlashMenu.s1.note')
         },
-        props: { items: DOC_SLASH_ITEMS.slice(0, 6), index: 1, top: 0, left: 0 },
+        props: { items: DOC_SLASH_ITEMS.slice(0, 6), index: 1, at: { top: 0, left: 0, width: 0, maxHeight: 300 } },
         expect: '标题 1',
       },
     ],

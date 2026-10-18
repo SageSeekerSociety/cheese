@@ -1,7 +1,7 @@
 """documents.created_by, and roles that share documents
 
 Revision ID: 1fa8b6c8019f
-Revises: 569e06806d03
+Revises: 32b875c31a9a
 Create Date: 2026-10-18
 
 A document's ``author`` is whoever made its latest version, so the rights a
@@ -25,7 +25,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "1fa8b6c8019f"
-down_revision: str | Sequence[str] | None = "569e06806d03"
+down_revision: str | Sequence[str] | None = "32b875c31a9a"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

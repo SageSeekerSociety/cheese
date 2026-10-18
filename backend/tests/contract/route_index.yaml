@@ -87,7 +87,7 @@ auth_entries:
   invitation.verified: "members invitation inbox/respond/revoke calls require_verified_caller then InvitationService binds recipient or revoker standing. Source: app/api/routes/members.py onward; domain/membership/services.py."
   routines.room: "routines._viewer / _routine_actor resolve in rule room and authorize_topic(enforce=True), then _sees_room; read lists filter readable rules. Source: app/api/routes/routines.py,182."
   routines.manage: "routines._routine_actor -> enforced room access, then _require_manage / _person according to operation: ownership or project manager and person-only confirmation/run/pause decisions. Agent draft/update limits remain in those helpers. Source: app/api/routes/routines.py onward."
-  routines.create: "routines.create_routine uses _viewer(enforced room access); owner/speaker and draft-vs-confirmed state are decided by _speaker and _is_person. Source: app/api/routes/routines.py."
+  routines.create: "routines.create_routine uses _viewer(enforced room access); owner/speaker and draft-vs-confirmed state are decided by _speaker and _is_person; the rule as made (its agent and owner) then passes the own-agent check. Source: app/api/routes/routines.py."
   skill.project: "project_skills._in_project / _load bind skill actual project, use enforced room access when topic is supplied, otherwise authorize_project; a person's create or edit also needs configure_agents (doc_access.require_role) whichever door it comes in by. Source: app/api/routes/project_skills.py,156."
   skill.bundle: "skill_bundles.download_skill_bundle reads scoped_token_claims from X-Cheese-Token (the session's project token) and derives the project from claim p; the URL carries no project id, so the credential itself is the only scope. A global sandbox token is not a project claim and is refused. Source: app/api/routes/skill_bundles.py and app/core/sandbox_auth.py."
   environment.user: "project_environment.AuthUser -> require_auth_user; access resolves user handle and checks roster for reads / MemberService.manages for writes, plus archive-write guard. room/apply operations bind the room and idle requirement. Source: app/api/routes/project_environment.py,54,79."
@@ -97,7 +97,7 @@ auth_entries:
   preview.access: "preview_sessions resolves authenticated actor then api/preview_host.require_preview_access, before minting resource-bound preview grant. Source: app/api/routes/preview_sessions.py; app/api/preview_host.py."
   workspace.access: "Decorator Depends(workspace.require_project_access): verify_scoped_token for project or auth.caller.may_access_project, then actual requested room/task containment + authorize_topic, with archive/task-ended PUT guards. Source: app/api/routes/workspace.py."
   document.reader: "api/doc_access.reach: a room's document resolves the actor in its room then authorize_topic (the topic-access setting applies); a document in no room resolves in its project then doc_access.authorize_in_project (a member, or 芝士 with its session credential in the project). Source: app/api/doc_access.py and the cited handler."
-  document.member: "document_comments._member uses api/doc_access.reach(enforce=True) (room roster for a room's document, project membership for one in no room) and doc_identity.operation_actor; mutations also bind the comment to its document. Source: app/api/routes/document_comments.py; app/api/doc_access.py."
+  document.member: "document_comments._member uses api/doc_access.reach(enforce=True) (room roster for a room's document, project membership for one in no room) and doc_identity.operation_actor; mutations and the agent stop also bind the comment to its document. Source: app/api/routes/document_comments.py; app/api/doc_access.py."
   canvas.writer: "canvases._canvas(write=True) / create_canvas: api/doc_access.reach(enforce=True) on the canvas's document, an authenticated actor, then doc_access.require_writable: the same callers as a write to that document. copy_canvas also reads the source canvas's document and requires the two documents to be in one project. Source: app/api/routes/canvases.py; app/api/doc_access.py."
   delegated.self: "ActorResolver.resolve(); the caller must be authenticated with a user id: a person's login, or a delegated credential (sandbox_auth.DelegatedClaims, cxdg_ prefix) that api.auth.DELEGATED_ROUTES admits here and resolves to the person the 芝士 answers for. Lists only that person's own rows. Source: app/api/routes/tasks/participation.py; app/api/auth/."
   document.human: "document_agent._asker uses api/doc_access.reach(enforce=True) and doc_identity.human_operation_actor (verified human, not agent identity); a box conversation is held in Valkey with its asker and document, and only that person on that document may go on with it, stop it, or put its answer into a thread they started. Source: app/api/routes/document_agent.py; app/domain/agent/document/box.py; app/api/doc_identity.py."
@@ -324,6 +324,7 @@ owners:
   feature_stats: "Feature usage catalogue and reports; domain/feature_stats registry/stats."
   platform_stats: "Platform usage/performance/product/pipeline/integration reports; domain/platform_stats services."
   ratchet: "Ratchet board ingestion and state; domain/ratchet board/store/ingest."
+  ci_activity: "The platform's own Actions runs, runners and merge queue, read from the tables the sweep fills; domain/ci_activity board/ingest."
   run_record: "What the platform did while running a conversation and its own errors, for the admin page; domain/run_record/admin.py."
   space.review: "Platform review of spaces; domain/space/review_service.py."
   space.materials: "A board's shared material library and its two visibility tiers; domain/space/material_service.py over the material rows domain/materials owns. Bytes leave only through the permission-checked download route; the material url never appears in a response."
@@ -468,6 +469,10 @@ routes:
   - {protocol: "http", method: "GET", path: "/admin/gateway/projects", auth: "platform.admin", owner: "agent.models"}
   - {protocol: "http", method: "PUT", path: "/admin/gateway/projects/{project_id}/budget", auth: "platform.admin", owner: "agent.models"}
   - {protocol: "http", method: "GET", path: "/admin/gateway/audit", auth: "platform.admin", owner: "agent.models"}
+  # app.api.routes.admin_ci_activity
+  - {protocol: "http", method: "GET", path: "/admin/ci-activity", auth: "platform.admin", owner: "ci_activity"}
+  - {protocol: "http", method: "GET", path: "/admin/ci-activity/jobs", auth: "platform.admin", owner: "ci_activity"}
+  - {protocol: "http", method: "GET", path: "/admin/ci-activity/steps", auth: "platform.admin", owner: "ci_activity"}
   # app.api.routes.admin_ratchet
   - {protocol: "http", method: "GET", path: "/admin/ratchet", auth: "platform.admin", owner: "ratchet"}
   - {protocol: "http", method: "POST", path: "/admin/ratchet/refresh", auth: "platform.admin", owner: "ratchet"}

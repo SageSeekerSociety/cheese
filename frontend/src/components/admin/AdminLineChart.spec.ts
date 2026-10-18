@@ -97,6 +97,21 @@ function tickCount(container: Element, text: string): number {
 }
 
 describe('AdminLineChart', () => {
+  it('a day with no value breaks the line and reads as a dash, not as zero', () => {
+    const { container } = mountChart({
+      xLabels: ['d1', 'd2', 'd3'],
+      series: [{ name: 'p50', values: [5, null, 7], style: 'solid' }],
+    })
+
+    // Two separate pieces: the pen lifts over the missing day instead of drawing a
+    // slope through a zero.
+    const d = container.querySelector('.alc__line')?.getAttribute('d') ?? ''
+    expect(d.match(/M/g)?.length).toBe(2)
+    expect(container.querySelectorAll('.alc__point').length).toBe(2)
+    const cells = Array.from(container.querySelectorAll('.alc__cell')).map((el) => el.textContent?.trim())
+    expect(cells).toEqual(['5', '—', '7'])
+  })
+
   it('hover 后 tooltip 显示该日各系列的 fmtNum 全值，移走消失', async () => {
     const { container } = mountChart({
       xLabels: ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7'],
