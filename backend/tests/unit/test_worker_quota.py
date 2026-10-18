@@ -160,9 +160,13 @@ def test_the_vitest_variable_is_the_one_this_repos_config_reads():
     config = (
         Path(__file__).resolve().parents[3] / "frontend/vite.config.ts"
     ).read_text(encoding="utf-8")
-    assert "VITEST_MAX_FORKS" in config
-    assert "VITEST_MAX_WORKERS" not in config
-    assert worker_quota.VARIABLES[1] == "VITEST_MAX_FORKS"
+    name = worker_quota.VARIABLES[1]
+    # The config's own read of the name, not a mention of it: a comment naming
+    # the variable says nothing about whether the config reads it.
+    assert f"process.env.{name}" in config
+    assert "process.env.VITEST_MAX_WORKERS" not in config
+    # And the number it reads feeding the pool vitest runs, not a constant.
+    assert "maxWorkers: maxForks" in config
 
 
 def test_the_release_carries_the_module_it_needs(tmp_path):
