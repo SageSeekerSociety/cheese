@@ -155,7 +155,12 @@ async def test_going_back_to_one_status_per_machine_turns_the_rule_red(
     monkeypatch,
 ) -> None:
     """Plant the read this change replaced. The answers stay the same, so the
-    red is the extra reads and nothing else."""
+    red is the extra reads and nothing else.
+
+    This guards ``_the_logins_were_read_once`` itself: delete its counting
+    assertion and this test goes green. It is not a regression guard for the
+    route — the count test above is the one that fails without the change.
+    """
     logins = _OneMachineAtATime(ROWS)
 
     out = await _listing(monkeypatch, logins)
@@ -184,6 +189,16 @@ class _Result:
         return _ScalarRows(self._rows)
 
 
+def _ids_asked(statement) -> list[str]:
+    """The ids an ``IN (...)`` carries, read from the statement's bound
+    parameters rather than from one spelling of the expression: a rewrite that
+    passes a tuple or a set still reads."""
+    for value in statement.compile().params.values():
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [str(device_id) for device_id in value]
+    return []
+
+
 class _CountingSession:
     """The login table, counting the queries it answers."""
 
@@ -195,7 +210,7 @@ class _CountingSession:
 
     async def execute(self, statement) -> _Result:
         self.executes += 1
-        wanted = list(statement.whereclause.right.value)
+        wanted = _ids_asked(statement)
         self.asked.extend(wanted)
         return _Result([row for d, row in self.rows.items() if d in wanted])
 
@@ -212,7 +227,7 @@ async def test_statuses_answers_every_row_in_one_query() -> None:
 
     assert session.executes == 1
     assert session.gets == 0
-    assert session.asked == wanted
+    assert sorted(session.asked) == sorted(wanted)
     assert got == {
         device_id: claude_login.view(ROWS[device_id]) for device_id in wanted
     }
