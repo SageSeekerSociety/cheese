@@ -1,13 +1,14 @@
 """Forge requests are attributed to the periodic job or to everyone else.
 
-The counters answer one question about a shared installation's minute: how much
-of the traffic is the platform's own clock? They count attempts that were
-actually sent (a caller hook that yields first is not one), and they bucket the
-raw response before ``forge_etags`` turns a 304 into a cached 200.
+The counters answer one question about a shared installation's minute: which of
+the traffic is the platform's own clock, and which periodic job it belongs to?
+They count attempts that were actually sent (a caller hook that yields first is
+not one), and they bucket the raw response before ``forge_etags`` turns a 304
+into a cached 200.
 
 Only requests carrying a token this platform minted for an installation are
-attributable, and the labels stay at two static values plus that installation
-number — no path, URL or token is kept.
+attributable, and the labels stay at a registered job name (or `other`) plus
+that installation number — no path, URL or token is kept.
 """
 
 import asyncio
@@ -19,7 +20,7 @@ import pytest
 
 from app.core import forge_quota, metrics
 from app.core.background import PeriodicRunner
-from app.core.forge_http import forge_client
+from app.core.forge_http import background_job, forge_client
 
 pytestmark = pytest.mark.anyio
 
@@ -52,33 +53,60 @@ def _responses(bucket: str, job: str, installation: int) -> int:
     ).value
 
 
-async def test_a_periodic_job_is_tagged_and_a_later_ordinary_call_is_not():
+async def test_each_periodic_job_is_tagged_by_its_registered_name():
     installation = 9910001
     auth = _auth(installation, "ghs_attribution_job")
-    ran = asyncio.Event()
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
     url = "https://api.invalid/repos/o/r/actions/runs"
 
-    async def job() -> None:
-        async with forge_client(transport=transport) as client:
-            await client.get(url, headers=auth)
-        ran.set()
+    async def run_once(name: str) -> None:
+        ran = asyncio.Event()
 
-    runner = PeriodicRunner("attribution", 60, job)
-    # Overdue, so the first tick runs at once and the next is a minute away.
-    runner.start(_Runs(), datetime.now(UTC) - timedelta(seconds=120))
-    try:
-        await asyncio.wait_for(ran.wait(), timeout=2)
-    finally:
-        await runner.stop()
+        async def job() -> None:
+            async with forge_client(transport=transport) as client:
+                await client.get(url, headers=auth)
+            ran.set()
+
+        runner = PeriodicRunner(name, 60, job)
+        # Overdue, so the first tick runs at once and the next is a minute away.
+        runner.start(_Runs(), datetime.now(UTC) - timedelta(seconds=120))
+        try:
+            await asyncio.wait_for(ran.wait(), timeout=2)
+        finally:
+            await runner.stop()
+
+    await run_once("ci activity sweep")
+    await run_once("notification digest")
 
     async with forge_client(transport=transport) as client:
         await client.get(url, headers=auth)
 
-    assert _started("job", installation) == 1
+    assert _started("ci activity sweep", installation) == 1
+    assert _started("notification digest", installation) == 1
     assert _started("other", installation) == 1
-    assert _responses("core_rest_non_304", "job", installation) == 1
-    assert _responses("core_rest_non_304", "other", installation) == 1
+    for name in ("ci activity sweep", "notification digest", "other"):
+        assert _responses("core_rest_non_304", name, installation) == 1
+
+
+async def test_the_job_name_is_reset_when_a_job_raises_or_is_cancelled():
+    installation = 9910006
+    auth = _auth(installation, "ghs_attribution_leak")
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+
+    for exc_type, suffix in (
+        (RuntimeError, "raise"),
+        (asyncio.CancelledError, "cancel"),
+    ):
+        with pytest.raises(exc_type):
+            with background_job("ci activity sweep"):
+                raise exc_type()
+        async with forge_client(transport=transport) as client:
+            await client.get(
+                f"https://api.invalid/repos/o/r/commits/{suffix}", headers=auth
+            )
+
+    assert _started("ci activity sweep", installation) == 0
+    assert _started("other", installation) == 2
 
 
 async def test_a_raw_304_is_counted_once_before_the_etag_layer_restores_the_body():

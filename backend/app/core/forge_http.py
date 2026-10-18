@@ -58,24 +58,24 @@ class _Borrowed(httpx.AsyncBaseTransport):
 
 _shared: tuple[asyncio.AbstractEventLoop, _Borrowed] | None = None
 
-#: The `job` label's two values. A label carrying the job's name would grow
-#: with the job list and answer a question the counters are not for: whether a
-#: request was made by the platform's own clock or by somebody else.
+#: The `job` label: the registered name of the periodic job whose tick is
+#: running, or `other` for any call made outside one. Job names come from the
+#: static registration list, never from a user id, a task title or a URL.
 JOB_OTHER = "other"
-JOB_PERIODIC = "job"
 
 _job: ContextVar[str] = ContextVar("forge_request_job", default=JOB_OTHER)
 
 
 @contextmanager
-def background_job() -> Iterator[None]:
-    """Attribute forge requests made inside to a periodic job's own reads.
+def background_job(name: str) -> Iterator[None]:
+    """Attribute forge requests made inside to ``name``'s periodic job.
 
-    Sync on purpose: ``PeriodicRunner`` wraps only the awaited job call, so the
-    context reaches the task's async sends without changing the scheduler. It
-    is reset in ``finally`` even when the job raises.
+    ``name`` must be a static, registered job name. Sync on purpose:
+    ``PeriodicRunner`` wraps only the awaited job call, so the context reaches
+    the task's async sends without changing the scheduler. It is reset in
+    ``finally`` even when the job raises or is cancelled.
     """
-    token = _job.set(JOB_PERIODIC)
+    token = _job.set(name)
     try:
         yield
     finally:

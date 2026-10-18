@@ -309,7 +309,7 @@ class PeriodicRunner:
                     # reset by the context manager on every exit path, so a
                     # failed or cancelled cycle cannot leak "job" into later
                     # work; scheduling and pause behaviour are untouched.
-                    with forge_http.background_job():
+                    with forge_http.background_job(self._name):
                         result = await self._job()
                 except asyncio.CancelledError:
                     # `stop()` cancels this task, and THAT has to end the loop.
