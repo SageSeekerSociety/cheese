@@ -198,8 +198,8 @@ beside what the runner journaled (`session_records`, see
 session host: a room's raw `.claude/projects/**/*.jsonl` files, subagent files
 included, are in its home there, and Codex's and pi's session files are under the
 resource's harness state (`~/.cheese/harness/<project>/<resource>/`). Removing the
-home first compresses them into
-`~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on the same host, which
+resource there, whether or not the room has a home on that host, first compresses
+them into `~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on the same host, which
 is then sent to `transcripts/rooms/<project>/<room>/<resource>.tar.gz` in the
 private bucket. The host's archive is deleted 30 days later (`TRANSCRIPT_RETENTION`
 in `room_cleanup/retire.py`), and only once the bucket is found to hold it as sent.
