@@ -288,6 +288,8 @@ class DeployRunForAMergedPR(unittest.TestCase):
         for message in (f'Revert "feat(x): the change (#3055)"\n\nThis reverts commit {MERGE}.',
                         'Revert "feat(x): the change (#3055)" (#3060)\n\nReverts SageSeekerSociety/cheese#3055',
                         'Revert "feat(x): the change (#3055)" (#3060)',
+                        # GitHub's body form alone, under a headline no other form matches.
+                        'chore: back out a change (#3060)\n\nReverts SageSeekerSociety/cheese#3055',
                         # This repo squashes a revert PR under its own conventional title (27e7f268d).
                         'revert(x): back out the change (#3055) (#3060)\n\nMain went red after it.',
                         'revert(x): take them back out (#3001, #3055) (#3060)'):
@@ -407,7 +409,9 @@ class DeployRunForAMergedPR(unittest.TestCase):
         # states, each reported, and the wait counts from the second.
         red = {"databaseId": 101, "status": "completed", "conclusion": "failure", "headSha": MERGE}
         rerun = {**red, "status": "in_progress", "conclusion": ""}
-        result = self.watch([run(9, "completed", "success", f"Deploy {MERGE}")], live=MERGE, red_wait="1",
+        # Two seconds, not one: the wait starts and is checked on whole-second clock reads, and a
+        # second boundary between them made a 1 s wait expire on the first red (6 of 60 under load).
+        result = self.watch([run(9, "completed", "success", f"Deploy {MERGE}")], live=MERGE, red_wait="2",
                             ci_polls=[[red], [rerun], [red]])
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(result.stdout.count(f"main is red after merge {MERGE[:9]} (run 101)"), 2, result.stdout)
