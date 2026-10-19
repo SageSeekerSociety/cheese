@@ -17,6 +17,7 @@ from pathlib import Path
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.pi.launch import VERSION
 from tests.pinned_claude import pi_binary
+from tests.support.machine_path import on_machine
 
 DEVICE = "center"
 
@@ -60,7 +61,7 @@ class Host:
         }
 
     def state(self, recorded: str) -> Path:
-        return Path(recorded.replace("$HOME", str(self.home))).resolve()
+        return Path(on_machine(recorded, self.home)).resolve()
 
     async def call_executor(self, device_id, state, method, params, *, timeout=660):
         from app.domain.agent.device_hub import DeviceCallError

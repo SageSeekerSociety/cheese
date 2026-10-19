@@ -58,6 +58,18 @@ func removeSelf(exe string) error { return os.Remove(exe) }
 
 // stopFootprintProcesses: unlinking what a running program was started from is
 // allowed here, so nothing has to stop before the footprint goes.
-func stopFootprintProcesses(string) {}
+func stopFootprintProcesses(string, bool) {}
 
 func removeTree(dir string) error { return os.RemoveAll(dir) }
+
+func lockEnrollment(path string) (func(), error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return func() { file.Close() }, nil
+}

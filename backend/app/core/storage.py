@@ -4,6 +4,7 @@ import io
 import logging
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -123,6 +124,14 @@ class StorageBackend(ABC):
     def get_url(self, key: str) -> str:
         """Get public URL for the file."""
 
+    async def delete_prefix(self, prefix: str) -> int:
+        """Delete every object whose key starts with ``prefix``; how many."""
+        raise NotImplementedError
+
+    def listed(self, prefix: str) -> AsyncIterator[list[tuple[str, datetime]]]:
+        """Pages of (key, last modified) for the objects under ``prefix``."""
+        raise NotImplementedError
+
 
 class LocalStorageBackend(StorageBackend):
     def __init__(self, base_path: str, base_url: str) -> None:
@@ -154,6 +163,31 @@ class LocalStorageBackend(StorageBackend):
 
     async def exists(self, key: str) -> bool:
         return await aiofiles.ospath.exists(self._base_path / key)
+
+    async def delete_prefix(self, prefix: str) -> int:
+        def remove() -> int:
+            gone = 0
+            for path in sorted(self._base_path.rglob("*")):
+                key = path.relative_to(self._base_path).as_posix()
+                if path.is_file() and key.startswith(prefix):
+                    path.unlink()
+                    gone += 1
+            return gone
+
+        return await asyncio.to_thread(remove)
+
+    async def listed(self, prefix: str) -> AsyncIterator[list[tuple[str, datetime]]]:
+        def scan() -> list[tuple[str, datetime]]:
+            found = []
+            for path in sorted(self._base_path.rglob("*")):
+                key = path.relative_to(self._base_path).as_posix()
+                if path.is_file() and key.startswith(prefix):
+                    found.append(
+                        (key, datetime.fromtimestamp(path.stat().st_mtime, UTC))
+                    )
+            return found
+
+        yield await asyncio.to_thread(scan)
 
     def get_url(self, key: str) -> str:
         return f"{self._base_url}/{key}"
@@ -288,6 +322,32 @@ class S3StorageBackend(StorageBackend):
                     return False
                 raise
             return True
+
+    async def delete_prefix(self, prefix: str) -> int:
+        gone = 0
+        async with self._get_client() as client:
+            pages = client.get_paginator("list_objects_v2").paginate(
+                Bucket=self._bucket, Prefix=prefix
+            )
+            async for page in pages:
+                keys = [{"Key": item["Key"]} for item in page.get("Contents", [])]
+                if keys:
+                    await client.delete_objects(
+                        Bucket=self._bucket, Delete={"Objects": keys, "Quiet": True}
+                    )
+                    gone += len(keys)
+        return gone
+
+    async def listed(self, prefix: str) -> AsyncIterator[list[tuple[str, datetime]]]:
+        async with self._get_client() as client:
+            pages = client.get_paginator("list_objects_v2").paginate(
+                Bucket=self._bucket, Prefix=prefix
+            )
+            async for page in pages:
+                yield [
+                    (item["Key"], item["LastModified"])
+                    for item in page.get("Contents", [])
+                ]
 
     async def exists(self, key: str) -> bool:
         async with self._get_client() as client:
