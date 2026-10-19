@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Callable
-from functools import lru_cache
+from functools import lru_cache, partial
 
 from fastapi import Depends
 from redis.asyncio import Redis
@@ -47,6 +47,7 @@ from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
+from app.domain.session_record import service as session_records
 from app.domain.space.services import SpaceLabels
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
@@ -123,7 +124,11 @@ def get_session_host() -> SessionHost:
     """The sessions on the session host this process talks to — a room's, a
     person's 芝士, a document thread's. One per process, like the chat
     service: it remembers which sessions are running and where each is read."""
-    return SessionHost(device_hub, on_alive=_note_alive)
+    return SessionHost(
+        device_hub,
+        on_alive=_note_alive,
+        records=partial(session_records.append, async_session_factory),
+    )
 
 
 @lru_cache
