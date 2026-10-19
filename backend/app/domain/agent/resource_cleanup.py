@@ -54,8 +54,15 @@ SANDBOXES = "sandboxes"
 SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
 
 # Where an archived room's session transcripts wait under FOOTPRINT_ROOT until
-# the cleanup that retained them deletes them (room_cleanup/retire.py sets how long).
+# their copy in the private bucket is confirmed and their retention is over
+# (room_cleanup/retire.py).
 TRANSCRIPTS_ROOT = "transcripts"
+
+# Where a resource's harness sessions keep their state under FOOTPRINT_ROOT — a
+# copy of the directory `machine_launcher.state_dir` names, held to it by
+# test_footprint_root.py: Codex's and pi's own session files are in there, not
+# in the room's home.
+HARNESS_ROOT = "harness"
 
 # Where the seats of a room keep the files that belong to one teammate's session
 # rather than to the room — a copy of `place.SEATS_DIR`, held to it by
@@ -475,27 +482,33 @@ def keep_room_files(home: Path, executor: dict | None, url: str, resource: str):
     try:
         with tarfile.open(archive, "w:gz") as bundle:
             bundle.add(room, arcname=CHECKOUT_DIR, recursive=True)
-        digest = hashlib.md5()  # the bucket's ETag of one PUT
-        with archive.open("rb") as source:
-            for block in iter(lambda: source.read(1 << 20), b""):
-                digest.update(block)
-        size = archive.stat().st_size
-        with archive.open("rb") as source:
-            request = urllib.request.Request(
-                url,
-                data=source,
-                method="PUT",
-                headers={
-                    "Content-Length": str(size),
-                    "Content-Type": "application/gzip",
-                },
-            )
-            with urllib.request.urlopen(request, timeout=600) as response:
-                if response.status // 100 != 2:
-                    raise RuntimeError(f"bucket answered {response.status}")
-        return {"size": size, "md5": digest.hexdigest()}
+        return put_archive(archive, url)
     finally:
         archive.unlink(missing_ok=True)
+
+
+def put_archive(archive: Path, url: str) -> dict:
+    """Send `archive` by one PUT to `url` (presigned by the platform); its size
+    and MD5, which the platform holds against what the bucket reports."""
+    digest = hashlib.md5()  # the bucket's ETag of one PUT
+    with archive.open("rb") as source:
+        for block in iter(lambda: source.read(1 << 20), b""):
+            digest.update(block)
+    size = archive.stat().st_size
+    with archive.open("rb") as source:
+        request = urllib.request.Request(
+            url,
+            data=source,
+            method="PUT",
+            headers={
+                "Content-Length": str(size),
+                "Content-Type": "application/gzip",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=600) as response:
+            if response.status // 100 != 2:
+                raise RuntimeError(f"bucket answered {response.status}")
+    return {"size": size, "md5": digest.hexdigest()}
 
 
 def remove_tree(path: Path) -> None:
@@ -663,18 +676,63 @@ def retained_transcripts(machine_home: Path, project: str, room: str, resource: 
     )
 
 
-def retain_transcripts(home: Path, archive: Path) -> None:
-    """Compress the home's Claude Code session files before the home goes.
+def harness_sessions(machine_home: Path, project: str, resource: str):
+    """The session files the resource's harnesses wrote, each with the name it
+    goes under in the archive (its path under the resource's harness root).
 
-    `.claude/projects` holds every session of the room — the main transcript
-    and each subagent's beside it. A link is stored as a link and never
-    followed: Claude Code links a resumed session's subagent files to the
-    originals in the same tree, and a link out of the home is not ours to read.
+    Every harness keeps a seat's state in `<harness>/<seat>/` there
+    (`machine_launcher.state_dir`) and its own session files in a `sessions`
+    directory at most two levels into it: Codex's under its `CODEX_HOME`, pi's
+    under `--session-dir` and each pi subagent's under its own. Nothing removes
+    these directories; they are archived with the room's other transcripts so
+    that the bucket has them too. A seat's `workspace` and `home` are the
+    session's working directory and `HOME`, the agent's own files rather than
+    the harness's, and are not looked in."""
+    root = (
+        machine_home
+        / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+        / HARNESS_ROOT
+        / str(uuid.UUID(project))
+        / str(uuid.UUID(resource))
+    )
+    if any(path.is_symlink() for path in (root, root.parent, root.parent.parent)):
+        raise RuntimeError("harness path is a symlink")
+    found = []
+    for seat in sorted(root.glob("*/*")):
+        for pattern in ("sessions", "*/sessions", "*/*/sessions"):
+            for path in sorted(seat.glob(pattern)):
+                inside = path.relative_to(seat).parts
+                if inside[0] in ("workspace", "home"):
+                    continue
+                # A link anywhere from the harness root down is not followed:
+                # the session could have pointed it anywhere on the machine.
+                chain = [
+                    root / Path(*path.relative_to(root).parts[:n])
+                    for n in range(1, len(path.relative_to(root).parts) + 1)
+                ]
+                if any(part.is_symlink() for part in chain) or not path.is_dir():
+                    continue
+                found.append((path, path.relative_to(root).as_posix()))
+    return found
+
+
+def retain_transcripts(home: Path, archive: Path, harnesses=()) -> None:
+    """Compress the resource's session files before the home goes.
+
+    `.claude/projects` holds every Claude Code session of the room — the main
+    transcript and each subagent's beside it; `harnesses` are the Codex and pi
+    ones (`harness_sessions`). A link is stored as a link and never followed:
+    Claude Code links a resumed session's subagent files to the originals in
+    the same tree, and a link out of the home is not ours to read.
     Written under a temporary name and renamed, so an archive under the final
     name is always whole; a retry after a crash rewrites it from the same home.
     """
-    source = home / ".claude/projects"
-    if source.is_symlink() or not source.is_dir():
+    sources = []
+    claude = home / ".claude/projects"
+    if not claude.is_symlink() and claude.is_dir():
+        sources.append((claude, "projects"))
+    sources += list(harnesses)
+    if not sources:
         return
     archive.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = archive.with_name(archive.name + ".part")
@@ -684,7 +742,8 @@ def retain_transcripts(home: Path, archive: Path) -> None:
             os.fdopen(descriptor, "wb") as output,
             tarfile.open(fileobj=output, mode="w:gz") as bundle,
         ):
-            bundle.add(source, arcname="projects", recursive=True)
+            for source, name in sources:
+                bundle.add(source, arcname=name, recursive=True)
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, archive)
@@ -704,6 +763,16 @@ def sync_directory(directory: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def send_transcripts(archive: Path, url: str):
+    """Send the retained archive to the bucket (`put_archive`); None when this
+    machine holds none for the resource."""
+    if not archive.is_file():
+        return None
+    if not url:
+        raise RuntimeError("there is no bucket to send the transcripts to")
+    return put_archive(archive, url)
 
 
 def expire_transcripts(archive: Path) -> None:
@@ -999,7 +1068,9 @@ def main() -> None:
             helper["release"](found[0])
         if room != "-" and home.exists():
             retain_transcripts(
-                home, retained_transcripts(Path.home(), project, room, resource)
+                home,
+                retained_transcripts(Path.home(), project, room, resource),
+                harness_sessions(Path.home(), project, resource),
             )
         for path in (work, home, resource_tmp(resource)):
             if path is not None and path.exists():
@@ -1011,7 +1082,18 @@ def main() -> None:
     elif action == "tasks":
         # `tasks` are closed tasks of this room; `cleanup` and `room` are unused.
         print(json.dumps(remove_task_checkouts(home, tasks)))
+    elif action == "send-transcripts":
+        # The URL to send to is in the environment, as for `keep-room`; the
+        # platform checks the bucket against the answer before anything here
+        # may expire.
+        sent = send_transcripts(
+            retained_transcripts(Path.home(), project, room, resource),
+            os.environ.get("CHEESE_KEEP_URL", ""),
+        )
+        print(json.dumps({"sent": sent}))
     elif action == "expire":
+        # Run only once the platform found the archive in the bucket as this
+        # machine sent it (`retire._expire_transcripts`).
         expire_transcripts(retained_transcripts(Path.home(), project, room, resource))
         print(json.dumps({"expired": True}))
     else:

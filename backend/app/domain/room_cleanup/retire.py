@@ -26,6 +26,9 @@ from app.domain.agent.device_storage import (
     list_device_storage,
     record_room_files,
     room_files_upload_url,
+    transcripts_kept,
+    transcripts_key,
+    transcripts_upload_url,
 )
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.models import AgentSession
@@ -40,12 +43,12 @@ from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheesex.topic.retire")
 
-# How long an archived room's Claude Code transcripts stay on the session host
-# after its cleanup removes the room's home. A window for debugging what an
-# agent did after the fact, and no longer: transcripts are sensitive user data,
-# and nothing needs them to carry the work on — the room's chat, its living doc
-# and the action timeline stay with the room. A reopened room starts a new
-# session and does not read them either.
+# How long an archived room's session transcripts (Claude Code's, Codex's and
+# pi's own files) stay on the session host after its cleanup removes the room's
+# home. Their copy in the private bucket is kept for good (Zhifei's ruling on
+# #4398, 2026-10-19, "R2上的得留 transcripts非常有价值 一定要留……包括agent
+# traces", which supersedes #1611's on-host-only 30 days): the host's copy goes
+# only once the bucket is found to hold it as sent (`_expire_transcripts`).
 TRANSCRIPT_RETENTION = timedelta(days=30)
 
 # A cleanup that fails again for the same reason is tried again later and
@@ -103,6 +106,32 @@ def _keeps_transcripts(entry: dict) -> bool:
         and settings.agent_session_device_id is not None
         and entry["device_id"] == settings.agent_session_device_id
     )
+
+
+async def _send_transcripts(operation: RoomCleanup, entry: dict) -> str | None:
+    """Send a resource's retained transcripts to the private bucket and check
+    the bucket holds them as sent; their key, or None when the machine holds
+    none. Raises when they were not kept: the machine's copy is then the only
+    one, and must stay."""
+    key = transcripts_key(
+        operation.project_id, operation.topic_id, entry["resource_id"]
+    )
+    answer = await _device_action(
+        entry["device_id"],
+        operation.project_id,
+        entry["resource_id"],
+        "send-transcripts",
+        operation.id,
+        operation.topic_id,
+        await transcripts_upload_url(key),
+    )
+    sent = answer.get("sent") if isinstance(answer, dict) else None
+    if sent is None:
+        return None
+    if not await transcripts_kept(key, sent):
+        # i18n-exempt: a cleanup's reason for waiting, for the logs and the row
+        raise RuntimeError(f"retained transcripts not kept in the bucket: {key}")
+    return key
 
 
 async def _destroyed(session, entry: dict) -> bool:
@@ -655,9 +684,22 @@ async def _advance(
                     raise RuntimeError("backend checkout removal failed")
         # Whether transcripts were kept is recorded with the removal, so their
         # expiry follows what was kept even if the session host changes.
-        done = {"removed": True}
+        done: dict[str, object] = {"removed": True}
         if _keeps_transcripts(entry):
             done["retained"] = True
+            # Sent now, so the bucket has them from the start; one that fails
+            # is sent again before the host's copy may expire. Committed
+            # first: no transaction stays open while the machine sends.
+            await session.commit()
+            try:
+                done["sent"] = await _send_transcripts(operation, entry)
+            except Exception:
+                logger.warning(
+                    "retained transcripts not sent yet operation=%s resource=%s",
+                    operation.id,
+                    entry["resource_id"],
+                    exc_info=True,
+                )
         operation.resources = [
             {**item, **done} if item == entry else item for item in operation.resources
         ]
@@ -689,6 +731,18 @@ async def _expire_transcripts(session, operation: RoomCleanup) -> None:
     for entry in operation.resources:
         if not entry.get("retained") or entry.get("expired"):
             continue
+        if not entry.get("sent"):
+            # Not in the bucket yet (a send that failed, or a cleanup from
+            # before transcripts were sent): sent first. One that fails raises,
+            # and the sweep tries again later with the host's copy untouched.
+            await session.commit()
+            sent = await _send_transcripts(operation, entry)
+            operation.resources = [
+                {**item, "sent": sent} if item == entry else item
+                for item in operation.resources
+            ]
+            await session.commit()
+            entry = {**entry, "sent": sent}
         await _device_action(
             entry["device_id"],
             operation.project_id,

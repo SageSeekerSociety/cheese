@@ -792,10 +792,11 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
   `TRANSCRIPT_S3_BUCKET`, which nothing else backs up. They are kept 30 days;
   the inputs each session was sent are then kept under
   `archive/user-messages/` for as long as the conversation exists.
-- **Transcripts** (the CLI's own `.jsonl` files) are not backed up. Claude Code
-  sessions run on the central session host, and their transcripts stay there:
-  the platform does not upload them. Archived-room cleanup keeps a room's transcripts compressed on that host
-  for 30 days, then deletes them — see
+- **Transcripts** (the CLI's own `.jsonl` files: Claude Code's, Codex's, pi's)
+  of an archived room are compressed on the central session host when its
+  cleanup removes the room's home, sent to the private `TRANSCRIPT_S3_BUCKET`
+  under `transcripts/rooms/`, and kept there for good; the host's copy goes 30
+  days later, once the bucket's is confirmed — see
   [archived-room cleanup deployment](../deploy/README-room-cleanup.md).
   Transcript objects uploaded to the private `TRANSCRIPT_S3_BUCKET` before
   uploading stopped are still there, indexed by the `raw_transcripts` table;

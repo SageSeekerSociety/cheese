@@ -43,7 +43,7 @@ covers:
 
 ## 回收脚本在设备上跑 {#script}
 
-`domain/agent/resource_cleanup.py` 是用 stdin 送到设备上、在那边跑的程序（没有 `__file__`、import 不到平台任何东西），所以它带着几个常数的**副本**，由 `tests/unit/test_footprint_root.py` 与 `place.py` 对齐：`FOOTPRINT_ROOT = ".cheese"`、`CHECKOUT_DIR = "room"`、`TRANSCRIPTS_ROOT = "transcripts"`、`PLATFORM_DIRS = (".cheese", ".claude")`。名字漂移的代价写得很直白：拆卸会对一条从没存在过的路径报成功，而真正的几百 GB 留在机器上。
+`domain/agent/resource_cleanup.py` 是用 stdin 送到设备上、在那边跑的程序（没有 `__file__`、import 不到平台任何东西），所以它带着几个常数的**副本**，由 `tests/unit/test_footprint_root.py` 与 `place.py` 对齐：`FOOTPRINT_ROOT = ".cheese"`、`CHECKOUT_DIR = "room"`、`TRANSCRIPTS_ROOT = "transcripts"`、`HARNESS_ROOT = "harness"`、`PLATFORM_DIRS = (".cheese", ".claude")`。名字漂移的代价写得很直白：拆卸会对一条从没存在过的路径报成功，而真正的几百 GB 留在机器上。
 
 动作（`main` 的第一个参数）：
 
@@ -70,9 +70,9 @@ covers:
 
 ## 记录（transcripts） {#transcripts}
 
-- CLI 自己的记录文件不上传；平台保留的是 runner 记下的那份原始记录，见[原始记录](/dev/session-records)。每个 Claude Code 会话都跑在中央会话主机上（`AGENT_SESSION_DEVICE_ID`），所以房间的记录就在它在那台机器上的 home 里。删 home 之前，先把 home 的 `.claude/projects` 树（主会话文件与每个分身的）压成 `~/.cheese/transcripts/<项目>/<房间>/<资源>.tar.gz`，保存在同一台机器上、只有该主机用户可读。**树里的链接按链接存，绝不跟随。** 别的设备不留记录。
-- 之后操作停在 `retained` 状态：home 被删后三十天（`TRANSCRIPT_RETENTION`，`domain/room_cleanup/retire.py`），同一个定时器删掉压缩包，操作变成 `complete`。
-- 这份副本只是事后查 agent 干了什么用的，没有任何东西读它。
+- CLI 自己的记录文件也进私有桶、永久保留（Zhifei 在 #4398 上 2026-10-19 的裁定，推翻 #1611 的“不上传”）；runner 记下的那份原始记录另见[原始记录](/dev/session-records)。每个会话都跑在中央会话主机上（`AGENT_SESSION_DEVICE_ID`）：Claude Code 的记录在房间 home 的 `.claude/projects` 里（主会话与每个分身的），Codex 和 pi 的在资源的 harness 状态目录 `~/.cheese/harness/<项目>/<资源>/` 下（Codex 的 `CODEX_HOME/sessions`，pi 的 `sessions/` 和每个子 agent 的）。删 home 之前，先把这些一起压成 `~/.cheese/transcripts/<项目>/<房间>/<资源>.tar.gz`，保存在同一台机器上、只有该主机用户可读。**树里的链接按链接存，绝不跟随。** 别的设备不留记录。
+- 压好之后用预签名 PUT 传进私有桶 `transcripts/rooms/<项目>/<房间>/<资源>.tar.gz`，后端按主机报的大小和 MD5 核对桶里那份。桶里那份没有任何代码删。
+- 之后操作停在 `retained` 状态：home 被删后三十天（`TRANSCRIPT_RETENTION`，`domain/room_cleanup/retire.py`），同一个定时器删掉主机上的压缩包，操作变成 `complete`；前提是桶里那份核对过。还没传上去的（当时传失败，或者在有上传之前就留下的）先传，传不上去就留在主机上，过一阵再试。
 - 记录还在保留期内的时候取消归档，**什么都不会被还原**：房间拿到新的资源代际，agent 开新会话；那份压缩包按原计划到期。再归档一次，新代际的记录会在旁边存成第二份。
 
 ## 独立时钟 {#timer}
