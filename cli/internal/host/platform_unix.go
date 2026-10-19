@@ -61,6 +61,7 @@ func (t tmuxScreen) Close() error { return t.s.Close() }
 func EndScreens() {
 	if m, err := terminal.NewManager(); err == nil {
 		m.KillServer()
+		m.RemoveRuntime()
 	}
 }
 
