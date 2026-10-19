@@ -12,15 +12,12 @@ started in a browser stays there (`app/api/app_return.py`).
 import base64
 import hashlib
 import secrets
-import uuid
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import jwt.api_jwt
 
 from app.common.auth import APP_SIGN_IN_TTL_S
-from app.core.config import settings
-from tests.conftest import seed_user
 from tests.integration.conftest import UserCreator
 
 
