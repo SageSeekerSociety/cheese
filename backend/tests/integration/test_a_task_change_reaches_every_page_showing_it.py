@@ -4,29 +4,28 @@ in the 支线 pane. Whatever changes what the task reads as reaches both without
 a reload, whichever path made the change.
 """
 
-import asyncio
-import threading
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
-from app.api.deps import get_chat_service, get_work_runner
+from app.api.deps import get_chat_service
+from app.domain.agent import runner_reports, session_state
 from app.domain.agent.announce import announce
-from app.domain.agent.runtime import addressed_to_agent
-from app.domain.agent.turn.intake.completion import TurnCompletion
+from app.domain.agent.reads import Report, SessionExited
 from app.domain.agent_instance.adapters import task_teammate
 from app.domain.delivery.agent import record_task_instruction
 from app.domain.review.landing_watch import watch_landings
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import Building, NeedsYou
-from tests.ask_fixtures import active_ask, wait_turn_idle
-from tests.conftest import wait_work_idle
+from tests.ask_fixtures import active_ask
 from tests.integration.conftest import (
     new_project,
     open_task,
     room_agent_seat,
     room_socket,
     session_auth_headers,
+    task_agent_headers,
 )
 
 #: How many ping round trips to wait for a frame before calling it not sent.
@@ -146,62 +145,65 @@ def test_a_question_asked_in_a_task_is_heard_in_its_channel(
     assert card["presentation"]["phrase"] == NeedsYou.awaiting_answer
 
 
-def test_a_turn_starting_and_ending_in_a_task_is_heard_in_its_channel(
-    client, stub_hooks, monkeypatch
-):
-    """The channel's card for a started task flips to 运行中 when a turn in the
-    task reaches its session, and back to 已开始 when the turn ends, without the
-    channel page reloading. The page rereads the task the moment it is told,
-    so what it reads then is what it keeps: settling the ended turn (its usage,
-    its inputs) can still be under way, and that must not read as running."""
+def test_the_teammates_report_in_a_task_is_heard_in_its_channel(client):
+    """The task's AI teammate says it is waiting on a build: the channel's card
+    for the task reads 在等结果, like the task's own page, without either
+    reloading."""
     project = new_project(client, owner="alice")
     room = project["root_topic_id"]
     task = open_task(client, room, owner="alice")["id"]
-    # Starting the task runs its first turn; the one this test holds comes
-    # after it, or it would be taken into that one.
-    wait_work_idle()
-    wait_turn_idle(client, task)
-    seat = room_agent_seat(client, task)
-    started = threading.Event()
+    seat = room_agent_seat(client, room)
 
-    def held(topic, prompt, reply, *, agent=None):
-        stub_hooks.starts(topic, agent=agent)
-        stub_hooks.acknowledges(topic, prompt, agent=agent)
-        started.set()
-
-    monkeypatch.setattr(stub_hooks, "emit_turn", held)
-    # The turn's settling waits until the channel has read the card.
-    read = threading.Event()
-    settle = TurnCompletion.close
-
-    async def settling_slowly(self, *args, **kwargs):
-        await asyncio.to_thread(read.wait, 10)
-        return await settle(self, *args, **kwargs)
-
-    monkeypatch.setattr(TurnCompletion, "close", settling_slowly)
-    chat = client.app.dependency_overrides[get_chat_service]()
-    with room_socket(client, room, "alice") as channel:
+    with (
+        room_socket(client, task, "alice") as task_page,
+        room_socket(client, room, "alice") as channel,
+    ):
+        _drain(task_page)
         _drain(channel)
-        client.portal.call(
-            lambda: get_work_runner().submit(
-                chat,
-                uuid.UUID(task),
-                author="system",
-                content="接着干",
-                addressed=addressed_to_agent(seat),
-            )
+        r = client.put(
+            f"/topics/{task}/task/progress",
+            json={"state": "waiting", "note": "等 CI 跑完"},
+            headers=task_agent_headers(project["id"], task, seat),
         )
-        assert started.wait(5), "the turn never reached its session"
-        assert _told(channel, room)
-        card = _channel_card(client, room, task)
-        assert card["presentation"]["phrase"] == Building.running
-        _drain(channel)
+        assert r.status_code == 200, r.text
 
-        stub_hooks.stops(uuid.UUID(task), "做完了", agent=seat)
-        try:
-            assert _told(channel, room)
-            card = _channel_card(client, room, task)
-        finally:
-            read.set()
-        assert card["presentation"]["phrase"] == Building.started
-    wait_turn_idle(client, task)
+        assert _told(task_page, room)
+        assert _told(channel, room)
+    card = _channel_card(client, room, task)
+    assert card["presentation"]["phrase"] == Building.waiting
+
+
+def test_the_task_session_ending_is_heard_in_its_channel(client):
+    """The seat's runner reports the task's session gone: both pages are told,
+    and read 「已离开」 beside what the teammate last said."""
+    project = new_project(client, owner="alice")
+    room = project["root_topic_id"]
+    task = open_task(client, room, owner="alice")["id"]
+    seat = room_agent_seat(client, room)
+    key = session_state.SeatKey(uuid.UUID(task), seat, "claude-code")
+    epoch = client.portal.call(session_state.register, client.test_factory, key)
+    chat = SimpleNamespace(
+        session_factory=client.test_factory, live=SimpleNamespace(unread_inputs={})
+    )
+
+    with (
+        room_socket(client, task, "alice") as task_page,
+        room_socket(client, room, "alice") as channel,
+    ):
+        _drain(task_page)
+        _drain(channel)
+        exited = Report(
+            key.conversation_id,
+            seat,
+            key.harness,
+            epoch,
+            epoch,
+            1,
+            datetime.now(UTC),
+            SessionExited("launch-1", current=True),
+        )
+        assert client.portal.call(runner_reports.apply, chat, exited) is True
+
+        assert _told(task_page, room)
+        assert _told(channel, room)
+    assert _task_read(client, task)["agent_left_at"] is not None

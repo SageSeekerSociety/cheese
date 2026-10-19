@@ -458,6 +458,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("queued message sweep", 104),
         ("chat progress reminder", 105),
         ("checklist reminder", 105),
+        ("task state reminder", 105),
         ("gate sweep", 106),
         ("cloud host pool sweep", 107),
         ("cloud sandbox lifecycle", 107),

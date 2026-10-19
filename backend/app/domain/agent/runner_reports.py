@@ -5,7 +5,7 @@ A ``Report`` (`agent/reads.py`) is one event a runner wrote
 claimed (``session_state.take``, which fences the writer's epoch and moves the
 seat's offset past it), and everything it changes in the database is written
 with that claim — an input's delivery, the seat's worker status, a failure on
-the inputs a failed work read. A redelivered event claims nothing and changes
+the inputs a failed work read, a task's session having left. A redelivered event claims nothing and changes
 nothing. What only tells somebody — a frame, a nudge to the waiting messages —
 follows the commit.
 
@@ -35,6 +35,7 @@ from app.domain.agent.turn_resume import started_on_receipt
 from app.domain.block.queries import reaction_summaries_for_blocks
 from app.domain.delivery.input_identity import InputReceipt
 from app.domain.delivery.receipts import drop_input, fail_read_inputs, record_receipt
+from app.domain.room_task.progress import note_agent_left
 
 
 async def apply(chat, report: Report) -> bool:
@@ -93,7 +94,8 @@ async def apply(chat, report: Report) -> bool:
                 )
         elif isinstance(fact, SessionExited):
             await session_state.declare(db, key, IDLE, report.at, exited=True)
-            # integration: room_task.progress.note_agent_left(db, conversation, at)
+            # A task's session ending is noted beside its teammate's last report.
+            await note_agent_left(db, report.conversation_id, at=report.at)
         await db.commit()
     if started is not None:
         payload, room = started

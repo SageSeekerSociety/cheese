@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.addressing import Event, address
 from app.domain.agent.model_catalog import catalog
 from app.domain.agent.opening import opening_state
+from app.domain.agent.session_state import running_conversations
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
@@ -453,11 +454,6 @@ async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict
     board does not read it: what a task shows is what its teammate reported
     (`presentation`).
     """
-    # deferred-import: `agent.session_state` arrives with the session protocol
-    # (ws/lifecycle-protocol) in the same change; move this to the top of the
-    # module when the two branches meet.
-    from app.domain.agent.session_state import running_conversations
-
     running = await running_conversations(db, [uuid.UUID(item["id"]) for item in items])
     return [
         {**item, "session_running": uuid.UUID(item["id"]) in running} for item in items

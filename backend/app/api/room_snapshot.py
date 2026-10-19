@@ -32,7 +32,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.project_skill_rows import proposals_in_room
 from app.api.review_comment_rows import review_comment_rows
-from app.api.room_task_rows import room_task_items, task_page_row
+from app.api.room_task_rows import (
+    room_task_items,
+    task_page_row,
+    with_session_running,
+)
 from app.api.task_origin import related_of
 from app.api.topic_member_rows import roster_rows
 from app.api.topic_pin_rows import pin_rows
@@ -69,9 +73,14 @@ async def room_snapshot(
     task = place.task
     if task is None:
         snapshot["tasks"] = {
-            "open": await room_task_items(db, actor, room, limit=0, status="open"),
-            "recent": await room_task_items(
-                db, actor, room, limit=0, status="closed", latest=RECENT_DONE
+            "open": await with_session_running(
+                db, await room_task_items(db, actor, room, limit=0, status="open")
+            ),
+            "recent": await with_session_running(
+                db,
+                await room_task_items(
+                    db, actor, room, limit=0, status="closed", latest=RECENT_DONE
+                ),
             ),
         }
         snapshot["pins"] = await pin_rows(db, place.room_id)

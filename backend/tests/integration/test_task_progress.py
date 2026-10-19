@@ -15,6 +15,7 @@ from sqlalchemy import update
 
 from app.core.config import settings
 from app.domain.room_task.models import Task
+from app.domain.room_task.progress import note_agent_left
 from tests.integration.conftest import (
     open_task,
     post_project,
@@ -103,10 +104,6 @@ def test_the_session_leaving_does_not_rewrite_what_the_teammate_said(client):
         _report(client, project_id, task_id, seat, "waiting", "等构建").status_code
         == 200
     )
-
-    # deferred-import: the entry point the session protocol calls; imported here
-    # so the rest of the file still runs where it does not exist yet.
-    from app.domain.room_task.progress import note_agent_left
 
     async def leave() -> bool:
         async with client.test_factory() as session:

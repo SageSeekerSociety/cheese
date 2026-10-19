@@ -21,6 +21,7 @@ from datetime import datetime
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.room_task.live import rows_written
 from app.domain.room_task.models import Task, TaskProgress, TaskStatus
 
 #: The note's width: one line on the task header. The column is this wide.
@@ -52,10 +53,13 @@ async def note_agent_left(
     conversation, whose id is the task's. An open task only — a closed one
     says how it ended. Says whether anything was marked; a conversation that is
     not a task marks nothing."""
-    marked = await session.execute(
+    room_id = await session.scalar(
         update(Task)
         .where(Task.id == conversation_id, Task.status == TaskStatus.open)
         .values(agent_left_at=at)
+        .returning(Task.room_id)
     )
-    # rowcount exists on the CursorResult execute() returns for DML.
-    return bool(marked.rowcount)  # type: ignore[attr-defined]
+    if room_id is None:
+        return False
+    rows_written(session, conversation_id, room_id)
+    return True
