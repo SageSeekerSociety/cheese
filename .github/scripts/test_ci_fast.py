@@ -1799,6 +1799,61 @@ class SelectionEvidenceTest(unittest.TestCase):
                                                     {"name": "/repo/frontend/src/i18n/english.spec.ts"}]}))
         self.assertEqual(validate_evidence(evidence)["result"], "pass")
 
+    def test_a_suite_that_failed_to_load_is_a_failure_not_an_empty_run(self):
+        # Vitest counts a file that failed before running a test in
+        # numFailedTestSuites, leaving numFailedTests at 0. The "no tests ran"
+        # rule read that as nothing to judge: 408 s of suites that could not
+        # load came back unknown, and a run where some suites passed and one
+        # failed to load came back green.
+        from ci_fast_checks import validate_evidence
+        path = self.root / "vitest.json"
+        evidence = {"kind": "vitest", "path": str(path), "mode": "full",
+                    "required_files": ["src/i18n/catalog.spec.ts"]}
+        load_error = "Failed to load url @/views/x.vue (imported by /repo/frontend/src/x.spec.ts)"
+        path.write_text(json.dumps({
+            "numPassedTests": 0, "numFailedTests": 0, "numPendingTests": 0,
+            "numFailedTestSuites": 2,
+            "testResults": [
+                {"name": "/repo/frontend/src/i18n/catalog.spec.ts", "status": "failed",
+                 "message": load_error},
+                {"name": "/repo/frontend/src/views/x.spec.ts", "status": "failed",
+                 "message": load_error},
+            ]}))
+        verdict = validate_evidence(evidence)
+        self.assertEqual(verdict["result"], "fail")
+        self.assertIn("failed before running a test", verdict["reason"])
+        self.assertIn("Failed to load url", verdict["reason"])
+        self.assertEqual(verdict["evidence"]["failed_suites"], 2)
+        # Some suites ran: without this the report is green even though the
+        # changed component never loaded.
+        path.write_text(json.dumps({
+            "numPassedTests": 5, "numFailedTests": 0, "numPendingTests": 0,
+            "numFailedTestSuites": 1,
+            "testResults": [
+                {"name": "/repo/frontend/src/i18n/catalog.spec.ts", "status": "passed"},
+                {"name": "/repo/frontend/src/views/x.spec.ts", "status": "failed",
+                 "message": load_error},
+            ]}))
+        self.assertEqual(validate_evidence(evidence)["result"], "fail")
+
+    def test_a_worker_crash_is_unknown_not_a_verdict(self):
+        # The worker died before the suite could report (killed, out of
+        # memory). Nothing about the change is known, so it is unknown — the
+        # tier's own rule — not a red check.
+        from ci_fast_checks import validate_evidence
+        path = self.root / "vitest.json"
+        evidence = {"kind": "vitest", "path": str(path), "mode": "full"}
+        path.write_text(json.dumps({
+            "numPassedTests": 0, "numFailedTests": 0, "numPendingTests": 0,
+            "numFailedTestSuites": 1,
+            "testResults": [
+                {"name": "/repo/frontend/src/views/x.spec.ts", "status": "failed",
+                 "message": "Worker exited unexpectedly (exit code 137) during load state"},
+            ]}))
+        verdict = validate_evidence(evidence)
+        self.assertEqual(verdict["result"], "unknown")
+        self.assertIn("crashed", verdict["reason"])
+
     def test_related_run_holding_only_the_seeds_is_an_empty_selection(self):
         # The seeds run whatever changed, so a report that holds only them says
         # nothing about the change: the graph selected no test file for the
