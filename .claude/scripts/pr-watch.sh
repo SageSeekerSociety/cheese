@@ -107,10 +107,11 @@ reverter_of() {
   local reverts="Reverts $REPO#$3([^0-9]|$)" typed="^[Rr][Ee][Vv][Ee][Rr][Tt][(:].*#$3([^0-9]|$)"
   [ "$sha" != "$merge" ] || return 0
   [ -n "${subject_of[$merge]+set}" ] || { echo unknown; return; }
-  # One compare call lists at most 250 commits, and main takes more than that
-  # in a couple of days, so the range is read page by page. Each page says
+  # Without per_page a compare call lists only the first 250 commits, and main
+  # takes more than that in a couple of days, so the range is read page by
+  # page, 1000 per page (the most the endpoint serves). Each page says
   # "#T <total> <listed>"; a range whose pages do not add up is unknown.
-  commits=$(gh api --paginate "repos/$REPO/compare/$merge...$sha?per_page=100" \
+  commits=$(gh api --paginate "repos/$REPO/compare/$merge...$sha?per_page=1000" \
               -q '"#T \(.total_commits) \(.commits|length)", (.commits[]|[.sha, .commit.message]|@tsv)' 2>/dev/null) \
     || { echo unknown; return; }
   [ "$(awk '$1 == "#T" {t = $2; n += $3} END {print (t != "" && t == n) ? "all" : "cut"}' <<<"$commits")" = all ] \
