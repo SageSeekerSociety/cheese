@@ -13,6 +13,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import httpx
@@ -34,7 +35,12 @@ from app.domain.project.forge import (
 )
 from app.domain.project.models import ProjectForge
 from app.domain.review import archive, landing_watch, pr_publish
-from app.domain.review.github_pr import _NO_VERDICT_CONCLUSIONS
+from app.domain.review.github_pr import GitHubPRError, _NO_VERDICT_CONCLUSIONS
+from app.domain.review.github_pr.task_pr_metadata import (
+    TaskPrMetadata,
+    TaskPrMetadataFailure,
+    TaskPrMetadataResult,
+)
 from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.merge_state import RED_CONCLUSIONS
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -193,6 +199,13 @@ async def poll_open_prs(
     }
 
 
+@dataclass(frozen=True)
+class _TaskPrCandidate:
+    task_id: uuid.UUID
+    project_id: uuid.UUID
+    number: int
+
+
 async def poll_uncarded_task_prs(
     chat: Chat,
     announce: Announce,
@@ -209,7 +222,7 @@ async def poll_uncarded_task_prs(
     global _uncarded_task_cursor
     sessions = chat.session_factory
     query = (
-        select(Task.id)
+        select(Task.id, Task.project_id, Task.pr_number)
         .join(Topic, Topic.id == Task.room_id)
         .where(
             Task.pr_number.is_not(None),
@@ -236,46 +249,81 @@ async def poll_uncarded_task_prs(
         query = query.where(Task.project_id == project_id)
     cursor = _uncarded_task_cursor if project_id is None else None
     async with sessions() as session:
-        task_ids = list(
-            await session.scalars(
-                query.where(Task.id > cursor) if cursor is not None else query
-            )
-        )
-        if cursor is not None and len(task_ids) < UNCARDED_TASKS_PER_TICK:
-            task_ids.extend(
-                await session.scalars(
-                    query.where(Task.id <= cursor).limit(
-                        UNCARDED_TASKS_PER_TICK - len(task_ids)
-                    )
+        rows = list(
+            (
+                await session.execute(
+                    query.where(Task.id > cursor) if cursor is not None else query
                 )
+            ).all()
+        )
+        if cursor is not None and len(rows) < UNCARDED_TASKS_PER_TICK:
+            rows.extend(
+                (
+                    await session.execute(
+                        query.where(Task.id <= cursor).limit(
+                            UNCARDED_TASKS_PER_TICK - len(rows)
+                        )
+                    )
+                ).all()
             )
-    if project_id is None and task_ids:
-        _uncarded_task_cursor = task_ids[-1]
+        candidates = [
+            _TaskPrCandidate(row.id, row.project_id, row.pr_number)
+            for row in rows
+            if row.pr_number is not None
+        ]
+    if project_id is None and candidates:
+        _uncarded_task_cursor = candidates[-1].task_id
 
     slots = asyncio.Semaphore(PRS_AT_ONCE)
 
-    async def advance(task_id: uuid.UUID) -> tuple[bool, bool, str | None]:
+    async def advance(
+        candidate: _TaskPrCandidate,
+        client,
+        quota,
+        metadata: dict[int, TaskPrMetadataResult] | None,
+    ) -> tuple[bool, bool, str | None]:
+        task_id = candidate.task_id
         """One task PR; returns (checked, merged, the failure to report)."""
         checked = merged = False
         try:
             async with slots:
                 async with sessions() as session:
                     task = await session.get(Task, task_id)
-                    if task is None or task.pr_number is None:
+                    if (
+                        task is None
+                        or task.pr_number != candidate.number
+                        or task.project_id != candidate.project_id
+                    ):
                         return checked, merged, None
-                    number, project = task.pr_number, task.project_id
+                    number, project = candidate.number, candidate.project_id
                     room_id, pr_url = task.room_id, task.pr_url
                     previous = (task.pr_checks_head, task.pr_checks_state)
-                    quota = await background_quota(project, session)
-                    client = await proposal_client(project, session)
-                # Asked once the session is closed, so no connection waits on it.
-                if not await quota_serves_background(quota):
-                    return checked, merged, None
-                if client is None:
-                    return checked, merged, None
-                status = await client.pr_status(number)
+                if metadata is None:
+                    # A provider without the batch operation keeps its own read.
+                    if not await quota_serves_background(quota):
+                        return checked, merged, None
+                    status = await client.pr_status(number)
+                else:
+                    value = metadata.get(number)
+                    if not isinstance(value, TaskPrMetadata) or value.number != number:
+                        reason = (
+                            value.reason
+                            if isinstance(value, TaskPrMetadataFailure)
+                            else "missing_metadata"
+                        )
+                        logger.warning("unreadable task PR metadata: %s", reason)
+                        raise GitHubPRError(say("upstreamUnavailable"))
+                    status = value
                 checked = True
                 if not status.merged:
+                    # The metadata read may have spent the remaining quota;
+                    # fresh merged facts need no further forge read to settle.
+                    if (
+                        metadata is not None
+                        and status.state == "open"
+                        and not await quota_serves_background(quota)
+                    ):
+                        return checked, merged, None
                     await _wake_when_checks_pass(
                         task_id,
                         number,
@@ -295,6 +343,7 @@ async def poll_uncarded_task_prs(
                     if (
                         task is None
                         or task.pr_number != number
+                        or task.project_id != project
                         or (task.status != TaskStatus.open and task.delivered_head)
                         or task.closing_since is not None
                     ):
@@ -345,7 +394,46 @@ async def poll_uncarded_task_prs(
             return checked, merged, f"{task_id}: {exc}"
         return checked, merged, None
 
-    outcomes = await asyncio.gather(*(advance(task_id) for task_id in task_ids))
+    projects: dict[uuid.UUID, list[_TaskPrCandidate]] = {}
+    for candidate in candidates:
+        projects.setdefault(candidate.project_id, []).append(candidate)
+
+    async def poll_project(project: uuid.UUID, picked: list[_TaskPrCandidate]):
+        try:
+            async with slots:
+                async with sessions() as session:
+                    quota = await background_quota(project, session)
+                    client = await proposal_client(project, session)
+                if client is None:
+                    return {item.task_id: (False, False, None) for item in picked}
+                reader = getattr(client, "task_pr_metadata", None)
+                metadata = None
+                if reader is not None:
+                    if not await quota_serves_background(quota):
+                        return {item.task_id: (False, False, None) for item in picked}
+                    metadata = await reader([item.number for item in picked])
+                    if not isinstance(metadata, dict):
+                        raise GitHubPRError(say("upstreamUnavailable"))
+        except Exception as exc:
+            logger.warning(
+                "task PR metadata batch failed for %s", project, exc_info=True
+            )
+            return {
+                item.task_id: (False, False, f"{item.task_id}: {exc}")
+                for item in picked
+            }
+        # Each provider advances after its own metadata, not after all GitHub
+        # queries; a Forgejo project still runs while a GitHub batch waits.
+        values = await asyncio.gather(
+            *(advance(item, client, quota, metadata) for item in picked)
+        )
+        return {item.task_id: value for item, value in zip(picked, values, strict=True)}
+
+    project_results = await asyncio.gather(
+        *(poll_project(project, picked) for project, picked in projects.items())
+    )
+    by_task = {key: value for group in project_results for key, value in group.items()}
+    outcomes = [by_task[item.task_id] for item in candidates]
     return {
         "tasks_checked": sum(1 for checked, _, _ in outcomes if checked),
         "tasks_merged": sum(1 for _, merged, _ in outcomes if merged),
@@ -356,7 +444,7 @@ async def poll_uncarded_task_prs(
 async def _wake_when_checks_pass(
     task_id: uuid.UUID,
     number: int,
-    status: PullRequestStatus,
+    status: PullRequestStatus | TaskPrMetadata,
     client,
     *,
     room_id: uuid.UUID,
@@ -406,11 +494,15 @@ async def _wake_when_checks_pass(
     head = status.head_sha
     if previous != (head, CHECKS_RUNNING) or state != CHECKS_GREEN:
         if previous != (head, state):
-            await _remember_checks(sessions, task_id, head, state)
+            await _remember_checks(
+                sessions, task_id, head, state, project_id=project_id, number=number
+            )
         return
     async with sessions() as session:
-        task = await session.get(Task, task_id)
-        if task is None or task.status is not TaskStatus.open:
+        task = await session.get(Task, task_id, with_for_update=True)
+        if task is None or task.project_id != project_id or task.pr_number != number:
+            return
+        if task.status is not TaskStatus.open or task.closing_since is not None:
             if task is not None:
                 _set_checks(task, head, state)
                 await session.commit()
@@ -466,10 +558,22 @@ def _set_checks(task: Task, head: str, state: str) -> None:
     task.pr_checks_state = state
 
 
-async def _remember_checks(sessions, task_id: uuid.UUID, head: str, state: str) -> None:
+async def _remember_checks(
+    sessions,
+    task_id: uuid.UUID,
+    head: str,
+    state: str,
+    *,
+    project_id: uuid.UUID,
+    number: int,
+) -> None:
     async with sessions() as session:
-        task = await session.get(Task, task_id)
-        if task is not None:
+        task = await session.get(Task, task_id, with_for_update=True)
+        if (
+            task is not None
+            and task.project_id == project_id
+            and task.pr_number == number
+        ):
             _set_checks(task, head, state)
             await session.commit()
 
