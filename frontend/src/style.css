@@ -60,10 +60,10 @@
   --accent-press: #d96e0a;
   --accent-ink: #9a5413; /* amber text on light */
   --accent-wash: #fdf1e2; /* rare tint */
-  /* Text ON a solid --accent fill (the notifying @chip). The same dark ink in both
-     themes on purpose: --accent stays bright in both, so its ink cannot flip with
-     the theme (white on #f57f17 is 2.6:1). */
-  --accent-on: #191a1c;
+  /* Text ON a solid --accent fill (the notifying @chip): cream on #f57f17 (2.5:1).
+     The dark set's --accent is brighter (#ffa733), where cream falls to 1.8:1, so
+     dark flips this token to the dark ink instead. */
+  --accent-on: #fff8e1;
 
   /* ---- Brand mark ----
      The logo has one colour (docs/brand.md §2/§5): the home tile goes flat brand
@@ -436,7 +436,7 @@
   --accent-press: #ffbc5e; /* pressing LIGHTENS on dark, unlike light theme */
   --accent-ink: #ffc670;
   --accent-wash: #2e2216;
-  --accent-on: #191a1c; /* same as light, deliberately: see the light set */
+  --accent-on: #191a1c; /* cream on the brighter dark --accent is 1.8:1; this flips */
 
   /* ---- Brand mark ---- */
   --brand-fill: #ffa20f; /* same as light, deliberately: brand.md §5 fixes the tile */
@@ -1388,9 +1388,9 @@ button:not(.v-btn) {
    看不出来能点。
    一个人有两种样子，和飞书一样分「提醒」和「提到」（lib/refChip 的 notified）：
    - `.mention`（@人）：这一处真的通知到了他。带「@」，实心琥珀底（`--accent`）、
-     深色字（`--accent-on`），是这段字里最要紧的那一处（docs/design-system.md §1.6）。
+     奶白字（`--accent-on`），是这段字里最要紧的那一处（docs/design-system.md §1.6）。
    - `.name-ref`：只是提到他，没有通知（平台提示里的操作人、通知卡、周报、文档里
-     芝士写的名字……）。不带「@」，浅琥珀底、琥珀墨色字——原来那颗 chip 的样子。
+     芝士写的名字……）。不带「@」，不给底，主色橙当字色。
    话题和文件只是去处，中性底、正文色。悬停只改底色。 */
 .mention,
 .name-ref {
@@ -1400,8 +1400,8 @@ button:not(.v-btn) {
   cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
-/* 实心琥珀底配深色字（--accent-on，两套主题同一个值）：浅色 #f57f17 上 6.6:1（按下 5.1:1），
-   深色 #ffa733 上 9.0:1。白字在 #f57f17 上只有 2.6:1，读不清。 */
+/* 实心琥珀底配奶白字：浅色 #f57f17 上 2.5:1（按下 #d96e0a 上 3.2:1）。深色那套的琥珀更亮
+   （#ffa733），奶白只剩 1.8:1，所以 `--accent-on` 在深色段是深色字，9.0:1。 */
 .mention {
   color: var(--accent-on);
   background: var(--accent);
@@ -1409,12 +1409,18 @@ button:not(.v-btn) {
 .mention:hover {
   background: var(--accent-press);
 }
+/* 只是提到他的那颗不给底：主色橙直接落在消息底上（浅色 #f57f17 上 2.7:1，深色 #ffa733 上 8.0:1）。
+   悬停改成加一道下划线，不换底色——这颗字是亮橙，任何比消息底更暖的浅底都会把它压淡：
+   原来那层 18% 的琥珀混色是 #fcdcbd，压在上面只剩 2.0:1（纯 --accent-wash 上 2.4:1）。
+   下划线是不动对比度的那个「点得动」的信号。 */
 .name-ref {
-  color: var(--accent-ink);
-  background: var(--accent-wash);
+  color: var(--accent);
+  background: transparent;
 }
 .name-ref:hover {
-  background: color-mix(in srgb, var(--accent) 18%, var(--accent-wash));
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .mention:is(.file-ref, .topic-ref) {
   color: var(--ink);
@@ -1430,12 +1436,14 @@ button:not(.v-btn) {
   background: var(--fill);
   cursor: default;
 }
-/* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。 */
+/* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。
+   悬停什么也不加——不给它下划线，也别亮出底色，那两种都是「点得动」的假信号。 */
 .name-ref--static {
   cursor: default;
 }
 .name-ref--static:hover {
-  background: var(--accent-wash);
+  background: transparent;
+  text-decoration: none;
 }
 /* 文件 chip 前那个 mdi 图标。 */
 .file-ref__icon {

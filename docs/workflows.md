@@ -115,7 +115,7 @@ uv run --with playwright python scripts/shots.py
 
 ### Token（`frontend/src/style.css :root` + `plugins/vuetify.ts` 镜像）
 - 中性灰阶：`--ink/--text/--muted/--faint`、`--line/--line-2/--fill`、`--canvas/--surface`。
-- 强调：`--accent`(#F57F17) 只点主按钮/激活态/品牌；`--accent-press`；`--accent-ink`(文字)。
+- 强调：`--accent`(#F57F17) 只点主按钮/激活态/品牌；`--accent-press`；`--accent-ink`(文字)；`--accent-on`(实心橙块上的字)。
 - 状态：`--ok/--warn/--danger`，**以圆点+中文文字呈现，不做彩色 chip**。
 - 形状：卡片圆角 12、控件 8、chip 6、头像 8；卡片**只用 1px 边框、不用阴影**（阴影只给菜单/弹窗/抽屉）。
 - 字体：Inter + 苹方（正文）、JetBrains Mono（meta/时间/数字/id）。

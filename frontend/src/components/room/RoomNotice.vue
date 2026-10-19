@@ -156,7 +156,7 @@ const showRetry = computed(
 const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
 const environmentAt = computed(() => environmentTarget(props.block, props.projectId))
 
-// 提示里的人只是被提到（浅色 chip、不带 @）；这件事同时叫醒的那一位（交给它的 AI 队友、
+// 提示里的人只是被提到（名字引用、不带 @）；这件事同时叫醒的那一位（交给它的 AI 队友、
 // 被派去修合并后检查的那一位）才是带 @ 的实心 chip（lib/noticeText 的 noticeNotified）。
 const refs = computed(() => ({ ...props.refs, notified: noticeNotified(props.block) }))
 
@@ -725,7 +725,7 @@ details[open]::details-content {
   content-visibility: visible;
 }
 /* 居中的淡行（置顶、归档、加入、改设置……）里的频道、文件：淡字、不垫底，悬停加下划线。
-   提到的人照常是浅色 chip（.name-ref），叫醒了谁的那一颗照常是实心 @chip——这一行和
+   提到的人照常是不给底的一颗（.name-ref），叫醒了谁的那一颗照常是实心 @chip——这一行和
    别处同一条规则。 */
 .room-happening :deep(.mention:is(.file-ref, .topic-ref)) {
   color: var(--muted);

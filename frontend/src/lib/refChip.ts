@@ -21,9 +21,9 @@ export interface RefNames {
   topicTitles: Record<string, string>
   /**
    * Which `<@handle>` here notified its person. Only those are drawn as the
-   * solid @chip; every other one is a name reference — a light chip with the
-   * person's name and no "@" — because "@" and the solid chip say "this told
-   * them", and a notice, a report or an agent's words in a document told nobody.
+   * solid @chip; every other one is a name reference — the person's name with
+   * no "@" and no fill — because "@" and the solid chip say "this told them",
+   * and a notice, a report or an agent's words in a document told nobody.
    * `true`: every one did (a message that went through the mention path).
    * Absent: none did.
    */
