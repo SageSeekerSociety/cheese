@@ -11,6 +11,7 @@ import pytest
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.delivery import agent as delivery_agent
 from app.domain.delivery import mention
+from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
 
 pytestmark = pytest.mark.anyio
@@ -24,7 +25,12 @@ class _Session:
         self.instance_reads = 0
 
     async def scalars(self, statement):
-        assert statement.column_descriptions[0]["entity"] is AgentInstance
+        entity = statement.column_descriptions[0]["entity"]
+        if entity is Delivery:
+            # The retry guard asks which seats this block already reached;
+            # none, in these tests.
+            return iter(())
+        assert entity is AgentInstance
         self.instance_reads += 1
         return iter(self.rows)
 

@@ -157,15 +157,11 @@ async def record_mentions(
     # 不再进「这次没叫醒」——它们本来就已经被叫醒过。额度判断因此只作用于
     # 真正新增的座位，重试写不出那条错误的熔断提示。
     already = set(
-        (
-            await session.scalars(
-                select(Delivery.dedup_key).where(
-                    Delivery.dedup_key.in_(
-                        [dedup_key(block_id, seat) for seat in named]
-                    )
-                )
+        await session.scalars(
+            select(Delivery.dedup_key).where(
+                Delivery.dedup_key.in_([dedup_key(block_id, seat) for seat in named])
             )
-        ).all()
+        )
     )
     for seat in named:
         instance = instances.get(seat)
