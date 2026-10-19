@@ -174,6 +174,29 @@ def test_personal_default_and_independent_second_team_enrollment(client):
         assert response.status_code == 403, response.text
 
 
+def test_desktop_enrollments_list_only_current_teams_with_the_raw_device_shape(client):
+    headers, (team, other, _, _) = setup_team(client)
+    shared, _ = enroll(client, headers["enroller"], team)
+    private, _ = enroll(client, headers["outsider"], other)
+
+    listed = client.get("/connector/my/team-devices", headers=headers["member"])
+
+    assert listed.status_code == 200, listed.text
+    [device] = listed.json()["devices"]
+    assert device == {
+        "device_id": shared["device_id"],
+        "name": "Computer",
+        "online": False,
+        "team_id": team,
+        "last_seen_at": None,
+        "screens": [],
+        "logins": [],
+    }
+    outside = client.get("/connector/my/team-devices", headers=headers["outsider"])
+    assert [d["device_id"] for d in outside.json()["devices"]] == [private["device_id"]]
+    assert client.get("/connector/my/team-devices").status_code == 401
+
+
 def test_team_lending_endpoints_are_gone(client):
     headers, (team, _, _, _) = setup_team(client)
     device, _ = enroll(client, headers["enroller"], team)
