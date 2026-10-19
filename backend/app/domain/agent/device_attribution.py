@@ -30,7 +30,7 @@ class DeviceAttribution:
 
     actor_user_id: int
     actor_handle: str
-    owner_user_id: int
+    owner_user_id: int | None
     project_id: uuid.UUID | None  # set only when the call came from inside a screen
     device_id: str
     screen: HubScreen | None
