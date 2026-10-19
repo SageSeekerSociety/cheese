@@ -92,17 +92,15 @@ async def project_distribution(db, project_id) -> dict:
             )
         else:
             specs[environment.spec] = specs.get(environment.spec, 0) + 1
-    devices = sql_device_service(db)
-    listed = []
-    for device_id, agents in on_devices.items():
-        device = await devices.get_device(device_id)
-        listed.append(
-            {
-                "device_id": device_id,
-                "name": device.name if device is not None else None,
-                "agents": agents,
-            }
-        )
+    devices = await sql_device_service(db).get_devices(list(on_devices))
+    listed = [
+        {
+            "device_id": device_id,
+            "name": devices[device_id].name if device_id in devices else None,
+            "agents": agents,
+        }
+        for device_id, agents in on_devices.items()
+    ]
     listed.sort(key=lambda entry: (-entry["agents"], entry["name"] or ""))
     return {
         "sandboxes": [

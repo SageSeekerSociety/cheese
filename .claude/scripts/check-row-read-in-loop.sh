@@ -33,13 +33,41 @@ if [[ "${1:-}" == "--self-test" ]]; then
       exit 1
     fi
   done
-  echo "dirty-tree self-test ok"
+  # Commit-path regression: pre-commit hands this hook a tree whose only
+  # difference is staged, and a staged violation must reach semgrep and come
+  # back red. Exit 1 exactly, so "reached semgrep" cannot be confused with the
+  # exit-2 precondition above.
+  git -C "$TMP" add backend/app/x.py
+  rc=0
+  (cd "$TMP" && ROW_READ_ROOT="$TMP" bash "$SELF" >/dev/null 2>&1) || rc=$?
+  if [[ $rc -ne 1 ]]; then
+    echo "self-test FAILED: staged violation exited $rc, expected 1" >&2
+    exit 1
+  fi
+  # And a staged benign change is green: the hook must not block commits that
+  # touch backend/app just because the index differs from HEAD.
+  printf 'def f():\n    return 1\n' > "$TMP/backend/app/x.py"
+  git -C "$TMP" add backend/app/x.py
+  rc=0
+  (cd "$TMP" && ROW_READ_ROOT="$TMP" bash "$SELF" >/dev/null 2>&1) || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "self-test FAILED: staged benign change exited $rc, expected 0" >&2
+    exit 1
+  fi
+  echo "dirty-tree and staged-range self-tests ok"
   exit 0
 fi
 
 [[ $# -eq 0 ]] || { echo "usage: $0 [--self-test]" >&2; exit 2; }
 
-if [[ -n "$(git status --porcelain --untracked-files=all -- backend/app)" ]]; then
+# Staged changes are the range this hook is here to judge, not dirt: in a
+# pre-commit run they are what the commit is about to contain, and the working
+# tree matches the index at that moment (pre-commit stashes everything else).
+# Only content outside the index can make semgrep read what the commit does
+# not contain, so that is the only thing that fails closed here.
+DIRTY="$(git status --porcelain --untracked-files=all -- backend/app \
+  | awk 'substr($0, 1, 2) == "??" || substr($0, 2, 1) != " "')"
+if [[ -n "$DIRTY" ]]; then
   echo "row-read-in-loop: backend/app has unstaged/untracked changes; commit them first" >&2
   exit 2
 fi

@@ -174,6 +174,9 @@ EVENT_ROUTINE_STOPPED: Final = "routine_stopped"
 #: AI 服务的一次请求失败了，会话正在按它自己的退避重试。重试期间房间里没有任何
 #: 输出，不说一声就和「在想」分不出来。同一段连续的重试只占一行，次数原地更新。
 EVENT_API_RETRY: Final = "api_retry"
+EVENT_TURN_RESUME_WAIT: Final = "turn_resume_wait"
+EVENT_TURN_RESUME_STARTED: Final = "turn_resume_started"
+EVENT_TURN_RESUME_STOPPED: Final = "turn_resume_stopped"
 #: 会话在压缩上下文：对话太长，模型接下一句之前要先把前面的内容整理成摘要。这期间
 #: 房间里没有任何输出，也不回新消息，不说一声就和会话挂了分不出来。开始时落一行，
 #: 结束时同一行改成已完成或失败（`meta.state = "over"`）。

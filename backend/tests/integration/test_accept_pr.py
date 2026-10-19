@@ -478,9 +478,6 @@ class FakeGitHubPrClient:
             signals = [s for s in signals if s.kind != "comment"]
         return signals
 
-    async def check_run_names(self, *, owner, repo, ref, token) -> set[str]:
-        return {r["name"] for r in self._derived_check_runs(ref)}
-
     async def update_branch(self, *, owner, repo, number, token) -> bool:
         self.update_branch_calls.append(number)
         self.update_branch_tokens.append(token)

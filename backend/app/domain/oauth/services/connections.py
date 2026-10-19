@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -57,6 +57,7 @@ async def create_connection(
     access_token: str | None = None,
     refresh_token: str | None = None,
     token_expires: datetime | None = None,
+    refresh_token_expires: datetime | None = None,
 ) -> dict:
     """Raises ``ConflictError`` when this provider identity is already
     linked, whatever a preceding lookup said."""
@@ -83,6 +84,7 @@ async def create_connection(
             if refresh_token
             else None,
             token_expires=token_expires,
+            refresh_token_expires=refresh_token_expires,
         )
     except IntegrityError:
         if await svc._repo.get_by_provider(provider_id, provider_user_id) is None:
@@ -102,6 +104,7 @@ async def update_connection_tokens(
     refresh_token: str | None,
     token_expires: datetime | None,
     raw_profile: dict | None = None,
+    refresh_token_expires: datetime | None = None,
 ) -> None:
     """``raw_profile=None`` (the default) leaves the stored profile as is —
     a token refresher has no profile to offer. A flow that DID just fetch
@@ -131,6 +134,7 @@ async def update_connection_tokens(
         else None,
         token_expires,
         raw_profile=raw_profile,
+        refresh_token_expires=refresh_token_expires,
     )
 
 
@@ -151,9 +155,13 @@ async def list_user_connections(svc: pkg.OAuthService, user_id: int) -> list[dic
             # Token 健康度 (2026-08-09): 只暴露元数据，绝不返回 token/密文本身.
             "login": (c.raw_profile or {}).get("login"),
             "tokenExpires": (c.token_expires.isoformat() if c.token_expires else None),
-            # A renewal token the backend can still use: stored, readable, and
-            # not rejected by GitHub (a rejection forgets it, tokens.py).
+            # Unknown expiry preserves existing links; known expired tokens
+            # cannot renew them, even before GitHub rejects a refresh attempt.
             "hasRefreshToken": c.refresh_token is not None
+            and (
+                c.refresh_token_expires is None
+                or c.refresh_token_expires > datetime.now(UTC)
+            )
             and svc._decrypt_stored_token(
                 c.refresh_token,
                 user_id=c.user_id,
