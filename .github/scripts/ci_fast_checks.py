@@ -541,9 +541,10 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         # checkout.
         site = root / "docs" / "site"
         plan.append({"id": "docs-deps", "cwd": site,
-                     "evidence": {"kind": "install"},
+                     "evidence": {"kind": "install",
+                                  "strict": any(p.startswith("docs/site/package") for p in changed)},
                      "command": ["npm", "ci", "--no-audit", "--no-fund"]})
-        plan.append({"id": "docs-build", "cwd": site,
+        plan.append({"id": "docs-build", "cwd": site, "needs": "docs-deps",
                      "env": {"OUT": str(tmp / "docs")},
                      "command": ["npm", "run", "build"]})
     return plan, omissions
@@ -771,8 +772,13 @@ def resolve(process, evidence):
     if kind == "install":
         # An install that fails is the machine (or the registry) missing a
         # dependency, not a verdict on the change. Exit 3 says exactly that;
-        # a timeout, memory stop or signal keeps its own result above.
+        # a timeout, memory stop or signal keeps its own result above. The one
+        # exception is a change that edits docs/site's own package files: there
+        # the install is judging the change, so its failure stays a failure.
         if process["result"] == "fail":
+            if evidence.get("strict"):
+                return {**process, "result": "fail",
+                        "reason": f"the docs dependencies the change edits do not install (exit {rc})"}
             return {**process, "result": "blocked",
                     "reason": f"could not install the docs dependencies (exit {rc})"}
         return process

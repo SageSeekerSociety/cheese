@@ -2002,6 +2002,14 @@ class SelectionEvidenceTest(unittest.TestCase):
         build = next(p for p in plan if p["id"] == "docs-build")
         self.assertEqual(build["command"], ["npm", "run", "build"])
         self.assertEqual(build["env"], {"OUT": str(self.root / "docs")})
+        # The build runs only when the install passed: missing dependencies
+        # must not turn into a failed build, which would red the change.
+        self.assertEqual(build["needs"], "docs-deps")
+        deps = next(p for p in plan if p["id"] == "docs-deps")
+        self.assertFalse(deps["evidence"]["strict"])
+        plan, _ = test_plan(self.root, ["docs/site/package.json"], {"guards": True}, self.root)
+        deps = next(p for p in plan if p["id"] == "docs-deps")
+        self.assertTrue(deps["evidence"]["strict"])
         plan, _ = test_plan(self.root, ["backend/app/core/config.py"], {}, self.root)
         self.assertFalse(any(p["id"].startswith("docs-") for p in plan))
 
@@ -2304,6 +2312,11 @@ class SelectionEvidenceTest(unittest.TestCase):
                          {"kind": "install"})
         self.assertEqual(failed["result"], "blocked")
         self.assertIn("could not install", failed["reason"])
+        # A change that edits the docs' own package files is judging those
+        # files: an install that fails there is a failure, not the machine.
+        strict = resolve({"result": "fail", "returncode": 1},
+                         {"kind": "install", "strict": True})
+        self.assertEqual(strict["result"], "fail")
         self.assertEqual(
             resolve({"result": "pass", "returncode": 0}, {"kind": "install"})["result"], "pass")
         # A killed install judged nothing either; it keeps its unknown result.
@@ -2641,7 +2654,7 @@ class PlanConcurrencyTest(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
-    def _drive(self, plan, jobs):
+    def _drive(self, plan, jobs, results=None):
         module = self._module()
         report = {"ran": [], "not_run": [], "reasons": []}
         active = {}
@@ -2662,7 +2675,7 @@ class PlanConcurrencyTest(unittest.TestCase):
             with lock:
                 active[str(cwd)] -= 1
                 report["ran"].append({"id": identifier})
-            return {}
+            return (results or {}).get(identifier, "pass")
 
         module.run_plan_checks(plan, invoke, jobs, report)
         return report, overlaps, peak[0]
@@ -2709,6 +2722,21 @@ class PlanConcurrencyTest(unittest.TestCase):
             jobs=1)
         self.assertEqual(peak, 1)
         self.assertEqual(overlaps, [])
+
+    def test_a_check_whose_dependency_did_not_pass_is_not_run(self):
+        # docs-build needs the install; without it the build fails for a
+        # reason that is not the change, which is the red this pair exists to
+        # avoid. A passed dependency runs it as usual.
+        plan = self._plan(("docs-deps", "docs/site"), ("docs-build", "docs/site"))
+        plan[1]["needs"] = "docs-deps"
+        report, _, _ = self._drive(plan, jobs=2, results={"docs-deps": "blocked"})
+        self.assertEqual([row["id"] for row in report["ran"]], ["docs-deps"])
+        self.assertEqual(report["not_run"],
+                         [{"id": "docs-build",
+                           "reason": "depends on docs-deps, which did not pass"}])
+        report, _, _ = self._drive(plan, jobs=2, results={"docs-deps": "pass"})
+        self.assertEqual([row["id"] for row in report["ran"]], ["docs-deps", "docs-build"])
+        self.assertEqual(report["not_run"], [])
 
     def test_jobs_default_follows_the_memory_the_tier_can_back(self):
         module = self._module()

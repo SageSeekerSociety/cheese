@@ -344,7 +344,9 @@ everything is still allowed to answer unknown.
   CI's guards job runs the same build only after merge, which is how a
   mismatched step name landed red on main on 2026-10-19. The install is its
   own row, and `npm ci` failing is blocked (a missing dependency), not a red
-  change; the build that follows is the only verdict on the docs.
+  change; the build does not run without a passed install. A change that edits
+  `docs/site`'s package files is the exception: its install failure is a
+  verdict on those files and stays a failure.
 
   A narrowed run is seeded with the changed source roots **and** every spec that
   judges a frontend file by reading it off disk rather than importing it
