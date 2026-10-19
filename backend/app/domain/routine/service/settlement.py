@@ -17,9 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import listing, say
+from app.domain.agent.mentions import announce_mentions, project_refs_text
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.models import Block
 from app.domain.delivery.models import Delivery
+from app.domain.membership.roster import roster_rows
 from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
@@ -205,6 +208,22 @@ async def _announce_finished(session: AsyncSession) -> list[Block]:
             # news when it is settled, so it moves to that moment.
             message.content = run.summary if ok_ else ""
             message.created_at = now()
+            if message.content:
+                # The teammate's words reach the room here, not through
+                # chat_send, so they get what chat_send gives an agent's
+                # message: a plain "@handle" becomes the mention it says it
+                # is, and whoever it names is told.
+                message.content = await project_refs_text(
+                    session, routine.project_id, topic.id, message.content
+                )
+                await announce_mentions(
+                    session,
+                    topic,
+                    message,
+                    routine.agent_handle,
+                    await roster_rows(session, routine.project_id, team=project_team),
+                    flag_unresolved=True,
+                )
             changed.append(message)
         await ProjectNotificationService(session).create(
             project_id=routine.project_id,

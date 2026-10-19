@@ -8,7 +8,9 @@ The rules, as stated before the code was written:
 - the rule's owner takes part in that 支线, so a reply there reaches them;
 - once settled, the message says how it went: what the teammate handed back
   when it succeeded, nothing in the teammate's name when it did not, and it
-  sits at the bottom of the main line, at the moment the run was settled.
+  sits at the bottom of the main line, at the moment the run was settled;
+- a result that @s a teammate by handle calls them, as the same words sent
+  with chat_send would: the message carries the mention and they are told.
 """
 
 import uuid
@@ -19,7 +21,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.thread import reads as thread_reads
 from tests.conftest import StubChannel, settle_turn
-from tests.integration.conftest import post_message
+from tests.integration.conftest import inbox, join_project_team, post_message
 from tests.integration.test_routines import (
     OWNER,
     PERSON,
@@ -72,8 +74,8 @@ def _run_message(client, room, run_id):
     )
 
 
-def _fired(client):
-    project = _project(client)
+def _fired(client, project=None):
+    project = project or _project(client)
     room = _room(client, project)
     routine = _weekly(client, room, headers=PERSON).json()["data"]
     _make_due(client, routine["id"])
@@ -188,3 +190,29 @@ def test_a_run_that_failed_says_nothing_in_the_teammates_name(client):
     assert message["content"] == ""
     assert message["routine_run"]["status"] == "failed"
     assert "资料库里没有上周的周报" in message["routine_run"]["reason"]
+
+
+def test_a_result_that_ats_a_teammate_tells_them(client):
+    project = _project(client)
+    join_project_team(client, project, "mentor-1")
+    inbox(client, "mentor-1")  # an account, so a notification has somewhere to go
+    room, _routine, run, _conversation, _submitted = _fired(client, project)
+
+    done = client.post(
+        f"/routine-runs/{run['id']}/report",
+        json={
+            "status": "succeeded",
+            "summary": "frontend-unit 超时，@mentor-1 需要重跑一次",
+            "outputs": [],
+        },
+    )
+    assert done.status_code == 200, done.text
+    _sweep(client)
+
+    message = _run_message(client, room, run["id"])
+    assert "<@mentor-1>" in message["content"], "结果里的 @ 没有变成点名"
+    assert "user:mentor-1" in (message.get("refs") or [])
+    # A fresh project: the only message that can have @-ed mentor-1 is this one.
+    assert inbox(client, "mentor-1", "MENTION"), (
+        "结果 @ 了 mentor-1，可是 mentor-1 没收到通知"
+    )
