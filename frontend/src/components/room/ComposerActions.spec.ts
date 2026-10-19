@@ -1,5 +1,5 @@
 // 「键盘快捷键」这条入口在触屏上收起来：那儿没有键盘，点开是一整页用不上的按键表。
-// 桌面上它照旧——显式那颗图标、⋯ 里那一行，都留着。
+// 桌面上它照旧在「+」里。
 //
 // 判据按输入方式（`hover: none`），不按视口宽度：插上鼠标/触控板的平板不算触屏，
 // 和 useChatRowActions、RoomComposer 是同一句话。
@@ -20,10 +20,6 @@ const BASE = {
   canSend: true,
   showImagePicker: true,
   enterSends: false,
-  alwaysSummon: false,
-  summonOn: false,
-  summonReady: true,
-  agentName: '芝士',
   canChecklist: true,
   canRemind: true,
 }
@@ -60,10 +56,6 @@ function mount(width: number, overrides: Record<string, unknown> = {}) {
   })
 }
 
-const shortcutButton = (container: Element) => container.querySelector(`[aria-label="${t('global.shortcuts.open')}"]`)
-const checklistButton = (container: Element) =>
-  container.querySelector(`[aria-label="${t('work.room.checklist.compose')}"]`)
-
 beforeEach(() => {
   // These assertions read the Chinese copy.
   setLocale('zh-CN')
@@ -97,32 +89,18 @@ describe('输入框下面那一行', () => {
     expect(view.emitted('files')).toHaveLength(2)
   })
 
-  it('触屏：不摆那颗键盘图标', () => {
+  it('触屏：「+」里没有「键盘快捷键」那一行', async () => {
     pointer('touch')
-    const { container } = mount(390)
-    expect(shortcutButton(container)).toBeNull()
-    // 别的动作还在。
-    expect(checklistButton(container)).toBeTruthy()
-  })
-
-  it('触屏：⋯ 里也没有「键盘快捷键」那一行', async () => {
-    pointer('touch')
-    mount(390, { collapseExtras: true })
+    mount(390)
     await fireEvent.click(screen.getByRole('button', { name: t('work.room.composer.more') }))
-    // 面板里该有的两行在，快捷键那行不在（等它出来之后再断言，免得断言了个空面板）。
+    // 面板里该有的那几行在，快捷键那行不在（等它出来之后再断言，免得断言了个空面板）。
     expect(await screen.findByText(t('work.room.checklist.compose'))).toBeTruthy()
     expect(screen.queryByText(t('global.shortcuts.open'))).toBeNull()
   })
 
-  it('桌面：显式那颗键盘图标还在', () => {
+  it('桌面：「+」里那一行还在', async () => {
     pointer('mouse')
-    const { container } = mount(1440)
-    expect(shortcutButton(container)).toBeTruthy()
-  })
-
-  it('桌面：⋯ 里那一行也还在', async () => {
-    pointer('mouse')
-    mount(1440, { collapseExtras: true })
+    mount(1440)
     await fireEvent.click(screen.getByRole('button', { name: t('work.room.composer.more') }))
     expect(await screen.findByText(t('global.shortcuts.open'))).toBeTruthy()
   })

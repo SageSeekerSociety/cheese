@@ -1,5 +1,8 @@
 <script setup lang="ts">
-// 输入框里跟着这条消息一起走的一样东西：回复的那条、待发的一个附件。
+// 输入框里跟着这条消息一起走的一样东西：回复的那条、引用、待发的一个附件。
+//
+// 给了 `detail` 插槽的那一枚（引用）点名字展开一块浮层，看它到底引的是什么：哪份文件、
+// 哪一版、哪一段原文。没给的照旧只有悬停气泡里的全名。
 //
 // 两样用同一种标签：左边一个记号说它是什么，中间是名字，右边一个 × 把它拿掉。
 // 回复原来是输入框上面单独的一条横栏，附件是框里一排带边框的方块——同一件事
@@ -23,10 +26,16 @@ const emit = defineEmits<{ (e: 'remove'): void; (e: 'retry'): void }>()
 <template>
   <span class="chip" :class="{ 'chip--quiet': quiet, 'chip--failed': failed }">
     <span class="chip__face"><slot name="face" /></span>
-    <span class="chip__label">{{ label }}</span>
+    <span v-if="$slots.detail" class="chip__label chip__label--open" role="button" tabindex="0">
+      {{ label }}
+      <v-menu activator="parent" location="top start" :offset="8" :close-on-content-click="false">
+        <div class="chip__detail"><slot name="detail" /></div>
+      </v-menu>
+    </span>
+    <span v-else class="chip__label">{{ label }}</span>
     <!-- 名字在标签边缘就截断了，全名得有地方看。不用 title：系统原生气泡要停约
          一秒才弹，又是屏幕上唯一不跟随主题的东西。 -->
-    <v-tooltip activator="parent" location="top" :text="label" />
+    <v-tooltip v-if="!$slots.detail" activator="parent" location="top" :text="label" />
     <!-- The failed chip's retry: the upload did not go through, the File is
          still in hand, one press sends the same bytes again. -->
     <button
@@ -46,6 +55,21 @@ const emit = defineEmits<{ (e: 'remove'): void; (e: 'retry'): void }>()
 </template>
 
 <style scoped>
+/* 能展开的那一枚：名字点得动。 */
+.chip__label--open {
+  cursor: pointer;
+}
+.chip__label--open:hover {
+  color: var(--ink);
+}
+.chip__detail {
+  max-width: 360px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
+}
 /* 28px 高，和动作行的按钮一个高度；底色而不是边框，框里不再套框。 */
 .chip {
   display: inline-flex;

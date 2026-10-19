@@ -1,18 +1,25 @@
 <script setup lang="ts">
-// 这条消息还带着什么：回复的那条在最前，后面是待发的附件。
+// 这条消息还带着什么：回复的那条在最前，然后是引用（幻灯片的一页、文档的一段……），
+// 后面是待发的附件。
 //
 // 从 `RoomComposer.vue` 里拆出来的（#2143）：一行排开、不换行，多了就在这一行里
 // 横着滚，每一个都还拿得掉。它只吃 props、只往上发事件（拿掉哪一个由房间决定）。
 import type { ChatAttachment } from '../../cx_types'
+import type { QuotedContext } from '../../lib/quotedContext'
+
+import { quoteSummary } from '../../lib/quoteSummary'
 
 import AttachmentChip from './AttachmentChip.vue'
 import ComposerChip from './ComposerChip.vue'
+import MessageQuote from './MessageQuote.vue'
 
 import { t } from '@/i18n'
 
 defineProps<{
   /** 这条消息回复的是哪一条，读出来的样子（「回复 谁：说了什么」）。不回复时是 null。 */
   replyLabel?: string | null
+  /** 带着的引用（幻灯片的一页、文档的一段……）。没有时是 null。 */
+  quote?: QuotedContext | null
   /** 已经传上去、等着跟下一条一起发出去的附件。 */
   atts: ChatAttachment[]
   /** 附件缩略图要从哪个话题的工作区取字节。 */
@@ -23,6 +30,7 @@ const emit = defineEmits<{
   (e: 'remove-att', index: number): void
   (e: 'retry-att', index: number): void
   (e: 'clear-reply'): void
+  (e: 'clear-quote'): void
 }>()
 
 // 拿掉的那一枚离开时脱出排版（absolute），后面的才能滑过来补位；脱出之前先把它钉
@@ -39,7 +47,7 @@ function pinLeaving(el: Element) {
   <!-- 这一行长出来、收回去都是高度过渡；里面的标签一个个弹进来，拿掉一个时
        后面的滑过来补位。 -->
   <Transition name="chip-row">
-    <div v-if="replyLabel || atts.length" class="chip-row">
+    <div v-if="replyLabel || quote || atts.length" class="chip-row">
       <TransitionGroup tag="div" name="chip" class="chip-list" @before-leave="pinLeaving">
         <ComposerChip
           v-if="replyLabel"
@@ -51,6 +59,18 @@ function pinLeaving(el: Element) {
           @remove="emit('clear-reply')"
         >
           <template #face><v-icon size="13">mdi-reply</v-icon></template>
+        </ComposerChip>
+        <ComposerChip
+          v-if="quote"
+          key="quote"
+          class="quote-chip"
+          quiet
+          :label="quoteSummary(quote)"
+          :remove-label="t('slides.removeQuote')"
+          @remove="emit('clear-quote')"
+        >
+          <template #face><v-icon size="13">mdi-format-quote-close</v-icon></template>
+          <template #detail><MessageQuote :quote="quote" open /></template>
         </ComposerChip>
         <AttachmentChip
           v-for="(a, i) in atts"

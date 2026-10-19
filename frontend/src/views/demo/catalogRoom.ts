@@ -30,6 +30,7 @@ import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
+import ComposerSummon from '@/components/room/ComposerSummon.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
@@ -39,7 +40,7 @@ import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
- *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
+ *  「外部」、「取消回复」。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
 // ---- @ 候选菜单（MentionMenu）------------------------------------------------
@@ -103,16 +104,29 @@ const CHIP_ATTS = [
 
 // ---- 动作行（ComposerActions）------------------------------------------------
 
-/** 那一行除了按钮之外什么都不带（算力 chips 由话题自己从插槽交进来）。 */
+/** 那一行除了按钮之外什么都不带（交给谁那颗头像、已归档那一枚由外面从插槽交进来）。 */
 const ACTIONS_BASE = {
   uploading: false,
   canSend: false,
   showImagePicker: false,
   enterSends: true,
-  alwaysSummon: false,
-  summonOn: false,
-  summonReady: true,
-  agentName: AGENT_NAME,
+  canVoice: true,
+  canChecklist: true,
+  canRemind: true,
+}
+
+// ---- 交给谁（ComposerSummon）------------------------------------------------
+
+const MATE = { handle: 'cheese', label: AGENT_NAME }
+// i18n-data: a demo teammate's name, shown as fixture data
+const OWN_MATE = { handle: 'cheese-0a1b2c3d', label: '我的 Claude Code' }
+const SUMMON_BASE = {
+  mates: [MATE, OWN_MATE],
+  shown: [MATE],
+  on: false,
+  fixed: false,
+  ready: true,
+  busy: [] as string[],
 }
 
 /** 芝士问的一道题，`answer_log` 由各格给。 */
@@ -539,51 +553,88 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
   {
     id: 'room-composer-actions',
     title: 'ComposerActions',
-    about: '输入框下面那一行：左边是「这条消息本身」的动作，右边是「它会怎么发出去」。',
+    about:
+      '输入框下面那一行：左边「+」收着上传文件、照片、清单、提醒和键盘快捷键；右边依次是麦克风、交给谁那颗头像和发送。',
     file: 'src/components/room/ComposerActions.vue',
     component: ComposerActions,
     needs: UI_T,
     states: [
       {
         name: '什么都没写',
-        note: '发送键是灰的（这一行唯一的实心块）。「交给芝士」开着的时候只改一条描边和墨色，形态不变——一行里只有一个实心块，那个位置是发送的。',
+        note: '左边只有「+」，右边是麦克风和发送。发送键是灰的（这一行唯一的实心块）。交给谁那颗头像由外面从 `summon` 插槽交进来，预览站的格子只喂默认插槽，所以这一格里没有它。',
         props: ACTIONS_BASE,
-        expect: '交给芝士',
-      },
-      {
-        name: '这条会开着芝士跑',
-        note: '正文里 @ 了它：按钮是填充的，一眼认得出这条消息会真的开出一轮，和「只是说了句话」是两回事。',
-        props: { ...ACTIONS_BASE, canSend: true, summonOn: true },
-        expect: '交给芝士',
+        expectSelector: '.composer-plus',
       },
       {
         name: '有字了，能发',
         note: '灰键过渡成琥珀；按下去沉一下，不等松手。',
         props: { ...ACTIONS_BASE, canSend: true },
-        expect: '交给芝士',
-      },
-      {
-        name: '手机上多一颗「照片」',
-        note: '那儿没有截图可贴、也没有东西可拖，从文件选择器里翻相册要绕好几步。',
-        props: { ...ACTIONS_BASE, showImagePicker: true },
-        expect: '交给芝士',
-      },
-      {
-        name: '名册还没到，芝士是谁还不知道',
-        note: '这一瞬间「交给芝士」是关着的：解析不出 handle，替人写进正文的那个 @ 只是一行字，消息照发、它不动。少一个入口，好过一个点了不算数的入口。',
-        props: { ...ACTIONS_BASE, summonReady: false },
-        expect: '交给芝士',
+        expectSelector: '.composer-send:not([disabled])',
       },
       {
         name: '上传还没回来',
         note: '这一刻发不出去，所以发送键是灰的——而不是把字吞掉。',
         props: { ...ACTIONS_BASE, canSend: true, uploading: true },
-        expect: '交给芝士',
+        expectSelector: '.composer-send[disabled]',
       },
       {
-        name: '私聊：没有「交给芝士」这一颗',
-        note: '那儿每条都是说给它听的，所以这一格只剩发送——`alwaysSummon` 一开，按钮整颗不画。算力那一枚是话题从 `chips` 具名插槽交进来的，预览站的格子只喂默认插槽、喂不进去，少的那一枚在这一格看不见。',
-        props: { ...ACTIONS_BASE, alwaysSummon: true, canSend: true },
+        name: '录音中：发送键变成 ✓',
+        note: '录音条从麦克风往左展开（外面的 `voice` 插槽），发送键原地变成「说完了」。',
+        props: { ...ACTIONS_BASE, voice: 'recording' },
+        expectSelector: '.composer-actions--voice',
+      },
+      {
+        name: '刚说进来一段：可以还原原话',
+        note: '「+」旁边一颗小药丸，底下细线 8 秒走完就收起；正文一动它也走开。',
+        props: { ...ACTIONS_BASE, canSend: true, voiceSwap: 'raw' },
+        expect: '还原原话',
+      },
+    ],
+  },
+  {
+    id: 'room-composer-summon',
+    title: 'ComposerSummon',
+    about:
+      '发送键左边那颗 AI 队友头像：这条发出去，谁会接手。它是正文的镜子——正文里 @ 了队友就亮、睁眼，没 @ 就灰着、闭眼。点一下交给头像上那位；右键、长按或按 ↑ 换一位。',
+    file: 'src/components/room/ComposerSummon.vue',
+    component: ComposerSummon,
+    needs: UI_T,
+    states: [
+      {
+        name: '不交给',
+        note: '灰底、闭眼。悬停时眯眼，预告点一下它就醒了。',
+        props: SUMMON_BASE,
+        expectSelector: '.summon__btn:not(.summon__btn--on)',
+      },
+      {
+        name: '交给它',
+        note: '换成它自己的底色、睁眼；底色先到，眼睛晚 40ms。',
+        props: { ...SUMMON_BASE, on: true },
+        expectSelector: '.summon__btn--on',
+      },
+      {
+        name: '它正在忙',
+        note: '往右上看、冒泡：它正在这个频道里跑一轮，这条它会接着看。',
+        props: { ...SUMMON_BASE, busy: [MATE.handle] },
+        expectSelector: '.summon__btn--busy',
+      },
+      {
+        name: '同时 @ 了两位',
+        note: '后端的做法是 @ 到的每位各起一轮，头像就叠着画两位。',
+        props: { ...SUMMON_BASE, on: true, shown: [MATE, OWN_MATE] },
+        expectSelector: '.summon__stack',
+      },
+      {
+        name: '任务负责人：规则常亮',
+        note: '任务里负责人说的话都交给队友，这是规则不是开关，点了只说明。',
+        props: { ...SUMMON_BASE, on: true, fixed: true },
+        expectSelector: '.summon__btn--fixed',
+      },
+      {
+        name: '名册还没到',
+        note: '解析不出 handle 的那一瞬间不接受点击：少一个入口，好过一个点了不算数的入口。',
+        props: { ...SUMMON_BASE, ready: false },
+        expectSelector: '.summon__btn[disabled]',
       },
     ],
   },

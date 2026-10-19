@@ -277,37 +277,76 @@ defineExpose({
 .composer-editor__host :deep(.composer-code-line--fence) {
   color: var(--muted);
 }
-/* 语音识别中：字会落在这儿。扫光是「机器正在做」，说得出正在发生的事（§9.6）。 */
+/* 录着、整理中：字会落在这儿。录着时一颗呼吸的红点 +「正在听」；整理中红点熄掉，
+   「正在整理」上走一道扫光——机器正在做事，说得出正在发生的事（§9.6）。 */
 .composer-editor__host :deep(.composer-voice-slot) {
-  display: inline-block;
-  width: 64px;
-  height: 14px;
-  margin: 0 2px;
-  vertical-align: -2px;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, var(--fill-2) 0%, var(--line-2) 40%, var(--fill-2) 80%);
-  background-size: 200% 100%;
-  animation: composer-voice-sweep 1.1s linear infinite;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  margin: 1px 2px 0;
+  padding: 0 8px;
+  /* 行高 24、药丸 22：贴着行顶再下移 1px，正好在这一行的正中。 */
+  vertical-align: top;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 22px;
+  user-select: none;
+  animation: composer-voice-in var(--dur-base) var(--ease-out);
 }
-/* 刚说进来的那段：淡入停稳，琥珀底慢慢退掉——它从哪来，一眼看得到。 */
+.composer-editor__host :deep(.composer-voice-slot i) {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: composer-voice-breathe 1.6s var(--ease-standard) infinite;
+}
+.composer-editor__host :deep(.composer-voice-slot--thinking i) {
+  background: var(--faint);
+  animation: none;
+}
+.composer-editor__host :deep(.composer-voice-slot--thinking span) {
+  background: linear-gradient(90deg, var(--muted) 35%, var(--ink) 50%, var(--muted) 65%);
+  background-size: 240% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: composer-voice-sheen 1.4s linear infinite;
+}
+/* 落字：整段先占好位置，从头逐字显出来，前沿四个字半透明；显的过程中垫着琥珀浅底，
+   显完了 1.2 秒退掉——它从哪来，一眼看得到。 */
+.composer-editor__host :deep(.composer-voice-revealing) {
+  border-radius: 3px;
+  background-color: var(--accent-wash);
+}
+.composer-editor__host :deep(.composer-voice-tail) {
+  opacity: 0.35;
+}
+.composer-editor__host :deep(.composer-voice-pending) {
+  opacity: 0;
+}
 .composer-editor__host :deep(.composer-voice-landed) {
   border-radius: 3px;
-  animation:
-    composer-voice-in var(--dur-base) var(--ease-out),
-    composer-voice-wash 1.6s var(--ease-standard) forwards;
-}
-@keyframes composer-voice-sweep {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: -100% 0;
-  }
+  animation: composer-voice-wash 1.2s var(--ease-standard) forwards;
 }
 @keyframes composer-voice-in {
   from {
     opacity: 0;
-    filter: blur(3px);
+    transform: scale(0.92);
+  }
+}
+@keyframes composer-voice-breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes composer-voice-sheen {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -40% 0;
   }
 }
 @keyframes composer-voice-wash {
@@ -318,12 +357,16 @@ defineExpose({
     background-color: transparent;
   }
 }
+/* 关掉动画之后意思还在：红点是实心的，「正在整理」照样写着，浅底直接退掉。 */
 @media (prefers-reduced-motion: reduce) {
-  .composer-editor__host :deep(.composer-voice-slot) {
+  .composer-editor__host :deep(.composer-voice-slot),
+  .composer-editor__host :deep(.composer-voice-slot i),
+  .composer-editor__host :deep(.composer-voice-slot--thinking span) {
     animation: none;
   }
-  .composer-editor__host :deep(.composer-voice-landed) {
-    animation: composer-voice-wash 1.6s var(--ease-standard) forwards;
+  .composer-editor__host :deep(.composer-voice-slot--thinking span) {
+    color: var(--muted);
+    background: none;
   }
 }
 </style>

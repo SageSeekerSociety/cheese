@@ -229,9 +229,11 @@ describe('AI 说的话署谁的名', () => {
     })
     await settle()
 
-    const shown = container.textContent ?? ''
-    expect(shown).toContain(t('work.room.composer.summon', { name: '接班' }))
-    expect(shown).not.toContain('退休')
+    // 发送键旁边那颗头像说的是交给谁。
+    const summon = container.querySelector('.summon__btn')?.getAttribute('aria-label') ?? ''
+    expect(summon).toContain('接班')
+    expect(summon).not.toContain('退休')
+    expect(container.textContent).not.toContain('退休')
   })
 
   it('名册还没到，也不能空着 —— 退回「芝士」', async () => {
@@ -362,7 +364,7 @@ describe('任务或支线另有队友时，发送框 @ 的是那一位', () => {
     const { container } = renderThread('t3', 'thread-3', OTHER)
     await settle()
 
-    await waitFor(() => expect(container.textContent).toContain(t('work.room.composer.summon', { name: '无言' })))
+    await waitFor(() => expect(container.querySelector('.summon__btn')?.getAttribute('aria-label')).toContain('无言'))
     const box = container.querySelector<HTMLElement>('.composer .ProseMirror')!
     box.focus()
     await fillComposer(box, '整理一下方案')
@@ -378,7 +380,7 @@ describe('任务或支线另有队友时，发送框 @ 的是那一位', () => {
 
     const box = container.querySelector<HTMLElement>('.composer .ProseMirror')!
     await waitFor(() => expect(composerText(box)).toBe(`<@${OTHER}> `))
-    expect(box.querySelector('.mention')?.textContent).toBe('@无言')
+    expect(box.querySelector('.mention')?.textContent).toBe('无言')
   })
 
   it('这件事没单独指定，还是房间那位', async () => {

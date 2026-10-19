@@ -26,7 +26,7 @@ test.describe('支线', () => {
 
   test('主线上叫芝士：它在这条消息的支线里回答', async ({ page }) => {
     const composer = await openChannel(page);
-    const button = page.locator('.summon-btn');
+    const button = page.locator('.summon__btn');
     await expect(button).toBeEnabled({ timeout: 15_000 });
 
     const text = `e2e thread question ${Date.now()}`;
