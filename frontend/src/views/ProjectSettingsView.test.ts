@@ -64,12 +64,10 @@ beforeEach(() => {
   me.id = null
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
   vi.mocked(ownAgents.getOwnAgents).mockResolvedValue({
-    allowed: true,
-    kinds: ['subscription', 'api_key', 'model_service'],
-    service_hosts: [],
     can_manage: false,
     agents: [],
     my_connections: [],
+    devices: [],
   })
   asRole('member', [])
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
@@ -276,7 +274,6 @@ describe('project settings', () => {
   })
 
   it.each([
-    ['agents', ['AI 队友', '默认模型', '成员自己的 Claude Code']],
     // 在哪运行、怎么准备、还能跑多久：环境一页说完。
     ['environment', ['默认环境', '脚本与环境变量', '额度', '项目和成员预算']],
     // 分支保护是合并规则，不是仓库连接。

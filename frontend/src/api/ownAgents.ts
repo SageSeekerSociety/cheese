@@ -1,4 +1,4 @@
-// 成员自己的 Claude Code（#2991）：项目允不允许成员接入、谁加入了，以及一台电脑上登录了没有。
+// Team model connections and their project teammate instances.
 import type { OwnAgentsSettings } from '../types/ownAgents'
 
 import { connectorRequest } from './connector'
@@ -12,7 +12,7 @@ export function getOwnAgents(projectId: string): Promise<OwnAgentsSettings> {
   return request<OwnAgentsSettings>(path(projectId))
 }
 
-/** 用自己的一份模型连接把自己的 Claude Code 加入项目。 */
+/** Add a teammate with a team connection, model, and execution device. */
 export function addOwnAgent(
   projectId: string,
   connectionId: string,
@@ -25,7 +25,7 @@ export function addOwnAgent(
   })
 }
 
-/** 把自己的一位 Claude Code 移出项目；只有它的主人能移。 */
+/** Remove a teammate from the project. */
 export function removeOwnAgent(projectId: string, handle: string): Promise<OwnAgentsSettings> {
   return request<OwnAgentsSettings>(`${path(projectId)}/${encodeURIComponent(handle)}`, {
     method: 'DELETE',
