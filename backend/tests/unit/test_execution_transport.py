@@ -791,6 +791,9 @@ def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(
         def publish_message(self, payload, args):
             raise AssertionError("nothing to caption")
 
+        def working_directory(self):
+            return "/work"
+
     result = central.deliver_send_user_file(
         Client(),
         {"workspace": "/work"},
