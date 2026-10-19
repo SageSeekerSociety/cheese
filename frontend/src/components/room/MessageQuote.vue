@@ -4,39 +4,12 @@ import type { QuotedContext } from '../../lib/quotedContext'
 import { computed } from 'vue'
 
 import { t } from '@/i18n'
+import { quoteSummary } from '@/lib/quoteSummary'
 
 const props = defineProps<{ quote: QuotedContext }>()
 
-/** 各种引用共用一个框：文字引用说引的是哪一段，位置引用说指在哪儿。
- *
- *  按 `kind` 分派，最后一支兜住这个版本还不认识的 kind——库里可能已经躺着更新的
- *  客户端发来的引用，读到它时画不出细节，但至少要说得出「这里有一份引用」，不能
- *  把 kind 当页码算出一串 undefined。 */
-const summary = computed(() => {
-  const quote = props.quote
-  switch (quote.kind) {
-    case 'slide-page':
-      return t(quote.scope === 'selection' ? 'slides.quotedSelection' : 'slides.quotedPage', {
-        page: quote.page,
-      })
-    case 'page-pin':
-      return t('slides.pinnedPage', { page: quote.page })
-    case 'sheet-cell':
-      return t('slides.quotedCell', {
-        address: quote.sheet ? `${quote.sheet}!${quote.address}` : quote.address,
-      })
-    case 'text-range':
-      return t('slides.quotedPassage')
-    case 'web-element':
-      return t('slides.quotedWebElement')
-    case 'web-text':
-      return t('slides.quotedWebText')
-    case 'web-region':
-      return t('slides.quotedWebRegion')
-    default:
-      return t('slides.quotedSource')
-  }
-})
+/** 一句话说出这是哪一处（`quoteSummary`，输入框上那枚引用标签读的也是它）。 */
+const summary = computed(() => quoteSummary(props.quote))
 /** 文件身份那一半（路径、来源、版本）。网页框选的区域只带网址，没有这几样 —— 在
  *  这里先收窄再取字段：`quote.path` 在只带网址的那一支上不存在，拿联集直接取连编译
  *  都过不去。 */

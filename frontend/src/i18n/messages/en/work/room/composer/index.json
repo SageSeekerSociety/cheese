@@ -12,7 +12,16 @@
   "send": "Send",
   "sendPhotos": "Send photos or videos",
   "sendUploading": "Uploading attachments — send once they finish",
-  "summon": "Hand to {name}",
+  "summonBusy": "{name} is busy and will pick this up next",
+  "summonJoin": ", ",
   "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)",
-  "summonOn": "{'@'}{name} is mentioned. Click to remove"
+  "summonOffMany": "Hand to {name} (⌘/Ctrl+Enter). Right-click to pick another teammate",
+  "summonOffManyTouch": "Hand to {name}. Long-press to pick another teammate",
+  "summonOn": "This goes to {name}. Click to cancel",
+  "summonOnMany": "This goes to {names}",
+  "summonPeopleOnly": "This one goes only to the people you mentioned",
+  "summonPicker": "Hand to which teammate",
+  "summonPickerBusy": "Busy",
+  "summonPickerOff": "Don't hand to a teammate",
+  "summonRule": "In a task, everything you say goes to {name}"
 }
