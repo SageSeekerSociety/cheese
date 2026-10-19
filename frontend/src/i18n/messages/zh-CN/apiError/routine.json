@@ -28,5 +28,6 @@
   "scheduleMonthlyDay": "每月执行要给出几号（1–31）",
   "scheduleTimeFormat": "执行时间要写成 HH:MM，例如 09:00",
   "scheduleWeeklyDays": "每周执行要给出星期几（0=周一 … 6=周日）",
-  "timezoneUnknown": "不认识的时区：{name}"
+  "timezoneUnknown": "不认识的时区：{name}",
+  "routineResumeNeedsTrigger": "先给它定个触发方式，它才知道什么时候跑"
 }

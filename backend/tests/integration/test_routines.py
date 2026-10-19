@@ -135,6 +135,10 @@ def test_a_rule_saved_without_a_trigger_waits_for_one(client):
     assert routine["trigger"] == ""
     assert routine["trigger_text"]
 
+    # 恢复它没有意义：没有触发方式就没有「下一次」。
+    refused = client.post(f"/routines/{routine['id']}/resume", headers=PERSON)
+    assert refused.status_code == 422, refused.text
+
     patched = client.patch(
         f"/routines/{routine['id']}",
         headers=PERSON,

@@ -264,6 +264,9 @@ async def resume(svc: pkg.RoutineService, row: Routine) -> Routine:
     """Continue from the next future moment; what was missed is not replayed."""
     if row.state != RoutineState.paused.value:
         raise ValidationError(say("routineResumePausedOnly"))
+    # 没定触发方式的规则没有「下一次」：恢复它只会让它挂着「运行中」却永不响。
+    if not row.trigger:
+        raise ValidationError(say("routineResumeNeedsTrigger"))
     svc._activate(row)
     await svc._session.flush()
     return row
