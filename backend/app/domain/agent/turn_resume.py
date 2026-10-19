@@ -7,7 +7,7 @@ card is posted), and a resumable one leaves a `TurnResume` row due after a
 backoff, or at the reset the service named. A clock (`hand_due`) turns a due
 row into one instruction on the delivery ledger (`delivery.agent.record_agent`),
 so admission, leases, the closed-task check and the 30-second dispatch all stay
-the ledger's, exactly as for a timed delivery or the wake watch's catch-up.
+the ledger's, exactly as for a timed delivery.
 
 What the session hears is `RESUME_NOTE`. It reaches the same session, which
 still holds the conversation the failed turn was having, so "go on from where
