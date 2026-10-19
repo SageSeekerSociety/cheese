@@ -63,6 +63,14 @@ check's result.
 `--jobs 1` restores the strictly serial tier. The rows keep the plan's order
 either way, so the report does not depend on which check finished first.
 
+The ceiling is per check, so `jobs` is also what the machine has to back: at
+`--jobs 2` a runner may see up to twice the sampled ceiling. The observed peaks
+(5.2 GiB and 1.1 GiB) leave room on a 16 GiB runner; that is why the default
+stays at 2 and does not grow with the machine. An interrupt (Ctrl-C, or a
+cancelled job) stops every running check before the pool is joined — a check
+runs in its own session, so the signal would otherwise not reach it and the
+tier would wait out its own timeout.
+
 For example, `CI_FAST_BUDGET_SECONDS=600 task ci:fast` gives a quota-constrained
 machine ten minutes without changing repository config. Required CI's draft job
 already passes `--budget 1200`, so its bound is unchanged. `--memory-mib` remains

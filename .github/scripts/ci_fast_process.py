@@ -15,6 +15,7 @@ from pathlib import Path
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 
 # Vars that alter what a check does rather than where its tools live. A test
@@ -25,6 +26,28 @@ SCRUB = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG", "GIT_CONFIG_GLOBAL",
     "PYTEST_ADDOPTS", "NODE_OPTIONS",
 )
+
+# Process groups started here and not yet reaped. A check runs in its own
+# session, so a signal sent to this process does not reach it; a concurrent
+# tier that is interrupted has to stop them by hand or the interpreter waits
+# for a check that is still running (up to its own timeout).
+_RUNNING: set[int] = set()
+_RUNNING_LOCK = threading.Lock()
+
+
+def stop_all():
+    """Kill every process group this process started and is still running.
+
+    Safe to call from any thread and when nothing is running. Only groups
+    created by `execute` are listed, so nothing outside this tool is touched.
+    """
+    with _RUNNING_LOCK:
+        pgids = list(_RUNNING)
+    for pgid in pgids:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def environment(extra=None):
@@ -95,6 +118,8 @@ def execute(command, cwd, timeout, memory_mib=3072, env=None):
             )
         except OSError as exc:
             return {**result, "result": "blocked", "output": str(exc)}
+        with _RUNNING_LOCK:
+            _RUNNING.add(proc.pid)
         try:
             misses = 0
             while True:
@@ -139,6 +164,8 @@ def execute(command, cwd, timeout, memory_mib=3072, env=None):
         finally:
             # Also reap children left behind by an otherwise successful wrapper.
             stop_group(proc)
+            with _RUNNING_LOCK:
+                _RUNNING.discard(proc.pid)
         output.seek(0, os.SEEK_END)
         size = output.tell()
         output.seek(max(0, size - 1024 * 1024))

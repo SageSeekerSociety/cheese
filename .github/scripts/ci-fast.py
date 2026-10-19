@@ -58,7 +58,7 @@ import threading
 import time
 
 from ci_fast_checks import _cores, resolve, test_plan, tree_guard_check
-from ci_fast_process import dependencies, execute
+from ci_fast_process import dependencies, execute, stop_all
 
 REPO_ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
 GIT_DIR = subprocess.check_output(["git", "rev-parse", "--git-dir"], text=True, cwd=REPO_ROOT).strip()
@@ -249,24 +249,32 @@ def run_plan_checks(plan, invoke, jobs, report):
     busy: set[str] = set()
     running = {}
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        while pending or running:
-            for check in list(pending):
-                if len(running) >= jobs:
+        try:
+            while pending or running:
+                for check in list(pending):
+                    if len(running) >= jobs:
+                        break
+                    cwd = str(check["cwd"])
+                    if cwd in busy:  # one writer per tree at a time
+                        continue
+                    pending.remove(check)
+                    busy.add(cwd)
+                    running[pool.submit(
+                        invoke, check["id"], check["command"], check["cwd"],
+                        check.get("evidence"), check.get("env"))] = check
+                if not running:
                     break
-                cwd = str(check["cwd"])
-                if cwd in busy:  # one writer per tree at a time
-                    continue
-                pending.remove(check)
-                busy.add(cwd)
-                running[pool.submit(
-                    invoke, check["id"], check["command"], check["cwd"],
-                    check.get("evidence"), check.get("env"))] = check
-            if not running:
-                break
-            done, _ = wait(running, return_when=FIRST_COMPLETED)
-            for future in done:
-                busy.discard(str(running.pop(future)["cwd"]))
-                future.result()
+                done, _ = wait(running, return_when=FIRST_COMPLETED)
+                for future in done:
+                    busy.discard(str(running.pop(future)["cwd"]))
+                    future.result()
+        except KeyboardInterrupt:
+            # Each check runs in its own session, so the interrupt that reached
+            # this thread does not reach them. Without this the pool's exit
+            # waits for a check that is still running — up to its own timeout —
+            # where the serial path stops it at once.
+            stop_all()
+            raise
     rows = [row for row in report["ran"] if row["id"] in order]
     rows.sort(key=lambda row: order[row["id"]])
     remaining = iter(rows)

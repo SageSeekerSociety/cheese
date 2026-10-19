@@ -24,6 +24,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -2358,7 +2359,10 @@ class PlanConcurrencyTest(unittest.TestCase):
                 if active[str(cwd)] > 1:
                     overlaps.append(identifier)
                 peak[0] = max(peak[0], sum(active.values()))
-            time.sleep(0.15)
+            # The first check of the plan finishes LAST on purpose: the report
+            # has to be put back in plan order, and a fixture where completion
+            # order happens to equal it would pass with that step deleted.
+            time.sleep(0.4 if identifier == "backend-pure" else 0.1)
             with lock:
                 active[str(cwd)] -= 1
                 report["ran"].append({"id": identifier})
@@ -2393,7 +2397,39 @@ class PlanConcurrencyTest(unittest.TestCase):
         module = self._module()
         self.assertEqual(module.jobs_for(3072), 1)   # the work machine's cap
         self.assertEqual(module.jobs_for(9216), 2)   # the CI runner's ceiling
+        # The boundary itself, spelled out: a threshold that moved inside
+        # (3072, 9216] would change what a 4-6 GiB machine does and these
+        # endpoints would not notice.
+        self.assertEqual(module.jobs_for(6143), 1)
+        self.assertEqual(module.jobs_for(6144), 2)
         self.assertEqual(module.jobs_for(9216, 1), 1)
+
+    def test_an_interrupt_stops_the_checks_the_scheduler_started(self):
+        """Ctrl-C has to stop a concurrent check, not wait it out.
+
+        A check runs in its own session, so the signal that reaches this thread
+        does not reach it. Raise a real SIGINT while two checks are running and
+        the scheduler has to return at once with both dead — the serial path
+        already does this through `execute`'s own cleanup.
+        """
+        from ci_fast_process import execute
+        module = self._module()
+        report = {"ran": [], "not_run": [], "reasons": []}
+
+        def invoke(identifier, command, cwd, evidence=None, env=None):
+            return execute(["sleep", "20"], tempfile.gettempdir(), 60)
+
+        plan = self._plan(("backend-pure", "backend"), ("frontend-unit", "frontend"))
+        timer = threading.Timer(0.5, os.kill, args=(os.getpid(), signal.SIGINT))
+        timer.start()
+        started = time.monotonic()
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                module.run_plan_checks(plan, invoke, 2, report)
+        finally:
+            timer.cancel()
+        self.assertLess(time.monotonic() - started, 5,
+                        "the interrupt must not wait for the checks to finish")
 
 
 if __name__ == "__main__":
