@@ -969,3 +969,119 @@ def test_an_accept_that_lands_during_a_redeliver_keeps_what_it_accepted(
     assert card["deliverable"]["filename"] == "报告.pdf"
     got = client.get(f"/accept-cards/{card_id}/deliverable")
     assert got.content == "采纳的那一份\n".encode()
+
+
+def test_a_redeliver_during_an_accept_does_not_slip_in_unseen_bytes(
+    client, monkeypatch
+):
+    """反过来的那个顺序：换交付物的请求已经锁住卡、正要写新的一份，人带着屏幕上
+    那一版点了采纳。采纳要么等它写完、看出版本变了而拒绝，要么先落定、让它拿到
+    409 —— 不能是「卡采纳了，挂着的却是没人看过的那一份」。"""
+    import time
+
+    from app.api.routes.accept import _accept_service
+    from app.domain.library import service as library_service
+    from app.domain.review.services import cards as cards_mod
+
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/报告.pdf": "看过的那一份\n"},
+        deliver="out/报告.pdf",
+    )
+    assert filed.status_code == 200, filed.text
+    card_id = filed.json()["data"]["id"]
+    task = delivery_task(client, room_id)
+    head = _rendered_head(client, card_id)
+    seen = _rendered_revision(client, card_id)
+    read = cards_mod._read_deliverable
+    write = library_service.write_artifact_snapshot
+    loop = {}
+    outcome = {}
+
+    async def remember_the_loop(*args, **kwargs):
+        loop["it"] = asyncio.get_running_loop()
+        return await read(*args, **kwargs)
+
+    async def accept_from_the_old_screen():
+        async with client.test_factory() as session:
+            try:
+                card = await _accept_service(session).accept(
+                    card_id=uuid.UUID(card_id),
+                    decided_by="alice",
+                    head_sha=head,
+                    deliverable_revision=seen,
+                )
+                await session.commit()
+                outcome["status"] = card.status.value
+            except Exception as exc:  # the refusal is one of the two answers
+                outcome["refused"] = repr(exc)
+
+    def write_once_an_accept_is_under_way(*args, **kwargs):
+        pending = asyncio.run_coroutine_threadsafe(
+            accept_from_the_old_screen(), loop["it"]
+        )
+        try:
+            pending.result(timeout=2)
+        except Exception:  # it waits on the row this request holds
+            pass
+        return write(*args, **kwargs)
+
+    monkeypatch.setattr(cards_mod, "_read_deliverable", remember_the_loop)
+    monkeypatch.setattr(
+        library_service, "write_artifact_snapshot", write_once_an_accept_is_under_way
+    )
+    _put(client, task, "out/报告2.pdf", "没看过的那一份\n")
+    _redeliver(client, task, delivery_headers(client, room_id), deliver="out/报告2.pdf")
+    for _ in range(100):
+        if outcome:
+            break
+        time.sleep(0.05)
+
+    got = client.get(f"/accept-cards/{card_id}/deliverable")
+    assert outcome, "the accept never finished"
+    assert not (
+        outcome.get("status") == "accepted"
+        and got.content == "没看过的那一份\n".encode()
+    ), outcome
+
+
+@pytest.mark.timeout(60)
+def test_accepting_a_file_card_whose_pr_is_not_open_yet_answers(client):
+    """交文件、分支上也有改动、PR 还没开的卡：采纳先替它开 PR。这一步用另一条连接
+    把 PR 号写回卡上，所以采纳和换交付物之间的排队不能是这一行的锁 —— 否则那条
+    连接等这次请求提交，这次请求等它写完，请求永远不返回。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    task = delivery_task(client, room_id)
+    _place(client, task)
+    _put(client, task, "out/报告.pdf", "正文\n")
+    filed = client.post(
+        f"/topics/{task.id}/accept-card",
+        headers=delivery_headers(client, room_id),
+        json={
+            "change_subject": "docs(report): finalise the report",
+            "reviewer_handle": "alice",
+            "deliver": "out/报告.pdf",
+            **delivery_artifact(client, room_id, hands_over=True),
+        },
+    )
+    assert filed.status_code == 200, filed.text
+    card = filed.json()["data"]
+    assert card["pr_number"] is None
+
+    r = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={
+            "decided_by": "alice",
+            "head_sha": card["merge_state"]["head_sha"],
+            "deliverable_revision": _rendered_revision(client, card["id"]),
+        },
+        headers=session_auth_headers("alice"),
+    )
+
+    # 开出来的 PR 还没有任何人看过它的 head，所以这一次不合、让人重新看：要紧
+    # 的是请求答了，而不是答了什么。
+    assert r.status_code in (200, 422), r.text

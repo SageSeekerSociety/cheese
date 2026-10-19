@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from sqlalchemy import select
 
 from app.core.errors import (
     ConflictError,
@@ -58,6 +57,7 @@ from app.domain.review.services._shared import (
     WHO_HUMAN,
     ReviewerAdmission,
     _deliverable_revision,
+    _hold_deliverable,
     _no_artifact_action,
     _one_artifact_action,
     _one_deliverable,
@@ -333,15 +333,10 @@ async def redeliver(
         if handed_over
         else None
     )
-    # 读机器上那一份可能要好几秒，人可能正好在这几秒里点了采纳。先锁住这一行、
-    # 重读状态，再动字节：否则采纳了的那一版会被换掉、它的快照被删掉。锁到提交
-    # 为止，晚到的采纳等这边写完再读。
-    await self._session.execute(
-        select(AcceptCard)
-        .where(AcceptCard.id == card.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
+    # 读机器上那一份可能要好几秒，人可能正好在这几秒里点了采纳。先和采纳排队、
+    # 重读状态，再动字节：否则采纳了的那一版会被换掉、它的快照被删掉。排到提交
+    # 为止，晚到的采纳等这边写完再看。
+    await _hold_deliverable(self._session, card)
     if card.status != AcceptStatus.pending:
         raise ConflictError(say("redeliverNoPendingCard"))
     before = card.deliverable_name or card.deliverable_url or ""
@@ -367,7 +362,10 @@ async def redeliver(
     )
     card.deliverable_name = snapshot[0] if snapshot else None
     card.deliverable_url = url or None
+    # 批准票和「绿了自动合」都是对旧那一份的表态，一起作废（同 `_dismiss_stale_accept`）。
     await self._repo.clear_approvals(card.id)
+    card.auto_merge_armed_by = None
+    card.auto_merge_armed_at = None
     await self._session.flush()
     await self._tell_the_reviewer(
         card,

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Final
 
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
@@ -156,6 +157,24 @@ _MERGE_FAILED_MESSAGE = (
     "The card remains pending and the topic stays active; repair the workspace "
     "and retry."
 )
+
+
+async def _hold_deliverable(session: AsyncSession, card: AcceptCard) -> None:
+    """换交付物（`redeliver`）与采纳在同一张卡上排队，到本事务结束为止，然后把
+    卡重读一遍。
+
+    用的是按卡号的事务级 advisory 锁，不是这一行的 FOR UPDATE：采纳那条路上有
+    几处用新连接改这张卡（`pr_publish.record_pr` 之类），行锁拿在请求自己的事务
+    里，那几处就会等一个永远等不到的提交。"""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"accept-card-deliverable:{card.id}"},
+    )
+    await session.execute(
+        select(AcceptCard)
+        .where(AcceptCard.id == card.id)
+        .execution_options(populate_existing=True)
+    )
 
 
 def _deliverable_revision(project_id: uuid.UUID, card: AcceptCard) -> str | None:

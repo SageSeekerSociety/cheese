@@ -7,7 +7,6 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NoReturn
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
@@ -60,6 +59,7 @@ from app.domain.review.services._shared import (
     logger,
     notice,
     _deliverable_revision,
+    _hold_deliverable,
 )
 
 
@@ -94,16 +94,12 @@ async def accept(
     # 交出去的文件或地址同理：待处理时它可以被原地换掉，看过的那一份还在才采纳。
     # 不带这一项不是绕过的办法，同 `_seen_head`。
     current = _deliverable_revision(topic.project_id, card)
-    if current is not None and card.pr_number is None:
-        # 没有 PR 的这条路几步就落定，锁住这一行再看一次：正在换交付物的那个
-        # 请求（`redeliver`，同样先锁这一行）要么已经提交、这里看到的就是新的
-        # 一版，要么等这边采纳完、自己看到卡已结束。
-        await self._session.execute(
-            select(AcceptCard)
-            .where(AcceptCard.id == card.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
+    if current is not None:
+        # 和换交付物的请求排队，排到这次采纳提交为止，再看一次：那个请求
+        # （`redeliver`）要么已经提交、这里看到的就是新的一版，要么等这边采纳
+        # 完、自己看到卡已结束。骑 PR 的卡也一样 —— 合并要几秒，不排队的话交付
+        # 物会在这几秒里被换掉。交合并的卡没有可换的交付物，不排。
+        await _hold_deliverable(self._session, card)
         if card.status not in (AcceptStatus.pending, AcceptStatus.conflict):
             raise ValidationError(say("reviewEndedNoAccept"))
         current = _deliverable_revision(topic.project_id, card)
