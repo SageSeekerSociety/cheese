@@ -459,6 +459,7 @@ class TieredDumpRetention(unittest.TestCase):
                 result, hourly, expired = self.backup_script(
                     backup_env="CHEESE_BACKUP_HOURLY_DAYS=7\n", pruner=pruner)
                 self.assertNotIn(expired, self.local())
+                self.assertIn(hourly, self.local())
                 self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_backup_script_with_dev_setting_and_failing_pruner_still_expires_and_fails(self):
