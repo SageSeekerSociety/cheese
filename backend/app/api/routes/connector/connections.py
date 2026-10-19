@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
@@ -62,6 +62,10 @@ class StartClaudeLoginIn(BaseModel):
 class StartClaudeLoginOut(BaseModel):
     opened: bool
     command: str | None
+
+
+class LoginRefreshOut(RootModel[None]):
+    """Refreshing credentials returns no device-level model summary."""
 
 
 @router.post(
@@ -355,10 +359,11 @@ async def remove_account_connection(
 @router.post("/my/devices/{device_id}/claude-code", dependencies=[ROUTE_DECIDES])
 async def check_my_claude_code(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
-) -> None:
+) -> LoginRefreshOut:
     """Refresh device credentials for the team Models page without a device summary."""
     await _my_self_hosted(device_id, resolver, service)
     await _ask_again(db, device_id)
+    return LoginRefreshOut(None)
 
 
 async def _ask_again(db: DbSession, device_id: str) -> None:
