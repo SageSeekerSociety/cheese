@@ -144,16 +144,6 @@ class GitHubPrClient(Protocol):
         ours, `behind`/`identical` means that other commit CONTAINS ours."""
         ...
 
-    async def check_run_names(
-        self, *, owner: str, repo: str, ref: str, token: str
-    ) -> set[str]:
-        """Names of every check-run that EXISTS on `ref` (#468 tier-2). The
-        poller compares this against the required list: a required name not in
-        this set has never reported, and its absence blocks the merge — a
-        path-filtered or broken workflow must read as "still waiting", never
-        as "nothing failed"."""
-        ...
-
     async def review_signals(
         self,
         *,
