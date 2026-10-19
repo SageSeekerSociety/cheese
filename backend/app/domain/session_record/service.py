@@ -139,12 +139,13 @@ def _masked(key: object, value: Any) -> str | None:
 @functools.lru_cache(maxsize=4096)
 def _names_a_credential(key: str) -> bool:
     """Whether `scrub_secrets`'s key=value rule takes ``key`` for a credential's
-    name, asked with a value no other rule touches. A name with a space in it
-    is prose ("Basic usage", which the auth-scheme rule would take), never the
-    name of a credential."""
-    if any(c.isspace() for c in key):
+    name, asked with a value no other rule touches. A name of several words
+    ("Admin password", "Basic usage") is asked by its last one: whole, the
+    auth-scheme rule would read "Basic usage=x" as a credential too."""
+    words = key.split()
+    if not words:
         return False
-    return scrub_secrets(f"{key}=x") != f"{key}=x"
+    return scrub_secrets(f"{words[-1]}=x") != f"{words[-1]}=x"
 
 
 def _entries(rows: list[dict]) -> list[dict]:

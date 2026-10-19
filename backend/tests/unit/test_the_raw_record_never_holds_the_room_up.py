@@ -155,11 +155,17 @@ def test_a_field_named_for_a_credential_loses_its_whole_value_and_only_that():
             "password": 84213377,
             "api_key": ["first half", "second half"],
             "Basic usage": "Run the tool with --help",
+            "Admin password": "correct horse battery staple",
             "input_tokens": 1200,
+            "token": None,
+            "secret": "",
         }
     )
     assert kept["password"] == "***"
     assert kept["api_key"] == "***"
+    assert kept["Admin password"] == "***"
+    assert kept["token"] is None
+    assert kept["secret"] == ""
     assert "Run the tool with --help" in kept.values()
     assert kept["input_tokens"] == 1200
 
