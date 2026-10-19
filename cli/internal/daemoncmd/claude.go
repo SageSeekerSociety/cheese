@@ -77,7 +77,7 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 				return fmt.Errorf("claude: login did not finish: %w", err)
 			}
 			fmt.Printf("Login %s:\n", id)
-			return printClaudeStatus(ctx, binary, loginDir)
+			return printClaudeStatus(ctx, binary, id, loginDir)
 		},
 	})
 
@@ -123,7 +123,7 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 					return err
 				}
 				fmt.Printf("Login %s:\n", id)
-				if err := printClaudeStatus(ctx, binary, loginDir); err != nil {
+				if err := printClaudeStatus(ctx, binary, id, loginDir); err != nil {
 					return err
 				}
 			}
@@ -251,7 +251,7 @@ func useModelService(cfgPath, baseURL, model, loginID string) error {
 		return err
 	}
 	fmt.Printf("Login %s:\n", id)
-	return printClaudeStatus(ctx, binary, loginDir)
+	return printClaudeStatus(ctx, binary, id, loginDir)
 }
 
 // loginDirectory is the login a `claude login` is for: the one named, or a new
@@ -294,7 +294,10 @@ func modelToken(in *os.File) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-func printClaudeStatus(ctx context.Context, binary, loginDir string) error {
+// printClaudeStatus says how the login this machine calls id stands. A login
+// that is not logged in is named in the hint: logging that one in again brings
+// back the agents added with it, where a plain `claude login` adds another.
+func printClaudeStatus(ctx context.Context, binary, id, loginDir string) error {
 	service, err := claudecode.LoadModelService(loginDir)
 	if err != nil {
 		return err
@@ -313,7 +316,7 @@ func printClaudeStatus(ctx context.Context, binary, loginDir string) error {
 	}
 	if !status.LoggedIn {
 		ui.Warn("Claude Code is not logged in.")
-		ui.Hint("`cheesehost claude login` to log in")
+		ui.Hint("`cheesehost claude login --login %s` to log it in again", id)
 		return nil
 	}
 	detail := status.AuthMethod

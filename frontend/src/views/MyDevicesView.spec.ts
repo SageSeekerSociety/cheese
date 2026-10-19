@@ -20,11 +20,12 @@ vi.mock('../api', async () => ({
 
 import MyDevicesView from './MyDevicesView.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 function mount() {
   return render(MyDevicesView as unknown as Component, {
-    global: { plugins: [createVuetify({ components, directives })], stubs: ['router-link'] },
+    // The i18n plugin for the sentences written with <i18n-t>.
+    global: { plugins: [createVuetify({ components, directives }), i18n], stubs: ['router-link'] },
   })
 }
 
@@ -184,5 +185,39 @@ describe('the screens open on a device', () => {
 
     await screen.findByText('lab-box')
     expect(screen.queryByTestId('device-sandbox')).toBeNull()
+  })
+})
+
+describe('a Claude Code login that stopped working', () => {
+  const lapsed = {
+    id: 'd1',
+    local_id: 'default',
+    installed: true,
+    logged_in: false,
+    auth_method: null,
+    subscription_type: null,
+    model: null,
+    checked_at: '2026-10-10T00:00:00Z',
+  }
+
+  function device(claude_code: unknown) {
+    return { device_id: 'd1', name: 'lab-box', online: false, project_ids: [], team_ids: [], screens: [], claude_code }
+  }
+
+  it('is the one the owner is told to log in again, so the agents added with it come back', async () => {
+    listMyDevices.mockResolvedValue({ devices: [device(lapsed)] })
+    mount()
+
+    const line = await screen.findByTestId('device-claude-code')
+    expect(line.textContent).toContain('cheesehost claude login --login default')
+  })
+
+  it('names no login on a machine that has none yet', async () => {
+    listMyDevices.mockResolvedValue({ devices: [device(null)] })
+    mount()
+
+    const line = await screen.findByTestId('device-claude-code')
+    expect(line.textContent).toContain('cheesehost claude login')
+    expect(line.textContent).not.toContain('--login')
   })
 })

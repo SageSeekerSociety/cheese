@@ -230,8 +230,8 @@ export const DEVICE_TEAMS: MyTeam[] = [
 
 // ---- 模型连接（`ModelConnectionsView`）-------------------------------------
 
-/** 三种连接：工作站上的两份 Claude 订阅（一台设备可以登录几个账号）、笔记本上的自定义模型服务、
- *  一台离线机器上的 API key。 */
+/** 三种连接：工作站上的 Claude 订阅、笔记本上的自定义模型服务、一台离线机器上的 API key，
+ *  以及工作站上的第二份订阅（一台设备可以登录几个账号）。 */
 export const MODEL_CONNECTIONS: ModelConnection[] = [
   {
     id: 'dev-desk',
@@ -248,23 +248,6 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     name: null,
     checked_at: ago(HOUR / 4),
     last_used_at: ago(2 * HOUR),
-    revoking: false,
-  },
-  {
-    id: 'login-desk-pro',
-    local_id: 'K3V7Q2M8XWZ4TN6PRJ5BHD2C7A',
-    device_id: 'dev-desk',
-    device_name: '工作站',
-    online: true,
-    installed: true,
-    logged_in: true,
-    auth_method: 'claude.ai',
-    subscription_type: 'pro',
-    model: null,
-    service_host: null,
-    name: '实验室的 Pro',
-    checked_at: ago(HOUR / 4),
-    last_used_at: null,
     revoking: false,
   },
   {
@@ -299,6 +282,23 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     name: null,
     checked_at: ago(3 * DAY),
     last_used_at: ago(3 * DAY),
+    revoking: false,
+  },
+  {
+    id: 'login-desk-pro',
+    local_id: 'K3V7Q2M8XWZ4TN6PRJ5BHD2C7A',
+    device_id: 'dev-desk',
+    device_name: '工作站',
+    online: true,
+    installed: true,
+    logged_in: true,
+    auth_method: 'claude.ai',
+    subscription_type: 'pro',
+    model: null,
+    service_host: null,
+    name: '实验室的 Pro',
+    checked_at: ago(HOUR / 4),
+    last_used_at: null,
     revoking: false,
   },
 ]

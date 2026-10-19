@@ -199,6 +199,16 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
         expect: '检查未通过',
         expectSelector: '.mc-state--failed',
       },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s4.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s4.note')
+        },
+        props: { connections: MODEL_CONNECTIONS.filter((c) => c.device_id === 'dev-desk'), held: [] },
+        expect: '实验室的 Pro',
+      },
     ],
   },
   {
