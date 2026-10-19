@@ -190,6 +190,18 @@ class SessionService:
         await self._db.commit()
         return None
 
+    async def holder(self, token: str) -> int | None:
+        """Whose live sign-in this refresh token is, without spending it:
+        unlike `refresh`, nothing rotates. None when it is no live sign-in's."""
+        if not token:
+            return None
+        return await self._db.scalar(
+            select(UserSession.user_id).where(
+                UserSession.current_hash == digest_token(token),
+                *_live_clauses(_now()),
+            )
+        )
+
     async def end(self, token: str) -> None:
         """Sign out the session this refresh token belongs to, if any."""
         presented = digest_token(token)

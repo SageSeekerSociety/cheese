@@ -26,7 +26,7 @@ covers:
 
 用 GitHub 登录经过 cheesex-app 的用户授权。登录回调保存一条 `github_app` 用户连接；连接项目仓库时，平台用这条连接确认安装和仓库权限，任务负责人署名也读取同一条连接。用户授权过期且无法刷新时，重新用 GitHub 登录。GitHub App 的用户授权不请求 OAuth scopes；读取已验证的邮箱依赖 App 的 `Email addresses: Read-only` 权限。
 
-从 app 内（账号安全、项目设置的「仓库与署名」、采纳卡）发起 GitHub 授权时，前端用当前知是会话取得短时、一次性的意图（`POST /users/auth/oauth/github-app/intent`）；浏览器用该意图发起授权，回调的 `state` 绑定发起者的用户 ID。回调里：GitHub 身份已属于该账号就更新连接令牌；该账号还没有 GitHub 连接、这个身份也未被关联，就直接连接到该账号，不验证密码；身份已属于其他账号时返回 `ALREADY_LINKED`；该账号已连接另一个 GitHub 身份时返回 `ACCOUNT_MISMATCH`。登录页不带意图，仍走决定页和已有账号的密码验证。桌面 app 目前不把此结果交回 app：被拒时在浏览器显示错误，用户从 app 重新发起。
+从 app 内（账号安全、项目设置的「仓库与署名」、任务里 PR 下方的署名提示）连接或重新授权 GitHub 是连接操作，不是登录。前端用当前知是会话取得短时、一次性的意图（`POST /users/auth/oauth/github-app/intent`，带上回到哪一页；桌面 app 发起时带 `X-Cheese-App`）。打开意图的浏览器必须持有同一账号仍有效的登录（登录路由读它的刷新 cookie），否则返回 `GITHUB_CONNECT_SIGNED_OUT`，意图不被消费：转发出去的链接在别的浏览器里什么也连不上。之后的 `state` 由 `OAUTH_STATE` cookie 绑定到这个浏览器。回调里：GitHub 身份已属于该账号就更新连接令牌；该账号还没有 GitHub 连接、这个身份也未被关联，就直接连接到该账号，不验证密码；身份已属于其他账号时返回 `ALREADY_LINKED`；该账号已连接另一个 GitHub 身份时返回 `ACCOUNT_MISMATCH`。这条路径不签发登录会话：成功后回到发起的页面，桌面 app 发起的结果经 `/account/to-app` 交回 app（`app/api/app_return.py`）。登录页不带意图，仍走决定页和已有账号的密码验证。
 
 ## 芝士和机器 {#agents}
 

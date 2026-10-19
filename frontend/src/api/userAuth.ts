@@ -210,8 +210,12 @@ export namespace UserAuthApi {
   export const getOAuthProviders = () =>
     axiosRequest<GetOAuthProvidersResponse>({ url: '/users/auth/oauth/providers', method: 'GET' })
 
-  export const getGithubAppIntent = () =>
-    axiosRequest<{ intent: string }>({ url: '/users/auth/oauth/github-app/intent', method: 'POST' })
+  export const getGithubAppIntent = (returnPath: string) =>
+    axiosRequest<{ intent: string }>({
+      url: '/users/auth/oauth/github-app/intent',
+      method: 'POST',
+      data: { returnPath },
+    })
 
   export const oauthLoginUrl = (providerId: string, state?: string, accessType?: string) => {
     const params = new URLSearchParams()

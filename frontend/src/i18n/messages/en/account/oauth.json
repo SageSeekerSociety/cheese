@@ -31,6 +31,7 @@
     "creationFailed": "Couldn't create the account. Please try again.",
     "emailTaken": "This email is already registered",
     "emailUnverified": "Verify your email address first",
+    "githubConnectSignedOut": "This browser is not signed in to the Cheese account that started connecting GitHub. Sign in to that account here, then connect GitHub again from Cheese.",
     "githubPasswordVerificationFailed": "This account could not be verified with a password. If it has no password yet, sign in to Cheese the way you usually do and connect GitHub under Project settings → Repository and credit (shown when commits are credited to the task owner), or set a password in Account Security and sign in with GitHub again.",
     "invalidCredentials": "Wrong username or password",
     "invalidInviteCode": "This invitation code is invalid or no longer active",

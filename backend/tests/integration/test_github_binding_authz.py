@@ -89,7 +89,7 @@ def test_new_connection_requires_github_sign_in(client, monkeypatch):
         f"/projects/{pid}/github/connect", headers=session_auth_headers("alice")
     )
     assert response.status_code == 403
-    assert "GitHub 登录" in response.json()["message"]
+    assert "连接 GitHub" in response.json()["message"]
 
 
 def test_separate_github_account_authorization_is_gone(client, monkeypatch):
@@ -329,7 +329,7 @@ def test_github_management_follows_participant_role_and_own_account(
     monkeypatch.setattr(OAuthService, "get_github_user_token", no_own_account)
     denied = client.get(install, headers=auth)
     assert denied.status_code == 403
-    assert "GitHub 登录" in denied.json()["message"]
+    assert "连接 GitHub" in denied.json()["message"]
     _set_team_admin(client, pid, handle, admin=False)
     denied = client.get(install, headers=auth)
     assert denied.status_code == 403

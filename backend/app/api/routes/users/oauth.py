@@ -6,7 +6,7 @@ import secrets
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, NamedTuple
 from urllib.parse import urlencode, urlparse
 
 import jwt
@@ -29,8 +29,10 @@ from app.api.deps import (
 )
 from app.api.legal_deps import client_context
 from app.api.response import ok, typed_response
+from app.api.app_return import back_in_app, started_in_app
 from app.api.routes.users._common import (
     GithubAppIntentOut,
+    GithubAppIntentRequest,
     OAuthEmailCodeRequest,
     OAuthEmailVerifyRequest,
     _check_email_code,
@@ -44,6 +46,7 @@ from app.api.routes.users._common import (
     logger,
 )
 from app.api.users_deps import (
+    REFRESH_COOKIE,
     issue_session,
 )
 from app.api.write_access import ROUTE_DECIDES
@@ -67,6 +70,7 @@ from app.domain.legal.services import ConsentService
 from app.domain.oauth.services import OAuthService
 from app.domain.user.login_security import LoginDelay, TOTPService
 from app.domain.user.passwords import require_new_password
+from app.domain.user.sessions import SessionService
 from app.domain.user.services import (
     NICKNAME_MAX_LENGTH,
     USERNAME_MAX_LENGTH,
@@ -410,60 +414,71 @@ _OAUTH_LOGIN_STATE_SCOPE = "oauth_login_state"
 _OAUTH_LOGIN_STATE_TTL_S = 10 * 60
 
 
-# A GitHub authorization started from inside the app names the Cheese account
-# that started it: the intent is minted for the signed-in session, spent once at
-# the login endpoint, and carried on as the state the callback reads back.
+# Connecting GitHub from inside the app is not a sign-in: the person is signed
+# in already, and the result is a connection on that account, never a session.
+# The app asks for an intent with its own session; the browser that opens the
+# intent must hold a sign-in of the same account (its refresh cookie is sent to
+# the login route), so a link carried to another browser connects nothing; the
+# intent is spent there and carried on as the state the callback reads back.
 _GITHUB_INTENT_SCOPE = "github_app_intent"
 
 
-async def _spend_github_intent(token: str) -> int:
-    """The account a GitHub intent was minted for, spending the intent.
-
-    Single use for the reason `single_use_state` gives: the intent binds a
-    GitHub identity to an account, so a copy that reached another browser must
-    not bind that browser's GitHub too."""
-    try:
-        claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-        if (
-            claims.get("type") == "github_intent"
-            and type(claims.get("user_id")) is int
-            and isinstance(claims.get("jti"), str)
-            and await single_use_state.claim(_GITHUB_INTENT_SCOPE, claims["jti"])
-        ):
-            return claims["user_id"]
-    except (jwt.PyJWTError, SingleUseUnavailableError):
-        pass
-    raise AuthenticationRequiredError("Invalid or expired GitHub authorization")
+class _GithubIntent(NamedTuple):
+    user_id: int
+    # The page to land back on, a path inside the frontend (`_safe_return_path`).
+    return_path: str | None
+    # Started in the desktop app: the result is shown there (`app_return`).
+    in_app: bool
 
 
-def _github_intent_state(user_id: int) -> str:
+def _safe_return_path(path: object) -> str | None:
+    """`path` when it is a path inside the frontend, else None. A landing that
+    could take the browser to another host would be an open redirect."""
+    if not isinstance(path, str) or not path or len(path) > 512:
+        return None
+    if not path.startswith("/") or path.startswith("//"):
+        return None
+    if any(c in path for c in "\\?#\r\n"):
+        return None
+    return path
+
+
+def _github_intent_token(intent: _GithubIntent, kind: str, jti: str) -> str:
     now = int(time.time())
     return jwt.encode(
         {
-            "type": "github_intent_state",
-            "user_id": user_id,
+            "type": kind,
+            "user_id": intent.user_id,
+            "rp": intent.return_path,
+            "app": intent.in_app,
             "iat": now,
             "exp": now + _OAUTH_LOGIN_STATE_TTL_S,
-            "jti": uuid.uuid4().hex,
+            "jti": jti,
         },
         settings.jwt_secret,
         algorithm="HS256",
     )
 
 
-def _github_intent_user(state: str) -> int | None:
-    if "." not in state:
-        return None
+def _read_github_intent(token: str, kind: str) -> tuple[_GithubIntent, str] | None:
+    """The intent a token of ``kind`` carries, with its ``jti``; None when the
+    token is not one, has expired or was not signed here."""
     try:
-        claims = jwt.decode(state, settings.jwt_secret, algorithms=["HS256"])
-        if (
-            claims.get("type") == "github_intent_state"
-            and type(claims.get("user_id")) is int
-        ):
-            return claims["user_id"]
+        claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
     except jwt.PyJWTError:
-        pass
-    raise AuthenticationRequiredError("Invalid GitHub authorization state")
+        return None
+    if (
+        claims.get("type") != kind
+        or type(claims.get("user_id")) is not int
+        or not isinstance(claims.get("jti"), str)
+    ):
+        return None
+    intent = _GithubIntent(
+        user_id=claims["user_id"],
+        return_path=_safe_return_path(claims.get("rp")),
+        in_app=claims.get("app") is True,
+    )
+    return intent, claims["jti"]
 
 
 def _oauth_login_state_scope(provider_id: str) -> str:
@@ -503,20 +518,41 @@ def _oauth_callback_error_redirect(provider_id: str, message: str) -> RedirectRe
     summary="Redirect to the OAuth provider's authorization page",
 )
 async def get_oauth_login_url(
+    request: Request,
     provider_id: Annotated[str, Path(alias="providerId")],
     intent: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> RedirectResponse:
     # The frontend navigates the browser straight to this endpoint, so we
     # 302-redirect to the provider's authorization page.
     if intent:
-        if provider_id != GITHUB_APP_PROVIDER:
+        read = _read_github_intent(intent, "github_intent")
+        if provider_id != GITHUB_APP_PROVIDER or read is None:
             return _oauth_callback_error_redirect(provider_id, "invalid_state")
+        connecting, jti = read
+        holder = await SessionService(session).holder(
+            request.cookies.get(REFRESH_COOKIE) or ""
+        )
+        if holder != connecting.user_id:
+            logger.info(
+                "GitHub connect: opened without the account's sign-in uid=%s",
+                connecting.user_id,
+            )
+            return _oauth_error_redirect(
+                "GITHUB_CONNECT_SIGNED_OUT",
+                "Sign in to the account that started connecting GitHub",
+            )
         try:
-            expected_user_id = await _spend_github_intent(intent)
-        except AuthenticationRequiredError:
+            spent = await single_use_state.claim(_GITHUB_INTENT_SCOPE, jti)
+        except SingleUseUnavailableError:
+            logger.exception("GitHub connect: cannot claim intent")
+            spent = False
+        if not spent:
             return _oauth_callback_error_redirect(provider_id, "invalid_state")
-        state = _github_intent_state(expected_user_id)
+        state = _github_intent_token(
+            connecting, "github_intent_state", uuid.uuid4().hex
+        )
     else:
         state = secrets.token_urlsafe(32)
     try:
@@ -558,27 +594,23 @@ async def get_oauth_login_url(
     **typed_response(GithubAppIntentOut),
 )
 async def github_app_intent(
+    request: Request,
+    payload: GithubAppIntentRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Tie a GitHub authorization started in the app to the signed-in account:
-    the callback connects GitHub to it, or renews the connection it has."""
-    now = int(time.time())
+    the callback connects GitHub to it, or renews the connection it has, and
+    lands on ``returnPath``."""
     jti = uuid.uuid4().hex
     await single_use_state.reserve(
         _GITHUB_INTENT_SCOPE, jti, ttl_s=_OAUTH_LOGIN_STATE_TTL_S
     )
-    intent = jwt.encode(
-        {
-            "type": "github_intent",
-            "user_id": auth_user.user_id,
-            "iat": now,
-            "exp": now + _OAUTH_LOGIN_STATE_TTL_S,
-            "jti": jti,
-        },
-        settings.jwt_secret,
-        algorithm="HS256",
+    intent = _GithubIntent(
+        user_id=auth_user.user_id,
+        return_path=_safe_return_path(payload.return_path),
+        in_app=started_in_app(request),
     )
-    return ok({"intent": intent})
+    return ok({"intent": _github_intent_token(intent, "github_intent", jti)})
 
 
 @router.get(
@@ -626,7 +658,6 @@ async def _resolve_oauth_identity(
     provider_id: str,
     user_info,
     tokens: dict | None = None,
-    expected_user_id: int | None = None,
 ) -> RedirectResponse:
     """Sign in the account this provider identity belongs to, or send the
     person to the page that decides which account it becomes.
@@ -645,19 +676,6 @@ async def _resolve_oauth_identity(
             provider_id=provider_id,
             provider_user_id=user_info.id,
         )
-        if expected_user_id is not None and (
-            existing is None or existing["userId"] != expected_user_id
-        ):
-            return await _connect_github_to(
-                request,
-                session,
-                oauth_service,
-                auth_service,
-                expected_user_id,
-                user_info,
-                tokens,
-                bound_elsewhere=existing is not None,
-            )
         if existing:
             if tokens:
                 await oauth_service.update_connection_tokens(
@@ -716,52 +734,65 @@ async def _resolve_oauth_identity(
 
 
 async def _connect_github_to(
-    request: Request,
     session: AsyncSession,
     oauth_service: OAuthService,
-    auth_service: UserAuthService,
-    user_id: int,
+    intent: _GithubIntent,
     user_info,
-    tokens: dict | None,
-    *,
-    bound_elsewhere: bool,
+    tokens: dict,
 ) -> RedirectResponse:
-    """Connect a GitHub identity to the signed-in account that started the
-    authorization. No password: that account's own session minted the intent.
+    """Connect a GitHub identity to the account that started connecting it, or
+    renew the connection it has. No password: that account's own sign-in
+    minted the intent and opened it. No session either: this is a connection,
+    and the browser is signed in already.
 
     An account that already has a GitHub connection only renews it, so a
     different identity there is a mismatch, never a second connection."""
-    connections = await oauth_service.list_user_connections(user_id)
-    if any(c["providerId"] == GITHUB_APP_PROVIDER for c in connections):
-        return _oauth_error_redirect(
-            "ACCOUNT_MISMATCH",
-            "This GitHub account is not linked to the Cheese account that started authorization",
-        )
-    if bound_elsewhere:
-        return _oauth_error_redirect(
-            "ALREADY_LINKED", "This OAuth account is linked to another user"
-        )
-    try:
-        await oauth_service.create_connection(
-            user_id=user_id,
-            provider_id=GITHUB_APP_PROVIDER,
-            provider_user_id=str(user_info.id),
+    existing = await oauth_service.get_connection_by_provider(
+        provider_id=GITHUB_APP_PROVIDER, provider_user_id=str(user_info.id)
+    )
+    if existing is not None and existing["userId"] == intent.user_id:
+        await oauth_service.update_connection_tokens(
+            connection_id=existing["id"],
+            access_token=tokens["access_token"],
+            refresh_token=tokens.get("refresh_token"),
+            token_expires=_token_expiry(tokens),
+            refresh_token_expires=_token_expiry(tokens, "refresh_token_expires"),
             raw_profile=_github_profile(user_info),
-            access_token=tokens["access_token"] if tokens else None,
-            refresh_token=tokens.get("refresh_token") if tokens else None,
-            token_expires=_token_expiry(tokens) if tokens else None,
-            refresh_token_expires=_token_expiry(tokens, "refresh_token_expires")
-            if tokens
-            else None,
         )
-    except ConflictError:
-        # Linked by a concurrent request since the lookup.
-        await session.rollback()
-        return _oauth_error_redirect(
-            "ALREADY_LINKED", "This OAuth account is linked to another user"
-        )
-    return await _oauth_login_redirect(
-        request, session, auth_service, user_id, GITHUB_APP_PROVIDER, bound="true"
+    else:
+        connections = await oauth_service.list_user_connections(intent.user_id)
+        if any(c["providerId"] == GITHUB_APP_PROVIDER for c in connections):
+            return _oauth_error_redirect(
+                "ACCOUNT_MISMATCH",
+                "This GitHub account is not linked to the Cheese account that started authorization",
+            )
+        if existing is not None:
+            return _oauth_error_redirect(
+                "ALREADY_LINKED", "This OAuth account is linked to another user"
+            )
+        try:
+            await oauth_service.create_connection(
+                user_id=intent.user_id,
+                provider_id=GITHUB_APP_PROVIDER,
+                provider_user_id=str(user_info.id),
+                raw_profile=_github_profile(user_info),
+                access_token=tokens["access_token"],
+                refresh_token=tokens.get("refresh_token"),
+                token_expires=_token_expiry(tokens),
+                refresh_token_expires=_token_expiry(tokens, "refresh_token_expires"),
+            )
+        except ConflictError:
+            # Linked by a concurrent request since the lookup.
+            await session.rollback()
+            return _oauth_error_redirect(
+                "ALREADY_LINKED", "This OAuth account is linked to another user"
+            )
+    # The landing page reads the connection back as soon as it loads, which
+    # dependency teardown would commit after.
+    await session.commit()
+    return RedirectResponse(
+        f"{settings.frontend_url}{intent.return_path or '/users/settings/security'}",
+        status_code=302,
     )
 
 
@@ -1168,10 +1199,15 @@ async def sign_in_with_github(
     ):
         logger.info("GitHub sign-in: state rejected")
         return _oauth_callback_error_redirect(provider_id, "invalid_state")
-    try:
-        expected_user_id = _github_intent_user(state)
-    except AuthenticationRequiredError:
+    read = _read_github_intent(state, "github_intent_state") if "." in state else None
+    if "." in state and read is None:
         return _oauth_callback_error_redirect(provider_id, "invalid_state")
+    connecting = read[0] if read else None
+
+    def shown(landing: RedirectResponse) -> RedirectResponse:
+        # A connection started in the desktop app shows its result there.
+        return back_in_app(landing) if connecting and connecting.in_app else landing
+
     try:
         provider = oauth_service.get_provider(provider_id)
         token_data = await provider.exchange_code(code)
@@ -1179,10 +1215,10 @@ async def sign_in_with_github(
         user_info = await provider.get_user_info(access_token) if access_token else None
     except Exception:
         logger.exception("GitHub sign-in: provider exchange failed")
-        return _oauth_callback_error_redirect(provider_id, "oauth_failed")
+        return shown(_oauth_callback_error_redirect(provider_id, "oauth_failed"))
     if user_info is None:
         logger.info("GitHub sign-in: the exchange returned no access token")
-        return _oauth_callback_error_redirect(provider_id, "oauth_failed")
+        return shown(_oauth_callback_error_redirect(provider_id, "oauth_failed"))
     # Only present when the App expires its user tokens; otherwise the token
     # is long-lived and both are absent.
     expires_in = token_data.get("expires_in")
@@ -1201,15 +1237,14 @@ async def sign_in_with_github(
             else None
         ),
     }
+    if connecting is not None:
+        return shown(
+            await _connect_github_to(
+                session, oauth_service, connecting, user_info, tokens
+            )
+        )
     return await _resolve_oauth_identity(
-        request,
-        session,
-        oauth_service,
-        auth_service,
-        provider_id,
-        user_info,
-        tokens,
-        expected_user_id=expected_user_id,
+        request, session, oauth_service, auth_service, provider_id, user_info, tokens
     )
 
 

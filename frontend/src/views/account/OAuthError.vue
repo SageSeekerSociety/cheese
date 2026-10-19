@@ -47,6 +47,8 @@ const errorDescription = computed(() => {
       return t('account.oauth.error.emailTaken')
     case 'EMAIL_UNVERIFIED':
       return t('account.oauth.error.emailUnverified')
+    case 'GITHUB_CONNECT_SIGNED_OUT':
+      return t('account.oauth.error.githubConnectSignedOut')
     case 'GITHUB_PASSWORD_VERIFICATION_FAILED':
       return t('account.oauth.error.githubPasswordVerificationFailed')
     case 'INVALID_CREDENTIALS':

@@ -1,7 +1,7 @@
 {
-  "access_denied": "The connecting person's project access or GitHub sign-in has expired. Have the project owner or a lead sign in with GitHub again and try again",
+  "access_denied": "The connecting person's project access or GitHub authorization has expired. Have the project owner or a lead renew their GitHub authorization and try again",
   "forge_conflict": "This project's code is hosted on the platform and can't be switched to a GitHub repository",
-  "github_error": "Couldn't verify your GitHub repository access. Sign in with GitHub again, then check access to the installation and repository",
+  "github_error": "Couldn't verify your GitHub repository access. Renew the GitHub authorization, then check access to the installation and repository",
   "internal_error": "Something went wrong on the platform and the connection didn't take effect. Try again, and send feedback if it keeps failing",
   "invalid_state": "The install link has expired or been used. Come back to this page and choose Connect GitHub repository again",
   "missing_installation_id": "GitHub didn't return an installation ID, so the install didn't take effect. Try again",
