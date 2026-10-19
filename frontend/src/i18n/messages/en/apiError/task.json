@@ -11,6 +11,7 @@
   "taskCreatedByPerson": "Only a person can create a task this way",
   "taskOpeningNotFailed": "The first turn has not failed; there is nothing to retry",
   "taskOwnSessionCloses": "Only the task's owner, or the task's own session, can close it",
+  "taskOwnSessionReportsProgress": "Only the task's own AI teammate session can report its progress",
   "taskOwnerNotInProject": "A task can only be handed to a project member",
   "taskOwnerOnly": "Only the task's owner can do this",
   "taskParticipantsOnly": "Only the task's owner and collaborators can do this",

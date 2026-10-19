@@ -57,6 +57,7 @@
   "cheeseSync": "Sync task code",
   "cheeseRecover": "Restore the task backup",
   "cheeseCloseTask": "Close the task",
+  "cheeseTaskState": "Report the task's state",
   "cheesePushFix": "Update the task PR",
   "cheeseFetch": "Read web page",
   "cheeseDocsSearch": "Search documentation",

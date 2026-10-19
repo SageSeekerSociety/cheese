@@ -6,8 +6,8 @@ replied-to-me, unresolved failures, and `my_tasks` — both the caller's own
 underway tasks and the borrowed `filling_in` rows). Several of those helpers
 ask the same underlying question:
 
-- which 支线 belong to these rooms (`threads_of_rooms`, `moving_topics`,
-  `replied_to_me`, `threads_still_threads`);
+- which 支线 belong to these rooms (`threads_of_rooms`, `replied_to_me`,
+  `threads_still_threads`);
 - which underway tasks belong to these rooms and when each last spoke
   (`tasks_of_rooms` twice, `underway_counts`, `underway_with`,
   `underway_others`, `last_block_at_for_tasks` twice);
@@ -62,9 +62,7 @@ EXPECTED_TOPIC_KEYS = {
     "joined",
     "kind",
     "last_activity_at",
-    "last_output_at",
     "members_only",
-    "moving",
     "my_tasks",
     "number",
     "parent_id",
@@ -83,6 +81,7 @@ EXPECTED_RAIL_TASK_KEYS = {
     "accepted_at",
     "accepted_by",
     "agent_handle",
+    "agent_left_at",
     "awaits_me",
     "base_branch",
     "base_task_id",
@@ -99,13 +98,15 @@ EXPECTED_RAIL_TASK_KEYS = {
     "id",
     "incomplete_since",
     "last_activity_at",
-    "last_output_at",
-    "moving",
     "number",
     "owner_handle",
     "pr_number",
     "pr_url",
     "presentation",
+    "progress_note",
+    "progress_set_at",
+    "progress_set_by",
+    "progress_state",
     "project_id",
     "reporter_handle",
     "reviewer_handle",
@@ -339,8 +340,8 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monke
     assert "topics.environment" not in topic_sql
     assert "topics.default_environment" not in topic_sql
 
-    # 2. `threads` is read once across threads_of_rooms, moving_topics,
-    #    replied_to_me, and threads_still_threads.
+    # 2. `threads` is read once across threads_of_rooms, replied_to_me, and
+    #    threads_still_threads.
     assert _count(seen, _THREADS_SELECT) == 1, [
         s for s in seen if _THREADS_SELECT.search(s)
     ]
@@ -360,7 +361,7 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monke
     ]
 
     # 5. Underway `tasks` (tasks_of_rooms, underway_counts, underway_with,
-    #    underway_others, last_block_at_for_tasks, moving_topics) is read once,
+    #    underway_others, last_block_at_for_tasks) is read once,
     #    and total `FROM tasks` queries are only 2 (_underway_for_rooms + unseen_deliveries).
     assert _count(seen, _UNDERWAY_TASKS_SELECT) == 1, [
         s for s in seen if _UNDERWAY_TASKS_SELECT.search(s)

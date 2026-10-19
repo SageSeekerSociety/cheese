@@ -22,6 +22,7 @@ import PanelToggle from '@/components/room/PanelToggle.vue'
 import { t } from '@/i18n'
 import { taskPhraseLabel } from '@/lib/board'
 import { environmentName } from '@/lib/environment'
+import { relTime } from '@/lib/relTime'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
@@ -68,6 +69,16 @@ const ownerName = computed(() => {
 const taskAgentName = computed(() => {
   const handle = props.task?.agent_handle
   return (handle && props.memberNames[handle]) || props.agentName
+})
+// 做这件事的队友报的那一句：看板那一格已经照它画了，页头再把它的原话、谁什么时候报的
+// 摆出来。它报完之后会话结束了，旁边写「已离开」，不改它报的。任务关了就不再说。
+const progressNote = computed(() => (isOpen.value ? (props.task?.progress_note ?? '') : ''))
+const agentLeft = computed(() => isOpen.value && !!props.task?.progress_state && !!props.task?.agent_left_at)
+const progressTitle = computed(() => {
+  const by = props.task?.progress_set_by
+  const at = props.task?.progress_set_at
+  if (!isOpen.value || !by || !at) return undefined
+  return t('work.task.progress.said', { name: props.memberNames[by] || taskAgentName.value, time: relTime(at) })
 })
 const otherPeople = computed(() => props.people.filter((m) => m.member_handle !== ME))
 const collaborators = computed(() => props.task?.contributor_handles ?? [])
@@ -191,7 +202,20 @@ async function confirmHandOver() {
         task ? taskTitle(task) : ''
       }}</span>
       <span class="task-header__meta">
-        <span v-if="task" class="task-header__state" data-testid="task-phrase">{{ taskPhraseLabel(task, ME) }}</span>
+        <span v-if="task" class="task-header__state" data-testid="task-phrase" :title="progressTitle">{{
+          taskPhraseLabel(task, ME)
+        }}</span>
+        <span
+          v-if="progressNote"
+          class="task-header__note"
+          data-testid="task-progress-note"
+          data-user-content
+          :title="progressTitle"
+          >{{ progressNote }}</span
+        >
+        <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
+          t('work.task.progress.left', { name: taskAgentName })
+        }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
           t('work.room.header.disconnected')
         }}</span>
@@ -541,6 +565,23 @@ async function confirmHandOver() {
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
+}
+/* 队友报状态时留的那一句：它的原话，可能很长，截在一行里，悬停看全（`title`）。 */
+.task-header__note {
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-header__left {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 .task-header__disconnected {
   flex: 0 0 auto;

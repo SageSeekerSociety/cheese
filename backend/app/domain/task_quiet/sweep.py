@@ -61,12 +61,8 @@ async def _remind(session: AsyncSession, now: datetime) -> int:
             ),
             now=now,
         )
-        # 「在跑」不问跑轮次的进程：一轮在跑就会一直落 block，安静三天的任务不会有
-        # 一轮正在跑。
         since = presentation.quiet_since(
-            shown,
-            running=False,
-            last_activity=last_said.get(task.id) or task.created_at,
+            shown, last_activity=last_said.get(task.id) or task.created_at
         )
         if since is None:
             continue

@@ -60,7 +60,7 @@ export const RAIL_ROWS = {
       hiddenCount: 12,
       hiddenUnread: 4,
       unreadTotal: 4,
-      hiddenLight: { kind: 'yellow', breathe: false },
+      hiddenLight: { kind: 'yellow' },
     }
   ),
   /** 子话题：缩进一级，左边一条竖向引导线。 */

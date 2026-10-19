@@ -303,6 +303,12 @@ _ROUTINE_SPEC = (
 )
 _ROUTINE_TIMEZONE = _text("时区，默认 Asia/Shanghai")
 
+#: `cheese_task_state` 能说的状态和那句话的长度。后端 `room_task.models.TaskProgress`
+#: 与 `room_task.progress.NOTE_MAX_CHARS` 的副本：这个文件单独发到机器上，读不到后端。
+#: tests/contract/test_platform_tools.py 在它和后端对不上时红。
+TASK_PROGRESS_STATES = ("working", "waiting", "blocked", "review")
+TASK_PROGRESS_NOTE_CHARS = 200
+
 #: `todo_write` 的上限。拒收的是后端 `PUT /topics/{id}/progress`（同样的两个数）；
 #: 这里写进工具说明，模型在调用之前就看得到。schema 只用表上别的工具已经在用的
 #: 关键字，同一份 schema 要过三个 harness 的工具机制。
@@ -633,6 +639,25 @@ PLATFORM_TOOLS = ToolTable(
                 "contributor": _CONTRIBUTOR,
             },
             [],
+        ),
+        _tool(
+            "cheese_task_state",
+            "在任务里说你的活此刻在哪一步。看板上这件任务就显示你说的这一句，"
+            "直到你再说一次；平台不替你推断，你的一轮结束了它也照旧显示。"
+            "开工时设 working；起了构建、CI、长命令在等结果时设 waiting；"
+            "没有人帮忙走不下去时设 blocked（负责人会看到要他处理），要人回答的"
+            "问题照样用 cheese_ask 问；这一步做完、交给人审阅时设 review。"
+            "情况变了就再设一次。note 用一句话说在做什么、在等什么或卡在哪。",
+            {
+                "state": {
+                    "type": "string",
+                    "enum": list(TASK_PROGRESS_STATES),
+                    "description": "working 在做；waiting 在等结果；blocked 卡住了；"
+                    "review 这一步做完，待审阅",
+                },
+                "note": _text(f"一句话，{TASK_PROGRESS_NOTE_CHARS} 字以内；可以不填"),
+            },
+            ["state"],
         ),
         _tool(
             "cheese_accept_request",
@@ -1499,6 +1524,12 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "here": args.get("here") is True,
                 **_given(args, "owner:owner_handle", "source_message_id"),
             },
+        }
+    if tool == "cheese_task_state":
+        return {
+            "method": "PUT",
+            "path": here + "/task/progress",
+            "body": {"state": args["state"], **_given(args, "note")},
         }
     if tool == "cheese_close_task":
         return {
@@ -3467,6 +3498,9 @@ _SAY = {
     "cheese_close_task": lambda a, d, e: (
         f"「{(d or {}).get('title')}」收了。"
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
+    ),
+    "cheese_task_state": lambda a, d, e: (
+        "看板上这件任务现在显示你说的状态，直到你再设一次。"
     ),
     "cheese_describe": lambda a, d, e: (
         "验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："

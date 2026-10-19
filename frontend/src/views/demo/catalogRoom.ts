@@ -235,6 +235,39 @@ const TASK_ENTRIES: CatalogEntry[] = [
         props: TASK_HEADER_PROPS,
         expect: '登录页加「记住我」',
       },
+      {
+        name: '队友说在等结果',
+        note: '状态是 AI 队友自己报的（不是从它在不在跑推出来的），后面跟着它的原话；悬停看是谁、什么时候报的。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'waiting' },
+            progress_state: 'waiting',
+            progress_note: '等 CI 跑完再看失败的两个用例',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '报完之后会话结束了',
+        note: '它报的那一句照旧，旁边写「已离开」：会话结束不改它报的状态。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'waiting' },
+            progress_state: 'waiting',
+            progress_note: '等 CI 跑完再看失败的两个用例',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+            agent_left_at: '2026-10-05T01:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-agent-left"]',
+      },
     ],
   },
   {

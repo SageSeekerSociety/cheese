@@ -2,7 +2,7 @@
 and an input's failure after it was read
 
 Revision ID: b7c1e4d92a10
-Revises: c9e25a7b38f1
+Revises: d1f37c8a46b2
 Create Date: 2026-10-19
 
 ``session_states`` holds each seat's session as its runner declares it, under

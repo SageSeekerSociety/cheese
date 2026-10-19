@@ -191,14 +191,25 @@ def environment_failure(event):
     return None
 
 
+#: The board phrases of a task that is waiting on a person or is done: its teammate
+#: is not to be woken whatever its session is doing.
+_PARKED_OR_DONE = frozenset(
+    {"awaiting_answer", "awaiting_review", "blocked", "accepted", "completed", "closed"})
+
+
 def environment_recovery(task, events, heartbeat, now):
     """Only two distinct, recent failed turns after all observed activity qualify.
 
-    Unknown/running/parked tasks are not safe to wake. Both failures must name
-    an environmental cause; a model error next to a machine error is not a streak.
+    Unknown/running/parked tasks are not safe to wake: the row must say no session
+    of its teammate is running (`session_running` is False, not merely absent), and
+    its phrase must not be one that waits on a person or says it is done. Both
+    failures must name an environmental cause; a model error next to a machine error
+    is not a streak.
     """
+    phrase = (task.get("presentation") or {}).get("phrase")
     if (task.get("status") != "open" or not task.get("agent_handle")
-            or (task.get("presentation") or {}).get("phrase") != "started"
+            or task.get("session_running") is not False
+            or phrase is None or phrase in _PARKED_OR_DONE
             or task.get("waiting_on") or task.get("awaits_me")):
         return None
     tail = sorted((e for e in events if (e.get("meta") or {}).get("event_type")), key=_created)[-2:]
@@ -373,7 +384,7 @@ v2 要求复盘产出 workflow-tree 新版，但资料库里还没有这份东�
     now = datetime(2026, 10, 16, 12, tzinfo=timezone.utc)
     at = lambda minutes: (now - timedelta(minutes=minutes)).isoformat()
     task = {"id": "task-a", "status": "open", "agent_handle": "cheese-a",
-            "presentation": {"phrase": "started"}}
+            "presentation": {"phrase": "started"}, "session_running": False}
     def event(id, minutes, said="Failed to prepare work machine"):
         return {"id": id, "turn_id": id, "created_at": at(minutes),
                 "meta": {"event_type": "turn_failed",
@@ -399,8 +410,13 @@ v2 要求复盘产出 workflow-tree 新版，但资料库里还没有这份东�
                       ("旧失败", [event("a", 1500), pair[1]]),
                       ("未来时间", [pair[0], event("a", -1)])):
         check("不恢复：" + label, eligible(ev), None)
-    for phrase in ("running", "awaiting_answer", "awaiting_review", "accepted", None):
-        check("不打扰运行或等待任务：" + str(phrase),
+    check("队友报了在做、会话已经停了：可重唤醒",
+          eligible(t=dict(task, presentation={"phrase": "running"})) is not None, True)
+    for running in (True, None):
+        check("不打扰会话在跑或说不清的任务：" + str(running),
+              eligible(t=dict(task, session_running=running)), None)
+    for phrase in ("awaiting_answer", "awaiting_review", "blocked", "accepted", None):
+        check("不打扰等人或已结束的任务：" + str(phrase),
               eligible(t=dict(task, presentation={"phrase": phrase})), None)
     for extra in ({"status": "closed"}, {"agent_handle": None}, {"waiting_on": "owner"},
                   {"awaits_me": True}):

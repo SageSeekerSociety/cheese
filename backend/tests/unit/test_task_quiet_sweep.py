@@ -59,6 +59,7 @@ def _task(room_id: uuid.UUID, *, created_at: datetime, title: str = "task") -> A
         title=title,
         owner_handle="alice",
         status=TaskStatus.open,
+        progress_state=None,
         accepted_at=None,
         conclusion=None,
         closing_since=None,

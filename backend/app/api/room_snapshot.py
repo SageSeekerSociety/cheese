@@ -37,7 +37,6 @@ from app.api.task_origin import related_of
 from app.api.topic_member_rows import roster_rows
 from app.api.topic_pin_rows import pin_rows
 from app.core.errors import NotFoundError
-from app.domain.agent.chat import ChatService
 from app.domain.feedback.proposals import ProposalService
 from app.domain.identity.actor import Actor
 from app.domain.room_task.place import place_or_404
@@ -51,7 +50,7 @@ THREADS = 100
 
 
 async def room_snapshot(
-    db: AsyncSession, chat: ChatService, actor: Actor, conversation_id: uuid.UUID
+    db: AsyncSession, actor: Actor, conversation_id: uuid.UUID
 ) -> dict | None:
     """The `room` of a `subscribed` frame for this conversation (a channel or a
     task), or None when it is neither — a thread's own line, say. The caller
@@ -70,11 +69,9 @@ async def room_snapshot(
     task = place.task
     if task is None:
         snapshot["tasks"] = {
-            "open": await room_task_items(
-                db, chat, actor, room, limit=0, status="open"
-            ),
+            "open": await room_task_items(db, actor, room, limit=0, status="open"),
             "recent": await room_task_items(
-                db, chat, actor, room, limit=0, status="closed", latest=RECENT_DONE
+                db, actor, room, limit=0, status="closed", latest=RECENT_DONE
             ),
         }
         snapshot["pins"] = await pin_rows(db, place.room_id)
@@ -82,7 +79,7 @@ async def room_snapshot(
             db, place.room_id, viewer=viewer, limit=THREADS
         )
     else:
-        snapshot["task"] = await task_page_row(db, chat, place, task)
+        snapshot["task"] = await task_page_row(db, place, task)
         snapshot["related"] = await related_of(db, task)
         snapshot["review_comments"] = await review_comment_rows(
             db, task, actor.handle or ""
