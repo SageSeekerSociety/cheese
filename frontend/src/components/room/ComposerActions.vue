@@ -173,9 +173,10 @@ const sendLabel = computed(() => {
   if (props.voice === 'thinking') return t('work.room.composer.voice.thinking')
   return props.uploading ? t('work.room.composer.sendUploading') : t('work.room.composer.send')
 })
+// 整理中不禁用：禁用的键会褪成灰色，而这一刻它是唯一在说「机器正在做」的地方，要保持琥珀色
+// 转圈。点它什么也不做（onSend 里拦着），读屏由 aria-disabled 说明。
 const sendDisabled = computed(() => {
-  if (props.voice === 'recording') return false
-  if (props.voice === 'thinking') return true
+  if (voiceOpen.value) return false
   return props.uploading || !props.canSend
 })
 </script>
@@ -269,6 +270,7 @@ const sendDisabled = computed(() => {
         :title="sendLabel"
         :aria-label="sendLabel"
         :disabled="sendDisabled"
+        :aria-disabled="voice === 'thinking' ? 'true' : undefined"
         @click="onSend"
       >
         <span class="composer-send__face">
@@ -438,12 +440,6 @@ const sendDisabled = computed(() => {
 .composer-send__icon--off {
   opacity: 0;
   transform: scale(0.7);
-}
-/* 整理中：录音条那一刻已经收起，这个键是唯一在说「机器正在做」的地方。 */
-.composer-actions--voice .composer-send:disabled {
-  background: var(--accent);
-  color: var(--accent-on);
-  opacity: 0.85;
 }
 .composer-send__spin {
   width: 14px;

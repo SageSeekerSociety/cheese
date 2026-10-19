@@ -284,9 +284,10 @@ defineExpose({
   align-items: center;
   gap: 6px;
   height: 22px;
-  margin: 0 2px;
+  margin: 1px 2px 0;
   padding: 0 8px;
-  vertical-align: -5px;
+  /* 行高 24、药丸 22：贴着行顶再下移 1px，正好在这一行的正中。 */
+  vertical-align: top;
   border-radius: var(--radius-pill);
   background: var(--fill);
   color: var(--muted);

@@ -105,10 +105,10 @@ describe('输入框下面那一行', () => {
     expect(emitted().send).toBeUndefined()
   })
 
-  it('整理中发送键按不动', () => {
-    mount(1280, { voice: 'thinking' })
-    expect(
-      (screen.getByRole('button', { name: t('work.room.composer.voice.thinking') }) as HTMLButtonElement).disabled
-    ).toBe(true)
+  it('整理中点发送键那个位置什么也不发', async () => {
+    const { emitted } = mount(1280, { voice: 'thinking', canSend: true })
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.composer.voice.thinking') }))
+    expect(emitted().send).toBeUndefined()
+    expect(emitted()['voice-done']).toBeUndefined()
   })
 })
