@@ -4,9 +4,9 @@ A session's runner numbers every record its harness writes (Claude Code's
 stream-json lines, Codex's app-server notifications, pi's entries) and the
 backend mirrors that journal (`agent.harness.driven`). This table keeps those
 records the way they came, so that what the agent did can be read after the
-mirror has forgotten it: for `retention.RETENTION` (30 days), after which only
-the inputs the session was sent are kept, as a run of their own under
-`archive/user-messages/` (`retention.expire`).
+mirror has forgotten it. A sealed run's object is kept in the bucket for good;
+its row, and with it the app's way to read the run, for `retention.RETENTION`
+(30 days, `retention.expire`).
 
 A row is a run of consecutive records of one session's journal, all of one
 turn. A record arrives as a run of one, with the record in the row
@@ -66,21 +66,18 @@ class SessionRecord(UuidPk, Base):
             "last_at",
             postgresql_where="object_key IS NULL",
         ),
-        # What the retention sweep picks up: sealed runs that are not archives
-        # (the predicate is `retention._EXPIRING`, spelled the same).
+        # What the retention sweep picks up: sealed runs.
         Index(
-            "ix_session_records_expiring",
+            "ix_session_records_sealed",
             "last_at",
-            postgresql_where=(
-                "object_key IS NOT NULL AND NOT starts_with(object_key, 'archive/')"
-            ),
+            postgresql_where="object_key IS NOT NULL",
         ),
     )
 
-    # The conversation (`conversations.id`), deliberately without a foreign
-    # key: a cascade would take the rows and leave their objects in the bucket
-    # with nothing naming them. `retention.forget_gone` removes a gone
-    # conversation's rows and objects together.
+    # The conversation (`conversations.id`), without a foreign key:
+    # `retention.forget_gone` deletes the rows of a conversation that is gone
+    # and of a channel a person deleted (whose row stays), in one place. Their
+    # objects stay in the bucket either way (Zhifei's ruling on #4398).
     conversation_id: Mapped[uuid.UUID] = mapped_column()
     # The turn the runner stamped on these records (`cheese.work_id`); empty for
     # what a session wrote before its first input.

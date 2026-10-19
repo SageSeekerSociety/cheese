@@ -16,8 +16,3 @@ def register_periodic_jobs(jobs: PeriodicJobs, *, sessions: SessionFactory) -> N
         retention.EVERY_S,
         lambda: retention.sweep(sessions),
     )
-    jobs.register(
-        "session record orphans",
-        retention.ORPHANS_EVERY_S,
-        lambda: retention.forget_orphans(sessions),
-    )
