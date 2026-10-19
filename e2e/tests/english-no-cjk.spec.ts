@@ -467,7 +467,6 @@ test("account settings and devices", async ({ page }) => {
   await check(page, [
     { name: "profile", path: "/users/settings/profile" },
     { name: "password and security", path: "/users/settings/security" },
-    { name: "usage", path: "/users/settings/usage" },
     { name: "devices", path: "/users/settings/devices" },
     { name: "connections", path: "/users/settings/connections" },
     { name: "public profile", path: "/users/alice" },
@@ -486,6 +485,7 @@ test("teams: shared and personal", async ({ page }) => {
     { name: "team compute", path: "/teams/team-1/compute" },
     { name: "team credits", path: "/teams/team-1/credits" },
     { name: "personal team", path: "/teams/alice" },
+    { name: "personal team credits", path: "/teams/alice/credits" },
   ]);
 });
 
