@@ -192,15 +192,17 @@ including subprocesses that could outlive a timed-out caller. Unpublished source
 cleanup pending. The platform does not create a
 separate backup of dirty working trees or unpushed commits.
 
-The CLI's own transcript files are not uploaded. What the platform keeps of a
-session is what its runner journaled (`session_records`, see
-[原始记录](manual/dev/session-records.md)), not these files. Claude Code runs
-on the central session host, so a room's raw `.claude/projects/**/*.jsonl` files,
-subagent files included, are in its home there. Removing that home first
-compresses them into `~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on
-the same host. The same cleanup operation deletes the archive 30 days later, for
-the reason given beside `TRANSCRIPT_RETENTION` in `room_cleanup/retire.py`: they are kept
-for debugging after the fact.
+The CLI's own transcript files are kept permanently in the private bucket,
+beside what the runner journaled (`session_records`, see
+[原始记录](manual/dev/session-records.md)). Every session runs on the central
+session host: a room's raw `.claude/projects/**/*.jsonl` files, subagent files
+included, are in its home there, and Codex's and pi's session files are under the
+resource's harness state (`~/.cheese/harness/<project>/<resource>/`). Removing the
+home first compresses them into
+`~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on the same host, which
+is then sent to `transcripts/rooms/<project>/<room>/<resource>.tar.gz` in the
+private bucket. The host's archive is deleted 30 days later (`TRANSCRIPT_RETENTION`
+in `room_cleanup/retire.py`), and only once the bucket is found to hold it as sent.
 
 Before cleanup takes ownership of deletion, unarchive cancels it and reuses the
 room's resources. If a stop or worktree move has an unresolved outcome, unarchive reports
