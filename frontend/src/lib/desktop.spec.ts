@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const listMyDevices = vi.fn()
+const listAccessibleDevices = vi.fn()
 const connectDevice = vi.fn()
 vi.mock('../api', () => ({
-  listMyDevices: () => listMyDevices(),
+  listAccessibleDevices: () => listAccessibleDevices(),
+  listMyTeams: async () => [{ id: 7, handle: 'personal', name: 'Personal', personal: true }],
   deviceProposedName: async () => ({ device_name: 'andy-mbp' }),
   connectDevice: (...args: unknown[]) => connectDevice(...args),
 }))
@@ -18,6 +19,7 @@ type Message = { kind: string; [k: string]: unknown }
 function desktopHost(thisDevice: string | null, outcome: 'ok' | { step: string; detail: string } = 'ok') {
   const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
     if (cmd === 'this_device') return thisDevice
+    if (cmd === 'this_devices') return thisDevice ? [thisDevice] : []
     if (cmd !== 'connect_this_machine') return
     const progress = args!.progress as { onmessage: (m: Message) => void }
     progress.onmessage({ kind: 'step', id: 'download' })
@@ -32,12 +34,12 @@ function desktopHost(thisDevice: string | null, outcome: 'ok' | { step: string; 
   }
   const w = window as unknown as { __TAURI__?: unknown; __CHEESE_APP__?: unknown }
   w.__TAURI__ = { core: { invoke, Channel } }
-  w.__CHEESE_APP__ = { can: ['device'] }
+  w.__CHEESE_APP__ = { can: ['device', 'teamEnrollment'] }
   return invoke
 }
 
 beforeEach(() => {
-  listMyDevices.mockReset().mockResolvedValue({ devices: [] })
+  listAccessibleDevices.mockReset().mockResolvedValue({ devices: [] })
   connectDevice.mockReset().mockResolvedValue({})
   Object.assign(deviceFlow, { open: false, stage: 'ask', steps: [], current: null, percent: null, failure: null })
 })
@@ -65,7 +67,7 @@ describe('signing in to the desktop app', () => {
   })
 
   it('leaves a computer that is already one of your online devices alone', async () => {
-    listMyDevices.mockResolvedValue({ devices: [{ device_id: 'd1', online: true }] })
+    listAccessibleDevices.mockResolvedValue({ devices: [{ device_id: 'd1', team_id: 7, online: true }] })
     const invoke = desktopHost('d1')
     await offerToConnect(10)
     expect(invoke).not.toHaveBeenCalledWith('connect_this_machine', expect.anything())
@@ -73,11 +75,11 @@ describe('signing in to the desktop app', () => {
   })
 
   it('brings back a computer connected before, without asking', async () => {
-    const away = { devices: [{ device_id: 'd1', online: false }] }
-    listMyDevices
+    const away = { devices: [{ device_id: 'd1', team_id: 7, online: false }] }
+    listAccessibleDevices
       .mockResolvedValueOnce(away)
       .mockResolvedValueOnce(away)
-      .mockResolvedValue({ devices: [{ device_id: 'd1', online: true }] })
+      .mockResolvedValue({ devices: [{ device_id: 'd1', team_id: 7, online: true }] })
     const invoke = desktopHost('d1')
     await offerToConnect(10)
     expect(invoke).toHaveBeenCalledWith('connect_this_machine', expect.objectContaining({ knownDeviceIds: ['d1'] }))
@@ -86,17 +88,18 @@ describe('signing in to the desktop app', () => {
 
   it('does nothing in a browser', async () => {
     await offerToConnect(10)
-    expect(listMyDevices).not.toHaveBeenCalled()
+    expect(listAccessibleDevices).not.toHaveBeenCalled()
     expect(deviceFlow.open).toBe(false)
   })
 })
 
 describe('bringing back a computer connected before', () => {
   it('shows the dialog only when a step needs the person', async () => {
-    listMyDevices.mockResolvedValue({ devices: [{ device_id: 'd1', online: false }] })
+    listAccessibleDevices.mockResolvedValue({ devices: [{ device_id: 'd1', team_id: 7, online: false }] })
     const invoke = desktopHost('d1')
     invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
       if (cmd === 'this_device') return 'd1'
+      if (cmd === 'this_devices') return ['d1']
       if (cmd !== 'connect_this_machine') return
       const progress = args!.progress as { onmessage: (m: Message) => void }
       progress.onmessage({ kind: 'step', id: 'removeOld' })
@@ -108,7 +111,7 @@ describe('bringing back a computer connected before', () => {
   })
 
   it('stays out of sight when it fails without needing anyone', async () => {
-    listMyDevices.mockResolvedValue({ devices: [{ device_id: 'd1', online: false }] })
+    listAccessibleDevices.mockResolvedValue({ devices: [{ device_id: 'd1', team_id: 7, online: false }] })
     desktopHost('d1', { step: 'download', detail: 'offline' })
     await offerToConnect(10)
     expect(deviceFlow.open).toBe(false)
@@ -118,11 +121,11 @@ describe('bringing back a computer connected before', () => {
 describe('connecting this computer', () => {
   it('approves it under the name it proposes, and is done once it is online', async () => {
     desktopHost('d9')
-    listMyDevices
+    listAccessibleDevices
       .mockResolvedValueOnce({ devices: [] })
-      .mockResolvedValue({ devices: [{ device_id: 'd9', online: true }] })
+      .mockResolvedValue({ devices: [{ device_id: 'd9', team_id: 7, online: true }] })
     await startConnecting()
-    expect(connectDevice).toHaveBeenCalledWith('c0de', 'andy-mbp')
+    expect(connectDevice).toHaveBeenCalledWith('c0de', 'andy-mbp', 7)
     expect(deviceFlow.stage).toBe('done')
     expect(deviceFlow.deviceId).toBe('d9')
   })
@@ -149,6 +152,7 @@ describe('connecting this computer', () => {
     invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'cancel_connect') return cancelled()
       if (cmd === 'this_device') return null
+      if (cmd === 'this_devices') return []
       const progress = args!.progress as { onmessage: (m: Message) => void }
       progress.onmessage({ kind: 'code', text: 'c0de' })
       await stopped

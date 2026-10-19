@@ -13,14 +13,14 @@ export function deviceProposedName(code: string): Promise<{ device_name: string 
 export function connectDevice(
   deviceCode: string,
   deviceName?: string,
-  projectId?: string
+  teamId?: number
 ): Promise<import('../cx_types').DeviceApproval> {
   return connectorRequest<import('../cx_types').DeviceApproval>('/connect', {
     method: 'POST',
     body: JSON.stringify({
       device_code: deviceCode,
       device_name: deviceName ?? null,
-      project_id: projectId ?? null,
+      team_id: teamId ?? null,
     }),
   })
 }
@@ -45,33 +45,24 @@ export function unbindMyDevice(deviceId: string): Promise<{ deleted: boolean; de
   })
 }
 
-// 为团队注册设备 (v4): bind/unbind a machine to a team so the team's projects can
-// run on it. Both return the updated device view.
-export function registerDeviceForTeam(deviceId: string, teamId: number): Promise<import('../cx_types').MyDevice> {
-  return connectorRequest<import('../cx_types').MyDevice>(`/my/devices/${encodeURIComponent(deviceId)}/teams`, {
-    method: 'POST',
-    body: JSON.stringify({ team_id: teamId }),
-  })
-}
-export function unregisterDeviceFromTeam(deviceId: string, teamId: number): Promise<import('../cx_types').MyDevice> {
-  return connectorRequest<import('../cx_types').MyDevice>(
-    `/my/devices/${encodeURIComponent(deviceId)}/teams/${teamId}`,
-    { method: 'DELETE' }
-  )
-}
-
 // 团队算力 (v4): the machines registered for a team — the team's compute, with
 // liveness. Any team member may view.
-export function listTeamDevices(teamId: number): Promise<{ devices: import('../cx_types').MyDevice[] }> {
-  return connectorRequest<{ devices: import('../cx_types').MyDevice[] }>(`/teams/${teamId}/devices`)
+export function listTeamDevices(
+  teamId: number
+): Promise<{ devices: import('../cx_types').MyDevice[]; can_manage: boolean }> {
+  return connectorRequest<{ devices: import('../cx_types').MyDevice[]; can_manage: boolean }>(
+    `/teams/${teamId}/devices`
+  )
 }
 
 // The teams the signed-in user belongs to. Includes the auto-provisioned personal
 // team (个人 = 单人真团队), which the backend sorts first and flags `personal`.
 export function listMyTeams(): Promise<import('../cx_types').MyTeam[]> {
-  return request<{ teams: Array<{ id: number; handle: string; name: string; personal?: boolean }> }>(
+  return request<{ teams: Array<{ id: number; handle: string; name: string; personal?: boolean; role?: string }> }>(
     '/teams/my-teams'
-  ).then((r) => r.teams.map((t) => ({ id: t.id, handle: t.handle, name: t.name, personal: t.personal === true })))
+  ).then((r) =>
+    r.teams.map((t) => ({ id: t.id, handle: t.handle, name: t.name, personal: t.personal === true, role: t.role }))
+  )
 }
 
 /** 让这台电脑再答一次能不能给会话沙箱：机主补上它缺的之后，服务器要再问才知道。 */
@@ -82,4 +73,8 @@ export function checkSandbox(deviceId: string): Promise<import('../types/deviceS
       method: 'POST',
     }
   )
+}
+
+export function listAccessibleDevices(): Promise<{ devices: import('../cx_types').MyDevice[] }> {
+  return connectorRequest<{ devices: import('../cx_types').MyDevice[] }>('/my/team-devices')
 }

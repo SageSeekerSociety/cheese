@@ -8,6 +8,8 @@ loses is held by the snapshot of the session's last turn. A cloud sandbox left
 behind is left to the idle sweep either way.
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import ast
 import json
 import re
@@ -85,9 +87,10 @@ async def _room(client, *, on_cloud=False, in_task=False):
                 await devices.start(name),
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, owner.id),
             )
-            await devices.assign_to_project(
-                device.device_id, project_id, actor_user_id=owner.id
+            await place_in_project_team(
+                devices, device.device_id, project_id, actor_user_id=owner.id
             )
             ids.append(device.device_id)
         old_device, new_device = ids
@@ -270,8 +273,7 @@ async def test_an_agent_switches_away_from_an_unreachable_machine_by_itself(
     to do it."""
     room = await _room(client)
     remote = _machines(monkeypatch, online=False)
-    owner = await _owner_id(client)
-    sandbox = {"kind": "sandbox", "spec": f"devices_of:{owner}"}
+    sandbox = {"kind": "sandbox", "spec": "team_devices"}
 
     switched = client.put(room.path, headers=room.agent, json={"environment": sandbox})
 

@@ -13,6 +13,10 @@ The hosts, the pool and the tool call here are the ones of
 client does.
 """
 
+from app.domain.device.wiring import sql_device_service
+from tests.support.devices import enrollment_team
+
+
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -74,6 +78,7 @@ def _enrolled(cloud, *device_ids: str) -> None:
             for device_id in device_ids:
                 db.add(
                     DeviceRow(
+                        team_id=await enrollment_team(sql_device_service(db), owner.id),
                         device_id=device_id,
                         name=device_id,
                         token=f"token-{device_id}",

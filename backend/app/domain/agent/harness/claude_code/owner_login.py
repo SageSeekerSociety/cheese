@@ -474,3 +474,20 @@ async def refresh_on_connect(session_factory, hub, device_id: str) -> None:
         await refresh(session_factory, hub, device_id)
     except Exception:
         logger.warning("claude login not checked on %s", device_id, exc_info=True)
+
+
+async def connections(
+    session: AsyncSession, device_ids: Sequence[str]
+) -> dict[str, list[dict]]:
+    """All login summaries on the team's devices, without credentials."""
+    if not device_ids:
+        return {}
+    rows = await session.scalars(
+        select(DeviceClaudeLoginRow).where(
+            DeviceClaudeLoginRow.device_id.in_(device_ids)
+        )
+    )
+    found: dict[str, list[dict]] = {}
+    for row in sorted(rows, key=_shown_first):
+        found.setdefault(row.device_id, []).append(claude_login.view(row))
+    return found

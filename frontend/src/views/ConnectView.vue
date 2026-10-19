@@ -1,20 +1,11 @@
 <script setup lang="ts">
-// 设备审批页 (P3 Phase B item 3): the frozen cli's device flow opens
-// `<origin>/connect?code=…`; the signed-in human lands here and approves —
-// which binds this machine to them as owner. A device is PURE COMPUTE (算力节点,
-// execution-architecture v3) — approving does NOT mint an agent; which agent runs
-// on it is decided per session/project later. Approval also deliberately does NOT
-// ask which project the machine serves: a machine belongs to *you*, and which
-// project uses its compute is decided later (device page / when a session picks it).
-//
-// 容器：读地址里的 code、预填 cli 提上来的名字、调后端批准。画面在
-// `ConnectViewView.vue`，只收 props、只发 `approve`。
+// Approve a device enrollment for one team; the team controls its compute.
 import type { DeviceApproval } from '../cx_types'
 
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { authToken, connectDevice, deviceProposedName } from '../api'
+import { authToken, connectDevice, deviceProposedName, listMyTeams } from '../api'
 import { t } from '../i18n'
 
 import ConnectViewView from './ConnectViewView.vue'
@@ -32,11 +23,21 @@ const approved = ref<DeviceApproval | null>(null)
 // The compute-node name, prefilled with the name the cli proposed (this machine's
 // hostname) so the human sees a real default and can just edit it — never "unnamed".
 const deviceName = ref('')
+const teams = ref<import('@/types/devices').MyTeam[]>([])
+const teamId = ref<number | null>(null)
 
 // Prefill from the cli-proposed name (the device's hostname). Best-effort: if the
 // lookup fails the field stays blank and the server still falls back to a real name.
 onMounted(async () => {
   if (!code.value) return
+  try {
+    teams.value = (await listMyTeams()).filter(
+      (team) => team.personal || team.role === 'OWNER' || team.role === 'ADMIN'
+    )
+    teamId.value = teams.value.find((team) => team.personal)?.id ?? null
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : t('project.connect.failed')
+  }
   try {
     const r = await deviceProposedName(code.value)
     if (r.device_name) deviceName.value = r.device_name
@@ -53,7 +54,7 @@ async function approve(name: string) {
   loading.value = true
   error.value = null
   try {
-    approved.value = await connectDevice(code.value, name.trim() || undefined)
+    approved.value = await connectDevice(code.value, name.trim() || undefined, teamId.value ?? undefined)
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('project.connect.failed')
   } finally {
@@ -64,6 +65,8 @@ async function approve(name: string) {
 
 <template>
   <ConnectViewView
+    v-model:team-id="teamId"
+    :teams="teams"
     :code="code"
     :logged-in="loggedIn"
     :loading="loading"

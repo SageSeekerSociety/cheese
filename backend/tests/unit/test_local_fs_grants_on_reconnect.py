@@ -12,6 +12,10 @@ snapshot) and in-process (the single-process deployment, where the socket
 lands in the same process).
 """
 
+from app.domain.device.wiring import sql_device_service
+from tests.support.devices import enrollment_team
+
+
 import asyncio
 import logging
 import uuid
@@ -100,6 +104,7 @@ async def _owner_of_the_machine(db_factory) -> int:
         await session.flush()
         session.add(
             DeviceRow(
+                team_id=await enrollment_team(sql_device_service(session), user.id),
                 device_id=MACHINE,
                 name=MACHINE,
                 token=f"tok-{uuid.uuid4().hex}",

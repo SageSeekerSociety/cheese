@@ -25,6 +25,10 @@ walked and counted. Only the size of the filesystem they are on is given,
 since this machine's own disk cannot be made full.
 """
 
+from app.domain.device.wiring import sql_device_service
+from tests.support.devices import enrollment_team
+
+
 import json
 import os
 import re
@@ -368,6 +372,7 @@ def test_on_a_persons_computer_a_sandbox_has_no_budget(cloud, monkeypatch):  # n
             alice = await UserRepository(db).get_by_handle("alice")
             db.add(
                 DeviceRow(
+                    team_id=await enrollment_team(sql_device_service(db), alice.id),
                     device_id="alices-computer",
                     name="alices-computer",
                     token="alices-token",

@@ -6,6 +6,8 @@ A failure is counted against the people's machines the room's sessions hold
 second strike quarantines the machine, and the room is told which one.
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import uuid
 
 from app.domain.agent.host_failure import judge_host_failure
@@ -36,8 +38,11 @@ async def _device_on_project(
         code,
         owner_user_id=OWNER,
         supply=supply,
+        team_id=await enrollment_team(service, OWNER),
     )
-    await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
+    await place_in_project_team(
+        service, device.device_id, project_id, actor_user_id=OWNER
+    )
     return device.device_id
 
 

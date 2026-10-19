@@ -11,6 +11,8 @@ at it. The bucket is a small HTTP server speaking the part of S3 a single PUT,
 HEAD, GET and DELETE use, reached through the platform's own S3 client.
 """
 
+from tests.support.devices import enrollment_team
+
 import asyncio
 import hashlib
 import io
@@ -176,6 +178,7 @@ async def _old_room(client, tmp_path, *, files=True):
             await devices.start("old box"),
             owner_user_id=owner,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner),
         )
         device_id = device.device_id
         # The room's session worked on that machine once; its lease is gone.

@@ -44,6 +44,7 @@ from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSessio
 from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.team.services import team_service
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
@@ -860,6 +861,7 @@ class HostPool(PoolSweep):
         device = await self._devices.approve(
             code,
             owner_user_id=owner.id,
+                    team_id=(await team_service(self._session).ensure_personal_team(owner.id)).id,
             # 入口决定待遇 (#282 决定 2): the platform asked MicroCloud for this
             # machine, so the platform may reclaim it. A CONSTANT, never derived
             # from what the machine looks like — the identical VM enrolled by a

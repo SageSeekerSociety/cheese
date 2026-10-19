@@ -90,7 +90,7 @@ async def _require_owned_device(db: AsyncSession, user_id: int, device_id: str) 
     the endpoint cannot be used to enumerate other people's machines.
     """
     device = await sql_device_service(db).get_hosted_device(device_id)
-    if device is None or device.owner_user_id != user_id:
+    if device is None or not await sql_device_service(db).may_manage(device, user_id):
         raise NotFoundError(say("deviceNotYours"))
 
 

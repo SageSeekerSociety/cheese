@@ -107,7 +107,7 @@
   "mcpServerNotAdded": "这个服务器不是在项目设置中添加的",
   "mcpServerNameTaken": "项目里已经有名为 {name} 的服务器",
   "mcpApprovalNotFound": "这条运行请求已不存在",
-  "mcpApprovalOwnerOnly": "只有这台设备的主人能决定",
+  "mcpApprovalOwnerOnly": "只有设备所属团队的管理员能决定",
   "mcpCommandInvalid": "无法解析这条命令",
   "mcpEnvNameInvalid": "环境变量名只能用字母、数字和下划线，且不以数字开头",
   "mcpServerUrlRequired": "地址不能为空"

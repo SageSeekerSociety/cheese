@@ -1,176 +1,32 @@
-// 这台设备：桌面 app 所在的这台电脑，作为一台设备在平台上的样子（名称、提供给哪些团队、
-// 机主自己的 Claude Code 登录了没有），和能对它做的事。接入完成那一步和「设置 → 这台设备」
-// 共用这一份。
 import type { MyDevice, MyTeam } from '@/cx_types'
-import type { ClaudeCodeLogin, ModelServiceInput } from '@/types/ownAgents'
 
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 
-import {
-  listMyDevices,
-  listMyTeams,
-  registerDeviceForTeam,
-  renameMyDevice,
-  unbindMyDevice,
-  unregisterDeviceFromTeam,
-} from '@/api'
-import { checkClaudeCode } from '@/api/ownAgents'
+import { listAccessibleDevices, listMyTeams } from '@/api'
 import { t } from '@/i18n'
-import { desktopBridge, markAsked } from '@/lib/desktop'
-import accountService from '@/services/account'
-import { claudeLoginOf, modelServiceOf } from '@/types/ownAgents'
-
-export type ClaudeLoginState = 'idle' | 'preparing' | 'browser'
+import { desktopBridge } from '@/lib/desktop'
 
 export function useThisDevice() {
   const bridge = desktopBridge()
   const device = ref<MyDevice | null>(null)
+  const enrollments = ref<MyDevice[]>([])
   const teams = ref<MyTeam[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
-  const claudeLogin = ref<ClaudeLoginState>('idle')
-
-  const claudeCode = computed<ClaudeCodeLogin | null>(() => (device.value ? claudeLoginOf(device.value) : null))
-  /** The model a model service is called with, when Claude Code here uses one. */
-  const claudeService = computed(() => modelServiceOf(claudeCode.value))
-
-  function fail(e: unknown, fallback: string) {
-    error.value = e instanceof Error ? e.message : t(fallback)
-  }
-
   async function load() {
     if (!bridge) return
     loading.value = true
     error.value = null
     try {
-      const id = await bridge.thisDevice()
-      const [devices, mine] = await Promise.all([
-        listMyDevices()
-          .then((r) => r.devices)
-          .catch(() => [] as MyDevice[]),
-        listMyTeams().catch(() => [] as MyTeam[]),
-      ])
-      device.value = devices.find((d) => d.device_id === id) ?? null
+      const [ids, result, mine] = await Promise.all([bridge.thisDevices(), listAccessibleDevices(), listMyTeams()])
+      enrollments.value = result.devices.filter((d) => ids.includes(d.device_id))
+      device.value = enrollments.value[0] ?? null
       teams.value = mine
-    } catch (e) {
-      fail(e, 'account.thisDevice.loadFailed')
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : t('account.thisDevice.loadFailed')
     } finally {
       loading.value = false
     }
   }
-
-  async function rename(name: string) {
-    const d = device.value
-    const clean = name.trim()
-    if (!d || !clean || clean === d.name) return
-    try {
-      device.value = { ...d, ...(await renameMyDevice(d.device_id, clean)) }
-    } catch (e) {
-      fail(e, 'account.devices.renameFailed')
-    }
-  }
-
-  async function setTeams(ids: number[]) {
-    const d = device.value
-    if (!d) return
-    try {
-      let next = d
-      for (const id of ids.filter((x) => !d.team_ids.includes(x))) next = await registerDeviceForTeam(d.device_id, id)
-      for (const id of d.team_ids.filter((x) => !ids.includes(x)))
-        next = await unregisterDeviceFromTeam(d.device_id, id)
-      device.value = { ...d, ...next }
-    } catch (e) {
-      fail(e, 'account.thisDevice.teamsFailed')
-    }
-  }
-
-  async function refreshClaudeCode() {
-    const d = device.value
-    if (!d) return
-    const login = await checkClaudeCode(d.device_id).catch(() => null)
-    device.value = { ...d, claude_code: login } as MyDevice
-  }
-
-  async function logInClaudeCode(console: boolean) {
-    if (!bridge || claudeLogin.value !== 'idle') return
-    error.value = null
-    claudeLogin.value = 'preparing'
-    try {
-      // The login shown here, logged out, is logged in again rather than another
-      // added beside it: the agents added with it come back with it.
-      await bridge.claudeLogin(console, claudeCode.value?.local_id ?? null, (step) => (claudeLogin.value = step))
-      await refreshClaudeCode()
-    } catch (e) {
-      const why = e as { step?: string; detail?: string }
-      if (why.step !== 'cancelled') error.value = t('account.thisDevice.claudeLoginFailed')
-    } finally {
-      claudeLogin.value = 'idle'
-    }
-  }
-
-  /** Points the login shown here (a new one when there is none) at another model
-   *  service; the key stays on this computer. */
-  async function useModelService(service: ModelServiceInput) {
-    if (!bridge?.claudeModelService || claudeLogin.value !== 'idle') return
-    error.value = null
-    claudeLogin.value = 'preparing'
-    try {
-      await bridge.claudeModelService(service, claudeCode.value?.local_id ?? null, (step) => (claudeLogin.value = step))
-      await refreshClaudeCode()
-    } catch (e) {
-      const why = e as { step?: string }
-      if (why.step !== 'cancelled') error.value = t('account.thisDevice.modelServiceFailed')
-    } finally {
-      claudeLogin.value = 'idle'
-    }
-  }
-
-  async function cancelClaudeCodeLogin() {
-    await bridge?.cancelClaudeLogin()
-  }
-
-  async function logOutClaudeCode() {
-    try {
-      if (claudeCode.value) await bridge?.claudeLogout(claudeCode.value.local_id)
-      await refreshClaudeCode()
-    } catch (e) {
-      fail(e, 'account.thisDevice.claudeLogoutFailed')
-    }
-  }
-
-  /** Unbinds this computer and stops its connector; it is not asked about again. */
-  async function disconnect() {
-    const d = device.value
-    if (!d || !bridge) return
-    try {
-      await unbindMyDevice(d.device_id)
-      await bridge.disconnectThisMachine().catch(() => {})
-      const userId = accountService.user?.id
-      if (typeof userId === 'number') markAsked(userId)
-      device.value = null
-    } catch (e) {
-      fail(e, 'account.devices.unbindFailed')
-    }
-  }
-
-  return {
-    available: bridge !== null,
-    /** Whether this app can point Claude Code at another model service. */
-    canUseModelService: !!bridge?.claudeModelService,
-    device,
-    teams,
-    loading,
-    error,
-    claudeCode,
-    claudeService,
-    claudeLogin,
-    load,
-    rename,
-    setTeams,
-    logInClaudeCode,
-    useModelService,
-    cancelClaudeCodeLogin,
-    logOutClaudeCode,
-    disconnect,
-  }
+  return { available: bridge !== null, device, enrollments, teams, loading, error, load }
 }

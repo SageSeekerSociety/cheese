@@ -16,6 +16,7 @@ from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.team.services import team_service
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
@@ -514,6 +515,7 @@ class WarmPoolService:
                 device = await self.devices.approve(
                     code,
                     owner_user_id=owner.id,
+                    team_id=(await team_service(self.session).ensure_personal_team(owner.id)).id,
                     supply=Supply.cloud,
                     name=row.create_request["hostname"],
                 )

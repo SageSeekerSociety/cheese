@@ -235,7 +235,7 @@ async def get_compute_configs(
                     "device_id": d.device_id,
                     "name": d.name,
                     "online": device_hub.is_online(d.device_id),
-                    "owned": actor.via == "token" and actor.user_id == d.owner_user_id,
+                    "owned": actor.via == "token" and actor.user_id is not None and await sql_device_service(db).may_manage(d, actor.user_id),
                 }
                 for d in devices
             ],

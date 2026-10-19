@@ -48,13 +48,6 @@ export default {
           component: () => import('@/views/user/settings/Notifications.vue'),
         },
         {
-          // 接入的电脑：这个人的工作电脑，哪个项目都能用。
-          path: 'devices',
-          name: 'UserSettingsDevices',
-          component: () => import('@/views/MyDevicesView.vue'),
-          meta: { palette: { label: 'account.settings.devices', icon: 'mdi-laptop' } },
-        },
-        {
           // 模型连接：这个人的 Claude Code 在各台设备上登录的账号或模型服务（#2991），
           // 在哪个浏览器里都能看、能解除。
           path: 'model-connections',
@@ -77,7 +70,7 @@ export default {
           component: () => import('@/views/user/settings/ThisDevice.vue'),
           beforeEnter: async () => {
             const { desktopCan } = await import('@/lib/desktopApp')
-            return desktopCan('device') ? true : { name: 'UserSettingsDevices' }
+            return desktopCan('device') ? true : { name: 'UserSettings' }
           },
         },
         {

@@ -125,8 +125,7 @@ export function device(over: Partial<MyDevice> = {}): MyDevice {
     device_id: 'dev-3f9a21',
     name: '书房的 Mac mini',
     online: true,
-    project_ids: [],
-    team_ids: [1],
+    team_id: 1,
     screens: [],
     in_use: null,
     ...over,
@@ -146,26 +145,34 @@ export const IN_USE: DeviceUser = {
 
 /** 一台在线的、两台被别的项目用着的机器：分别是「在线」「有活干」两种行。 */
 export const DEVICES: MyDevice[] = [
-  device({ device_id: 'dev-3f9a21', name: '书房的 Mac mini', online: true, screens: [] }),
+  device({
+    device_id: 'dev-3f9a21',
+    name: '书房的 Mac mini',
+    online: true,
+    screens: [],
+    logins: [
+      {
+        id: 'login-preview',
+        local_id: 'preview',
+        name: '工作账号',
+        installed: true,
+        logged_in: true,
+        auth_method: 'claude.ai',
+        subscription_type: 'max',
+        model: null,
+        service_host: null,
+        checked_at: '2026-10-19T12:00:00Z',
+        revoking: false,
+      },
+    ],
+  }),
   device({
     device_id: 'dev-8b1c04',
     name: '客厅的 NUC',
     online: false,
-    project_ids: ['p-clean'],
-    team_ids: [],
     in_use: [IN_USE],
-    attached_projects: [{ id: 'p-clean', name: '数据清洗' }],
   }),
 ]
-
-/** 自己名下、还没注册给这个团队的那一台：菜单里列的就是它。 */
-export const MY_DEVICES: MyDevice[] = [
-  device({ device_id: 'dev-3f9a21', name: '书房的 Mac mini', team_ids: [] }),
-  device({ device_id: 'dev-8b1c04', name: '客厅的 NUC', online: false, team_ids: [] }),
-]
-
-/** 已在团队里那一台，用来给「移出」那颗按钮判据。 */
-export const TEAM_DEVICE_ID = 'dev-3f9a21'
 
 // ---- 空间申请（AdminSpacesPageView）----------------------------------------
 

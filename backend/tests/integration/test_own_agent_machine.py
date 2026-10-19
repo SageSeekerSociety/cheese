@@ -9,6 +9,8 @@ conversation has, like any agent's, which is its owner's computer only when
 that is the environment.
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import json
 import uuid
 from datetime import UTC, datetime
@@ -58,11 +60,14 @@ async def _user(db, handle):
 async def _machine(devices, name, owner, project_id=None):
     code = await devices.start(name)
     device = await devices.approve(
-        code, owner_user_id=owner.id, supply=Supply.self_hosted
+        code,
+        owner_user_id=owner.id,
+        supply=Supply.self_hosted,
+        team_id=await enrollment_team(devices, owner.id),
     )
     if project_id is not None:
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
     return device.device_id
 
