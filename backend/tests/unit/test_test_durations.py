@@ -8,8 +8,10 @@ hand-built one here is enough to say what the reader makes of them.
 
 from pathlib import Path
 
+import pytest
+
 from scripts import test_durations
-from tests.conftest import _LAYER_CEILING_S
+from tests.conftest import _LAYER_CEILING_S, _ceiling_scale
 
 
 def _artifacts(root: Path, layer: str, entries: list[tuple[str, float]]) -> Path:
@@ -98,6 +100,24 @@ def test_each_layer_keeps_its_own_artifacts(tmp_path: Path) -> None:
 def test_the_ceiling_reader_agrees_with_the_conftest_that_owns_it() -> None:
     """The report says how close to the ceiling a test came; conftest owns it."""
     assert test_durations._ceilings() == _LAYER_CEILING_S
+
+
+def test_the_layer_ceiling_scale_comes_from_the_environment(monkeypatch) -> None:
+    """Only the fast tier sets it; full CI keeps the strict numbers.
+
+    The ceilings were measured on a machine the run had to itself. The tier
+    that runs two trees at once tells this run how much wall clock it lost, so
+    a test is not failed for the sharing; anything but a finite number >= 1 is
+    a usage error rather than a silently different allowance.
+    """
+    monkeypatch.delenv("CHEESE_TEST_CEILING_SCALE", raising=False)
+    assert _ceiling_scale() == 1
+    monkeypatch.setenv("CHEESE_TEST_CEILING_SCALE", "1.75")
+    assert _ceiling_scale() == 1.75
+    for raw in ("0", "-1", "nan", "inf", "x", ""):
+        monkeypatch.setenv("CHEESE_TEST_CEILING_SCALE", raw)
+        with pytest.raises(pytest.UsageError):
+            _ceiling_scale()
 
 
 def test_the_report_runs_slowest_first_and_flags_what_a_fix_has_reached() -> None:

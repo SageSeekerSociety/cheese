@@ -59,6 +59,13 @@ commands and turns each command's report into a verdict nobody can fake:
   * The frontend's parallelism is derived from the memory ceiling the caller
     passed (vitest_workers), not pinned: a run given a ceiling that backs
     several forks gets several, and the local default still gets one.
+  * The backend's parallelism is derived the same way (pytest_workers): the
+    full suite runs ``-n auto``; this tier gets one worker per 1536 MiB, at
+    most the CPUs, and the local default still runs one process. When two
+    trees run at once the backend is told the wall clock it lost through
+    CHEESE_TEST_CEILING_SCALE (ceiling_scale), which multiplies the layer
+    ceilings in ``backend/tests/conftest.py``; full CI never sets it and keeps
+    the strict numbers.
 """
 
 import json
@@ -138,6 +145,11 @@ VITEST_FLAGS = ["--no-passWithNoTests", "--no-allowOnly"]
 # frontend suite at three forks (the 4 vCPU / 16 GiB runner's own pool) peaked
 # at 3580 MiB on 2026-10-12, against a 9216 MiB ceiling and this budget per fork.
 MIB_PER_VITEST_WORKER = 3072
+# Sampled group RSS one pytest-xdist worker is allowed. A single-process pure
+# run peaked at 1.1 GiB across the 12 CI runs measured on 2026-10-19, and the
+# workers share one sampled ceiling. 1536 MiB leaves that peak ~35% headroom
+# while keeping the work machine's 3072 MiB ceiling at two workers.
+MIB_PER_PYTEST_WORKER = 1536
 TSC_CANNOT_JUDGE = 2
 
 
@@ -172,6 +184,47 @@ def vitest_flags(memory_mib):
     workers = vitest_workers(memory_mib)
     serial = ["--no-file-parallelism"] if workers == 1 else []
     return [f"--maxWorkers={workers}", *serial, *VITEST_FLAGS]
+
+
+def pytest_workers(memory_mib):
+    """How many pytest-xdist workers a run with this memory ceiling may start.
+
+    The full backend suite runs ``-n auto``; the fast tier ran one process and
+    spent its whole budget waiting. The ceiling that bounds the run is the same
+    sampled group RSS the caller passes, so the pool is capped by it as well:
+    one worker per MIB_PER_PYTEST_WORKER, at most the CPUs, and at least one.
+    The work machine's 3072 MiB cap still backs two; the 9216 MiB a CI draft
+    gets backs the runner's four.
+    """
+    return max(1, min(_cores(), memory_mib // MIB_PER_PYTEST_WORKER))
+
+
+def ceiling_scale(plan, memory_mib, jobs):
+    """The wall-clock allowance for the checks this tier starts at once.
+
+    The layer ceilings in ``backend/tests/conftest.py`` were measured on a run
+    that had the machine to itself. When two trees run together, every test in
+    the backend still takes the same number of CPU cycles but gets
+    ``demand / cores`` times the wall clock, and the pure layer's 10 s ceiling
+    would fail it for the machine sharing rather than for a wait (measured:
+    four workers of the tree guards on a four-core box pushed one test to
+    17.9 s). This returns the factor the backend run multiplies its ceilings by
+    — only when the plan really has another tree to share with, and only above
+    one. Full CI never asks: it runs one tree at a time and keeps the strict
+    numbers.
+    """
+    if jobs <= 1 or len({str(check["cwd"]) for check in plan}) <= 1:
+        return 1.0
+    ids = {check["id"] for check in plan}
+    demand = 0
+    if "backend-pure" in ids:
+        demand += pytest_workers(memory_mib)
+    if ids & {"frontend-unit", "frontend-i18n"}:
+        # The Vitest parent runs beside its forks and is part of the load.
+        demand += vitest_workers(memory_mib) + 1
+    if not demand:
+        return 1.0
+    return max(1.0, demand / max(1, _cores()))
 
 
 def _narrow_config(root, tmp, ts_files):
@@ -441,10 +494,17 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         env = {"TEST_PG_BASE": "postgresql://cheese:cheese@127.0.0.1:1/cheese_ci_fast",
                "DATABASE_URL": "postgresql+asyncpg://cheese:cheese@127.0.0.1:1/cheese_ci_fast",
                "PYTHONPATH": pythonpath, "CI_FAST_NODES": str(nodes)}
+        # The full suite's own parallelism, bounded by what this machine was
+        # said to back rather than by `auto` (which ignores the ceiling). One
+        # worker keeps the single-process form the tier had, so the work
+        # machine's 3072 MiB cap still runs the suite exactly as before.
+        workers = pytest_workers(memory_mib)
+        parallel = ["-n", str(workers)] if workers > 1 else []
         plan.append({"id": "backend-pure", "cwd": root / "backend", "env": env,
                      "command": ["uv", "run", "--no-sync", "pytest", *selected, "-m", "pure", "-q",
                                  "--ignore=tests/forgejo", "-k", "not kotlin",
-                                 "-p", "ci_fast_pytest_plugin", "--junitxml", str(output)],
+                                 "-p", "ci_fast_pytest_plugin", *parallel,
+                                 "--junitxml", str(output)],
                      "evidence": {"kind": "junit", "path": str(output), "nodes": str(nodes),
                                   "files": selected, "required": targets, "selection": reason}})
     return plan, omissions

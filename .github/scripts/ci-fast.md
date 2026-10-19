@@ -283,6 +283,15 @@ everything is still allowed to answer unknown.
   `__import__(expr)`) widen conservatively; a giant strongly-connected group may
   select many tests, in which case the run is honest about the size and may end
   unknown.
+  The run's own parallelism comes from the same memory ceiling: one
+  pytest-xdist worker per 1536 MiB, at most the CPUs, and one process (the
+  form this tier had) below that. The full suite's `-n auto` cannot be used
+  here because the ceiling is a bound, not the machine. The audit plugin
+  writes one part per worker and the controller merges them, so a worker's
+  tests are never reported as unrun because another finished last. When the
+  plan runs the backend beside a frontend tree, the backend is told the wall
+  clock it loses through `CHEESE_TEST_CEILING_SCALE`, which multiplies the
+  layer ceilings in `backend/tests/conftest.py`; full CI never sets it.
 - A frontend catalog edit under `frontend/src/i18n/messages/**` is read back by
   the backend refusal/sentences tree guards, but the shared CI path map names
   only `roomNotice`/`apiError`/`global`. This tier widens backend scope locally
