@@ -397,6 +397,39 @@ def test_the_failed_tests_are_read_out_of_the_red_jobs_logs():
             id="stylelint-syntax-error",
         ),
         pytest.param(
+            "2026-10-19T02:53:25.1Z src/views/SignIn.vue\n"
+            "2026-10-19T02:53:25.2Z   2: [Chinese outside the catalog] <span>确定</span>\n"
+            "2026-10-19T02:53:25.3Z \n"
+            "2026-10-19T02:53:25.4Z Chinese a user can read goes through the catalog:\n",
+            ["src/views/SignIn.vue"],
+            id="i18n-grouped-diagnostic",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z New scenes that are not standalone-ready (this is what the ratchet blocks):\n"
+            "2026-10-19T02:53:25.2Z   src/views/SignIn.vue: C\n"
+            "2026-10-19T02:53:25.3Z     - reads API\n"
+            "2026-10-19T02:53:25.4Z Scenes that stopped being standalone-ready (also what the ratchet blocks):\n"
+            "2026-10-19T02:53:25.5Z   src/views/Settings.vue: A -> B\n"
+            "2026-10-19T02:53:25.6Z Better than that tree says, nothing to do:\n"
+            "2026-10-19T02:53:25.7Z   src/views/Improved.vue: was debt, is standalone-ready now\n",
+            ["src/views/Settings.vue", "src/views/SignIn.vue"],
+            id="graded-static-diagnostics",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z FAIL: new debt cannot be frozen.\n"
+            "2026-10-19T02:53:25.2Z     NEW: src/views/SignIn.vue\n"
+            "2026-10-19T02:53:25.3Z     BASELINE GREW: src/views/SignIn.vue -> src/views/Form.vue (baseline line 3)\n",
+            ["src/views/Form.vue", "src/views/SignIn.vue"],
+            id="tagged-static-diagnostics",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z Better than that tree says, nothing to do:\n"
+            "2026-10-19T02:53:25.2Z   src/views/Improved.vue: is a container now; its view src/views/Form.vue is what is frozen\n"
+            "2026-10-19T02:53:25.3Z NEW: src/views/Added.vue\n",
+            [],
+            id="passing-reports-are-not-failures",
+        ),
+        pytest.param(
             "2026-10-19T02:53:25.1Z   /repo/backend/app/main.py:15:24 - warning: unused\n"
             "2026-10-19T02:53:25.2Z Run ruff check backend/app/main.py\n"
             "2026-10-19T02:53:25.3Z ##[error]Process completed with exit code 1.\n",

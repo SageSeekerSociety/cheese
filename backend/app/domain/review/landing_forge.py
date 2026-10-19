@@ -219,11 +219,13 @@ _STATIC_DIAGNOSTIC = re.compile(
     rf"^\s*(?:-->\s+)?({_SOURCE_FILE})(?:"
     r":\d+:\d+(?:\s*$|:\s*[A-Z]+\d+\b|\s+-\s+error:)"
     r"|\(\d+,\d+\):\s*error TS\d+\b"
-    r"|:\d+:\d+\s{2,}\S|:\d+\s+\S)"
+    r"|:\d+:\d+\s{2,}\S|:\d+\s+\S"
+    r"|:\s+(?:[B-Z]|A -> [B-Z])\s*$)"
 )
-#: ESLint's stylish formatter puts the path on its own line above the errors.
-_ESLINT_FILE = re.compile(rf"^\s*({_SOURCE_FILE})\s*$")
-_ESLINT_ERROR = re.compile(r"^\s+\d+:\d+\s+error\s")
+#: Grouped diagnostics put the path above location/severity or issue-label rows.
+_DIAGNOSTIC_FILE = re.compile(rf"^\s*({_SOURCE_FILE})\s*$")
+_GROUPED_ERROR = re.compile(r"^\s+(?:\d+:\d+\s+error\s|\d+:\s+\[[^]]+\]\s)")
+_TAGGED_DIAGNOSTIC = re.compile(r"^\s+(?:NEW|BASELINE GREW):\s+(.+)$")
 
 #: The step in the probe workflow whose failure alone means "the tests fail on
 #: that commit"; the workflow itself is the project's (`main_gate`).
@@ -274,23 +276,30 @@ def _failed_paths(log: str, *, tests_only: bool = False) -> list[str]:
     lint or type error in it.
     """
     found: list[str] = []
-    eslint_file: str | None = None
+    diagnostic_file: str | None = None
+    failure_report = False
     for raw in log.splitlines():
         line = _clean_log_line(raw)
         if _FAILED_LINE.search(line):
             found += [match.group(1) for match in _TEST_PATH.finditer(line)]
+            failure_report = True
+        elif not line.strip():
+            failure_report = False
         if tests_only:
             continue
         diagnostic = _STATIC_DIAGNOSTIC.match(line)
         if diagnostic:
             found.append(diagnostic.group(1))
-        header = _ESLINT_FILE.fullmatch(line)
+        tagged = _TAGGED_DIAGNOSTIC.match(line) if failure_report else None
+        if tagged:
+            found += [match.group(1) for match in _TEST_PATH.finditer(tagged.group(1))]
+        header = _DIAGNOSTIC_FILE.fullmatch(line)
         if header:
-            eslint_file = header.group(1)
-        elif eslint_file and _ESLINT_ERROR.match(line):
-            found.append(eslint_file)
+            diagnostic_file = header.group(1)
+        elif diagnostic_file and _GROUPED_ERROR.match(line):
+            found.append(diagnostic_file)
         elif not re.match(r"^\s+\d+:\d+\s+warning\s", line):
-            eslint_file = None
+            diagnostic_file = None
     return found
 
 
