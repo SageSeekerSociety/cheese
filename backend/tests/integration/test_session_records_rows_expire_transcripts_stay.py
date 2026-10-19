@@ -131,6 +131,43 @@ def test_a_deleted_conversations_transcript_stays_in_the_bucket(
     assert _rows(client, room) == 0
 
 
+def test_deleted_channel_records_are_hidden_before_sealing(client, tmp_path, bucket):
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    work = str(uuid.uuid4())
+    session.write(_turn(work))
+    session.drain()
+    assert session.read(turn_id=work)
+    _delete_room(client, session.ref.topic_id)
+
+    response = client.get(f"/topics/{session.ref.topic_id}/session-records")
+    assert response.status_code == 404
+    assert _rows(client, session.ref.topic_id) > 0
+    _seal(client, bucket)
+    assert work in _works_in(bucket)
+
+
+def test_sealing_keeps_database_copy_when_bucket_readback_differs(
+    client, tmp_path, bucket, monkeypatch
+):
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    work = str(uuid.uuid4())
+    session.write(_turn(work))
+    session.drain()
+    before = session.read(turn_id=work)
+    download = bucket.download
+
+    async def corrupt_readback(key):
+        return b"truncated upload"
+
+    monkeypatch.setattr(bucket, "download", corrupt_readback)
+    with pytest.raises(RuntimeError, match="verification failed"):
+        _seal(client, bucket)
+    assert session.read(turn_id=work) == before
+    monkeypatch.setattr(bucket, "download", download)
+    _seal(client, bucket)
+    assert session.read(turn_id=work) == before
+
+
 def test_a_conversation_whose_row_is_gone_keeps_its_transcript(
     client, tmp_path, monkeypatch, bucket
 ):

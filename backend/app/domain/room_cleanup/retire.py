@@ -116,19 +116,35 @@ async def _send_transcripts(operation: RoomCleanup, entry: dict) -> str | None:
     key = transcripts_key(
         operation.project_id, operation.topic_id, entry["resource_id"]
     )
-    answer = await _device_action(
-        entry["device_id"],
-        operation.project_id,
-        entry["resource_id"],
-        "send-transcripts",
-        operation.id,
-        operation.topic_id,
-        await transcripts_upload_url(key),
-    )
+    url = await transcripts_upload_url(key)
+    try:
+        answer = await _device_action(
+            entry["device_id"],
+            operation.project_id,
+            entry["resource_id"],
+            "send-transcripts",
+            operation.id,
+            operation.topic_id,
+            url,
+        )
+    except (resource_cleanup.StillRunning, DeviceOffline):
+        raise
+    except Exception as exc:
+        # A signed URL changes on every retry. The persisted failure state
+        # names the stage and resource; the first traceback keeps the cause.
+        raise RuntimeError(
+            f"transcript upload failed resource={entry['resource_id']}"
+        ) from exc
     sent = answer.get("sent") if isinstance(answer, dict) else None
     if sent is None:
         return None
-    if not await transcripts_kept(key, sent):
+    try:
+        verified = await transcripts_kept(key, sent)
+    except Exception as exc:
+        raise RuntimeError(
+            f"transcript bucket check failed resource={entry['resource_id']}"
+        ) from exc
+    if not verified:
         # i18n-exempt: a cleanup's reason for waiting, for the logs and the row
         raise RuntimeError(f"retained transcripts not kept in the bucket: {key}")
     return key
@@ -452,8 +468,16 @@ async def _sweep_once(
                             cleanup_id,
                             reason,
                         )
-                    else:
+                    elif changed:
                         logger.exception("cleanup failed operation=%s", cleanup_id)
+                    else:
+                        logger.debug(
+                            "cleanup still failing operation=%s failures=%s due_at=%s reason=%s",
+                            cleanup_id,
+                            operation.failures if operation else None,
+                            operation.due_at if operation else None,
+                            reason,
+                        )
                     counts["pending"] += 1
         finally:
             await _release(sessions, cleanup_id)
@@ -687,18 +711,30 @@ async def _advance(
         done: dict[str, object] = {"removed": True}
         if _keeps_transcripts(entry):
             done["retained"] = True
+            done["expires_at"] = (datetime.now(UTC) + TRANSCRIPT_RETENTION).isoformat()
             # Sent now, so the bucket has them from the start; one that fails
             # is sent again before the host's copy may expire. Committed
             # first: no transaction stays open while the machine sends.
             await session.commit()
+            # Record removal before sending: a failed upload retries this stage,
+            # never a removal of a home that may already belong to a new room.
+            operation.resources = [
+                {**item, **done} if item == entry else item
+                for item in operation.resources
+            ]
+            await session.commit()
+            entry = {**entry, **done}
             try:
                 done["sent"] = await _send_transcripts(operation, entry)
-            except Exception:
-                logger.warning(
-                    "retained transcripts not sent yet operation=%s resource=%s",
+            except Exception as exc:
+                changed = _held_back(operation, str(exc)[:2048])
+                logger.log(
+                    logging.ERROR if changed else logging.DEBUG,
+                    "retained transcripts upload failed operation=%s resource=%s reason=%s",
                     operation.id,
                     entry["resource_id"],
-                    exc_info=True,
+                    operation.last_error,
+                    exc_info=changed,
                 )
         operation.resources = [
             {**item, **done} if item == entry else item for item in operation.resources
@@ -711,10 +747,12 @@ async def _advance(
     )
     if any(entry.get("retained") for entry in operation.resources):
         operation.state = "retained"
-        operation.due_at = datetime.now(UTC) + TRANSCRIPT_RETENTION
+        if operation.last_error is None:
+            operation.due_at = datetime.now(UTC) + TRANSCRIPT_RETENTION
     else:
         operation.state = "complete"
-    _went_on(operation)
+    if operation.state == "complete":
+        _went_on(operation)
     # A channel someone deleted has nothing left to hold its row for. An
     # archived one waits here for whoever unarchives it.
     await _remove_deleted_room(session, operation)
@@ -728,6 +766,7 @@ async def _advance(
 
 
 async def _expire_transcripts(session, operation: RoomCleanup) -> None:
+    waiting = []
     for entry in operation.resources:
         if not entry.get("retained") or entry.get("expired"):
             continue
@@ -743,6 +782,11 @@ async def _expire_transcripts(session, operation: RoomCleanup) -> None:
             ]
             await session.commit()
             entry = {**entry, "sent": sent}
+        if expires_at := entry.get("expires_at"):
+            deadline = datetime.fromisoformat(expires_at)
+            if deadline > datetime.now(UTC):
+                waiting.append(deadline)
+                continue
         await _device_action(
             entry["device_id"],
             operation.project_id,
@@ -756,11 +800,14 @@ async def _expire_transcripts(session, operation: RoomCleanup) -> None:
             for item in operation.resources
         ]
         await session.commit()
-    operation.state = "complete"
+    operation.state = "retained" if waiting else "complete"
+    if waiting:
+        operation.due_at = min(waiting)
     _went_on(operation)
     await session.commit()
     logger.info(
-        "cleanup transcripts expired operation=%s room=%s",
+        "cleanup transcripts %s operation=%s room=%s",
+        operation.state,
         operation.id,
         operation.topic_id,
     )

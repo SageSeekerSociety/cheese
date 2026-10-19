@@ -42,6 +42,8 @@ async def session_records(
     refused rather than read as "from the start", which a caller could not tell
     from a real page."""
     place = await place_or_404(db, topic_id)
+    if place.room.deleted_at is not None:
+        raise NotFoundError(say("topicNotFound"))
     await _actor_in_place(resolver, place)
     cursor = None
     if after is not None:

@@ -354,6 +354,8 @@ async def _seal_one(
         # Uploaded before the rows go: a crash in between leaves an object
         # nothing names, never a run with nothing behind it.
         await storage.upload(io.BytesIO(body), key, "application/gzip")
+        if await storage.download(key) != body:
+            raise RuntimeError(f"session record archive verification failed: {key}")
         await db.execute(
             delete(SessionRecord).where(SessionRecord.id.in_([r.id for r in run]))
         )
