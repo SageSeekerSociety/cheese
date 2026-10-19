@@ -21,11 +21,9 @@ import {
   FEISHU_CONFIGURED,
   FEISHU_UNCONFIGURED,
   FOUND_USER,
-  MY_DEVICES,
   MY_TEAMS,
   SEARCH_TEAMS,
   team,
-  TEAM_DEVICE_ID,
   TEAM_INVITATIONS,
   TEAM_JOIN_REQUESTS,
   TEAM_MEMBERS,
@@ -177,88 +175,36 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
   {
     id: 'compute-view',
     title: 'ComputeView',
-    get about() {
-      return t('catalog.computeView.about')
-    },
+    about: '团队设备的管理和状态。示例数据。',
     file: 'src/views/teams/detail/ComputeView.vue',
     component: ComputeView,
     needs: UI_T_R,
     args: {
-      scope: 'team',
+      devices: DEVICES,
+      canManage: true,
       loading: false,
       loadFailed: false,
       reason: null,
       forbidden: false,
-      addable: MY_DEVICES,
       busy: null,
-      myDevices: MY_DEVICES,
-      devices: DEVICES,
-      onlineCount: 1,
-      teamId: 1,
-      myDeviceIds: new Set([TEAM_DEVICE_ID]),
+      desktop: true,
+      command:
+        'curl -fsSL https://example.test/connector/install.sh | sh\ncheesehost --profile team-1 link connect https://example.test/connector',
+      windowsCommand:
+        'irm https://example.test/connector/install.ps1 | iex\ncheesehost --profile team-1 link connect https://example.test/connector',
       error: null,
     },
     states: [
+      { name: '管理员', note: '团队管理员管理每次接入。', props: {}, expectSelector: 'input' },
+      { name: '成员', note: '成员只读。', props: { canManage: false }, expect: '书房的 Mac mini' },
+      { name: '读取中', note: '正在读取。', props: { loading: true }, expectSelector: '.v-progress-circular' },
       {
-        get name() {
-          return t('catalog.computeView.s1.name')
-        },
-        get note() {
-          return t('catalog.computeView.s1.note')
-        },
-        props: {},
-        expect: '书房的 Mac mini',
-      },
-      {
-        get name() {
-          return t('catalog.computeView.s2.name')
-        },
-        get note() {
-          return t('catalog.computeView.s2.note')
-        },
-        props: { loading: true, devices: [] },
-        expectSelector: '.v-progress-circular',
-      },
-      {
-        get name() {
-          return t('catalog.computeView.s3.name')
-        },
-        get note() {
-          return t('catalog.computeView.s3.note')
-        },
-        props: { loadFailed: true, reason: '服务暂时不可用', devices: [] },
+        name: '读取失败',
+        note: '提供重试。',
+        props: { loadFailed: true, reason: '服务暂时不可用' },
         expect: '服务暂时不可用',
       },
-      {
-        get name() {
-          return t('catalog.computeView.s4.name')
-        },
-        get note() {
-          return t('catalog.computeView.s4.note')
-        },
-        props: { loadFailed: true, reason: null, forbidden: true, devices: [] },
-        expect: '你没有权限查看',
-      },
-      {
-        get name() {
-          return t('catalog.computeView.s5.name')
-        },
-        get note() {
-          return t('catalog.computeView.s5.note')
-        },
-        props: { devices: [], addable: [], myDevices: [], onlineCount: 0 },
-        expect: '还没有自有设备',
-      },
-      {
-        get name() {
-          return t('catalog.computeView.s6.name')
-        },
-        get note() {
-          return t('catalog.computeView.s6.note')
-        },
-        props: { error: '这台设备已经被别的团队占用了' },
-        expect: '这台设备已经被别的团队占用了',
-      },
+      { name: '暂无设备', note: '没有接入。', props: { devices: [] }, expect: '暂无设备' },
     ],
   },
   {

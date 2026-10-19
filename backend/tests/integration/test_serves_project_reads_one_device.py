@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.domain.device.models import DeviceRow, DeviceTeamRow, HostedDeviceRow
+from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.device.wiring import sql_device_service
 from app.domain.project.models import Project
 from app.domain.user.models import User
@@ -40,6 +40,7 @@ async def _project_with_machines(session, count):
             device_id=did,
             name=did,
             token=f"tok-{did}",
+            team_id=team_id,
             owner_user_id=owner.id,
             created_at=datetime.now(UTC),
         )
@@ -49,7 +50,6 @@ async def _project_with_machines(session, count):
     session.add_all(
         HostedDeviceRow(device_id=did, owner_user_id=owner.id) for did in ids
     )
-    session.add_all(DeviceTeamRow(device_id=did, team_id=team_id) for did in ids)
     await session.flush()
     return project.id, ids
 

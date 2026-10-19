@@ -24,7 +24,7 @@ import pytest
 from sqlalchemy import MetaData, Table, event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
-from app.domain.device.models import DeviceProjectRow, DeviceRow, DeviceTeamRow
+from app.domain.device.models import DeviceRow
 from app.domain.device.repository import Device
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.user.models import User
@@ -41,7 +41,10 @@ async def device_engine():
     only, and one with neither."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     metadata = MetaData()
-    for model in (DeviceRow, DeviceProjectRow, DeviceTeamRow, User):
+    from sqlalchemy import Column, Integer
+
+    Table("team", metadata, Column("id", Integer, primary_key=True))
+    for model in (DeviceRow, User):
         cast(Table, model.__table__).to_metadata(metadata)
     try:
         async with engine.begin() as connection:
@@ -53,6 +56,7 @@ async def device_engine():
                         device_id="device-1",
                         name="alpha",
                         token="token-1",
+                        team_id=7,
                         owner_user_id=1,
                         created_at=NOW,
                     ),
@@ -60,6 +64,7 @@ async def device_engine():
                         device_id="device-2",
                         name="beta",
                         token="token-2",
+                        team_id=7,
                         owner_user_id=2,
                         created_at=NOW,
                     ),
@@ -67,21 +72,13 @@ async def device_engine():
                         device_id="device-3",
                         name="gamma",
                         token="token-3",
+                        team_id=7,
                         owner_user_id=1,
                         created_at=NOW,
                     ),
                 ]
             )
             await session.flush()
-            session.add_all(
-                [
-                    DeviceProjectRow(device_id="device-1", project_id=PROJECT_TWO),
-                    DeviceProjectRow(device_id="device-1", project_id=PROJECT_ONE),
-                    DeviceProjectRow(device_id="device-2", project_id=PROJECT_ONE),
-                    DeviceTeamRow(device_id="device-1", team_id=7),
-                    DeviceTeamRow(device_id="device-1", team_id=3),
-                ]
-            )
             await session.commit()
             yield session, engine
     finally:
@@ -115,8 +112,7 @@ def _comparable(device: Device) -> dict:
         "token": device.token,
         "owner_user_id": device.owner_user_id,
         "created_at": device.created_at,
-        "project_ids": sorted(device.project_ids, key=str),
-        "team_ids": sorted(device.team_ids),
+        "team_id": device.team_id,
         "supply": device.supply,
         "last_seen_at": device.last_seen_at,
     }

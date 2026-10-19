@@ -203,7 +203,8 @@ class LocalDirectoryService:
         self,
         grant_id: uuid.UUID,
         *,
-        owner_user_id: int,
+        actor_user_id: int,
+        device_id: str,
     ) -> DirectoryGrant | None:
         """Revoke one grant. Idempotent, and effective on the next question asked.
 
@@ -211,7 +212,7 @@ class LocalDirectoryService:
         trail whose grants have been deleted cannot say 为哪件事.
         """
         grant = await self._repo.get_grant(grant_id)
-        if grant is None or grant.owner_user_id != owner_user_id:
+        if grant is None or grant.device_id != device_id:
             return None
         if grant.revoked:
             return grant
@@ -220,25 +221,19 @@ class LocalDirectoryService:
         revoked = replace(
             grant,
             revoked_at=datetime.now(UTC),
-            revoked_by_user_id=owner_user_id,
+            revoked_by_user_id=actor_user_id,
         )
         await self._repo.save_grant(revoked)
         return revoked
 
     async def list_grants(
         self,
-        owner_user_id: int,
+        device_id: str,
         *,
-        device_id: str | None = None,
         include_revoked: bool = False,
     ) -> list[DirectoryGrant]:
-        if device_id is not None:
-            grants = await self._repo.list_grants_for_device(
-                device_id, include_revoked=include_revoked
-            )
-            return [g for g in grants if g.owner_user_id == owner_user_id]
-        return await self._repo.list_grants_for_owner(
-            owner_user_id, include_revoked=include_revoked
+        return await self._repo.list_grants_for_device(
+            device_id, include_revoked=include_revoked
         )
 
     async def effective_grants(

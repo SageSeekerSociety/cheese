@@ -5,12 +5,14 @@ owner and mints a token, but grants NO agent identity. The agent a screen runs a
 resolved per project/topic at turn time, not stored on the device.
 """
 
+from tests.support.devices import enrollment_team
+
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import NotFoundError
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService, DeviceStatus
 from app.domain.device.supply import Supply
@@ -41,6 +43,7 @@ async def test_start_then_poll_pending_then_approved():
         code,
         owner_user_id=owner,
         supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, owner),
     )
     poll = await service.poll(code)
     assert poll["status"] == DeviceStatus.APPROVED
@@ -59,6 +62,7 @@ async def test_approve_name_override_else_keeps_cli_name():
         code1,
         owner_user_id=uuid.uuid4(),
         supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, uuid.uuid4()),
     )
     assert d1.name == "Andys-MacBook-Pro-510"
     # ...a name from the approval page overrides it.
@@ -68,6 +72,7 @@ async def test_approve_name_override_else_keeps_cli_name():
         owner_user_id=uuid.uuid4(),
         supply=Supply.self_hosted,
         name="  andy-studio  ",
+        team_id=await enrollment_team(service, uuid.uuid4()),
     )
     assert d2.name == "andy-studio"
 
@@ -82,6 +87,7 @@ async def test_start_generates_a_real_name_never_unnamed():
             code,
             owner_user_id=uuid.uuid4(),
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(service, uuid.uuid4()),
         )
         assert device.name and device.name != "unnamed"
 
@@ -93,6 +99,7 @@ async def test_verify_token_identifies_device_only_when_valid():
         code,
         owner_user_id=uuid.uuid4(),
         supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, uuid.uuid4()),
     )
     assert (await service.verify_token(device.token)).device_id == device.device_id
     assert await service.verify_token("nope") is None
@@ -107,11 +114,13 @@ async def test_approve_is_idempotent_same_token():
         code,
         owner_user_id=owner,
         supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, owner),
     )
     d2 = await service.approve(
         code,
         owner_user_id=owner,
         supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, owner),
     )
     assert d1.device_id == d2.device_id
     assert d1.token == d2.token  # never mints a second credential
@@ -128,81 +137,7 @@ async def test_expired_code_is_rejected():
             code,
             owner_user_id=uuid.uuid4(),
             supply=Supply.self_hosted,
-        )
-
-
-async def test_project_binding_and_ownership_guard():
-    service, _ = _service()
-    owner, other = uuid.uuid4(), uuid.uuid4()
-    project = uuid.uuid4()
-    code = await service.start("m")
-    device = await service.approve(
-        code,
-        owner_user_id=owner,
-        supply=Supply.self_hosted,
-    )
-
-    assert not await service.serves_project(device.device_id, project)
-    await service.assign_to_project(device.device_id, project, actor_user_id=owner)
-    assert await service.serves_project(device.device_id, project)
-    served = await service.list_devices_for_project(project)
-    assert [d.device_id for d in served] == [device.device_id]
-
-    # A non-owner cannot manage the device's project assignments.
-    with pytest.raises(ForbiddenError):
-        await service.assign_to_project(
-            device.device_id, uuid.uuid4(), actor_user_id=other
-        )
-
-    await service.unassign_from_project(device.device_id, project, actor_user_id=owner)
-    assert not await service.serves_project(device.device_id, project)
-
-
-async def test_human_management_never_lists_or_mutates_a_cloud_endpoint():
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock, MagicMock
-
-    from app.api.routes.connector.connections import register_device_for_team
-    from app.api.routes.connector.schemas import BindTeamRequest
-
-    service, _ = _service()
-    owner, team_id = uuid.uuid4(), 7
-
-    async def _enroll(supply: Supply):
-        return await service.approve(
-            await service.start(supply.value),
-            owner_user_id=owner,
-            supply=supply,
-        )
-
-    hosted = await _enroll(Supply.self_hosted)
-    cloud = await _enroll(Supply.cloud)
-    for device in (hosted, cloud):
-        await service.assign_to_team(device.device_id, team_id, actor_user_id=owner)
-
-    assert [d.device_id for d in await service.list_owned(owner)] == [hosted.device_id]
-    assert [d.device_id for d in await service.list_devices_for_team(team_id)] == [
-        hosted.device_id
-    ]
-    with pytest.raises(NotFoundError):
-        await service.rename_owned(cloud.device_id, "no", actor_user_id=owner)
-    with pytest.raises(NotFoundError):
-        await service.delete_owned(cloud.device_id, actor_user_id=owner)
-    with pytest.raises(NotFoundError):
-        await service.unassign_from_team(cloud.device_id, team_id, actor_user_id=owner)
-
-    resolver = SimpleNamespace(
-        resolve=AsyncMock(
-            return_value=SimpleNamespace(authenticated=True, user_id=owner)
-        )
-    )
-    with pytest.raises(NotFoundError):
-        await register_device_for_team(
-            cloud.device_id,
-            BindTeamRequest(team_id=team_id),
-            resolver,
-            service,
-            MagicMock(),
+            team_id=await enrollment_team(service, uuid.uuid4()),
         )
 
 
@@ -213,9 +148,10 @@ async def test_delete_owned_forgets_the_device():
         await service.start("laptop"),
         owner_user_id=owner,
         supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, owner),
     )
 
-    await service.delete_owned(device.device_id, actor_user_id=owner)
+    await service.remove(device.device_id, actor_user_id=owner)
 
     assert await service.get_device(device.device_id) is None
 
@@ -228,6 +164,7 @@ async def test_get_devices_answers_the_ids_that_exist_and_omits_the_rest():
             await service.start(name),
             owner_user_id=owner,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(service, owner),
         )
         for name in ("one", "two")
     ]

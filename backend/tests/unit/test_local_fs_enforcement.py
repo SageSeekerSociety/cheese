@@ -212,7 +212,7 @@ async def test_a_revoke_committed_while_a_push_is_in_flight_reaches_the_machine(
     class RevokedMeanwhile(FakeLink):
         async def push_local_fs_grants(self, device_id, grants, *, timeout=20):
             if not self.pushed:
-                await service.revoke(paper.id, owner_user_id=OWNER)
+                await service.revoke(paper.id, actor_user_id=OWNER, device_id=DEVICE)
             return await super().push_local_fs_grants(
                 device_id, grants, timeout=timeout
             )
@@ -241,7 +241,7 @@ async def test_a_revoke_committed_while_an_unanswered_push_is_out_reaches_the_ma
         async def push_local_fs_grants(self, device_id, grants, *, timeout=20):
             if not self.pushed:
                 self.pushed.append((device_id, grants))
-                await service.revoke(paper.id, owner_user_id=OWNER)
+                await service.revoke(paper.id, actor_user_id=OWNER, device_id=DEVICE)
                 raise TimeoutError
             return await super().push_local_fs_grants(
                 device_id, grants, timeout=timeout
@@ -307,7 +307,7 @@ async def test_revoking_pushes_an_emptied_set():
     await push_grants(service, link, DEVICE)
     assert len(link.pushed[0][1]) == 1
 
-    await service.revoke(grant.id, owner_user_id=OWNER)
+    await service.revoke(grant.id, actor_user_id=OWNER, device_id=DEVICE)
     outcome = await push_grants(service, link, DEVICE)
 
     assert outcome.delivered is True
@@ -325,7 +325,7 @@ async def test_a_revoked_grant_is_not_sent_again():
         mode=GrantMode.READ,
         scope=GrantScope.USER,
     )
-    await service.revoke(grant.id, owner_user_id=OWNER)
+    await service.revoke(grant.id, actor_user_id=OWNER, device_id=DEVICE)
     link = FakeLink()
     await push_grants(service, link, DEVICE)
     assert link.pushed[0][1] == []

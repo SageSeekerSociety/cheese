@@ -79,10 +79,8 @@ async def test_running_sessions_roles_visibility_and_completion(
         device = await devices.approve(
             await devices.start("workstation"),
             owner_user_id=user.id,
+            team_id=project["team_id"],
             supply=Supply.self_hosted,
-        )
-        await devices.assign_to_team(
-            device.device_id, project["team_id"], actor_user_id=user.id
         )
         sessions = AgentSessionService(db)
         db.add(

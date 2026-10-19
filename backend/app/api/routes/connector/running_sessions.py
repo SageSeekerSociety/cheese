@@ -24,13 +24,7 @@ async def device_sessions(device_id: str, resolver: ActorResolverDep, db: DbSess
     device = await sql_device_service(db).get_device(device_id)
     if device is None:
         raise NotFoundError()
-    teams = team_service(db)
-    visible = False
-    for team_id in device.team_ids:
-        if await teams.is_team_member(team_id, actor.user_id):
-            visible = True
-            break
-    if not visible:
+    if not await team_service(db).is_team_member(device.team_id, actor.user_id):
         raise ForbiddenError()
     placed = await running_on(db, device_id)
     readable = set()

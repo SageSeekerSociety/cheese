@@ -27,7 +27,7 @@ from app.domain.machine import lifecycle
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.lifecycle import SandboxLifecycle
 from app.domain.machine.models import SandboxHome
-from tests.integration.test_switch_pushes_first import _machines, _owner_id, _room
+from tests.integration.test_switch_pushes_first import _machines, _room
 
 pytestmark = pytest.mark.anyio
 
@@ -36,7 +36,7 @@ async def _on_alices_computers(client, monkeypatch):
     """A room whose agent works in a sandbox on alice's computers, placed by
     one tool call."""
     room = await _room(client)
-    spec = f"devices_of:{await _owner_id(client)}"
+    spec = "team_devices"
     async with client.test_factory() as db:
         await AgentSessionService(db).set_environment(
             room.conversation_id,

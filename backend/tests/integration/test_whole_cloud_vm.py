@@ -9,6 +9,8 @@ session has been idle, but never before its work is pushed. Users see the
 environment, never the machine.
 """
 
+from tests.support.devices import enrollment_team
+
 import ast
 import json
 import re
@@ -197,7 +199,10 @@ def _up(case, seat) -> str:
             owner = await IdentityService(db).ensure_agent_user(handle=HOST_OWNER)
             devices = sql_device_service(db)
             device = await devices.approve(
-                await devices.start("pool"), owner_user_id=owner.id, supply=Supply.cloud
+                await devices.start("pool"),
+                owner_user_id=owner.id,
+                supply=Supply.cloud,
+                team_id=await enrollment_team(devices, owner.id),
             )
             repo = CloudHostRepository(db)
             home = await repo.current_home(seat.session)

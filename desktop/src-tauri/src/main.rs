@@ -48,6 +48,7 @@ const SERVER_PERMISSIONS: &[&str] = &[
     "allow-cancel-connect",
     "allow-this-device",
     "allow-prevent-sleep",
+    "allow-this-devices",
     "allow-claude-login",
     "allow-cancel-claude-login",
     "allow-claude-logout",
@@ -99,6 +100,7 @@ async fn connect_this_machine(
     app: tauri::AppHandle,
     running: State<'_, connect::Running>,
     known_device_ids: Vec<String>,
+    team_id: u64,
     progress: Channel<Progress>,
 ) -> Result<(), connect::Failure> {
     let resources = app
@@ -109,7 +111,7 @@ async fn connect_this_machine(
     let percent = |value: u8| drop(progress.send(Progress::Percent { value }));
     let code = |text: &str| drop(progress.send(Progress::Code { text: text.into() }));
     let events = connect::Events { step: &step, percent: &percent, code: &code };
-    connect::connect(ORIGIN, &resources, &known_device_ids, &running, &events).await
+    connect::connect(ORIGIN, &resources, &known_device_ids, team_id, &running, &events).await
 }
 
 /// Which device this computer is, so the page can tell whether it is already connected.
@@ -146,6 +148,9 @@ async fn machine_sleep_setting(path: &std::path::Path, enabled: Option<bool>) ->
     }
     Ok(preference.prevent_sleep.unwrap_or(true))
 }
+
+#[tauri::command]
+async fn this_devices() -> Vec<String> { connect::stored_device_ids().await }
 
 #[tauri::command]
 fn cancel_connect(running: State<'_, connect::Running>) {
@@ -313,6 +318,7 @@ fn main() {
             cancel_connect,
             this_device,
             prevent_sleep,
+            this_devices,
             claude_login,
             cancel_claude_login,
             claude_logout,
@@ -384,7 +390,7 @@ fn main() {
             // the title bar lies over the page, the app's own version, and what else
             // the app can do for it.
             let about = format!(
-                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, version: {version:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\", \"updates\", \"device\", \"modelService\"] }};",
+                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, version: {version:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\", \"updates\", \"device\", \"modelService\", \"teamEnrollment\"] }};",
                 version = app.package_info().version.to_string(),
                 start = serde_json::to_string(&start).unwrap_or_else(|_| "null".into()),
             );

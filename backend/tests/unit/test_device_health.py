@@ -8,6 +8,8 @@ machine, what clears it, and what happens to a machine that has been judged.
 Behaviour only — driven through ``DeviceService`` with the in-memory repo, no DB.
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -53,8 +55,11 @@ async def _device_on_project(
         code,
         owner_user_id=OWNER,
         supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, OWNER),
     )
-    await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
+    await place_in_project_team(
+        service, device.device_id, project_id, actor_user_id=OWNER
+    )
     return device.device_id
 
 
