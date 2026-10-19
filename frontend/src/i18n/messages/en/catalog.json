@@ -1157,6 +1157,10 @@
     }
   },
   "thisDeviceView": {
+    "sleepOff": {
+      "name": "No sessions, sleep prevention off",
+      "note": "The session list is empty and the switch is off. The computer can sleep when idle."
+    },
     "about": "Account settings 'This device': whether the computer the desktop app runs on is connected, what it's called, which teams it's offered to, the owner's own Claude Code, and disconnecting the device.",
     "s1": {
       "name": "Still asking the connection state",

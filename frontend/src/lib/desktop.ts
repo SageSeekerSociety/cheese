@@ -78,6 +78,7 @@ export interface DesktopBridge {
   connectThisMachine: (options: ConnectOptions) => Promise<void>
   cancelConnect: () => Promise<void>
   thisDevice: () => Promise<string | null>
+  preventSleep: (enabled?: boolean) => Promise<boolean>
   /** Logs in the login this computer calls `loginId` again, or adds one when it is null. */
   claudeLogin: (console: boolean, loginId: string | null, onStep: (step: ClaudeLoginStep) => void) => Promise<void>
   cancelClaudeLogin: () => Promise<void>
@@ -130,6 +131,9 @@ export function desktopBridge(): DesktopBridge | null {
     },
     async thisDevice() {
       return (await invoke('this_device')) as string | null
+    },
+    async preventSleep(enabled) {
+      return (await invoke('prevent_sleep', { enabled: enabled ?? null })) as boolean
     },
     async claudeLogin(console, loginId, onStep) {
       const progress = new Channel<Progress>()

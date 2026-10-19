@@ -47,6 +47,7 @@ const SERVER_PERMISSIONS: &[&str] = &[
     "allow-connect-this-machine",
     "allow-cancel-connect",
     "allow-this-device",
+    "allow-prevent-sleep",
     "allow-claude-login",
     "allow-cancel-claude-login",
     "allow-claude-logout",
@@ -115,6 +116,17 @@ async fn connect_this_machine(
 #[tauri::command]
 async fn this_device() -> Option<String> {
     connect::stored_device_id().await
+}
+
+#[tauri::command]
+async fn prevent_sleep(enabled: Option<bool>) -> Result<bool, String> {
+    let mut cmd = platform::cheesehost();
+    cmd.arg("prevent-sleep");
+    if let Some(enabled) = enabled { cmd.arg(if enabled { "on" } else { "off" }); }
+    let out = cmd.output().await.map_err(|e| e.to_string())?;
+    if !out.status.success() { return Err(String::from_utf8_lossy(&out.stderr).into_owned()); }
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    value.get("prevent_sleep").and_then(|v| v.as_bool()).ok_or_else(|| "Missing sleep preference".into())
 }
 
 #[tauri::command]
@@ -279,6 +291,7 @@ fn main() {
             connect_this_machine,
             cancel_connect,
             this_device,
+            prevent_sleep,
             claude_login,
             cancel_claude_login,
             claude_logout,

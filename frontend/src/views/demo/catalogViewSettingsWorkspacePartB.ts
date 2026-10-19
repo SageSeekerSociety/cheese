@@ -254,6 +254,23 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
       online: true,
       connecting: false,
       name: '工作站',
+      sessions: [
+        {
+          session_id: 'preview-session',
+          agent_name: '代码助手',
+          project_id: 'preview-project',
+          project_name: '校园协作',
+          team_id: 2,
+          team_name: '产品团队',
+          conversation_id: 'preview-task',
+          conversation_kind: 'task',
+          conversation_title: '整理项目文档',
+          room_id: 'preview-room',
+          roles: ['center', 'executor'],
+          since: '2026-10-19T10:00:00Z',
+        },
+      ],
+      preventSleep: true,
       teams: DEVICE_TEAMS,
       teamIds: [2],
       claudeLoggedIn: true,
@@ -329,6 +346,16 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
         props: { error: '这台设备的接入状态没读出来' },
         expect: '这台设备的接入状态没读出来',
         expectSelector: '[role="alert"]',
+      },
+      {
+        get name() {
+          return t('catalog.thisDeviceView.sleepOff.name')
+        },
+        get note() {
+          return t('catalog.thisDeviceView.sleepOff.note')
+        },
+        props: { sessions: [], preventSleep: false },
+        expectSelector: '.v-selection-control:not(.v-selection-control--dirty)',
       },
     ],
   },

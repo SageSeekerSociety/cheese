@@ -5,13 +5,18 @@
  */
 import { computed, onMounted, watch } from 'vue'
 
+import { useDeviceSessions } from '@/composables/useDeviceSessions'
 import { useThisDevice } from '@/composables/useThisDevice'
 
 import { deviceFlow, startConnecting } from '@/lib/desktop'
 import ThisDeviceView from '@/views/user/settings/ThisDeviceView.vue'
 
 const here = useThisDevice()
-onMounted(here.load)
+const running = useDeviceSessions(() => (here.device.value ? [here.device.value.device_id] : []))
+onMounted(async () => {
+  await here.load()
+  await running.load()
+})
 
 // 从这一页接入的，接好后这一页跟着换成已接入的样子。
 watch(
@@ -26,6 +31,10 @@ const connecting = computed(() => deviceFlow.open && deviceFlow.stage === 'progr
 
 <template>
   <ThisDeviceView
+    :sessions="running.sessions.value"
+    :prevent-sleep="running.preventSleep.value"
+    :sleep-saving="running.saving.value"
+    :sessions-error="running.error.value"
     :loading="here.loading.value && !here.device.value"
     :connected="!!here.device.value"
     :online="!!here.device.value?.online"
@@ -39,6 +48,7 @@ const connecting = computed(() => deviceFlow.open && deviceFlow.stage === 'progr
     :claude-state="here.claudeLogin.value"
     :can-use-model-service="here.canUseModelService"
     :error="here.error.value"
+    @prevent-sleep="running.setPreventSleep"
     @connect="startConnecting"
     @rename="here.rename"
     @teams="here.setTeams"

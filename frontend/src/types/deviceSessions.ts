@@ -1,5 +1,20 @@
 import type { Environment } from './compute'
 
+export interface RunningDeviceSession {
+  session_id: string
+  agent_name: string
+  project_id: string
+  project_name: string
+  team_id: number
+  team_name: string
+  conversation_id: string
+  conversation_kind: 'room' | 'task' | 'thread'
+  conversation_title: string
+  room_id: string
+  roles: Array<'center' | 'executor'>
+  since: string
+}
+
 // One agent session on a self-hosted device, as the bulk switch lists it; `working` = mid-turn, left alone.
 export interface DeviceSession {
   id: string
