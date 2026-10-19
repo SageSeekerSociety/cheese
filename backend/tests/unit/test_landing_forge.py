@@ -21,7 +21,13 @@ from app.domain.review.landing_forge import (
     Check,
     ForgeUnavailable,
     GitHubLandingReads,
+    gate_run,
 )
+from app.core.config import settings as platform
+from app.domain.review.main_gate import PLATFORM_GATE_NAMES, MainGate, gate_for
+
+#: The name the platform's own repository gives its batch gate.
+GATE = PLATFORM_GATE_NAMES.check
 
 MERGED = "m" * 40
 SINCE = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
@@ -127,10 +133,11 @@ def _reads_with(handle):
         "r",
         transport=httpx.MockTransport(handle),
         branch="main",
+        gate=PLATFORM_GATE_NAMES,
     )
 
 
-def _gate_run(status: str, conclusion: str | None, name: str = "CI required"):
+def _gate_run(status: str, conclusion: str | None, name: str = GATE):
     return {
         "name": name,
         "status": status,
@@ -327,7 +334,7 @@ def test_a_rerun_that_passed_wins_over_the_red_it_replaced():
         Check("CI required", "completed", "failure", "", suite=1),
         Check("CI required", "completed", "success", "", suite=1),
     ]
-    assert gate_run(red_then_green).conclusion == "success"
+    assert gate_run(red_then_green, GATE).conclusion == "success"
 
 
 def test_a_red_gate_beats_a_cancelled_one_whatever_the_order():
@@ -343,7 +350,7 @@ def test_a_red_gate_beats_a_cancelled_one_whatever_the_order():
             Check("CI required", "completed", "cancelled", "", suite=1),
         ],
     ):
-        assert gate_run(runs).conclusion == "failure"
+        assert gate_run(runs, GATE).conclusion == "failure"
 
 
 def test_a_neutral_gate_counts_as_a_pass():
@@ -355,7 +362,7 @@ def test_a_neutral_gate_counts_as_a_pass():
         Check("CI required", "completed", "failure", "", suite=1),
         Check("CI required", "completed", "neutral", "", suite=1),
     ]
-    assert gate_run(runs).conclusion == "neutral"
+    assert gate_run(runs, GATE).conclusion == "neutral"
 
 
 # --- the culprit probe -------------------------------------------------------
@@ -375,7 +382,12 @@ class _ActionsTokens(_Tokens):
 
 
 def _probe_reads(
-    *, actions: str | None = "write", runs=None, steps=(), status="completed"
+    *,
+    actions: str | None = "write",
+    runs=None,
+    steps=(),
+    status="completed",
+    gate: MainGate | None = None,
 ):
     posts: list[dict] = []
 
@@ -413,6 +425,7 @@ def _probe_reads(
         "r",
         transport=httpx.MockTransport(handle),
         branch="main",
+        gate=PLATFORM_GATE_NAMES if gate is None else gate,
     )
     return reads, posts
 
@@ -470,7 +483,64 @@ def test_the_named_tests_step_decides_the_verdict():
 def test_a_break_before_the_tests_is_unknown():
     assert _verdict([("install backend dependencies", "failure")]) == "unknown"
     assert _verdict([("run the named tests", "skipped")]) == "unknown"
+
+
+def test_a_run_still_going_is_not_a_verdict():
+    """Waiting is not judging: a search that read this as ``unknown`` would
+    stop at its first probe, before the tests had run at all."""
     assert (
         _verdict([("run the named tests", "success")], status="in_progress")
-        == "unknown"
+        == "running"
     )
+
+
+def test_a_project_names_what_its_repository_calls_the_gate():
+    gate = gate_for(
+        {
+            "main_gate": {
+                "check": "gate",
+                "green_ref": "green",
+                "probe_workflow": "probe.yml",
+            }
+        },
+        repo="someone/else",
+    )
+    assert (gate.check, gate.green_ref, gate.probe_workflow) == (
+        "gate",
+        "green",
+        "probe.yml",
+    )
+
+
+def test_only_the_platforms_own_repository_gets_the_platform_names():
+    """Every other repository's CI is unknown to the platform: no gate name,
+    no green mark, no probe workflow — so no probe is ever dispatched there."""
+    assert gate_for({}, repo=platform.platform_repository) == PLATFORM_GATE_NAMES
+    assert gate_for(None, repo="someone/else") == MainGate()
+
+
+def test_half_a_gate_is_not_a_gate():
+    """An empty name would read a check nobody chose; absent is the safe read."""
+    assert gate_for({"main_gate": {"check": "   "}}, repo="someone/else") == MainGate()
+
+
+def test_a_repository_with_no_such_check_has_no_batch_gate():
+    """A project that never configured one: the batch reads find no gate, and
+    every caller falls back to judging each merge on its own. The nameless run
+    is the one that would be mistaken for a gate, so it is what the case uses."""
+    assert gate_run([Check("", "completed", "failure", "", suite=1)]) is None
+    assert (
+        gate_run([Check("some other check", "completed", "failure", "", suite=1)])
+        is None
+    )
+
+
+def test_a_repository_without_a_probe_workflow_dispatches_nothing():
+    """Only a repository that has the workflow can be probed; anywhere else the
+    batch is attributed the way it was before the search existed."""
+    reads, posts = _probe_reads(
+        runs=[{"id": 7, "name": "culprit-bisect", "display_title": "culprit n"}],
+        gate=MainGate(),
+    )
+    assert asyncio.run(reads.dispatch_bisect("a" * 40, ["t.py"], "n")) is None
+    assert posts == []

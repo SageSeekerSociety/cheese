@@ -70,3 +70,18 @@ def test_every_probe_failing_names_nobody_when_the_base_fails_too():
 def test_the_oldest_commit_is_named_when_the_base_passes():
     result, _ = _run(COMMITS, lambda sha: "pass" if sha == "b0" else "fail", base="b0")
     assert result.culprit == "c0"
+
+
+def test_the_base_is_probed_once_and_the_search_is_over():
+    """A passing base answers the oldest commit. Probing it again would spend
+    a run to re-ask what was just decided, and a flaky second answer could take
+    the culprit back."""
+    seen: list[str] = []
+
+    async def probe(sha):
+        seen.append(sha)
+        return "pass" if sha == "b0" else "fail"
+
+    result = asyncio.run(bisect(COMMITS, probe, base="b0"))
+    assert result.culprit == "c0"
+    assert seen.count("b0") == 1

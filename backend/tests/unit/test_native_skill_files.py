@@ -14,8 +14,10 @@ import pytest
 from app.domain.skill_library import (
     _NATIVE_SKILL_SRC,
     _SHIPPED_NATIVE_SKILLS,
+    RESERVED_SKILL_NAMES,
     SKILL_FILE_SUFFIXES,
     native_skill_files,
+    shipped_skill_names,
 )
 
 
@@ -104,3 +106,8 @@ def test_the_specialist_files_are_named_from_the_index():
             skill = name.split("/references/")[0]
             index = shipped[f"{skill}/SKILL.md"]
             assert Path(name).name in index, f"{name} 在 SKILL.md 里没有入口"
+
+
+def test_a_project_skill_cannot_take_the_name_of_one_the_platform_ships():
+    """项目技能和平台技能同名，会话里只剩一份，另一份的说明悄悄没了。"""
+    assert set(shipped_skill_names()) <= RESERVED_SKILL_NAMES

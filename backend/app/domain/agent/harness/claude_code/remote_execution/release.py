@@ -279,7 +279,7 @@ def release_abandoned_views():
 
 def sources():
     # deferred-import: this file also runs on the machine, with no `app` package
-    from app.domain.agent import executor_transport, pr_creation
+    from app.domain.agent import executor_transport, pr_creation, task_checkout
 
     # deferred-import: this file also runs on the machine, with no `app` package
     from app.domain.agent.harness.driven import mcp_gateway
@@ -326,6 +326,8 @@ def sources():
                 Path(__file__).resolve().parents[6] / "sandbox/cheese"
             ).read_text(),
             "executor_transport.py": Path(executor_transport.__file__).read_text(),
+            # The transport's own reads it from beside itself.
+            "task_checkout.py": Path(task_checkout.__file__).read_text(),
             "pr_creation.py": Path(pr_creation.__file__).read_text(),
             # The door its Claude Code reaches the project's MCP servers by.
             "mcp_gateway.py": Path(mcp_gateway.__file__).read_text(),

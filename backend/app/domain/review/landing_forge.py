@@ -32,6 +32,7 @@ from app.domain.review.github_pr.failure_logs import (
     _clean_log_line,
     _download_log_tail,
 )
+from app.domain.review.main_gate import MainGate, main_gate_for
 from app.domain.review.superseded_runs import actions_job_id
 
 logger = logging.getLogger("cheesex.review.landing_forge")
@@ -63,16 +64,6 @@ class Deployment:
     url: str
 
 
-#: The check run the batched main gate aggregates under: a literal in
-#: `required-ci.yml`, and the name branch protection requires (#4249).
-BATCH_GATE = "CI required"
-
-#: Where the batched gate's last green result is kept. `required-ci.yml` moves
-#: it after a green run on main; a red one leaves it, so the next run covers
-#: both.
-MAIN_GREEN_REF = "main-green"
-
-
 @dataclass(frozen=True, slots=True)
 class CommitChange:
     """One commit a batch covers, and what it changed."""
@@ -100,6 +91,11 @@ class BatchCommits:
 
 
 class LandingReads(Protocol):
+    @property
+    def main_gate(self) -> MainGate:
+        """What this repository calls the pieces of its batched main gate."""
+        ...
+
     async def merge_sha(self, pr_number: int) -> str | None: ...
     async def checks(self, sha: str) -> list[Check]: ...
     async def parent(self, sha: str) -> str | None: ...
@@ -150,9 +146,13 @@ class LandingReads(Protocol):
         ...
 
     async def bisect_verdict(self, run_id: str) -> str:
-        """``pass``, ``fail`` or ``unknown`` for a probe run. Only the step that
-        runs the named tests failing is ``fail``; a run still going, or one
-        that broke anywhere else, is ``unknown``."""
+        """``pass``, ``fail``, ``unknown`` or ``running`` for a probe run.
+
+        Only the step that runs the named tests decides: failing is ``fail``,
+        passing is ``pass``. A run that broke anywhere else cannot judge the
+        commit and is ``unknown``; one that has not finished is ``running``,
+        which is not a verdict at all — the caller has to keep waiting rather
+        than end the search."""
         ...
 
 
@@ -170,12 +170,13 @@ async def reads_for(
     # never assumes main); the batched reads simply have no branch to compare
     # against until it is.
     branch = binding.default_branch or None
+    gate = await main_gate_for(project_id, session, repo=binding.repo)
     if binding.kind == "github_app":
         return GitHubLandingReads(
-            client, tokens, binding.api_url, owner, repo, branch=branch
+            client, tokens, binding.api_url, owner, repo, branch=branch, gate=gate
         )
     return ForgejoLandingReads(
-        client, tokens, binding.api_url, owner, repo, branch=branch
+        client, tokens, binding.api_url, owner, repo, branch=branch, gate=gate
     )
 
 
@@ -206,9 +207,8 @@ _TEST_PATH = re.compile(
     r"\.(?:py|pyi|ts|tsx|js|jsx|vue|go|rs|java))"
 )
 
-#: The workflow that reruns named tests on one commit, and the step in it whose
-#: failure alone means "the tests fail on that commit".
-BISECT_WORKFLOW = "culprit-bisect.yml"
+#: The step in the probe workflow whose failure alone means "the tests fail on
+#: that commit"; the workflow itself is the project's (`main_gate`).
 BISECT_TEST_STEP = "run the named tests"
 #: Looking for a just-dispatched run: GitHub lists it a moment late.
 _RUN_LOOKUPS = 3
@@ -222,13 +222,19 @@ _RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
 _PASS_CONCLUSIONS = frozenset({"success", "neutral"})
 
 
-def gate_run(runs: list[Check]) -> Check | None:
+def gate_run(runs: list[Check], name: str = "") -> Check | None:
     """The batched gate's own check run among a commit's checks, if any.
+
+    ``name`` is the project's (`main_gate`), not a literal: a repository that
+    does not aggregate its main checks has no such run, and every caller reads
+    that as "this repository gates each merge on its own".
 
     A re-run leaves more than one run of the same name on a commit; as
     `merge_state._outcome` reads them, any pass wins, a run still going beats
     an old red, and only then is the remaining one the answer."""
-    gates = [run for run in runs if run.name == BATCH_GATE]
+    if not name:
+        return None
+    gates = [run for run in runs if run.name == name]
     if not gates:
         return None
     for run in gates:
@@ -266,12 +272,18 @@ class GitHubLandingReads:
         transport=None,
         *,
         branch: str | None = None,
+        gate: MainGate | None = None,
     ):
         self._client = client
         self._tokens = tokens
         self._transport = transport
         self._branch = branch
+        self._gate = gate or MainGate()
         self._base = f"{api_base.rstrip('/')}/repos/{quote(owner)}/{quote(repo)}"
+
+    @property
+    def main_gate(self) -> MainGate:
+        return self._gate
 
     async def _get(self, path: str, params: dict | None = None):
         token, _ = await self._tokens.installation_token()
@@ -351,7 +363,7 @@ class GitHubLandingReads:
         # never deciding while merges keep landing.
         for commit in reversed(ahead):
             runs = await self.checks(commit)
-            gate = gate_run(runs)
+            gate = gate_run(runs, self._gate.check)
             if gate is None or gate.status != "completed":
                 continue
             if gate.conclusion != "cancelled":
@@ -359,8 +371,12 @@ class GitHubLandingReads:
         return None
 
     async def main_green(self) -> str | None:
+        if not self._gate.green_ref:
+            return None
         try:
-            data = await self._get(f"/git/ref/heads/{quote(MAIN_GREEN_REF, safe='')}")
+            data = await self._get(
+                f"/git/ref/heads/{quote(self._gate.green_ref, safe='')}"
+            )
         except ForgeUnavailable:
             return None
         sha = (data.get("object") or {}).get("sha")
@@ -508,7 +524,7 @@ class GitHubLandingReads:
     async def dispatch_bisect(
         self, sha: str, tests: list[str], nonce: str
     ) -> str | None:
-        if not self._branch:
+        if not self._branch or not self._gate.probe_workflow:
             return None
         # Ask first: without `actions: write` the POST is a 403 the App would
         # be counted for.
@@ -521,7 +537,8 @@ class GitHubLandingReads:
         }
         async with forge_client(transport=self._transport, timeout=20.0) as http:
             resp = await http.post(
-                f"{self._base}/actions/workflows/{BISECT_WORKFLOW}/dispatches",
+                f"{self._base}/actions/workflows/"
+                f"{self._gate.probe_workflow}/dispatches",
                 headers=headers,
                 # `ref` must be a branch: a bare commit cannot be dispatched.
                 json={
@@ -538,7 +555,7 @@ class GitHubLandingReads:
                 await asyncio.sleep(_RUN_LOOKUP_WAIT_S)
             try:
                 data = await self._get(
-                    f"/actions/workflows/{BISECT_WORKFLOW}/runs",
+                    f"/actions/workflows/{self._gate.probe_workflow}/runs",
                     {"event": "workflow_dispatch", "per_page": 30},
                 )
             except ForgeUnavailable:
@@ -556,7 +573,7 @@ class GitHubLandingReads:
         try:
             run = await self._get(f"/actions/runs/{quote(run_id, safe='')}")
             if run.get("status") != "completed":
-                return "unknown"
+                return "running"
             data = await self._get(
                 f"/actions/runs/{quote(run_id, safe='')}/jobs", {"per_page": 100}
             )
@@ -591,11 +608,17 @@ class ForgejoLandingReads:
         repo: str,
         *,
         branch: str | None = None,
+        gate: MainGate | None = None,
     ):
         self._client = client
         self._tokens = tokens
         self._branch = branch
+        self._gate = gate or MainGate()
         self._repo = f"/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
+
+    @property
+    def main_gate(self) -> MainGate:
+        return self._gate
 
     async def merge_sha(self, pr_number: int) -> str | None:
         return (await self._client.pr_status(pr_number)).merge_commit_sha
