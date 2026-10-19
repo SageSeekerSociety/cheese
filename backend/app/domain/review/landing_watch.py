@@ -18,6 +18,13 @@ looked for, both of which nobody has to set up:
   task hears; when they point at none or at several, every task in the batch
   hears and is asked to rule itself out. A later green batch that covers those
   commits takes the blame back (`_withdraw_passed`).
+
+  A batch long enough for it is searched instead of guessed at:
+  `culprit_search` reruns the failed tests on commits in the middle of the
+  batch, one probe per sweep, and names the first commit they fail on. Only
+  that commit's task hears. A search that cannot name one says so with its
+  reason, and the batch is told to rule itself out as before — a commit is
+  never picked to have an answer.
 - **A deployment that includes the merge commit**, where the forge records
   deployments (a GitHub Actions job with `environment:` does). The task's
   conversation says where it was deployed, or that the deployment failed; a
@@ -50,7 +57,7 @@ from app.domain.notice_meta import (
     notice,
 )
 from app.domain.project.forge import background_quota, quota_serves_background
-from app.domain.review import landing_forge
+from app.domain.review import culprit_bisect, culprit_search, landing_forge
 from app.domain.review.landing_forge import (
     BatchCommits,
     Check,
@@ -125,6 +132,15 @@ class Batch:
     #: The one commit those files point at; None when they point at none, at
     #: several, or at a commit the forge would not let us read whole.
     blamed: str | None
+    #: The commit the batch starts after — the last green batch's end — when
+    #: the forge could say where the batch starts at all.
+    base: str | None = None
+    #: ``blamed`` was named by rerunning the failed tests on commits of the
+    #: batch (`culprit_search`), not by the files those tests name.
+    by_bisect: bool = False
+    #: Why a culprit search ran and named nobody; "" when none ran, or one did
+    #: and named a commit.
+    bisect: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +166,12 @@ async def watch_landings(
     """
 
     sessions = chat.session_factory
+    try:
+        # A search is read by every merge of its batch while that watch lasts;
+        # past that only the table holds it, and nothing ever reads it again.
+        await culprit_search.purge(sessions)
+    except Exception:  # a cleanup that fails must not stop the watch
+        logger.warning("purging culprit searches failed", exc_info=True)
     withdrawn = await _withdraw_passed(sessions, record_instruction=record_instruction)
     gone_on = await go_on_while_working(
         sessions,
@@ -327,6 +349,17 @@ async def _look(
         if watching_checks
         else None
     )
+    if (
+        checks is not None
+        and checks.outcome == ChecksOutcome.failed
+        and checks.batch is not None
+    ):
+        batch = await _search_for_culprit(
+            chat, reads, project_id, checks.batch, memo=memo
+        )
+        # None while a probe is out: the batch is red, but which task it is
+        # belongs to is what this sweep is still finding out.
+        checks = None if batch is None else replace(checks, batch=batch)
     deployed = None
     if watching_deploy:
         try:
@@ -533,7 +566,7 @@ async def _judge_checks(
     if any(run.status != "completed" for run in own):
         return None
     red = _red_checks(own)
-    gate = gate_run(own)
+    gate = gate_run(own, reads.main_gate.check)
     anchor = await _green(reads, project_id, memo)
     if gate is not None and gate.conclusion in _FAILED:
         if anchor and await _covered(reads, project_id, sha, anchor, memo):
@@ -611,7 +644,7 @@ async def _judge_checks(
             )
         return None
     head, head_checks = covering
-    covering_gate = gate_run(head_checks)
+    covering_gate = gate_run(head_checks, reads.main_gate.check)
     if (
         covering_gate is None
         or covering_gate.conclusion is None
@@ -649,7 +682,7 @@ async def _gate_ran(
     """Whether ``sha`` was checked on its own, rather than in a batch."""
     if not sha:
         return False
-    gate = gate_run(await _checks(reads, project_id, sha, memo))
+    gate = gate_run(await _checks(reads, project_id, sha, memo), reads.main_gate.check)
     return (
         gate is not None
         and gate.status == "completed"
@@ -700,6 +733,7 @@ async def _judge_batch(
     if not red:
         return Judgement(ChecksOutcome.passed, ())
     anchor = await _green(reads, project_id, memo)
+    base = anchor
     commits = None
     if anchor:
         commits = await _once(
@@ -708,7 +742,7 @@ async def _judge_batch(
             lambda: reads.commits_between(anchor, head),
         )
     if commits is None:
-        commits = await _walk_back(reads, project_id, head, memo)
+        commits, base = await _walk_back(reads, project_id, head, memo)
     tests = tuple(
         await _once(memo, (project_id, "tests", head), lambda: reads.failed_tests(head))
     )
@@ -724,15 +758,76 @@ async def _judge_batch(
             ),
             failed_tests=tests,
             blamed=_blame(tests, commits),
+            base=base,
         ),
     )
 
 
-async def _walk_back(reads: LandingReads, project_id, head: str, memo: dict):
-    """The batch's commits when `main-green` cannot say where it starts: back
-    from ``head`` until a batch gate that finished green, which is the anchor."""
+def _searchable(batch: Batch) -> bool:
+    """Whether bisecting this batch can say anything the files did not.
+
+    Only a batch read whole gives the search an ordered list to narrow, and
+    only named failed tests give it something to rerun. Everything else is
+    attributed as it was before the search existed.
+    """
+    return (
+        batch.complete
+        and len(batch.commits) >= culprit_bisect.MIN_COMMITS
+        and bool(batch.failed_tests)
+    )
+
+
+async def _search_for_culprit(
+    chat: Chat, reads: LandingReads, project_id, batch: Batch, *, memo: dict
+) -> Batch | None:
+    """Advance the batch's culprit search one step and take its answer.
+
+    None while a probe is out — the batch is red, and which task it belongs to
+    is what the next sweeps are finding out. A search that cannot run at all
+    (no probe workflow, no permission) leaves the batch exactly as the file
+    match left it, so a repository without one is attributed as it always was.
+    """
+    if not reads.main_gate.probe_workflow or not _searchable(batch):
+        return batch
+
+    async def step():
+        return await culprit_search.advance(
+            chat.session_factory,
+            reads,
+            project_id=project_id,
+            head=batch.head,
+            base=batch.base,
+            commits=[commit.sha for commit in batch.commits],
+            tests=list(batch.failed_tests),
+        )
+
+    try:
+        # One search per batch per sweep, however many of its merges are looked
+        # at: they share the same commits, and each costs a forge call.
+        finding = await _once(memo, (project_id, "culprit", batch.head), step)
+    except Exception:  # a broken search must not leave the red unreported
+        logger.warning("culprit search failed for %s", batch.head, exc_info=True)
+        return batch
+    if finding.state == "searching":
+        return None
+    if finding.state == "located":
+        return replace(batch, blamed=finding.culprit, by_bisect=True)
+    if finding.state == "unlocated":
+        return replace(batch, blamed=None, by_bisect=False, bisect=finding.reason)
+    return batch
+
+
+async def _walk_back(
+    reads: LandingReads, project_id, head: str, memo: dict
+) -> tuple[BatchCommits, str | None]:
+    """The batch's commits when the green mark cannot say where it starts: back
+    from ``head`` until a batch gate that finished green, which is the base.
+
+    Oldest first, like `commits_between`: the batch reads the same way whether
+    the mark or the walk found its start."""
     changes = []
     current = head
+    base: str | None = None
     complete = False
     while current and len(changes) < BATCH_COMMITS:
         change = await _once(
@@ -747,13 +842,21 @@ async def _walk_back(reads: LandingReads, project_id, head: str, memo: dict):
         if not parent:
             complete = True
             break
-        gate = gate_run(await _checks(reads, project_id, parent, memo))
+        gate = gate_run(
+            await _checks(reads, project_id, parent, memo), reads.main_gate.check
+        )
         if gate is not None and gate.status == "completed":
             if gate.conclusion in _PASS:
+                base = parent
                 complete = True
                 break
         current = parent
-    return BatchCommits(total=len(changes), changes=tuple(changes), complete=complete)
+    return (
+        BatchCommits(
+            total=len(changes), changes=tuple(reversed(changes)), complete=complete
+        ),
+        base,
+    )
 
 
 def _blame(tests: tuple[str, ...], commits: BatchCommits | None) -> str | None:
@@ -995,13 +1098,44 @@ def _batch_checks_failed_prompt(
         if len(batch.failed_tests) > len(shown):
             lines.append(f"- ……另有 {len(batch.failed_tests) - len(shown)} 个")
     if batch.blamed == sha:
-        lines.append("失败用例所在的文件只有这条线的提交改过，先按这个方向修。")
+        if batch.by_bisect:
+            lines.append(
+                "平台在这批里挑提交逐个重跑了失败的用例，第一次失败就出在这条提交上，"
+                "先按这个方向修。"
+            )
+        else:
+            lines.append("失败用例所在的文件只有这条线的提交改过，先按这个方向修。")
+    elif batch.bisect:
+        lines.append(
+            f"平台在这批里挑提交逐个重跑了失败的用例，也没能定位到是哪一条"
+            f"（{_bisect_reason(batch.bisect)}），本批每条线都先各自排除："
+            "确认不是你的改动导致的，就在任务里说明理由；是你的就修。"
+        )
     else:
         lines.append(
             "没有哪条在看的线能单独认领这些失败用例，本批每条线都先各自排除："
             "确认不是你的改动导致的，就在任务里说明理由；是你的就修。"
         )
     return "\n".join(lines) + "\n" + _how_to_fix(task_id, reopened)
+
+
+#: Why a culprit search named nobody, said to the batch in its own words.
+#: `culprit_bisect` states the reason; a reader of the task should not have to
+#: know the planner's vocabulary to understand what happened.
+_BISECT_REASONS = {
+    "a probe could not judge": "重跑的结果判断不了（探测运行失败或被取消）",
+    "the probe did not finish": "探测运行没有在期限内结束",
+    "the search ran out of time": "搜索没有在期限内完成",
+    "a probe could not be started": "平台没能派出探测运行",
+    "probe budget spent": "探测次数用完了，还没缩到一条提交",
+    "no passing base to check against": "这批之前没有能通过的同一次重跑做对照",
+    "the base does not pass": "这批之前的那个提交上这些用例也失败",
+    "too few commits to bisect": "提交太少，没有二分",
+}
+
+
+def _bisect_reason(reason: str) -> str:
+    return _BISECT_REASONS.get(reason, reason)
 
 
 def _how_to_fix(task_id, reopened: bool) -> str:
@@ -1079,7 +1213,7 @@ async def _withdraw_passed(
                 runs = await reads.checks(merge_sha)
             except Exception:  # a forge read that fails withdraws nothing
                 continue
-            gate = gate_run(runs)
+            gate = gate_run(runs, reads.main_gate.check)
             # Only a red check in the batch's own workflow run is taken back:
             # a workflow that runs beside it (an image build, say) is another
             # suite, and Required CI going green says nothing about it. A

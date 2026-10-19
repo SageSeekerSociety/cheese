@@ -221,6 +221,15 @@ export const FEEDBACK_ENTRIES: CatalogEntry[] = [
         expect: '导出一个月的数据要等四十秒',
       },
       {
+        name: '个人奖励',
+        note: '侧栏只显示实际获奖励的反馈数与累计点数，提交不等于获奖。',
+        props: {
+          beta: { credits: 500, claimed: true, feedback_credits: 100 },
+          rewards: { feedback_count: 3, feedback_credits: 300, items: [] },
+        },
+        expect: '我的反馈奖励',
+      },
+      {
         name: '管理员看得见入口',
         note: '服务端说这个读者是管理员：页头多一颗「管理后台」——它出不出现由服务端答，不是一个可以拨的开关。',
         props: { isAdmin: true },

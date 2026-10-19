@@ -1,5 +1,4 @@
 {
-  "ownAgentOtherOwnersTask": "这是别人的 Claude Code，只能做它主人负责的任务",
   "routineAgentNotInRoom": "执行者必须是这个频道里的 AI 队友",
   "routineAlreadyConfirmed": "这条已经确认过了",
   "routineConfirmEnable": "确认启用",

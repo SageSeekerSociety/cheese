@@ -76,10 +76,8 @@ class Member:
     # A teammate's ``name_source``: ``default`` while it still carries the name
     # it was born with, which a screen shows in its reader's language.
     name_source: str | None = None
-    # A member's own agent (#2991): who it belongs to, and who may call it —
-    # ``owner`` (that person alone) or ``project`` (any person here).
+    # A personal agent's owner; conversation is open to the team.
     owner_handle: str | None = None
-    callers: str | None = None
 
     def as_dict(self) -> dict:
         """读名册的调用方拿到的那一行。
@@ -111,8 +109,6 @@ class Member:
             row["name_source"] = self.name_source
         if self.owner_handle is not None:
             row["owner_handle"] = self.owner_handle
-        if self.callers is not None:
-            row["callers"] = self.callers
         return row
 
 
@@ -227,7 +223,6 @@ async def _read_roster(
                     instance_handle=seat.session_handle,
                     name_source=seat.name_source,
                     owner_handle=seat.owner_handle,
-                    callers=seat.callers,
                 )
             )
             at[seat.seat] = len(rows) - 1
@@ -250,7 +245,6 @@ async def _read_roster(
             instance_handle=seat.session_handle,
             name_source=seat.name_source,
             owner_handle=seat.owner_handle,
-            callers=seat.callers,
         )
     return tuple(rows)
 
