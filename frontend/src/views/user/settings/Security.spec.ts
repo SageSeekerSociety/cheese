@@ -58,7 +58,11 @@ vi.mock('@/lib/desktopApp', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/desktopApp')>()),
   goAuthorize: vi.fn(),
 }))
-vi.mock('@/services/account', () => ({ currentUserId: ref(7) }))
+vi.mock('@/services/account', () => ({
+  currentUserId: ref(7),
+  currentUserName: ref('ada'),
+  default: { logout: vi.fn() },
+}))
 vi.mock('@/plugins/dialog', () => ({
   useDialog: () => ({ confirm: () => ({ wait: async () => true }) }),
 }))

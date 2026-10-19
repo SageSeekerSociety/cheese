@@ -35,6 +35,7 @@ from app.core import background, net_io, route_metrics
 from app.core.config import settings
 from app.core.health import set_periodic_health
 from app.core.db import async_session_factory
+from app.core.deleted_accounts import ClosedAccountGuard
 from app.core.errors import register_exception_handlers
 from app.core.forge_http import reuse_forge_connections
 from app.core.job_runs import JobRuns
@@ -643,6 +644,9 @@ install_query_watch(app)
 # to read it; inside `request_context`, so a 429 is in the access log like any
 # other answer. Pure ASGI: see `app/core/request_limits.py`.
 app.add_middleware(RequestLimits)
+
+# Inside CORS for the same reason: a closed account's refusal must be readable.
+app.add_middleware(ClosedAccountGuard)
 
 app.add_middleware(
     CORSMiddleware,
