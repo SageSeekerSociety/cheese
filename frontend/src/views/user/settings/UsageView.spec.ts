@@ -83,6 +83,8 @@ function show(data: CreditUsage) {
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: blank },
+      { path: '/plans', name: 'CreditPlans', component: blank },
+      { path: '/feedback', component: blank },
       { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
       { path: '/projects/:projectId', name: 'workspace-project', component: blank },
     ],
@@ -159,10 +161,36 @@ describe('芝士额度', () => {
   it("the month reads in points: used of the plan's, what is left and each line's", async () => {
     const view = show(usage())
     const month = await view.findByRole('region', { name: '本月' })
-    expect(within(month).getByText(/290\D+500/)).toBeTruthy()
-    expect(within(month).getByText(/210/)).toBeTruthy()
+    expect(within(month).getByText('290 点')).toBeTruthy()
+    expect(within(month).getByText('500 点')).toBeTruthy()
+    expect(within(month).getByText('210 点')).toBeTruthy()
+    expect(within(month).getByText('方案剩余 210 点')).toBeTruthy()
     for (const spent of ['134', '87', '29', '40'])
       expect(within(month).getByText(new RegExp(`^${spent}\\D`))).toBeTruthy()
+  })
+
+  it.each([
+    {
+      name: 'a plan overdraft before a reward arrives',
+      spent: 550,
+      packs: [{ ...PACK, credits_total: 500, credits_remaining: 500 }],
+      available: '450 点',
+    },
+    {
+      name: 'a reward overdraft before another reward arrives',
+      spent: 500,
+      packs: [
+        { ...PACK, credits_total: 500, credits_remaining: -50 },
+        { ...PACK, id: 'g2', credits_total: 100, credits_remaining: 100 },
+      ],
+      available: '50 点',
+    },
+  ])('deducts $name from available credits', async ({ spent, packs, available }) => {
+    const view = show(
+      usage({ period: { ...PERIOD, credits_used: spent, used_ratio: 1, remaining_ratio: 0 }, packs })
+    )
+    const month = await view.findByRole('region', { name: '本月' })
+    expect(within(month).getByText(available)).toBeTruthy()
   })
 
   it('past the plan, the bar splits by what each line used', async () => {
@@ -213,5 +241,10 @@ describe('芝士额度', () => {
     const teams = await view.findByRole('region', { name: '我所在的团队' })
     const link = within(teams).getByText('城市数据实验室').closest('a') as HTMLAnchorElement
     expect(link.getAttribute('href')).toBe('/teams/citylab/credits')
+  })
+
+  it('opens the shared plans page from personal credits', async () => {
+    const view = show(usage())
+    expect(view.getByRole('link', { name: '查看套餐' }).getAttribute('href')).toBe('/plans')
   })
 })

@@ -27,6 +27,7 @@ onMounted(offers.load)
     :loading="loading"
     :error="error"
     :beta="offers.beta.value"
+    :rewards="offers.rewards.value"
     :offers-busy="offers.busy.value"
     :offers-error="offers.error.value"
     @retry="load"

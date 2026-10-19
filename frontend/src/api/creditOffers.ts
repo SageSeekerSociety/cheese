@@ -1,8 +1,10 @@
-import type { BetaCredits, CreditRequest } from '@/types/creditOffers'
+import type { BetaCredits, CreditRequest, CreditRewards, PublishedCreditPlan } from '@/types/creditOffers'
 
 import { request } from '../api'
 
 export const getBetaCredits = () => request<BetaCredits>('/users/me/credits/beta')
+export const getMyCreditRewards = () => request<CreditRewards>('/users/me/credits/rewards')
+export const getPublishedCreditPlans = () => request<{ plans: PublishedCreditPlan[] }>('/credits/plans')
 export const claimBetaCredits = () =>
   request<{ credits: number; issued: boolean }>('/users/me/credits/beta', { method: 'POST' })
 export const getCreditRequests = (teamId: number) =>
