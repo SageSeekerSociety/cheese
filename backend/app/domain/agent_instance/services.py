@@ -289,7 +289,18 @@ class AgentInstanceService:
         return await self.for_handle(project, handle)
 
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
-        """The role instructions saved on this agent."""
+        """Current personal ownership instructions, or a team's saved role."""
+        # Deferred to break services -> own.__init__ -> membership -> services.
+        from app.domain.agent_instance.own.naming import own_role
+        from app.domain.agent_instance.own.ownership import owned_instance, owner_of
+
+        owned = await owned_instance(self._session, agent.instance_id)
+        if owned is not None:
+            owner = await owner_of(self._session, agent.instance_id)
+            if owner is not None:
+                return own_role(
+                    owner[1], on_account=owned.on_account, owner_handle=owner[0]
+                )
         return agent.configuration.get("body") or None
 
     # --- management ---------------------------------------------------------

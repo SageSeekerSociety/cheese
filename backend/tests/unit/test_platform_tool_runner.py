@@ -408,13 +408,19 @@ def test_a_task_someone_asked_for_is_created_and_touches_nothing_else():
     )
     out = run(
         "cheese_task",
-        {"title": "查一下分页", "summary": "干这个", "owner": "lisi"},
+        {
+            "title": "查一下分页",
+            "summary": "干这个",
+            "owner": "lisi",
+            "source_message_id": _DOC,
+        },
         host,
     )
     [plan] = host.requests
     assert plan["path"] == f"/topics/{_ROOM}/teammate-tasks"
     assert plan["body"]["here"] is False
     assert plan["body"]["owner_handle"] == "lisi"
+    assert plan["body"]["source_message_id"] == _DOC
     assert host.synced == []
     assert "查一下分页" in out
 

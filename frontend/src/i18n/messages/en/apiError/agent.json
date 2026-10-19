@@ -67,7 +67,6 @@
   "nounModelService": "model service",
   "offeredNeedsPrices": "A model needs both an input and an output price to be offered: an unpriced model silently disables the project's max_budget brake",
   "ownAgentAddPersonOnly": "Only members can add their own Claude Code to a project",
-  "ownAgentCallersOwnerOnly": "Only its owner can decide who may call their Claude Code",
   "ownAgentConnectionKindRefused": "This project doesn't allow this kind of model connection",
   "ownAgentConnectionNotFound": "Model connection not found: it isn't yours, or it was removed or logged out",
   "ownAgentNotDefault": "A member's own Claude Code can't be the project's default teammate",
@@ -123,5 +122,7 @@
   "teammateNotSeatedHere": "This AI teammate isn't in this channel, so it can't work here. Add it to the channel, or ask another teammate",
   "topicNotFound": "Channel not found",
   "turnForceStopped": "This turn was force-stopped",
-  "upstreamModelRequired": "The upstream model ID can't be empty"
+  "upstreamModelRequired": "The upstream model ID can't be empty",
+  "ownAgentTaskOwnerMessageRequired": "To create a task, cite the ID of a message written by your owner.",
+  "ownAgentHasNoOwner": "This agent has no personal owner to ask privately."
 }

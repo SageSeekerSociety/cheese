@@ -20,6 +20,7 @@ from app.api.topic_member_rows import roster_rows
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
+from app.domain.agent.own_calls import ask_owner_to_join
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.room_task.place import place_or_404
@@ -61,6 +62,7 @@ async def add_topic_member(
         seat_project=seat_project,
         team=project_team,
     )
+    await ask_owner_to_join(db, (await place_or_404(db, topic_id)).room, body.handle)
     await db.commit()
     # A private channel appears in the list of whoever was brought in.
     await tell_project(topic_id, TOPICS)

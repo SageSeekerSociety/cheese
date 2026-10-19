@@ -601,6 +601,7 @@ PLATFORM_TOOLS = ToolTable(
                 "owner": _text(
                     "负责人 handle，就是说要做这件事的人；省略是你这一轮回应的那个人"
                 ),
+                "source_message_id": _text("任务所依据的消息 id；成员自己的 AI 必须引用主人发送的消息"),
                 "here": {
                     "type": "boolean",
                     "description": "这条支线原地转为任务填 true；另开任务不填",
@@ -792,6 +793,10 @@ PLATFORM_TOOLS = ToolTable(
             "的选项后面加一个「其他」，点开能自己写答案，所以选项里不要"
             "再放「其他」「都不是」「我自己说」这类兜底项，只写真正的候选。",
             {
+                "to_owner": {
+                    "type": "boolean",
+                    "description": "成员自己的 AI 私聊主人征求同意时填 true；问题只发到你和主人的私聊",
+                },
                 "questions": {
                     "type": "array",
                     "minItems": 1,
@@ -1244,6 +1249,7 @@ def _ask_body(args: dict) -> dict:
     # Identity is supplied by the host credential, never an author in args.
     return {
         "questions": questions,
+        **({"to_owner": True} if args.get("to_owner") is True else {}),
         **({"to": to} if to is not None else {}),
         "request_id": str(uuid.UUID(args["request_id"]))
         if args.get("request_id")
@@ -1461,7 +1467,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "title": args["title"],
                 "summary": args.get("summary") or "",
                 "here": args.get("here") is True,
-                **_given(args, "owner:owner_handle"),
+                **_given(args, "owner:owner_handle", "source_message_id"),
             },
         }
     if tool == "cheese_close_task":

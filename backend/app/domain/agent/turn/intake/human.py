@@ -60,7 +60,7 @@ async def prepare_human(
     )
     if project is None:
         raise NotFoundError(say("projectNotFound"))
-    await own_calls.seat_if_named(session, project, topic, content, author)
+    await own_calls.seat_if_named(session, project, topic, content)
     agent = await _agent_at(session, place)
     mentions = await person_mentions(
         session, topic, content, agent, dm=_is_dm(topic), members=handoff.roster
@@ -170,7 +170,7 @@ async def refuse_call(
                 recipient["instance_id"] = str(instance.id)
                 recipient["handle"] = instance.handle
         recipient["mentioned"] = True
-    refused = await own_calls.refused(session, prepared.project, recipient, author)
+    refused = await own_calls.refused(session, prepared.project, recipient)
     return CallAdmission(seat, refused)
 
 

@@ -69,13 +69,14 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.opening import opening_content
+from app.domain.agent.own_calls import ask_owner_to_join
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import (
     project_team,
     seat_project,
     task_teammate,
 )
-from app.domain.agent_instance.own import may_work_for
+from app.domain.agent_instance.own import owned_by_seat, owner_of
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.delivery.ledger import settle_card
 from app.domain.idempotency import store as idem
@@ -425,14 +426,9 @@ async def update_task(
             db, actor, place, task, body.owner_handle
         )
         await tasks.hand_over(task, owner_handle=body.owner_handle)
-    project_now = await ProjectRepository(db).get(place.project_id)
-    settings_now = project_now.settings if project_now is not None else None
     if "agent_handle" in body.model_fields_set:
         given = (body.agent_handle or "").strip() or None
-        if not await may_work_for(
-            db, place.project_id, given, task.owner_handle, settings_now
-        ):
-            raise ForbiddenError(say("ownAgentOtherOwnersTask"))
+        seated = await members.agent_handles(place.room_id) if given else []
         await task_dispatch.give_task_teammate(
             db,
             task,
@@ -441,19 +437,8 @@ async def update_task(
             seat_project=seat_project,
             team=project_team,
         )
-    elif not await may_work_for(
-        db, place.project_id, task.agent_handle, task.owner_handle, settings_now
-    ):
-        # Handed to someone whose own agent it is not (#2991): the task goes
-        # back to the project's teammate, and its new owner may give it theirs.
-        await task_dispatch.give_task_teammate(
-            db,
-            task,
-            None,
-            by=actor.handle,
-            seat_project=seat_project,
-            team=project_team,
-        )
+        if given and given not in seated:
+            await ask_owner_to_join(db, place.room, given)
     if body.contributor_handles is not None:
         people = await members.project_people(place.project_id, team=project_team)
         wanted = list(dict.fromkeys(body.contributor_handles))
@@ -517,6 +502,7 @@ class TeammateTaskIn(BaseModel):
     #: The 支线 the teammate is in becomes the task, in place, rather than a
     #: new task being made from it.
     here: bool = False
+    source_message_id: uuid.UUID | None = None
 
 
 @router.post("/{topic_id}/teammate-tasks", dependencies=[ROUTE_DECIDES])
@@ -540,6 +526,21 @@ async def create_teammate_task(
     )
     if actor.via != "cheese":
         raise ForbiddenError(say("teammateTaskByTeammate"))
+    owned = await owned_by_seat(db, place.project_id, actor.handle)
+    source = None
+    if owned is not None:
+        owner_identity = await owner_of(db, owned.instance_id)
+        source = (
+            await BlockRepository(db).get(body.source_message_id)
+            if body.source_message_id
+            else None
+        )
+        if (
+            source is None
+            or owner_identity is None
+            or source.author != owner_identity[0]
+        ):
+            raise ForbiddenError(say("ownAgentTaskOwnerMessageRequired"))
     task_dispatch.refuse_tasks_in_private(place.room)
     if body.here and place.thread is None:
         raise UnprocessableEntityError(say("teammateTaskHereOnlyInThread"))
@@ -577,7 +578,7 @@ async def create_teammate_task(
         raise UnprocessableEntityError(say("taskOwnerNotInProject"))
     # What the person said that this turn answers is where the task came from;
     # in a 支线 that is usually a reply, not the message the 支线 hangs under.
-    asked = await asked_in(
+    asked = source or await asked_in(
         db,
         place.conversation_id,
         actor.handle,

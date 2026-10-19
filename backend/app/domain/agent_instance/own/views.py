@@ -80,7 +80,6 @@ async def listing(
             {
                 "handle": agent_instance_handle(instance.id),
                 "name": instance.display_name,
-                "callers": owned.callers.value,
                 "owner_handle": owner.username if owner else None,
                 "owner_name": (
                     faces.get(owner.username, (None, None))[0] or owner.username
