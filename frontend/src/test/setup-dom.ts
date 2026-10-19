@@ -14,3 +14,10 @@ const svg = (globalThis as { SVGElement?: { prototype: { getBBox?: unknown } } }
 if (svg && typeof svg.prototype.getBBox !== 'function') {
   svg.prototype.getBBox = () => ({ x: 0, y: 0, width: 0, height: 0 })
 }
+
+// `devicePixelRatio`：Vuetify 的浮层（菜单、提示）定位时按它把坐标取整到物理像素。
+// 测试环境的全局上没有它，菜单一开，下一帧的定位就抛一个没人接的异常——常常落在
+// 那条测试已经结束之后，整个文件全绿而这一轮照样判失败。补成 1，和没有缩放的屏幕一样。
+if (!('devicePixelRatio' in globalThis)) {
+  Object.defineProperty(globalThis, 'devicePixelRatio', { configurable: true, writable: true, value: 1 })
+}
