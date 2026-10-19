@@ -29,6 +29,9 @@ class ChecksOutcome(enum.StrEnum):
     timeout = "timeout"
     #: The forge cannot say (no repository, no credentials).
     unavailable = "unavailable"
+    #: Nothing ran on the merge commit: the repository checks pull requests
+    #: only, so there is no post-merge signal to wait for.
+    unchecked = "unchecked"
 
 
 class DeployOutcome(enum.StrEnum):

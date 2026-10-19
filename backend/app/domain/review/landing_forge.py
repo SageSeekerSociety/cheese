@@ -7,12 +7,17 @@ answer the first three; deployments are GitHub's, read only when the App's
 installation was granted them, and a repository that records none simply has
 none to report.
 
-GitHub reads the default branch's required checks from branch protection and
-effective rulesets, preserving the expected app. Batch boundaries come from
-those checks on the branch's commits; no repository-owned marker is read.
-GitHub also supplies batch history and failed-job logs. Forgejo judges each
-merge against its effective branch policy; a commit with no runs has not
-been checked yet.
+What is judged is what ran on the merge commit itself. The branch's required
+checks are the forge's gate before the merge, which the forge has already
+enforced; a check that only runs on pull requests never reports on the merge
+commit, so it is not looked for there.
+
+A repository may run its default-branch checks in batches, cancelling the run
+a newer push supersedes. Such a commit's runs are cancelled, and the run that
+covers it is the first one after it on the branch that was not (GitHub's
+compare reads the commits after it). GitHub also supplies a batch's commits
+and its failed-job logs. Forgejo reports commit statuses, which are never
+cancelled, so every merge there is judged on its own.
 """
 
 import logging
@@ -20,7 +25,6 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from fnmatch import fnmatchcase
 from typing import Literal, Protocol
 from urllib.parse import quote
 
@@ -54,19 +58,6 @@ class Check:
     #: success / failure / cancelled / skipped / timed_out / … once completed
     conclusion: str | None
     url: str
-    #: The check suite (one workflow run) the check belongs to. A workflow
-    #: that runs beside the batched gate — an image build, say — is another
-    #: suite, which is how its failure is told apart from the gate's own.
-    suite: int | None = None
-    app_id: int | None = None
-    required: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class RequiredCheck:
-    name: str
-    app_id: int | None = None
-    pattern: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,13 +95,6 @@ class BatchCommits:
 
 
 class LandingReads(Protocol):
-    async def configure(self) -> None: ...
-
-    @property
-    def required_checks(self) -> tuple[RequiredCheck, ...]:
-        """Checks required by the default branch's forge policy."""
-        ...
-
     async def merge_sha(self, pr_number: int) -> str | None: ...
     async def checks(self, sha: str) -> list[Check]: ...
     async def parent(self, sha: str) -> str | None: ...
@@ -120,24 +104,17 @@ class LandingReads(Protocol):
         records none the platform may read."""
         ...
 
-    async def covering_run(
-        self, sha: str, *, anchor: str | None = None
+    async def run_after(
+        self, sha: str, names: frozenset[str], *, passed: bool = False
     ) -> tuple[str, list[Check]] | None:
-        """The newest finished batch gate at or after ``sha`` — the commit the
-        run reported on, and that commit's checks. ``anchor`` is what
-        `main_green` names, when it names anything: with a mark to find, the
-        search may go further back. None while no gate has finished yet, and
-        on a forge that gates each merge on its own."""
-        ...
+        """A later run of the checks ``names`` on the branch, after ``sha``:
+        the commit it reported on, and that commit's checks.
 
-    async def main_green(self) -> str | None:
-        """The commit the last green batch ended on, or None when the forge
-        keeps no such mark."""
-        ...
-
-    async def commits_between(self, base: str, head: str) -> BatchCommits | None:
-        """The commits after ``base`` up to and including ``head``; None when
-        the forge cannot compare them (``base`` is not an ancestor, say)."""
+        By default the first run after ``sha`` that was not cancelled, which
+        is the batch that covered it; None while that run is still going or
+        has not started. ``passed`` asks instead for the newest one that went
+        green, which settles a red on ``sha``: that commit contains it. None
+        on a forge that cannot list the commits after one."""
         ...
 
     async def commit_change(self, sha: str) -> CommitChange | None:
@@ -148,10 +125,6 @@ class LandingReads(Protocol):
         """Files named by failed tests or static checks in the red jobs' logs.
         ``tests_only`` returns no paths when any static diagnostic is present:
         a test rerun cannot judge that failure, even in the same file."""
-        ...
-
-    async def is_ancestor(self, commit: str, descendant: str) -> bool:
-        """Whether ``descendant`` is ``commit`` or comes after it."""
         ...
 
 
@@ -166,30 +139,29 @@ async def reads_for(
     tokens = await tokens_for_project(project_id, session)
     owner, repo = binding.repo.split("/", 1)
     if binding.kind == "github_app":
-        reads = GitHubLandingReads(client, tokens, binding.api_url, owner, repo)
-    else:
-        reads = ForgejoLandingReads(client, tokens, binding.api_url, owner, repo)
-    return reads
+        # Empty means "not resolved from the provider yet" (`repositories.py`
+        # never assumes main); there is then no branch to look ahead on.
+        return GitHubLandingReads(
+            client,
+            tokens,
+            binding.api_url,
+            owner,
+            repo,
+            branch=binding.default_branch or None,
+        )
+    return ForgejoLandingReads(client, tokens, binding.api_url, owner, repo)
 
 
 _FINISHED_DEPLOYMENT = ("success", "failure", "error")
 
-#: GitHub lists at most 250 commits in one comparison and 300 files in one
-#: commit. Past those a batch cannot be read whole, and a failure must not be
-#: pinned on whichever commit happened to be listed.
-_COMPARE_MAX_COMMITS = 250
+#: GitHub lists at most 300 files in one commit. Past that a commit's changes
+#: cannot be read whole, and a failure must not be pinned on it.
 _COMMIT_MAX_FILES = 300
-#: How far forward the covering run is looked for, and how far back a batch is
-#: read when `main-green` cannot say where it starts. Both bound forge calls
-#: rather than express a rule: a batch is a handful of commits.
+#: How many commits after a merge are looked at for a later run. It bounds
+#: forge calls rather than express a rule: a batch is a handful of commits.
 _LOOK_AHEAD = 20
-_LOOK_BACK = 20
 #: How many red jobs get their log read for failing file names.
 _RED_LOGS = 3
-#: How far the search goes when `main-green` names nothing. Before the first
-#: green batch no anchor exists, and a batch can be as long as the attribution
-#: reads: the same bound applies until the mark appears.
-_LOOK_AHEAD_NO_ANCHOR = 20
 
 #: A failed check-run's log names its failing tests in one of these shapes:
 #: pytest `FAILED tests/x.py::test_y - …`, vitest/jest `FAIL  src/x.test.ts > …`.
@@ -224,72 +196,41 @@ _RED_CONCLUSIONS = frozenset(
 _PASS_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 
 
-def gate_run(
-    runs: list[Check], required: tuple[RequiredCheck, ...] = ()
-) -> Check | None:
-    """The batched gate's own check run among a commit's checks, if any.
-
-    Every required context must be present and must report from the app the
-    branch policy names. Missing checks remain pending. Multiple contexts are
-    aggregated without inventing a check name the hosted repository must use.
+def named_runs(runs: list[Check], names: frozenset[str]) -> Check | None:
+    """What the checks ``names`` came to on one commit, as one check; None
+    when one of them has no run there.
 
     A re-run leaves more than one run of the same name on a commit; as
     `merge_state._outcome` reads them, any pass wins, a run still going beats
     an old red, and only then is the remaining one the answer."""
-    if not required:
-        return None
-    contexts = []
-    for check in required:
-        if not check.pattern:
-            contexts.append(check)
-            continue
-        names = sorted({run.name for run in runs if fnmatchcase(run.name, check.name)})
-        if not names:
-            return Check(check.name, "queued", None, "")
-        contexts.extend(RequiredCheck(name, check.app_id) for name in names)
     selected = []
-    for check in contexts:
-        gates = [
-            run
-            for run in runs
-            if run.name == check.name
-            and (check.app_id is None or run.app_id == check.app_id)
-        ]
-        if not gates:
-            selected.append(Check(check.name, "queued", None, ""))
-        else:
-            selected.append(
+    for name in sorted(names):
+        same = [run for run in runs if run.name == name]
+        if not same:
+            return None
+        selected.append(
+            next(
+                (
+                    run
+                    for run in same
+                    if run.status == "completed" and run.conclusion in _PASS_CONCLUSIONS
+                ),
                 next(
-                    (
-                        run
-                        for run in gates
-                        if run.status == "completed"
-                        and run.conclusion in _PASS_CONCLUSIONS
-                    ),
+                    (run for run in same if run.status != "completed"),
                     next(
-                        (run for run in gates if run.status != "completed"),
-                        next(
-                            (
-                                run
-                                for run in gates
-                                if run.conclusion in _RED_CONCLUSIONS
-                            ),
-                            gates[0],
-                        ),
+                        (run for run in same if run.conclusion in _RED_CONCLUSIONS),
+                        same[0],
                     ),
-                )
+                ),
             )
+        )
     if len(selected) == 1:
         return selected[0]
-    pending = any(
-        run.status != "completed"
-        or run.conclusion not in (_PASS_CONCLUSIONS | _RED_CONCLUSIONS | {"cancelled"})
-        for run in selected
-    )
+    pending = any(run.status != "completed" for run in selected)
     red = any(run.conclusion in _RED_CONCLUSIONS for run in selected)
     cancelled = any(run.conclusion == "cancelled" for run in selected)
     return Check(
-        ", ".join(check.name for check in required),
+        ", ".join(run.name for run in selected),
         "in_progress" if pending else "completed",
         None
         if pending
@@ -299,7 +240,6 @@ def gate_run(
         if cancelled
         else "success",
         next((run.url for run in selected if run.url), ""),
-        required=tuple(check.name for check in contexts),
     )
 
 
@@ -351,67 +291,12 @@ class GitHubLandingReads:
         transport=None,
         *,
         branch: str | None = None,
-        required: tuple[RequiredCheck, ...] = (),
     ):
         self._client = client
         self._tokens = tokens
         self._transport = transport
         self._branch = branch
-        self._required = required
         self._base = f"{api_base.rstrip('/')}/repos/{quote(owner)}/{quote(repo)}"
-        self._graphql_url = api_base.rstrip("/").removesuffix("/v3") + "/graphql"
-        self._owner, self._repo = owner, repo
-
-    @property
-    def required_checks(self) -> tuple[RequiredCheck, ...]:
-        return self._required
-
-    @property
-    def default_branch(self) -> str | None:
-        return self._branch
-
-    async def configure(self):
-        token, _ = await self._tokens.installation_token()
-        async with forge_client(transport=self._transport, timeout=20.0) as http:
-            response = await http.post(
-                self._graphql_url,
-                headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "query": "query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){defaultBranchRef{name branchProtectionRule{requiredStatusChecks{context app{databaseId}}}}}}",
-                    "variables": {"owner": self._owner, "repo": self._repo},
-                },
-            )
-        response.raise_for_status()
-        data = response.json()
-        if data.get("errors") or not (data.get("data") or {}).get("repository"):
-            raise ForgeUnavailable
-        branch_data = data["data"]["repository"]["defaultBranchRef"]
-        if not branch_data:
-            raise ForgeUnavailable
-        self._branch = branch_data["name"]
-        branch = quote(self._branch, safe="")
-        rules = await self._get(f"/rules/branches/{branch}")
-        required = set()
-        for check in (branch_data.get("branchProtectionRule") or {}).get(
-            "requiredStatusChecks"
-        ) or []:
-            required.add(
-                RequiredCheck(
-                    check["context"], (check.get("app") or {}).get("databaseId")
-                )
-            )
-        for rule in rules:
-            if rule.get("type") == "required_status_checks":
-                for check in rule["parameters"]["required_status_checks"]:
-                    app_id = check.get("integration_id")
-                    required.add(
-                        RequiredCheck(
-                            check["context"], app_id if app_id and app_id > 0 else None
-                        )
-                    )
-        self._required = tuple(
-            sorted(required, key=lambda check: (check.name, check.app_id or 0))
-        )
 
     async def _get(self, path: str, params: dict | None = None):
         token, _ = await self._tokens.installation_token()
@@ -446,8 +331,6 @@ class GitHubLandingReads:
                     status=run.get("status") or "",
                     conclusion=run.get("conclusion"),
                     url=run.get("html_url") or "",
-                    suite=(run.get("check_suite") or {}).get("id"),
-                    app_id=(run.get("app") or {}).get("id"),
                 )
                 for run in runs
             ]
@@ -481,10 +364,10 @@ class GitHubLandingReads:
         parents = (await self._get(f"/commits/{sha}")).get("parents") or []
         return parents[0].get("sha") if parents else None
 
-    # --- the batched main gate (#4249) -------------------------------------
+    # --- a branch checked in batches (#4249) ------------------------------
 
-    async def covering_run(
-        self, sha: str, *, anchor: str | None = None
+    async def run_after(
+        self, sha: str, names: frozenset[str], *, passed: bool = False
     ) -> tuple[str, list[Check]] | None:
         if not self._branch:
             return None
@@ -494,81 +377,29 @@ class GitHubLandingReads:
             )
         except ForgeUnavailable:
             return None
-        if data.get("status") not in ("ahead", "identical"):
+        if data.get("status") != "ahead":
             return None
-        # With a mark there is a batch to find, and it may have started several
-        # commits back. Without one the repository may not gate main at all,
-        # and every candidate costs a check-runs call on every tick: look at
-        # the newest few only.
-        depth = _LOOK_AHEAD if anchor else _LOOK_AHEAD_NO_ANCHOR
-        ahead: list[str] = []
-        for commit in (data.get("commits") or [])[-depth:]:
-            if not isinstance(commit, dict):
-                continue
-            head_sha = commit.get("sha")
-            if isinstance(head_sha, str) and head_sha:
-                ahead.append(head_sha)
-        # Newest first. A gate still running is skipped rather than waited on:
-        # a red run before it decided this commit's fate, and a later green one
-        # takes the blame back (`_withdraw_passed`). Waiting for it would mean
-        # never deciding while merges keep landing.
-        for commit in reversed(ahead):
+        later = [
+            commit["sha"]
+            for commit in data.get("commits") or []
+            if isinstance(commit, dict) and isinstance(commit.get("sha"), str)
+        ]
+        # Oldest first, as the compare lists them. The covering run is the
+        # first that was not cancelled; one still going is the answer to wait
+        # for. A green one is looked for from the other end, past whatever
+        # has not finished or went red since.
+        candidates = reversed(later[-_LOOK_AHEAD:]) if passed else later[:_LOOK_AHEAD]
+        for commit in candidates:
             runs = await self.checks(commit)
-            gate = gate_run(runs, self._required)
-            if gate is None or gate.status != "completed":
+            ran = named_runs(runs, names)
+            if ran is None or ran.conclusion == "cancelled":
                 continue
-            if gate.conclusion != "cancelled":
-                return commit, runs
+            if passed:
+                if ran.status == "completed" and ran.conclusion in _PASS_CONCLUSIONS:
+                    return commit, runs
+                continue
+            return (commit, runs) if ran.status == "completed" else None
         return None
-
-    async def main_green(self) -> str | None:
-        if not self._branch or not self._required:
-            return None
-        commits = await self._get(
-            "/commits", {"sha": self._branch, "per_page": _LOOK_BACK}
-        )
-        for commit in commits:
-            gate = gate_run(await self.checks(commit["sha"]), self._required)
-            if (
-                gate is not None
-                and gate.status == "completed"
-                and gate.conclusion in _PASS_CONCLUSIONS
-            ):
-                return commit["sha"]
-        return None
-
-    async def commits_between(self, base: str, head: str) -> BatchCommits | None:
-        try:
-            data = await self._get(
-                f"/compare/{quote(base, safe='')}...{quote(head, safe='')}"
-            )
-        except ForgeUnavailable:
-            return None
-        if data.get("status") not in ("ahead", "identical"):
-            return None
-        listed = [c for c in (data.get("commits") or []) if isinstance(c, dict)]
-        total = data.get("total_commits")
-        total = total if isinstance(total, int) else len(listed)
-        # Completeness is about what was *read*, not what was listed: past the
-        # caps some commits are never looked at, and a commit the forge refused
-        # to describe is one whose files are unknown.
-        complete = (
-            len(listed) >= total
-            and len(listed) < _COMPARE_MAX_COMMITS
-            and len(listed) <= _LOOK_BACK
-        )
-        changes = []
-        for commit in listed[-_LOOK_BACK:]:
-            sha = commit.get("sha")
-            if not sha:
-                complete = False
-                continue
-            change = await self.commit_change(sha)
-            if change is None:
-                complete = False
-                continue
-            changes.append(change)
-        return BatchCommits(total=total, changes=tuple(changes), complete=complete)
 
     async def commit_change(self, sha: str) -> CommitChange | None:
         try:
@@ -645,17 +476,6 @@ class GitHubLandingReads:
             logger.info("could not read job %s log: %s", job_id, exc)
         return ""
 
-    async def is_ancestor(self, commit: str, descendant: str) -> bool:
-        if commit == descendant:
-            return True
-        try:
-            data = await self._get(
-                f"/compare/{quote(commit, safe='')}...{quote(descendant, safe='')}"
-            )
-        except ForgeUnavailable:
-            return False
-        return data.get("status") in ("ahead", "identical")
-
     async def deployment(self, sha: str, since: datetime) -> Deployment | None:
         if "deployments" not in await self._tokens.granted_permissions():
             raise ForgeUnavailable
@@ -695,46 +515,10 @@ class GitHubLandingReads:
 
 
 class ForgejoLandingReads:
-    def __init__(
-        self,
-        client,
-        tokens,
-        api_base: str,
-        owner: str,
-        repo: str,
-        *,
-        branch: str | None = None,
-        required: tuple[RequiredCheck, ...] = (),
-    ):
+    def __init__(self, client, tokens, api_base: str, owner: str, repo: str):
         self._client = client
         self._tokens = tokens
-        self._branch = branch
-        self._required = required
         self._repo = f"/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
-
-    @property
-    def required_checks(self) -> tuple[RequiredCheck, ...]:
-        return self._required
-
-    async def configure(self):
-        token, _ = await self._tokens.installation_token()
-        forgejo = self._client.client
-        repository = forgejo._data(
-            await forgejo.request("GET", self._repo, token=token)
-        )
-        self._branch = repository["default_branch"]
-        protection = forgejo._data(
-            await forgejo.request(
-                "GET",
-                f"{self._repo}/branches/{quote(self._branch, safe='')}",
-                token=token,
-            )
-        )
-        self._required = tuple(
-            RequiredCheck(name, pattern=True)
-            for name in ((protection or {}).get("status_check_contexts") or [])
-            if protection.get("enable_status_check")
-        )
 
     async def merge_sha(self, pr_number: int) -> str | None:
         return (await self._client.pr_status(pr_number)).merge_commit_sha
@@ -762,18 +546,12 @@ class ForgejoLandingReads:
     async def deployment(self, sha: str, since: datetime) -> Deployment | None:
         raise ForgeUnavailable
 
-    # Forgejo has no batched main gate: each merge is checked on its own, so a
-    # commit with no runs has simply not been checked yet.
+    # Forgejo reports commit statuses, which are never cancelled: each merge
+    # is judged on its own, and there is no batch to read.
 
-    async def covering_run(
-        self, sha: str, *, anchor: str | None = None
+    async def run_after(
+        self, sha: str, names: frozenset[str], *, passed: bool = False
     ) -> tuple[str, list[Check]] | None:
-        return None
-
-    async def main_green(self) -> str | None:
-        return None
-
-    async def commits_between(self, base: str, head: str) -> BatchCommits | None:
         return None
 
     async def commit_change(self, sha: str) -> CommitChange | None:
@@ -781,6 +559,3 @@ class ForgejoLandingReads:
 
     async def failed_paths(self, head: str, *, tests_only: bool = False) -> list[str]:
         return []
-
-    async def is_ancestor(self, commit: str, descendant: str) -> bool:
-        return False

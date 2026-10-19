@@ -21,15 +21,14 @@ from app.domain.review.landing_forge import (
     Check,
     ForgeUnavailable,
     GitHubLandingReads,
-    RequiredCheck,
     _failed_paths,
-    gate_run,
+    named_runs,
 )
 from app.domain.review.landing_watch import Batch, BatchCommit, _search_for_culprit
 
-#: The name the platform's own repository gives its batch gate.
+#: The check a repository runs on its branch in batches.
 GATE = "rocket-build"
-REQUIRED = (RequiredCheck(GATE),)
+GATES = frozenset({GATE})
 
 MERGED = "m" * 40
 SINCE = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
@@ -123,7 +122,7 @@ def test_an_installation_without_deployments_has_none_to_report():
         _deployment(reads)
 
 
-# --- the batched main gate (#4249) -----------------------------------------
+# --- a branch checked in batches (#4249) ------------------------------------
 
 
 def _reads_with(handle):
@@ -141,7 +140,6 @@ def _reads_with(handle):
             )
         ),
         branch="main",
-        required=REQUIRED,
     )
 
 
@@ -154,9 +152,8 @@ def _gate_run(status: str, conclusion: str | None, name: str = GATE):
     }
 
 
-def test_the_covering_run_is_the_newest_gate_that_finished():
-    """A queued gate and a cancelled one are not answers; the newest finished
-    gate is. A re-run's green wins over the red that came before it."""
+def _later(runs_by_sha):
+    """The branch after "a": the commits of ``runs_by_sha``, oldest first."""
 
     def handle(request):
         path = request.url.path.removeprefix("/repos/o/r")
@@ -165,128 +162,54 @@ def test_the_covering_run_is_the_newest_gate_that_finished():
                 200,
                 json={
                     "status": "ahead",
-                    "commits": [{"sha": "b"}, {"sha": "c"}, {"sha": "d"}],
+                    "commits": [{"sha": sha} for sha in runs_by_sha],
                 },
             )
         if path.endswith("/check-runs"):
-            sha = path.split("/")[2]
             return httpx.Response(
-                200,
-                json={
-                    "check_runs": {
-                        "b": [_gate_run("completed", "success")],
-                        "c": [_gate_run("completed", "cancelled")],
-                        "d": [_gate_run("queued", None)],
-                    }[sha]
-                },
-            )
-        return httpx.Response(404)
-
-    assert asyncio.run(_reads_with(handle).covering_run("a", anchor="a0"))[0] == "b"
-
-
-def test_a_repository_whose_main_pushes_run_no_gate_has_no_covering_run():
-    def handle(request):
-        path = request.url.path.removeprefix("/repos/o/r")
-        if path.startswith("/compare/"):
-            return httpx.Response(
-                200, json={"status": "ahead", "commits": [{"sha": "b"}]}
-            )
-        if path.endswith("/check-runs"):
-            return httpx.Response(200, json={"check_runs": []})
-        return httpx.Response(404)
-
-    assert asyncio.run(_reads_with(handle).covering_run("a")) is None
-
-
-def test_the_last_green_commit_is_read_from_default_branch_checks():
-    def handle(request):
-        path = request.url.path.removeprefix("/repos/o/r")
-        if path == "/commits":
-            assert request.url.params["sha"] == "main"
-            return httpx.Response(200, json=[{"sha": "red"}, {"sha": "green"}])
-        if path.endswith("/check-runs"):
-            conclusion = "success" if "/green/" in path else "failure"
-            return httpx.Response(
-                200, json={"check_runs": [_gate_run("completed", conclusion)]}
-            )
-        return httpx.Response(404)
-
-    assert asyncio.run(_reads_with(handle).main_green()) == "green"
-
-
-def _compare_then_commits(commits):
-    def handle(request):
-        path = request.url.path.removeprefix("/repos/o/r")
-        if path.startswith("/compare/"):
-            return httpx.Response(
-                200,
-                json={
-                    "status": "ahead",
-                    "total_commits": len(commits),
-                    "commits": [{"sha": sha} for sha in commits],
-                },
-            )
-        if path.startswith("/commits/"):
-            sha = path.split("/")[2]
-            return httpx.Response(
-                200,
-                json={
-                    "commit": {"message": f"feat: {sha}\n\nbody"},
-                    "files": [{"filename": f"{sha}.py"}],
-                },
+                200, json={"check_runs": runs_by_sha[path.split("/")[2]]}
             )
         return httpx.Response(404)
 
     return _reads_with(handle)
 
 
-def test_reading_a_batch_reports_every_commit_and_what_it_changed():
-    batch = asyncio.run(_compare_then_commits(["b", "c"]).commits_between("a", "d"))
-    assert batch.complete
-    assert batch.total == 2
-    assert [(change.sha, change.subject) for change in batch.changes] == [
-        ("b", "feat: b"),
-        ("c", "feat: c"),
-    ]
-    assert batch.changes[0].files == ("b.py",)
+def test_the_covering_run_is_the_first_after_the_commit_that_was_not_cancelled():
+    reads = _later(
+        {
+            "b": [_gate_run("completed", "cancelled")],
+            "c": [_gate_run("completed", "failure")],
+            "d": [_gate_run("completed", "success")],
+        }
+    )
+    assert asyncio.run(reads.run_after("a", GATES))[0] == "c"
 
 
-def test_a_batch_whose_commits_were_not_all_read_is_not_complete():
-    """Past the cap some commits are never looked at; nothing may be pinned on
-    one of the rest."""
-    shas = [f"c{i}" for i in range(30)]
-    batch = asyncio.run(_compare_then_commits(shas).commits_between("a", "z"))
-    assert batch.total == 30
-    assert len(batch.changes) == 20
-    assert not batch.complete
+def test_a_covering_run_still_going_is_waited_for():
+    reads = _later(
+        {
+            "b": [_gate_run("queued", None)],
+            "c": [_gate_run("completed", "success")],
+        }
+    )
+    assert asyncio.run(reads.run_after("a", GATES)) is None
 
 
-def test_a_commit_the_forge_refuses_to_describe_makes_the_batch_incomplete():
-    def handle(request):
-        path = request.url.path.removeprefix("/repos/o/r")
-        if path.startswith("/compare/"):
-            return httpx.Response(
-                200,
-                json={
-                    "status": "ahead",
-                    "total_commits": 2,
-                    "commits": [{"sha": "b"}, {"sha": "c"}],
-                },
-            )
-        if path == "/commits/c":
-            return httpx.Response(403)
-        return httpx.Response(
-            200,
-            json={
-                "commit": {"message": "feat: b"},
-                "files": [{"filename": "b.py"}],
-            },
-        )
+def test_a_later_green_run_is_found_past_a_newer_red_one():
+    reads = _later(
+        {
+            "b": [_gate_run("completed", "success")],
+            "c": [_gate_run("completed", "failure")],
+            "d": [_gate_run("in_progress", None)],
+        }
+    )
+    assert asyncio.run(reads.run_after("a", GATES, passed=True))[0] == "b"
 
-    batch = asyncio.run(_reads_with(handle).commits_between("a", "c"))
-    assert [change.sha for change in batch.changes] == ["b"]
-    assert not batch.complete
+
+def test_a_branch_whose_pushes_run_no_such_check_has_no_later_run():
+    reads = _later({"b": [_gate_run("completed", "success", name="lint")]})
+    assert asyncio.run(reads.run_after("a", GATES)) is None
+    assert asyncio.run(reads.run_after("a", GATES, passed=True)) is None
 
 
 def _reads_failed_log(log, *, redirect=False):
@@ -525,41 +448,28 @@ async def test_a_static_failure_in_a_test_file_is_not_bisected_by_running_tests(
     assert searches == []
 
 
-def test_ancestry_is_what_the_compare_says():
-    def handle(request):
-        path = request.url.path.removeprefix("/repos/o/r")
-        if path == "/compare/a...b":
-            return httpx.Response(200, json={"status": "ahead"})
-        return httpx.Response(200, json={"status": "behind"})
-
-    reads = _reads_with(handle)
-    assert asyncio.run(reads.is_ancestor("a", "b"))
-    assert not asyncio.run(reads.is_ancestor("b", "a"))
-    assert asyncio.run(reads.is_ancestor("a", "a"))
-
-
 def test_a_rerun_that_passed_wins_over_the_red_it_replaced():
 
     red_then_green = [
-        Check(GATE, "completed", "failure", "", suite=1),
-        Check(GATE, "completed", "success", "", suite=1),
+        Check(GATE, "completed", "failure", ""),
+        Check(GATE, "completed", "success", ""),
     ]
-    assert gate_run(red_then_green, REQUIRED).conclusion == "success"
+    assert named_runs(red_then_green, GATES).conclusion == "success"
 
 
 def test_a_red_gate_beats_a_cancelled_one_whatever_the_order():
 
     for runs in (
         [
-            Check(GATE, "completed", "cancelled", "", suite=1),
-            Check(GATE, "completed", "failure", "", suite=1),
+            Check(GATE, "completed", "cancelled", ""),
+            Check(GATE, "completed", "failure", ""),
         ],
         [
-            Check(GATE, "completed", "failure", "", suite=1),
-            Check(GATE, "completed", "cancelled", "", suite=1),
+            Check(GATE, "completed", "failure", ""),
+            Check(GATE, "completed", "cancelled", ""),
         ],
     ):
-        assert gate_run(runs, REQUIRED).conclusion == "failure"
+        assert named_runs(runs, GATES).conclusion == "failure"
 
 
 def test_a_neutral_gate_counts_as_a_pass():
@@ -567,7 +477,7 @@ def test_a_neutral_gate_counts_as_a_pass():
     # The precedence has to matter: with the neutral run first the old
     # first-match code would return the failure.
     runs = [
-        Check(GATE, "completed", "failure", "", suite=1),
-        Check(GATE, "completed", "neutral", "", suite=1),
+        Check(GATE, "completed", "failure", ""),
+        Check(GATE, "completed", "neutral", ""),
     ]
-    assert gate_run(runs, REQUIRED).conclusion == "neutral"
+    assert named_runs(runs, GATES).conclusion == "neutral"

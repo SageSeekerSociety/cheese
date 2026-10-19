@@ -24,12 +24,11 @@ from sqlalchemy import select, text
 
 from app.domain.review import landing_forge, landing_watch
 from app.domain.review.landing_forge import (
-    BatchCommits,
     Check,
     CommitChange,
     Deployment,
     ForgeUnavailable,
-    RequiredCheck,
+    named_runs,
 )
 from app.domain.review.landing_models import TaskLanding
 from tests.integration.test_a_task_delivers_in_steps import (
@@ -42,6 +41,8 @@ from tests.integration.test_accept_pr import (
 from tests.landing import summary_turn_ends, time_passes, watch
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
+
+_PASSED = ("success", "neutral", "skipped")
 
 MERGED = "merge-sha-1"
 BEFORE = "parent-sha-0"
@@ -56,30 +57,17 @@ class _Forge:
         self.ran: dict[str, list[Check]] = {}
         self.deployed: Deployment | None = None
         self.records_deployments = True
-        #: The newest finished batch gate at or after a commit: sha -> (head, checks).
-        self.covered: dict[str, tuple[str, list[Check]]] = {}
-        #: The commit `main-green` names, when the repository batches.
-        self.green: str | None = None
-        #: (anchor, head) -> the commits of that batch.
-        self.batches: dict[tuple[str, str], BatchCommits] = {}
+        #: The commits on the branch after the merges, oldest first; their
+        #: checks are in `ran`.
+        self.later: list[str] = []
         #: sha -> what that commit changed.
         self.changes: dict[str, CommitChange] = {}
         #: head -> the test files the red jobs name.
         self.failing: dict[str, list[str]] = {}
-        #: (commit, descendant) pairs the forge says are in that order.
-        self.ahead: set[tuple[str, str]] = set()
         #: PR number -> the commit its merge put on main.
         self.merges: dict[int, str] = {}
         #: sha -> its first parent, for tests that walk a batch back.
         self.parents: dict[str, str | None] = {}
-
-    @property
-    def required_checks(self) -> tuple[RequiredCheck, ...]:
-        """This repository batches its main checks, as the platform's own does."""
-        return (RequiredCheck("CI required"),)
-
-    async def configure(self):
-        pass
 
     async def merge_sha(self, pr_number):
         return self.merges.get(pr_number, MERGED)
@@ -97,23 +85,27 @@ class _Forge:
             raise ForgeUnavailable("no deployments")
         return self.deployed
 
-    async def covering_run(self, sha, *, anchor=None):
-        return self.covered.get(sha)
-
-    async def main_green(self):
-        return self.green
-
-    async def commits_between(self, base, head):
-        return self.batches.get((base, head))
+    async def run_after(self, sha, names, *, passed=False):
+        """As the forge reads it: the first later run that was not cancelled,
+        or the newest that went green."""
+        after = self.later[self.later.index(sha) + 1 :] if sha in self.later else []
+        for commit in reversed(after) if passed else after:
+            runs = self.ran.get(commit, [])
+            ran = named_runs(runs, names)
+            if ran is None or ran.conclusion == "cancelled":
+                continue
+            if passed:
+                if ran.status == "completed" and ran.conclusion in _PASSED:
+                    return commit, runs
+                continue
+            return (commit, runs) if ran.status == "completed" else None
+        return None
 
     async def commit_change(self, sha):
         return self.changes.get(sha)
 
     async def failed_paths(self, head, *, tests_only=False):
         return self.failing.get(head, [])
-
-    async def is_ancestor(self, commit, descendant):
-        return commit == descendant or (commit, descendant) in self.ahead
 
 
 def _ran(name: str, conclusion: str | None) -> Check:
@@ -122,7 +114,6 @@ def _ran(name: str, conclusion: str | None) -> Check:
         status="completed" if conclusion else "in_progress",
         conclusion=conclusion,
         url=f"https://ci.example/{name}",
-        suite=1,
     )
 
 

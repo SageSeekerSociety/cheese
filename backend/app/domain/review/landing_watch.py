@@ -3,17 +3,22 @@
 A PR merged by a task is watched for `task_landing.WATCH_FOR`. Two things are
 looked for, both of which nobody has to set up:
 
-- **The checks the repository runs on the merge commit.** One that fails there
-  and passed on the commit before it is this merge's: the task's AI teammate is
-  told to fix it, the task reopens if it had closed, and its owner hears. A
-  check that was failing before the merge too is not this task's, and nothing
-  is said. A flaky one is the AI teammate's to tell apart, with the log in front
-  of it; the platform does not rerun anything.
+- **The checks that ran on the merge commit.** Only what ran there is judged:
+  the branch's required checks gated the pull request before the merge, and a
+  check that runs only on pull requests never reports on the merge commit. One
+  that fails there and passed on the commit before it is this merge's: the
+  task's AI teammate is told to fix it, the task reopens if it had closed, and
+  its owner hears. A check that was failing before the merge too is not this
+  task's, and nothing is said. A flaky one is the AI teammate's to tell apart,
+  with the log in front of it; the platform does not rerun anything. A merge
+  commit on which nothing runs has no signal to wait for: the watch says so
+  (`ChecksOutcome.unchecked`) once the forge has had time to start them.
 
-  A repository may gate main in batches instead (#4249): one run covers every
-  commit since the last green one, so the commits inside a batch have no run of
-  their own — their push was superseded, and their check runs are cancelled.
-  There the failing files in the red job's log are matched against the files
+  A repository may run main in batches instead (#4249): one run covers every
+  commit since the last one that was not superseded, so the commits inside a
+  batch have no run of their own — their push was superseded, and their check
+  runs are cancelled. The run that covers one is the first after it that was
+  not cancelled. There the failing files in the red job's log are matched against the files
   each commit of the batch changed: when they point at one commit, only that
   task hears; when they point at none or at several, every task in the batch
   hears and is asked to rule itself out. A later green batch that covers those
@@ -63,7 +68,7 @@ from app.domain.review.landing_forge import (
     Check,
     ForgeUnavailable,
     LandingReads,
-    gate_run,
+    named_runs,
 )
 from app.domain.review.landing_models import ChecksOutcome, DeployOutcome, TaskLanding
 from app.domain.review.ports import (
@@ -106,6 +111,11 @@ BATCH_COMMITS = 20
 #: How long a landing without a merge commit holds back the verdicts of its
 #: project's red batches.
 UNREAD_FOR = timedelta(minutes=10)
+
+#: How long after the merge a commit with no checks at all may still be about
+#: to get them: the forge starts its runs a little after the push lands. Past
+#: this, nothing is coming and the merge has no post-merge signal.
+NO_CHECKS_FOR = timedelta(minutes=5)
 
 #: What a prompt lists before it says how much it left out.
 PROMPT_COMMITS = 10
@@ -345,19 +355,13 @@ async def _look(
     # Asked with no session open, so no connection waits on the forge.
     if not await quota_serves_background(quota):
         return 0
-
-    candidate = reads
-
-    async def policy():
-        await candidate.configure()
-        return candidate
-
-    reads = await _once(memo, (project_id, "forge-policy"), policy)
     sha = sha or await reads.merge_sha(pr_number)
     if not sha:
         return 0
     checks = (
-        await _judge_checks(reads, sha, project_id=project_id, memo=memo)
+        await _judge_checks(
+            reads, sha, project_id=project_id, memo=memo, landed_at=since
+        )
         if watching_checks
         else None
     )
@@ -497,17 +501,54 @@ def _checks(reads: LandingReads, project_id, sha: str, memo: dict):
     return _once(memo, (project_id, "checks", sha), lambda: reads.checks(sha))
 
 
-def _green(reads: LandingReads, project_id, memo: dict):
-    return _once(memo, (project_id, "green"), reads.main_green)
-
-
-def _covered(reads: LandingReads, project_id, sha: str, anchor: str, memo: dict):
-    """Whether the green batch `main-green` ends covers ``sha``."""
+def _after(
+    reads: LandingReads,
+    project_id,
+    sha: str,
+    names: frozenset[str],
+    memo: dict,
+    *,
+    passed: bool = False,
+):
     return _once(
         memo,
-        (project_id, "covered", sha, anchor),
-        lambda: reads.is_ancestor(sha, anchor),
+        (project_id, "after", sha, names, passed),
+        lambda: reads.run_after(sha, names, passed=passed),
     )
+
+
+def _superseded(runs: list[Check]) -> frozenset[str]:
+    """The checks a newer push superseded on this commit: every run of the
+    name was cancelled. The run that covers them is on a later commit."""
+    by_name: dict[str, list[Check]] = {}
+    for run in runs:
+        by_name.setdefault(run.name, []).append(run)
+    return frozenset(
+        name
+        for name, group in by_name.items()
+        if all(run.conclusion == "cancelled" for run in group)
+    )
+
+
+async def _batch_gate(
+    reads: LandingReads, project_id, sha: str, runs: list[Check], memo: dict
+) -> frozenset[str]:
+    """The checks that run on this commit as one batch; empty when it was
+    checked on its own.
+
+    A commit inside a batch has its runs cancelled. The commit that ends a
+    batch ran them, and the commit before it had them cancelled: those of its
+    red checks are the batch's verdict, not this commit's alone."""
+    superseded = _superseded(runs)
+    if superseded:
+        return superseded
+    red = {run.name for run in _red_checks(runs)}
+    if not red:
+        return frozenset()
+    parent = await reads.parent(sha)
+    if not parent:
+        return frozenset()
+    return frozenset(red) & _superseded(await _checks(reads, project_id, parent, memo))
 
 
 def _red_checks(runs: list[Check]) -> list[Check]:
@@ -532,175 +573,93 @@ def _red_checks(runs: list[Check]) -> list[Check]:
     return red
 
 
-def _reds_elsewhere(runs: list[Check], gate: Check | None) -> list[Check]:
-    """Red checks on a commit that the batch gate's own run does not own.
+def _reds_elsewhere(runs: list[Check], gate: frozenset[str]) -> list[Check]:
+    """Red checks on a commit outside the batch's own checks ``gate``.
 
     A completed pass for a name settles it; a completed red blocks even while
     a re-run of it is in flight, because that red has not been settled yet.
     """
     by_name: dict[str, list[Check]] = {}
     for run in runs:
-        by_name.setdefault(run.name, []).append(run)
+        if run.name not in gate:
+            by_name.setdefault(run.name, []).append(run)
     red: list[Check] = []
     for group in by_name.values():
-        others = [
-            run
-            for run in group
-            if run is not gate
-            and (gate is None or run.name not in gate.required)
-            and (
-                gate is None
-                or run.suite is None
-                or gate.suite is None
-                or run.suite != gate.suite
-            )
-        ]
-        if not others:
-            continue
-        if any(run.status == "completed" and run.conclusion in _PASS for run in others):
+        if any(run.status == "completed" and run.conclusion in _PASS for run in group):
             continue
         red.extend(
             run
-            for run in others
+            for run in group
             if run.status == "completed" and run.conclusion in _FAILED
         )
     return red
 
 
 async def _judge_checks(
-    reads: LandingReads, sha: str, *, project_id, memo: dict
+    reads: LandingReads, sha: str, *, project_id, memo: dict, landed_at: datetime
 ) -> Judgement | None:
-    """What the checks for the merge commit ``sha`` came to, or None while they
-    are still being decided."""
+    """What the checks that ran on the merge commit ``sha`` came to, or None
+    while they are still being decided."""
     own = await _checks(reads, project_id, sha, memo)
+    if not own:
+        # Nothing runs on this branch's pushes, or the forge has not started
+        # it yet: only the second is worth waiting for.
+        if datetime.now(UTC) - landed_at < NO_CHECKS_FOR:
+            return None
+        return Judgement(ChecksOutcome.unchecked, ())
     # Queued is as unfinished as in progress: the batch's first look often
     # finds `scope` and `fail-fast` completed while every product job, and the
     # gate itself, still sit in the queue on the shared pool.
     if any(run.status != "completed" for run in own):
         return None
     red = _red_checks(own)
-    gate = gate_run(own, reads.required_checks)
-    anchor = await _green(reads, project_id, memo)
-    if gate is not None and gate.conclusion in _FAILED:
-        if anchor and await _covered(reads, project_id, sha, anchor, memo):
-            # A later batch went green over this commit: that red is settled.
-            return Judgement(ChecksOutcome.passed, ())
-        parent = await reads.parent(sha)
-        if anchor is None and await _gate_ran(reads, project_id, parent, memo):
-            # No batch mark exists and the commit before it was gated on its
-            # own: this repository checks each merge as it lands, and the old
-            # rule still holds.
-            return await _judge_merge(
-                reads, sha, red, parent=parent, project_id=project_id, memo=memo
+    superseded = _superseded(own)
+    if superseded:
+        # The commit landed inside a batch: the run that covers it is the
+        # first after it that was not cancelled.
+        covering = await _after(reads, project_id, sha, superseded, memo)
+        if covering is not None:
+            head, head_checks = covering
+            if named_runs(head_checks, superseded).conclusion in _FAILED:
+                return await _judge_batch(
+                    reads,
+                    sha,
+                    head=head,
+                    head_checks=head_checks,
+                    gate=superseded,
+                    project_id=project_id,
+                    memo=memo,
+                )
+        elif not red:
+            return None
+        # The batch passed, or has not reported yet while a check of this
+        # commit's own already went red: that red is judged on its own.
+    elif red:
+        gate = await _batch_gate(reads, project_id, sha, own, memo)
+        if gate:
+            # This commit ended a batch, and its run went red. A later batch
+            # that already went green over it has settled that.
+            if await _after(reads, project_id, sha, gate, memo, passed=True):
+                return Judgement(ChecksOutcome.passed, ())
+            return await _judge_batch(
+                reads,
+                sha,
+                head=sha,
+                head_checks=own,
+                gate=gate,
+                project_id=project_id,
+                memo=memo,
             )
-        # The batched gate ran on this very commit and went red.
-        return await _judge_batch(
-            reads, sha, head=sha, head_checks=own, project_id=project_id, memo=memo
+    if red:
+        return await _judge_merge(
+            reads,
+            sha,
+            red,
+            parent=await reads.parent(sha),
+            project_id=project_id,
+            memo=memo,
         )
-    if gate is not None and gate.conclusion in _PASS:
-        # Its own batch passed; a red left here is another workflow's, and the
-        # old rule judges it.
-        if red:
-            return await _judge_merge(
-                reads,
-                sha,
-                red,
-                parent=await reads.parent(sha),
-                project_id=project_id,
-                memo=memo,
-            )
-        return Judgement(ChecksOutcome.passed, ())
-    if gate is None:
-        if red:
-            return await _judge_merge(
-                reads,
-                sha,
-                red,
-                parent=await reads.parent(sha),
-                project_id=project_id,
-                memo=memo,
-            )
-        if any(
-            run.status == "completed" and run.conclusion != "cancelled" for run in own
-        ):
-            # A repository with no batch gate runs each merge on its own, and
-            # this one finished green.
-            return Judgement(ChecksOutcome.passed, ())
-    # The gate was cancelled (a newer push superseded this commit's run) or
-    # never existed: the commit landed inside a batch, and the gate that covers
-    # it is the newest one after it — unless a green batch already moved past.
-    if anchor and await _covered(reads, project_id, sha, anchor, memo):
-        if red:
-            return await _judge_merge(
-                reads,
-                sha,
-                red,
-                parent=await reads.parent(sha),
-                project_id=project_id,
-                memo=memo,
-            )
-        return Judgement(ChecksOutcome.passed, ())
-    covering = await _once(
-        memo,
-        (project_id, "cover", sha, anchor),
-        lambda: reads.covering_run(sha, anchor=anchor),
-    )
-    if covering is None:
-        if red:
-            return await _judge_merge(
-                reads,
-                sha,
-                red,
-                parent=await reads.parent(sha),
-                project_id=project_id,
-                memo=memo,
-            )
-        return None
-    head, head_checks = covering
-    covering_gate = gate_run(head_checks, reads.required_checks)
-    if (
-        covering_gate is None
-        or covering_gate.conclusion is None
-        or covering_gate.conclusion == "cancelled"
-    ):
-        if red:
-            return await _judge_merge(
-                reads,
-                sha,
-                red,
-                parent=await reads.parent(sha),
-                project_id=project_id,
-                memo=memo,
-            )
-        return None
-    if covering_gate.conclusion not in _FAILED:
-        if red:
-            return await _judge_merge(
-                reads,
-                sha,
-                red,
-                parent=await reads.parent(sha),
-                project_id=project_id,
-                memo=memo,
-            )
-        return Judgement(ChecksOutcome.passed, ())
-    return await _judge_batch(
-        reads, sha, head=head, head_checks=head_checks, project_id=project_id, memo=memo
-    )
-
-
-async def _gate_ran(
-    reads: LandingReads, project_id, sha: str | None, memo: dict
-) -> bool:
-    """Whether ``sha`` was checked on its own, rather than in a batch."""
-    if not sha:
-        return False
-    gate = gate_run(await _checks(reads, project_id, sha, memo), reads.required_checks)
-    return (
-        gate is not None
-        and gate.status == "completed"
-        and gate.conclusion != "cancelled"
-    )
+    return Judgement(ChecksOutcome.passed, ())
 
 
 async def _judge_merge(
@@ -737,25 +696,20 @@ async def _judge_batch(
     *,
     head: str,
     head_checks: list[Check],
+    gate: frozenset[str],
     project_id,
     memo: dict,
 ) -> Judgement:
-    """The batched gate on ``head`` went red: who in the batch it covers may
-    have broken it."""
+    """The batch's checks ``gate`` went red on ``head``: who in the batch it
+    covers may have broken it."""
     red = tuple(_red_checks(head_checks))
     if not red:
         return Judgement(ChecksOutcome.passed, ())
-    anchor = await _green(reads, project_id, memo)
-    base = anchor
-    commits = None
-    if anchor:
-        commits = await _once(
-            memo,
-            (project_id, "between", anchor, head),
-            lambda: reads.commits_between(anchor, head),
-        )
-    if commits is None:
-        commits, base = await _walk_back(reads, project_id, head, memo)
+    commits, base = await _once(
+        memo,
+        (project_id, "batch", head, gate),
+        lambda: _walk_back(reads, project_id, head, gate, memo),
+    )
     paths = tuple(
         await _once(memo, (project_id, "paths", head), lambda: reads.failed_paths(head))
     )
@@ -842,13 +796,10 @@ async def _search_for_culprit(
 
 
 async def _walk_back(
-    reads: LandingReads, project_id, head: str, memo: dict
+    reads: LandingReads, project_id, head: str, gate: frozenset[str], memo: dict
 ) -> tuple[BatchCommits, str | None]:
-    """The batch's commits when the green mark cannot say where it starts: back
-    from ``head`` until a batch gate that finished green, which is the base.
-
-    Oldest first, like `commits_between`: the batch reads the same way whether
-    the mark or the walk found its start."""
+    """The batch's commits: back from ``head`` until a commit whose run of the
+    batch's checks ``gate`` finished green, which is the base. Oldest first."""
     changes = []
     current = head
     base: str | None = None
@@ -866,14 +817,11 @@ async def _walk_back(
         if not parent:
             complete = True
             break
-        gate = gate_run(
-            await _checks(reads, project_id, parent, memo), reads.required_checks
-        )
-        if gate is not None and gate.status == "completed":
-            if gate.conclusion in _PASS:
-                base = parent
-                complete = True
-                break
+        ran = named_runs(await _checks(reads, project_id, parent, memo), gate)
+        if ran is not None and ran.status == "completed" and ran.conclusion in _PASS:
+            base = parent
+            complete = True
+            break
         current = parent
     return (
         BatchCommits(
@@ -1177,11 +1125,12 @@ def _how_to_fix(task_id, reopened: bool) -> str:
     )
 
 
-def batch_passed_prompt(*, title: str, sha: str) -> str:
-    """What a task hears when a later batch made its blamed commit green."""
+def red_settled_prompt(*, title: str, sha: str) -> str:
+    """What a task hears when the red its commit was blamed for is settled."""
     return (
-        f"任务「{title}」的提交 {sha[:12]} 之前被主干那一批的全量检查判过红，"
-        "后续的一批已经跑绿并覆盖了它，这条催修撤销，不用再为它改。"
+        f"任务「{title}」的提交 {sha[:12]} 之前在主干上被检查判过红，"
+        "那次红已经过去了（在这个提交上重跑通过，或后续一批跑绿并覆盖了它），"
+        "这条催修撤销，不用再为它改。"
         "如果你已经动手修了，照常交付；还没开始的就停在这里。"
     )
 
@@ -1189,8 +1138,9 @@ def batch_passed_prompt(*, title: str, sha: str) -> str:
 async def _withdraw_passed(
     sessions, *, record_instruction: RecordInstruction | None
 ) -> int:
-    """Take back the fix asked for when a later batch went green over the
-    commit: `main-green` moving past it is that batch passing."""
+    """Take back the fix asked for once the red it was asked for is settled:
+    a re-run of the failed checks passed on the merge commit itself, or, for
+    a merge judged with its batch, a later run of the batch's checks passed."""
     now = datetime.now(UTC)
     async with sessions() as session:
         rows = list(
@@ -1221,30 +1171,15 @@ async def _withdraw_passed(
                 reads = None
         if reads is None:
             continue
-        try:
-            await reads.configure()
-            anchor = await reads.main_green()
-        except Exception:  # a forge read that fails withdraws nothing
-            logger.warning(
-                "reading main-green failed for %s", project_id, exc_info=True
-            )
-            continue
-        if not anchor:
-            continue
+        memo: dict = {}
         for landing_id, task_id, merge_sha in blames:
             try:
-                if not await reads.is_ancestor(merge_sha, anchor):
+                if not await _settled(reads, project_id, merge_sha, memo):
                     continue
-                runs = await reads.checks(merge_sha)
             except Exception:  # a forge read that fails withdraws nothing
-                continue
-            gate = gate_run(runs, reads.required_checks)
-            # Only a red check in the batch's own workflow run is taken back:
-            # a workflow that runs beside it (an image build, say) is another
-            # suite, and Required CI going green says nothing about it. A
-            # completed red counts even while a re-run of it is in flight: the
-            # failure has not been settled yet.
-            if _reds_elsewhere(runs, gate):
+                logger.warning(
+                    "reading whether %s is settled failed", merge_sha, exc_info=True
+                )
                 continue
             async with sessions() as session:
                 landing = await session.get(
@@ -1258,9 +1193,24 @@ async def _withdraw_passed(
                     await tell_agent(
                         session,
                         task,
-                        batch_passed_prompt(title=task.title, sha=merge_sha),
+                        red_settled_prompt(title=task.title, sha=merge_sha),
                         record_instruction=record_instruction,
                     )
                 await session.commit()
             withdrawn += 1
     return withdrawn
+
+
+async def _settled(reads: LandingReads, project_id, sha: str, memo: dict) -> bool:
+    """Whether the red a merge was judged for has since been settled.
+
+    A check outside the batch's own (an image build, say) is settled only on
+    the merge commit itself: a later batch going green says nothing about it.
+    A completed red counts even while a re-run of it is in flight."""
+    runs = await _checks(reads, project_id, sha, memo)
+    gate = await _batch_gate(reads, project_id, sha, runs, memo)
+    if _reds_elsewhere(runs, gate):
+        return False
+    if not gate:
+        return True
+    return await _after(reads, project_id, sha, gate, memo, passed=True) is not None

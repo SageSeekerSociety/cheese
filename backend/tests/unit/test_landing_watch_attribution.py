@@ -87,8 +87,8 @@ def test_a_batch_that_was_not_read_whole_blames_nobody():
 
 def test_a_rerun_that_passed_is_not_red():
     runs = [
-        Check("backend tests (unit)", "completed", "failure", "", suite=1),
-        Check("backend tests (unit)", "completed", "success", "", suite=1),
+        Check("backend tests (unit)", "completed", "failure", ""),
+        Check("backend tests (unit)", "completed", "success", ""),
     ]
     assert _red_checks(runs) == []
 
@@ -161,7 +161,7 @@ def test_a_search_that_named_nobody_says_so_and_why():
 def test_a_neutral_run_counts_as_a_pass():
     """`merge_state` treats neutral as passing; the watcher reads it the same."""
     runs = [
-        Check("shell-tests", "completed", "neutral", "", suite=1),
-        Check("shell-tests", "completed", "failure", "", suite=1),
+        Check("shell-tests", "completed", "neutral", ""),
+        Check("shell-tests", "completed", "failure", ""),
     ]
     assert _red_checks(runs) == []
