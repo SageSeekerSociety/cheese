@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from migration_helpers import with_lock_retries
 
 revision = "b8d14f6a27e0"
-down_revision = "5d3e8a1f2b7c"
+down_revision = "e2600cb40ed8"
 branch_labels = None
 depends_on = None
 
@@ -19,13 +19,27 @@ def upgrade():
     op.add_column("device", sa.Column("team_id", sa.BigInteger(), nullable=True))
     # Provenance cannot cascade-delete a shared team's resource.
     for table in ("device", "hosted_device"):
-        op.alter_column(table, "owner_user_id", existing_type=sa.Integer(), nullable=True)
+        op.alter_column(
+            table, "owner_user_id", existing_type=sa.Integer(), nullable=True
+        )
         op.drop_constraint(f"{table}_owner_user_id_fkey", table, type_="foreignkey")
-        op.create_foreign_key(f"fk_{table}_owner_user_id_user", table, "user", ["owner_user_id"], ["id"], ondelete="SET NULL", postgresql_not_valid=True)
+        op.create_foreign_key(
+            f"fk_{table}_owner_user_id_user",
+            table,
+            "user",
+            ["owner_user_id"],
+            ["id"],
+            ondelete="SET NULL",
+            postgresql_not_valid=True,
+        )
     with op.get_context().autocommit_block():
-        op.execute("ALTER TABLE device VALIDATE CONSTRAINT fk_device_owner_user_id_user")
-        op.execute("ALTER TABLE hosted_device VALIDATE CONSTRAINT fk_hosted_device_owner_user_id_user")
-    op.execute('''
+        op.execute(
+            "ALTER TABLE device VALIDATE CONSTRAINT fk_device_owner_user_id_user"
+        )
+        op.execute(
+            "ALTER TABLE hosted_device VALIDATE CONSTRAINT fk_hosted_device_owner_user_id_user"
+        )
+    op.execute("""
         CREATE FUNCTION device_enrollment_personal_team(enroller integer) RETURNS bigint
         LANGUAGE plpgsql AS $$
         DECLARE chosen bigint;
@@ -39,8 +53,8 @@ def upgrade():
             WHERE NOT EXISTS (SELECT 1 FROM team_user_relation WHERE team_id = chosen AND user_id = enroller AND deleted_at IS NULL);
             RETURN chosen;
         END $$;
-    ''')
-    op.execute('''
+    """)
+    op.execute("""
         CREATE FUNCTION device_enrollment_team_default() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
             IF NEW.team_id IS NULL THEN
@@ -48,14 +62,14 @@ def upgrade():
             END IF;
             RETURN NEW;
         END $$;
-    ''')
-    op.execute('''
+    """)
+    op.execute("""
         CREATE TRIGGER device_enrollment_team_default BEFORE INSERT ON device
         FOR EACH ROW EXECUTE FUNCTION device_enrollment_team_default();
-    ''')
+    """)
     # The prior backend may still finish a team-assignment request before it
     # is replaced. Retired with the old tables in the following release.
-    op.execute('''
+    op.execute("""
         CREATE FUNCTION device_legacy_team_write() RETURNS trigger LANGUAGE plpgsql AS $$
         DECLARE machine text; enroller integer; chosen bigint;
         BEGIN
@@ -70,11 +84,11 @@ def upgrade():
             UPDATE device SET team_id = chosen WHERE device_id = machine;
             RETURN NULL;
         END $$;
-    ''')
-    op.execute('''
+    """)
+    op.execute("""
         CREATE TRIGGER device_legacy_team_write AFTER INSERT OR UPDATE OR DELETE ON device_team
         FOR EACH ROW EXECUTE FUNCTION device_legacy_team_write();
-    ''')
+    """)
 
 
 def downgrade():

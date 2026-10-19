@@ -1,5 +1,4 @@
 {
-  "title": "芝士额度",
   "balance": {
     "available": "可用额度",
     "planTotal": "每月方案额度",
@@ -13,7 +12,6 @@
     "heading": "选择适合你的研究方式",
     "lede": "查看可用方案，或为课题组申请共享额度。",
     "forWhom": "查看对象",
-    "personal": "个人账户",
     "back": "返回额度",
     "loadFailed": "无法读取套餐",
     "windowTerms": "按使用窗口限额",

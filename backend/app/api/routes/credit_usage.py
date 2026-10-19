@@ -28,7 +28,7 @@ from app.domain.agent.model_catalog import model_choices
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
 from app.domain.team.services import team_service
-from app.domain.usage.report import LINES, UsageReport
+from app.domain.usage.report import LINES, TEAM_LINES, UsageReport
 
 router = APIRouter(tags=["credits"])
 
@@ -108,5 +108,16 @@ async def team_credit_usage(
     team = await team_service(db).get_team(team_id)
     if team is None:
         raise NotFoundError(say("teamNotFound", team=team_id))
-    report = await UsageReport(db).team(team.id, team.plan_key)
+    reports = UsageReport(db)
+    personal = team.personal_owner_user_id is not None
+    report = await reports.team(
+        team.id, team.plan_key, lines=LINES if personal else TEAM_LINES
+    )
+    if personal:
+        shared = [
+            t
+            for t in await team_service(db).get_teams_of_user(auth_user.user_id)
+            if t.personal_owner_user_id is None
+        ]
+        report["teams"] = await reports.teams_left(shared)
     return ok(await _named(db, report))

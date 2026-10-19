@@ -85,9 +85,12 @@
 
       <p v-if="notice" class="ap__notice" role="status">
         {{ notice }}
-        <NavLink v-if="creditRefused" :to="{ name: 'UserSettingsUsage' }" class="ap__usage">{{
-          t('usage.viewUsage')
-        }}</NavLink>
+        <NavLink
+          v-if="creditRefused"
+          :to="{ name: 'TeamsDetailCredits', params: { handle: personalTeamHandle } }"
+          class="ap__usage"
+          >{{ t('usage.viewUsage') }}</NavLink
+        >
       </p>
     </div>
 
@@ -173,6 +176,7 @@ const props = defineProps<{
   notice: string | null
   /** 被拒是因为额度不够：提示旁给「查看用量」。 */
   creditRefused?: boolean
+  personalTeamHandle?: string
   busy: boolean
 }>()
 

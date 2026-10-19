@@ -143,17 +143,21 @@ async def my_devices(
 
 
 @router.get("/my/team-devices")
-async def accessible_devices(resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession) -> dict[str, Any]:
+async def accessible_devices(
+    resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+) -> dict[str, Any]:
     """Enrollments visible through current team membership, for the desktop app."""
     user_id = await _require_user(resolver)
     devices = []
     for team in await TeamRepository(db).list_teams_of_user(user_id):
         devices.extend(await service.list_devices_for_team(team.id))
     logins = await owner_login.connections(db, [d.device_id for d in devices])
-    return {"devices": [
-        {**await _device_view(db, d, []), "logins": logins.get(d.device_id, [])}
-        for d in devices
-    ]}
+    return {
+        "devices": [
+            {**await _device_view(db, d, []), "logins": logins.get(d.device_id, [])}
+            for d in devices
+        ]
+    }
 
 
 async def _my_self_hosted(

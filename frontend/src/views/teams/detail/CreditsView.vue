@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import type { CreditUsage } from '@/lib/creditUsage'
-import type { CreditRequest } from '@/types/creditOffers'
+import type { CreditUsage, UsageTeam } from '@/lib/creditUsage'
+import type { BetaCredits, CreditRequest, CreditRewards } from '@/types/creditOffers'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import NavLink from '@/components/common/NavLink.vue'
+import CreditOffers from '@/components/usage/CreditOffers.vue'
 import CreditTopUp from '@/components/usage/CreditTopUp.vue'
 import UsageDailyChart from '@/components/usage/UsageDailyChart.vue'
 import UsagePackList from '@/components/usage/UsagePackList.vue'
 import UsagePeriodCard from '@/components/usage/UsagePeriodCard.vue'
 import UsageShareList from '@/components/usage/UsageShareList.vue'
+import UsageTeamList from '@/components/usage/UsageTeamList.vue'
 import { fmtMonth } from '@/lib/creditUsage'
 
 // 团队的「额度」：本月用了多少（按协作、算力分）、其他额度、每天用量、各项目占多少。不按人分。
@@ -22,13 +26,21 @@ const props = defineProps<{
   loading: boolean
   error: string | null
   canManage?: boolean
+  personal?: boolean
+  beta?: BetaCredits | null
+  rewards?: CreditRewards | null
   teamHandle?: string
   requests?: CreditRequest[]
   offersBusy?: boolean
   offersError?: string | null
 }>()
 
-const emit = defineEmits<{ retry: []; request: [kind: CreditRequest['kind'], credits?: number]; 'retry-offers': [] }>()
+const emit = defineEmits<{
+  retry: []
+  claim: []
+  request: [kind: CreditRequest['kind'], credits?: number]
+  'retry-offers': []
+}>()
 
 const { t, locale } = useI18n()
 
@@ -46,6 +58,7 @@ const projects = computed(() =>
 const otherCredits = computed(() =>
   (props.usage?.packs ?? []).filter((p) => !p.project_id).reduce((sum, p) => sum + p.credits_remaining, 0)
 )
+const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { handle: team.handle } })
 </script>
 
 <template>
@@ -83,14 +96,38 @@ const otherCredits = computed(() =>
           :other-credits="otherCredits"
           :lines="usage.lines"
         />
+        <CreditOffers
+          v-if="personal"
+          :beta="beta"
+          :busy="offersBusy"
+          :error="offersError"
+          @claim="emit('claim')"
+          @retry="emit('retry-offers')"
+        />
       </section>
       <UsagePackList v-if="usage.packs.length" :packs="usage.packs" />
       <div class="tcv__columns">
         <UsageDailyChart :days="usage.days" stacked /><UsageShareList
-          :title="t('usage.projects.byProject')"
+          :title="t(personal ? 'usage.projects.mine' : 'usage.projects.byProject')"
           :items="projects"
         />
       </div>
+      <UsageTeamList v-if="personal && usage.teams?.length" :teams="usage.teams" :link-of="teamLink" />
+      <section v-if="personal" class="usv__rewards">
+        <div class="usv__reward-head">
+          <h2 class="t-title">{{ t('usage.rewards.history') }}</h2>
+          <NavLink to="/feedback">{{ t('usage.offers.feedbackLink') }}</NavLink>
+        </div>
+        <p v-if="rewards" class="usv__earned">{{ t('usage.rewards.earned', { n: rewards.feedback_credits }) }}</p>
+        <ul v-if="rewards?.items.length" class="usv__history">
+          <li v-for="(item, index) in rewards.items" :key="index">
+            <span>{{ t(item.kind === 'beta' ? 'usage.rewards.betaTitle' : 'usage.rewards.accepted') }}</span
+            ><time>{{ new Date(item.created_at).toLocaleDateString(locale) }}</time
+            ><strong>{{ t('usage.rewards.gain', { n: item.credits }) }}</strong>
+          </li>
+        </ul>
+        <BaseEmptyState v-else-if="rewards" size="inline" :title="t('usage.rewards.empty')" />
+      </section>
       <details v-if="requests?.length" class="tcv__requests">
         <summary>{{ t('usage.offers.requestsTitle') }}</summary>
         <ul>
@@ -116,6 +153,47 @@ const otherCredits = computed(() =>
   flex-direction: column;
   gap: 32px;
 }
+.usv__reward-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.usv__rewards {
+  padding-top: 8px;
+}
+.usv__reward-head :deep(a),
+.usv__earned {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+.usv__earned {
+  margin: 12px 0;
+}
+.usv__history {
+  padding: 0;
+  margin: 12px 0 0;
+  list-style: none;
+}
+.usv__history li {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+.usv__history time {
+  color: var(--muted);
+  margin-left: auto;
+}
+.usv__history strong {
+  color: var(--ok-ink);
+  font-weight: 500;
+}
+
 .tcv__actions {
   display: flex;
   justify-content: flex-end;

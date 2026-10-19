@@ -133,8 +133,12 @@ def spec_of(name: str) -> Spec | None:
             background_cap_s=settings.cloud_vm_background_cap_s,
         )
     if name == TEAM_DEVICES:
-        return Spec(name, platform=False, idle_s=settings.cloud_sandbox_idle_stop_s,
-                    background_cap_s=settings.cloud_sandbox_background_cap_s)
+        return Spec(
+            name,
+            platform=False,
+            idle_s=settings.cloud_sandbox_idle_stop_s,
+            background_cap_s=settings.cloud_sandbox_background_cap_s,
+        )
     if name.startswith(DEVICES_OF):
         owner = name.removeprefix(DEVICES_OF)
         if owner.isdigit():

@@ -216,9 +216,7 @@ class DeviceService:
         """Keep when the machine was last heard from."""
         await self._repo.note_last_seen(device_id, at)
 
-    async def rename(
-        self, device_id: str, name: str, *, actor_user_id: int
-    ) -> Device:
+    async def rename(self, device_id: str, name: str, *, actor_user_id: int) -> Device:
         """Rename a device the caller owns. The name is a human label only (never a
         semantic/authorization key), so a plain non-empty check is all that's needed."""
         device = await self._require_team_admin(device_id, actor_user_id)

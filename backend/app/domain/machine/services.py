@@ -861,7 +861,9 @@ class HostPool(PoolSweep):
         device = await self._devices.approve(
             code,
             owner_user_id=owner.id,
-                    team_id=(await team_service(self._session).ensure_personal_team(owner.id)).id,
+            team_id=(
+                await team_service(self._session).ensure_personal_team(owner.id)
+            ).id,
             # 入口决定待遇 (#282 决定 2): the platform asked MicroCloud for this
             # machine, so the platform may reclaim it. A CONSTANT, never derived
             # from what the machine looks like — the identical VM enrolled by a

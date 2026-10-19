@@ -986,15 +986,17 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_routine_draft",
-            "为当前频道起草一条定时与触发规则（到点让这个频道的队友开工一轮）。"
-            "起草出来的是**草稿，不会执行**：只有频道里的人点「确认启用」它才开始跑。"
-            "所以起草完要把配置用一两句话说给用户听，请他在「定时与触发」里确认，"
-            "不要说得像已经设好了。",
+            "为当前频道建一条例行事务（到点让这个频道的队友开工一轮）。"
+            "**存下就在跑**：没有人再点一次确认，所以你建之前先把配置说清楚，"
+            "建完自己说一句它已经开跑了、什么时候跑第一次，话里带上返回的那个"
+            "链接（就是规则的名字，点开还是这个频道，右栏那一格开在这一条上）。",
             {
-                "title": _text("规则名字，一句话"),
-                "instructions": _text("到点要做的事，写清做什么、交出什么"),
-                "context_scope": _text("可以用哪些资料；不写就是按需要自取"),
-                "output_dir": _text("结果放频道文件区哪个目录；不写就是根目录"),
+                "title": _text("规则名字，一句话；不写就取目标的第一句"),
+                "instructions": _text("目标：到点要做的事，写清做什么、交出什么"),
+                "note": _text(
+                    "补充说明：还有什么要它知道的；不写就没有这一项"
+                    "（用哪些资料、结果放哪，每次开工它自己定，不用在这里写）"
+                ),
                 "trigger": {
                     "type": "string",
                     "enum": list(ROUTINE_TRIGGERS),
@@ -1009,19 +1011,18 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_routine_list",
-            "列出这个频道的定时与触发规则：名字、id、状态（草稿/启用中/已暂停）、"
+            "列出这个频道的例行事务：名字、id、状态（启用中/已暂停）、"
             "什么时候跑、下次什么时候跑。",
         ),
         _tool(
             "cheese_routine_update",
-            "改一条规则，只发要改的那几项。**人设的规则被你改过会退回草稿**，"
-            "要人再确认一次才继续跑；改完把改动说给用户听。",
+            "改一条规则，只发要改的那几项。**改完立刻就按新的跑**，没有人再确认一次；"
+            "改完把改动说给用户听。",
             {
                 "routine": _ROUTINE,
                 "title": _text("新名字"),
-                "instructions": _text("新的工作内容"),
-                "context_scope": _text("新的资料范围"),
-                "output_dir": _text("新的结果目录"),
+                "instructions": _text("新的目标"),
+                "note": _text("新的补充说明；给空字符串就清掉这一项"),
                 "trigger": {
                     "type": "string",
                     "enum": list(ROUTINE_TRIGGERS),
@@ -1718,8 +1719,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "timezone": args.get("timezone") or "Asia/Shanghai",
             **_given(
                 args,
-                "context_scope",
-                "output_dir",
+                "note",
                 "owner_handle",
                 "agent_handle",
             ),
@@ -1740,8 +1740,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             args,
             "title",
             "instructions",
-            "context_scope",
-            "output_dir",
+            "note",
             "trigger",
             "spec",
             "timezone",
@@ -3355,20 +3354,34 @@ def _say_todo(args, data, env) -> str:
 
 def _say_routine_draft(args, data, env) -> str:
     data = data or {}
+    first = f"，第一次在 {data['next_run_at']}" if data.get("next_run_at") else ""
+    title = data.get("title") or args.get("title") or ""
+    project = data.get("project_id") or env.get("CHEESE_PROJECT") or ""
+    # 点开是**这个频道**：右栏切到「例行事务」，这一条展开着。不去项目那一页 —— 规则
+    # 长在这个房间里，人刚在这里说的事就在眼前做完，别把人带到别处去认路。
+    room = data.get("topic_id") or ""
+    name = (
+        f"[{title}](/projects/{project}/channels/{room}?tab=routines&routine={data.get('id')})"
+        if project and room and data.get("id")
+        else f"「{title}」"
+    )
     return (
-        f"已为这个频道起草「{data.get('title')}」(id={data.get('id')})，"
-        "它现在是**草稿，不会执行**。\n"
-        f"什么时候跑：{data.get('trigger_text') or args.get('trigger') or 'schedule'}\n"
-        "把配置用一两句话说给用户听，请他在这个频道右侧的「定时与触发」里点"
-        "「确认启用」。确认之前一个字都不会跑，所以别告诉他规则已经设好了。"
+        f"已为这个频道建了{name}，**它已经在跑了**，没有人再确认一次。\n"
+        f"什么时候跑：{data.get('trigger_text') or args.get('trigger') or 'schedule'}"
+        f"{first}\n"
+        f"（id={data.get('id')}，你自己后面调用要用，别写给用户。）\n"
+        "现在你自己说一句告诉用户建好了：把那上面的名字原样带上 —— 它是这条规则的"
+        "标题，点开就是这个频道右边「例行事务」那一格上展开着的那一条。像平常说话那样"
+        "说清楚建了什么、什么时候第一次跑就够了；别说是链接、别写 id、也别把这段说明"
+        "抄过去。他要改或不要，就在那一格上改。"
     )
 
 
 def _say_routine_list(args, data, env) -> str:
     rows = (data or {}).get("data") or []
     if not rows:
-        return "这个频道还没有定时与触发规则。"
-    state = {"draft": "草稿（等人确认）", "active": "启用中", "paused": "已暂停"}
+        return "这个频道还没有例行事务。"
+    state = {"active": "启用中", "paused": "已暂停"}
     lines = []
     for row in rows:
         line = (
@@ -3388,12 +3401,10 @@ def _say_routine_list(args, data, env) -> str:
 def _say_routine_update(args, data, env) -> str:
     data = data or {}
     state = data.get("state")
-    tail = (
-        "它退回了草稿：人设的规则被你改过，要人再确认一次才继续跑，把改动说给他听。"
-        if state == "draft"
-        else f"它现在 {state}。"
+    return (
+        f"已改「{data.get('title') or args.get('routine')}」，"
+        f"它现在 {state}，下一次就按改后的来。把改动说给用户听。"
     )
-    return f"已改「{data.get('title') or args.get('routine')}」，{tail}"
 
 
 def _say_routine_pause(args, data, env) -> str:

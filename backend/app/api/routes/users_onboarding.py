@@ -177,7 +177,9 @@ async def _work_on_own_computer(
     assert me.user_id is not None
     try:
         async with session.begin_nested():
-            if not await sql_device_service(session).serves_project(device_id, project.id):
+            if not await sql_device_service(session).serves_project(
+                device_id, project.id
+            ):
                 return False
             environment = Sandbox(spec=TEAM_DEVICES)
             await check_allowed(session, project, environment, me)

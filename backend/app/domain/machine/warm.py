@@ -515,7 +515,9 @@ class WarmPoolService:
                 device = await self.devices.approve(
                     code,
                     owner_user_id=owner.id,
-                    team_id=(await team_service(self.session).ensure_personal_team(owner.id)).id,
+                    team_id=(
+                        await team_service(self.session).ensure_personal_team(owner.id)
+                    ).id,
                     supply=Supply.cloud,
                     name=row.create_request["hostname"],
                 )

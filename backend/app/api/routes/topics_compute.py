@@ -72,7 +72,9 @@ async def _may_move_task(db, resolver, actor, topic, task) -> bool:
 
     devices = sql_device_service(db)
     held = await devices.get_devices(list(await devices_held_by(db, task.id)))
-    return any([await devices.may_manage(device, actor.user_id) for device in held.values()])
+    return any(
+        [await devices.may_manage(device, actor.user_id) for device in held.values()]
+    )
 
 
 async def _place_for_change(db, resolver, topic_id: uuid.UUID):

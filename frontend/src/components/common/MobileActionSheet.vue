@@ -135,7 +135,12 @@ useFocusReturn(open)
       </div>
       <slot />
       <ul v-if="props.actions.length" class="action-sheet__list" role="menu">
-        <li v-for="action in props.actions" :key="action.key" role="none">
+        <li
+          v-for="action in props.actions"
+          :key="action.key"
+          role="none"
+          :class="{ 'action-sheet__row--apart': action.divider }"
+        >
           <button
             type="button"
             role="menuitem"
@@ -190,6 +195,13 @@ useFocusReturn(open)
   margin: 0;
   padding: 4px 0;
   list-style: none;
+}
+/* 上面几件和「不可撤销的那一件」分开：桌面上那里是一条分隔线，这里是面板，线跟着
+   面板的宽度走。 */
+.action-sheet__row--apart {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
 }
 .action-sheet__item {
   display: flex;

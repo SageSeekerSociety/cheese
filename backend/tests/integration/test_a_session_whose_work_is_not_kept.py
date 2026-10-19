@@ -290,9 +290,7 @@ async def _move(client, monkeypatch, held: dict) -> dict:
     response = client.put(
         f"/topics/{held['conversation']}/sessions/{held['session']}/environment",
         headers={"X-Cheese-Token": held["turn"]},
-        json={
-            "environment": {"kind": "sandbox", "spec": "team_devices"}
-        },
+        json={"environment": {"kind": "sandbox", "spec": "team_devices"}},
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]

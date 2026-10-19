@@ -178,8 +178,7 @@ describe('首页目录的画面', () => {
       expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/docs', '/teams/andy/compute']))
     )
     expect(hrefs()).not.toContain('/teams/andy/members')
-    // 自己的额度在个人设置里；团队才有「额度」这一页。
-    expect(hrefs()).not.toContain('/teams/andy/credits')
+    expect(hrefs()).toContain('/teams/andy/credits')
 
     const text = document.body.textContent ?? ''
     expect(text.indexOf('林夏')).toBeLessThan(text.indexOf('团队'))

@@ -175,8 +175,8 @@ async function ask(q) {
       const err = await res.json().catch(() => ({}))
       const msg = res.status === 429 ? (err.message || '提问太频繁了，稍后再试。') : (err.message || '芝士暂时答不上来，稍后再试。')
       // Refused for credits: say where the month's usage is.
-      const credits = /^credits/.test((err.error && err.error.i18n && err.error.i18n.key) || '')
-      body.innerHTML = `<p>${esc(msg)}${credits ? ` <a href="${PLATFORM}/users/settings/usage">查看用量</a>` : ''}</p>`
+      const creditsPath = res.headers.get('X-Credits-Path')
+      body.innerHTML = `<p>${esc(msg)}${creditsPath ? ` <a href="${esc(PLATFORM + creditsPath)}">查看用量</a>` : ''}</p>`
       return
     }
     const reader = res.body.getReader(), dec = new TextDecoder()

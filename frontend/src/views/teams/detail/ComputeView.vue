@@ -6,7 +6,10 @@ import { ref } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
+import { teammateName } from '@/lib/agentNames'
+import { topicTitle } from '@/lib/topicState'
 
 defineProps<{
   devices: MyDevice[]
@@ -100,6 +103,27 @@ const adding = ref(false)
           {{ login.logged_in ? t('teams.compute.loginReady') : t('teams.compute.loginUnavailable') }}
         </p>
         <p v-if="!device.logins?.length" class="t-caption c-muted">{{ t('teams.compute.noLogins') }}</p>
+        <div
+          v-for="use in device.in_use ?? []"
+          :key="`${use.topic_id}:${use.agent_handle}`"
+          class="t-caption c-muted mt-2"
+        >
+          <i18n-t keypath="work.deviceInUse.line" tag="span" scope="global">
+            <template #project
+              ><span data-user-content>{{ use.project_name }}</span></template
+            >
+            <template #room
+              ><span data-user-content>{{ topicTitle({ title: use.topic_title }) }}</span></template
+            >
+            <template #agent>
+              <UserRef
+                :handle="use.agent_handle"
+                :name="teammateName(use.agent_name, use.agent_name_source)"
+                :project-id="use.project_id"
+              />
+            </template>
+          </i18n-t>
+        </div>
       </section>
     </div>
   </v-container>

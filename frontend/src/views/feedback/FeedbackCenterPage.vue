@@ -9,7 +9,7 @@ import { useCreditOffers } from '@/composables/useCreditOffers'
 import FeedbackCenterPageView from './FeedbackCenterPageView.vue'
 
 import { t } from '@/i18n'
-import { myId } from '@/me'
+import { myHandle, myId } from '@/me'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 反馈中心首页 (/feedback)。
@@ -108,6 +108,7 @@ onMounted(() => {
 <template>
   <FeedbackCenterPageView
     :is-admin="store.isAdmin"
+    :personal-team-handle="myHandle()"
     :tab="store.tab"
     :tabs="tabs"
     :meta="store.meta"
