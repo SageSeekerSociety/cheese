@@ -11,7 +11,9 @@ guess from a report written after the fact:
     excluded ``integration``/``contract`` node is the tier working as designed;
     an excluded ``pure`` node is the layer being silently under-run, and the
     runner fails it rather than letting a ``-k`` hide it.
-  * ``executed``  — every node that reported, with its outcome.
+  * ``executed``  — every node that reported, with its outcome, and for a
+    skip the reason pytest gave: the reader counts only a skip that names a
+    capability this machine lacks as reached.
 
 Under ``-n`` the run is several processes. Each xdist worker sees the whole
 collection (``pytest_collection_modifyitems`` runs before distribution) and
@@ -144,13 +146,32 @@ def pytest_collection_modifyitems(session, config, items):
     _flush()
 
 
+def _skip_reason(report):
+    """What pytest said about a skip, so the reader can tell which kind it was.
+
+    A skip that names a capability this machine lacks (bubblewrap, sandbox-exec,
+    ripgrep, tmux) is the environment declining the test. Any other skip — a
+    plain ``@pytest.mark.skip``, a feature-flag ``skipif``, an xfail — may hide
+    a real failure, so it must keep reading as not executed. ``wasxfail`` is
+    set only for an xfail failure; pytest reports it with outcome ``skipped``.
+    """
+    wasxfail = getattr(report, "wasxfail", None)
+    if wasxfail is not None:
+        return f"xfail: {wasxfail}"
+    longrepr = getattr(report, "longrepr", None)
+    if isinstance(longrepr, tuple) and len(longrepr) >= 3:
+        return str(longrepr[2])
+    return str(longrepr)
+
+
 def pytest_runtest_logreport(report):
     # A call that passed, plus anything that did not pass at all (setup skips,
     # errors, teardown failures) — everything the executed set must account for.
     if report.when == "call" or report.outcome != "passed":
-        _STATE["executed"].append(
-            {"node": report.nodeid, "when": report.when, "outcome": report.outcome}
-        )
+        entry = {"node": report.nodeid, "when": report.when, "outcome": report.outcome}
+        if report.outcome == "skipped":
+            entry["reason"] = _skip_reason(report)
+        _STATE["executed"].append(entry)
 
 
 def pytest_sessionfinish(session, exitstatus):

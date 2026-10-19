@@ -2417,10 +2417,12 @@ class PytestPluginTest(unittest.TestCase):
             return object() if name == self._layer else None
 
     class Report:
-        def __init__(self, node, when, outcome):
+        def __init__(self, node, when, outcome, longrepr=None, wasxfail=None):
             self.nodeid = node
             self.when = when
             self.outcome = outcome
+            self.longrepr = longrepr
+            self.wasxfail = wasxfail
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -2436,8 +2438,12 @@ class PytestPluginTest(unittest.TestCase):
     def drive(self, selected=(), deselected=(), reports=()):
         self.plugin.pytest_collection_modifyitems(None, None, [self.Item(n, l) for n, l in selected])
         self.plugin.pytest_deselected([self.Item(n, l) for n, l in deselected])
-        for node, when, outcome in reports:
-            self.plugin.pytest_runtest_logreport(self.Report(node, when, outcome))
+        for report in reports:
+            node, when, outcome, *extra = report
+            longrepr = extra[0] if extra else None
+            wasxfail = extra[1] if len(extra) > 1 else None
+            self.plugin.pytest_runtest_logreport(
+                self.Report(node, when, outcome, longrepr, wasxfail))
         self.plugin.pytest_sessionfinish(None, 0)
         return json.loads(self.sidecar.read_text())
 
@@ -2484,17 +2490,45 @@ class PytestPluginTest(unittest.TestCase):
 
     def test_skipped_pure_node_counts_as_reached(self):
         # The hosted runner deliberately lacks bubblewrap, sandbox-exec, ripgrep
-        # and tmux; those tests report a setup skip. The node was reached and
-        # declined, so it is not unrun — only a node with no report at all is.
+        # and tmux; those tests report a setup skip naming the capability. The
+        # node was reached and declined, so it is not unrun.
         from ci_fast_checks import validate_evidence
         data = self.drive(
             selected=[("tests/unit/test_x.py::test_a", "pure")],
-            reports=[("tests/unit/test_x.py::test_a", "setup", "skipped")])
+            reports=[("tests/unit/test_x.py::test_a", "setup", "skipped",
+                      ("tests/unit/test_x.py", 1,
+                       "Skipped: needs a real tmux >= 3.0"))])
         self.assertEqual(data["executed"],
-                         [{"node": "tests/unit/test_x.py::test_a", "when": "setup", "outcome": "skipped"}])
+                         [{"node": "tests/unit/test_x.py::test_a", "when": "setup",
+                           "outcome": "skipped",
+                           "reason": "Skipped: needs a real tmux >= 3.0"}])
         verdict = validate_evidence(self.evidence(data, ["tests/unit/test_x.py"]))
         self.assertEqual(verdict["result"], "pass")
         self.assertEqual(verdict["evidence"]["unrun"], [])
+
+    def test_a_plain_skip_stays_unrun(self):
+        # A @pytest.mark.skip is not the environment declining: it may be
+        # hiding a real failure, so it must keep the run unknown.
+        from ci_fast_checks import validate_evidence
+        data = self.drive(
+            selected=[("tests/unit/test_x.py::test_a", "pure")],
+            reports=[("tests/unit/test_x.py::test_a", "setup", "skipped",
+                      ("tests/unit/test_x.py", 1, "Skipped: temporarily disabled"))])
+        verdict = validate_evidence(self.evidence(data, ["tests/unit/test_x.py"]))
+        self.assertEqual(verdict["result"], "unknown")
+        self.assertEqual(verdict["evidence"]["unrun"], ["tests/unit/test_x.py::test_a"])
+
+    def test_a_non_strict_xfail_stays_unrun(self):
+        # pytest reports a non-strict xfail that fails as "skipped" with
+        # wasxfail set. That is a failing test, not a missing capability.
+        from ci_fast_checks import validate_evidence
+        data = self.drive(
+            selected=[("tests/unit/test_x.py::test_a", "pure")],
+            reports=[("tests/unit/test_x.py::test_a", "call", "skipped",
+                      None, "known flake")])
+        verdict = validate_evidence(self.evidence(data, ["tests/unit/test_x.py"]))
+        self.assertEqual(verdict["result"], "unknown")
+        self.assertEqual(verdict["evidence"]["unrun"], ["tests/unit/test_x.py::test_a"])
 
     def test_teardown_failure_fails(self):
         from ci_fast_checks import validate_evidence
