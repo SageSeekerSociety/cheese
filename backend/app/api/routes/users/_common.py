@@ -75,6 +75,18 @@ class OAuthEmailVerifyRequest(OAuthEmailCodeRequest):
     code: str = Field(..., min_length=1)
 
 
+class GithubAppIntentRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: The page to land back on once GitHub is connected.
+    return_path: str | None = Field(default=None, alias="returnPath")
+
+
+class GithubAppIntentOut(BaseModel):
+    #: Passed to the GitHub login URL as `intent`; spent once there.
+    intent: str
+
+
 class SignupConsent(BaseModel):
     #: document key → the version shown on the signup page.
     documents: dict[str, str]
