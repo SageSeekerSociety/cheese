@@ -295,6 +295,26 @@ def _is_ancestor(ancestor, descendant):
     ).returncode == 0
 
 
+def merge_ref_base(event_base, head="HEAD", cwd=None):
+    """The base a pull_request checkout was actually merged onto.
+
+    The default checkout for a pull_request is GitHub's merge ref: a merge
+    commit whose first parent is the base branch tip it was built on. The
+    event payload's ``pull_request.base.sha`` is not always that commit: main
+    moves between the payload and the merge ref, so a diff against the payload
+    counts unrelated main commits as part of the PR. Measured 2026-10-19, a
+    backend-only PR selected the frontend suite and spent 333 s running it
+    because main's frontend changes sat between the two bases. A commit with
+    two parents is the merge; its first parent is the base. Anything else (a
+    head checkout, a ref that is not a merge) keeps the event's answer.
+    """
+    parents = subprocess.check_output(
+        ["git", "rev-list", "--parents", "-n", "1", head],
+        cwd=cwd, text=True,
+    ).split()
+    return parents[1] if len(parents) >= 3 else event_base
+
+
 def effective_base(event_base, head="HEAD"):
     """Resolve the one base both the receipt and suite diff must use."""
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
@@ -374,7 +394,10 @@ def actions_run_url():
 
 
 def main():
-    if sys.argv[1] == "scope":
+    if sys.argv[1] == "pr-base":
+        event_base = sys.argv[2] if len(sys.argv) > 2 else ""
+        print(merge_ref_base(event_base))
+    elif sys.argv[1] == "scope":
         event_name, event = _read_event()
         # A main push names no base it can trust, so the argument is empty and
         # effective_base resolves the anchor itself.
@@ -413,7 +436,7 @@ def main():
             raise SystemExit("\n".join(f"{error} (run: {run_url})" for error in errors))
         print(f"Every selected suite passed (tier: {expected_tier}).")
     else:
-        raise SystemExit("Usage: required-ci.py scope [BASE_SHA] | check")
+        raise SystemExit("Usage: required-ci.py scope [BASE_SHA] | check | pr-base [EVENT_BASE]")
 
 
 if __name__ == "__main__":
