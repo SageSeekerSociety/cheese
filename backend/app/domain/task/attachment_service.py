@@ -176,8 +176,9 @@ class TaskAttachmentService:
         )
         if not links:
             return None
+        tasks_by_id = await self._tasks.get_by_ids([link.task_id for link in links])
         for link in links:
-            task = await self._tasks.get_by_id(link.task_id)
+            task = tasks_by_id.get(link.task_id)
             if task is None:
                 continue
             if await self._may_download(task=task, user_id=user_id):
