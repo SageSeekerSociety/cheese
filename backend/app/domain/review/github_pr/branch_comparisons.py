@@ -7,7 +7,8 @@ import httpx
 
 from app.core import forge_quota
 from app.core.forge_http import forge_client
-from app.domain.review.github_pr._shared import GitHubPrError, _refused
+from app.core.sentences import say
+from app.domain.review.github_pr._shared import GitHubPrError, _refused, logger
 from app.domain.review.github_pr.protocol import (
     BranchComparison,
     BranchComparisonFailure,
@@ -21,8 +22,8 @@ BRANCH_COMPARISON_BATCH = 50
 
 
 def _invalid(reason: str) -> GitHubPrError:
-    # i18n-exempt: internal diagnostic for an unusable upstream response
-    return GitHubPrError(f"Unusable GitHub branch comparison: {reason}")
+    logger.warning("unusable GitHub branch comparison: %s", reason)
+    return GitHubPrError(say("githubBranchComparisonInvalid"))
 
 
 def _query(pairs: Sequence[BranchPair]) -> tuple[str, dict[str, str]]:
@@ -53,14 +54,16 @@ def _parse(
     payload: Any, pairs: Sequence[BranchPair]
 ) -> dict[BranchPair, BranchComparisonResult]:
     if not isinstance(payload, dict):
-        raise _invalid("response is not an object")
+        raise _invalid("response_not_object")
     errors = payload.get("errors", [])
     if not isinstance(errors, list) or any(
         not isinstance(error, dict) for error in errors
     ):
-        raise _invalid("invalid errors")
+        raise _invalid("invalid_errors")
     if any(error.get("type") == "RATE_LIMITED" for error in errors):
-        raise BranchComparisonsDeferred("GitHub GraphQL quota spent")
+        raise BranchComparisonsDeferred(
+            say("forgeQuotaExhausted", wait=say("forgeQuotaBackSoon"))
+        )
     failures: dict[str, list[str]] = {}
     aliases = {f"r{index}" for index in range(len(pairs))}
     for error in errors:
@@ -72,14 +75,14 @@ def _parse(
             or not isinstance(path[1], str)
             or path[1] not in aliases
         ):
-            raise _invalid(str(error.get("message") or "unscoped query error")[:300])
+            raise _invalid(str(error.get("message") or "unscoped_query_error")[:300])
         failures.setdefault(path[1], []).append(
             str(error.get("message") or "query failed")[:300]
         )
     data = payload.get("data")
     repository = data.get("repository") if isinstance(data, dict) else None
     if not isinstance(repository, dict):
-        raise _invalid("missing repository")
+        raise _invalid("missing_repository")
     results: dict[BranchPair, BranchComparisonResult] = {}
     for index, pair in enumerate(pairs):
         alias = f"r{index}"
@@ -140,7 +143,7 @@ async def read_branch_comparisons(
                 )
             ):
                 raise BranchComparisonsDeferred(
-                    "Draft preflight yielded to quota consumers"
+                    say("forgeQuotaExhausted", wait=say("forgeQuotaBackSoon"))
                 )
             batch = unique[offset : offset + BRANCH_COMPARISON_BATCH]
             query, variables = _query(batch)
@@ -150,13 +153,17 @@ async def read_branch_comparisons(
             )
             if response.status_code != 200:
                 error = _refused("githubRefusedCommitOrder", response)
-                if response.status_code in (403, 429):
+                if response.status_code == 429 or forge_quota.rate_limited(response):
+                    if installation is not None:
+                        forge_quota.refuse(
+                            installation, forge_quota.wait_seconds(response)
+                        )
                     raise BranchComparisonsDeferred(str(error))
                 raise error
             try:
                 payload = response.json()
             except ValueError as exc:
-                raise _invalid("response is not JSON") from exc
+                raise _invalid("response_not_json") from exc
             try:
                 results.update(_parse(payload, batch))
             except BranchComparisonsDeferred:

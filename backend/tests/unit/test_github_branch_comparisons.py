@@ -189,8 +189,21 @@ async def test_http_refusal_does_not_fall_back_to_individual_reads(status):
 
     def handler(request):
         sent.append(request)
-        return httpx.Response(status, json={"message": "refused"})
+        return httpx.Response(
+            status, headers={"x-ratelimit-remaining": "0"}, json={"message": "refused"}
+        )
 
     with pytest.raises(BranchComparisonsDeferred):
         await read(handler, [(f"task/{n}", "main") for n in range(51)])
     assert len(sent) == 1 and sent[0].url.path == "/graphql"
+
+
+@pytest.mark.anyio
+async def test_permission_refusal_is_not_misreported_as_quota():
+    def handler(request):
+        return httpx.Response(403, json={"message": "Resource not accessible"})
+
+    with pytest.raises(GitHubPrError) as caught:
+        await read(handler, [("task/a", "main")])
+    assert not isinstance(caught.value, BranchComparisonsDeferred)
+    assert forge_quota.refused_until(7291) is None

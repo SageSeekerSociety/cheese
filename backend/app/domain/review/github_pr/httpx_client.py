@@ -1,7 +1,7 @@
 """`HttpxGitHubPrClient` — the real client, and the one the process hands out.
 
-Plain REST calls against api.github.com with a token the caller passes per call,
-plus the two GraphQL calls the merge queue needs. Behind `default_client()` —
+REST and bounded GraphQL operations against api.github.com with a token the
+caller passes per call. Behind `default_client()` —
 one process-wide instance, which is why the zero-check-runs grace period is
 bookkeeping on `self` that outlives a poll.
 """
