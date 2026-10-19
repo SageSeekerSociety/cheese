@@ -1,7 +1,7 @@
 /**
- * 预览站里「后台那一组整页」的前半：方案与额度、棘轮、运行记录、协议文档。
+ * 预览站里「后台那一组整页」的前半：方案与额度、运行记录、协议文档。
  *
- * 这些页面在应用里由各自的路由页取数（`AdminCreditsPage.vue`、`AdminRatchetPage.vue`、
+ * 这些页面在应用里由各自的路由页取数（`AdminCreditsPage.vue`、
  * `AdminRunRecordsPage.vue`、`LegalDocument.vue`），路由页碰接口层，预览站碰不得。好在
  * 它们都已经拆成「路由页 → 只吃 props 的画面」：这里展示的正是产品里真会走到的那几格 ——
  * 数据到货 / 首次加载 / 读失败 / 空 / 点开了某一行的详情。各屏公用的一份数据见
@@ -15,11 +15,13 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
+  CRV_CI_BOARD,
+  CRV_CI_JOBS,
+  CRV_CI_STEPS,
   CRV_HISTORY,
   CRV_LEGAL,
   CRV_MACHINES,
   CRV_PLANS,
-  CRV_RATCHET,
   CRV_RUN_DETAIL,
   CRV_RUN_OVERVIEW,
   CRV_TEAM_DETAIL,
@@ -28,9 +30,9 @@ import {
 } from './catalogViewAdminFixtures'
 
 import { t } from '@/i18n'
+import AdminCiActivityPageView from '@/views/admin/AdminCiActivityPageView.vue'
 import AdminCreditsPageView from '@/views/admin/AdminCreditsPageView.vue'
 import AdminMachinesPageView from '@/views/admin/AdminMachinesPageView.vue'
-import AdminRatchetPageView from '@/views/admin/AdminRatchetPageView.vue'
 import AdminRunRecordsPageView from '@/views/admin/AdminRunRecordsPageView.vue'
 import LegalDocumentView from '@/views/legal/LegalDocumentView.vue'
 
@@ -73,6 +75,8 @@ export const VIEW_ADMIN_ENTRIES: CatalogEntry[] = [
       historyError: null,
       teamPlanSaving: false,
       teamPlanError: null,
+      overseasSaving: false,
+      overseasError: null,
       grantOpen: false,
       grantSaving: false,
       grantError: null,
@@ -130,92 +134,66 @@ export const VIEW_ADMIN_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
-    id: 'admin-ratchet-page-view',
-    title: 'AdminRatchetPageView',
+    id: 'admin-ci-activity-page-view',
+    title: 'AdminCiActivityPageView',
     get about() {
-      return t('catalog.adminRatchetPageView.about')
+      return t('catalog.adminCiActivityPageView.about')
     },
-    file: 'src/views/admin/AdminRatchetPageView.vue',
-    component: AdminRatchetPageView,
+    file: 'src/views/admin/AdminCiActivityPageView.vue',
+    component: AdminCiActivityPageView,
     needs: UI_T_R,
-    args: { board: CRV_RATCHET },
+    args: { board: CRV_CI_BOARD, days: 7, jobs: CRV_CI_JOBS },
     states: [
       {
         get name() {
-          return t('catalog.adminRatchetPageView.s1.name')
+          return t('catalog.adminCiActivityPageView.s1.name')
         },
         get note() {
-          return t('catalog.adminRatchetPageView.s1.note')
+          return t('catalog.adminCiActivityPageView.s1.note')
         },
         props: {},
-        expect: '现在',
+        expect: 'e2e / e2e',
       },
       {
         get name() {
-          return t('catalog.adminRatchetPageView.s2.name')
+          return t('catalog.adminCiActivityPageView.s2.name')
         },
         get note() {
-          return t('catalog.adminRatchetPageView.s2.note')
+          return t('catalog.adminCiActivityPageView.s2.note')
         },
-        props: { board: null, loading: true },
-        expectSelector: '.arc__skel',
+        props: { job: CRV_CI_JOBS[0], steps: CRV_CI_STEPS, runner: 'cheese-ci-runner-1' },
+        expect: 'Run e2e',
       },
       {
         get name() {
-          return t('catalog.adminRatchetPageView.s3.name')
+          return t('catalog.adminCiActivityPageView.s3.name')
         },
         get note() {
-          return t('catalog.adminRatchetPageView.s3.note')
-        },
-        props: { board: null, failed: true },
-        expect: '归档读不出来',
-      },
-      {
-        get name() {
-          return t('catalog.adminRatchetPageView.s4.name')
-        },
-        get note() {
-          return t('catalog.adminRatchetPageView.s4.note')
-        },
-        props: { board: { ...CRV_RATCHET, points: 0, total_stored: 0, collections: [], areas: [] } },
-        expect: '还没有一次采集',
-      },
-      {
-        get name() {
-          return t('catalog.adminRatchetPageView.s5.name')
-        },
-        get note() {
-          return t('catalog.adminRatchetPageView.s5.note')
+          return t('catalog.adminCiActivityPageView.s3.note')
         },
         props: {
           board: {
-            ...CRV_RATCHET,
-            points: 1,
-            total_stored: 1,
-            collection: 'failed',
-            collections: [
-              {
-                commit: 'aaed1c00',
-                collected_at: '2026-09-29T09:00:00+00:00',
-                run_url: 'https://example.test/run/aaed',
-                collection: 'failed',
-                reason: 'no interpreter (exit 127)',
-              },
-            ],
-            areas: [],
+            ...CRV_CI_BOARD,
+            sweep: {
+              at: '2026-10-17T22:35:00+00:00',
+              error: 'CiQuotaRefused: GitHub quota spent (HTTP 403)',
+              jobs_owed: 4210,
+              covered_from: '2026-10-12T04:00:00+00:00',
+              complete: false,
+            },
           },
         },
-        expect: '这次没有可用的测量',
+        expect: 'GitHub quota spent',
       },
       {
         get name() {
-          return t('catalog.adminRatchetPageView.s6.name')
+          return t('catalog.adminCiActivityPageView.s4.name')
         },
         get note() {
-          return t('catalog.adminRatchetPageView.s6.note')
+          return t('catalog.adminCiActivityPageView.s4.note')
         },
-        props: { pull: '拉取失败：no interpreter (exit 127)', pullFailed: true },
-        expect: '拉取失败：no interpreter (exit 127)',
+        props: { board: null, jobs: [], failed: true },
+        expectSelector: '.v-btn, button',
       },
     ],
   },

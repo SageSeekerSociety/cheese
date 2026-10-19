@@ -61,8 +61,13 @@ def test_an_old_long_index_line_does_not_block_an_unrelated_edit():
     old_long = "- [a](a.md) — " + "长" * 180
     index = old_long + "\n"
     edited = index + "- [b](b.md) — 新加的一行\n"
-    result = _session_wrote("team/MEMORY.md", edited, platform=index)
-    assert result.files == {"team/MEMORY.md": edited}
+    b = _note("新的一条。")
+    result = sync_tree(
+        scopes={"team": {"MEMORY.md": index}},
+        disk={"team/MEMORY.md": edited, "team/b.md": b},
+        baseline={"team/MEMORY.md": digest(index)},
+    )
+    assert result.files == {"team/MEMORY.md": edited, "team/b.md": b}
     assert result.rejected == {}
 
 

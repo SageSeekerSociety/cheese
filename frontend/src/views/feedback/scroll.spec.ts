@@ -1,7 +1,7 @@
 /// <reference types="node" />
 /** 反馈页面必须自己领滚动（三个；原先还有第四个 /design/feedback，已删）。
  *
- * 全站约定：`styles/common.scss` 把 `html / body / #app` 定成固定高度加
+ * 全站约定：外框挂着时，`styles/common.scss` 把 `html / body / #app` 定成固定高度加
  * `overflow: hidden`，**滚动由每一页自己领** —— 别的页面都写着
  * `<div class="overview-page fill-height overflow-y-auto">` 这一组（OverviewView、
  * ProfileView、MarketView、ProjectDocsView…十来个）。

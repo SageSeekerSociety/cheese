@@ -94,12 +94,28 @@
           <v-icon :icon="oauthProviderIcon(conn.providerId)" size="18" />
           {{ oauthProviderName(conn.providerId) }}
         </span>
-        <span class="srow__v">
-          <span v-if="conn.login" class="srow__strong">@{{ conn.login }}</span>
-          <template v-if="conn.connectedAt">{{
-            t('account.security.linkedOn', { date: formatDate(conn.connectedAt) })
-          }}</template>
+        <span class="srow__v" :class="{ 'srow__v--stack': conn.providerId === GITHUB_APP_PROVIDER_ID }">
+          <span class="srow__line">
+            <span v-if="conn.login" class="srow__strong">@{{ conn.login }}</span>
+            <template v-if="conn.connectedAt">{{
+              t('account.security.linkedOn', { date: formatDate(conn.connectedAt) })
+            }}</template>
+          </span>
+          <template v-if="conn.providerId === GITHUB_APP_PROVIDER_ID">
+            <span v-if="githubExpired(conn)" class="srow__note srow__note--danger">{{
+              t('account.security.githubExpired')
+            }}</span>
+            <span v-else class="srow__note">{{ t('account.security.githubUse') }}</span>
+          </template>
         </span>
+        <BaseButton
+          v-if="conn.providerId === GITHUB_APP_PROVIDER_ID && githubExpired(conn)"
+          kind="primary"
+          size="sm"
+          @click="emit('sign-in-github')"
+        >
+          {{ t('account.security.githubSignInAgain') }}
+        </BaseButton>
         <BaseButton kind="ghost" size="sm" :loading="unbinding === conn.id" @click="emit('unbind', conn)">
           {{ t('account.security.unlink') }}
         </BaseButton>
@@ -255,6 +271,7 @@
 
             <div v-else-if="setupStep === 'verify'" key="verify" class="setup">
               <p class="setup__lede">{{ t('account.security.verifyLede') }}</p>
+              <!-- eslint-disable vuejs-accessibility/no-autofocus -- this step appears because the person chose to turn on two-step sign-in; focus moves into the code they are asked for -->
               <v-otp-input
                 v-model="verificationCode"
                 autofocus
@@ -264,6 +281,7 @@
                 :error="!!verifyError"
                 @finish="emit('enable-totp')"
               />
+              <!-- eslint-enable vuejs-accessibility/no-autofocus -->
               <p v-if="verifyError" class="setup__error">{{ verifyError }}</p>
             </div>
 
@@ -323,8 +341,12 @@ import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import i18n, { t } from '@/i18n'
+import { GITHUB_APP_PROVIDER_ID, ownGithub } from '@/lib/githubAccount'
 import { oauthProviderIcon, oauthProviderName } from '@/views/account/oauthProvider'
 import { deviceOf } from '@/views/user/settings/deviceName'
+
+/** Nothing renews this GitHub authorization: PRs fall back to the AI teammate. */
+const githubExpired = (conn: OAuthConnectionInfo) => ownGithub(conn, true).state === 'expired'
 
 /** Which half of turning two-step verification on is shown. */
 export type SetupStep = 'qr' | 'verify' | 'backup'
@@ -372,6 +394,8 @@ const emit = defineEmits<{
   'close-totp': []
   'change-password': [password: string]
   unbind: [conn: OAuthConnectionInfo]
+  /** GitHub's authorization ran out: authorize cheesex-app again. */
+  'sign-in-github': []
   'sign-out-device': [sessionId: string]
   'sign-out-others': []
   copy: [text: string]
@@ -467,6 +491,29 @@ const sessionIcon = (userAgent: string) =>
 
 .srow--sub .srow__k {
   padding-left: 16px;
+}
+
+.srow__v--stack {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  row-gap: 2px;
+}
+
+.srow__line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.srow__note {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.srow__note--danger {
+  color: var(--danger-ink);
 }
 
 .srow--empty {

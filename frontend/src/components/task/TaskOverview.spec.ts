@@ -13,6 +13,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import { resetRooms, seedRoom } from '../../test/fakeDocCollab'
 
+// 文档的链接那一侧（#3827）：打开文档时问一次被引用、打 # 时问一次能引用的文档。这里不关心。
+vi.mock('@/api/docLinks', () => ({ getDocumentBacklinks: async () => ({ links_to: [], linked_from: [] }) }))
+vi.mock('@/lib/linkableDocuments', () => ({ linkableDocuments: async () => [] }))
 vi.mock('../../api/docThreads', () => ({
   listDocThreads: async () => ({ data: [], total: 0 }),
   writeDocThread: async () => ({}),
@@ -102,9 +105,6 @@ function open(task: RoomTask, extra: Record<string, unknown> = {}) {
       agentName: '芝士',
       agentHandle: 'cheese-t1',
       members: [],
-      comparing: false,
-      comparison: null,
-      compareError: null,
       checklist: [],
       related: null,
       canRetry: false,
@@ -121,22 +121,23 @@ function prose(container: Element): string {
 }
 
 describe('任务的概览', () => {
+  // 结论存的是 token；读的人看到的是人名，而且结论没有通知谁，所以不是 @chip。点名字去这个人那里。
+  it('结论里提到的人读成他的名字，点了去他那里', async () => {
+    const done = { ...task('task-1', 't1'), status: 'done', conclusion: '和 <@alice> 对过，按方案二做' } as RoomTask
+    const { getByText, container, emitted } = open(done, { memberNames: { alice: '爱丽丝' } })
+
+    const name = getByText('爱丽丝')
+    expect(container.textContent).toContain('和 爱丽丝 对过，按方案二做')
+    expect(container.textContent).not.toContain('<@alice>')
+    expect(container.textContent).not.toContain('@爱丽丝')
+    name.click()
+    expect(emitted()['mention-click']).toEqual([['alice']])
+  })
+
   it('画的是这个任务的实况文档', async () => {
     seedRoom('doc-1', '任务开工时写的第一段')
     const { container } = open(task('task-1', 't1'))
 
     await waitFor(() => expect(prose(container)).toContain('任务开工时写的第一段'))
-  })
-
-  // 「与开始时相比」是同一个位置的另一种画法：比对照在文档上面时，文档不该还在下面挂着。
-  it('比对时文献比对顶掉文档', async () => {
-    seedRoom('doc-1', '任务开工时写的第一段')
-    const { container } = open(task('task-1', 't1'), {
-      comparing: true,
-      comparison: { before: '改之前', after: '改之后' },
-    })
-
-    await waitFor(() => expect(container.textContent).toContain('修改 1 段'))
-    expect(container.querySelector('.doc-prose')).toBeNull()
   })
 })

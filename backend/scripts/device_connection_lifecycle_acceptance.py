@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # The connector half below speaks the same executor frames the doubles under
 # tests/ speak, and they are declared in one place so a wire change reaches
 # all of them (backend/tests/fixtures/wire pins that place against the Go side).
-from tests.support import wire  # noqa: E402
+from tests.support import wire
 
 SECRET = "lifecycle-acceptance-secret"
 TRACE_ID = "execution-lifecycle-acceptance"

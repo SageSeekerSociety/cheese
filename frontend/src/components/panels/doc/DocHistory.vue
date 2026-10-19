@@ -29,6 +29,8 @@ const props = defineProps<{
   /** handle → 读得懂的名字。 */
   nameOf: (handle: string) => string
   mentionNames: Record<string, string>
+  /** 这份文档 @ 到并通知过的人：旧版本里也画成 @chip。 */
+  notifiedMentions?: string[]
 }>()
 const emit = defineEmits<{
   (e: 'update:open', open: boolean): void
@@ -79,17 +81,13 @@ watch(
   { immediate: true }
 )
 
-/** 同一个人（同一个人让 AI 队友改）相隔不到这么久连着存的几版，算一条。 */
+/** 同一个人相隔不到这么久连着存的几版，算一条。 */
 const RUN_MS = 10 * 60_000
 const entries = computed(() => {
   const out: DocVersion[] = []
   let newer: DocVersion | null = null
   for (const v of versions.value) {
-    const joins =
-      newer &&
-      newer.actor === v.actor &&
-      newer.requested_by === v.requested_by &&
-      Date.parse(newer.created_at) - Date.parse(v.created_at) < RUN_MS
+    const joins = newer && newer.actor === v.actor && Date.parse(newer.created_at) - Date.parse(v.created_at) < RUN_MS
     if (!joins) out.push(v)
     newer = v
   }
@@ -123,13 +121,13 @@ const diff = computed(() =>
     : null
 )
 const latest = computed(() => versions.value[0] ?? null)
-const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
+const names = computed(() => {
+  const told = props.notifiedMentions ?? []
+  return { mentionNames: props.mentionNames, topicTitles: {}, notified: (handle: string) => told.includes(handle) }
+})
 
 function who(version: DocVersion): string {
-  const name = props.nameOf(version.actor)
-  return version.requested_by
-    ? t('work.room.doc.historyFor', { who: name, requester: props.nameOf(version.requested_by) })
-    : name
+  return props.nameOf(version.actor)
 }
 
 async function restoreSelected() {

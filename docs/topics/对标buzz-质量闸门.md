@@ -325,9 +325,13 @@ ci.yml 的 `Desktop Core` job 另跑 `just desktop-check`（biome + file-sizes +
 
 5. **workflow 合约测试**（`scripts/test-release-ref-contract.sh` 等一批，跑在 ci.yml 的 `changes` job 里）。
    它们守的是"多条发布 workflow 之间引用的 ref/tag 约定不要漂"。我们没有那么多互相引用的发布 workflow。
-   **但记一笔**：<&.github/workflows/deploy-dev.yml> 靠 `workflow_run: workflows: ["Build and Push Docker Image"]`
-   串接 <&.github/workflows/build.yml>——这是一条**靠 workflow 显示名字符串匹配**的隐式契约，
-   改 build.yml 的 `name:` 会静默断掉 dev 自动部署。以后这类跨 workflow 契约再多一条，这个模式就该回头看。
+   **但记一笔**：<&.github/workflows/deploy-dev.yml> 曾靠 `workflow_run: workflows: ["Build and Push Docker Image"]`
+   串接 <&.github/workflows/build.yml>——那是一条**靠 workflow 显示名字符串匹配**的隐式契约，
+   改 build.yml 的 `name:` 会静默断掉 dev 自动部署。这条契约已经拆掉：Deploy 只由 Required CI 的完成事件触发，
+   镜像就绪与否由 eligibility 读 run 列表判断（构建还在跑就等它，见 <&deploy/check-auto-deploy.py>），
+   不再看 build.yml 的显示名。触发本身仍按 `"Required CI"` 这个显示名匹配，改
+   <&.github/workflows/required-ci.yml> 的 `name:` 仍会静默断掉 dev 自动部署。
+   以后这类跨 workflow 契约再多一条，这个模式就该回头看。
 
 ---
 

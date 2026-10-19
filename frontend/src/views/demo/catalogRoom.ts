@@ -29,9 +29,12 @@ import GuideBubble from '@/components/common/GuideBubble.vue'
 import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
+import ComposerEditor from '@/components/room/ComposerEditor.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
+import ThreadHead from '@/components/room/ThreadHead.vue'
+import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 
@@ -149,11 +152,12 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
     tone: 'running',
     accepted: null,
     at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    latest: null,
     ...over,
   }
 }
 
-/** 任务页页头那一格：一件还没开始的任务，一位 AI 队友，它的会话在标准沙箱里。 */
+/** 任务页页头那一格：一件在做的任务，一位 AI 队友，它的会话在标准沙箱里。 */
 const TASK_HEADER_PROPS = {
   room: { id: 'demo-room', project_id: 'demo', title: '前端', kind: 'topic', status: 'active' },
   task: {
@@ -164,10 +168,9 @@ const TASK_HEADER_PROPS = {
     title_source: 'human',
     status: 'open',
     owner_handle: 'alice',
-    started_at: null,
     created_at: '2026-10-05T00:00:00Z',
     updated_at: '2026-10-05T00:00:00Z',
-    presentation: { column: 'not_started', phrase: 'discussing' },
+    presentation: { column: 'building', phrase: 'started' },
   },
   memberNames: { 'cheese-topica': AGENT_NAME },
   agentName: AGENT_NAME,
@@ -190,10 +193,7 @@ const TASK_HEADER_PROPS = {
     ],
   },
   machineError: false,
-  starting: false,
-  startError: null,
   actionError: null,
-  start: async () => {},
   close: async () => true,
   reopen: async () => true,
   handOver: async () => true,
@@ -216,8 +216,8 @@ const TASK_ENTRIES: CatalogEntry[] = [
     needs: UI_T,
     states: [
       {
-        name: '还没开始',
-        note: '一件刚建好的任务：标题在左，状态写着在讨论；数据都从 props 来，开始、改环境这些动作交给上面。',
+        name: '在做',
+        note: '一件在做的任务：标题在左，状态在后面；数据都从 props 来，转交、改环境这些动作交给上面。',
         props: TASK_HEADER_PROPS,
         expect: '登录页加「记住我」',
       },
@@ -282,6 +282,94 @@ const TASK_ENTRIES: CatalogEntry[] = [
           ownerName: AGENT_NAME,
         },
         expect: '已采纳 2 次',
+      },
+      {
+        name: '单独成块',
+        note: '单独成块时多一行：任务里最后说的一句，说它此刻在做什么。负责人带头像。',
+        props: {
+          task: taskLine({
+            latest: '发送验证码的接口写好了，正在写校验那一个',
+            status: '芝士在做',
+          }),
+          ownerName: '王一鸣',
+          ownerAvatar: '',
+        },
+        expect: '正在写校验那一个',
+      },
+      {
+        name: '支线顶上',
+        note: '支线转成任务后，画在支线那一块顶上：只有任务名、负责人和状态，回复数和最后一句在下面的支线那几行里。',
+        props: {
+          task: taskLine({ latest: '这一句不画', status: '芝士在做' }),
+          ownerName: '王一鸣',
+          head: true,
+        },
+        expect: '王一鸣',
+      },
+    ],
+  },
+  {
+    id: 'room-thread-root',
+    title: 'ThreadRoot',
+    about: '一条支线挂着的那条主线消息，画在这段对话最上面：支线的右半边和支线转成的任务页开头都是它。',
+    file: 'src/components/room/ThreadRoot.vue',
+    component: ThreadRoot,
+    needs: UI_T,
+    states: [
+      {
+        name: '一条人说的话',
+        note: '署名、时间、正文；长了收起，点「展开」看全。',
+        props: {
+          root: {
+            id: 'b-root',
+            conversation_id: 'demo-room',
+            kind: 'message',
+            author_type: 'participant',
+            author: 'wangyiming',
+            content: '登录要不要加手机验证码？老师上次好像提过',
+            created_at: '2026-10-15T02:15:00Z',
+          },
+          name: '王一鸣',
+          avatar: '',
+          refs: { mentionNames: {}, topicTitles: {} },
+        },
+        expect: '登录要不要加手机验证码',
+      },
+    ],
+  },
+  {
+    id: 'room-thread-head',
+    title: 'ThreadHead',
+    about:
+      '支线的页头一行：它挂着的那条消息说的事和「转为任务」；转成以后是任务名、状态、负责人和「整页打开」。桌面上在支线那一栏顶上，手机上是顶栏的内容。',
+    file: 'src/components/room/ThreadHead.vue',
+    component: ThreadHead,
+    needs: UI_T,
+    args: { viewer: 'alice', members: [], memberNames: { alice: 'Alice' }, canToTask: true },
+    states: [
+      {
+        name: '还是支线',
+        note: '写挂着的那条消息说的事，右边「转为任务」；桌面那一栏带关闭键。',
+        props: { heading: '登录要不要加手机验证码？', task: null, closable: true },
+        expect: '登录要不要加手机验证码',
+      },
+      {
+        name: '转成了任务',
+        note: '同一行换成任务：任务名、状态、负责人，「整页打开」进任务页。',
+        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, closable: true },
+        expect: '登录页加「记住我」',
+      },
+      {
+        name: '在手机顶栏里',
+        note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边，没有关闭键。',
+        props: { heading: '登录要不要加手机验证码？', task: null, bar: true },
+        expect: '登录要不要加手机验证码',
+      },
+      {
+        name: '转成任务，在手机顶栏里',
+        note: '两行：任务名独占第一行，状态和负责人退到第二行，同一号字、同一种灰，各成一格。',
+        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, bar: true },
+        expect: '登录页加「记住我」',
       },
     ],
   },
@@ -420,6 +508,31 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '附件那一枚左边是它的记号（图片是缩略图、有第一页的文档是封面、其余是类型图标），右边一直写着名字。',
         props: { replyLabel: null, atts: CHIP_ATTS.slice(0, 1), topicId: 'demo' },
         expect: '预算.xlsx',
+      },
+    ],
+  },
+  {
+    id: 'room-composer-editor',
+    title: 'ComposerEditor',
+    about: '打字的那一块：正文是要发出去的那段字，里面点到的人、频道画成标签，标签当一个字删。',
+    file: 'src/components/room/ComposerEditor.vue',
+    component: ComposerEditor,
+    needs: UI_T,
+    states: [
+      {
+        name: '点了一个人，还贴了一段代码',
+        note: '标签和对话里的样子一样；``` 围起来的几行画成代码块，里面按 Tab 是缩进。',
+        props: {
+          modelValue: '请 <@alice> 看一下这段：\n```\ndef f(x):\n    return x * 2\n```',
+          names: { mentionNames: { alice: 'Alice' }, topicTitles: {}, notified: true },
+        },
+        expect: '@Alice',
+      },
+      {
+        name: '还没打字',
+        note: '空着的时候是一行提示语，打了字就没了。',
+        props: { modelValue: '', names: { mentionNames: {}, topicTitles: {} }, placeholder: `给${AGENT_NAME}发消息` },
+        expect: `给${AGENT_NAME}发消息`,
       },
     ],
   },

@@ -103,11 +103,11 @@ async def finish_deferred_message(
         if mode == "ordinary-removed":
             admit = runner._intake._admit
 
-            async def paused_admit(service, room, turn, agent=None):
+            async def paused_admit(service, room, turn, agent=None, **kwargs):
                 if turn == ordinary_id:
                     queued.set()
                     await released.wait()
-                return await admit(service, room, turn, agent)
+                return await admit(service, room, turn, agent, **kwargs)
 
             monkeypatch.setattr(runner._intake, "_admit", paused_admit)
         else:

@@ -12,8 +12,8 @@ from urllib.parse import urlsplit
 
 from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import exception_text, listing, say
+from app.domain.deliverables import artifacts
 from app.domain.library import service as library
-from app.domain.project import artifacts
 from app.domain.review import (
     archive,
     commit_message,
@@ -68,7 +68,7 @@ async def _topic_or_404(self: pkg.AcceptService, topic_id: uuid.UUID) -> Topic:
     """
     place = await PlaceResolver(self._session).resolve(topic_id)
     if place is None:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     return place.room
 
 
@@ -188,14 +188,13 @@ async def create_card(
     comparison = await ProjectFiles(
         self._session, task.project_id, task.id
     ).comparison()
+    has_branch_changes = bool(
+        comparison and comparison.get("total_commits") and comparison.get("files") != []
+    )
     # A commit that changes no file delivers nothing either: accepting it would
     # merge an empty commit into the base and call that a delivery. Work whose
     # result does not land on the base ends by closing the task instead.
-    if (
-        not comparison
-        or not comparison.get("total_commits")
-        or comparison.get("files") == []
-    ):
+    if hands_over_repository and not has_branch_changes:
         raise ValidationError(
             say("taskBranchNothingToDeliver", branch=task.branch_name)
         )
@@ -211,7 +210,13 @@ async def create_card(
     # 在清单上留下一项。
     handed_over = (deliver or "").strip()
     snapshot = (
-        await _read_deliverable(self._session, task.project_id, task.id, handed_over)
+        await _read_deliverable(
+            self._session,
+            task.project_id,
+            task.id,
+            handed_over,
+            executor=self._executor,
+        )
         if handed_over
         else None
     )
@@ -247,7 +252,7 @@ async def create_card(
         status=AcceptStatus.pending,
         change_subject=subject,
         change_body=change_body or None,
-        delivered_task_ids=[task.id],
+        delivered_task_ids=[task.id] if has_branch_changes else [],
         artifact_id=declared.id,
         # 和上面那个「要不要声明产物」问的是同一句话，所以答案从同一个地方来：
         # 两处各算一次的话，有一天它们会对不上，而对不上的那一天没有任何报错。
@@ -270,7 +275,8 @@ async def create_card(
             snapshot[0],
             snapshot[1],
         )
-    card.pr_number, card.pr_url = task.pr_number, task.pr_url
+    if has_branch_changes:
+        card.pr_number, card.pr_url = task.pr_number, task.pr_url
     await self._announce_filed(topic, card, task)
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
@@ -312,7 +318,7 @@ async def _warn_about_a_second_pending_migration(
                 for entry in (comparison or {}).get("files", [])
                 if entry.get("status") == "added"
             ]
-        except Exception:  # noqa: BLE001 — a diagnostic must not break 递卡
+        except Exception:  # a diagnostic must not break 递卡
             return []
         return [p for p in added if _ALEMBIC_VERSIONS_DIR in p]
 
@@ -658,7 +664,11 @@ async def _render(
             "checked_at": None,
             "since": None,
         }
-    elif caps.reports_checks:
+    elif caps.reports_checks and (
+        card.pr_number is not None
+        or bool(card.delivered_task_ids)
+        or card.deliverable_kind not in (DeliverableKind.file, DeliverableKind.link)
+    ):
         mirror = card.merge_state if isinstance(card.merge_state, dict) else None
         data["merge_state"] = mirror or {
             "state": "unknown",
@@ -752,9 +762,12 @@ async def _enforce_protocol(
     # The condition asks for someone from outside the team to sign off: an
     # external member of this project.
 
+    if self._roster_team is None:  # pragma: no cover - 接线漏了才会走到
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError("roster_team was not handed in")
     outside = {
         m.handle
-        for m in await roster(self._session, topic.project_id)
+        for m in await roster(self._session, topic.project_id, team=self._roster_team)
         if m.source == "external"
     }
     if decided_by not in outside:

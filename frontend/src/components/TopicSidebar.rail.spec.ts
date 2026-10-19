@@ -17,6 +17,9 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { screenHeader } from '@/composables/useScreenHeader'
+
+import ScreenHeaderTitle from './common/Navigation/ScreenHeaderTitle.vue'
 import TopicSidebar from './TopicSidebar.vue'
 
 import { setLocale } from '@/i18n'
@@ -64,22 +67,24 @@ const router = createRouter({
 
 // v-navigation-drawer 必须活在一个 v-layout 里，否则 Vuetify 直接抛
 // "Could not find injected layout"——所以挂一个最小宿主把它包起来。
+// Reads the declared header in its own render, after the sidebar beside it has set up.
+const BarTitle = defineComponent({
+  setup: () => () => h(ScreenHeaderTitle, { header: screenHeader.value, fallback: '' }),
+})
+
 const Host = defineComponent({
   props: { inner: { type: Object, required: true } },
   setup(props) {
-    return () => h(VLayout, null, { default: () => [h(Sidebar, props.inner as Record<string, unknown>)] })
+    // ScreenHeaderTitle stands in for the phone top bar: in page form the project row
+    // is the bar's content, declared by the sidebar (useScreenHeader).
+    return () =>
+      h(VLayout, null, {
+        default: () => [h(Sidebar, props.inner as Record<string, unknown>), h(BarTitle)],
+      })
   },
 })
 
 function mount(inner: Record<string, unknown> = {}, pinia = createPinia()) {
-  // 整页形态下项目头那一行填进顶栏那一格（Teleport 到 #app-bar-slot，真实环境里
-  // 由 MobileAppBar 画）。落点不存在时 Teleport 会在卸载时炸，所以这里把它摆出来
-  // ——和 v-navigation-drawer 必须有 v-layout 是同一类前置条件。
-  if (!document.getElementById('app-bar-slot')) {
-    const slot = document.createElement('div')
-    slot.id = 'app-bar-slot'
-    document.body.appendChild(slot)
-  }
   const vuetify = createVuetify({ components, directives })
   return render(Host, {
     props: {
@@ -335,10 +340,10 @@ describe('行左边那一个槽', () => {
     // 黄不占槽——槽永远是频道记号。
     expect(row.querySelector('.row-slot .row-light')).toBeNull()
     expect(row.querySelector('.row-light--yellow')).not.toBeNull()
-    const marks = Array.from(row.querySelectorAll('[data-state]'))
-    expect(marks.map((m) => m.getAttribute('data-state'))).toEqual(['working'])
+    const marks = Array.from(row.querySelectorAll('.rail-members__one'))
+    expect(marks.length).toBe(1)
     expect(marks[0].getAttribute('title')).toContain('正在这里工作')
-    expect(topicRowFor(container, 'b').querySelector('[data-state]')).toBeNull()
+    expect(topicRowFor(container, 'b').querySelector('.rail-members__one')).toBeNull()
 
     // 同一个话题一旦有了子话题，槽让给折叠开关；灯还在行尾，不受影响
     const withChild = [...busy, topic('a-sub', 'a')]
@@ -354,10 +359,10 @@ describe('行左边那一个槽', () => {
       t.id === 'a' ? ({ ...t, activity: [{ member: 'zhang', kind: 'typing', since: 1, expires_in: 5 }] } as Topic) : t
     )
     const { container } = mount({ topics: typing })
-    expect(topicRowFor(container, 'a').querySelector('[data-state]')).toBeNull()
+    expect(topicRowFor(container, 'a').querySelector('.rail-members__one')).toBeNull()
   })
 
-  it('有人等一位队友回话超过五分钟，红的是那位队友；还没满五分钟不红', () => {
+  it('有人等一位队友回话超过五分钟，这一行亮红灯；还没满五分钟不红', () => {
     const longAgo = new Date(Date.now() - 6 * 60_000).toISOString()
     const justNow = new Date(Date.now() - 60_000).toISOString()
     const rows = topics.map((t) =>
@@ -369,15 +374,17 @@ describe('行左边那一个槽', () => {
     )
     const { container } = mount({ topics: rows })
     const rowA = topicRowFor(container, 'a')
-    const stalled = Array.from(rowA.querySelectorAll('[data-state]'))
-    expect(stalled.map((m) => m.getAttribute('data-state'))).toEqual(['stalled'])
-    expect(stalled[0].getAttribute('title')).toMatch(/有人 @ 了.*分钟/)
-    // 槽里没有房间级的状态：卡住的是成员
-    expect(slotsOf(rowA)[0].querySelector('[data-state]')).toBeNull()
-    // 这一行的灯也不亮：红灯说的是「这一行显示在跑、却没动静」，一位成员卡住
-    // 是另一件事，那位成员自己的红点说了它
-    expect(rowA.querySelector('.row-light')).toBeNull()
-    expect(topicRowFor(container, 'b').querySelector('[data-state]')).toBeNull()
+    // 等太久了是这一行的状态：行尾一颗红灯，不再画成成员头像。
+    const light = rowA.querySelector('.row-light--red')
+    expect(light).not.toBeNull()
+    // 「在等谁、为什么」还在：悬停那一句说的仍是那位成员和等的原因。
+    expect(light?.getAttribute('title')).toMatch(/有人 @ 了.*分钟/)
+    expect(rowA.querySelector('.rail-members__one')).toBeNull()
+    // 槽里没有房间级的状态：槽永远是频道记号。
+    expect(slotsOf(rowA)[0].querySelector('.row-light')).toBeNull()
+    // 还没满五分钟的那一行，什么都不亮。
+    expect(topicRowFor(container, 'b').querySelector('.row-light')).toBeNull()
+    expect(topicRowFor(container, 'b').querySelector('.rail-members__one')).toBeNull()
   })
 
   it('一位队友那一轮报错了，不等五分钟立刻红，悬停说是它那一轮', () => {
@@ -387,8 +394,8 @@ describe('行左边那一个槽', () => {
         : t
     )
     const { container } = mount({ topics: rows })
-    const mark = topicRowFor(container, 'a').querySelector('[data-state="stalled"]')
-    expect(mark?.getAttribute('title')).toContain('最近一轮报错了')
+    const light = topicRowFor(container, 'a').querySelector('.row-light--red')
+    expect(light?.getAttribute('title')).toContain('最近一轮报错了')
   })
 
   // 时间线说不出在等谁的那一笔（member 为 null），侧栏把它记在项目默认的队友头上。
@@ -414,7 +421,7 @@ describe('行左边那一个槽', () => {
     }
     const failedNow = () => ({ member: null, reason: 'failed', since: new Date().toISOString() })
 
-    it('它一边在干活、房间一边在等一个说不出是谁的成员：这一行只画它一次', async () => {
+    it('它一边在干活、房间一边在等一个说不出是谁的成员：不画头像，红灯说这件事', async () => {
       const rows = topics.map((t) =>
         t.id === 'a'
           ? ({ ...t, waits: [failedNow()], activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic)
@@ -422,11 +429,11 @@ describe('行左边那一个槽', () => {
       )
       const { container } = mount({ topics: rows }, withDefaultAgent())
       await nextTick()
-      const marks = topicRowFor(container, 'a').querySelectorAll('[data-state]')
-      expect(marks.length).toBe(1)
+      expect(topicRowFor(container, 'a').querySelector('.rail-members__one')).toBeNull()
+      expect(topicRowFor(container, 'a').querySelector('.row-light--red')?.getAttribute('title')).toContain('小芝')
     })
 
-    it('同一位队友在哪一行都是同一种底色', async () => {
+    it('说不出是谁的那一笔落在项目默认的队友头上：红灯写的是它的名字', async () => {
       const rows = topics.map((t) =>
         t.id === 'a'
           ? ({ ...t, waits: [failedNow()] } as Topic)
@@ -436,10 +443,14 @@ describe('行左边那一个槽', () => {
       )
       const { container } = mount({ topics: rows }, withDefaultAgent())
       await nextTick()
-      const toneIn = (title: string) =>
-        topicRowFor(container, title).querySelector('[data-state] .cheese-avatar')?.getAttribute('data-tone')
-      expect(toneIn('b')).toBeTruthy()
-      expect(toneIn('a')).toBe(toneIn('b'))
+      // 在干活的那一行照旧画它的头像……
+      const tone = topicRowFor(container, 'b')
+        .querySelector('.rail-members__one .cheese-avatar')
+        ?.getAttribute('data-tone')
+      expect(tone).toBeTruthy()
+      // ……在等的那一行不画，但红灯的悬停说的是同一位（默认队友）。
+      expect(topicRowFor(container, 'a').querySelector('.rail-members__one')).toBeNull()
+      expect(topicRowFor(container, 'a').querySelector('.row-light--red')?.getAttribute('title')).toContain('小芝')
     })
   })
 

@@ -14,6 +14,29 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+GIB = 1024**3
+
+# A run is judged against the memory its own box allows, not a fixed number: a
+# hosted runner has 16 GiB while a remote sandbox ends a session at its cgroup
+# cap (docs/remote-execution.md: 3 GiB, no swap by default). This value is the
+# last resort when neither the cgroup nor /proc/meminfo says anything.
+SANDBOX_MEMORY_LIMIT_BYTES = 3 * GIB
+# Within a tenth of the cap a run is one allocation from disappearing, so that
+# is the line reported.
+MEMORY_HEADROOM_RATIO = 0.1
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+PROC_SELF_CGROUP = Path("/proc/self/cgroup")
+PROC_CPUINFO = Path("/proc/cpuinfo")
+PROC_STAT = Path("/proc/stat")
+
+# Runnable processes beyond the CPUs are queued, and steal time says the box's
+# neighbours are spending the vCPUs this run was promised.
+CPU_STEAL_LIMIT_PERCENT = 5.0
+
+# PostgreSQL keeps this many of `max_connections` for superusers; once the
+# rest are taken, new clients wait. `SHOW` reports the real value when known.
+SUPERUSER_RESERVED_CONNECTIONS = 3
+
 
 def record(stream, **fields):
     stream.write(json.dumps({"at": datetime.now(UTC).isoformat(), **fields}) + "\n")
@@ -38,7 +61,20 @@ async def sample_postgres():
                 server_settings={"application_name": "cheese-ci-resource-observer"},
             )
             if not settings_recorded:
-                record(sys.stdout, fsync=await connection.fetchval("SHOW fsync"))
+                record(
+                    sys.stdout,
+                    settings={
+                        "fsync": await connection.fetchval("SHOW fsync"),
+                        "max_connections": int(
+                            await connection.fetchval("SHOW max_connections")
+                        ),
+                        "superuser_reserved_connections": int(
+                            await connection.fetchval(
+                                "SHOW superuser_reserved_connections"
+                            )
+                        ),
+                    },
+                )
                 settings_recorded = True
             rows = await connection.fetch(
                 "SELECT backend_type, wait_event_type, wait_event, count(*) AS count "
@@ -107,9 +143,501 @@ def sample_disks(paths):
         time.sleep(5)
 
 
+def sample_memory():
+    # The cgroup counts this box's own pages, including the children, which is
+    # the only number a container cap can be compared with. Sampling here keeps
+    # the peak out of the storage sampler, which needs a Postgres to exist.
+    record(sys.stdout, event="sampler_started", pid=os.getpid(), interval_seconds=1)
+    while True:
+        try:
+            record(sys.stdout, mem_used_bytes=cgroup_memory_usage())
+        except Exception as error:
+            record(sys.stdout, error=type(error).__name__)
+        time.sleep(1)
+
+
 def observed_disks():
     paths = ["/", os.environ.get("RUNNER_TEMP"), tempfile.gettempdir()]
     return list(dict.fromkeys(path for path in paths if path))
+
+
+def read_jsonl(path):
+    """The objects a sampler wrote, ignoring a line it did not finish."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return []
+    samples = []
+    for line in lines:
+        try:
+            sample = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(sample, dict):
+            samples.append(sample)
+    return samples
+
+
+def read_text(path):
+    try:
+        return path.read_text()
+    except OSError:
+        return ""
+
+
+VMSTAT_COLUMNS = (
+    "r",
+    "b",
+    "swpd",
+    "free",
+    "buff",
+    "cache",
+    "si",
+    "so",
+    "bi",
+    "bo",
+    "in",
+    "cs",
+    "us",
+    "sy",
+    "id",
+    "wa",
+    "st",
+)
+
+
+def parse_vmstat(text):
+    """vmstat's numeric rows as dicts keyed by its column names."""
+    rows = []
+    for line in text.splitlines():
+        values = line.split()
+        if len(values) < len(VMSTAT_COLUMNS):
+            continue
+        try:
+            numbers = [int(value) for value in values[: len(VMSTAT_COLUMNS)]]
+        except ValueError:
+            continue  # the two header lines
+        rows.append(dict(zip(VMSTAT_COLUMNS, numbers, strict=True)))
+    return rows
+
+
+def read_mem_total(meminfo):
+    for line in read_text(meminfo).splitlines():
+        if line.startswith("MemTotal:"):
+            return int(line.split()[1]) * 1024
+    return None
+
+
+def memory_peak_bytes(
+    memory_samples, storage_samples, vmstat_rows, mem_total_bytes, limit_bytes
+):
+    """The highest memory use any sample saw, or None if none measured it.
+
+    Cgroup samples are already net of the page cache the kernel can drop;
+    fallbacks to host-wide numbers are not, and say so where they appear.
+    """
+    container_peaks = [
+        sample["mem_used_bytes"]
+        for sample in memory_samples
+        if isinstance(sample.get("mem_used_bytes"), int)
+    ]
+    if container_peaks:
+        # A cgroup sample is this box's own use; host-wide numbers would make
+        # a container cap meaningless.
+        return max(container_peaks)
+    if mem_total_bytes is None:
+        return None
+    if limit_bytes < mem_total_bytes:
+        # The box is capped below the machine's memory and no scoped sample
+        # survived: host-wide numbers would judge the neighbours, and the
+        # cgroup's use right now is not the peak. Leave it unjudged.
+        return None
+    peaks = [
+        max(0, mem_total_bytes - (row["free"] + row["buff"] + row["cache"]) * 1024)
+        for row in vmstat_rows
+    ]
+    peaks += [
+        max(0, mem_total_bytes - sample["mem_available_bytes"])
+        for sample in storage_samples
+        if isinstance(sample.get("mem_available_bytes"), int)
+    ]
+    return max(peaks) if peaks else None
+
+
+def cpu_peak(vmstat_rows):
+    """The runnable queue and the steal share at their worst."""
+    if not vmstat_rows:
+        return None, None
+    # `r` is instantaneous in every report, so all of them describe this run.
+    runnable = max(row["r"] for row in vmstat_rows)
+    # The steal percentage in the first report averages since boot, not this
+    # run. A run that ends inside one second only ever has that report, and
+    # its steal says nothing about the run, so it stays unknown.
+    later = vmstat_rows[1:]
+    steal = float(max(row["st"] for row in later)) if later else None
+    return runnable, steal
+
+
+def processor_count():
+    """How many CPUs the machine vmstat measures has, as the kernel reports it.
+
+    `os.cpu_count()` follows the process's affinity mask, so on a shared box it
+    counts the cores this run may use, while `vmstat`'s queue counts the whole
+    machine. The queue is only meaningful against the machine's own count.
+    """
+    processors = sum(
+        1
+        for line in read_text(PROC_CPUINFO).splitlines()
+        if line.startswith("processor")
+    )
+    if not processors:
+        processors = sum(
+            1
+            for line in read_text(PROC_STAT).splitlines()
+            if line.startswith("cpu") and line[3:4].isdigit()
+        )
+    return processors or os.cpu_count() or 1
+
+
+def database_peak(postgres_samples):
+    """The most client backends and the server's usable connection slots."""
+    limit = None
+    peak = None
+    for sample in postgres_samples:
+        settings = sample.get("settings")
+        if isinstance(settings, dict):
+            try:
+                max_connections = int(settings["max_connections"])
+                reserved = int(
+                    settings.get(
+                        "superuser_reserved_connections",
+                        SUPERUSER_RESERVED_CONNECTIONS,
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                pass
+            else:
+                limit = max_connections - reserved
+        waits = sample.get("waits")
+        if isinstance(waits, list):
+            clients = sum(
+                row["count"]
+                for row in waits
+                if isinstance(row, dict)
+                and row.get("backend_type") == "client backend"
+                and isinstance(row.get("count"), int)
+            )
+            peak = clients if peak is None else max(peak, clients)
+    return peak, limit
+
+
+def cgroup_dirs():
+    """This process's own cgroup first, then the hierarchy root.
+
+    A sandbox usually does not own the cgroup namespace, so the files under
+    `/sys/fs/cgroup` describe the host; only the path named in
+    `/proc/self/cgroup` is the box's own. A cgroup v1 controller is mounted
+    under a directory of its own, so its path carries that directory.
+    """
+    directories = []
+    for line in read_text(PROC_SELF_CGROUP).splitlines():
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        hierarchy, controllers, relative = parts
+        relative = relative.strip("/")
+        if hierarchy == "0":
+            directories.append(CGROUP_ROOT / relative)
+        elif "memory" in controllers.split(","):
+            directories.append(CGROUP_ROOT / "memory" / relative)
+    directories.append(CGROUP_ROOT)
+    return directories
+
+
+def cgroup_ancestors(directory):
+    """`directory` and every cgroup above it, up to the hierarchy root."""
+    directories = [directory]
+    while directory != CGROUP_ROOT and CGROUP_ROOT in directory.parents:
+        directory = directory.parent
+        directories.append(directory)
+    return directories
+
+
+def _cgroup_int(directory, names):
+    for name in names:
+        try:
+            value = (directory / name).read_text().strip()
+        except OSError:
+            continue
+        return int(value) if value.isdigit() else None
+    return None
+
+
+def _memory_stat_int(directory, names):
+    """The value of the first of `names` present, in the order given.
+
+    Order is the caller's priority, not the file's: on cgroup v1 the locals
+    come before the hierarchical totals in the file, and the totals are the
+    ones that match `memory.usage_in_bytes`.
+    """
+    values = {}
+    for line in read_text(directory / "memory.stat").splitlines():
+        name, _, value = line.partition(" ")
+        if name in names and value.strip().isdigit():
+            values.setdefault(name, int(value))
+    for name in names:
+        if name in values:
+            return values[name]
+    return None
+
+
+def cgroup_memory_usage():
+    """Bytes this cgroup holds that the kernel cannot drop, or None.
+
+    `memory.current` also counts page cache, and the kernel reclaims that
+    before it kills anything at the cap: a run that writes files reaches the
+    cap with almost no real pressure. Leaving the inactive file pages out is
+    what makes the number comparable with the cap. Only the inactive half is
+    left out on purpose: active pages include tmpfs and shared memory, which
+    nothing gets back without swap, so they stay counted.
+    """
+    for directory in cgroup_dirs():
+        value = _cgroup_int(directory, ("memory.current", "memory.usage_in_bytes"))
+        if value is None:
+            continue
+        # The totals first: on v1 `memory.usage_in_bytes` is hierarchical, so
+        # pairing it with the local figure would subtract too little.
+        reclaimable = _memory_stat_int(
+            directory, ("total_inactive_file", "inactive_file")
+        )
+        if reclaimable is None or reclaimable > value:
+            # Nothing to subtract, or the two reads disagree; the raw reading
+            # is the safe answer either way -- never a made-up zero.
+            return value
+        return value - reclaimable
+    return None
+
+
+def cgroup_memory_limit(mem_total_bytes):
+    """The tightest memory cap on this process's cgroup path.
+
+    cgroup v2 enforces the minimum along the path from the cgroup to the
+    root, so a child whose own `memory.max` says "max" is still capped by an
+    ancestor.
+    """
+    limits = []
+    for directory in cgroup_dirs():
+        for ancestor in cgroup_ancestors(directory):
+            for name in ("memory.max", "memory.limit_in_bytes"):
+                try:
+                    value = int((ancestor / name).read_text().strip())
+                except (OSError, ValueError):
+                    continue
+                # cgroup v1 spells "unlimited" as a number just under 2**63;
+                # anything at or above the machine's memory is no cap at all.
+                if mem_total_bytes is None or value < mem_total_bytes:
+                    limits.append(value)
+    return min(limits) if limits else None
+
+
+def memory_limit_bytes(mem_total_bytes=None):
+    """The cap to compare against: this box's, whichever layer sets it."""
+    try:
+        return int(os.environ["CHEESE_CI_SANDBOX_MEMORY_BYTES"])
+    except (KeyError, ValueError):
+        pass
+    limit = cgroup_memory_limit(mem_total_bytes)
+    if limit is not None:
+        return limit
+    return mem_total_bytes or SANDBOX_MEMORY_LIMIT_BYTES
+
+
+def summarize(output):
+    """One observation of the run's peak memory, CPU queue and connections."""
+    output = Path(output)
+    lifecycle = read_jsonl(output / "lifecycle.jsonl")
+    start = next((event for event in lifecycle if event.get("event") == "start"), {})
+    storage = read_jsonl(output / "storage.log")
+    memory = read_jsonl(output / "memory.log")
+    vmstat_rows = parse_vmstat(read_text(output / "vmstat.log"))
+    postgres = read_jsonl(output / "postgres.log")
+    mem_total_bytes = read_mem_total(output / "meminfo")
+    limit_bytes = memory_limit_bytes(mem_total_bytes)
+    runnable_peak, steal_peak = cpu_peak(vmstat_rows)
+    backends_peak, connection_limit = database_peak(postgres)
+    return {
+        # vmstat counts runnable processes across the whole machine, so the
+        # queue is judged against that machine, not this box's affinity.
+        "cpu_count": (
+            start.get("processors") or start.get("cpu_count") or os.cpu_count() or 1
+        ),
+        "memory_total_bytes": mem_total_bytes,
+        "memory_peak_bytes": memory_peak_bytes(
+            memory, storage, vmstat_rows, mem_total_bytes, limit_bytes
+        ),
+        "memory_limit_bytes": limit_bytes,
+        "postgres_watched": start.get("postgres", True),
+        "runnable_peak": runnable_peak,
+        "steal_peak_percent": steal_peak,
+        "client_backends_peak": backends_peak,
+        "db_connection_limit": connection_limit,
+        "samples": {
+            "storage": len(storage),
+            "memory": len(memory),
+            "vmstat": len(vmstat_rows),
+            "postgres": len(postgres),
+        },
+    }
+
+
+def _state(observed, threshold):
+    if observed is None or threshold is None:
+        return "unknown"
+    return "over" if observed > threshold else "ok"
+
+
+def _conclusion(total, crossed, unknown):
+    if len(unknown) == total:
+        return "not judged: no sample for any threshold"
+    if crossed:
+        verdict = f"{len(crossed)} of {total} checks crossed: {', '.join(crossed)}"
+    else:
+        verdict = "no threshold crossed"
+    if unknown:
+        return f"{verdict}; not judged: {', '.join(unknown)}"
+    return verdict
+
+
+def _next_steps(crossed, unknown, postgres_watched=True):
+    steps = []
+    if "memory" in crossed:
+        steps.append("narrow the run: fewer selected files or workers")
+    if "cpu" in crossed:
+        steps.append("rerun on another shard or a quieter runner")
+    if "database" in crossed:
+        steps.append("narrow the run or raise the database's connection budget")
+    if crossed:
+        steps.append("hand the run to CI when the local box is shared")
+    # A pure-layer run never starts Postgres, so it can never collect that
+    # sample; asking it to is advice with no way to follow it.
+    missing = [metric for metric in unknown if metric != "database" or postgres_watched]
+    if missing:
+        steps.append("collect a sample before judging the missing checks")
+    if not steps:
+        steps.append("no action needed")
+    return steps
+
+
+def evaluate(summary):
+    """Judge the summary against the sandbox, CPU and connection thresholds."""
+    memory_threshold = int(summary["memory_limit_bytes"] * (1 - MEMORY_HEADROOM_RATIO))
+    runnable_over = (
+        summary["runnable_peak"] is not None
+        and summary["runnable_peak"] > summary["cpu_count"]
+    )
+    steal_over = (
+        summary["steal_peak_percent"] is not None
+        and summary["steal_peak_percent"] > CPU_STEAL_LIMIT_PERCENT
+    )
+    cpu_over = runnable_over or steal_over
+    if cpu_over:
+        cpu_state = "over"
+    elif summary["runnable_peak"] is None and summary["steal_peak_percent"] is None:
+        cpu_state = "unknown"
+    else:
+        cpu_state = "ok"
+    checks = [
+        {
+            "metric": "memory",
+            "state": _state(summary["memory_peak_bytes"], memory_threshold),
+            "observed": summary["memory_peak_bytes"],
+            "threshold": memory_threshold,
+        },
+        {
+            "metric": "cpu",
+            "state": cpu_state,
+            # Every signal that crossed, not just the first: the numbers
+            # beside it describe the queue, and steal can set the state alone.
+            "over_by": [
+                signal
+                for signal, crossed in (
+                    ("runnable", runnable_over),
+                    ("steal", steal_over),
+                )
+                if crossed
+            ],
+            "observed": summary["runnable_peak"],
+            "threshold": summary["cpu_count"],
+            "steal_percent": summary["steal_peak_percent"],
+            "steal_limit_percent": CPU_STEAL_LIMIT_PERCENT,
+        },
+        {
+            "metric": "database",
+            "state": _state(
+                summary["client_backends_peak"], summary["db_connection_limit"]
+            ),
+            "observed": summary["client_backends_peak"],
+            "threshold": summary["db_connection_limit"],
+        },
+    ]
+    crossed = [check["metric"] for check in checks if check["state"] == "over"]
+    unknown = [check["metric"] for check in checks if check["state"] == "unknown"]
+    return {
+        "checks": checks,
+        "crossed": crossed,
+        "unknown": unknown,
+        "conclusion": _conclusion(len(checks), crossed, unknown),
+        "next_steps": _next_steps(
+            crossed, unknown, summary.get("postgres_watched", True)
+        ),
+    }
+
+
+def _gib(value):
+    return f"{value / GIB:.2f} GiB"
+
+
+def _describe(check, summary):
+    state = check["state"]
+    if check["metric"] == "memory":
+        if state == "unknown":
+            return "memory: unknown — no memory sample"
+        return (
+            f"memory: {state} — peak {_gib(check['observed'])} in use "
+            f"(inactive cache excluded), "
+            f"threshold {_gib(check['threshold'])} "
+            f"(cap {_gib(summary['memory_limit_bytes'])})"
+        )
+    if check["metric"] == "cpu":
+        steal = summary["steal_peak_percent"]
+        steal_text = (
+            "no steal sample"
+            if steal is None
+            else f"steal {steal:.1f}% (limit {CPU_STEAL_LIMIT_PERCENT:.1f}%)"
+        )
+        if check["observed"] is None:
+            return f"cpu: {state} — no runnable sample; {steal_text}"
+        return (
+            f"cpu: {state} — peak {check['observed']} runnable on "
+            f"{summary['cpu_count']} CPUs; {steal_text}"
+        )
+    if state == "unknown":
+        return "database: unknown — no connection sample"
+    return (
+        f"database: {state} — peak {check['observed']} client backends, "
+        f"limit {check['threshold']}"
+    )
+
+
+def report_lines(summary, verdict):
+    lines = [f"resources: {verdict['conclusion']}"]
+    lines += [f"  {_describe(check, summary)}" for check in verdict["checks"]]
+    lines.append(f"resources next: {'; '.join(verdict['next_steps'])}")
+    return lines
+
+
+def print_report(summary, verdict):
+    print("\n".join(report_lines(summary, verdict)))
 
 
 def stop(process):
@@ -132,7 +660,9 @@ def observe(output, command, *, postgres=True):
         record(
             events,
             event="start",
+            processors=processor_count(),
             cpu_count=os.cpu_count(),
+            postgres=postgres,
             machine=platform.machine(),
             system=platform.system(),
             release=platform.release(),
@@ -164,7 +694,10 @@ def observe(output, command, *, postgres=True):
             disks = [
                 arg for path in observed_disks() for arg in ("--sample-disk", path)
             ]
-            commands = [("disks", [*module, *disks])]
+            commands = [
+                ("disks", [*module, *disks]),
+                ("memory", [*module, "--sample-memory"]),
+            ]
             if postgres:
                 commands.append(("postgres", [*module, "--sample-postgres"]))
             if postgres_pid := os.environ.get("CHEESE_CI_POSTGRES_PID"):
@@ -221,6 +754,20 @@ def observe(output, command, *, postgres=True):
                 )
             for stream in streams:
                 stream.close()
+            # Judge the run only after its samples are closed, and never let
+            # the judgement itself change the command's result.
+            try:
+                summary = summarize(output)
+                verdict = evaluate(summary)
+                record(
+                    events,
+                    event="resources_summary",
+                    summary=summary,
+                    verdict=verdict,
+                )
+                print_report(summary, verdict)
+            except Exception as error:
+                record(events, event="summary_failed", error=type(error).__name__)
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
             record(events, event="finished")
@@ -229,6 +776,7 @@ def observe(output, command, *, postgres=True):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sample-postgres", action="store_true")
+    parser.add_argument("--sample-memory", action="store_true")
     parser.add_argument("--sample-storage", type=int)
     parser.add_argument("--sample-disk", action="append")
     parser.add_argument(
@@ -241,6 +789,8 @@ def main():
     args = parser.parse_args()
     if args.sample_postgres:
         asyncio.run(sample_postgres())
+    elif args.sample_memory:
+        sample_memory()
     elif args.sample_storage:
         sample_storage(args.sample_storage)
     elif args.sample_disk:

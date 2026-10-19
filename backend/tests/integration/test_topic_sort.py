@@ -4,8 +4,12 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import inspect
+
 from app.domain.topic.models import Topic
+from app.domain.topic.services import TopicService
 from tests.integration.conftest import post_project
+from tests.support.counting_session import counting_sql
 
 
 def _make_project(client) -> str:
@@ -114,3 +118,57 @@ def test_sort_does_not_break_parent_child_structure(client):
     root = next(t for t in by_id.values() if t["kind"] == "root")
     assert by_id[alpha]["parent_id"] == root["id"]
     assert by_id[zeta]["parent_id"] == root["id"]
+
+
+def _set_environments(client, topic_id: str) -> None:
+    async def _update():
+        async with client.test_factory() as s:
+            topic = await s.get(Topic, uuid.UUID(topic_id))
+            topic.description = "Room description"
+            topic.environment = {"spec": "standard", "setup": "x" * 1024}
+            topic.default_environment = {"spec": "vm"}
+            await s.commit()
+
+    asyncio.run(_update())
+
+
+def test_the_list_does_not_load_the_sandbox_environment(client):
+    pid = _make_project(client)
+    tid = _make_topic(client, pid, "Env room")
+    _set_environments(client, tid)
+
+    async def _load():
+        async with client.test_factory() as s:
+            topics, _, _ = await TopicService(s).list_for_project(
+                uuid.UUID(pid), viewer=None
+            )
+            topic = next(t for t in topics if str(t.id) == tid)
+            return set(inspect(topic).unloaded)
+
+    unloaded = asyncio.run(_load())
+    assert {"environment", "default_environment"} <= unloaded
+
+
+def test_the_list_query_omits_sandbox_environment_columns(client):
+    pid = _make_project(client)
+    tid = _make_topic(client, pid, "Env room")
+    _set_environments(client, tid)
+
+    with counting_sql(client) as seen:
+        r = client.get("/topics", params={"project_id": pid})
+    assert r.status_code == 200
+
+    rows = r.json()["data"]["data"]
+    room = next(t for t in rows if t["id"] == tid)
+    assert room["title"] == "Env room"
+    assert room["description"] == "Room description"
+    assert room["status"] == "active"
+    assert room["last_activity_at"] is not None
+
+    topic_selects = [
+        sql for sql in seen if "FROM topics" in sql and "topics.title" in sql
+    ]
+    assert topic_selects
+    for sql in topic_selects:
+        assert "topics.environment" not in sql
+        assert "topics.default_environment" not in sql

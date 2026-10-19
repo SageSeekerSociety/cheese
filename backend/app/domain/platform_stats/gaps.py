@@ -40,6 +40,7 @@ from app.domain.machine.models import (
     WarmMachine,
     capacity,
 )
+from app.domain.platform_stats.ports import PreviewConnections, count
 from app.domain.project.models import Project
 from app.domain.usage import ledger
 from app.domain.usage.models import ComputeGrant, GrantSource, ResourceUsage
@@ -54,8 +55,14 @@ LOW_CREDIT_RATIO = 0.10
 
 
 class GapRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        previews: PreviewConnections | None = None,
+    ) -> None:
         self._session = session
+        self._previews = previews
 
     # ---- 用量：额度燃尽 ----------------------------------------------------
 
@@ -158,8 +165,9 @@ class GapRepository:
         }
 
     async def _unlimited_project_ids(self) -> list:
-        """不计量（unlimited）的项目：所属团队挂在不限量的方案上。判据与准入同一
-        处（`usage.ledger`）——这里数的是「方案不限量」，不是「额度用完了」。"""
+        """不计量（unlimited）的项目：所属团队挂在不限量的方案上。判据是准入用的
+        那一个（`Terms.unlimited`，在 `usage.payers`；准入在
+        `usage.ledger_queries`）——这里数的是「方案不限量」，不是「额度用完了」。"""
         projects = list((await self._session.execute(select(Project))).scalars())
         payers = await ledger.payers_for_projects(self._session, projects)
         balances = await ledger.Ledger(self._session).balances(payers)
@@ -248,29 +256,28 @@ class GapRepository:
             "note_key": "platform.diskNote",
         }
 
-    @staticmethod
-    def _preview() -> dict[str, Any]:
+    def _preview(self) -> dict[str, Any]:
         """预览 helper 的在飞数量。**进程内存**，重启即清零。
 
         和 `MachineInventoryRepository` 报不了在线设备是同一类缺口：在线状态住在进程
         内存里，库里没有那一列。页面上写的是「这个进程里的预览连接」，不是「全平台」。
-        """
-        try:
-            # deferred-import: tests replace this name on app.domain.agent.preview_hub
-            from app.domain.agent.preview_hub import preview_hub
 
-            machines = getattr(preview_hub, "_machines", {})
-            return {
-                "available": True,
-                "attached": len(machines),
-                "note_key": "platform.previewNote",
-            }
-        except Exception:
-            return {
-                "available": False,
-                "attached": None,
-                "note_key": "platform.previewMissing",
-            }
+        从哪里数由外面递（`ports.PreviewConnections`）：本包在第 7 层、够得着第 5 层的
+        `agent`，可两个包落在同一个强连通分量里（C3），自己 import 一次就冻一条边。
+        原来那句 `getattr(preview_hub, "_machines", {})` 还多欠一层债：字段一改名就
+        静默报 0，看板上一个「一个预览都没有」看着完全正常。
+
+        `available` 现在恒为 `True` —— 数读不到的**唯一**情形是接线漏了，那当场炸
+        （下面那句 raise），不再假装成「这一项暂时没有」。键留着是因为前端按它写。
+        """
+        if self._previews is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("preview connections were not handed in")
+        return {
+            "available": True,
+            "attached": self._previews.attached(),
+            "note_key": "platform.previewNote",
+        }
 
     async def _machine_census(self) -> dict[str, Any]:
         """温机/云端宿主机按状态的存量普查，和宿主机上的沙箱槽位。
@@ -280,12 +287,6 @@ class GapRepository:
         机。整台云虚拟机不出槽位，也不占槽位。这里数的是台账里的**行**与状态
         分布，不是在线进程。
         """
-
-        async def _count(model: Any, *where: Any) -> int:
-            stmt = select(func.count()).select_from(model)
-            if where:
-                stmt = stmt.where(*where)
-            return int((await self._session.execute(stmt)).scalar_one() or 0)
 
         warm_rows = (
             await self._session.execute(
@@ -303,23 +304,28 @@ class GapRepository:
             )
         )
         return {
-            "devices": await _count(DeviceRow),
-            "hosted_devices": await _count(HostedDeviceRow),
-            "warm_total": await _count(WarmMachine),
+            "devices": await count(self._session, DeviceRow),
+            "hosted_devices": await count(self._session, HostedDeviceRow),
+            "warm_total": await count(self._session, WarmMachine),
             "warm_by_state": {str(s): int(n) for s, n in warm_rows},
-            "warm_error": await _count(
-                WarmMachine, WarmMachine.error.is_not(None), WarmMachine.error != ""
+            "warm_error": await count(
+                self._session,
+                WarmMachine,
+                WarmMachine.error.is_not(None),
+                WarmMachine.error != "",
             ),
-            "host_total": await _count(CloudHost),
+            "host_total": await count(self._session, CloudHost),
             "host_by_status": {str(s): int(n) for s, n in host_rows},
             "host_active": len(live),
-            "host_enroll_error": await _count(
+            "host_enroll_error": await count(
+                self._session,
                 CloudHost,
                 CloudHost.enroll_error.is_not(None),
                 CloudHost.enroll_error != "",
             ),
             # A slot is a sandbox; one being destroyed holds it until it goes.
-            "host_slots_used": await _count(
+            "host_slots_used": await count(
+                self._session,
                 SandboxHome,
                 SandboxHome.host_id.in_(
                     [host.id for host in live if not host.whole_machine]

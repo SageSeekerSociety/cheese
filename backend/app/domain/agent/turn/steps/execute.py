@@ -113,6 +113,12 @@ async def execute(
         "is_resume": is_resume,
         "status": "running",
         "started_at": time.time(),
+        # The last frame this turn published: what it was, and when on this
+        # process's monotonic clock. Both None until the first frame — the
+        # readout (`/run-records/turns`) reports "unknown", never 0, for a
+        # turn this process has not seen a frame from.
+        "last_frame_kind": None,
+        "last_frame_at": None,
         "first_output_s": None,
         "tools": 0,
         "duration_s": None,
@@ -232,6 +238,21 @@ async def execute(
             turn_frames = frames if frames is not None else frame_factory()
             async for frame in turn_frames:
                 kind = frame.get("type")
+                # Proof of life for the silence check in sweep_orphans and the
+                # frame the turn readout reports, taken before the `continue`s
+                # below so EVERY frame counts — a `session_lifecycle` frame is
+                # still a frame this turn's session published. A tool call
+                # persists no Block, so without this a turn legitimately
+                # grinding through tools looks identical to a wedged one.
+                #
+                # Only the watchdog and the record are touched here: the
+                # cold-start fuse keeps its own deadline and is retired solely
+                # by `assistant_block` below, so no other frame can clear it.
+                label = frame.get("subtype") if kind == "system" else kind
+                rec["last_frame_kind"] = str(label) if label else None
+                rec["last_frame_at"] = state.last_frame_at[str(turn_id)] = (
+                    time.monotonic()
+                )
                 if kind == "session_lifecycle":
                     # Interactive providers hand lifecycle to the live
                     # subscription. Their request returns after injection;
@@ -239,11 +260,6 @@ async def execute(
                     lifecycle["session_owned"] = True
                     turn_deadline.reschedule(None)
                     continue
-                # Proof of life for the silence check in sweep_orphans, taken
-                # before the `continue`s below so EVERY frame counts. A tool
-                # call persists no Block, so without this a turn legitimately
-                # grinding through tools looks identical to a wedged one.
-                state.last_frame_at[str(turn_id)] = time.monotonic()
                 # Measured from `turn_start` when the backend told us when
                 # the turn began, and from `loop_start` when it did not: a
                 # recorded fact must not depend on an optional frame.
@@ -473,7 +489,7 @@ async def execute(
             block = await effects.post_system_event(
                 topic_id, text, turn_id, meta=fuse_meta or timeout_meta
             )
-        except Exception:  # noqa: BLE001 — best effort
+        except Exception:  # best effort
             logger.exception("failed to persist timeout event")
         if block is not None:
             await publish(channel, {"type": "event_block", "block": block})
@@ -503,7 +519,7 @@ async def execute(
         await publish(channel, error_frame(exc.message, type="error"))
         # Ends the stream, for the reason spelled out on the timeout path.
         await publish(channel, {"type": "done"})
-    except Exception as exc:  # noqa: BLE001 — surface runtime failures (spec H4)
+    except Exception as exc:  # surface runtime failures (spec H4)
         rec["status"] = "crashed"
         rec["duration_s"] = round(time.monotonic() - t0, 1)
         logger.exception("turn %s failed for topic %s", turn_id, topic_id)
@@ -534,7 +550,7 @@ async def execute(
             block = await effects.post_system_event(
                 topic_id, text, turn_id, meta=event_meta
             )
-        except Exception:  # noqa: BLE001 — best effort, never mask the error
+        except Exception:  # best effort, never mask the error
             logger.exception("failed to persist turn-failure event")
         if block is not None:
             await publish(channel, {"type": "event_block", "block": block})
@@ -569,6 +585,6 @@ async def execute(
     if not session_owns_ending:
         try:
             await close_turns(sessions, [turn_id])
-        except Exception:  # noqa: BLE001 — the turn already finished
+        except Exception:  # the turn already finished
             logger.exception("could not close the interval for turn %s", turn_id)
     clear_context("turn", "topic")

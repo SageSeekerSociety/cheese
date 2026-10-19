@@ -31,11 +31,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.block.indexed_rows import FAILED_TURN_ROWS
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
-    AuthorType,
     Block,
     BlockKind,
 )
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column, names_a_person
 from app.domain.thread.models import Thread
 
@@ -88,6 +88,11 @@ def _among(ids):
     tens of thousands of ids, and asyncpg refuses more than 32767 bound values
     in one statement."""
     return any_(bindparam(None, list(ids), type_=ARRAY(Uuid)))
+
+
+def _became_a_task():
+    """Whether the 支线 became a task in place: the task has its id."""
+    return select(_tasks.c.id).where(_tasks.c.id == Thread.id).exists()
 
 
 #: How much of the last reply the main line shows: two lines of it.
@@ -212,7 +217,9 @@ async def under_messages(
     """The line under each of these main-line messages whose 支线 has a reply
     in it, an AI teammate answering in it now, or a turn that failed in it,
     keyed by the message: what `in_room` says of a 支线, and who is answering
-    (``replying``: the seats with a turn running in a 支线)."""
+    (``replying``: the seats with a turn running in a 支线). A 支线 that became
+    a task keeps its line: the task's card is drawn on top of it, the same
+    conversation with an owner."""
     if not block_ids:
         return {}
     found = list(
@@ -232,23 +239,35 @@ async def under_messages(
 
 
 async def _participants(
-    session: AsyncSession, threads: list[Thread]
+    session: AsyncSession,
+    threads: list[Thread],
+    *,
+    roots: dict[uuid.UUID, Block] | None = None,
 ) -> dict[uuid.UUID, list[str]]:
     """Who said something in each 支线, the message it hangs under first. A
     routine's run is a message of its teammate's, said on its owner's behalf:
-    the owner takes part in that 支线 from the start."""
+    the owner takes part in that 支线 from the start.
+
+    ``roots`` is the messages the 支线 hang under when the caller has already
+    read them (`_describe` needs them whole), so the same rows are not read a
+    second time; without it only their authors are read."""
     if not threads:
         return {}
     root_ids = [t.root_block_id for t in threads]
     runs = await routine_runs_of(session, root_ids)
-    roots: dict[uuid.UUID, list[str]] = {}
-    for block in await session.scalars(
-        select(Block).where(Block.id == _among(root_ids))
-    ):
-        owner = runs.get(block.id, {}).get("owner")
-        roots[block.id] = [block.author, *([owner] if owner else [])]
+    if roots is None:
+        found = await session.execute(
+            select(Block.id, Block.author).where(Block.id == _among(root_ids))
+        )
+        authors = {block_id: author for block_id, author in found}
+    else:
+        authors = {block_id: block.author for block_id, block in roots.items()}
+    starters: dict[uuid.UUID, list[str]] = {}
+    for block_id, author in authors.items():
+        owner = runs.get(block_id, {}).get("owner")
+        starters[block_id] = [author, *([owner] if owner else [])]
     said: dict[uuid.UUID, list[str]] = {
-        t.id: list(roots.get(t.root_block_id, [])) for t in threads
+        t.id: list(starters.get(t.root_block_id, [])) for t in threads
     }
     rows = await session.execute(
         select(Block.conversation_id, Block.author, func.min(Block.created_at))
@@ -311,8 +330,9 @@ async def in_room(
     session: AsyncSession, room_id: uuid.UUID, *, viewer: str | None, limit: int
 ) -> list[dict]:
     """A channel's 支线 that have replies or a failed turn, the latest first:
-    the message each hangs under, its last reply, who took part, whether it
-    became a task, and whether something new is waiting for ``viewer``."""
+    the message each hangs under, its last reply, who took part, the tasks
+    made from it, and whether something new is waiting for ``viewer``. One
+    that became a task is listed with the channel's tasks, not here."""
     failed_turn = (
         select(Block.id)
         .where(
@@ -325,7 +345,11 @@ async def in_room(
     threads = list(
         await session.scalars(
             select(Thread)
-            .where(Thread.room_id == room_id, or_(Thread.reply_count > 0, failed_turn))
+            .where(
+                Thread.room_id == room_id,
+                or_(Thread.reply_count > 0, failed_turn),
+                ~_became_a_task(),
+            )
             .order_by(Thread.last_reply_at.desc().nulls_last(), Thread.id)
             .limit(limit)
         )
@@ -363,7 +387,7 @@ async def _describe(
         .order_by(_tasks.c.created_at)
     ):
         tasks.setdefault(task.upgraded_from_block_id, []).append(task)
-    said = await _participants(session, threads)
+    said = await _participants(session, threads, roots=roots)
     unread = await _unread(session, threads, viewer) if viewer else set()
     failed = await _failed(session, threads)
     out = []

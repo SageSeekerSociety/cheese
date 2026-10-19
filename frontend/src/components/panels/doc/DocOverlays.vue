@@ -13,6 +13,7 @@
 import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Selection } from '@tiptap/pm/state'
+import type { SlashMenuState } from '../../../composables/useDocSlashMenu'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
@@ -43,7 +44,7 @@ const props = withDefaults(
     editable: boolean
     topicId: string | null
     /** 上面那把 slash 菜单现在开在哪、停在第几行；null = 关着。 */
-    slashMenu?: { items: SlashItem[]; index: number; top: number; left: number } | null
+    slashMenu?: SlashMenuState | null
     /** 父层每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
     /** 项目 AI 队友的名字和 handle：浮条上的那个入口是它。 */
@@ -495,7 +496,8 @@ function addBlockBelow() {
 // 或者整块删掉。图表、表格这类有结构的块只能删，换成正文会丢掉结构。
 // 拖它照旧是挪这一块。菜单量着手柄的位置摆在屏幕上，手柄因为鼠标移开而收起时它还在。
 const blockMenu = ref<{ pos: number; current: string; converts: boolean; top: number; left: number } | null>(null)
-function openBlockMenu(e: MouseEvent) {
+// Enter and Space open it too: the grip says role="button".
+function openBlockMenu(e: Event) {
   const ed = props.editor
   if (!ed || hoverPos.value == null) return
   const node = ed.state.doc.nodeAt(hoverPos.value)
@@ -620,12 +622,12 @@ defineExpose({ onHover, onEdited })
      (↑↓/Enter/Esc) is handled in the suggestion plugin; the mouse
      path routes through the same command(). -->
   <Transition name="doc-menu">
+    <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- `hover` is DocSlashMenu's own event, which it also fires when an item takes focus -->
     <DocSlashMenu
       v-if="slashMenu"
       :items="slashMenu.items"
       :index="slashMenu.index"
-      :top="slashMenu.top"
-      :left="slashMenu.left"
+      :at="slashMenu"
       @pick="emit('pick', $event)"
       @hover="emit('hover', $event)"
     />
@@ -691,7 +693,10 @@ defineExpose({ onHover, onEdited })
       :aria-expanded="!!blockMenu"
       :aria-label="t('work.room.doc.blockHandle')"
       :title="t('work.room.doc.blockHandle')"
+      tabindex="0"
       @click="openBlockMenu"
+      @keydown.enter.prevent="openBlockMenu"
+      @keydown.space.prevent="openBlockMenu"
     >
       <v-icon size="15">mdi-drag-vertical</v-icon>
     </span>

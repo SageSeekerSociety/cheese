@@ -17,7 +17,7 @@ const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 // `enter`), so paths need no respelling. Its skills are the exception: the
 // build reads them all from this host's config directory. A project's are the
 // project's, on the executor; one the platform shipped is in the executor's
-// own config directory (`client.py` `skill_paths`, the same mapping).
+// own config directory (`shell_prefix.skill_paths`, the same mapping).
 const skills = execution.central_config + "/skills/";
 const projectSkills = execution.session_workspace + "/.claude/skills/";
 const shipped = new Set(execution.shipped_skills || []);
@@ -25,7 +25,7 @@ const shipped = new Set(execution.shipped_skills || []);
 // that name — a subdirectory's, or one written without its `paths` — with where
 // the executor holds each and what Claude Code adds to its description. They
 // change while the session runs (`release.touch_skills`), so they are read
-// each time (`client.py` `skill_places` reads the same file).
+// each time (`shell_prefix.skill_places` reads the same file).
 const sessionDir = (execution.target_file || "").replace(/[^/]*$/, "");
 const placesFile = sessionDir && sessionDir + "skill-places.json";
 // The one native Read this plugin lets through the session's PreToolUse guard
@@ -296,6 +296,10 @@ export function register(on) {
         const result = [outcome.result.stdout, outcome.result.stderr]
           .filter((text) => typeof text === "string" && text !== "")
           .map((text) => ({ type: "text", text }));
+        // Pictures the tool hands back (a mini-app's, as the platform ran
+        // it) follow the text, as the build hands them here: already in the
+        // Messages API's shape, which is what the result must carry.
+        result.push(...response.content.filter((block) => block.type === "image"));
         return outcome.context ? { result, context: outcome.context } : { result };
       } catch (error) {
         return { deny: "Cheese tool failed: " + String(error) };
@@ -357,22 +361,18 @@ export function register(on) {
         return { deny: "Cheese delivery failed: " + String(error) };
       }
     }
-    // The machine's stdio servers and the teammate's type's (`agent_mcp`, whose
-    // definitions the bridge hands the machine with each call).
-    for (const server of [...(execution.mcp_servers || []), ...Object.keys(execution.agent_mcp || {})]) {
-      const prefix = "mcp__" + server + "__";
-      if (tool.startsWith(prefix)) {
-        try {
-          const response = await $.mcp.call(server, tool.slice(prefix.length), args);
-          if (response.isError) return failed(response);
-          return { result: response.content };
-        } catch (error) {
-          return { deny: "Remote MCP failed: " + String(error) };
-        }
-      }
-    }
     if (tool === "Bash") {
       const denied = await refused($, tool_use_id, tool, args);
+      if (denied) return denied;
+    }
+    // Monitor's command is a Bash command to the build: the shell prefix sends
+    // it to the executor, and the project's rules for Bash are the rules for
+    // it. Its WebSocket source is opened by the build itself, on this host.
+    if (tool === "Monitor") {
+      if (args.ws) {
+        return { deny: "Monitor's ws source is unavailable here; give it a command instead (it runs on the work machine)." };
+      }
+      const denied = await refused($, tool_use_id, "Bash", { command: args.command });
       if (denied) return denied;
     }
     return next(e);

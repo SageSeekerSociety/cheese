@@ -51,15 +51,21 @@ jobs:
           REPO: ${{ github.repository }}
         run: python3 .github/scripts/ci-pool-health.py
 
-      - name: Tell the team a CI machine is missing
-        if: ${{ failure() && env.WEBHOOK != '' }}
+      # Two different failures leave the step above red: a machine is missing
+      # (exit 1), or the check reached no conclusion about the pool (exit 2 —
+      # the runner list could not be read, or it arrived and could not be
+      # interpreted). The script decides which sentence each one is; this step
+      # sends that sentence and adds nothing of its own, so a could-not-judge
+      # case can never arrive as "a machine is missing". A healthy pool writes
+      # no alert and stays quiet.
+      - name: Tell the team what the pool check found
+        if: ${{ always() && env.WEBHOOK != '' && steps.pool.outputs.alert != '' }}
         env:
-          PROBLEMS: ${{ steps.pool.outputs.problems }}
+          ALERT: ${{ steps.pool.outputs.alert }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
-          text="$(printf 'CI 机器掉了：%s\n这一轮：%s' \
-            "${PROBLEMS:-见运行日志}" "$RUN_URL")"
+          text="$(printf '%s\n这一轮：%s' "$ALERT" "$RUN_URL")"
           curl -sS -m 15 -X POST "$WEBHOOK" \
             -H 'Content-Type: application/json' \
             --data "$(jq -n --arg t "$text" '{msg_type:"text",content:{text:$t}}')" \
@@ -126,7 +132,11 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
-          text="$(printf '站点探活失败：%s\n原因：%s\n这一轮：%s' \
+          # 【严重】 leads the line because this shares a group with the
+          # backend's error alerts, and on 2026-10-15 an 85-minute outage alert
+          # sat unread among them: a site-down message has to be told apart
+          # from the rest at a glance, before anyone reads past the first word.
+          text="$(printf '【严重】站点探活失败：%s\n原因：%s\n这一轮：%s' \
             "$HEALTH_URL" "${REASON:-两次探测都没有拿到 200}" "$RUN_URL")"
           # Never fail the job on the alert itself: the probe result is the
           # finding, and a webhook that is down must not hide it.

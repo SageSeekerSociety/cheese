@@ -12,6 +12,7 @@ from app.api.response import ok
 from app.api.routes.tasks._common import (
     PatchTaskParticipantRequest,
     PatchTaskRequest,
+    set_task_mentors,
 )
 from app.api.task_deps import (
     get_task_membership_service,
@@ -32,6 +33,7 @@ from app.api.task_teaching import (
     coerce_teaching,
     validate_task_teaching,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import may_teach_task
@@ -41,6 +43,8 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.agent_instance.adapters import default_teammate
+from app.domain.living_doc.overview import seed_overview
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -49,6 +53,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.task.adapters import TaskTerms, as_brief, as_claim
 from app.domain.task.claims import own_claim
 from app.domain.task.inputs import (
     map_approve_type,
@@ -66,6 +71,7 @@ from app.domain.task.visibility_service import resolve_user_email_domain
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
+from app.domain.usage.adapters import ComputeCredits
 from app.domain.user.repositories import (
     UserRealNameRepository,
 )
@@ -102,7 +108,7 @@ async def get_task(
     # 题目的附属读路由（材料清单）走同一个判断。
     await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
 
-    # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。  # noqa: E501
+    # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。
     participation: dict
     if auth_user.user_id == 0:
         participation = {
@@ -168,7 +174,7 @@ async def get_task(
             "hasParticipation": bool(identities),
         }
 
-    # 组装 task DTO，并按当前用户补充 joined/submittable/userDeadline/participationEligibility 等字段（部分字段为简化版）。  # noqa: E501
+    # 组装 task DTO，并按当前用户补充 joined/submittable/userDeadline/participationEligibility 等字段（部分字段为简化版）。
     task_dict = _task_to_api_model(task)
 
     joined = False
@@ -269,10 +275,7 @@ async def get_task(
     )
 
 
-@router.patch(
-    "/{taskId}",
-    summary="Update Task",
-)
+@router.patch("/{taskId}", summary="Update Task", dependencies=[ROUTE_DECIDES])
 async def patch_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     payload: PatchTaskRequest,
@@ -472,6 +475,11 @@ async def patch_task(
 
     # 「给 AI 队友的指导」: 整份替换这道题的那一格，见 apply_task_teaching。
     apply_task_teaching(task, coerce_teaching(payload.teaching))
+
+    if payload.mentors is not None:
+        await set_task_mentors(
+            db, task=task, handles=payload.mentors, creator_user_id=task.creator_id
+        )
 
     task.updated_at = datetime.now(UTC)
     task = await service.save(task)
@@ -692,6 +700,7 @@ async def get_tasks(
     "/{taskId}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete Task",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -729,6 +738,7 @@ async def delete_task(
     "/{taskId}/participants/{participantId}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete TaskMembership",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -763,6 +773,7 @@ async def delete_task_participant(
     "/{taskId}/participants",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete TaskMembership by member",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_task_participant_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -798,6 +809,7 @@ async def delete_task_participant_by_member(
 @router.patch(
     "/{taskId}/participants",
     summary="Update TaskMembership by member",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_task_membership_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -808,7 +820,7 @@ async def patch_task_membership_by_member(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
-    """Patch a TaskMembership identified by (taskId, memberId) and return all participants."""  # noqa: E501
+    """Patch a TaskMembership identified by (taskId, memberId) and return all participants."""
     task = await service.get_task(task_id)
     if task is None:
         raise NotFoundError("Task not found")
@@ -844,7 +856,13 @@ async def patch_task_membership_by_member(
         phone=payload.phone,
     )
 
-    await ProjectService(db).activate_participation(task=task, membership=membership)
+    await ProjectService(
+        db,
+        default_teammate=default_teammate,
+        compute_credits=ComputeCredits(db),
+        overview=seed_overview,
+        task_terms=TaskTerms(db),
+    ).activate_participation(task=as_brief(task), claim=as_claim(membership))
 
     # 按 Kotlin PatchTaskMembershipByMember 语义，返回当前任务下所有参与者。
     all_memberships = await membership_service.list_memberships_for_task(

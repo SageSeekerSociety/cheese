@@ -254,7 +254,7 @@ def main() -> int:
     try:
         for line in report(arguments.results, arguments.log):
             print(line)
-    except Exception as exc:  # noqa: BLE001 — this step must never fail the job
+    except Exception as exc:  # this step must never fail the job
         print(f"::error::could not read {arguments.results}: {exc}")
     return 0
 

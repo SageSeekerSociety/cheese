@@ -989,7 +989,7 @@ async def test_orphan_turns_resume_after_restart(db_factory, monkeypatch):
         lambda _chat, tid, after, content, **_kw: scheduled.append((tid, content)),
     )
 
-    class _Chat:
+    class _Chat(WorkChat):
         def __init__(self):
             self.events: list[tuple[uuid.UUID, str]] = []
             self.notices: list[tuple[uuid.UUID, str]] = []
@@ -1061,7 +1061,7 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
         lambda _chat, tid, after, content, **_kw: scheduled.append(tid),
     )
 
-    class _Chat:
+    class _Chat(WorkChat):
         session_factory = db_factory
 
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -1102,7 +1102,7 @@ async def test_periodic_sweep_ignores_a_just_started_turn(db_factory):
     fresh = await open_turn(db_factory, await a_topic(db_factory), age_s=2)
     runner = AgentWorkRunner(InProcessBroker())
 
-    class _Chat:
+    class _Chat(WorkChat):
         session_factory = db_factory
 
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -1129,7 +1129,7 @@ async def test_stale_orphan_is_dropped_loudly(db_factory, monkeypatch):
 
     monkeypatch.setattr(broker, "publish", _capture)
 
-    class _Chat:
+    class _Chat(WorkChat):
         def __init__(self):
             self.texts: list[str] = []
             # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在
@@ -1238,7 +1238,7 @@ async def test_sweep_claims_a_turn_that_is_live_but_silent(db_factory):
         assert topic_ids == {topic}
         return {topic: datetime.now(UTC) - timedelta(hours=8)}
 
-    class _Chat:
+    class _Chat(WorkChat):
         def __init__(self):
             self.texts: list[str] = []
             # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在
@@ -1281,7 +1281,7 @@ async def test_sweep_spares_a_turn_grinding_through_tools(db_factory):
     async def _last_block(topic_ids):
         return {topic: datetime.now(UTC) - timedelta(hours=4)}  # DB says silent
 
-    class _Chat:
+    class _Chat(WorkChat):
         session_factory = db_factory
 
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -1293,7 +1293,7 @@ async def test_sweep_spares_a_turn_grinding_through_tools(db_factory):
     task.cancel()
 
 
-class _SweepChat:
+class _SweepChat(WorkChat):
     """The three things a sweep asks of a ChatService, and a log of what it said."""
 
     def __init__(
@@ -1375,7 +1375,7 @@ async def test_a_delivered_row_without_a_death_probe_is_unknown_not_dead(db_fact
         db_factory, topic, delivered=True, age_s=3600, resendable=False
     )
 
-    class _NoProbe:
+    class _NoProbe(WorkChat):
         def __init__(self, factory) -> None:
             self.session_factory = factory
             self.texts: list[str] = []
@@ -1626,7 +1626,7 @@ async def test_sweep_spares_live_turns_when_the_activity_probe_fails(db_factory)
     async def _boom(topic_ids):
         raise RuntimeError("PG is down")
 
-    class _Chat:
+    class _Chat(WorkChat):
         session_factory = db_factory
 
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -1656,7 +1656,7 @@ async def test_a_wedged_turn_is_cancelled_and_handed_to_a_human(db_factory):
     async def _last_block(topic_ids):
         return {topic: datetime.now(UTC) - timedelta(seconds=2700)}
 
-    class _Chat:
+    class _Chat(WorkChat):
         session_factory = db_factory
 
         def __init__(self) -> None:
@@ -1711,7 +1711,7 @@ async def test_sweep_keeps_a_turn_that_opened_while_it_was_probing(db_factory):
         newcomer.append(await open_turn(db_factory, new_topic, age_s=0))
         return {dead_topic: datetime.now(UTC) - timedelta(hours=8)}
 
-    class _Chat:
+    class _Chat(WorkChat):
         session_factory = db_factory
 
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -1835,7 +1835,7 @@ async def test_a_killed_turn_stops_claiming_to_be_running(db_factory):
     async def _last_block(topic_ids):
         return {topic: datetime.now(UTC) - timedelta(hours=8)}
 
-    class _Chat:
+    class _Chat(WorkChat):
         session_factory = db_factory
 
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -1879,7 +1879,7 @@ async def test_a_deploy_the_platform_handles_itself_says_nothing(
     )
     metas: list[dict] = []
 
-    class _Chat:
+    class _Chat(WorkChat):
         session_factory = db_factory
 
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -1982,7 +1982,7 @@ async def test_the_platforms_own_work_is_re_sent_like_anyone_elses(
     )
     metas: list[dict] = []
 
-    class _Chat:
+    class _Chat(WorkChat):
         session_factory = db_factory
 
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -2027,7 +2027,7 @@ async def test_a_deploy_that_loses_a_message_for_good_still_warns(
     )
     metas: list[dict] = []
 
-    class _Chat:
+    class _Chat(WorkChat):
         session_factory = db_factory
 
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):

@@ -1,4 +1,6 @@
 {
+  "acceptConflict": "采纳停下：PR #{pr} 和目标分支冲突了",
+  "acceptConflictDetail": "{url}\n冲突不能在采纳时解掉：GitHub 现在合不了这个 PR。轮询会把这条冲突交给芝士，它要在任务目录里合入目标分支、解决后重新推送；解完检查绿了再重新采纳。",
   "acceptDismissed": "PR #{pr} 有新提交，已有的采纳批准被作废",
   "acceptDismissedDetail": "被作废的批准：{voided}。\n新提交作废已有的采纳（项目分支保护，默认开）。请重新查看这个 PR 后再采纳。\n{url}",
   "acceptDone": "{actor} 采纳了这次改动，PR #{pr} {how}",
@@ -34,6 +36,8 @@
   "cardVoided": "{actor} 作废了审阅",
   "cardVoidedDetail": "作废于状态「{state}」。这不是退回，也不代表检查未通过，只是结束这次审阅，让频道可以重新提交。{reason}",
   "cardVoidedReason": " 理由：{note}",
+  "checksPassed": "PR #{pr} 的检查已全绿，可以递卡了",
+  "checksPassedAwaitingReview": "PR #{pr} 的检查已全绿，等待验收",
   "ciFailed": "PR #{pr} 的 {stage} 检查没通过",
   "dependencyActionDelivered": "当前目标分支为 {branch}。获取远端分支，将本任务的提交整理到目标分支上，解决冲突，重新运行检查并推送。父任务可能采用 squash 合并，请核对补丁，只重放本任务独有的改动；不要重新带入父任务整理时移除、且尚未重新获准的祖先改动。普通 rebase 成功不代表提交范围正确，请核对最终差异是否仅含本任务交付。",
   "dependencyActionUndelivered": "保留现有工作，检查本任务依赖了哪些尚未交付的修改。根据任务要求决定移除依赖、独立实现或报告无法继续的原因；不要把驳回或关闭当作代码已经合并，也不要自动关闭子任务。决定移除依赖时，在本任务分支上，以项目默认分支为基线重新整理本任务独有的提交，验证差异不包含被驳回的改动，再执行 cheese push-fix --drop-dependency。它会更新现有 PR 的目标分支、清除任务依赖和旧批准；不要重复递卡或自行合并。",
@@ -79,7 +83,6 @@
   "labelWhyVoided": "为什么作废",
   "lines": "{items}",
   "mergeQueueLeft": "PR #{pr} 离开了合并队列但未合并",
-  "dispatchSeatWoken": "你是这个项目设置里的「调度座位」，平台把「可以合并」和「离开合并队列」两类事件也叫一份给你：\n\n{headline}\n{detail}",
   "mergeRefused": "PR #{pr} 被 GitHub 拒绝合并",
   "mergeRefusedDetail": "{reason}\n{url}",
   "mergeRefusedOnAccept": "采纳未完成：GitHub 拒绝合并 PR #{pr}",

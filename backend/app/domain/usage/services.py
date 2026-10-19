@@ -19,8 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.model_access import ModelAccess, model_access
+from app.domain.usage.model_access import overseas_approved as _overseas_approved
 
 
 def _gateway_budget(balance: ledger.Balance, spent_usd: float) -> float | None:
@@ -40,16 +42,36 @@ class UsageService:
     async def project_credits(self, project_id: uuid.UUID) -> dict:
         """一个项目在算力账上的额度：总额 / 已用 / 剩余 / 是不是不限额。
 
-        额度包只有 `usage.ledger` 答得出「这个项目还能花多少」—— 网关那把虚拟 key
+        额度包只有账本答得出「这个项目还能花多少」（读那一半，
+        `usage/ledger_queries.py`）—— 网关那把虚拟 key
         上的 `max_budget` 只是这个数的换算结果。管理页要同时看「账上是多少」和
         「刹车上被设成了多少」，所以这扇门得把它转出去。
         """
         payer = await ledger.payer_for_project(self._session, project_id)
         return (await self._summaries({project_id: payer}))[project_id]
 
+    async def task_gateway_budget(
+        self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+    ) -> float | None:
+        summary = await self.project_credits(project_id)
+        remaining = None if summary["unlimited"] else summary["credits_remaining"]
+        member = await CreditBudgets(self._session).member_remaining(
+            project_id, owner_handle
+        )
+        if member is not None:
+            remaining = member if remaining is None else min(remaining, member)
+        if remaining is None:
+            return None
+        spent = await self._repo.task_gateway_spend(project_id, task_id, owner_handle)
+        return round(spent + max(0.0, remaining) * CREDIT_USD, 4)
+
     async def plan_model_tiers(self, team_id: int) -> frozenset[str] | None:
         """The model tiers the team's plan allows; None is every tier."""
         return (await ledger.team_terms(self._session, team_id)).model_tiers
+
+    async def overseas_approved(self, team_id: int) -> bool:
+        """Has an administrator approved the team for overseas models."""
+        return await _overseas_approved(self._session, team_id)
 
     async def model_access(self, team_id: int) -> ModelAccess:
         """Which models the team's plan lets it pick, and which plan each of
@@ -64,19 +86,34 @@ class UsageService:
 
     async def project_credits_batch(self, projects: list) -> dict[uuid.UUID, dict]:
         """`project_credits` 的批量版：一批项目 → 各自的额度汇总，一条查询取回
-        额度包，再按与逐项目同一条规则（`ledger._applies`）归给各项目。"""
+        额度包，再按与逐项目同一条规则（`usage.balance._applies`）归给各项目。"""
         payers = await ledger.payers_for_projects(self._session, projects)
         return await self._summaries(payers)
 
     async def _summaries(self, payers: dict) -> dict[uuid.UUID, dict]:
         balances = await ledger.Ledger(self._session).balances(payers)
         spent = await self._repo.gateway_spend(list(payers))
+        caps = await CreditBudgets(self._session).project_caps(list(payers))
         out = {}
         for key, balance in balances.items():
             summary = balance.summary()
             summary["gateway_budget_usd"] = _gateway_budget(
                 balance, spent.get(key, 0.0)
             )
+            if key in caps:
+                limit, used = caps[key]
+                remaining = max(0.0, limit - used)
+                if not balance.unlimited:
+                    remaining = min(remaining, max(0.0, balance.credits_remaining))
+                summary.update(
+                    unlimited=False,
+                    credits_total=limit,
+                    credits_used=used,
+                    credits_remaining=remaining,
+                    gateway_budget_usd=round(
+                        spent.get(key, 0.0) + remaining * CREDIT_USD, 4
+                    ),
+                )
             out[key] = summary
         return out
 

@@ -1,0 +1,81 @@
+  decoded = self.decode_complete(
+ids {"project": "586786ec-acac-41f5-ba69-7296055c73a2", "room": "13f6e609-d016-49c0-b8ac-d67d1641bd76", "task": "5f4dcca7-31e5-4f88-9c10-2baff7e70619"} rounds=5 loadavg=92.58 114.55 95.17 143/9133 13136
+===== channel detail  (5 req, wall 251 ms)  statements/req 37.0  db/req 158.1 ms =====
+     122.5 ms/req    1.0 calls/req  SELECT blocks,threads,topic_read_states
+       4.7 ms/req    2.0 calls/req  SELECT tasks,threads,blocks,unnest
+       3.7 ms/req    3.0 calls/req  SELECT blocks,tasks
+       3.5 ms/req    4.0 calls/req  SELECT tasks
+       3.4 ms/req    3.0 calls/req  SELECT blocks
+       2.3 ms/req    1.0 calls/req  SELECT unnest,tasks,threads,LATERAL
+       2.2 ms/req    3.0 calls/req  SELECT accept_cards
+       2.0 ms/req    1.0 calls/req  SELECT blocks,tasks,topics
+===== channel task list  (5 req, wall 82 ms)  statements/req 16.0  db/req 12.4 ms =====
+       2.3 ms/req    1.0 calls/req  SELECT blocks,tasks
+       2.0 ms/req    1.0 calls/req  SELECT blocks
+       1.9 ms/req    2.0 calls/req  SELECT accept_cards
+       1.4 ms/req    1.0 calls/req  SELECT unnest,LATERAL,blocks
+       1.2 ms/req    1.0 calls/req  SELECT tasks
+       0.6 ms/req    2.0 calls/req  SELECT projects
+       0.6 ms/req    1.0 calls/req  SELECT resource_usage
+       0.5 ms/req    2.0 calls/req  SELECT tasks,threads
+===== channel blocks  (5 req, wall 76 ms)  statements/req 14.0  db/req 11.1 ms =====
+       4.0 ms/req    2.0 calls/req  SELECT blocks
+       1.4 ms/req    1.0 calls/req  SELECT tasks
+       1.1 ms/req    1.0 calls/req  SELECT routine_runs,routines,threads
+       0.9 ms/req    2.0 calls/req  SELECT projects
+       0.7 ms/req    2.0 calls/req  SELECT tasks,threads
+       0.6 ms/req    1.0 calls/req  SELECT block_reactions
+       0.6 ms/req    1.0 calls/req  SELECT threads
+       0.6 ms/req    1.0 calls/req  SELECT topics
+===== channel environment  (5 req, wall 28 ms)  statements/req 14.0  db/req 4.3 ms =====
+       0.7 ms/req    2.0 calls/req  SELECT device_team,projects
+       0.6 ms/req    2.0 calls/req  SELECT projects
+       0.6 ms/req    2.0 calls/req  SELECT device_project
+       0.5 ms/req    1.0 calls/req  SELECT topics
+       0.5 ms/req    2.0 calls/req  SELECT tasks,threads
+       0.4 ms/req    1.0 calls/req  SELECT agent_sessions
+       0.3 ms/req    1.0 calls/req  SELECT agent_environments
+       0.3 ms/req    1.0 calls/req  SELECT user
+===== channel members  (5 req, wall 63 ms)  statements/req 12.0  db/req 3.6 ms =====
+       0.8 ms/req    3.0 calls/req  SELECT topic_memberships
+       0.5 ms/req    2.0 calls/req  SELECT projects
+       0.5 ms/req    1.0 calls/req  SELECT topics
+       0.5 ms/req    2.0 calls/req  SELECT tasks,threads
+       0.4 ms/req    1.0 calls/req  SELECT agent_instances
+       0.4 ms/req    1.0 calls/req  SELECT threads
+       0.3 ms/req    1.0 calls/req  SELECT user
+       0.2 ms/req    1.0 calls/req  SELECT project_members
+===== channel pins  (5 req, wall 60 ms)  statements/req 8.0  db/req 2.6 ms =====
+       0.7 ms/req    1.0 calls/req  SELECT pins,blocks
+       0.5 ms/req    1.0 calls/req  SELECT topics
+       0.5 ms/req    2.0 calls/req  SELECT tasks,threads
+       0.3 ms/req    1.0 calls/req  SELECT user
+       0.3 ms/req    1.0 calls/req  SELECT projects
+       0.2 ms/req    1.0 calls/req  SELECT topic_memberships
+       0.2 ms/req    1.0 calls/req  SELECT project_members
+===== channel threads  (5 req, wall 61 ms)  statements/req 8.0  db/req 3.4 ms =====
+       1.6 ms/req    1.0 calls/req  SELECT threads,blocks
+       0.4 ms/req    1.0 calls/req  SELECT topics
+       0.4 ms/req    2.0 calls/req  SELECT tasks,threads
+       0.3 ms/req    1.0 calls/req  SELECT projects
+       0.2 ms/req    1.0 calls/req  SELECT user
+       0.2 ms/req    1.0 calls/req  SELECT project_members
+       0.2 ms/req    1.0 calls/req  SELECT topic_memberships
+===== project task list  (5 req, wall 136 ms)  statements/req 11.0  db/req 35.0 ms =====
+      23.0 ms/req    1.0 calls/req  SELECT tasks
+       4.7 ms/req    2.0 calls/req  SELECT blocks,tasks
+       2.4 ms/req    1.0 calls/req  SELECT topics,topic_memberships
+       2.2 ms/req    1.0 calls/req  SELECT accept_cards
+       1.0 ms/req    1.0 calls/req  SELECT unnest,LATERAL,blocks
+       0.5 ms/req    2.0 calls/req  SELECT projects
+       0.5 ms/req    1.0 calls/req  SELECT agent_turns
+       0.4 ms/req    1.0 calls/req  SELECT user
+===== awaiting-me (reference)  (5 req, wall 94 ms)  statements/req 12.0  db/req 19.7 ms =====
+       7.3 ms/req    2.0 calls/req  SELECT blocks,tasks
+       2.4 ms/req    1.0 calls/req  SELECT accept_cards
+       2.1 ms/req    1.0 calls/req  SELECT unnest,LATERAL,blocks
+       1.6 ms/req    1.0 calls/req  SELECT tasks
+       1.5 ms/req    1.0 calls/req  SELECT topics,topic_memberships
+       1.2 ms/req    1.0 calls/req  SELECT topics
+       0.9 ms/req    1.0 calls/req  SELECT notification
+       0.9 ms/req    1.0 calls/req  SELECT threads

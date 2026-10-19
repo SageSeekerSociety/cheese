@@ -45,27 +45,31 @@ from pathlib import Path
 
 # These inspect trees/catalogs rather than importing the files they constrain,
 # so the import graph alone would not reach them; they always run.
+# test_ci_fast.py checks this tuple against the tree (a unit test that reads
+# tree files without importing app.*), so a new guard is not left to memory.
 TREE_GUARDS = (
-    "test_domain_import_guard.py", "test_legacy_error_ratchet.py",
+    "test_domain_import_guard.py",
     "test_a_refusal_is_said_with_a_key.py", "test_sentences.py",
     "test_is_private_read_points.py", "test_harness_boundary.py",
     "test_actor_is_not_typed.py", "test_author_type_two_values.py",
     "test_nothing_reads_the_model_off_a_type_or_an_instance.py",
     "test_social_notifications_through_the_ledger.py",
     "test_remote_hub_answers_every_hub_call.py", "test_the_platform_never_starts_a_turn.py",
-    "test_no_project_memory_pool.py", "test_one_roster_agents_included.py",
-    "test_no_adhoc_auth_helpers.py", "test_local_fs_sharing_guard.py",
+    "test_one_roster_agents_included.py", "test_local_fs_sharing_guard.py",
+    "test_get_by_id_has_batch_sibling.py",
+    # Read .claude/scripts, .github/workflows, deploy/ or a repository tree
+    # (app, backend, tests) instead of importing app.*, so no import edge
+    # reaches them.
+    "test_changed_runner.py", "test_postgres_version_pins.py",
+    "test_event_landing_guard.py", "test_metering_proxy_addon.py",
+    "test_known_debt_is_not_an_xfail.py", "test_dead_definitions_stay_dead.py",
+    "test_success_envelope_single_home.py",
 )
 META = {
     "backend/pyproject.toml", "backend/uv.lock",
-    # backend/openapi.json left the repository on 2026-10-14; the frontend
-    # builds it on demand and what stays committed is its digest. Either way a
-    # non-Python input under backend/ hits the rule above, which asks for the
-    # same full run.
-    "backend/openapi.sha256",
     "backend/tests/module_durations.json", "backend/tests/quarantine.txt",
     "backend/tests/slow_tests.txt", "backend/.importlinter",
-    "backend/deferred-import-baseline.json", ".pre-commit-config.yaml",
+    ".pre-commit-config.yaml",
 }
 UNIT_PREFIX = "tests/unit/"
 DYNAMIC_IMPORT_NAMES = {"import_module", "__import__"}
@@ -192,7 +196,7 @@ def select_backend(root, changed, conservative=False, harness_gap=""):
     # penalty below (app.main loads its routes that way, which would make it a
     # consumer of the harness helper and every test that builds the app through
     # it a harness test — most of the suite, dropped from a tier that can run
-    # it) and the literal-named files (the legacy-error ratchet names every file
+    # it) and the literal-named files (a tree guard that names every file
     # it counts, which is not a reason to skip it).
     import_reverse = defaultdict(set)
     dynamic_consumers = set()

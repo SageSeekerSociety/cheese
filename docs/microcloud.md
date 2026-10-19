@@ -23,10 +23,11 @@ user-facing route lists hosts. The admin dashboard counts them.
 |---|---|---|
 | `CLOUD_HOST_SLOTS_PER_CORE` | 2 | Sandbox slots per host core. A slot is a sandbox, for as long as it exists. |
 | `CLOUD_SANDBOX_IDLE_STOP_S` | 600 | A sandbox whose conversation runs no turn and whose session asked for no tool this long is destroyed. |
-| `CLOUD_SANDBOX_BACKGROUND_CAP_S` | 3600 | A command the executor still runs for the session (a Bash call sent to the background) keeps an idle sandbox up, until this long after the session's last activity. |
-| `CLOUD_POOL_MIN_FREE_SLOTS` | 2 | When the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. An idle host is not let go if that would take the free slots below it. |
+| `CLOUD_SANDBOX_BACKGROUND_CAP_S` | 900 | A command the executor still runs for the session (a Bash call sent to the background) keeps an idle sandbox up, until this long after the session's last activity. |
+| `CLOUD_VM_BACKGROUND_CAP_S` | 3600 | The same keep-alive for a whole cloud VM's sandbox. Longer than a sandbox's, because a VM's idle release (1800 s) is longer than a sandbox's. |
+| `CLOUD_POOL_MIN_FREE_SLOTS` | 4 | When the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. The default is one host's worth of sandboxes — the default host runs four — so the next host is under way once fewer than four slots are free; a deployment that creates a different host size sets this to that host's capacity. An idle host is not let go if that would take the free slots below it. |
 | `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host that has no sandbox on it is kept before it is released. |
-| `CLOUD_POOL_MAX_HOSTS` | 10 | The platform's cap on hosts, protecting the cluster: ten hosts' disks written full fit in the cluster's shared thin pool. A session that finds the pool full and every host full is told capacity is tight and to try later. |
+| `CLOUD_POOL_MAX_HOSTS` | 12 | The platform's cap on hosts, whole cloud VMs among them, protecting the cluster: the current 400 GB shared thin pool holds ten hosts' disks written full, so each place above ten over-commits it by a disk. It rises only as the storage behind it grows. A session that finds the pool full and every host full is told capacity is tight and to try later. |
 | `CLOUD_SANDBOX_CREDITS_PER_HOUR` | none | Credits a running sandbox costs per hour. Unset, no cloud sandbox starts. |
 | `CLOUD_VM_CREDITS_PER_HOUR` | `{}` | Credits per hour of a VM sandbox, from creation to release, by its size as `<cores>c<GiB>g` (`4c8g`). A size not listed cannot be created. |
 
@@ -45,7 +46,7 @@ Nothing inside a sandbox bounds what it writes: a host is an unprivileged contai
 loop device for a filesystem per sandbox and no project quotas. So the disk is held the way
 Kubernetes holds a node's ephemeral storage, by reading it and evicting. Every
 `SANDBOX_DISK_CHECK_S` (60 s), every online machine holding a sandbox — the platform's hosts
-and people's computers alike — reports the free bytes and inodes of the filesystem its homes
+and people's computers alike — and every platform host in the pool, holding one or not, reports the free bytes and inodes of the filesystem its homes
 are on, one `statvfs`. What each home holds takes a walk of every file (13 s on a dev host
 holding 880 thousand inodes), so it is read every `SANDBOX_DISK_WALK_S` (300 s), and at once
 on any check that finds the disk below a floor.
@@ -65,6 +66,17 @@ on any check that finds the disk below a floor.
   own directory on a computer that runs it without a sandbox) is never touched.
 - An executor that cannot be installed because the disk is full says so rather than repeating
   the path the error named.
+
+### What hosts and sandboxes use is shown and alerted
+
+`backend/app/domain/machine/readings.py`. The same reading also carries a host's memory
+(`/proc/meminfo`, the container's own under lxcfs), the CPU time of its cgroup root, its load,
+and each sandbox cgroup's `memory.current` and `memory.peak`. A platform host's reading is kept
+(`host_readings`, six hours) with each sandbox's latest memory and disk (`sandbox_usages`), and
+the admin page `/admin/machines` shows them beside the sandbox limits, with each reading's age.
+A host past 85% of its disk, 90% of its inodes or 90% of its memory on two readings running is
+sent to the alert group, keyed per host and resource, so the alert path's backoff (an hour,
+four hours, a day) repeats it while it lasts. A person's computer's reading is not kept.
 
 ### Idle sandboxes are destroyed
 
@@ -103,7 +115,7 @@ Until then an operator fetches one with `python -m scripts.retained_files homes`
 
 Sandboxes are disposable: what counts is what was pushed. So the pool also gives up on an
 enrolled host the provider reports in `error`, and on one whose connector has been away for
-ten minutes (`services.LOST_AFTER`, counted by the sweep in `cloud_hosts.offline_since`) while
+ten minutes (`reaper.LOST_AFTER`, counted by the sweep in `cloud_hosts.offline_since`) while
 another host of the pool is online. With none online, the sweep takes the outage for the
 platform's own (a restart, a cut link) and gives up on nothing. Each session that worked on
 the host is placed in a new sandbox on its next tool call; that call's result tells the agent,
@@ -126,6 +138,7 @@ never the machine.
 | `MICROCLOUD_VM_OFFERING_ID` | 0 | The offering VMs are created from. 0: the deployment does not offer VM sandboxes, and the spec is not offered. |
 | `CLOUD_VM_CORES` / `_MEMORY_MB` / `_DISK_GB` | 4 / 8192 / 40 | The one VM size, clamped into the offering. Recorded on the row with the project the VM was created for. |
 | `CLOUD_VM_IDLE_RELEASE_S` | 1800 | A VM is pushed and released once its session has been idle this long, by the measure a sandbox is destroyed by (no turn in its conversation, no tool call, no background command still running). |
+| `CLOUD_VM_BACKGROUND_CAP_S` | 3600 | How long a background command keeps a VM up after the session's last activity. Its own setting, not the sandbox's: the sandbox cap (900 s) is shorter than the VM's idle release, so it would hold nothing up. |
 
 The pool sweep releases it as soon as no home is
 left on it, with no idle hold: when its session switches away after pushing, when the room's

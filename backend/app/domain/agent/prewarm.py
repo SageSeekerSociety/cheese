@@ -91,7 +91,7 @@ class SeatPrewarm:
     async def _room_active(self, topic_id: uuid.UUID) -> None:
         try:
             seat = await self._chat._turn_seat_handle(topic_id)
-        except Exception:  # noqa: BLE001 — a room it cannot read is the turn's to report
+        except Exception:  # a room it cannot read is the turn's to report
             logger.warning("session_prewarm_seat_unknown topic=%s", topic_id)
             return
         runtime = self._chat._compute.seat_runtime(topic_id, seat)
@@ -123,7 +123,7 @@ class SeatPrewarm:
         started = time.monotonic()
         try:
             outcome = await self._prewarm(session)
-        except Exception:  # noqa: BLE001 — the next turn starts it the usual way
+        except Exception:  # the next turn starts it the usual way
             logger.exception(
                 "session_prewarm_failed topic=%s seat=%s",
                 session.topic_id,

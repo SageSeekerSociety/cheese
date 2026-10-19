@@ -23,13 +23,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import notice_keys, say
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.own import may_work_for
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
+from app.domain.room_task.place import place_or_404
 from app.domain.routine import service as routines
 from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import RoutineService
@@ -131,17 +135,18 @@ def _is_person(actor: Actor) -> bool:
 async def _manages_project(
     db: AsyncSession, actor: Actor, project_id: uuid.UUID
 ) -> bool:
-    """Is ``actor`` a project manager — its owner, or an owner/admin of the team
-    the project belongs to?
+    """May ``actor`` manage every channel of the project, and so every routine
+    in them, not only their own?
 
-    Not a new judgment: ``MemberService.manages`` is the same one the project's
-    own routes ask (``app/domain/membership/services.py``). Credentials come
-    first: a handle that arrived through the deprecated body/param fallback is
-    whatever the caller typed, and anyone can type the owner's handle.
+    Credentials come first: a handle that arrived through the deprecated
+    body/param fallback is whatever the caller typed, and anyone can type the
+    owner's handle.
     """
     if not actor.authenticated:
         return False
-    return await MemberService(db).manages(project_id, actor.handle)
+    return await MemberService(db).manages(
+        project_id, actor.handle, Permission.manage_channels
+    )
 
 
 async def _sees_room(
@@ -156,7 +161,9 @@ async def _sees_room(
     """
     if not settings.authz_enforce_topic_access:
         return True
-    seated = await TopicMemberService(db).joined_ids([topic_id], actor.handle)
+    seated = await TopicMemberService(db).joined_ids(
+        [topic_id], actor.handle, team=project_team
+    )
     if topic_id in seated:
         return True
     return await _manages_project(db, actor, project_id)
@@ -287,7 +294,7 @@ async def _readable_rules(
         )
         return [r for r in rows if r.topic_id in seen], True
     mine = await TopicMemberService(db).joined_ids(
-        list({r.topic_id for r in rows}), actor.handle
+        list({r.topic_id for r in rows}), actor.handle, team=project_team
     )
     return [r for r in rows if r.topic_id in mine], False
 
@@ -300,9 +307,9 @@ async def list_routines(
     topic: uuid.UUID | None = None,
 ) -> dict:
     if topic is not None:
-        place = await TopicService(db).place_or_404(topic)
+        place = await place_or_404(db, topic)
         if place.project_id != project_id:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         actor = await _viewer(db, resolver, project_id, place.room_id)
         rows = await RoutineService(db).list(project_id, topic_id=place.room_id)
     else:
@@ -314,21 +321,15 @@ async def list_routines(
     return ok(page(items, len(items)))
 
 
-@router.post("/topics/{topic_id}/routines")
+@router.post("/topics/{topic_id}/routines", dependencies=[ROUTE_DECIDES])
 async def create_routine(
     topic_id: uuid.UUID, body: RoutineIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _viewer(db, resolver, place.project_id, topic_id)
     room = await TopicService(db).get(place.room_id)
     if room is None:
-        raise NotFoundError("Topic not found")
-    await _own_agent_works_for(
-        db,
-        place.project_id,
-        body.agent_handle,
-        body.owner_handle or (actor.handle if _is_person(actor) else ""),
-    )
+        raise NotFoundError(say("topicNotFound"))
     row = await RoutineService(db).create(
         topic=room,
         by=await _speaker(db, actor, room.id),
@@ -342,6 +343,12 @@ async def create_routine(
         tz=body.timezone,
         owner_handle=body.owner_handle,
         agent_handle=body.agent_handle,
+    )
+    # Asked of the rule as made, before it is committed: the service settles who
+    # it is for (a person's rule is their own) and which teammate runs it (the
+    # room's first when none is named), and those two are what the check is about.
+    await _own_agent_works_for(
+        db, place.project_id, row.agent_handle, row.owner_handle or ""
     )
     presented = await _present_one(db, actor, row)
     await db.commit()
@@ -358,7 +365,7 @@ async def get_routine(
     return ok({**presented, "runs": [_run(r) for r in runs]})
 
 
-@router.patch("/routines/{routine_id}")
+@router.patch("/routines/{routine_id}", dependencies=[ROUTE_DECIDES])
 async def update_routine(
     routine_id: uuid.UUID, body: RoutinePatch, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -379,7 +386,7 @@ async def update_routine(
     return ok(presented)
 
 
-@router.post("/routines/{routine_id}/confirm")
+@router.post("/routines/{routine_id}/confirm", dependencies=[ROUTE_DECIDES])
 async def confirm_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -392,7 +399,7 @@ async def confirm_routine(
     return ok(presented)
 
 
-@router.post("/routines/{routine_id}/pause")
+@router.post("/routines/{routine_id}/pause", dependencies=[ROUTE_DECIDES])
 async def pause_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -407,7 +414,7 @@ async def pause_routine(
     return ok(presented)
 
 
-@router.post("/routines/{routine_id}/resume")
+@router.post("/routines/{routine_id}/resume", dependencies=[ROUTE_DECIDES])
 async def resume_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -420,7 +427,7 @@ async def resume_routine(
     return ok(presented)
 
 
-@router.post("/routines/{routine_id}/run-now")
+@router.post("/routines/{routine_id}/run-now", dependencies=[ROUTE_DECIDES])
 async def run_routine_now(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -443,7 +450,7 @@ async def run_routine_now(
     return ok(_run(run))
 
 
-@router.delete("/routines/{routine_id}")
+@router.delete("/routines/{routine_id}", dependencies=[ROUTE_DECIDES])
 async def delete_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -464,7 +471,7 @@ async def list_runs(
     return ok(page(items, len(items)))
 
 
-@router.post("/routine-runs/{run_id}/report")
+@router.post("/routine-runs/{run_id}/report", dependencies=[ROUTE_DECIDES])
 async def report_run(
     run_id: uuid.UUID, body: ReportIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

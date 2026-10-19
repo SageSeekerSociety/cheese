@@ -12,10 +12,11 @@ from dataclasses import replace
 
 from sqlalchemy import select
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import record_receipt, register_input
+from app.domain.event_author import AuthorType
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
 
 

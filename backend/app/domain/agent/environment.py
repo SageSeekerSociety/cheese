@@ -18,6 +18,7 @@ An environment is one of two things:
   there without isolation, so only that computer's owner may choose it.
 """
 
+import uuid
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
@@ -29,6 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
+from app.domain.agent.models import AgentTurn
+from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
 from app.domain.user.models import User as UserRow
 
@@ -39,6 +42,19 @@ STANDARD = "standard"
 VM = "vm"
 #: One person's own enrolled computers: ``devices_of:<user id>``.
 DEVICES_OF = "devices_of:"
+
+
+async def room_is_busy(session: AsyncSession, room_id: uuid.UUID) -> bool:
+    """An open turn anywhere in the room keeps its environment in use."""
+    active = await session.scalar(
+        select(AgentTurn.id)
+        .where(
+            of_room(AgentTurn.conversation_id, room_id),
+            AgentTurn.stopped_at.is_(None),
+        )
+        .limit(1)
+    )
+    return active is not None
 
 
 class Sandbox(BaseModel):
@@ -81,12 +97,17 @@ def dump(environment: Sandbox | SelfHosted | None) -> dict | None:
 @dataclass(frozen=True)
 class Spec:
     """What a sandbox spec is: who supplies its devices, whether running on
-    them costs the project credits, and how long an idle sandbox is kept."""
+    them costs the project credits, how long an idle sandbox is kept, and how
+    long a command still running for the session keeps it up."""
 
     name: str
     #: The platform's machines (``standard``, ``vm``), as against a person's.
     platform: bool
     idle_s: float
+    #: How long a command the executor still runs for the session keeps an
+    #: idle sandbox up, counted from the session's last activity. A whole VM's
+    #: idle release is longer than a sandbox's, so its cap is longer too.
+    background_cap_s: float
     #: The person whose computers ``devices_of:<id>`` places on.
     owner_user_id: int | None = None
 
@@ -98,9 +119,19 @@ class Spec:
 def spec_of(name: str) -> Spec | None:
     """The spec ``name`` names, or None for one that does not exist."""
     if name == STANDARD:
-        return Spec(STANDARD, platform=True, idle_s=settings.cloud_sandbox_idle_stop_s)
+        return Spec(
+            STANDARD,
+            platform=True,
+            idle_s=settings.cloud_sandbox_idle_stop_s,
+            background_cap_s=settings.cloud_sandbox_background_cap_s,
+        )
     if name == VM:
-        return Spec(VM, platform=True, idle_s=settings.cloud_vm_idle_release_s)
+        return Spec(
+            VM,
+            platform=True,
+            idle_s=settings.cloud_vm_idle_release_s,
+            background_cap_s=settings.cloud_vm_background_cap_s,
+        )
     if name.startswith(DEVICES_OF):
         owner = name.removeprefix(DEVICES_OF)
         if owner.isdigit():
@@ -108,6 +139,7 @@ def spec_of(name: str) -> Spec | None:
                 name,
                 platform=False,
                 idle_s=settings.cloud_sandbox_idle_stop_s,
+                background_cap_s=settings.cloud_sandbox_background_cap_s,
                 owner_user_id=int(owner),
             )
     return None

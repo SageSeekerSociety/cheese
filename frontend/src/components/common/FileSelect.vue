@@ -7,8 +7,10 @@
       :multiple="max > 1"
       :max="max"
       :disabled="disabled"
+      :aria-label="t('shell.fileSelect.upload')"
       @change="onFileChange"
     />
+    <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the transparent file input stretched over this area is the control (Tab and Enter reach it); this click only forwards to it -->
     <div :class="contentClass" @click="onButtonClick">
       <slot>
         <BaseButton kind="secondary" :disabled="disabled">

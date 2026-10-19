@@ -1,6 +1,6 @@
 /**
- * 「预览面板」那一册的样例数据：一张图、一叠幻灯片、一份 CSV、一栏修订、一栏保存
- * 历史，和几个取数的替身。
+ * 「预览面板」那一册的样例数据：一张图、一叠幻灯片、一份 CSV、一份 Word、一栏修订、
+ * 一栏保存历史、一帧跑着的应用，和几个取数的替身。
  *
  * 单独一份，和 `catalogPanelsFixtures.ts` 同一个理由：那一份已经够长，而这些只被
  * `catalogPanelsPreview.ts` 用。能用真类型的地方就用真类型（`DocumentRevision`、
@@ -8,11 +8,15 @@
  */
 import type { RoomFileEditorSession, RoomFileRevision } from '@/api'
 import type { PenStroke, ShapeStroke } from '@/components/panels/preview/designSketch'
+import type { ImageRegionHandle, ImageRegionTarget } from '@/components/panels/preview/usePreviewImageRegion'
 import type { DocumentRevisionsBundle } from '@/composables/useDocumentRevisions'
+import type { PreviewFrame } from '@/composables/usePreviewFrames'
 import type { RoomFileHistoryBundle } from '@/composables/useRoomFileHistory'
-import type { DocumentRevision } from '@/cx_types'
+import type { DocumentRevision, FileContent } from '@/cx_types'
 
-import { ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
+
+import { previewPanelProps } from './catalogFixtures'
 
 import { fileHistoryBundle, revisionsBundle, roomFileEditorBundle } from '@/test/panelBundles'
 
@@ -110,4 +114,124 @@ export function fileHistoryWith(): RoomFileHistoryBundle {
 export function fileEditorUnsupported() {
   const session: RoomFileEditorSession = { enabled: false, reason: 'unsupported' }
   return roomFileEditorBundle({ session: ref<RoomFileEditorSession | null>(session) })
+}
+
+/** 一篇 Word：读不成文本（`content` 是 null，字节由内容域发出来），所以它走文档
+ *  那一档里「转成 PDF 再看」那条路。 */
+export const PREVIEW_DOC_FILE: FileContent = {
+  path: 'docs/课程大纲.docx',
+  content: null,
+  version: '3c2b1a0',
+  bytes: 24576,
+  binary: true,
+  too_large: false,
+  source: 'live',
+}
+
+/** 台前那一帧：一个跑着的应用。
+ *
+ *  `label`、`mime`、运行状态都给了值，因为应用条和那行运行状态画的正是它们。 */
+export function previewFrame(over: Partial<PreviewFrame> = {}): PreviewFrame {
+  return {
+    id: 1,
+    name: 'cheese-preview-demo',
+    url: 'http://127.0.0.1:4173/',
+    label: '预览 · 第一版',
+    mime: 'text/html',
+    version: '9f8e7d6',
+    live: true,
+    posted: true,
+    resourceId: 'af31c9e0d4b2',
+    instance: 'inst-7c41a9',
+    runtime: 'ready',
+    connection: 'online',
+    ...over,
+  }
+}
+
+/** 顶栏那一档要的那几样：从预览面板那一整包里挑，免得两处各写一份示例值。 */
+export function headBarProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  const all = previewPanelProps()
+  return {
+    topicId: all.topicId,
+    projectId: all.projectId,
+    previewUrl: null,
+    previewFile: all.previewFile,
+    fullscreenSupported: true,
+    isImageArtifact: false,
+    previewFull: false,
+    refreshing: false,
+    ...over,
+  }
+}
+
+/** 应用那一档（网页/应用帧）要的那几样。 */
+export function frameStageProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  const all = previewPanelProps()
+  return {
+    topicId: all.topicId,
+    frameName: all.frameName,
+    previewFile: null,
+    previewMime: 'text/html',
+    previewUrl: null,
+    previewAppNote: '',
+    previewTunnelUp: true,
+    previewError: null,
+    previewReadError: null,
+    pickTarget: null,
+    pickOn: false,
+    ...over,
+  }
+}
+
+/** 文档那一档要的那几样：默认是那篇 markdown。 */
+export function docStageProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  const all = previewPanelProps()
+  return {
+    topicId: all.topicId,
+    projectId: all.projectId,
+    documentType: all.documentType,
+    documentName: all.documentName,
+    documentSuffix: all.documentSuffix,
+    previewFile: all.previewFile,
+    docBytes: null,
+    docLoading: false,
+    docError: '',
+    docRendererMissing: false,
+    downloadError: '',
+    revs: revisionsWith(),
+    fileHistory: fileHistoryWith(),
+    showHistory: false,
+    ...over,
+  }
+}
+
+/** 图片那一档拿的那个句柄 —— `usePreviewImageRegion` 露出来的那一套。
+ *
+ *  真去调那个 composable 得在组件里（它要一份 props，还要一个卸载钩子），所以这里照
+ *  它的形状搭一个：写成 `satisfies ImageRegionHandle`，它的形状一变得这里当场红。 */
+export function imageRegionWith(over: { src?: string; identity?: string } = {}): ImageRegionHandle {
+  return {
+    imageSrc: ref(over.src ?? PREVIEW_IMAGE_SRC),
+    imageIdentity: computed(() => over.identity ?? '设计稿.png'),
+    selectionEnabled: computed(() => true),
+    target: shallowRef<ImageRegionTarget | null>(null),
+    capture: () => null,
+    message: () => null,
+    clear: () => {},
+  } satisfies ImageRegionHandle
+}
+
+/** 图片那一档要的那几样：默认这张图已经铺上去了。 */
+export function imageStageProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    documentName: '设计稿.png',
+    previewFull: false,
+    imageRegion: imageRegionWith(),
+    locatorNote: '',
+    locator: null,
+    docError: '',
+    annotateError: '',
+    ...over,
+  }
 }

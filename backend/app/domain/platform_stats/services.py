@@ -29,11 +29,11 @@ from app.domain.admin.services import AdminService
 from app.domain.day_windows import dense_series, utc_day_window
 from app.domain.feedback.models import FeedbackStatus
 from app.domain.feedback.services import FeedbackService
-from app.domain.platform_stats.claude_pool import read_claude_pool, snapshot_path
 from app.domain.platform_stats.gaps import GapRepository
 from app.domain.platform_stats.integrations import IntegrationsRepository
 from app.domain.platform_stats.performance import performance_snapshot
 from app.domain.platform_stats.pipeline import PipelineRepository
+from app.domain.platform_stats.ports import PreviewConnections, TurnCounts
 from app.domain.platform_stats.product import ProductHealthRepository
 from app.domain.platform_stats.repositories import MachineInventoryRepository
 from app.domain.platform_stats.usage_detail import (
@@ -42,6 +42,7 @@ from app.domain.platform_stats.usage_detail import (
     TOP_USERS,
     UsageDetailRepository,
 )
+from app.domain.usage.claude_pool import read_claude_pool, snapshot_path
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.services import UsageService
 from app.domain.user.services import AccountService
@@ -56,17 +57,25 @@ TOP_MODELS = 10
 
 
 class PlatformStatsService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        previews: PreviewConnections | None = None,
+        counts: TurnCounts | None = None,
+    ) -> None:
         self._session = session
         # 三个别的领域的读：各自走它们自己那道 service 门，不摸它们的仓储。
         self._usage = UsageService(session)
         self._users = AccountService(session)
         self._feedback = FeedbackService(session)
         self._machines = MachineInventoryRepository(session)
-        self._pipeline = PipelineRepository(session)
+        # 两样 `agent` 里的东西（预览连接数、轮次账上的三个数）由 api 递进来 ——
+        # 本包和它同在一个强连通分量里，自己够过去就要冻新边（`ports.py`）。
+        self._pipeline = PipelineRepository(session, counts=counts)
         self._product = ProductHealthRepository(session)
         self._integrations = IntegrationsRepository(session)
-        self._gaps = GapRepository(session)
+        self._gaps = GapRepository(session, previews=previews)
         self._usage_detail = UsageDetailRepository(session)
 
     async def feedback(self, *, days: int, handle: str) -> dict:

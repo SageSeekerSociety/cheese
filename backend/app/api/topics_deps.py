@@ -34,15 +34,22 @@
 
 from datetime import UTC, datetime
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.auth import ActorResolver
-from app.core.errors import ValidationError
+from app.api.doc_access import require_role
+from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.actor import Actor
+from app.domain.membership.roster import Member
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project_permissions import Permission
 from app.domain.room_task.place import Place
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import UsageRepository
 
 __all__ = [
@@ -61,10 +68,37 @@ async def _actor_in_place(resolver: ActorResolver, place: Place) -> Actor:
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
+    # The place already carries the room row: hand it in so the door does not
+    # look the conversation's room up and read that row again.
+    await resolver.authorize_topic(actor, project_id=place.project_id, room=place.room)
     return actor
+
+
+async def require_person_speaks(
+    db: AsyncSession, actor: Actor, place: Place
+) -> tuple[Member, ...] | None:
+    """A person saying something here, on the terms every message of theirs
+    is said on — a message, or a checklist they post.
+
+    An archived channel is read, not spoken in: its main line, its 支线 and
+    its tasks alike; unarchiving it is how it is spoken in again. A channel's
+    main line is its members speaking: anyone in the project reads it and
+    answers in a 支线 under it, and speaking in the main line is joining first.
+    And their role has to speak at all.
+
+    Returns the project roster when asking that read it (综合's main line is
+    the project's members), for the message's writer to use instead of reading
+    it again; ``None`` when it was not read.
+    """
+    if place.room.status == "archived":
+        raise ForbiddenError(say("roomArchivedUnarchiveFirst"))
+    members = TopicMemberService(db)
+    if place.inner_id is None and not await members.may_speak(
+        place.room, actor.handle, team=project_team
+    ):
+        raise ForbiddenError(say("channelJoinToPost"))
+    await require_role(db, actor, place.project_id, Permission.speak)
+    return members.roster_read
 
 
 def _parse_moment(raw: object) -> datetime | None:

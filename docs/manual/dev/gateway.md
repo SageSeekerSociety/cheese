@@ -7,7 +7,7 @@ covers:
   - backend/app/domain/agent/gateway.py
   - backend/app/domain/agent/gateway_admin.py
   - backend/app/domain/agent/gateway_catalog.py
-  - backend/app/domain/agent/gateway_models.py
+  - backend/app/domain/agent/gateway_models/
   - backend/app/api/routes/admin_models.py
   - backend/scripts/gateway_conformance.py
 ---
@@ -42,7 +42,7 @@ covers:
 Claude Code 的一条流常常要几分钟，流到一半断掉的不会重放，所以发布不能重启正在服务的实例。
 
 - **拓扑**：地址归 `gateway-netns` 所有，它只占着网络命名空间：发布的端口 `172.17.0.1:4000`、应用网络上的别名 `litellm`、内部网络 `colors` 上的地址。HAProxy（`gateway-proxy-a` 或 `-b`）跑在它的命名空间里，后面是两个颜色 `litellm-blue`、`litellm-green`，同一份 compose 定义，共用 `litellm-db` 和 `litellm-redis`。平时只运行一个代理、一个颜色。
-- **为什么平时只留一个颜色**：路由器的冷却状态和 `deepseek-flash` 的会话亲和都在进程内存里（`router_settings` 没配 Redis），两个颜色同时接流量，各管各的冷却和亲和，同一个会话会在两边的 RUC 节点之间来回、前缀缓存一直不命中。第二个颜色常驻也只有网关自己崩掉时才有用；真到那一步再考虑，并先把路由状态放进 Redis。
+- **为什么平时只留一个颜色**：路由器的冷却状态在进程内存里，两个颜色同时接流量会各自维护冷却状态。第二个颜色常驻也只有网关自己崩掉时才有用；真到那一步再考虑，并先把路由状态放进 Redis。
 - **一次发布**：先认出正在服务的颜色：容器在运行、在 HAProxy 里既没被排空也不在维护状态的那一个，看的是管理状态而不是某一刻的健康检查。两个都符合（重启发生在排空中途）就取较新的那个；有颜色在运行却一个都不符合，就什么都不动、报失败。然后在空闲的颜色上起新镜像，依次过四关：docker 健康检查；`/health/readiness`（查数据库）；直接对新颜色发一次 `GET /v1/models`（带 master key），它列出的模型必须包括正在服务的颜色列出的每一个，只有本次发布从 `config.yaml` 删掉的除外，所以管理页加在数据库里的模型没加载完不会接流量；HAProxy 自己的检查看到它起来。这里不用 `/health`，它会真的去调每个模型。四关都过，再通过 HAProxy 的运行时 API 一条命令把它设成 ready、把旧颜色设成 drain。HAProxy 不重启，调用方的连接一条都不断；HAProxy 按请求选后端，所以计量代理复用的旧连接，下一个请求就落到新颜色。旧颜色继续把手上的流都传完，脚本每 5 秒读一次它在 HAProxy 里的 `scur`，到 0 才停它，最多等 30 分钟（`GATEWAY_DRAIN_SECONDS`）。到点还有请求没完，就照样停，并在工作流里打一条 `::warning::`，写明切断了几个。
 - **停的时候**：LiteLLM 收到 SIGTERM 会先把在途的流都传完，再把内存里的花销计数和花销日志写进数据库；`stop_grace_period: 60s` 就是留给这一步的，docker 默认的 10 秒到点会 SIGKILL。
 - **重试只在连不上时**：`retry-on conn-failure` 加 `option redispatch`，即颜色拒绝或没接住连接时换另一个颜色再试（HAProxy 3.2 不写 `retry-on` 时默认也是这个，这里写明）。请求已经发出去之后的失败一律不重试：那时 LiteLLM 可能已经调了上游，再发一次就付两次钱。HAProxy 的持续检查用 `/health/liveliness` 而不是 readiness：数据库一抖，readiness 会让两个颜色同时下线。
@@ -51,7 +51,7 @@ Claude Code 的一条流常常要几分钟，流到一半断掉的不会重放�
 - **代理本身的变化也不断流**：`deploy/compose/gateway-proxy.cfg` 或代理的镜像、定义一变，发布就在同一个命名空间里起另一个代理，两个都监听 `:4000`（SO_REUSEPORT），新代理带着从旧代理导出的服务器状态（`server-state-file`，含 drain 标记）启动；它一起来，这个文件就删掉，因为之后颜色都靠运行时 API 切换，留着它，下次重启或崩溃重启的代理会读到过时的 drain 标记，把正在服务的颜色当成已排空。确认它看得到正在服务的颜色后，给旧代理 SIGUSR1 软停：它马上不再接新连接，已经排在它监听队列里的连接由内核转给新代理（`net.ipv4.tcp_migrate_req`），手上的连接照常服务完，空闲连接上的下一个请求照常处理、回 `Connection: close` 再关（`option idle-close-on-response`）。它最多活 35 分钟（`hard-stop-after`）；旧颜色要等它退出才停，因为它带着的流不在新代理的计数里。
 - **只有换地址本身会断流**：`gateway-netns` 的端口、网络或镜像一变就得重建它，所有连接都断，工作流要勾上 `interrupt` 才会执行。
 - **从单容器迁过来那一次**：旧的 `cheese-gateway-litellm-1` 占着 `172.17.0.1:4000` 和别名 `litellm`，docker 不会把它们从一个还在运行的容器上挪走，所以第一次发布要勾 `interrupt`。脚本先把 `litellm-blue` 起好、过完四关（模型清单对照旧容器），然后最多等 10 分钟（`GATEWAY_MIGRATION_QUIET_SECONDS`），等到旧容器没有一条连接在 30 秒内收发过数据（从它的网络命名空间里用 `ss` 看，需要 sudo），再给它 SIGTERM，给在途请求 30 秒（`GATEWAY_MIGRATION_GRACE`），然后启动 `gateway-netns` 和 `gateway-proxy-a`。这段时间里新请求被拒，计量代理连到旧容器的空闲长连接全部作废，每条上的下一个请求会失败一次。代理起不来，或者发布在这一步被取消，都会把旧容器重新拉起。
-- **两个颜色同时运行的那几分钟**：LiteLLM 启动时自己跑数据库迁移，新颜色会在旧颜色还在服务的时候改共享的数据库；LiteLLM 的迁移一般只加不删，但升级上游镜像的那次发布要看一眼迁移里有没有删列或改列。新颜色的冷却和亲和从空开始，所以每次发布后每个会话第一次请求会重新选一次 RUC 节点、丢一次前缀缓存。预算刹车的花销计数在 `coordination_redis` 里，两个颜色共用，不受影响。
+- **两个颜色同时运行的那几分钟**：LiteLLM 启动时自己跑数据库迁移，新颜色会在旧颜色还在服务的时候改共享的数据库；LiteLLM 的迁移一般只加不删，但升级上游镜像的那次发布要看一眼迁移里有没有删列或改列。新颜色的路由冷却状态从空开始。预算刹车的花销计数在 `coordination_redis` 里，两个颜色共用，不受影响。
 
 ## 一个项目一把虚拟 key {#keys}
 
@@ -105,8 +105,8 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `gateway.py` | 管理客户端，L0/L1/L2 三个层次的定义就写在这个文件的 docstring 里；铸 key、设额度、drain 用量 |
 | `gateway_admin.py` | 「会抛」的管理客户端（管理页必须看得见失败）：`GatewayUnreachable` / `GatewayRefused` 分开抛，凭据从不回显或落日志 |
 | `gateway_catalog.py` | 目录快照与定时刷新（上面那一节） |
-| `gateway_models.py` | 管理页的服务：模型与逐模型用量、项目额度；`_TTL_SECONDS = 15`，因为 `/model/info` 与一周用量都是百 KB 级 |
-| `api/routes/admin_models.py` | `/admin/gateway` 的九条路由：模型列表/详情/新建/改/删/停用、项目额度、审计 |
+| `gateway_models/` | 管理页的服务（`GatewayModelsService`）：模型与逐模型用量、项目额度；`_TTL_SECONDS = 15`，因为 `/model/info` 与一周用量都是百 KB 级。2026-10 由一个 1,119 行的单文件按职责拆成包，`__init__.py` 保持原来每个方法、常量与重导出 |
+| `api/routes/admin_models.py` | `/admin/gateway` 的路由：模型列表/详情/新建/改/删/停用，线路的加/改/删/停用/排序（`/models/{name}/sources/...`），项目额度、审计 |
 
 翻译的规矩：**连接性失败由路由层翻**（不可达 503、被拒 502），页面才能告诉人「是网关挂了，过会儿再试」还是「你这个动作本身不被允许」；「模型不存在」404、「请求体不合法 / 不变式被违反 / 对 config 模型写」400 由服务层抛，因为那几种要读库或读网关才知道。
 
@@ -116,6 +116,18 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 
 - **写 `config.yaml`**：加一条路由和价格，在 `model_info` 下写 `cheese_selectable: true`；`cheese_tier` 写这个模型的档位（included / premium / frontier，缺省 included），方案按它限定可用的模型。这是随镜像发布的基线，改它要发布网关。标记是 opt-in 的，因为网关也路由不上菜单的模型——`glm-4.5` 是分身别名指向的地方。
 - **管理页**：管理员增删改停运行时模型（`STORE_MODEL_IN_DB` 打开），不用发布；每次写都记审计（谁做的），写成功后刷新目录，模型立刻可选。`config.yaml` 里声明的模型在页面上是只读的，网关不许写它们。
+
+### 一个模型，几条线路 {#sources}
+
+同一个 `model_name` 在网关里可以有好几行（部署），网关按 `litellm_params.order` 从小到大试，相同的一起分流，没有 order 的只在所有有 order 的都冷却时才轮到。管理页把它们叫「线路」：任何模型都能加运行时线路，包括 `config.yaml` 声明的（`kimi-k3` 的官方行在 config 里，OpenCode Go 那一行可以从页面加），config 的那几行在页面上列出来但只读。不用发布网关，加完立刻生效。
+
+- **模型的元数据每一行都一样**：上架、名字、档位、思考档、能力，目录读 `/model/info` 列出的第一行，而哪一行排第一不由我们定。加线路时服务层从已有那一行抄（`cheese_*` 里属于模型的键，加上每一个显式写了的 `supports_*`，`supports_output_config` 这类决定思考档送不送得到上游），改模型时每一行都改；部署 id 不抄（共用一个 id，一行 429 冷却全组，#3294）。
+- **新线路默认是兜底**：默认优先级排在现有带 order 的线路之后。新线路会接走在用线路的流量时，请求体必须带 `make_primary: true`，页面上要勾「让它成为首选」，不带就 400。这种情况是它的数不大于在用线路里最小的那个，或者旁边的线路都没写 order。给停用的模型加线路，新线路也是停用的。
+- **请求头**：静态头写在这一行的 `litellm_params.extra_headers`，LiteLLM 原样发给上游（`hosted_vllm/` 与 `anthropic/` 两种都实测过）；接收 Claude Code 会话 id 的头名写在 `model_info.cheese_session_header`，由网关侧的钩子填值。`/model/info` 对每一把虚拟 key 都开放：`model_info` 原样回，`litellm_params` 过 LiteLLM 的掩码，而掩码只看头名——名字里有 key、token、secret、auth、password、credential、cookie 这一段的，值被打码，别的原样可读（1.103.3 上实测）。所以头的值按公开对待，上游凭据填 `api_key`；认证与传输相关的头不许按线路写。页面只列头名，审计里也只留头名。
+- **协议**：`anthropic` → `anthropic/<上游名>`（原生 Messages）；`openai-chat` → `hosted_vllm/<上游名>`（只有 chat/completions 的中转站与 OpenCode Go；不能用 `openai/`，那会被翻成 Responses API）；`openai-responses` → `openai/<上游名>`。不选协议时 `upstream_model` 就是完整的 LiteLLM 模型串。原生 Messages 的地址不带 `/v1`（LiteLLM 自己拼 `/v1/messages`，服务层把多填的 `/v1` 去掉）；Chat 线路的地址要带到 `/v1`。
+- **Chat 线路让整组折叠 system 消息**：Messages 翻成 chat/completions 会丢掉对话中间的 system 消息（实测 glm-5.2、MiMo），所以一个模型一旦有 `openai-chat` 线路，组里每一行都标 `supports_mid_conversation_system: false`，服务层加线路时顺手改齐运行时的行；config.yaml 的行没标就拒，先去改 config。
+- **免费**：唯一合法的零价是声明出来的——`cheese_free: true` 且输入、输出都写成 0（`price_is_set` 认它，`check_config.py` 同一条）；没标免费的零价一律拒。免费线路和付费线路在同一个模型里时，用量估价按付费线路里最高的那一档算，免费线路上的流量也一样（`usage.pricing`）。页面在混用时会提示这一点。
+- 目录对一个模型的判断看整组：有一行没停用就还能选，在用的每一行都有价（或声明免费）才算有价。
 
 还有一项要按模型手动标：**`supports_mid_conversation_system: false`**。Claude Code 会把技能清单、运行环境和日期放在对话中间的 system 消息里；有的线路收不了它，有的是网关转换时丢掉，有的是上游丢掉或整条请求拒绝。标了 `false` 的模型，平台启动 Claude Code 时设 `CLAUDE_CODE_MODEL_CAPABILITIES`，让它把这些内容并进第一条用户消息（`gateway_usage.model_capabilities`）。没标的照 Claude Code 的默认。这一项只在量过之后手动标，不按上游推断：线路以后支持了，把标记去掉就行。量法是从后端经网关发一条对话中间带暗号的 system 消息，问模型暗号是什么。`config.yaml` 里的模型写在条目里，运行时模型在管理页的能力开关里关掉。
 
@@ -152,9 +164,13 @@ GATEWAY_KEY=<项目 key> python3 backend/scripts/gateway_conformance.py \
 - `--deployment <model_info.id>` 只打模型组里的一个部署：LiteLLM 把 `model` 是部署 id 的请求直接路由到那一个部署。按模型组生效的 pre-call 钩子（去掉计费行、会话亲和）这时不起作用，所以钉住部署时缓存未命中只记 warn。
 - 请求逐个发，一个模型几美分；有一项 fail 就退出码 1。失败原因里带供应商的报错原文和模型回答的片段，所以输出是给操作的人看的，别贴进共享日志。
 
-### 订阅与中转：同一个模型挂多条供给 {#supply-rows}
+### 免费、订阅与中转：同一个模型挂多条供给 {#supply-rows}
 
-一个模型组可以有多行（多个 deployment），路由器按 `litellm_params.order` 从小往大用：先用最小 `order` 里健康的，任何错误（配额用完的 429 在内，上下文超长与内容审查除外）都在同一个请求里落到下一档；没写 `order` 的行只在所有带 `order` 的都不健康时才用。所以「订阅额度优先、按量付费兜底」就是订阅那行 `order: 1`、官方 API 那行在后面。被 429 的行冷却约 5 秒后再试。
+一个模型组可以有多行（多个 deployment），路由器按 `litellm_params.order` 从小往大用：先用最小 `order` 里健康的，任何错误（配额用完的 429 在内，上下文超长与内容审查除外）都在同一个请求里落到下一档；只有所有带 `order` 的行都不健康时，才会使用没写 `order` 的行。被 429 的行冷却约 5 秒后重试。
+
+新发现可用的免费供给就接入；同一个模型的供给按免费、已购买的订阅额度、按量付费 API 的顺序设置 `order`。`deepseek-flash` 的自建供给核实与官方别名的模型版本一致后，排在最前面；有可用的免费供给时接在自建之后、官方按量付费 API 之前。
+
+接入前核对供应商当前价格，并用平台实际使用的 API 跑通请求和 `gateway_conformance.py` 的适用检查。仅在供应商客户端内免费的入口，要等平台 API 可用后再上架。
 
 有的上游要自己的请求头（`upstream_headers.py`），按行声明在 `model_info` 里，只发给声明了的那一行，同组兜底的官方行收不到：
 

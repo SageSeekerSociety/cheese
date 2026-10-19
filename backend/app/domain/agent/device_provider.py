@@ -44,7 +44,7 @@ from app.domain.agent.harness.claude_code import (
     DEVICE_TUNNEL_PROBE,
     resident_release,
 )
-from app.domain.agent.harness.launch import ExecutorPlan, MachinePlace, MachinePlan
+from app.domain.agent.launch import ExecutorPlan, MachinePlace, MachinePlan
 from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.place import (
     CHECKOUT_DIR,
@@ -1310,7 +1310,7 @@ class DeviceChannel(Channel):
                 env={"CHEESE_TUNNEL_PROBE_DIR": seat_dir(home_dir, seat)},
                 timeout=_ALIVE_PROBE_TIMEOUT_S,
             )
-        except Exception:  # noqa: BLE001 — a probe failure is not proof of death
+        except Exception:  # a probe failure is not proof of death
             return False
         finally:
             logger.info(

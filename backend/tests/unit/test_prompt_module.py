@@ -1,56 +1,29 @@
-"""提示词/上下文渲染那一块搬出来之后，自己站得住。
+"""提示词/上下文渲染：从 ``prompt`` 直接测，不经过 ``ChatService``、不碰数据库。
 
-与 ``test_event_lines.py`` 同一套口径，三条：
-
-- 直接 import 新模块就能测，不经过 ``ChatService``、不碰数据库、不起 app fixture；
-- chat.py 还导出的那些名字，和新模块里的是同一个对象；
-- 新模块不反向 import chat，否则门面就成了循环。
-
-行为本身（进度层、开场事实、话题披露、平台提示进 prompt 的那一段）由
+进度层、开场事实、话题披露、平台提示进 prompt 的那一段由
 ``test_progress_prompt.py``、``test_session_opening_prompt.py``、
 ``test_prompt_topic_disclosure.py`` 与 ``test_doc_change_notice.py`` /
-``test_message_edit.py`` 覆盖。这里补的是搬出来之后新出现的两样东西：
-模块边界，和原先没有直接单测的那几件——「哪些块是这一轮还没读进去的输入」「重放几次
-才值得说一句」「整理上下文那两行怎么变」。
+``test_message_edit.py`` 覆盖。这里测的是另外几件——「哪些块是这一轮还没读进去的
+输入」「重放几次才值得说一句」「整理上下文那两行怎么变」。
 """
 
-import ast
-import pathlib
 from types import SimpleNamespace
 
-from app.domain.agent import chat, prompt
+from app.domain.agent import prompt
 from app.domain.agent.service import AgentCompacting
 from app.domain.agent.turn.state import inputs
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CONSUMED_TURN_META_KEY,
-    AuthorType,
     BlockKind,
 )
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.notice_meta import (
     EVENT_CONTEXT_COMPACT,
     SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_PLATFORM,
-)
-
-#: 搬走的全部名字。门面要逐个还得出同一个对象。
-MOVED = (
-    "_PROGRESS_MARK",
-    "_REPLAY_NOTICE_AT",
-    "_REPLAY_NOTICE_EVERY",
-    "_compaction_notice",
-    "_pending_platform_notices",
-    "_platform_preamble",
-    "_progress_lines",
-    "_prompt_topic_refs",
-    "_replay_notice",
-    "_resume_notice",
-    "_sandbox_limits",
-    "_session_opening_lines",
-    "_topic_ref_lists",
-    "project_overview",
 )
 
 
@@ -75,41 +48,6 @@ def _block(
         content=content,
         meta=meta if meta is not None else {},
     )
-
-
-# ---- 门面：搬走的名字还是同一个对象，导入路径没变 ----
-
-
-def test_the_moved_names_are_the_same_objects_behind_the_facade():
-    """chat.py 还导得出的那些，是同一个对象。只有轮次组装（``room/turn.py``）用到
-    的那几个，chat.py 已经不再导出。"""
-    for name in MOVED:
-        if hasattr(chat, name):
-            assert getattr(chat, name) is getattr(prompt, name), name
-
-
-def test_the_module_does_not_import_the_facade_back():
-    """反向 import 就是循环，门面也就不是门面了。"""
-    tree = ast.parse(pathlib.Path(prompt.__file__).read_text())
-    modules = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
-    modules |= {
-        alias.name
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Import)
-        for alias in n.names
-    }
-    assert "app.domain.agent.chat" not in modules
-
-
-def test_the_definitions_are_not_left_behind_in_chat():
-    """门面是「重新导出」，不是「两份定义」——两份定义会各自漂移。"""
-    tree = ast.parse(pathlib.Path(chat.__file__).read_text())
-    defined = {
-        n.name
-        for n in tree.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    assert not (defined & set(MOVED)), sorted(defined & set(MOVED))
 
 
 # ---- 待读窗口：由真实准备与收尾共用 state owner，保留全部行为断言 ----

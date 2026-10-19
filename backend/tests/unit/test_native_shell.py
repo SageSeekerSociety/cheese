@@ -393,6 +393,7 @@ class Session:
                     "central_config": str(self.config),
                     "central_tmp": str(self.tmp),
                     "central_hooks": {},
+                    "target_file": str(root / "central" / "execution.json"),
                     **({"kind": kind} if kind else {}),
                 }
             )
@@ -467,6 +468,39 @@ def test_a_bash_command_runs_there_and_the_build_learns_its_directory(session, m
     assert session.cwd_file.read_text() == "/\n"
 
 
+def _task_output(session, name="b1x2y3z4w"):
+    """The file the build sends one command's output to, in its temporary
+    directory, which it keeps for a command it ran in the background."""
+    tasks = session.tmp / "claude-1000" / "-the-project" / "a-session" / "tasks"
+    tasks.mkdir(parents=True, exist_ok=True)
+    return tasks / f"{name}.output"
+
+
+def test_a_later_command_reads_a_kept_output_file_where_the_executor_holds_it(
+    session, machine
+):
+    session.output = _task_output(session)
+    code, output = session.run(session.wrapped("echo started; echo finished"))
+    assert (code, output) == (0, b"started\nfinished\n")
+    # A real executor cannot see this host's files. This one can, so the file
+    # is emptied here: a command that read it here would print nothing.
+    kept = session.output
+    kept.write_bytes(b"")
+    session.output = session.root / "output"
+    code, output = session.run(session.wrapped(f"tail -n 1 {kept}; cat '{kept}'"))
+    assert (code, output) == (0, b"finished\nstarted\nfinished\n")
+
+
+def test_the_executor_lets_go_of_an_output_file_the_build_deleted(session, machine):
+    session.output = _task_output(session)
+    assert session.run(session.wrapped("echo waited for"))[0] == 0
+    # The build took the output of a command it waited for and deleted it.
+    session.output.unlink()
+    session.output = session.root / "output"
+    assert session.run(session.wrapped("true"))[0] == 0
+    assert list((machine.state / "commands").iterdir()) == []
+
+
 def test_a_command_starts_in_the_sessions_directory(session, machine):
     (machine.workspace / "sub").mkdir()
     code, output = session.run(session.wrapped("pwd"), cwd=machine.workspace / "sub")
@@ -478,9 +512,13 @@ DRIVER = textwrap.dedent(
     import json, os, sys
     sys.path.insert(0, {source!r})
     import client
+    import shell_prefix
     import shell_stop
     for name, value in json.loads(os.environ["DRIVER_CONSTANTS"]).items():
-        setattr(client if hasattr(client, name) else shell_stop, name, value)
+        # The shell prefix reads its own limits out of `shell_prefix`; setting
+        # the name on `client` would reach nothing.
+        where = shell_prefix if hasattr(shell_prefix, name) else shell_stop
+        setattr(where, name, value)
     failures = int(os.environ.get("DRIVER_FAILURES", "0"))
     kind = os.environ.get("DRIVER_FAILURE", "out-of-reach")
     real = client.RemoteClient
@@ -520,7 +558,9 @@ DRIVER = textwrap.dedent(
                     raise client.MachineOutOfReach()
             return super().call(method, params, **options)
 
-    client.RemoteClient = Flaky
+    # `shell` and the reader it stands on look their client up in
+    # `shell_prefix`; the watcher's stop goes through `shell_stop`'s.
+    shell_prefix.RemoteClient = Flaky
     shell_stop.RemoteClient = Flaky
     raise SystemExit(client.shell(sys.argv[1], sys.argv[2]))
     """
@@ -893,6 +933,9 @@ def test_this_hosts_environment_stays_here(session, machine):
             CLAUDECODE="1",
             GIT_EDITOR="true",
             CLAUDE_CODE_ENTRYPOINT="sdk-cli",
+            # The session's short name travels inside the command's body, not
+            # in the environment a native session on the executor would see.
+            T=str(machine.workspace),
         ),
     )
     assert code == 0
@@ -909,6 +952,9 @@ def test_this_hosts_environment_stays_here(session, machine):
         "CLAUDE_CODE_MESSAGING_SOCKET",
         "CLAUDE_PID",
         "CLAUDE_CODE_TMPDIR",
+        # Not a secret, but the same rule: a build running natively on the
+        # executor has no `T`, and a room's command must see what it sees.
+        "T",
     ):
         assert secret not in remote, secret
     assert "s3cret-central" not in (machine.workspace / "env.txt").read_text()
@@ -916,6 +962,58 @@ def test_this_hosts_environment_stays_here(session, machine):
     assert remote["GIT_EDITOR"] == "true"
     assert remote["CLAUDE_CODE_ENTRYPOINT"] == "sdk-cli"
     assert remote["EXECUTOR_MARKER"] == "on-the-executor"
+
+
+def test_the_short_name_is_bound_in_the_command(session, machine):
+    """`$T` is the command's to use, without being an environment variable of
+    it: the name is bound in the shell that runs the command, where `cd "$T"`
+    finds it, and the environment listing is the one a native session has."""
+    (machine.workspace / "under T").mkdir()
+    code, output = session.run(
+        session.wrapped('cd "$T/under T" && pwd; env | grep -c "^T=" || true'),
+        env=session.env(T=str(machine.workspace)),
+    )
+    assert code == 0
+    assert output == f"{machine.workspace}/under T\n0\n".encode()
+
+
+def test_the_short_name_is_respelled_where_the_machine_holds_the_project(
+    session, machine
+):
+    """A session started in a directory of its own (`virtual_workspace`, as a
+    member's own session apart from its executor starts) names that directory
+    under `$T`; the command runs on the machine, so the value has to cross with
+    `body` the way every other path a body names does."""
+    own = session.root / "own"
+    target = json.loads(Path(session.target).read_text())
+    target["virtual_workspace"] = str(own)
+    Path(session.target).write_text(json.dumps(target))
+    code, output = session.run(
+        session.wrapped('cd "$T" && pwd'),
+        env=session.env(T=str(own)),
+    )
+    assert (code, output) == (0, f"{machine.workspace}\n".encode())
+
+
+def test_a_session_that_has_not_rented_its_machine_binds_its_placeholder(
+    session, machine
+):
+    """While the target still names the placeholder, only the transport can
+    spell the project — after this point, inside the body. The name is bound
+    single-quoted for that substitution (see
+    `test_the_workspace_has_a_short_name`); once the lease is written the
+    target names the machine and the prefix spells the value itself."""
+    # `executor_transport.DEFERRED_WORKSPACE`: the target a session is started
+    # with before its machine is rented.
+    placeholder = "/unavailable-project"
+    target = json.loads(Path(session.target).read_text())
+    target["workspace"] = placeholder
+    Path(session.target).write_text(json.dumps(target))
+    code, output = session.run(
+        session.wrapped('echo "[${T-unset}]"'),
+        env=session.env(T=placeholder),
+    )
+    assert (code, output) == (0, b"[/unavailable-project]\n")
 
 
 @pytest.mark.parametrize(

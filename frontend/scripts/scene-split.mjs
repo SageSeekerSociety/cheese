@@ -16,10 +16,9 @@
 // render it, and — when the page has one route record that lacks it — adds
 // `props: true` to that record. It never overwrites an existing view.
 //
-// After a write, run the three checks the split is graded by:
+// After a write, run the two checks the split is graded by:
 //
 //   pnpm run lint:scenes                     the view has to come out grade A
-//   pnpm run lint:catalog                    it has to be in the preview site
 //   pnpm exec vitest run src/views/…         the page still renders what it did
 //
 // Why it stops at a plan: which values the page passes and what they are called

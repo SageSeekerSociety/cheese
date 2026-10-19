@@ -9,13 +9,15 @@ from typing import TYPE_CHECKING
 
 from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import exception_text, say
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
+from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 from app.domain.membership.services import MemberService
-from app.domain.repository import identity
+from app.domain.project_permissions import Permission
 from app.domain.review import (
     archive,
     commit_message,
+    credit,
     notes,
     pr_publish,
     pr_text,
@@ -29,12 +31,15 @@ from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
-    pass
+    from app.domain.room_task.models import Task
 
 from app.domain.project.protection import branch_protection_of
 from app.domain.review import github_pr
 from app.domain.review import services as pkg
-from app.domain.review.github_pr import GitHubPRRateLimited
+from app.domain.review.forgejo_pr import ForgejoPRClient
+from app.domain.review.github_pr import GitHubPRClient, GitHubPRRateLimited
+from app.domain.review.github_pr_status import pr_opener
+from app.domain.review.ready_rebase import ReadyRebase, rebase_behind_before_ready
 from app.domain.review.services._shared import (
     EVENT_CARD_REDESCRIBED,
     EVENT_CARD_VOIDED,
@@ -89,8 +94,31 @@ async def mark_ready(
     if client is None:
         return {"ready": False, "reason": "这个项目没有绑定 GitHub"}
 
+    # The quota is per installation and shared by every call below, so the
+    # whole hand-over is under it, not just the read that opens it: a refusal
+    # from the commit read, the title write or the flag flip is the same
+    # exhausted quota the sentence answers, and every step here retries from
+    # scratch (the title write is the same string, the flip is idempotent).
+    rebase = ReadyRebase()
     try:
         view = await client.pr_view(task.pr_number)
+        if view.get("draft"):
+            node_id = str(view.get("node_id") or "")
+            if not node_id:
+                raise ValidationError(say("githubNoPrNodeId"))
+            rebase = await _rebase_behind_before_ready(
+                self, client=client, topic=topic, task=task, number=task.pr_number
+            )
+            if rebase.refused is not None:
+                return rebase.refused
+            # `view` was read before the rebase on purpose: the merge commit
+            # an update-branch lands becomes the head, and its subject is
+            # 「Merge branch 'main' into …」, not the line this work belongs
+            # under. The title must come from the commit the task wrote.
+            title = await _ready_title(client, view)
+            if title is not None:
+                await client.update_pr(task.pr_number, title=title)
+            await client.mark_ready_for_review(node_id)
     except GitHubPRRateLimited:
         return {
             "ready": False,
@@ -98,17 +126,99 @@ async def mark_ready(
                 "GitHub API 请求额度暂时用尽，PR 尚未标记为可评审；额度恢复后请重试。"
             ),
         }
-    if view.get("draft"):
-        node_id = str(view.get("node_id") or "")
-        if not node_id:
-            raise ValidationError(say("githubNoPrNodeId"))
-        await client.mark_ready_for_review(node_id)
+    # The head the work stands on now: the one after a rebase when the branch
+    # moved, else the one read before. The caller reads CI and pushes against
+    # it; the pre-rebase sha would answer 「没跑」 and a rejected push.
+    head = rebase.head or (view.get("head") or {}).get("sha")
     return {
         "ready": True,
         "already": not bool(view.get("draft")),
         "pr_number": task.pr_number,
         "pr_url": task.pr_url,
+        "head": head,
+        "rebased": rebase.rebased,
     }
+
+
+async def _rebase_behind_before_ready(
+    self: pkg.AcceptService,
+    *,
+    client: GitHubPRClient | ForgejoPRClient,
+    topic: Topic,
+    task: Task,
+    number: int,
+) -> ReadyRebase:
+    """`mark_ready`'s side of the shared rebase step: credentials and the
+    forge client come from this service, the decision from `ready_rebase`."""
+
+    async def credentials() -> tuple[str, str] | None:
+        creds, _reason = await self._app_credentials(topic)
+        return None if creds is None else (creds.write, creds.read)
+
+    return await rebase_behind_before_ready(
+        session=self._session,
+        client=client,
+        project_id=topic.project_id,
+        base_branch=task.base_branch,
+        number=number,
+        credentials=credentials,
+        status_client=lambda: self._status_client(topic.project_id),
+    )
+
+
+#: How many merge commits `_ready_title` follows down the first parent before
+#: it gives up. A line merges the base branch in a handful of times at most;
+#: a longer chain is not this work's history, and leaving the placeholder on
+#: is the answer that cannot put somebody else's sentence on the PR.
+_READY_TITLE_HOPS = 5
+
+
+async def _ready_title(
+    client: GitHubPRClient | ForgejoPRClient, view: dict
+) -> str | None:
+    """The title a draft PR has to go on before it is marked ready, or None
+    to leave the one it already has.
+
+    A draft PR carries the platform's placeholder (`pr_publish.draft_title`),
+    because the line this change will land under is not written until somebody
+    files a card. Marking it ready is the other moment that stops being true:
+    the full `CI required` the ready flag starts reads the PR's title, and a
+    repository that checks its own titles reads `WIP: <任务标题>` there and
+    fails a change every other check passed. The head commit's subject is the
+    title this work already has.
+
+    Only the placeholder is replaced. A subject 递卡 wrote, or one somebody
+    typed on GitHub, is not the platform's to overwrite — and a draft whose
+    title was already corrected is the case this leaves alone.
+
+    A subject that is itself a placeholder is left alone too: writing it would
+    put the very title this is here to remove back on the PR, and the commit
+    behind it is what has to change.
+
+    The head is not always the commit the task wrote: this repository resolves
+    a lag with `git merge origin/main` (AGENTS.md), and that merge commit
+    becomes the head. Its subject — 「merge main into …」 — is not the line the
+    work lands under, and it is exactly what the title check refuses (#4302).
+    More than one parent is the structural mark of that merge, so follow the
+    first parent until a single-parent commit turns up; the other parents are
+    the base branch's history, not this work's.
+    """
+    if not pr_publish.is_draft_title(view.get("title")):
+        return None
+    sha = str((view.get("head") or {}).get("sha") or "")
+    if not sha:
+        return None
+    for _ in range(_READY_TITLE_HOPS + 1):
+        parents = await client.commit_parents(sha)
+        if len(parents) <= 1:
+            break
+        sha = parents[0]
+    else:
+        return None
+    subject = await client.commit_subject(sha)
+    if subject is None or pr_publish.is_draft_title(subject):
+        return None
+    return subject[:255]
 
 
 async def redescribe(
@@ -121,7 +231,7 @@ async def redescribe(
 ) -> AcceptCard:
     """更正这张卡的描述 —— and rewrite the PR from it in the same breath.
 
-    **Why this may be corrected while `Cheese-Task:` may not.** A delivery
+    **Why this may be corrected while the credits may not.** A delivery
     claim is an ASSERTION OF FACT about who wrote the code; letting it be
     edited after filing is letting somebody put another agent's name on a
     change, and the wrong name in permanent history reads exactly like the
@@ -134,7 +244,7 @@ async def redescribe(
 
     The PR is rewritten from the card, never read back into it. The card is
     the single source of both texts, so they cannot disagree — and the
-    trailers (`Cheese-Task`, `Requested-by`, `Cheese-Agent`) stay something
+    trailers (`Co-authored-by`, `Link`) stay something
     the platform asserts rather than something anybody can retype in a
     GitHub textarea.
 
@@ -170,13 +280,14 @@ async def redescribe(
     if card.pr_number is not None:
         client = await self._app_pr_client(topic)
         if client is not None:
-            who = await identity.attribution(self._session, topic, card=card)
             view = await client.pr_view(card.pr_number)
             await pr_publish.sync_pr_text(
                 client,
                 view,
                 title=pr_text.change_subject(card, topic),
-                body=pr_text.pr_body(topic, "", card, who),
+                body=await pr_publish.pr_body_for(
+                    self._session, topic, card=card, opened_by=pr_opener(view)
+                ),
             )
     # 留痕：谁在什么时候把描述从什么改成了什么。这条入口的存在本身需要可追溯，
     # 否则它就是一条能悄悄改「这次改动会在历史里说什么」的路。
@@ -253,7 +364,7 @@ async def push_fix(
             "reason": "" if pushed else "任务已无依赖，PR 没有新提交",
         }
     if not cards:
-        return {"pushed": False, "reason": "这个话题手上没有骑着 PR 的验收卡"}
+        return {"pushed": False, "reason": "这个频道手上没有骑着 PR 的验收卡"}
     card = cards[0]
     assert card.pr_number is not None  # filtered above; for the type checker
     topic = await self._topic_or_404(card.topic_id)
@@ -325,11 +436,11 @@ async def revoke(
     if card.status != AcceptStatus.accepted:
         raise ValidationError(say("revokeAcceptedOnly"))
 
-    # Only the person who accepted it, or someone who manages the project,
+    # Only the person who accepted it, or someone who manages every channel,
     # may revoke — not any arbitrary handle.
     topic = await self._topic_or_404(card.topic_id)
     if decided_by != card.decided_by and not await MemberService(self._session).manages(
-        topic.project_id, decided_by
+        topic.project_id, decided_by, Permission.manage_channels
     ):
         raise ValidationError(say("revokeAcceptForbidden"))
 
@@ -405,7 +516,9 @@ async def merge_despite_checks(
     else:
         allowed = (
             {decided_by}
-            if await MemberService(self._session).manages(topic.project_id, decided_by)
+            if await MemberService(self._session).manages(
+                topic.project_id, decided_by, Permission.edit_settings
+            )
             else set()
         )
     if decided_by not in allowed:
@@ -463,7 +576,7 @@ async def _override_github_checks(
             state=state,
             line=tail.splitlines()[0] if tail else "",
         )
-    except Exception as exc:  # noqa: BLE001 — a broken read must not lock a human out
+    except Exception as exc:  # a broken read must not lock a human out
         logger.warning("force-merge check read failed for card %s: %s", card.id, exc)
         state = None
         checks_at_merge = say("forceMergedChecksUnread")
@@ -472,8 +585,12 @@ async def _override_github_checks(
     verdict = _force_merge_verdict(state)
 
     number = card.pr_number
-    who = await identity.attribution(
-        self._session, topic, card=card, decided_by=decided_by
+    who = await credit.attribution(
+        self._session,
+        topic,
+        card=card,
+        decided_by=decided_by,
+        opened_by=status.opened_by,
     )
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
@@ -565,7 +682,7 @@ async def void(
     从没被检查过的代码背书；作废 + 重递效果一样而且安全，这条区别是本功能的
     设计前提，不要"优化"掉。
 
-    授权：卡上的验收人、项目所有者、团队的所有者和管理员。它是授权类动作，所以芝士在
+    授权：卡上的验收人，或能管理所有频道的人（默认是管理员和所有者）。它是授权类动作，所以芝士在
     collaborative 模式下被 `_forbid_ai` 挡住（跟 accept/approve 同一条线）
     —— 路由也**故意不**声明成芝士专用（`app/api/write_access.py`）。
     """
@@ -579,7 +696,7 @@ async def void(
 
     if decided_by != card.reviewer_handle and not await MemberService(
         self._session
-    ).manages(topic.project_id, decided_by):
+    ).manages(topic.project_id, decided_by, Permission.manage_channels):
         raise ForbiddenError(say("voidForbidden"))
 
     await self._cancel_queued_accept(card)
@@ -587,7 +704,7 @@ async def void(
     reason = say("cardVoidedReason", note=note.strip()) if note.strip() else ""
     headline = (
         f"{VOIDED_PREFIX}：<@{decided_by}> 作废于状态「{was}」。"
-        f"话题可以重新提交审阅。{reason}"
+        f"频道可以重新提交审阅。{reason}"
     )
     if archive.pr_left_open(card):
         # 跟归档收敛同一条产品判断 (review/archive.py 的模块 docstring)：平台

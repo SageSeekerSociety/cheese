@@ -1,4 +1,4 @@
-"""Agent-authored proposals retain independently resolved human credits."""
+"""Who a delivery is credited to, from the room to the PR that carries it."""
 
 import uuid
 from datetime import UTC, datetime
@@ -50,8 +50,7 @@ def test_delivery_credits_the_agent_actually_seated_in_the_room(client):
 
     who, trailers = client.portal.call(lambda: read_credit())
     assert who.author == identity.agent_identity(acting)
-    assert f"Cheese-Agent: {acting}\n" in trailers + "\n"
-    assert f"Cheese-Agent: {default_seat}" not in trailers
+    assert default_seat not in trailers
 
 
 def test_reporter_credit_is_declared_on_close_and_only_declared_work_counts(client):
@@ -95,7 +94,9 @@ def test_reporter_credit_is_declared_on_close_and_only_declared_work_counts(clie
         async with client.test_request_factory() as session:
             place = await PlaceResolver(session).resolve(uuid.UUID(room))
             assert place is not None
-            card = SimpleNamespace(delivered_task_ids=[task["id"]], task_id=None)
+            card = SimpleNamespace(
+                delivered_task_ids=[task["id"]], task_id=uuid.UUID(task["id"])
+            )
             return await identity.attribution(session, place.room, card=card)
 
     credited = client.portal.call(lambda: read_credit())
@@ -104,7 +105,6 @@ def test_reporter_credit_is_declared_on_close_and_only_declared_work_counts(clie
         identity.platform_identity("alice"),
         identity.platform_identity("coder"),
     )
-    assert credited.author == identity.agent_identity(room_agent_seat(client, room))
     concluded = client.post(
         f"/topics/{task['id']}/close",
         json={"contributor_handles": ["reporter"], "reporter_handle": None},
@@ -135,13 +135,31 @@ def test_reporter_credit_is_declared_on_close_and_only_declared_work_counts(clie
     assert client.portal.call(lambda: read_credit()).coauthors == credited.coauthors
 
 
+_ALICE_ON_GITHUB = {"type": "User", "id": 583231, "login": "alice"}
+_THE_APP = {"type": "Bot", "id": 314883224, "login": "cheesex-app[bot]"}
+
+
+def _app_identity():
+    from app.domain.repository import identity
+
+    return identity.app_identity(_THE_APP["id"])
+
+
+_APP = _app_identity()
+
+
 class _FakeClient:
+    """A GitHub where a token opens a PR as its holder, and the App's own
+    opens it as the bot. `opened` records each PR's body as it last read."""
+
     opened: list[dict] = []
+    owners_token: str | None = "ghu_alice"
 
     def __init__(self, owner: str, repo: str, tokens, **_):
         pass
 
     async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+        type(self).opened[-1]["body"] = body
         return {"number": number, "title": title, "body": body}
 
     async def open_pr(
@@ -151,20 +169,29 @@ class _FakeClient:
         base: str,
         title: str,
         body: str,
+        draft: bool = False,
+        as_user_token: str | None = None,
     ) -> OpenedPR:
-        type(self).opened.append({"body": body})
+        by = _ALICE_ON_GITHUB if as_user_token else _THE_APP
+        type(self).opened.append({"body": body, "token": as_user_token})
         return OpenedPR(
-            {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"},
+            {
+                "number": 42,
+                "title": title,
+                "body": body,
+                "user": by,
+                "html_url": "https://github.com/acme/widgets/pull/42",
+            },
         )
 
 
-def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
-    """A GitHub the platform can push to, plus the set of handles that have
-    actually connected an account (`connected[handle] -> their token`)."""
+def _github_world(monkeypatch) -> None:
+    """A GitHub the platform can push to."""
     from app.domain.repository import forge_files
     from app.domain.review import pr_publish
 
     _FakeClient.opened = []
+    _FakeClient.owners_token = "ghu_alice"
 
     async def _fake_proposal_client(_project_id, _session):
         return _FakeClient("acme", "widgets", _FakeTokens())
@@ -180,16 +207,29 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
             "commits": [],
         }
 
-    async def _fake_user_token(_session, handle: str) -> str | None:
-        return connected.get(handle)
+    async def _owners_token(_session, handle):
+        return _FakeClient.owners_token if handle == "alice" else None
 
+    async def _linked(_session, handle, **_):
+        if handle == "alice" and _FakeClient.owners_token:
+            return str(_ALICE_ON_GITHUB["id"]), {"login": "alice"}
+        return None
+
+    monkeypatch.setattr(
+        "app.domain.oauth.services.get_github_user_token_for_handle", _owners_token
+    )
+    monkeypatch.setattr(
+        "app.domain.oauth.services.get_github_profile_for_handle", _linked
+    )
+
+    async def _on_github(_session, _project_id):
+        return "github", _APP
+
+    monkeypatch.setattr("app.domain.review.credit._forge", _on_github)
     monkeypatch.setattr(pr_publish, "proposal_client", _fake_proposal_client)
     monkeypatch.setattr(pr_publish, "branch_head", _fake_branch_head)
     monkeypatch.setattr(forge_files, "branch_head", _fake_branch_head)
     monkeypatch.setattr(forge_files, "repository_data", _comparison)
-    monkeypatch.setattr(
-        "app.domain.oauth.services.get_github_user_token_for_handle", _fake_user_token
-    )
 
 
 def _project(client, owner: str) -> tuple[str, str]:
@@ -224,40 +264,57 @@ def _publish(client, pid: str, tid: str, cid: str) -> None:
     )
 
 
-def test_requester_oauth_does_not_change_the_pr_author(client, monkeypatch):
-    """Requester OAuth never replaces the agent identity used to open a PR."""
-    _github_world(monkeypatch, connected={"alice": "gho_alice"})
-
-    pid, root = _project(client, owner="alice")
-    agent = room_agent_seat(client, root)
-    _publish(client, pid, root, _card(client, root))
-
-    [opened] = _FakeClient.opened
-    assert "Requested-by: alice" in opened["body"]
-    assert agent not in opened["body"]
-
-
-def test_the_agent_handle_never_reaches_the_pr_even_when_nobody_connected_github(
+def test_the_owner_who_linked_github_opens_the_pr_in_their_own_name(
     client, monkeypatch
 ):
-    """验收 4: alice owns the room but has no GitHub connection. The PR still
-    opens — with the App token, as before — and still credits her by handle."""
-    _github_world(monkeypatch, connected={})
+    _github_world(monkeypatch)
+
+    pid, root = _project(client, owner="alice")
+    _publish(client, pid, root, _card(client, root))
+
+    [opened] = _FakeClient.opened
+    assert opened["token"] == "ghu_alice"
+    assert "Co-authored-by: alice" not in opened["body"]
+
+
+def test_an_owner_without_github_is_credited_on_the_apps_pr(client, monkeypatch):
+    """alice owns the task but never linked GitHub. The PR opens with the App
+    token and credits her under the platform's own address."""
+    _github_world(monkeypatch)
+    _FakeClient.owners_token = None
 
     pid, root = _project(client, owner="alice")
     agent = room_agent_seat(client, root)
     _publish(client, pid, root, _card(client, root))
 
     [opened] = _FakeClient.opened
-    assert "Requested-by: alice" in opened["body"]
+    assert opened["token"] is None
+    assert "Co-authored-by: alice <alice@zhishi.local>" in opened["body"]
     assert agent not in opened["body"]
+
+
+def test_the_agent_mode_opens_the_pr_as_the_app_and_names_no_owner(client, monkeypatch):
+    _github_world(monkeypatch)
+
+    pid, root = _project(client, owner="alice")
+    r = client.put(
+        f"/projects/{pid}/commit-credit",
+        json={"mode": "agent"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    _publish(client, pid, root, _card(client, root))
+
+    [opened] = _FakeClient.opened
+    assert opened["token"] is None
+    assert "alice" not in opened["body"]
 
 
 def test_a_room_with_no_human_owner_still_opens_its_pr(client, monkeypatch):
     """验收 4: an ownerless project has an ownerless room. Nothing to resolve —
     the PR must open anyway rather than raising, and the agent's handle must not
     be what fills the gap."""
-    _github_world(monkeypatch, connected={"alice": "gho_alice"})
+    _github_world(monkeypatch)
 
     p = post_project(client, json={"name": "P"}).json()["data"]
     pid, root = p["id"], p["root_topic_id"]
@@ -278,7 +335,7 @@ def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
 
     走不通的方式是 404：任务不是地点，那个 id 名下没有话题可以递。
     """
-    _github_world(monkeypatch, connected={"alice": "gho_alice"})
+    _github_world(monkeypatch)
 
     _, root = _project(client, owner="alice")
     tid = open_task(client, root)["id"]
@@ -299,7 +356,7 @@ def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
 def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
     """验收 5: creator and owner are the same person, so the answer must be the
     one this path always gave."""
-    _github_world(monkeypatch, connected={"alice": "gho_alice"})
+    _github_world(monkeypatch)
 
     pid, _ = _project(client, owner="alice")
     r = client.post(
@@ -311,4 +368,4 @@ def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
     _publish(client, pid, tid, _card(client, tid))
 
     [opened] = _FakeClient.opened
-    assert "Requested-by: alice" in opened["body"]
+    assert opened["token"] == "ghu_alice"

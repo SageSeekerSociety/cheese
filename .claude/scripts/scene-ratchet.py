@@ -105,8 +105,8 @@ WHAT THIS CHECK DOES NOT ASK: whether a standalone-ready scene is in the
 preview site (`/demo/catalog`). That used to be a warning here, counted
 against `catalog.ts` alone — it missed the entries split into the sibling
 `catalog*.ts` files, and it only looked at scenes when every grade-A component
-is a candidate. It is its own ratchet now, `.claude/scripts/catalog-ratchet.py`
-(`pnpm run lint:catalog`), over every component rather than every scene.
+is a candidate. No check asks it now; `docs/site/gen/catalog_reach.py` reads
+which components the site shows, for the docs' components page.
 
 Exit codes: 0 nothing to report, 1 a scene regressed or a new scene is not
 standalone-ready, 2 could not judge (no `frontend/src/` under `--root`, no
@@ -137,7 +137,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = "frontend/src"
 ROUTER_DIR = "frontend/src/router"
 VIEWS_DIR = "frontend/src/views/"
-PANELS_DIR = "frontend/src/components/panels"
 
 #: Where the frozen set is read from: the merge base with this ref.
 DEFAULT_BASE = "origin/main"
@@ -508,8 +507,8 @@ def key_of(scene: str) -> str:
     """`frontend/src/views/404.vue` -> `src/views/404.vue`.
 
     Baseline keys are relative to `frontend/`, like every other baseline in
-    that directory (`import-boundary-baseline.json`): a path relative to the
-    repository root only reads correctly from here.
+    that directory (`stylelint-baseline.json`): a path relative to the repository
+    root only reads correctly from here.
     """
     if not scene.startswith("frontend/"):
         raise ValueError(f"not under frontend/: {scene}")
@@ -672,7 +671,8 @@ def base_tree(root: Path, rev: str, dest: Path) -> Path:
         raise Unjudgeable(f"cannot unpack the tree at {rev}: {exc}") from exc
     if not (dest / "frontend" / "src").is_dir():
         raise Unjudgeable(f"the tree at {rev} has no {SRC_DIR}/ to grade")
-    return dest
+    # macOS resolves /var to /private/var; use the same path spelling as resolved imports.
+    return dest.resolve()
 
 
 def classify(grades: dict[str, Any], views: dict[str, str]) -> Baseline:

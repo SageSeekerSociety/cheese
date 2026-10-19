@@ -10,7 +10,7 @@ tool call (``SandboxHome.active_at``) and the end of the last turn in the
 conversation its session works in. A command the executor is still running for
 the session — a Bash call sent to the background, a long build or test whose
 result the next turn reads (``running_commands``) — keeps an idle sandbox up
-too, but only until ``cloud_sandbox_background_cap_s`` after that activity. A
+too, but only until the spec's ``background_cap_s`` after that activity. A
 process the agent detached itself (``nohup … &``, a dev server) is not work in
 progress and keeps nothing up. A line that has handed its delivery over and is
 waiting on the checks the platform is watching for its card
@@ -41,6 +41,14 @@ and a later sweep removes the home again once ``STOP_HOLD`` has passed.
 A session's whole cloud VM is released by the same idle measure, held for
 its spec's idle time (``cloud_vm``), on the same clock
 (``runner.SandboxSweeper``).
+
+When the pool is pressed — no host that may take a sandbox has a free slot,
+or a session is waiting on a shared host's slot — an idle sandbox on a
+platform host is destroyed after ``cloud_sandbox_idle_stop_pressed_s``
+instead, so the slot goes to whoever is waiting on it. A sandbox on a
+person's own computer keeps its spec's idle time whatever the pool's state;
+a whole cloud VM is neither this sweep's nor a user of the shared slots
+(``cloud_vm``), so waiting on one presses nothing.
 """
 
 import json
@@ -50,7 +58,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -62,6 +70,7 @@ from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.machine import metering, sandbox_home
 from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
+from app.domain.machine.reaper import accepting, free_slots
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.review.queries import waiting_on_checks
 
@@ -126,11 +135,77 @@ def _idle_for(spec: str) -> timedelta:
     return timedelta(seconds=known.idle_s)
 
 
+def _background_cap(spec: str) -> timedelta:
+    """How long a command still running for the session keeps an idle sandbox
+    of ``spec`` up; a spec that no longer exists is held to the standard one's.
+    A whole VM's idle release outlasts a sandbox's, so its cap is longer —
+    a cap shorter than the idle time would hold nothing up."""
+    known = spec_of(spec) or spec_of(STANDARD)
+    assert known is not None
+    return timedelta(seconds=known.background_cap_s)
+
+
+def _pressed_idle() -> timedelta:
+    """How long a sandbox on a platform host is kept idle while the pool has
+    no room for another one (`cloud_sandbox_idle_stop_pressed_s`)."""
+    return timedelta(seconds=settings.cloud_sandbox_idle_stop_pressed_s)
+
+
+#: How long an open turn's interval may stand and still count as its session at
+#: work. A process killed inside a turn leaves its row open and nothing closes
+#: it (`AgentWorkRunner.ORPHAN_STALE_S`, which this module cannot import): past
+#: that age the platform has already given up on the turn, and the row must not
+#: hold a machine for good.
+STALE_TURN = timedelta(hours=2)
+
+
+def _of_session(session_id, column, correlate):
+    """``column`` of the session ``session_id`` names, as a scalar subquery:
+    for the two things a turn has to be of to be this session's work."""
+    query = select(column).where(AgentSession.id == session_id)
+    if correlate is not None:
+        query = query.correlate(correlate)
+    return query.scalar_subquery()
+
+
+def _mine(conversation, seat) -> ColumnElement[bool]:
+    """The clauses saying a turn belongs to the session ``conversation`` and
+    ``seat`` name.
+
+    The conversation is the session's own, never its room's: every task of a
+    channel hangs under the room, and reading the room kept every other task's
+    sandbox in it up for days. The seat is the session's own too — another
+    teammate's turn in the same conversation is not this session's work — and a
+    row whose seat was never recorded counts as anybody's, which is how every
+    other reader counts one (``agent.turn.state.authority``).
+    """
+    return and_(
+        AgentTurn.conversation_id == conversation,
+        or_(AgentTurn.agent_handle.is_(None), AgentTurn.agent_handle == seat),
+    )
+
+
+def _own_turns(session_id, *, correlate=None) -> ColumnElement[bool]:
+    """``_mine`` for the session ``session_id`` names, for a query already over
+    the homes."""
+    return _mine(
+        _of_session(session_id, AgentSession.conversation_id, correlate),
+        _of_session(session_id, AgentSession.agent_handle, correlate),
+    )
+
+
 class SandboxLifecycle:
-    def __init__(self, session: AsyncSession, hub=None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        hub=None,
+        *,
+        recovering: Callable[[uuid.UUID], bool] | None = None,
+    ) -> None:
         self._session = session
         self._repo = CloudHostRepository(session)
         self._hub = hub or device_hub
+        self._recovering = recovering
 
     async def sweep(self) -> dict[str, int]:
 
@@ -152,24 +227,23 @@ class SandboxLifecycle:
         # The shortest idle time of any spec, to narrow the rows; each is then
         # held to its own spec's.
         idle_for = _idle_for(STANDARD)
+        pressed = await self._pressed()
+        # A pressed pool takes its cloud sandboxes back sooner.
+        narrow = min(idle_for, _pressed_idle()) if pressed else idle_for
 
-        # A turn running in the conversation the home's session works in, or
-        # one that ended within the idle time, keeps that sandbox up. Not the
-        # room's turns: every task of a channel hangs under it, and one task at
-        # work kept the sandboxes of all the others up for days. Decided here,
-        # not after a limit: busy homes would otherwise take every place in the
-        # batch.
+        # A turn of the session's own, running or ended within the idle time,
+        # keeps that sandbox up. Decided here, not after a limit: busy homes
+        # would otherwise take every place in the batch.
         session_active = (
             select(AgentTurn.id)
             .where(
-                AgentTurn.conversation_id
-                == select(AgentSession.conversation_id)
-                .where(AgentSession.id == SandboxHome.session_id)
-                .correlate(SandboxHome)
-                .scalar_subquery(),
+                _own_turns(SandboxHome.session_id, correlate=SandboxHome),
                 or_(
-                    AgentTurn.stopped_at.is_(None),
-                    AgentTurn.stopped_at > now - idle_for,
+                    and_(
+                        AgentTurn.stopped_at.is_(None),
+                        AgentTurn.started_at > now - STALE_TURN,
+                    ),
+                    AgentTurn.stopped_at > now - narrow,
                 ),
             )
             .exists()
@@ -179,6 +253,7 @@ class SandboxLifecycle:
                 SandboxHome.id,
                 SandboxHome.session_id,
                 SandboxHome.topic_id,
+                SandboxHome.host_id,
                 SandboxHome.active_at,
                 SandboxHome.stopped_at,
                 SandboxHome.spec,
@@ -200,7 +275,7 @@ class SandboxLifecycle:
                 or_(
                     SandboxHome.stopped_at < now - STOP_HOLD,
                     (SandboxHome.stopped_at.is_(None))
-                    & (SandboxHome.active_at < now - idle_for)
+                    & (SandboxHome.active_at < now - narrow)
                     & or_(SandboxHome.session_id.is_(None), ~session_active),
                 ),
             )
@@ -215,20 +290,91 @@ class SandboxLifecycle:
             if not self._hub.is_online(home.device_id):
                 continue
             current = home.session_id is not None
+            held = None
             if home.stopped_at is not None:
                 # An unfinished removal: done again, whatever it is now.
                 idle = now - home.active_at
             else:
-                since = await self._idle_since(home, now, _idle_for(home.spec))
+                held = self._held_for(home, pressed)
+                since = await self._idle_since(home, now, held)
                 if since is None:
                     continue
                 idle = now - since
             # A home its session still uses is destroyed under its room's lock.
             if await self._destroy(
-                home.id, home.topic_id if current else None, home.device_id, idle
+                home.id,
+                home.topic_id if current else None,
+                home.device_id,
+                idle,
+                idle_for=held,
             ):
                 destroyed += 1
         return destroyed
+
+    async def _pressed(self) -> bool:
+        """Whether the pool has no place for another sandbox right now: a
+        session is waiting on a shared host's slot, or no host that may take
+        one has a free slot. A wait on a person's computer or on a whole VM
+        presses nothing: neither takes one of the shared slots."""
+        waiting = await self._session.scalar(
+            select(SandboxHome.id)
+            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
+            .where(
+                # A session waiting on a shared host's slot. One waiting on a
+                # person's computer takes no pool slot, and one waiting on a
+                # whole VM it has to itself presses nothing either: freeing a
+                # shared slot does not bring that machine up.
+                CloudHost.whole_machine.is_(False),
+                SandboxHome.waiting_since.is_not(None),
+                SandboxHome.stopped_at.is_(None),
+            )
+            .limit(1)
+        )
+        if waiting is not None:
+            await self._session.commit()
+            return True
+        hosts = await self._repo.live()
+        load = await self._repo.occupancy()
+        await self._session.commit()
+        return not any(free_slots(host, load) for host in hosts if accepting(host))
+
+    @staticmethod
+    def _held_for(home, pressed: bool) -> timedelta:
+        """How long that home is kept before it is idle: a cloud sandbox on a
+        pressed pool goes at the shorter time, everything else at its spec's."""
+        idle_for = _idle_for(home.spec)
+        if pressed and home.host_id is not None:
+            return min(idle_for, _pressed_idle())
+        return idle_for
+
+    async def at_work(self, conversation_id, agent_handle, now: datetime) -> bool:
+        """Whether a turn of this session's own is running: one in the
+        conversation it works in, under its own seat (``_mine``), and not a row
+        left open past ``STALE_TURN`` — a corpse must not hold a machine for
+        good either. Asked of a whole cloud VM's session before its VM is
+        checkpointed or released (``cloud_vm``)."""
+        active = (
+            await self._session.scalar(
+                select(AgentTurn.id)
+                .where(
+                    _mine(conversation_id, agent_handle),
+                    AgentTurn.stopped_at.is_(None),
+                    AgentTurn.started_at > now - STALE_TURN,
+                )
+                .limit(1)
+            )
+        ) is not None
+        return active or (
+            self._recovering is not None and self._recovering(conversation_id)
+        )
+
+    async def _session_recovering(self, session_id: uuid.UUID | None) -> bool:
+        if session_id is None or self._recovering is None:
+            return False
+        conversation = await self._session.scalar(
+            select(AgentSession.conversation_id).where(AgentSession.id == session_id)
+        )
+        return conversation is not None and self._recovering(conversation)
 
     async def _idle_since(
         self, home, now: datetime, idle_for: timedelta
@@ -238,17 +384,22 @@ class SandboxLifecycle:
 
         if home.session_id is None:
             return home.active_at
+        if self._recovering is not None:
+            recovering = await self._session_recovering(home.session_id)
+            await self._session.commit()
+            if recovering:
+                return None
         turns = (
             await self._session.execute(
                 select(
-                    func.count().filter(AgentTurn.stopped_at.is_(None)),
+                    # An interval left open past the orphan sweep's limit is a
+                    # corpse, and must not read as this session still at work.
+                    func.count().filter(
+                        AgentTurn.stopped_at.is_(None),
+                        AgentTurn.started_at > now - STALE_TURN,
+                    ),
                     func.max(AgentTurn.stopped_at),
-                ).where(
-                    AgentTurn.conversation_id
-                    == select(AgentSession.conversation_id)
-                    .where(AgentSession.id == home.session_id)
-                    .scalar_subquery()
-                )
+                ).where(_own_turns(home.session_id))
             )
         ).one()
         await self._session.commit()
@@ -257,7 +408,7 @@ class SandboxLifecycle:
         since = max(home.active_at, turns[1] or home.active_at)
         if now - since < idle_for:
             return None
-        cap = timedelta(seconds=settings.cloud_sandbox_background_cap_s)
+        cap = _background_cap(home.spec)
         if now - since < cap and await self._waiting_on_checks(home):
             # The line has handed its delivery over and is waiting on the
             # checks the platform is watching for its card. The poller wakes
@@ -337,12 +488,17 @@ class SandboxLifecycle:
         device_id: str,
         idle: timedelta | None,
         *,
+        idle_for: timedelta | None = None,
         tell: Callable[[AsyncSession, SandboxHome], Awaitable[dict | None]]
         | None = None,
     ) -> bool:
         """Destroy one sandbox: idle for ``idle``, or, with ``idle`` None,
         because its project's credits ran out (``metering.unpaid_sandboxes``),
-        an earlier removal did not finish, or it is evicted (``tell``)."""
+        an earlier removal did not finish, or it is evicted (``tell``).
+
+        ``idle_for`` is how long this home was to be kept before it counts as
+        idle — the shorter pressed time for a cloud sandbox (``_held_for``);
+        without it, its spec's."""
         # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
@@ -354,15 +510,18 @@ class SandboxLifecycle:
             await TopicService(self._session).lock(room_id)
         home = await self._repo.lock_home(home_id)
         now = datetime.now(UTC)
-        if home is None or (
-            home.stopped_at is None
-            and idle is not None
-            and now - home.active_at < _idle_for(home.spec)
-        ):
+        if home is None:
+            await self._session.commit()
+            return False
+        held = idle_for if idle_for is not None else _idle_for(home.spec)
+        if home.stopped_at is None and idle is not None and now - home.active_at < held:
             await self._session.commit()
             return False
         if home.stopped_at is not None and now - home.stopped_at < STOP_HOLD:
             # Another sweep is removing it.
+            await self._session.commit()
+            return False
+        if idle is not None and await self._session_recovering(home.session_id):
             await self._session.commit()
             return False
         unpaid = home.stopped_at is None and idle is None and tell is None

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request
 
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.db import async_session_factory
 from app.core.errors import AuthenticationRequiredError, ValidationError
 from app.core.sentences import say
@@ -37,7 +38,7 @@ def _caller_token(request: Request) -> str:
     return ""
 
 
-@router.post("/{topic_id}")
+@router.post("/{topic_id}", dependencies=[ROUTE_DECIDES])
 async def receive_webhook(
     topic_id: uuid.UUID, body: dict, request: Request, db: DbSession
 ) -> dict:

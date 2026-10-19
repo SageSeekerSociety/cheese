@@ -4,11 +4,18 @@
 /** 一份文档，不含正文。 */
 export interface ProjectDocument {
   id: string
-  project_id: string
+  /** 它所属的团队；自己名下的文档属于自己的个人团队（#3774）。 */
+  team_id: number
+  /** 它所属的项目；团队自己的文档（和自己名下的）是 null。 */
+  project_id: string | null
   kind: string
   title: string | null
   doc_version: number
+  /** 最近一个版本是谁改的。 */
   author: string
+  /** 作者，建成时定下（`lib/docAuthors.ts`）：文档归谁，和写它的 AI 队友。 */
+  created_by?: string | null
+  drafted_by?: string | null
   created_at: string
   updated_at: string
 }

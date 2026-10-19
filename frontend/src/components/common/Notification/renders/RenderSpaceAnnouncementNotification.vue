@@ -2,10 +2,10 @@
   <div class="notification-content">
     <div class="announcement-head">
       <span class="announcement-tag">{{ t('notifications.SPACE_ANNOUNCEMENT.tag') }}</span>
-      <span class="text-subtitle-2 font-weight-bold">{{ title }}</span>
+      <span class="n-title">{{ title }}</span>
     </div>
-    <div v-if="excerpt" class="text-body-2 text-medium-emphasis mt-1 announcement-excerpt">{{ excerpt }}</div>
-    <div class="text-caption text-medium-emphasis mt-1">{{ body }}</div>
+    <div v-if="excerpt" class="n-quote">{{ excerpt }}</div>
+    <div class="n-sub">{{ body }}</div>
   </div>
 </template>
 
@@ -51,12 +51,6 @@ defineExpose({
 </script>
 
 <style scoped>
-.notification-content {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
 .announcement-head {
   display: flex;
   gap: 6px;
@@ -72,11 +66,5 @@ defineExpose({
   color: var(--muted);
   font-size: 12px;
   line-height: var(--lh-12);
-}
-
-.announcement-excerpt {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

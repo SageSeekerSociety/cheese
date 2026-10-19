@@ -7,9 +7,10 @@ from datetime import datetime
 from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.agent import forgejo_tokens
+from app.domain.agent import turn_resume
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.project import forgejo_tokens
 
 LastActivity = Callable[[set[uuid.UUID]], Awaitable[dict[uuid.UUID, datetime]]]
 
@@ -67,6 +68,14 @@ def register_periodic_jobs(
         "checklist reminder",
         settings.chat_progress_check_interval_s,
         chat.remind_stale_checklists,
+    )
+    # Hands due resumes to the delivery ledger; the timed-delivery clock, next
+    # in the manifest, dispatches them.
+    jobs.register("turn resumes", 30, lambda: turn_resume.hand_due(sessions))
+    jobs.register(
+        "failed turn resume deliveries",
+        30,
+        lambda: turn_resume.report_failed_deliveries(sessions),
     )
     # This clock is the only entry point to memory housekeeping.
     jobs.register(

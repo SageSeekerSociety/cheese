@@ -2,9 +2,8 @@
 人手动开 PR 时，这份模板会出现在正文里。agent 递验收卡时正文由卡片那段覆盖，
 所以两处都照同一组小节写，读的人不用分辨是哪种写的。
 
-平台自己会往正文末尾加 Requested-by / Cheese-Topic / Cheese-Card / Cheese-Agent /
-Cheese-Task / Co-authored-by（采纳时还有 Reviewed-by / Reported-by），这些不要在
-下面重复写。
+平台自己会往正文末尾加 Link / Co-authored-by / Reported-by（采纳时还有
+Reviewed-by），这些不要在下面重复写。
 
 小标题用英文，和提交标题的规矩一致；正文本身写中文还是英文随写的人。
 -->

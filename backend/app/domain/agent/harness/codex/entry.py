@@ -8,7 +8,9 @@ import signal
 from pathlib import Path
 
 from app.domain.agent.harness.codex.runner import Runner
-from app.domain.agent.harness.codex.tools import RemoteTools
+from app.domain.agent.harness.codex.tools import RemoteTools, mcp_config
+from app.domain.agent.harness.driven.mcp_gateway import SECRET_ENV
+from app.domain.agent.harness.driven.monitor import Monitors
 from app.domain.agent.harness.driven.runner import SessionStart, reply_owed_path
 
 
@@ -24,20 +26,29 @@ async def serve(state: Path, config: dict) -> None:
     # as the Claude Code and pi launches carry them (`session_skill_files`).
     await asyncio.to_thread(tools.ship_skills, config.get("skills") or {})
     runner = Runner(state, tools, skills=tools)
+    tools.monitors = runner.monitors = Monitors(
+        tools.client.control,
+        runner.tell,
+        cwd=lambda: tools.client.config["workspace"],
+        place=lambda command: tools.on_the_machine({"command": command})["command"],
+    )
     runner.checkpointer = tools.client.checkpoint
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stopped.set)
     waits = []
+    gateway = tools.gateway()
     try:
         schemas = await tools.discover()
+        port = gateway.start()
         tools.main_thread = await runner.start(
             SessionStart(**config["opening"]),
             binary=config["binary"],
             cwd=config["cwd"],
-            env=dict(os.environ),
+            env={**os.environ, SECRET_ENV: gateway.secret},
             tools=schemas,
+            overrides=mcp_config(tools.mcp_servers, port),
         )
         assert runner.process is not None
         process = asyncio.create_task(runner.process.wait())
@@ -50,6 +61,7 @@ async def serve(state: Path, config: dict) -> None:
         try:
             await runner.close()
         finally:
+            gateway.close()
             await asyncio.gather(*waits, return_exceptions=True)
 
 

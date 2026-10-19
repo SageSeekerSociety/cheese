@@ -14,7 +14,7 @@ from app.auth.core import (
     SystemRole,
 )
 from app.common.auth import get_optional_user_id
-from app.core.errors import AccessDeniedError
+from app.core.errors import AccessDeniedError, AuthenticationRequiredError
 from app.core.obs import bind_context
 from app.db.session import get_db
 
@@ -113,7 +113,6 @@ class PermissionChecker:
             Resource.SPACE_CATEGORY: "space",
             Resource.PROJECT: "project",
             Resource.PROJECT_MEMBERSHIP: "project",
-            Resource.KNOWLEDGE: "knowledge",
             Resource.DISCUSSION: "discussion",
             Resource.QUESTION: "question",
             Resource.ANSWER: "answer",
@@ -144,8 +143,6 @@ async def require_auth_user(
 ) -> AuthUserInfo:
     """Like get_auth_user but rejects anonymous/guest access."""
     if auth_user.user_id == 0:
-        from app.core.errors import AuthenticationRequiredError
-
         raise AuthenticationRequiredError("Login required")
     return auth_user
 
@@ -169,8 +166,6 @@ def require_permission(
         # which conflates "no credentials" with "insufficient permissions"
         # and breaks the standard auth flow on the frontend.
         if auth_user.user_id == 0:
-            from app.core.errors import AuthenticationRequiredError
-
             raise AuthenticationRequiredError("Login required")
 
         resource_id: int | None = None

@@ -78,7 +78,7 @@ def _spawn(command: str, cwd: str) -> tuple[int, int]:
             # after their profile (`jobs.py`), and a login shell would read
             # /etc/profile again over what that put on PATH.
             os.execvpe("/bin/sh", ["/bin/sh", "-c", command], environment)
-        except BaseException as error:  # noqa: BLE001 — nothing may escape
+        except BaseException as error:  # nothing may escape
             try:
                 os.write(2, f"{type(error).__name__}: {error}\n".encode())
             except OSError:

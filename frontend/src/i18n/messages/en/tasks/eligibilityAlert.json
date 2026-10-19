@@ -1,0 +1,14 @@
+{
+  "cannotJoinTitle": "You can't join yet",
+  "goFillIn": "Fill them in",
+  "manageMyTeams": "Manage my teams",
+  "manageThisTeam": "Manage this team",
+  "memberMissingRealName": "These members haven't provided real-name details yet:",
+  "needRealName": "This challenge asks for real-name details before you can join.",
+  "needTeam": "You need to create or join a team to take part in this challenge",
+  "rankHint": "Solve more basic challenges to raise your level and unlock harder ones.",
+  "teamNotEligibleTitle": "No eligible team",
+  "teamTooBig": "This challenge allows a team of at most {count} — your team is over the limit.",
+  "teamTooSmall": "This challenge needs a team of at least {count} — invite more people to your team.",
+  "teamsNoneEligible": "You have 1 team, but it can't take part in this challenge | You have {count} teams, but none of them can take part in this challenge"
+}

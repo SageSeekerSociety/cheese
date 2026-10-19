@@ -123,8 +123,13 @@ def _build_membership_service(
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = 1
     session.execute.return_value = mock_result
+    # `_notify` is patched out in these tests, so the ledger the service was
+    # handed is never called; a stand-in keeps the constructor honest.
     svc = TeamMembershipService(
-        session=session, team_repo=team_repo, application_repo=app_repo
+        session=session,
+        team_repo=team_repo,
+        application_repo=app_repo,
+        deliver=AsyncMock(),
     )
     return svc, team_repo, app_repo
 
@@ -885,6 +890,10 @@ class TestCreateInvitation:
         svc, team_repo, app_repo = _build_membership_service()
         team_repo.is_team_at_least_admin.return_value = True
         team_repo.is_team_member.return_value = False
+        # Only the owner may invite someone in as an admin.
+        team_repo.get_member_relation.return_value = MagicMock(
+            role=TeamMemberRole.OWNER
+        )
         app_repo.exists_pending_for_user_and_team.return_value = False
 
         saved = _make_application(id=300, role="ADMIN")
@@ -908,6 +917,10 @@ class TestCreateInvitation:
         svc, team_repo, app_repo = _build_membership_service()
         team_repo.is_team_at_least_admin.return_value = True
         team_repo.is_team_member.return_value = False
+        # Only the owner may invite someone in as an admin.
+        team_repo.get_member_relation.return_value = MagicMock(
+            role=TeamMemberRole.OWNER
+        )
         app_repo.exists_pending_for_user_and_team.return_value = False
 
         saved = _make_application(id=300, role="OWNER")

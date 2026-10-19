@@ -37,6 +37,7 @@
 `pending_gate` 行，全都可以判死。
 """
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -45,9 +46,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.core.sentences import say
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 from app.domain.notice_meta import (
     EVENT_GATE_ABANDONED,
     SEVERITY_WARN,
@@ -65,6 +67,14 @@ from app.domain.topic.repositories import TopicRepository
 #: 落在这里。10 分钟 —— 实测健康的闸门是 17–23 秒，所以这已经宽出两个数量级，
 #: 而坏掉的卡从 2 小时 44 分（观测值）缩到 20 分钟被发现。
 GATE_STALE_GRACE_S = 600
+
+#: 一轮扫底同时判死几张卡。判死一张卡只等两样东西：它自己那个事务，和那一条
+#: `nudge`（读一次房间的座位，再 submit 一轮），本进程几乎没有要算的；一次重部署
+#: 之后攒下的孤儿卡都落在同一轮里，一张接一张等于把这几十张卡按轮询周期
+#: （`gate_sweep_interval_s`，默认 300 秒）排队。八个是拿连接池的零头换来的上限
+#: ——部署默认 `BACKEND_WORKERS=1`，一个 worker 手里是 20 个池内加 15 个溢出；worker
+#: 多了这一份按 `db_connections_per_worker()` 摊薄，那时 8 就该跟着小——不是吞吐目标。
+AT_ONCE = 8
 
 _ABANDONED_OUTPUT = (
     f"{GATE_ABANDONED_PREFIX}：平台未能取得这次检查的结果（后端重启或检查任务丢失），"
@@ -163,39 +173,61 @@ async def sweep(
     `event` + `meta` 是房间里那一行（平台提示统一契约）。
 
     一张卡一个事务，跟 `review/pr_poll.py::poll_open_prs` 同样的理由：一张卡出错
-    不能把另一张卡已经判死的结果回滚掉。
+    不能把另一张卡已经判死的结果回滚掉。判死一张卡等的是它自己的事务和那一条
+    `nudge`，两张卡之间除了数据库没有别的东西共用，所以几张卡在 `AT_ONCE` 以内
+    同时判。交回的列表跟一张一张判时同序，轮询和启动扫底读到的都是这个。
+
+    `nudge` 抛出去照旧从这里抛给调用方（那一下本来就不在 `try` 里，所以不算某张卡
+    的错）：判死已经提交过了，不会被回滚。和一张一张判时不同的一点是，`gather`
+    不会取消同一批里别的卡 —— 异常交给调用方的当下，剩下的几张还在接着判完，这一
+    轮的返回值也就没有了。
     """
     async with session_factory() as session:
         stale = await find_abandoned(session, now=now)
         targets = [(c.id, c.topic_id) for c in stale]
 
-    condemned: list[uuid.UUID] = []
-    errors: list[str] = []
-    for card_id, topic_id in targets:
-        async with session_factory() as session:
-            try:
-                card = await AcceptCardRepository(session).get(card_id)
-                # 重查一次状态：从上面那次查询到现在，闸门可能刚好结算完了。
-                if card is None or card.status != AcceptStatus.pending_gate:
-                    continue
-                await condemn(session, card)
-                await session.commit()
-            except Exception as exc:  # noqa: BLE001 — 一张卡失败不能停下整轮
-                await session.rollback()
-                errors.append(f"{card_id}: {exc}")
-                continue
-        condemned.append(card_id)
-        if nudge is not None:
-            await nudge(
-                topic_id,
-                _ABANDONED_NUDGE,
-                _ABANDONED_EVENT,
-                notice(
-                    EVENT_GATE_ABANDONED,
-                    severity=SEVERITY_WARN,
-                    who=WHO_CHEESE,
-                    detail=_ABANDONED_NUDGE,
-                    detail_label=_ABANDONED_DETAIL_LABEL,
-                ),
-            )
-    return {"condemned": condemned, "errors": errors}
+    at_once = asyncio.Semaphore(AT_ONCE)
+
+    async def condemn_one(
+        card_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> tuple[uuid.UUID, bool, str | None]:
+        """判死一张卡：`(卡 id, 判死了没有, 出错的话记的那一行)`。
+
+        两个都不是（卡没了、或者状态已经不是 `pending_gate`）就是没判死也没出错
+        —— 重查一次状态，从上面那次查询到现在，闸门可能刚好结算完了。
+        """
+        async with at_once:
+            async with session_factory() as session:
+                try:
+                    card = await AcceptCardRepository(session).get(card_id)
+                    if card is None or card.status != AcceptStatus.pending_gate:
+                        return card_id, False, None
+                    await condemn(session, card)
+                    await session.commit()
+                except Exception as exc:  # 一张卡失败不能停下整轮
+                    await session.rollback()
+                    return card_id, False, f"{card_id}: {exc}"
+            if nudge is not None:
+                await nudge(
+                    topic_id,
+                    _ABANDONED_NUDGE,
+                    _ABANDONED_EVENT,
+                    notice(
+                        EVENT_GATE_ABANDONED,
+                        severity=SEVERITY_WARN,
+                        who=WHO_CHEESE,
+                        detail=_ABANDONED_NUDGE,
+                        detail_label=_ABANDONED_DETAIL_LABEL,
+                    ),
+                )
+            return card_id, True, None
+
+    judged = await asyncio.gather(
+        *(condemn_one(card_id, topic_id) for card_id, topic_id in targets)
+    )
+    return {
+        "condemned": [card_id for card_id, condemned, _error in judged if condemned],
+        "errors": [
+            error for _card_id, _condemned, error in judged if error is not None
+        ],
+    }

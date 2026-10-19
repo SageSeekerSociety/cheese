@@ -24,6 +24,7 @@ from app import device_connection_app
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.device_failures import DeviceCallError
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
@@ -46,7 +47,7 @@ from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.driven.runner import LONG_POLL, socket_path
-from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.launch import MachinePlace
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_session.services import AgentSessionService
@@ -241,26 +242,32 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
                 token=prepared.token,
             )
         assert captured["CHEESE_AUTHOR"] == "other-teammate"
+        # The session's shell as the launch script leaves it for the agent, on
+        # a machine with no git identity of its own.
+        script = machine_launcher.launch_script(command="true")
+        start = script.index('SEATD="$HOME/.cheese/seats/')
+        end = script.index('cat > "$HOME/.cheese/cheese-environment.py"')
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".gitconfig").write_text("[user]\n\tuseConfigOnly = true\n")
         env = {
             **os.environ,
             **captured,
+            "HOME": str(home),
+            "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_COMMITTER_NAME": "fixture",
             "GIT_COMMITTER_EMAIL": "fixture@example.test",
         }
         subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
         subprocess.run(
             [
-                "git",
-                "-C",
+                "sh",
+                "-c",
+                script[start:end]
+                + 'git -C "$1" -c core.hooksPath=/dev/null -c commit.gpgsign=false '
+                "commit --allow-empty -m Fixture",
+                "sh",
                 str(tmp_path),
-                "-c",
-                "core.hooksPath=/dev/null",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "Fixture",
             ],
             env=env,
             check=True,
@@ -993,11 +1000,13 @@ async def test_a_room_with_two_live_teammates_lists_them_and_reads_the_one_named
 
 class CenterHub(FakeHub):
     """The session host, a connector whose screens run a Claude Code runner,
-    and the room's machine, connected while ``machine_up``."""
+    and the room's machine, connected while ``machine_up``, its executor
+    answering while ``executor_up``."""
 
     def __init__(self) -> None:
         super().__init__()
         self.machine_up = True
+        self.executor_up = True
         self.machine_asked = 0
 
     def is_online(self, device_id: str) -> bool:
@@ -1009,6 +1018,11 @@ class CenterHub(FakeHub):
         self.machine_asked += 1
         if not self.machine_up:
             raise TimeoutError("the machine does not answer")
+        if not self.executor_up:
+            raise DeviceCallError(
+                "dial unix /tmp/cheese-execution-1000-0.sock: "
+                "connect: no such file or directory"
+            )
         return {"workspace": "/home/machine", "mcp_servers": []}
 
 
@@ -1226,6 +1240,31 @@ async def test_a_session_started_while_its_machine_is_away_starts_at_the_placeho
         assert started.sid != first.sid
         target, claims, _ = launched(hub, started)
         assert target["workspace"] == "/unavailable-project"
+        assert claims["lease"]
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_a_session_whose_executor_stopped_while_idle_starts_on_its_machine(
+    client, room, monkeypatch
+):
+    """An executor that sat idle stops itself, and its machine says so when
+    asked. A session started then starts on the machine, whose hands it takes
+    at launch, which starts the executor again: not at the placeholder, where
+    it would have none of the project's MCP servers, skills or hooks."""
+    project, topic = room
+    hub, turn = center_room(client, monkeypatch)
+
+    async def exercise():
+        first = await turn(project, topic)
+        await lease_machine(client.test_request_factory, topic, "/home/machine/p")
+        hub.executor_up = False
+        hub.ping = {"alive": False}
+        started = await turn(project, topic)
+        assert started.sid != first.sid
+        target, claims, _ = launched(hub, started)
+        assert target["workspace"] == "/home/machine/p"
         assert claims["lease"]
 
     client.portal.call(exercise)

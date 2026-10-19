@@ -6,7 +6,7 @@
 //    「我发布的题目」接口，那里的待审核题目得出现在屏幕上。
 // 4. 「只看待处理」只留有报名待审核或提交待评审的题，也写在地址里。
 //
-// 另有两条筛选：话题可以多选，列表要的是「带其中任一个」；搜索按回车才查。
+// 另有两条筛选：标签可以多选，列表要的是「带其中任一个」；搜索按回车才查。
 import type { Component } from 'vue'
 
 import { defineComponent, h } from 'vue'
@@ -191,8 +191,8 @@ describe('题目列表的范围', () => {
   })
 })
 
-describe('题目列表的话题与搜索', () => {
-  // 话题下拉是一个 VOverlay，happy-dom 没有 visualViewport，不补上菜单打不开。
+describe('题目列表的标签与搜索', () => {
+  // 标签下拉是一个 VOverlay，happy-dom 没有 visualViewport，不补上菜单打不开。
   beforeAll(() => {
     vi.stubGlobal('visualViewport', {
       width: 1024,
@@ -216,11 +216,11 @@ describe('题目列表的话题与搜索', () => {
     vi.clearAllMocks()
   })
 
-  it('话题可以多选，取消全部选择后不再按话题筛', async () => {
+  it('标签可以多选，取消全部选择后不再按标签筛', async () => {
     await mount()
     await waitFor(() => expect(screen.getByText('一道题')).toBeTruthy())
 
-    await fireEvent.click(screen.getByRole('button', { name: /全部话题/ }))
+    await fireEvent.click(screen.getByRole('button', { name: /全部标签/ }))
     await fireEvent.click(await screen.findByText('深度学习'))
     await fireEvent.click(screen.getByText('计算机视觉'))
 

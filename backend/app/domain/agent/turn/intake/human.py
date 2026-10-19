@@ -3,6 +3,7 @@
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -21,6 +22,7 @@ from app.domain.agent.queries import _agent_at
 from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent.turn.store.human import (
     CallAdmission,
+    HumanHandoff,
     HumanPreparation,
     persist_human_message,
 )
@@ -30,21 +32,39 @@ from app.domain.delivery.mention import mentioned_handles, record_mentions
 from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
+from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place
+from app.domain.room_task.services import TaskService
 from app.domain.thread.services import answered_in, thread_teammate
 from app.domain.topic_membership.services import TopicMemberService
 
 
 async def prepare_human(
-    session: AsyncSession, place: Place, content: str, author: str
+    session: AsyncSession,
+    place: Place,
+    content: str,
+    author: str,
+    *,
+    handoff: HumanHandoff | None = None,
 ) -> HumanPreparation:
+    """Read a person's message in the writer's session. What ``handoff`` carries
+    the request already read, and is used instead of reading it again."""
     topic = place.room
-    project = await load_project(session, topic.project_id)
+    handoff = handoff or HumanHandoff()
+    # Merged without a load, the request's row is this session's identity-map
+    # entry: every later `get` of the project here (`_agent_at`) is answered by it.
+    project = (
+        await session.merge(handoff.project, load=False)
+        if handoff.project is not None
+        else await load_project(session, topic.project_id)
+    )
     if project is None:
         raise NotFoundError(say("projectNotFound"))
     await own_calls.seat_if_named(session, project, topic, content, author)
     agent = await _agent_at(session, place)
-    mentions = await person_mentions(session, topic, content, agent, dm=_is_dm(topic))
+    mentions = await person_mentions(
+        session, topic, content, agent, dm=_is_dm(topic), members=handoff.roster
+    )
     # A two-seat private room addresses its peer only if that peer is an agent.
     seats = (
         await TopicMemberService(session).private_seats(topic.id)
@@ -57,7 +77,10 @@ async def prepare_human(
         "instance_id": str(agent.instance_id),
         "handle": agent.handle,
         "mentioned": (
-            place.task is not None and not _names_only_people(mentions.content)
+            place.task is not None
+            and place.task.status == TaskStatus.open
+            and TaskService.takes_part(place.task, author)
+            and not _names_only_people(mentions.content)
         )
         or (seats is not None and looks_like_agent_handle(seats[1])),
     }
@@ -76,9 +99,12 @@ async def prepare_human(
 def _names_only_people(content: str) -> bool:
     """Whether ``content`` @-s someone and every one it @-s is a person.
 
-    A task calls its teammate with every message, except one that says whom it
-    is for and names no AI teammate there: an @ of a person is said to that
-    person, and the task's teammate does not pick it up. ``@all``/``@here``
+    A task calls its teammate with every message its owner or a collaborator
+    says, except one that says whom it is for and names no AI teammate there:
+    an @ of a person is said to that person, and the task's teammate does not
+    pick it up. Anyone else in the project may speak in a task as in a 支线:
+    their message calls the teammate only when it @-s it, and otherwise rides
+    into its next turn as something said there. ``@all``/``@here``
     name the whole channel, the teammate included."""
     handles = mentioned_handles(content)
     return bool(handles) and all(
@@ -199,10 +225,11 @@ class HumanMessages:
         attachments: list[dict] | None = None,
         client_id: str | None = None,
         quoted_context: dict | None = None,
+        handoff: HumanHandoff | None = None,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]:
         stored = await persist_human_message(
             self.sessions,
-            prepare=prepare_human,
+            prepare=partial(prepare_human, handoff=handoff),
             refuse=refuse_call,
             record_effects=record_human_effects,
             topic_id=topic_id,

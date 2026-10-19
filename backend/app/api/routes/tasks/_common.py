@@ -8,8 +8,6 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
-# 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
 from app.api.space_payloads import TeachingRequest
 from app.api.task_teaching import (
     apply_task_teaching,
@@ -29,11 +27,15 @@ from app.domain.space.repositories import (
 from app.domain.task.inputs import (
     map_submitter_type,
 )
+from app.domain.task.mentors import require_consent, set_mentors
 from app.domain.task.services import (
     TaskService,
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
+
+# 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
+# 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
 
 
 class ConfirmTaskPublishFromPdfRequest(BaseModel):
@@ -77,6 +79,9 @@ class CreateTaskRequest(BaseModel):
     # 这道题自己的「给 AI 队友的指导」(#944)，盖过 空间/项目集 那份。省略 =
     # 不设，于是这道题沿用上层的；给了就整份替换掉上层的（见 resolve 的生效语义）。
     teaching: TeachingRequest | None = None
+    # Who joins every claimer's project as a mentor (#3830): the publisher or
+    # an admin of the space. Empty = nobody.
+    mentors: list[str] = Field(default_factory=list)
 
 
 class TaskParticipantRequest(BaseModel):
@@ -90,6 +95,8 @@ class TaskParticipantRequest(BaseModel):
     apply_reason: str | None = Field(default=None, alias="applyReason")
     personal_advantage: str | None = Field(default=None, alias="personalAdvantage")
     remark: str | None = None
+    # The claimer agrees to the task's mentors joining their project (#3830).
+    agree_mentors: bool = Field(default=False, alias="agreeMentors")
 
 
 class JoinTaskAsTeamRequest(BaseModel):
@@ -102,6 +109,7 @@ class JoinTaskAsTeamRequest(BaseModel):
     apply_reason: str | None = Field(default=None, alias="applyReason")
     personal_advantage: str | None = Field(default=None, alias="personalAdvantage")
     remark: str | None = None
+    agree_mentors: bool = Field(default=False, alias="agreeMentors")
 
 
 class PatchTaskParticipantRequest(BaseModel):
@@ -158,6 +166,8 @@ class PatchTaskRequest(BaseModel):
     # config — the protocol's whole-key semantics; omitting it leaves it exactly
     # as it is, so a PATCH that only renames a 题目 does not wipe the 指导.
     teaching: TeachingRequest | None = None
+    # The whole list of mentors; omitted leaves it as it is.
+    mentors: list[str] | None = None
 
 
 class CreateSubmissionReviewRequest(BaseModel):
@@ -407,3 +417,14 @@ async def _create_task_entity(
         await task_service.replace_submission_schema(task.id, submission_schema)
 
     return task
+
+
+async def set_task_mentors(
+    db, *, task, handles: list[str], creator_user_id: int | None
+) -> None:
+    """Record the task's mentors (`app.domain.task.mentors`)."""
+    await set_mentors(db, task=task, handles=handles, creator_user_id=creator_user_id)
+
+
+async def require_mentor_consent(db, *, task, agreed: bool) -> None:
+    await require_consent(db, task=task, agreed=agreed)

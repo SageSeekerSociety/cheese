@@ -8,22 +8,47 @@
       "reviewer": "待你审阅",
       "reporter": "你提的需求已有交付",
       "asked": "待你回答",
-      "start": "待你开始",
       "checksFailed": "检查未通过",
       "bounced": "已退回",
       "decide": "待你决定",
-      "read": "变更提醒"
+      "read": "变更提醒",
+      "invited": "待你答复",
+      "joinRequest": "待你审批",
+      "allow": "待你允许"
     },
     "markRead": "标为已读",
     "answerLabel": "写下你的决定",
     "answer": "答复",
     "actionFailed": "操作失败",
-    "markAllRead": "全部标为已读"
+    "markAllRead": "全部标为已读",
+    "invite": {
+      "project": "{person} 邀请你加入项目",
+      "team": "{person} 邀请你加入团队",
+      "request": "{person} 申请加入团队",
+      "asRole": "以{role}身份加入",
+      "accept": "接受",
+      "approve": "批准",
+      "decline": "拒绝",
+      "transfer": "{person} 把项目转让给你"
+    },
+    "role": {
+      "MEMBER": "成员",
+      "ADMIN": "管理员",
+      "OWNER": "所有者",
+      "mentor": "导师"
+    },
+    "mcpRun": {
+      "title": "在你的设备 {device} 上运行 MCP 服务器 {server}",
+      "from": "来自项目的 {file}，最近由 {name} 修改",
+      "once": "允许后，这条命令以后不再询问；命令改了会再问你",
+      "allow": "允许运行",
+      "refuse": "不允许",
+      "added": "{name} 在项目设置中添加"
+    }
   },
   "nav": {
     "teamProjects": "项目",
     "teamMembers": "成员",
-    "teamKnowledge": "知识库",
     "teamCompute": "设备",
     "newTeam": "新建或加入团队",
     "teamActions": "团队操作",
@@ -48,6 +73,7 @@
     "disbandTeamBody": "解散后所有成员都会离开这个团队，无法撤销。团队里的项目要先全部归档；归档的项目解散后只有项目所有者和外部成员还看得到。",
     "disbandTeamDone": "已解散「{name}」",
     "disbandTeamFailed": "解散团队失败",
-    "disbandTeamTypeName": "输入团队名「{name}」确认"
+    "disbandTeamTypeName": "输入团队名「{name}」确认",
+    "teamDocs": "文档"
   }
 }

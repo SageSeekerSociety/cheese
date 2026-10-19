@@ -140,7 +140,7 @@ def deliver_stop(target, command_id, pipe):
                         "signal": int(signalled),
                     },
                 )
-            except Exception:  # noqa: BLE001 — link down or refused: retry, backing off
+            except Exception:  # link down or refused: retry, backing off
                 client = RemoteClient(current_target(target))
                 time.sleep(min(30.0, max(1.0, time.monotonic() - started)))
 

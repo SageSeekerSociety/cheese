@@ -1,28 +1,22 @@
 #!/usr/bin/env node
-// Runs the component boundary rule over src/components and compares the result
-// against import-boundary-baseline.json.
+// Runs the component boundary rule over src/components and fails on any
+// violation.
 //
-//   node scripts/import-boundary-ratchet.mjs            check (exit 1 on any new violation)
-//   node scripts/import-boundary-ratchet.mjs --update   rewrite the baseline downward
+//   node scripts/import-boundary-ratchet.mjs            check (exit 1 on any violation)
 //   node scripts/import-boundary-ratchet.mjs --json     one JSON record on stdout, same exit code
+//   node scripts/import-boundary-ratchet.mjs --files <path>   judge just those paths
 //
 // The rule itself is declared in import-boundary-ratchet-core.mjs (as an eslint
-// rule object) and applied by eslint.boundary.config.mjs; the counting and the
-// ratchet arithmetic are pure functions there, unit-tested by
-// import-boundary-ratchet.test.mjs. This file is only the I/O around them.
+// rule object) and applied by eslint.boundary.config.mjs; the counting is a
+// pure function there, unit-tested by import-boundary-ratchet.test.mjs. This
+// file is only the I/O around them.
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import {
-  BOUNDARY_FILES,
-  compare,
-  formatBoundaryReport,
-  parseEslintJson,
-  tightenedBaseline,
-} from './import-boundary-ratchet-core.mjs'
-import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
+import { BOUNDARY_FILES, formatBoundaryReport, parseEslintJson } from './import-boundary-ratchet-core.mjs'
+import { asJson, cannotJudge, emit, plainResult, verdict } from './ratchet-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -32,15 +26,7 @@ function options(name) {
   return process.argv.flatMap((arg, i) => (arg === name ? [process.argv[i + 1]] : []))
 }
 
-function option(name, fallback) {
-  return options(name)[0] ?? fallback
-}
-
-const update = process.argv.includes('--update')
 const ID = 'fe-boundary'
-// Overridable so the self-test can judge a planted file against a throwaway
-// baseline instead of editing the committed one.
-const baselinePath = resolve(ROOT, option('--baseline', 'import-boundary-baseline.json'))
 
 // Resolve the binary explicitly rather than trusting PATH: `pnpm run` puts
 // node_modules/.bin there but `node scripts/...` does not, and an eslint that
@@ -99,56 +85,20 @@ if (run.status === 2) {
   cannotJudge({ id: ID }, 'eslint exited 2 (configuration or internal error)')
 }
 
-const current = parsed.counts
-const currentTotal = Object.values(current).reduce((a, b) => a + b, 0)
-
-const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, 'utf8')).files ?? {} : {}
-
-if (update) {
-  const next = tightenedBaseline(baseline, current)
-  writeFileSync(
-    baselinePath,
-    `${JSON.stringify(
-      {
-        _comment:
-          'Frozen src/components -> API layer / vue-router imports. The ratchet ' +
-          'blocks any NEW violation; these are pre-existing and may only go down. ' +
-          'Regenerate with `pnpm run lint:boundary:update`. The rule and its ' +
-          'messages live in scripts/import-boundary-ratchet-core.mjs.',
-        files: next,
-      },
-      null,
-      2
-    )}\n`
-  )
-  const total = Object.values(next).reduce((a, b) => a + b, 0)
-  console.log(`baseline updated: ${total} violation(s) across ${Object.keys(next).length} file(s)`)
-  process.exit(0)
-}
-
-const result = compare(baseline, current)
+const result = plainResult(parsed.counts)
 const scanned = (scan.length ? scan : ROOTS).join(', ')
-// Only the files the ratchet is blocking: listing every frozen violation in the
-// tree would bury the new one the report is about.
-const regressed = new Set(result.regressions.map((r) => r.file))
-const failureReport = formatBoundaryReport(
-  result,
-  parsed.violations.filter((v) => regressed.has(v.file))
-)
 
 if (asJson) {
-  // Per-file counts, the shape the board groups by (docs/topics/棘轮页方案 3.1).
-  // The report is not on stdout here — the collector parses stdout — but on
-  // failure it goes to stderr, so a --json run (what ci:fast calls) still prints
-  // the line, the rule and the fix.
-  const details = Object.entries(current)
-    .filter(([, count]) => count > 0)
-    .map(([file, count]) => ({ file, count }))
+  // Per-file counts accompany the verdict.
+  // The report is not on stdout here — ci:fast parses stdout — but on
+  // failure it goes to stderr, so a --json run still prints the line, the rule
+  // and the fix.
+  const details = Object.entries(parsed.counts).map(([file, count]) => ({ file, count }))
   emit(verdict({ id: ID, result, details }))
-  if (!result.ok) console.error(failureReport)
+  if (!result.ok) console.error(formatBoundaryReport(parsed.violations))
   process.exit(result.ok ? 0 : 1)
 }
 
-console.log(failureReport)
-console.log(`scanned ${scanned} — ${currentTotal} violation(s)`)
+console.log(formatBoundaryReport(parsed.violations))
+console.log(`scanned ${scanned}`)
 process.exit(result.ok ? 0 : 1)

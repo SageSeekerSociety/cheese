@@ -10,20 +10,24 @@ from fastapi import APIRouter, Depends, Header, Request, Response
 
 from app.api.auth import ActorResolverDep, require_seated_in_its_room
 from app.api.deps import get_chat_service
+from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.caller import may_access_project
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.core.sentences import say
+from app.domain.agent import execution
 from app.domain.agent.chat import ChatService
 from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.review import forge_clients
+from app.domain.room_task.place import Task, TaskStatus, TopicStatus, place_or_404
 from app.domain.room_task.services import TaskService
-from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["workspace"])
@@ -124,7 +128,7 @@ async def list_files(
     await ProjectService(db).get_or_404(project_id)
     # A selected task owns its worktree; otherwise show the project base.
     files, actual_source = await ProjectFiles(
-        db, project_id, task, release_session=True
+        db, project_id, task, release_session=True, executor=execution.call
     ).files(source)
     return ok({**page(files, len(files)), "source": actual_source})
 
@@ -147,9 +151,9 @@ async def read_file(
     """
     await ProjectService(db).get_or_404(project_id)
     return ok(
-        await ProjectFiles(db, project_id, task, release_session=True).text(
-            path, source
-        )
+        await ProjectFiles(
+            db, project_id, task, release_session=True, executor=execution.call
+        ).text(path, source)
     )
 
 
@@ -167,7 +171,7 @@ async def read_file_raw(
     (the text endpoint would mangle binary content)."""
     await ProjectService(db).get_or_404(project_id)
     data, actual_source = await ProjectFiles(
-        db, project_id, task, release_session=True
+        db, project_id, task, release_session=True, executor=execution.call
     ).raw(path, source)
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
     # Arbitrary uploads must never execute in the app's origin.
@@ -189,7 +193,9 @@ async def read_file_raw(
     )
 
 
-@router.put("/{project_id}/file", dependencies=[Depends(require_project_access)])
+@router.put(
+    "/{project_id}/file", dependencies=[ROUTE_DECIDES, Depends(require_project_access)]
+)
 async def write_file(
     project_id: uuid.UUID,
     body: dict,
@@ -209,6 +215,12 @@ async def write_file(
     teammate is told before its next tool call to re-read the file.
     """
     await ProjectService(db).get_or_404(project_id)
+    await require_role(
+        db,
+        await resolver.resolve(project_id=project_id),
+        project_id,
+        Permission.edit_content,
+    )
     path = (body.get("path") or "").strip()
     content = body.get("content") or ""
     version = body.get("version") or None
@@ -218,9 +230,9 @@ async def write_file(
     if task is None:
         raise ValidationError(say("chooseTaskToEdit"))
     actor = await resolver.resolve(project_id=project_id, topic_id=task)
-    saved = await ProjectFiles(db, project_id, task, release_session=True).save(
-        path, content, version, base if isinstance(base, str) else None
-    )
+    saved = await ProjectFiles(
+        db, project_id, task, release_session=True, executor=execution.call
+    ).save(path, content, version, base if isinstance(base, str) else None)
     row = await TaskService(db).get(task)
     if row is not None and actor.authenticated and actor.via != "cheese":
         said = await announce_edit(
@@ -258,9 +270,14 @@ async def git_diff(
     await ProjectService(db).get_or_404(project_id)
     return ok(
         {
-            "diff": await ProjectFiles(db, project_id, task, release_session=True).diff(
-                source, ref
-            )
+            "diff": await ProjectFiles(
+                db,
+                project_id,
+                task,
+                release_session=True,
+                executor=execution.call,
+                compare_status=forge_clients.compare_status,
+            ).diff(source, ref)
         }
     )
 
@@ -289,7 +306,7 @@ async def topic_work_summary(
     every open task in a busy channel took past the timeout on every visit.
     """
     await ProjectService(db).get_or_404(project_id)
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     one = (
         await TaskService(db).get(place.task_id) if place.task_id is not None else None
     )

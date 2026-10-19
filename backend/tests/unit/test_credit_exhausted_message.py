@@ -22,8 +22,8 @@ from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.turn.state.notices import _is_out_of_credit
-from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
 from app.domain.usage.ledger import month_end, month_of
 from tests.conftest import (

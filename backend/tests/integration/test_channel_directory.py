@@ -10,7 +10,7 @@ The rules, as stated before the code was written:
 - that manager archives such a channel or names its manager without joining,
   and reads it only after joining, which the channel is told;
 - a channel's manager hands it to someone else in the project, a person;
-- an external member does not open channels.
+- an external member opens channels like any member; a mentor does not.
 """
 
 from tests.integration.conftest import (
@@ -152,16 +152,24 @@ def test_a_channel_is_handed_to_another_person(client):
     assert hand("bob", "dave").status_code == 200
 
 
-def test_an_external_member_does_not_open_channels(client):
+def test_an_external_member_opens_channels_and_a_mentor_does_not(client):
     p = _project(client)
     add_external_member(client, p["id"], "erin", by="dave")
+    add_external_member(client, p["id"], "fay", by="dave")
+    made = client.put(
+        f"/projects/{p['id']}/members/fay/role",
+        json={"role": "mentor"},
+        headers=session_auth_headers("dave"),
+    )
+    assert made.status_code == 200, made.text
+
+    assert _channel(client, p["id"], "外部的频道", by="erin")
     r = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "外部的频道"},
-        headers=session_auth_headers("erin"),
+        json={"project_id": p["id"], "title": "导师的频道"},
+        headers=session_auth_headers("fay"),
     )
     assert r.status_code == 403, r.text
-    assert _channel(client, p["id"], "队内的频道", by="bob")
 
 
 def test_someone_outside_a_private_chat_cannot_archive_it(client):

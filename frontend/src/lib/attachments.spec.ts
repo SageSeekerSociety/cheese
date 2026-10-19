@@ -182,17 +182,14 @@ describe('chat attachments', () => {
     expect(onError).toHaveBeenCalledWith('每条消息最多添加 9 个附件')
   })
 
-  // 贴进来的那一份不进资料库：资料库按名字寻址，而剪贴板里的截图没有名字——
-  // 浏览器编的那个（`image.png`）换成带时间的。这一格证明「来路」跟着请求走、
-  // 名字也换了；挑进来的一份用原名，也不改名。
-  it('says a pasted file came off the clipboard, and a picked one did not', async () => {
+  // 剪贴板里的截图没有名字——浏览器编的那个（`image.png`）换成带时间的；挑进来的
+  // 一份用原名，也不改名。
+  it('names a pasted image after when it was pasted, and keeps a picked name', async () => {
     const { addFiles, onPaste } = usePendingAttachments(() => 't1')
     onPaste(pasteImage())
     await new Promise((r) => setTimeout(r, 0))
     await addFiles([file('预算表.xlsx', 'application/octet-stream')])
 
-    const origins = sent.map((form) => form.get('origin'))
-    expect(origins).toEqual(['clipboard', 'file'])
     expect((sent[0].get('file') as File).name).toMatch(/^粘贴的图片-\d{8}-\d{6}\.png$/)
     expect((sent[1].get('file') as File).name).toBe('预算表.xlsx')
   })

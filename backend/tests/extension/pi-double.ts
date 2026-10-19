@@ -45,6 +45,13 @@ export class FakePi {
   handlers = new Map<string, Handler[]>();
   sent: { message: any; options: any }[] = [];
 
+  // The servers handed to pi's own MCP client, by name.
+  mcpServers = new Map<string, any>();
+
+  registerMcpServer(name: string, config: any) {
+    this.mcpServers.set(name, config);
+  }
+
   registerTool(definition: any) {
     this.tools.set(definition.name, definition);
   }

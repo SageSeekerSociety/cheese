@@ -59,9 +59,10 @@ export const GUIDE_STEPS: GuideStep[] = [
     key: 'task',
     anchors: ['task-card', 'task-row'],
     waiting: ['timeline', 'thread-pane'],
-    done: (c) => c.has('task-page'),
+    // 支线转成的任务在右半边打开，任务页由那里的「整页打开」进。
+    done: (c) => c.has('task-page') || c.has('task-pane'),
   },
-  { key: 'taskPage', anchors: ['task-start', 'task-page'], waiting: ['task-card', 'task-row'] },
+  { key: 'taskPage', anchors: ['task-page', 'task-open-page'], waiting: ['task-card', 'task-row'] },
   {
     key: 'accept',
     anchors: ['accept-card'],

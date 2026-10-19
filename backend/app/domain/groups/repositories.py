@@ -12,6 +12,7 @@ from app.domain.groups.models import (
     GroupQuestionRelationship,
     GroupTarget,
 )
+from app.domain.reads import get_by_ids
 
 
 @overload
@@ -49,6 +50,11 @@ class GroupRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_ids(self, group_ids: Sequence[int]) -> dict[int, Group]:
+        return await get_by_ids(
+            self._session, Group, group_ids, Group.deleted_at.is_(None)
+        )
 
     async def search(
         self,
@@ -321,6 +327,22 @@ class GroupMembershipRepository:
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
+
+    async def count_members_by_group_ids(
+        self, group_ids: Sequence[int]
+    ) -> dict[int, int]:
+        if not group_ids:
+            return {}
+        stmt = (
+            select(GroupMembership.group_id, func.count(GroupMembership.id))
+            .where(
+                GroupMembership.group_id.in_(group_ids),
+                GroupMembership.deleted_at.is_(None),
+            )
+            .group_by(GroupMembership.group_id)
+        )
+        result = await self._session.execute(stmt)
+        return {group_id: int(count) for group_id, count in result.all()}
 
     async def is_member(self, group_id: int, member_id: int) -> bool:
         membership = await self._get_membership(group_id, member_id)

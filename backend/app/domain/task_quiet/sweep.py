@@ -20,9 +20,10 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import notice_keys, notice_message, say
+from app.domain.addressing import Event, Hand, address
 from app.domain.block.queries import awaiting_an_answer
-from app.domain.delivery.addressing import Event, Hand, address
-from app.domain.delivery.ledger import DeliveryEvent, deliver
+from app.domain.delivery.ledger import deliver
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.notification.models import NotificationType
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.room_task import presentation
@@ -52,8 +53,7 @@ async def _remind(session: AsyncSession, now: datetime) -> int:
     last_said = await TaskService(session).last_block_at_for_tasks(ids)
     cards = await latest_cards_by_task(session, ids)
     asked = await awaiting_an_answer(session, ids)
-    topics = TopicService(session)
-    reminded = 0
+    due = []
     for task in tasks:
         shown = presentation.task_presentation(
             presentation.facts_for_task(
@@ -73,7 +73,18 @@ async def _remind(session: AsyncSession, now: datetime) -> int:
         quiet = now - since
         if not (presentation.QUIET_NOTICE_AFTER <= quiet < presentation.STALLED_AFTER):
             continue
-        room = await topics.get(task.room_id)
+        due.append((task, since, quiet))
+    if not due:
+        return 0
+    rooms = {
+        t.id: t
+        for t in await TopicService(session).get_many(
+            {task.room_id for task, _, _ in due}
+        )
+    }
+    reminded = 0
+    for task, since, quiet in due:
+        room = rooms.get(task.room_id)
         if room is None or str(room.status) == "archived":
             continue
         content = say("taskQuiet", title=task.title, days=quiet.days)

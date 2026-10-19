@@ -36,9 +36,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent_instance.own import owned_instance
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.conversation.services import of_room
-from app.domain.delivery.agent import instance_for_seat, now, record_agent
-from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.delivery.agent import instances_for_seats, now, record_agent
 from app.domain.delivery.models import Delivery
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.notification.models import NotificationType
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -153,8 +153,9 @@ async def record_mentions(
     if by_agent:
         used = await _agent_mentions_since(session, room_id, now() - timedelta(hours=1))
         budget = AGENT_MENTIONS_PER_HOUR - used
+    instances = await instances_for_seats(session, project_id, named)
     for seat in named:
-        instance = await instance_for_seat(session, project_id, seat)
+        instance = instances.get(seat)
         if instance is None:
             continue
         # A member's own agent answers only whoever its owner lets call it

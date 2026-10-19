@@ -14,7 +14,7 @@ from collections import Counter
 
 import pytest
 
-from app.api.routes import connector
+from app.api.routes.connector import devices
 
 
 @pytest.fixture
@@ -43,16 +43,16 @@ async def test_the_whole_fleet_attaching_recovers_a_few_at_a_time(
 
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
     fleet = [
-        asyncio.create_task(connector.recover_business_state(f"machine-{i}"))
+        asyncio.create_task(devices.recover_business_state(f"machine-{i}"))
         for i in range(71)
     ]
     for _ in range(10):
         await asyncio.sleep(0)
-    assert high_water == connector._RECOVERY_AT_ONCE
+    assert high_water == devices._RECOVERY_AT_ONCE
     release.set()
     await asyncio.wait_for(asyncio.gather(*fleet), 5)
     # Queued, never dropped: every machine is recovered.
-    assert high_water == connector._RECOVERY_AT_ONCE
+    assert high_water == devices._RECOVERY_AT_ONCE
     assert Counter(recovered) == Counter(f"machine-{i}" for i in range(71))
 
 
@@ -71,6 +71,6 @@ async def test_a_machine_whose_recovery_fails_frees_its_place(
 
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
     for i in range(8):
-        await connector.recover_business_state(f"machine-{i}")
+        await devices.recover_business_state(f"machine-{i}")
     assert len(seen) == 8
-    assert connector._recovering._value == connector._RECOVERY_AT_ONCE
+    assert devices._recovering._value == devices._RECOVERY_AT_ONCE

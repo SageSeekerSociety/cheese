@@ -1,0 +1,111 @@
+{
+  "page": {
+    "subtitle": "平台自己仓库的 CI：PR 在合并队列里等多久、作业等机器多久、每台机器上每个作业和每一步跑多久"
+  },
+  "window": {
+    "aria": "统计窗口",
+    "days": "{n} 天"
+  },
+  "unit": {
+    "minutes": "{n} 分钟",
+    "seconds": "{n} 秒"
+  },
+  "state": {
+    "loadFailed": "CI 数据读不出来",
+    "retry": "重试",
+    "loading": "正在读…"
+  },
+  "sweep": {
+    "never": "还没有扫描过：后端每 5 分钟从 GitHub 读一次，第一次扫完之前这里是空的",
+    "current": "最近一次扫描 {at}",
+    "owed": "最近一次扫描 {at}，还有 {owed} 次运行的作业没读",
+    "backfilling": "最近一次扫描 {at}。还在回填历史：数据只覆盖 {from} 之后，还有 {owed} 次运行的作业没读",
+    "error": "最近一次扫描没读完：{error}"
+  },
+  "kpi": {
+    "queue": "合并队列耗时 p50",
+    "waitHosted": "等机器 p50（GitHub 托管）",
+    "waitSelf": "等机器 p50（自托管）",
+    "ciPr": "CI required 平均（PR）",
+    "ciQueue": "CI required 平均（合并队列）",
+    "rounds": "每个 PR 的 CI 轮数",
+    "flaky": "重跑才过",
+    "busy": "同时在跑的作业"
+  },
+  "note": {
+    "noSample": "这段时间没有可算的样本。",
+    "spread": "{n} 个样本；p50 {p50}，p90 {p90}，最长 {max}。",
+    "queue": "从 PR 第一次进合并队列算到它合并：中间被踢出、重新排队的时间都算在内。",
+    "wait": "作业被创建（它依赖的作业都跑完了）到拿到机器开始跑。",
+    "ci": "Required CI 完整档的第一次尝试：从运行创建到最后一个作业结束。草稿档和被取消的运行不算，重跑的等待也不算。",
+    "rounds": "合并的 {prs} 个 PR 上，PR 事件里有结论（成功或失败）的 Required CI 运行平均几次；{more} 的 PR 不止一轮。合并队列里平均跑 {queue} 次。",
+    "roundsIncomplete": "CI 历史从 {from} 开始，{n} 个已合并 PR 可能缺少更早的 CI 轮数",
+    "historyUnknown": "暂无 CI 历史覆盖记录，轮数可能不完整",
+    "flaky": "{runs} / {of} 次有结论的 Required CI 运行：最后一次尝试通过，之前的尝试里有作业失败，同一个提交。",
+    "busy": "按分钟采样的平均值；峰值 {peak}。忙的机器时间里 PR 的 CI 占 {pr}，合并队列 {queue}，main 上的构建和部署 {main}。",
+    "busyChart": "每小时内按分钟采样的平均值。",
+    "depth": "每小时里合并队列最长时排了几个 PR，和同一小时里同时在跑的作业最多几个。"
+  },
+  "chart": {
+    "queue": "合并队列耗时（分钟，按合并那天）",
+    "ci": "CI required 耗时 p50（分钟）",
+    "wait": "等机器 p50（秒）",
+    "busy": "同时在跑的作业（每小时）",
+    "depth": "合并队列长度与作业峰值（每小时）",
+    "hourOfDay": "一天里各小时平均有几个作业在跑（UTC）",
+    "rounds": "合并的 PR 用了几轮 PR CI",
+    "ejections": "合并队列为什么把 PR 移出去"
+  },
+  "series": {
+    "pr": "PR",
+    "queue": "合并队列",
+    "hosted": "GitHub 托管",
+    "selfHosted": "自托管",
+    "busy": "全部",
+    "depth": "队列长度峰值",
+    "peak": "作业峰值"
+  },
+  "hourOfDay": {
+    "label": "{hour}:00"
+  },
+  "rounds": {
+    "exactly": "{n} 轮",
+    "atLeast": "{n} 轮及以上"
+  },
+  "ejections": {
+    "label": "{reason} · {actor}"
+  },
+  "runners": {
+    "title": "每台机器",
+    "empty": "暂无作业",
+    "hostedPrefix": "GitHub 托管：",
+    "col": {
+      "runner": "机器",
+      "jobs": "作业数",
+      "busy": "忙了几小时",
+      "utilisation": "忙的比例",
+      "wait": "等机器 p50",
+      "duration": "作业耗时 p50",
+      "failed": "失败"
+    }
+  },
+  "jobs": {
+    "title": "最慢的作业",
+    "titleOn": "最慢的作业：{runner}",
+    "allRunners": "看所有机器",
+    "empty": "暂无作业",
+    "col": {
+      "job": "作业",
+      "runs": "次数",
+      "max": "最长",
+      "wait": "等机器 p50",
+      "failed": "失败"
+    }
+  },
+  "steps": {
+    "empty": "暂无步骤",
+    "col": {
+      "step": "步骤"
+    }
+  }
+}

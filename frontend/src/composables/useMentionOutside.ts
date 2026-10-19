@@ -31,8 +31,9 @@ export function useMentionOutside(options: {
     return handles.map(options.nameOf).join(t('work.room.roster.listSeparator'))
   }
 
-  /** 我发的一条落了库：它 @ 到的人里有不在频道的，就问；没有就不动上一次的。 */
-  function offer(block: PostedMessage) {
+  /** 我发的一条落了库（一条消息，或文档存回的一版）：它 @ 到的人里有不在频道的，就问；
+   *  没有就不动上一次的。 */
+  function offer(block: Pick<PostedMessage, 'mentioned_outside'>) {
     const outside = block.mentioned_outside
     if (outside?.handles.length) prompt.value = outside
   }

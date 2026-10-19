@@ -726,3 +726,35 @@ async def test_a_pre_cache_checkpoint_does_not_bill_old_cache_to_new_calls():
     days[today] = {"m": (1250, 80, 0.12, 1130, 0)}
     rows, _ = await gw.drain_new_usage(g, "k", ckpt)
     assert [(r.prompt_tokens, r.cache_read_tokens) for r in rows] == [(200, 180)]
+
+
+@pytest.mark.anyio
+async def test_only_a_model_the_gateway_marks_needs_approval():
+    """``cheese_overseas: true`` is what keeps Gemini and GPT from unapproved
+    teams; anything else, a missing key or a non-true value, does not."""
+    priced = {
+        "input_cost_per_token": 0.000004,
+        "output_cost_per_token": 0.000004,
+    }
+    client = gw.LlmGateway(
+        "http://gw",
+        "mk",
+        transport=_transport(
+            _model_info_response(
+                [
+                    {
+                        "model_name": name,
+                        "litellm_params": {"model": f"anthropic/{name}", **priced},
+                        "model_info": {"cheese_selectable": True, **info},
+                    }
+                    for name, info in (
+                        ("marked", {"cheese_overseas": True}),
+                        ("unmarked", {}),
+                        ("stringly", {"cheese_overseas": "yes"}),
+                    )
+                ]
+            )
+        ),
+    )
+    reported = {m.id: m.overseas for m in await client.models()}
+    assert reported == {"marked": True, "unmarked": False, "stringly": False}

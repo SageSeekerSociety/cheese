@@ -5,11 +5,21 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent_session.models import AgentSession
 from app.domain.living_doc.services import Documents
-from app.domain.room_task.models import Task
+
+# `Task`, `TaskStatus` and `TopicStatus` are part of the answer this seam gives
+# about a place — which row an id names, whether its work is still open, whether
+# its room is archived — so they are re-exported for the routes that ask:
+# `routes/workspace.py` takes them from here, not from `room_task.models` or
+# `topic.models` (C2 in `backend/.importlinter`). They are the place's
+# vocabulary, not a model read — the seam still makes every query. Renaming or
+# moving one of them carries the routes that read it here.
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.thread.models import Thread
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicStatus
 
 
 @dataclass(frozen=True)
@@ -60,11 +70,14 @@ class Place:
     @property
     def keeps_work(self) -> bool:
         """Whether what a session does here may reach the project. Not from a
-        支线, and from a task only once its owner started it: what changes the
-        project is done in a started task or in the room's own line."""
-        if self.thread is not None:
-            return False
-        return self.task is None or self.task.started_at is not None
+        支线: what changes the project is done in a task or in the room's own
+        line. A 支线 that became a task resolves as the task
+        (`PlaceResolver.conversation`), so its session keeps its work from then
+        on. A closed task is talked in as a 支线 is: about what was done, with
+        nothing more done; reopening it is how the work goes on."""
+        return self.thread is None and (
+            self.task is None or self.task.status == TaskStatus.open
+        )
 
 
 class PlaceResolver:
@@ -79,7 +92,7 @@ class PlaceResolver:
 
     async def conversation(self, conversation_id: uuid.UUID) -> Place | None:
         """The conversation ``conversation_id`` names — a room's id, a task's or
-        a 支线's."""
+        a 支线's. A 支线 that became a task shares its id and is the task."""
         place = await self.resolve(conversation_id)
         if place is not None:
             return place
@@ -92,6 +105,31 @@ class PlaceResolver:
             room = await self._session.get(Topic, thread.room_id)
             return Place(room=room, thread=thread) if room is not None else None
         return None
+
+
+async def place_or_404(session: AsyncSession, place_id: uuid.UUID) -> Place:
+    """The conversation this id names — a room, or one of its tasks — or 404.
+
+    The route-level counterpart of `TopicService.get_or_404`, and the front door
+    of most routes: they are addressed by a conversation id that may be either a
+    room or a task, and a task's place carries its room (the roster, files and
+    work computer are the room's, the history and the session are the task's).
+
+    它从前是 `TopicService` 的一个方法，跟着「按 id 取一个地方」这件事搬到本模块：
+    回答它要读 `tasks` 和 `threads`，而那是本包的行 —— 第 2 层的 `topic` 反过来
+    读，才是层表上那条向上的边（`docs/manual/dev/architecture.md`）。
+    """
+    place = await PlaceResolver(session).conversation(place_id)
+    if place is None:
+        raise NotFoundError(say("topicNotFound"))
+    return place
+
+
+def require_doc_writable(place: Place) -> None:
+    """归档后工作面冻结 (spec §6.3): an archived room's document takes no more
+    writes."""
+    if place.room.status == TopicStatus.archived:
+        raise ValidationError(say("topicArchivedDocFrozen"))
 
 
 async def living_doc_of(session: AsyncSession, place: Place):
@@ -127,7 +165,7 @@ async def session_keeps_work(
     """Whether the agent session ``session_id`` may carry its work into the
     project (`Place.keeps_work`): what a machine credential naming it asks
     before it is handed what pushes. One naming no session, or a session that
-    is gone, has no 支线 or unstarted task to answer for, and keeps its work.
+    is gone, has no 支线 to answer for, and keeps its work.
 
     ``session_id`` is whatever the caller holds — a claim read off a token, or
     the id of the session row it looked up, which is a UUID."""

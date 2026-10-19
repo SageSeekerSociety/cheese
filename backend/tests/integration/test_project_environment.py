@@ -1,7 +1,11 @@
 """Project scripts: human stewardship, room pinning, and explicit application."""
 
 import uuid
+from datetime import UTC, datetime
 
+import pytest
+
+from app.domain.agent.repositories import AgentTurnRepository
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
@@ -96,25 +100,98 @@ def test_room_from_another_project_cannot_be_read_or_changed(client):
 
 
 def test_active_room_refuses_application_but_project_can_save_future_config(client):
+    """「这一轮在跑」看的是库里的 open 行，不是这台进程的缓存。
 
-    from app.api.deps import get_chat_service
-
+    种进缓存不算数：那台跑着轮次的后端不是这一台，行才是跨进程的权威。所以这里种
+    一行真开着的 ``AgentTurn``（作者、正文都由它自己的生命周期写），房间才真的在忙。
+    """
     project_id, headers = project(client)
     topic_id = room(client, project_id)
     base = f"/projects/{project_id}/environment"
-    chat = client.app.dependency_overrides[get_chat_service]()
-    chat.live.active_turn_ids[uuid.UUID(topic_id)] = {uuid.uuid4()}
-    try:
-        saved = client.put(base, headers=headers, json={"startup_script": "echo next"})
-        assert saved.status_code == 200
-        applied = client.post(
-            f"{base}/rooms/{topic_id}/apply", headers=headers, json={"latest": True}
-        )
-        assert applied.status_code == 422, applied.text
-        current = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
-        assert current["pinned_revision"] != saved.json()["data"]["revision"]
-    finally:
-        chat.live.active_turn_ids.clear()
+
+    async def seed_open_turn():
+        async with client.test_request_factory() as session:
+            work = uuid.uuid4()
+            await AgentTurnRepository(session).open(
+                turn_id=work,
+                conversation_id=uuid.UUID(topic_id),
+                continuation_id=work,
+                author="cheese",
+                content="在跑一轮活",
+                is_resume=False,
+                resendable=True,
+                started_at=datetime.now(UTC),
+                delivered_at=datetime.now(UTC),
+                agent_handle="cheese",
+            )
+            await session.commit()
+
+    client.portal.call(seed_open_turn)
+
+    saved = client.put(base, headers=headers, json={"startup_script": "echo next"})
+    assert saved.status_code == 200
+    applied = client.post(
+        f"{base}/rooms/{topic_id}/apply", headers=headers, json={"latest": True}
+    )
+    assert applied.status_code == 422, applied.text
+    assert applied.json()["error"]["i18n"]["key"] == "roomBusyFinishBeforeEnvironment"
+    current = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
+    assert current["pinned_revision"] != saved.json()["data"]["revision"]
+
+
+@pytest.mark.parametrize(
+    ("place", "stopped", "busy"),
+    [
+        ("room", False, True),
+        ("task", False, True),
+        ("task", True, False),
+        ("other", False, False),
+    ],
+)
+def test_room_environment_busy_covers_its_tasks_but_not_stopped_or_other_work(
+    client, place, stopped, busy
+):
+    from app.domain.agent.models import AgentTurn
+    from app.domain.room_task.models import Task
+
+    project_id, headers = project(client)
+    topic_id = room(client, project_id)
+    other_room = room(client, project_id) if place == "other" else None
+
+    async def seed_turn():
+        async with client.test_request_factory() as session:
+            conversation_id = uuid.UUID(other_room or topic_id)
+            if place == "task":
+                task = Task(
+                    project_id=uuid.UUID(project_id),
+                    room_id=conversation_id,
+                    title="Work using the room environment",
+                )
+                session.add(task)
+                await session.flush()
+                conversation_id = task.id
+            work = uuid.uuid4()
+            await AgentTurnRepository(session).open(
+                turn_id=work,
+                conversation_id=conversation_id,
+                continuation_id=work,
+                author="alice",
+                content="Work",
+                is_resume=False,
+                resendable=True,
+                started_at=datetime.now(UTC),
+            )
+            if stopped:
+                turn = await session.get(AgentTurn, work)
+                turn.stopped_at = datetime.now(UTC)
+            await session.commit()
+
+    client.portal.call(seed_turn)
+    response = client.get(
+        f"/projects/{project_id}/environment/rooms/{topic_id}", headers=headers
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"].get("busy", False) is busy
 
 
 async def test_image_migration_keeps_other_settings_and_pins_all_rooms(db_factory):
@@ -257,3 +334,84 @@ def test_applying_holds_no_room_lock_while_the_machine_is_reset(client, monkeypa
     assert outcome["response"].status_code == 422, outcome["response"].text
     after = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
     assert after["pinned_revision"] == before["pinned_revision"]
+
+
+def test_offered_specs_select_count_does_not_scale_with_owners(client, monkeypatch):
+    from types import SimpleNamespace
+
+    from sqlalchemy import event, select
+
+    from app.domain.agent.environment import devices_of
+    from app.domain.machine import environments
+    from app.domain.user.models import User
+
+    for i in range(10):
+        seed_user(client, f"spec-owner-{i}")
+
+    async def get_owner_ids():
+        async with client.test_factory() as db:
+            return dict(
+                (
+                    await db.execute(
+                        select(User.id, User.username).where(
+                            User.username.in_([f"spec-owner-{i}" for i in range(10)])
+                        )
+                    )
+                ).all()
+            )
+
+    owner_names = client.portal.call(get_owner_ids)
+    owner_ids = list(owner_names)
+    assert len(owner_ids) == 10
+    owners = owner_ids[:2]
+
+    async def people_with_sandboxes(_db, _project_id):
+        return owners
+
+    monkeypatch.setattr(environments, "_people_with_sandboxes", people_with_sandboxes)
+
+    async def offered_spec_query_count():
+        count = 0
+
+        def record(_conn, _cursor, statement: str, *_rest) -> None:
+            nonlocal count
+            normalized = statement.lower()
+            if normalized.lstrip().startswith("select") and 'from "user"' in normalized:
+                count += 1
+
+        async with client.test_factory() as db:
+            target = db.sync_session.bind
+            event.listen(target, "before_cursor_execute", record)
+            try:
+                specs = await environments.offered_specs(
+                    db, SimpleNamespace(id=uuid.uuid4())
+                )
+            finally:
+                event.remove(target, "before_cursor_execute", record)
+        return count, specs
+
+    small_count, small_specs = client.portal.call(offered_spec_query_count)
+    owners = owner_ids
+    large_count, large_specs = client.portal.call(offered_spec_query_count)
+
+    small_devices = [
+        spec for spec in small_specs if spec["spec"].startswith("devices_of:")
+    ]
+    large_devices = [
+        spec for spec in large_specs if spec["spec"].startswith("devices_of:")
+    ]
+    small_by_spec = {spec["spec"]: spec["label"] for spec in small_devices}
+    large_by_spec = {spec["spec"]: spec["label"] for spec in large_devices}
+    assert len(small_devices) == len(small_by_spec) == 2
+    assert len(large_devices) == len(large_by_spec) == 10
+    assert set(small_by_spec) == {devices_of(user_id) for user_id in owner_ids[:2]}
+    assert set(large_by_spec) == {devices_of(user_id) for user_id in owner_ids}
+    assert all(
+        owner_names[user_id] in small_by_spec[devices_of(user_id)]
+        for user_id in owner_ids[:2]
+    )
+    assert all(
+        owner_names[user_id] in large_by_spec[devices_of(user_id)]
+        for user_id in owner_ids
+    )
+    assert small_count == large_count == 1

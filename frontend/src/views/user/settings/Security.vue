@@ -42,6 +42,7 @@
     @close-totp="closeTotp"
     @change-password="handleChangePassword"
     @unbind="handleUnbind"
+    @sign-in-github="signInWithGithub"
     @sign-out-device="signOutDevice"
     @sign-out-others="handleSignOutOthers"
     @copy="copy"
@@ -61,15 +62,19 @@ import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/brow
 
 import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
+import { signInWithGithub } from '@/composables/useGithubSignIn'
+
 import SecurityView from './SecurityView.vue'
 
 import { ApiError, deleteOAuthConnection, listOAuthConnections } from '@/api'
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
+import { GITHUB_APP_PROVIDER_ID } from '@/lib/githubAccount'
 import { useDialog } from '@/plugins/dialog'
 import AccountService, { currentUserId, currentUserName } from '@/services/account'
 import { oauthProviderName } from '@/views/account/oauthProvider'
+
 import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 
 const dialogs = useDialog()
@@ -314,9 +319,6 @@ const generateBackupCodes = async () => {
 
 // ---- Linked accounts ----
 
-// Only the accounts that sign in. A repository link (the GitHub app) is managed
-// with its project and never signs anyone in.
-const LINK_ONLY = new Set(['github_app'])
 const connections = ref<OAuthConnectionInfo[]>([])
 const connectionsLoaded = ref(false)
 const unbinding = ref<number | null>(null)
@@ -325,7 +327,7 @@ const fetchConnections = async () => {
   if (!currentUserId.value) return
   try {
     const { connections: all } = await listOAuthConnections(String(currentUserId.value))
-    connections.value = all.filter((c) => !LINK_ONLY.has(c.providerId))
+    connections.value = all
   } catch (error) {
     fail(error, t('account.security.loadFailed'))
   } finally {
@@ -335,9 +337,13 @@ const fetchConnections = async () => {
 
 const handleUnbind = async (conn: OAuthConnectionInfo) => {
   const provider = oauthProviderName(conn.providerId)
-  const confirmed = await dialogs
-    .confirm(t('account.security.unlinkBody', { provider }), { title: t('account.security.unlinkTitle', { provider }) })
-    .wait()
+  // GitHub does a second job besides signing in: unlinking it moves the PRs of
+  // every task this person owns back to the AI teammate, and they should know.
+  const body =
+    conn.providerId === GITHUB_APP_PROVIDER_ID
+      ? t('account.security.githubUnlinkBody')
+      : t('account.security.unlinkBody', { provider })
+  const confirmed = await dialogs.confirm(body, { title: t('account.security.unlinkTitle', { provider }) }).wait()
   if (confirmed) await unbind(conn.id)
 }
 

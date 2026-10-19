@@ -29,6 +29,9 @@ from app.domain.review.nudges import (
 from app.domain.review.nudges import (
     _title_nudge as _title_nudge_from_nudges,
 )
+from app.domain.review.ports import (
+    Announce,
+)
 from app.domain.review.room_notices import (
     _announce_filed as _announce_filed_from_room,
 )
@@ -77,20 +80,38 @@ from app.domain.review.services._shared import (
 )
 
 
+def _announce_of(self: pkg.AcceptService) -> Announce:
+    """构造时递进来的那一个（`ports.Announce`）。
+
+    只有只读路径的门不接线，`None` 就是那种；这里还要说话，说明有个门漏了递 ——
+    当场炸掉，比静默不发好。
+    """
+    if self._announce is None:
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError(
+            "AcceptService was built without an `announce`, and this path speaks: "
+            "the door that built it must hand one in "
+            "(app/domain/review/ports.py)"
+        )
+    return self._announce
+
+
 async def _announce_filed(
     self: pkg.AcceptService,
     topic: Topic,
     card: AcceptCard,
     task: Task,
 ) -> None:
-    return await _announce_filed_from_room(self._session, topic, card, task)
+    return await _announce_filed_from_room(
+        self._session, topic, card, task, announce=_announce_of(self)
+    )
 
 
 async def _announce_new_artifact(
     self: pkg.AcceptService, topic: Topic, name: str, *, task_id: uuid.UUID
 ) -> None:
     return await _announce_new_artifact_from_room(
-        self._session, topic, name, task_id=task_id
+        self._session, topic, name, task_id=task_id, announce=_announce_of(self)
     )
 
 
@@ -103,7 +124,12 @@ def _notify_merge_result(
     meta: dict | None = None,
 ) -> None:
     return _notify_merge_result_from_room(
-        pkg.async_session_factory, topic, content, task_id=task_id, meta=meta
+        pkg.async_session_factory,
+        topic,
+        content,
+        task_id=task_id,
+        meta=meta,
+        announce=_announce_of(self),
     )
 
 
@@ -123,20 +149,33 @@ async def _tell_the_reviewer(
     also: Sequence[str] = (),
 ) -> None:
     return await _tell_the_reviewer_from_room(
-        self._session, card, topic, content, meta=meta, also=also
+        self._session,
+        card,
+        topic,
+        content,
+        meta=meta,
+        also=also,
+        announce=_announce_of(self),
     )
 
 
 async def _settle_the_card(
     self: pkg.AcceptService, card: AcceptCard, outcome: str
 ) -> None:
-    return await _settle_the_card_from_room(self._session, card, outcome)
+    return await _settle_the_card_from_room(
+        self._session, card, outcome, settle_card=self._settle_card
+    )
 
 
 async def _notify_ready(
     self: pkg.AcceptService, card: AcceptCard, topic: Topic
 ) -> None:
-    return await _notify_ready_from_room(self._session, card, topic)
+    return await _notify_ready_from_room(
+        self._session,
+        card,
+        topic,
+        announce=_announce_of(self),
+    )
 
 
 async def _note_needs_human(
@@ -148,12 +187,17 @@ async def _note_needs_human(
     explain: str | None = None,
 ) -> None:
     return await _note_needs_human_from_room(
-        self._session, card=card, topic=topic, reason=reason, explain=explain
+        self._session,
+        card=card,
+        topic=topic,
+        reason=reason,
+        explain=explain,
+        announce=_announce_of(self),
     )
 
 
 async def _record_task_nudge(
-    self: pkg.AcceptService, *, topic, task, content, headline, meta, dispatch=None
+    self: pkg.AcceptService, *, topic, task, content, headline, meta, replaces=None
 ):
     return await _record_task_nudge_from_room(
         self._session,
@@ -162,7 +206,9 @@ async def _record_task_nudge(
         content=content,
         headline=headline,
         meta=meta,
-        dispatch=dispatch,
+        replaces=replaces,
+        announce=_announce_of(self),
+        record_instruction=self._record_instruction,
     )
 
 
@@ -222,7 +268,7 @@ async def _note_merge_blocked(
             "解决并验证后提交，用 cheese push-fix 更新原 PR。"
             "采纳由人决定；只有人已启用自动合并且项目条件满足时才会自动合并。\n"
             "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
-            "请在话题里说清楚卡在哪、需要谁做什么。"
+            "请在频道里说清楚卡在哪、需要谁做什么。"
         ),
         headline=say("mergeRefused", pr=card.pr_number),
         meta=notice(
@@ -250,7 +296,6 @@ async def _note_merge_stop_and_wake(
     action: str,
     headline,
     meta,
-    dispatch=None,
 ) -> None:
     """Put `note` on the card and, when it is new, wake the task's 芝士.
 
@@ -276,9 +321,6 @@ async def _note_merge_stop_and_wake(
         content=f"{lead}{action if actionable else _CLOSED_TASK_ACTION}",
         headline=headline,
         meta=meta,
-        # 任务已关闭时只留这条给房间看，不叫座位：那条指令它照做不了
-        # （`delivery.agent.dispatch_pending` 只会把它标成失败并留下一行误导的账）。
-        dispatch=dispatch if actionable else None,
     )
 
 
@@ -326,7 +368,6 @@ async def _note_left_merge_queue(
             severity=SEVERITY_ERROR,
             who=WHO_CHEESE,
         ),
-        dispatch=lead + action,
     )
 
 
@@ -441,6 +482,10 @@ async def _dispatch_nudges(
                 detail=nudge.detail or None,
                 detail_label=nudge.detail_label or None,
             ),
+            # Each kind's newest nudge restates that kind's whole current state
+            # on this PR, so it replaces one of its kind still waiting for the
+            # agent (`delivery.agent.record_task_instruction`).
+            replaces=f"pr:{card.pr_number}:{nudge.kind.value}",
         )
     for nudge in fresh:
         ledger.record(nudge.kind, nudge.signature)

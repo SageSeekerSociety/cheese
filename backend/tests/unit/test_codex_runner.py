@@ -173,3 +173,137 @@ async def test_work_ownership_precedes_ack_and_children_keep_original_work(tmp_p
         ]
     finally:
         await reopened.close()
+
+
+@pytest.mark.anyio
+async def test_a_turn_the_session_was_woken_into_is_its_own_work(tmp_path):
+    """A monitor's line said to an idle session starts a turn nobody sent:
+    the room opens the books for it when it speaks (`unsolicited`), and the
+    next turn the platform sends is the platform's work again."""
+    sent = []
+
+    async def send(text):
+        sent.append(text)
+        return "turn"
+
+    runner = Runner(tmp_path, AsyncMock())
+    runner.session = SimpleNamespace(
+        send=AsyncMock(side_effect=send),
+        thread_id="thread",
+        turn_id=None,
+        observe=lambda event: None,
+    )
+    try:
+        await runner.tell("<task-notification>line</task-notification>")
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "turn"}},
+            }
+        )
+        woken = (await runner.dispatch("events", {}))["events"][-1]["record"]
+        assert woken["cheese"]["unsolicited"] is True
+        own_work = woken["cheese"]["work_id"]
+
+        await runner.send("input", "from the room", work_id="platform-work")
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "next"}},
+            }
+        )
+        sent_turn = (await runner.dispatch("events", {}))["events"][-1]["record"]
+        assert sent_turn["cheese"]["work_id"] == "platform-work" != own_work
+        assert "unsolicited" not in sent_turn["cheese"]
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("ending", ["interrupted", "completed"])
+async def test_a_person_heard_during_a_woken_turn_gets_a_turn_of_their_own(
+    tmp_path, ending
+):
+    """A person's message that arrives with the room's own work while a turn a
+    monitor woke is running is not refused: that turn ends as its own work and
+    the message starts the room's, so each turn's records name the work the
+    room opened for it. Whether the woken turn stops for it or was finishing
+    anyway, the person's turn still owes them a reply."""
+    sent = []
+
+    async def send(text):
+        sent.append(text)
+        runner.session.turn_id = f"turn-{len(sent)}"
+        return runner.session.turn_id
+
+    async def interrupt():
+        turn = runner.session.turn_id
+
+        async def ends():
+            await runner.record(
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "thread",
+                        "turn": {"id": turn, "status": ending},
+                    },
+                }
+            )
+
+        asyncio.get_running_loop().call_later(0.05, asyncio.ensure_future, ends())
+        return True
+
+    def observe(event):
+        if event.get("method") == "turn/completed":
+            runner.session.turn_id = None
+
+    runner = Runner(tmp_path, AsyncMock())
+    runner.session = SimpleNamespace(
+        send=AsyncMock(side_effect=send),
+        interrupt=AsyncMock(side_effect=interrupt),
+        thread_id="thread",
+        turn_id=None,
+        observe=observe,
+    )
+    try:
+        await runner.tell("<task-notification>line</task-notification>")
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "turn-1"}},
+            }
+        )
+        woken = (await runner.dispatch("events", {}))["events"][-1]["record"]
+        await runner.send(
+            "input", "from a person", work_id="platform-work", owes_reply=True
+        )
+        assert sent == ["<task-notification>line</task-notification>", "from a person"]
+        records = [e["record"] for e in (await runner.dispatch("events", {}))["events"]]
+        ended = next(r for r in records if r.get("method") == "turn/completed")
+        assert ended["cheese"]["work_id"] == woken["cheese"]["work_id"]
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "turn-2"}},
+            }
+        )
+        theirs = (await runner.dispatch("events", {}))["events"][-1]["record"]
+        assert theirs["cheese"]["work_id"] == "platform-work"
+        assert "unsolicited" not in theirs["cheese"]
+        assert runner.owed == "input"
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_line_said_mid_turn_goes_into_that_turn(tmp_path):
+    runner = Runner(tmp_path, AsyncMock())
+    sender = AsyncMock(return_value="turn")
+    runner.session = SimpleNamespace(send=sender, thread_id="thread", turn_id="turn")
+    runner.journal.remember("work:thread", "platform-work")
+    try:
+        await runner.tell("<task-notification>line</task-notification>")
+        sender.assert_awaited_once()
+        assert runner.journal.recall("work:thread") == "platform-work"
+    finally:
+        await runner.close()

@@ -197,21 +197,21 @@ export const SHARED_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '认得的人',
-        note: 'handle 和显示名都给：画成 @爱丽丝。预览站没注入名册，所以它点不动 —— 这一格看的是名字那一半。',
+        note: 'handle 和显示名都给：画成名字「爱丽丝」。预览站没注入名册，所以它点不动 —— 这一格看的是名字那一半。',
         props: { handle: 'alice', name: '爱丽丝' },
-        expect: '@爱丽丝',
+        expect: '爱丽丝',
       },
       {
         name: '只知道名字',
-        note: '没有 handle 就没有去处（找不到那个人的主页）：照样画 @名字，但这一颗不是可点的东西。',
+        note: '没有 handle 就没有去处（找不到那个人的主页）：照样画名字，但不是可点的东西。',
         props: { name: '新来的同学' },
-        expect: '@新来的同学',
+        expect: '新来的同学',
       },
       {
         name: '没人注入名册时的兜底',
-        note: '只给 handle、名册又没注入：查不到显示名就退回 handle，画成 @alice，照样没有去处。',
+        note: '只给 handle、名册又没注入：查不到显示名就退回 handle，画成 alice，照样没有去处。',
         props: { handle: 'alice' },
-        expect: '@alice',
+        expect: 'alice',
       },
     ],
   },

@@ -1,0 +1,16 @@
+{
+  "claimFailed": "Couldn't claim the challenge",
+  "joined": "Registration submitted — your project is ready",
+  "leaveConfirm": "Leave this challenge?",
+  "leaveConfirmTitle": "Confirm withdrawal",
+  "leaveFailed": "Couldn't leave the challenge",
+  "leaveTeamConfirm": "Withdraw team \"{name}\" from this challenge?",
+  "left": "You left the challenge",
+  "loadTeamsFailed": "Couldn't load your teams",
+  "noEligibleTeams": "None of your teams can take part in this challenge",
+  "noTeamJoined": "You haven't joined this challenge on behalf of a team",
+  "signInFirst": "Sign in first",
+  "submitInfoFailed": "Couldn't submit your details",
+  "teamClaimFailed": "Couldn't claim the challenge for your team",
+  "teamLeft": "Your team left the challenge"
+}

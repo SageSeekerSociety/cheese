@@ -42,18 +42,19 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.block.models import Block
 from app.domain.conversation.models import Conversation
 from app.domain.project.repositories import ProjectRepository
 from app.domain.usage import pricing
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, Rates, payer_for_project
 from app.domain.usage.models import IngestCheckpoint
+from app.domain.usage.ports import TurnStarts
 
 logger = logging.getLogger("cheese.usage.ingest")
 
@@ -166,10 +167,12 @@ class WorkIndex:
     The metering proxy logs one line per ``/v1/messages`` response and knows
     nothing about platform attribution; blocks carry the originating message or
     work id. Joining the two makes the aggregate count attributed work instead
-    of HTTP calls. Starts are loaded once per topic per ingestion pass.
+    of HTTP calls. Starts come in through ``TurnStarts`` — that read is a layer
+    above this one — and are loaded once per topic per ingestion pass.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, turn_starts: TurnStarts) -> None:
+        self._turn_starts = turn_starts
         self._starts: dict[uuid.UUID, list[tuple[datetime, uuid.UUID]]] = {}
 
     async def work_at(
@@ -183,7 +186,7 @@ class WorkIndex:
             return None
         starts = self._starts.get(topic_id)
         if starts is None:
-            starts = await self._load(session, topic_id)
+            starts = list(await self._turn_starts(session, topic_id))
             self._starts[topic_id] = starts
         idx = bisect_right([s for s, _ in starts], moment) - 1
         if idx < 0:
@@ -192,23 +195,6 @@ class WorkIndex:
         if (moment - started_at).total_seconds() > _WORK_ATTRIBUTION_WINDOW_S:
             return None
         return work_id
-
-    async def _load(
-        self, session: AsyncSession, topic_id: uuid.UUID
-    ) -> list[tuple[datetime, uuid.UUID]]:
-        # One conversation's own blocks: a task's sit under its own id, and
-        # folding them into the room's would attribute the same turn twice.
-        stmt = (
-            select(Block.turn_id, func.min(Block.created_at))
-            .where(
-                Block.conversation_id == topic_id,
-                Block.turn_id.is_not(None),
-            )
-            .group_by(Block.turn_id)
-            .order_by(func.min(Block.created_at))
-        )
-        rows = (await session.execute(stmt)).all()
-        return [(started, work_id) for work_id, started in rows if work_id and started]
 
 
 # A row naming a project the database does not have is held for a later pass —
@@ -250,6 +236,7 @@ async def _land_row(
     # or a task or thread inside one. The usage row's own reference is to the
     # conversation, so that is where it is looked up.
     topic_id = _uuid_or_none(row.get("topic_id"))
+    logged_topic_id = topic_id
     if topic_id is not None:
         conversation = await session.scalar(
             select(Conversation.id)
@@ -297,6 +284,20 @@ async def _land_row(
         cost = rates.cost_usd(
             input_tokens, output_tokens, cache_read, cache_write, cache_write_1h
         )
+    execution = None
+    try:
+        logged_work_id = uuid.UUID(str(row.get("work_id")))
+    except ValueError:
+        logged_work_id = None
+    if logged_work_id is not None:
+        execution = await CreditBudgets(session).execution(logged_work_id, project_id)
+        if execution is not None and execution.conversation_id != logged_topic_id:
+            execution = None
+    work_id = (
+        execution.work_id
+        if execution is not None
+        else await work_index.work_at(session, logged_topic_id, row.get("ts"))
+    )
     await Ledger(session).record(
         await payer_for_project(session, project_id),
         credits=spend_to_credits(cost),
@@ -310,9 +311,9 @@ async def _land_row(
         cost_usd=cost,
         route="subscription",
         kind=row["kind"] if row.get("kind") in LINE_KINDS else "chat",
-        # The proxy log has no work id and one attributed unit can make many
-        # /v1/messages calls. Use the nearest block-carried id by timestamp.
-        turn_id=await work_index.work_at(session, topic_id, row.get("ts")),
+        turn_id=work_id,
+        # Timestamp matching can group old calls, but cannot authorize a member charge.
+        attribute_to_work=execution is not None,
     )
     return LANDED
 
@@ -327,9 +328,17 @@ def _row_age_s(ts: object) -> float | None:
 
 
 async def ingest_once(
-    session_factory: SessionFactory, path: Path, source: str = SOURCE
+    session_factory: SessionFactory,
+    path: Path,
+    source: str = SOURCE,
+    *,
+    turn_starts: TurnStarts,
 ) -> dict[str, int]:
     """One ingestion pass. Returns counters (for logs and tests).
+
+    ``turn_starts`` is handed in because this layer cannot read the blocks it
+    answers from (`app/domain/usage/ports.py`); the clock behind this pass gets
+    it at the composition root, a test passes the real one.
 
     A row naming a project the database does not have holds the checkpoint just
     before it and is retried next pass — it may be a race with the project
@@ -363,7 +372,7 @@ async def ingest_once(
             offset = 0
         rows, row_ends, consumed = read_new_lines(path, offset)
         new_offset = consumed
-        work_index = WorkIndex()
+        work_index = WorkIndex(turn_starts)
         unpriced: Counter[str] = Counter()
         unsplit: Counter[str] = Counter()
         for index, row in enumerate(rows):

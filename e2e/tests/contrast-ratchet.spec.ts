@@ -1,36 +1,31 @@
 import { test, expect } from '@playwright/test'
-import { writeFileSync } from 'node:fs'
 import {
   PAGES,
   THEMES,
   collectRuns,
-  compare,
   contrastRatio,
   formatContrastReport,
+  judge,
   roundRatio,
-  tightenedBaseline,
   worstOf,
 } from '../../frontend/scripts/contrast-ratchet-core.mjs'
-import { BASELINE, baselineFile, collect, measure, open, readBaseline } from '../contrast-walk.mjs'
+import { collect, measure, open } from '../contrast-walk.mjs'
 
 // The rendered half of `fe-contrast`: what a reader of the public pages
-// actually gets, painted. The rule, the ratchet and the baseline live in
-// frontend/ (scripts/contrast-ratchet-core.mjs, contrast-baseline.json) beside
-// the other frontend ratchets; this is the gate, because the measurement needs
-// a real browser and Playwright lives here.
+// actually gets, painted. The rule lives in frontend/
+// (scripts/contrast-ratchet-core.mjs) beside the other frontend checks; this is
+// the gate, because the measurement needs a real browser and Playwright lives
+// here. Every run must clear its floor; there is no baseline.
 //
-// The walk itself is not here: it is in e2e/contrast-walk.mjs, shared with the
-// driver the ratchet snapshot collector runs (e2e/contrast-ratchet.mjs), so the
-// number that page freezes and the verdict this gate gives come out of the same
-// code. What stays here is the three plants that say the walk still means what
-// the numbers need it to mean.
+// The walk lives in e2e/contrast-walk.mjs. The tests here check its verdict and
+// the planted cases that show the walk still measures the intended property.
 //
 // What it covers, and what it deliberately does not: the three public pages a
 // visitor can reach, in both themes, at 1440×900. `/` and `/about` are the same
 // document for a visitor (`/` is where the site's links point), so the landing
 // is measured once. The signed-in app is not covered — Playwright signs in as
 // alice and every spec shares that backend, but the app surface is large enough
-// that freezing it would freeze more than anyone has looked at. Public pages
+// that gating it would gate more than anyone has looked at. Public pages
 // are where #1328 and #3691 both went wrong.
 //
 // Animations are off (`reducedMotion: 'reduce'`), and not only for speed: the
@@ -39,53 +34,37 @@ import { BASELINE, baselineFile, collect, measure, open, readBaseline } from '..
 // Under reduced motion the landing's own stylesheet resolves the clause to
 // `--ink` immediately, so the measured value is the settled one.
 
-const UPDATE = process.env.CONTRAST_UPDATE === '1'
-const FREEZE_NEW = process.env.CONTRAST_FREEZE_NEW === '1'
-
 test('the public pages render every text run above its contrast floor', async ({ page }) => {
   test.slow()
   const runs = []
   for (const theme of THEMES) {
     for (const path of PAGES) runs.push(...(await measure(page, path, theme)))
   }
-  const worst = worstOf(runs)
-  if (UPDATE) {
-    const next = tightenedBaseline(readBaseline(), worst, { freezeNew: FREEZE_NEW })
-    writeFileSync(BASELINE, `${JSON.stringify(baselineFile(next), null, 2)}\n`)
-    console.log(
-      `${Object.keys(next).length} frozen run(s) written to ${BASELINE}` +
-        (FREEZE_NEW ? '' : ' (new runs not added — set CONTRAST_FREEZE_NEW=1 to accept them as debt)'),
-    )
-    return
-  }
-  const comparison = compare(readBaseline(), worst)
-  expect(comparison.ok, `\n${formatContrastReport(comparison)}\n`).toBe(true)
+  const verdict = judge(worstOf(runs))
+  expect(verdict.ok, `\n${formatContrastReport(verdict)}\n`).toBe(true)
 })
 
-test('a run planted below its floor goes red, and freezing it turns the page green', async ({ page }) => {
-  // The plant the unit tests cannot be: they exercise the arithmetic on runs
-  // they construct themselves, and the one thing that would make this gate
-  // useless is the walk itself. So this plants the mistake #3691 fixed — text
-  // written in `--faint` — in the real DOM, walks the real page, and requires
-  // the same compare() the gate runs to call it a regression.
+test('a run planted below its floor goes red', async ({ page }) => {
+  // The plant the unit tests cannot be: they exercise the verdict on runs they
+  // construct themselves, and the one thing that would make this gate useless
+  // is the walk itself. So this plants the mistake #3691 fixed — text written
+  // in `--faint` — in the real DOM, walks the real page, and requires the same
+  // judge() the gate runs to call it a failure.
   const runs = await measure(page, '/', 'light')
-  expect(compare(readBaseline(), worstOf(runs)).ok, 'the page as it stands passes').toBe(true)
+  expect(judge(worstOf(runs)).ok, 'the page as it stands passes').toBe(true)
 
   // The visitor bar's links, in `--faint`. No navigation after this: `open()`
   // would throw the planted stylesheet away.
   await page.addStyleTag({ content: '.site-nav a { color: var(--faint) !important; }' })
   const planted = await collect(page, '/', 'light')
-  const comparison = compare(readBaseline(), worstOf(planted))
-  expect(comparison.ok, `\n${formatContrastReport(comparison)}\n`).toBe(false)
+  const verdict = judge(worstOf(planted))
+  expect(verdict.ok, `\n${formatContrastReport(verdict)}\n`).toBe(false)
   // Named, not just counted: a plant that stopped hitting the links but darkened
-  // something else on the way past would still leave a non-empty `added` list.
-  expect(comparison.added.map(({ key }: { key: string }) => key)).toEqual([
+  // something else on the way past would still leave a non-empty `below` list.
+  expect(verdict.below.map(({ key }: { key: string }) => key)).toEqual([
     '/|light|a.router-link-active.router-link-exact-active|',
     '/|light|a|',
   ])
-  // The way out is a commit that says so, not a flag on the check.
-  const frozen = tightenedBaseline(readBaseline(), worstOf(planted), { freezeNew: true })
-  expect(compare(frozen, worstOf(planted)).ok, 'and the way out is to freeze it on purpose').toBe(true)
 })
 
 test('the ratio the page works out is the one the rule would', async ({ page }) => {

@@ -33,7 +33,7 @@ covers:
 | 主 API | `app.main:app` | 8081 | 全部业务接口、投递与调度、Agent 轮、迁移 | 替换（滚动交接见[部署拓扑](/dev/topology#handover)） |
 | 机器连接服务 | `app.device_connection_app:app` | 8082 | 设备与终端 WebSocket，以及进出设备的 RPC | 不重启（`release-device-connection.yml`） |
 | 模型隧道 | `app.llm_tunnel_app:app` | 8091 | 远端机器把模型流量送进来的 WebSocket | 不重启（`deploy/llm-tunnel/up.sh`） |
-| 代码托管事件中继 | `app.forge_events_app:app` | 8093 | 接 GitHub App 的 webhook，再经 WebSocket 推给各部署 | 单独部署 |
+| 代码托管事件中继 | `app.forge_events_app:app` | 8093 | 接 GitHub App 的 webhook，再经 WebSocket 推给各部署 | 它跑的代码变了才替换（`deploy/code-digest.py`） |
 
 分开的原因写在各自模块的 docstring 里：机器连接服务要活过主 API 的替换，否则每次发版都会掐断设备链接；模型隧道单独成进程，是因为隧道 WebSocket 原来终结在后端进程里，换容器就切断了那个窗口内所有机器的模型流量（`llm_tunnel_app.py` 引 #551）。
 
@@ -90,7 +90,7 @@ covers:
 
 - `error.name` 是调用方用来分辨「状态码一样但条件不同」的字段（`SudoRequiredError` 与普通 403 的区别就在这里）。它取类自己声明的 `wire_name`（不继承），没声明就是类名；改类名或把类并进别的类时，在类上写回旧名，客户端就不受影响。`code` 这个名字留给以后的 snake_case 错误码（`error.code`）。
 - `retryable` 取类属性，默认 `false`；只有同一个请求原样再发、过一会儿真会成功的类才写 `retryable = True`（今天是 forge 的限流和连不上；限流中间件的 429 也带 `true`）。前端对 502–504、520–530 的 GET 只在它不为 `false` 时自动重试。
-- `AppError` 和它的 `ValidationError`、`UnauthorizedError`、`GatewayUnavailableError` 已弃用：它们各自已经是替代类（`UnprocessableEntityError`、`AuthenticationRequiredError`、`UpstreamUnavailableError`）的子类，只保留「消息可省」的构造。`tests/unit/test_legacy_error_ratchet.py` 按文件记着它们的用法次数，多了少了都会红：新代码用替代类，迁完一处就把基线减下来。
+- `AppError` 和它的 `ValidationError`、`UnauthorizedError`、`GatewayUnavailableError` 已弃用：它们各自已经是替代类（`UnprocessableEntityError`、`AuthenticationRequiredError`、`UpstreamUnavailableError`）的子类，只保留「消息可省」的构造。新代码用替代类。
 - `Accept: text/event-stream` 的请求拿到的是 `event: error\ndata: <错误体>` 的 SSE 正文而不是 JSON：`data` 就是同一支 JSON 会答的那个体（`code`、`message` 和带 `name`/`data`/`retryable` 的 `error`），调用方按字段判别，不必去读那句话（`test_a_deprecated_error_answers_a_stream_with_the_same_envelope`）。这条分支在 `BaseError`、`HTTPException`、请求校验三个处理器里各写了一遍，**转发异常 headers 的只有 `HTTPException` 的 JSON 那支和 `DeviceOffline`**；`BaseError` 没有 headers。
 
 处理器一律用 `closing_the_socket` 包一层：异常发生在 WebSocket 连接上时不能返回 HTTP 响应（uvicorn 会拒绝并报「Expected ASGI message ...」），改成记一条 WARNING 后按 1011 关掉。
@@ -137,7 +137,7 @@ covers:
 
 ## 周期任务清单 {#periodic}
 
-`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 34 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
+`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 35 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
 
 登记名称重复、清单缺项或出现未列出的任务都会报错，防止巡检漏接后静默缺席。
 
@@ -147,7 +147,8 @@ covers:
 |---|---|---|
 | forge event subscriptions | 固定 300s | 对账仓库 webhook 订阅 |
 | forge credential cache cleanup | 固定 3600s | 清过期的托管平台令牌缓存 |
-| pr poll / task pr poll / draft pr sweep | `accept_pr_poll_interval_s` | 镜像 PR 合并态、给没卡的任务补卡、开 draft PR |
+| pr poll / task pr poll | `accept_pr_poll_interval_s` | 镜像 PR 合并态、给没卡的任务补卡 |
+| draft pr sweep | `draft_pr_sweep_interval_s` | 给有提交、还没 PR 的分支开 draft PR；周期这一拍只扫 `draft_pr_sweep_activity_window_s` 内动过的任务，事件和重连的补扫扫全部 |
 | orphan sweep | `orphan_sweep_interval_s` | 扫死了没带进程一起死的轮 |
 | chat progress reminder | `chat_progress_check_interval_s` | 提醒沉默的轮 |
 | gate sweep | `gate_sweep_interval_s` | 收超龄的闸门孤儿卡 |
@@ -159,6 +160,7 @@ covers:
 | notification email drain / push drain | `notification_email_drain_interval_s` / `notification_push_drain_interval_s` | 那两条 Redis 队列的唯一消费者，不跑就一封邮件、一条推送都不发 |
 | delivery resend | `delivery_resend_interval_s` | 投递账本上「记下了没发出去」的行 |
 | docs question retention | 固定 86400s | 清过期的问芝士记录 |
+| turn resumes | 固定 30s | 因模型服务临时故障（`agent/resumable_failures.py` 认得的那几类：限流、过载和 5xx、流中断、连不上、订阅出口离线、订阅账号冷却、说明了恢复时刻的额度）失败的轮次，到点把「接着做」记上投递账本（`agent/turn_resume.py`），由下一项派发 |
 | timed deliveries | 固定 30s | 定时投递到点派发 |
 | overdue deliveries | `delivery_overdue_check_interval_s` | 给 AI 的投递记下超过 30 分钟还没送出去，就发告警（同一个问题一小时一条） |
 | routines | 固定 30s | 周期任务与事件触发的一次执行 |

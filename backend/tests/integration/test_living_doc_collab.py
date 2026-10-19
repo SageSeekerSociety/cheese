@@ -253,7 +253,10 @@ def test_a_markdown_write_that_would_lose_text_is_refused_with_the_reason(client
 def test_a_project_document_in_no_room_is_its_members_and_nobody_elses(client):
     """A document of the project's own, in no task, is read and written by the
     project's members through the same routes, and refused to anyone else."""
+    from sqlalchemy import select
+
     from app.domain.living_doc.models import Document
+    from app.domain.project.models import Project
 
     task = _topic(client)
     project_id = uuid.UUID(
@@ -264,7 +267,10 @@ def test_a_project_document_in_no_room_is_its_members_and_nobody_elses(client):
 
     async def make() -> uuid.UUID:
         async with client.test_factory() as session:
-            doc = Document(project_id=project_id)
+            team = await session.scalar(
+                select(Project.team_id).where(Project.id == project_id)
+            )
+            doc = Document(project_id=project_id, team_id=team)
             session.add(doc)
             await session.commit()
             return doc.id

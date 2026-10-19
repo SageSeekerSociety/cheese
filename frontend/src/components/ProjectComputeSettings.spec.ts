@@ -18,6 +18,8 @@ const vm: Environment = { kind: 'sandbox', spec: 'vm' }
 function configs(overrides: Partial<ProjectComputeConfigs> = {}): ProjectComputeConfigs {
   return {
     default: standard,
+    max_concurrent_turns: 20,
+    max_concurrent_turns_from: 'deployment',
     can_manage: true,
     devices: [{ device_id: 'lab', name: '实验室工作站', online: true, owned: true }],
     specs: [

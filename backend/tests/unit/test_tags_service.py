@@ -162,8 +162,11 @@ class TestGetTopic:
         svc, repo = _make_service()
         repo.get_by_id.return_value = None
 
-        with pytest.raises(NotFoundError, match="Topic not found"):
+        with pytest.raises(NotFoundError) as raised:
             await svc.get_tag(999)
+        error = raised.value.to_response_body()["error"]
+        assert error["i18n"]["key"] == "tagNotFound"
+        assert error["data"] == {"id": 999}
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +192,10 @@ class TestCreateTopic:
         svc, repo = _make_service()
         repo.get_by_name.return_value = _topic(id=1, name="Existing")
 
-        with pytest.raises(ConflictError, match="Topic already exists"):
+        with pytest.raises(ConflictError) as raised:
             await svc.create_tag(name="Existing", created_by_id=7)
+        error = raised.value.to_response_body()["error"]
+        assert error["i18n"]["key"] == "tagNameTaken"
+        assert error["data"] == {"name": "Existing"}
 
         repo.create.assert_not_awaited()

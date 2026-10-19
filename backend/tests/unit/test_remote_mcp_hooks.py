@@ -12,7 +12,6 @@ the machine: which hooks ran, with what, and whether the call went out.
 """
 
 import argparse
-import asyncio
 import json
 import subprocess
 import sys
@@ -23,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from tests.pinned_claude import claude_binary
+from tests.support.mcp_gateway_client import call_tool, text_of, tool_names
 
 SCRIPTS = Path(__file__).resolve().parents[3] / "scripts/remote_execution"
 
@@ -77,7 +77,7 @@ def platform():
     calls: list[dict] = []
 
     class Route(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802 — the stdlib's name
+        def do_POST(self):  # the stdlib's name
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             calls.append({"path": self.path, **body})
             if body["method"] == "tools/call":
@@ -158,26 +158,14 @@ def test_codex_calls_a_remote_server_inside_the_projects_hooks(
     monkeypatch.setenv("CHEESE_API", api)
     monkeypatch.setenv("CHEESE_TOKEN", "room-token")
     target = {**target, "remote_mcp": {"path": "/topics/t/mcp", "servers": ["tracker"]}}
+    gateway = RemoteTools(target).gateway()
+    gateway.start()
     try:
-        tools = RemoteTools(target)
-        names = [tool["name"] for tool in asyncio.run(tools.discover())]
-        assert "mcp__tracker__whoami" in names
+        assert tool_names(gateway, "tracker") == ["whoami"]
 
-        def call(call_id, note):
-            return asyncio.run(
-                tools(
-                    "item/tool/call",
-                    {
-                        "tool": "mcp__tracker__whoami",
-                        "callId": call_id,
-                        "arguments": {"note": note},
-                    },
-                )
-            )
-
-        allowed = call("call-1", "hello")
-        assert allowed["success"] is True, allowed
-        assert allowed["contentItems"][0]["text"] == "REMOTE_RESULT hello"
+        allowed = call_tool(gateway, "tracker", "whoami", {"note": "hello"})
+        assert not allowed.get("isError"), allowed
+        assert text_of(allowed) == "REMOTE_RESULT hello"
         pre, post = _log(project)
         assert (pre["hook_event_name"], pre["tool_name"]) == (
             "PreToolUse",
@@ -187,13 +175,16 @@ def test_codex_calls_a_remote_server_inside_the_projects_hooks(
         assert post["hook_event_name"] == "PostToolUse"
         assert post["tool_response"]["content"][0]["text"] == "REMOTE_RESULT hello"
 
-        reached = len(calls)
-        denied = call("call-2", "FORBIDDEN")
-        assert denied["success"] is False
-        assert "PROJECT_POLICY: no forbidden notes" in denied["contentItems"][0]["text"]
-        assert len(calls) == reached, "a denied call never reaches the server"
+        reached = len([c for c in calls if c["method"] == "tools/call"])
+        denied = call_tool(gateway, "tracker", "whoami", {"note": "FORBIDDEN"})
+        assert denied["isError"] is True
+        assert "PROJECT_POLICY: no forbidden notes" in text_of(denied)
+        assert len([c for c in calls if c["method"] == "tools/call"]) == reached, (
+            "a denied call never reaches the server"
+        )
         assert [e["hook_event_name"] for e in _log(project)[2:]] == ["PreToolUse"]
     finally:
+        gateway.close()
         subprocess.run(executor.command("stop"), capture_output=True, timeout=30)
 
 

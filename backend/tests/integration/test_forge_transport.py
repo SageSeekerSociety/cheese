@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.forgejo_tokens import seal_forge_token
+from app.domain.project.forgejo_tokens import seal_forge_token
 from app.domain.project.models import ForgeToken
 
 

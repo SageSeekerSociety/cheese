@@ -46,6 +46,10 @@ checks the ones that can be read off the source:
   unresolved-drop
       A drop or rename whose table or column is not a literal cannot be
       checked; spell the names out (or justify an exception).
+  unparseable
+      A migration file does not parse as Python. Every statement in it is
+      unjudged, so it is an error, not the warning ``unresolved`` gives a
+      statement whose SQL is merely dynamic.
   lock-retry-copy
       Lock retries come from ``migration_helpers.with_lock_retries``, not a
       pasted ``DO`` block.
@@ -74,20 +78,33 @@ Usage:
 
 FILEs, when given, are judged instead of the added ones (still against
 ``--base``'s models).
+
+Exit 0 nothing unsafe was read, 1 something was, 2 ``--base`` could not be read,
+so nothing was judged.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 VERSIONS_DIR = "backend/alembic/versions"
 MODELS_DIR = "backend/app"
+
+# Exit 2 is this directory's "could not judge" (check-file-sizes.py, test-changed.py
+# and the ratchets all use it). A guard that could not read its comparison base has
+# judged no migration at all, so exiting 0 there is indistinguishable from a run
+# that read the diffs and cleared them. Distinct from 1, which means migrations were
+# read and refused, so a caller can tell "could not answer" from "answered no".
+EXIT_CANNOT_JUDGE = 2
 
 ERROR_RULES = frozenset(
     {
@@ -106,10 +123,10 @@ ERROR_RULES = frozenset(
         "lock-retry-copy",
         "unresolved-table",
         "unresolved-drop",
+        "unparseable",
         "empty-downgrade",
     }
 )
-WARNING_RULES = frozenset({"alter-column-existing", "fk-on-add-column", "unresolved"})
 
 _PRAGMA = re.compile(
     r"#\s*migration-safety:\s*(allow|allow-file)\s+([a-z0-9,\- ]+?)\s*(?:—|--|:)\s*(\S.*)$"
@@ -911,7 +928,10 @@ def analyze(migrations: dict[str, str], base_models: dict[str, str]) -> list[Fin
         try:
             tree = ast.parse(source)
         except SyntaxError as error:
-            findings.append(Finding(path, error.lineno or 1, "unresolved", f"does not parse: {error}"))
+            # A file that does not parse was not read and cleared: every statement
+            # in it is unjudged. `unresolved` is a warning for one statement whose
+            # SQL is dynamic, so reusing it here let a broken file exit 0.
+            findings.append(Finding(path, error.lineno or 1, "unparseable", f"does not parse: {error}"))
             continue
         facts = _FileFacts()
         visitor = _Migration(path, source, base_tables, new_tables, facts)
@@ -984,6 +1004,24 @@ def added_migrations(base: str, versions_dir: str) -> list[str]:
     return sorted({p for p in added + untracked if p.endswith(".py")})
 
 
+def cannot_judge(base: str) -> int:
+    """Refuse to answer when ``base`` cannot be read, instead of passing by default.
+
+    Which migrations are new, and the models the release still serving maps, both
+    come from ``base``: run without it and the drop/rename rules have nothing to
+    compare against, so a clean report would mean "nothing looked at", not "nothing
+    wrong". The explanation goes to stderr, the way check-file-sizes.py reports its
+    own 2, so that stdout carries a verdict or nothing.
+    """
+    print(
+        f"cannot judge: {base} is not a ref this checkout has, so the migrations this "
+        "branch adds cannot be told from the ones already there.",
+        file=sys.stderr,
+    )
+    print("Fetch it first (`git fetch --unshallow origin`), or name another --base.", file=sys.stderr)
+    return EXIT_CANNOT_JUDGE
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default="origin/main")
@@ -1005,20 +1043,15 @@ def main() -> int:
         base_models = read_tree(args.base, args.models_dir)
         paths = files or added_migrations(args.base, args.versions_dir)
     except subprocess.CalledProcessError:
-        if os.environ.get("CI"):
-            print(f"FAIL: {args.base} is not available; fetch it before this step (git fetch --unshallow origin)")
-            return 2
-        if not files:
-            print(f"note: {args.base} not available — cannot tell which migrations are new, skipping")
-            return 0
-        print(f"note: {args.base} not available — drop/rename rules skipped, the rest still apply")
-        base_models, paths = {}, files
+        return cannot_judge(args.base)
 
     if not paths:
         print(f"PASS: no migrations added relative to {args.base}")
         return 0
 
-    migrations = {p: Path(p).read_text(encoding="utf-8") for p in paths if Path(p).is_file()}
+    # `utf-8-sig` drops a BOM: Python's file reader tolerates one, but `ast.parse`
+    # on the decoded text rejects U+FEFF, which would now block a valid migration.
+    migrations = {p: Path(p).read_text(encoding="utf-8-sig") for p in paths if Path(p).is_file()}
     findings = analyze(migrations, base_models)
     errors = [f for f in findings if f.is_error]
     for finding in findings:
@@ -1409,13 +1442,113 @@ def self_test() -> int:
         [],
     )
 
+    # --- a file that does not parse is not a clean file ----------------------
+    # `unresolved` is a warning for one statement whose SQL is dynamic. The same
+    # name used to cover a whole file that does not parse, so a migration with a
+    # syntax error was reported as a warning and the run exited 0.
+    broken = {"m.py": _HEAD + "\ndef upgrade() -> None:\n    op.drop_column('task', 'video_url'\n"}
+    unparseable = analyze(broken, _BASE_MODELS)
+    check("a migration that does not parse", [f.rule for f in unparseable], ["unparseable"])
+    check("... is an error, not a warning", [f.is_error for f in unparseable], [True])
+
+    # --- a base it cannot read is not a clean tree ---------------------------
+    # The local path through `main()` that could not reach `--base` wrote a note
+    # and exited 0, which the pre-commit hook read exactly as "read the added
+    # migrations and cleared them". Driven through the real command in a real
+    # repository: the exit code, and the `git rev-parse` that runs before the
+    # read, are the whole of what is asserted here, and the pure functions above
+    # cannot see either.
+    lab = Path(tempfile.mkdtemp(prefix="migration-safety-self-test-"))
+    lab_env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    lab_env.pop("GIT_DIR", None)
+    # `CI` goes too, so that the child is the local path these assertions are
+    # about. The code they pin read it: under `CI` an unreachable base already
+    # exited 2, so leaving it set would let the unfixed script pass whenever the
+    # self-test ran in CI — which is the only place it runs on its own.
+    lab_env.pop("CI", None)
+    try:
+        versions = lab / "backend" / "alembic" / "versions"
+        versions.mkdir(parents=True)
+        (versions / "x.py").write_text(_HEAD + "\ndef upgrade() -> None:\n    pass\n", encoding="utf-8")
+
+        def git(*argv: str) -> None:
+            done = subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", *argv],
+                cwd=lab,
+                capture_output=True,
+                text=True,
+                env=lab_env,
+            )
+            if done.returncode != 0:
+                raise AssertionError(
+                    f"self-test fixture: git {' '.join(argv)} exited {done.returncode}: {done.stderr.strip()}"
+                )
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "self-test@example.invalid")
+        git("config", "user.name", "self-test")
+        git("add", "-A")
+        git("commit", "-qm", "x")
+
+        # Both shapes of the command: with nothing named it has to work out the
+        # added set itself, and with a file named it can read that one but not
+        # the previous release's models. Neither can finish without the base.
+        for label, argv in (
+            ("with no files named", []),
+            ("with a file named", ["backend/alembic/versions/x.py"]),
+        ):
+            unavailable = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--base", "no-such-base-ref", *argv],
+                cwd=lab,
+                capture_output=True,
+                text=True,
+                env=lab_env,
+            )
+            check(f"an unavailable --base is refused {label}", unavailable.returncode, EXIT_CANNOT_JUDGE)
+            check(f"... and no verdict is printed {label}", "PASS" in unavailable.stdout, False)
+
+        # Through the real command, with a base it can read: one untracked
+        # migration whose syntax is broken must exit 1 and never print PASS.
+        (versions / "broken.py").write_text(
+            _HEAD + "\ndef upgrade() -> None:\n    op.drop_column('task', 'video_url'\n",
+            encoding="utf-8",
+        )
+        broken_run = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--base", "main"],
+            cwd=lab,
+            capture_output=True,
+            text=True,
+            env=lab_env,
+        )
+        check("a migration that does not parse is refused", broken_run.returncode, 1)
+        check("... and it is named", "[unparseable]" in broken_run.stdout, True)
+        check("... and no verdict is printed", "PASS" in broken_run.stdout, False)
+
+        # A BOM is valid to Python's file reader; it must not read as unparseable.
+        (versions / "broken.py").unlink()
+        (versions / "bom.py").write_bytes(
+            b"\xef\xbb\xbf" + (_HEAD + "\ndef upgrade() -> None:\n    pass\n").encode(),
+        )
+        bom_run = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--base", "main"],
+            cwd=lab,
+            capture_output=True,
+            text=True,
+            env=lab_env,
+        )
+        check("a BOM-prefixed migration is read", bom_run.returncode, 0)
+        check("... and is not called unparseable", "unparseable" in bom_run.stdout, False)
+    finally:
+        shutil.rmtree(lab, ignore_errors=True)
+
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}")
     if failures:
         return 1
     print(
         "PASS: check-migration-safety self-test (drop/rename, index, constraints, columns, imports, "
-        "unreadable names, NOT VALID/VALIDATE, empty downgrade, exceptions)"
+        "unreadable names, NOT VALID/VALIDATE, empty downgrade, unparseable files, exceptions, and "
+        "the refusal of a --base it cannot read)"
     )
     return 0
 

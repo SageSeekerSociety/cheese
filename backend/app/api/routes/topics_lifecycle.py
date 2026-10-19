@@ -19,6 +19,11 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError
 from app.core.sentences import say
 from app.domain.agent.project_feed import TOPICS, tell_project
+from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.adapters import platform_line
+from app.domain.delivery.ledger import settle_card
+from app.domain.review.archive import close_cards_for_archived_topic
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -26,7 +31,7 @@ from app.domain.topic_membership.services import TopicMemberService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("/{topic_id}/archive")
+@router.post("/{topic_id}/archive", dependencies=[ROUTE_DECIDES])
 async def archive_topic(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -41,7 +46,14 @@ async def archive_topic(
     if not actor.authenticated:
         raise ForbiddenError(say("archiveSignIn"))
     await TopicMemberService(db).require_administrator(topic_id, actor.handle)
-    topic = await TopicService(db).archive(topic_id, by=actor.handle)
+    topic = await TopicService(db).archive(
+        topic_id,
+        by=actor.handle,
+        settle_card=settle_card,
+        cards=close_cards_for_archived_topic,
+        close_tasks=close_room_tasks,
+        events=platform_line,
+    )
     out = TopicOut.model_validate(topic).model_dump(mode="json")
     await db.commit()
     await tell_project(topic_id, TOPICS)
@@ -72,7 +84,7 @@ async def cleanup_status(
     )
 
 
-@router.post("/{topic_id}/unarchive")
+@router.post("/{topic_id}/unarchive", dependencies=[ROUTE_DECIDES])
 async def unarchive_topic(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -87,7 +99,12 @@ async def unarchive_topic(
     if not actor.authenticated:
         raise ForbiddenError(say("unarchiveSignIn"))
     await TopicMemberService(db).require_administrator(topic_id, actor.handle)
-    topic = await TopicService(db).unarchive(topic_id, by=actor.handle)
+    topic = await TopicService(db).unarchive(
+        topic_id,
+        by=actor.handle,
+        sessions=AgentSessionService(db),
+        events=platform_line,
+    )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
@@ -111,7 +128,14 @@ async def delete_topic(
     if not actor.authenticated:
         raise ForbiddenError(say("deleteChannelSignIn"))
     await TopicMemberService(db).require_administrator(topic_id, actor.handle)
-    await TopicService(db).delete(topic_id, by=actor.handle)
+    await TopicService(db).delete(
+        topic_id,
+        by=actor.handle,
+        settle_card=settle_card,
+        cards=close_cards_for_archived_topic,
+        close_tasks=close_room_tasks,
+        events=platform_line,
+    )
     await db.commit()
     await tell_project(topic_id, TOPICS)
     return ok({"deleted": True})

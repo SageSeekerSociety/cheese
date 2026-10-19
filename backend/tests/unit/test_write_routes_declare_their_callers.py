@@ -20,13 +20,8 @@ from app.api.write_access import (
     violations,
     write_routes,
 )
-from app.api.write_access_baseline import UNDECLARED
 from app.core.errors import register_exception_handlers
 from app.main import app
-
-# The frozen list may only shrink. Lower this when you declare routes; raising
-# it lets a new route skip the declaration, which is what the list exists to stop.
-_CEILING = 404
 
 # The routes only a 芝士 credential may call. Widening one to ROUTE_DECIDES lets
 # a person's browser session through, so it is a decision, not a refactor:
@@ -39,7 +34,7 @@ _CHEESE_ONLY = {
 
 
 def test_the_app_has_no_write_route_without_a_declaration() -> None:
-    assert violations(app, UNDECLARED) == []
+    assert violations(app) == []
 
 
 def test_the_cheese_only_surface_is_the_one_decided() -> None:
@@ -49,21 +44,6 @@ def test_the_cheese_only_surface_is_the_one_decided() -> None:
         if r.declared and r.declared[0].startswith("cheese_only")
     }
     assert found == _CHEESE_ONLY
-
-
-def test_the_frozen_list_names_only_undeclared_routes_that_exist() -> None:
-    undeclared = {(r.method, r.path) for r in write_routes(app) if not r.declared}
-    stale = sorted(UNDECLARED - undeclared)
-    assert not stale, (
-        "declared, renamed or removed; delete these from "
-        f"app/api/write_access_baseline.py: {stale}"
-    )
-
-
-def test_the_frozen_list_does_not_grow() -> None:
-    assert len(UNDECLARED) <= _CEILING, "declare the new route instead"
-    # Ratchet: once the list shrinks, the ceiling follows it down.
-    assert len(UNDECLARED) == _CEILING, f"lower _CEILING to {len(UNDECLARED)}"
 
 
 def _app(*routers: APIRouter, guarded: bool = False) -> FastAPI:
@@ -83,11 +63,9 @@ def test_an_undeclared_write_route_is_refused() -> None:
     @router.get("/{thing_id}")
     async def read(thing_id: str) -> None: ...
 
-    found = violations(_app(router), frozenset())
+    found = violations(_app(router))
     assert len(found) == 1
     assert found[0].startswith("POST /things/{thing_id} ")
-    # The frozen list lets the same route through, by method and path.
-    assert violations(_app(router), frozenset({("POST", "/things/{thing_id}")})) == []
 
 
 def test_a_router_declares_for_its_routes_and_a_route_declares_once() -> None:
@@ -96,14 +74,14 @@ def test_a_router_declares_for_its_routes_and_a_route_declares_once() -> None:
     @declared.delete("/{thing_id}")
     async def remove(thing_id: str) -> None: ...
 
-    assert violations(_app(declared), frozenset()) == []
+    assert violations(_app(declared)) == []
 
     twice = APIRouter(prefix="/twice", dependencies=[ROUTE_DECIDES])
 
     @twice.post("/{topic_id}", dependencies=[CHEESE_ONLY_IN_ROOM])
     async def both(topic_id: str) -> None: ...
 
-    [found] = violations(_app(twice), frozenset())
+    [found] = violations(_app(twice))
     assert "cheese_only_in_room and route_decides" in found
 
 

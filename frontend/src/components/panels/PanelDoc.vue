@@ -18,11 +18,13 @@
 // 西就是这一格的接口，谁传谁看得见；将来哪一样不传了，typecheck 也会点名。
 import type { DocPeopleBundle } from '../../composables/useDocPeople'
 import type { DocThreadsBundle } from '../../composables/useDocThreads'
+import type { useMentionOutside } from '../../composables/useMentionOutside'
 import type { PanelDocBundle, PanelDocument } from '../../composables/usePanelDoc'
 import type { Topic } from '../../cx_types'
+import type { DocAuthor } from '../../lib/docAuthors'
 import type { DocReviewRequest } from '../../lib/docReview'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import PanelDocView from './PanelDocView.vue'
 
@@ -46,6 +48,8 @@ const props = withDefaults(
     agentHandle?: string | null
     /** 画在一整页里，见 PanelDocView。 */
     bare?: boolean
+    /** 文档的作者，标题下面那一行，见 PanelDocView。 */
+    authors?: DocAuthor[]
     /** 顶栏画到页面上的哪个位置，见 PanelDocView。 */
     barTo?: string
     /** 跟着外面那一列一起滚，见 PanelDocView。 */
@@ -56,6 +60,8 @@ const props = withDefaults(
     docThreads: DocThreadsBundle
     /** 名册读成名字那一包（`composables/useDocPeople.ts`）。 */
     docPeople: DocPeopleBundle
+    /** 评论 @ 了打不开这份文档的人时问的那一句（`composables/useMentionOutside.ts`）。 */
+    commentOutside?: ReturnType<typeof useMentionOutside>
   }>(),
   {
     taskId: null,
@@ -64,6 +70,8 @@ const props = withDefaults(
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     bare: false,
+    authors: () => [],
+    commentOutside: undefined,
     barTo: undefined,
     flow: false,
   }
@@ -73,13 +81,17 @@ const props = withDefaults(
 // open-file: a <&path> chip was clicked — WorkPanel switches to the
 // 改动 tab and opens it there (the ONE cross-tab wire, and the only one).
 const emit = defineEmits<{
-  (e: 'open-topic', topicId: string): void
+  /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
+  (e: 'open-topic', topicId: string, blockId?: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   /** 资料库文档的标题变了（自己改的，或者别人改的）。 */
   (e: 'titled', title: string): void
   /** 「⋯」里点了删除：问不问、怎么删、删完去哪，由这一页定。 */
   (e: 'delete'): void
+  /** 「移动到…」：挪到自己名下、团队或团队的一个项目（#3774）。 */
+  (e: 'move'): void
+  (e: 'share'): void
 }>()
 
 const viewRef = ref<InstanceType<typeof PanelDocView> | null>(null)
@@ -92,13 +104,34 @@ const people = props.docPeople
 // 或不在名册上的人给空串，由 UserAvatar 画他自己的首字母 —— 不再退回全站那张默认脸。
 const avatarOf = (handle: string) => people.avatars.value[handle] ?? ''
 
-// 回复里 @ 的 AI 队友，和发评论一样写成点名。
+// 我在文档里 @ 了打不开它的人：那一条提示要写成名字。
+const outsidePrompt = computed(() => {
+  const asked = doc.mentionOutside.prompt.value
+  if (!asked) return null
+  return {
+    names: asked.handles.map((h) => people.names.value[h] ?? h).join(t('work.room.roster.listSeparator')),
+    membersOnly: asked.members_only,
+    mayAdd: asked.may_add,
+    adding: doc.mentionOutside.adding.value,
+  }
+})
+
+// 回复里 @ 的 AI 队友，和发评论一样写成点名。回执里说了谁打不开这份文档，就问一句。
 const threads = {
   state: docThreads.state,
   actions: {
     ...docThreads.actions,
-    reply: (id: string, content: string) => docThreads.actions.reply(id, doc.withMentions(content)),
+    reply: async (id: string, content: string) => {
+      const written = await docThreads.actions.reply(id, doc.withMentions(content))
+      if (written) props.commentOutside?.offer(written)
+      return written
+    },
   },
+}
+async function sendComment(content: string, quote: string) {
+  const posted = await doc.sendComment(content, quote)
+  props.commentOutside?.offer(posted)
+  return posted
 }
 
 // Dev-only probe hook: lets Playwright inspect the live document without
@@ -169,24 +202,33 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :deleted="doc.deleted.value"
     :activity-tick="props.activityTick"
     :topic-list="props.topicList"
+    :document-list="doc.linkable.value"
+    :backlinks="doc.backlinks.value"
     :agent-name="props.agentName"
     :agent-handle="props.agentHandle"
     :mention-names="people.names.value"
     :mention-people="people.people.value"
+    :notified-mentions="doc.notifiedMentions.value"
+    :fetch-notified-mentions="doc.fetchNotifiedMentions"
     :bare="props.bare"
+    :authors="props.authors"
     :untitled="!!props.taskId"
     :bar-to="props.barTo"
     :flow="props.flow"
     :session="doc.session.value"
     :editable="doc.editable.value"
     :read-only="doc.readOnly.value"
+    :suggest-only="doc.suggestOnly.value"
+    :suggesting="doc.suggesting.value"
+    :set-suggesting="doc.setSuggesting"
     :loading="doc.loading.value"
     :connection="doc.connection.value"
     :outdated="doc.outdated.value"
     :peers="doc.peers.value"
     :error-msg="doc.errorMsg.value"
     :comment-author="doc.commentAuthor"
-    :send-comment="doc.sendComment"
+    :send-comment="sendComment"
+    :comment-outside="commentOutside"
     :refresh-threads="docThreads.refresh"
     :thread-state="threads.state"
     :thread-actions="threads.actions"
@@ -206,11 +248,16 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :avatar-of="avatarOf"
     :load-versions="doc.loadVersions"
     :restore-version="doc.restoreVersion"
-    @open-topic="emit('open-topic', $event)"
+    :mention-outside="outsidePrompt"
+    @mention-outside-add="doc.mentionOutside.add"
+    @mention-outside-dismiss="doc.mentionOutside.dismiss"
+    @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
     @rename="rename"
     @delete="emit('delete')"
+    @move="emit('move')"
+    @share="emit('share')"
   >
     <template #lead><slot name="lead" /></template>
   </PanelDocView>

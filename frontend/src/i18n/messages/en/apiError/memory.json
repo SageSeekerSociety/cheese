@@ -46,8 +46,7 @@
   "migrationUnknownSource": "A decision's source isn't a known old memory: {source}",
   "migrationUnplaced": "These old memories have nowhere to go ({count} in all): {sources}{more}",
   "privateMemoryNeedsOwner": "A private memory needs owner_handle",
-  "privateMemoryOwnerEdits": "Only its owner can change a private memory. Admins can see it but can't change it",
-  "privateMemoryOwnerSees": "Only its owner and project admins can see a private memory",
+  "privateMemoryOwnerSees": "Can't access someone else's private memory",
   "projectIdInvalid": "Invalid project_id",
   "versionMustBeInteger": "version must be an integer"
 }

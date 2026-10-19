@@ -279,7 +279,10 @@ def release_abandoned_views():
 
 def sources():
     # deferred-import: this file also runs on the machine, with no `app` package
-    from app.domain.agent import executor_transport
+    from app.domain.agent import executor_transport, pr_creation
+
+    # deferred-import: this file also runs on the machine, with no `app` package
+    from app.domain.agent.harness.driven import mcp_gateway
 
     directory = Path(__file__).parent
     result = {
@@ -287,12 +290,26 @@ def sources():
         for name in (
             "client.py",
             "shell_stop.py",
-            # Windows' locks, process trees and detached starts, which the two
-            # above load from beside them there.
+            # The parts of `client.py` it imports from beside itself: the
+            # command it runs for the build's shell prefix, the namespace it
+            # enters a session into, and the files a turn hands a person.
+            "shell_prefix.py",
+            "namespace.py",
+            "send_user_file.py",
+            # Windows' locks, process trees and detached starts, which
+            # `shell_stop.py` and `runtime.py` load from beside them there.
             "portable.py",
             "proxy.js",
             "private.py",
             "runtime.py",
+            # The parts of `runtime.py` it imports from beside itself: the
+            # primitives every piece reads, the command registry, the project's
+            # context and the tool calls. It is shipped whole and loaded by
+            # path, so it can reach no module of the app.
+            "runtime_core.py",
+            "runtime_commands.py",
+            "runtime_context.py",
+            "runtime_calls.py",
             "context_service.py",
             "forwarded_fs.py",
             "release.py",
@@ -309,6 +326,9 @@ def sources():
                 Path(__file__).resolve().parents[6] / "sandbox/cheese"
             ).read_text(),
             "executor_transport.py": Path(executor_transport.__file__).read_text(),
+            "pr_creation.py": Path(pr_creation.__file__).read_text(),
+            # The door its Claude Code reaches the project's MCP servers by.
+            "mcp_gateway.py": Path(mcp_gateway.__file__).read_text(),
         }
     )
     return result
@@ -322,8 +342,8 @@ def sources():
 # Every other helper stays as the launch left it, so a change to one is a
 # change to the launch (`launch_only`). `client.py` is replaced on disk here,
 # but `prepare` wrote the shell prefix, the launch environment, the argv and
-# the MCP config out of it once, the forwarded view's server and the other MCP
-# bridges keep the modules they started with, and nothing writes those again.
+# the MCP config out of it once, the forwarded view's server and the MCP
+# gateway keep the modules they started with, and nothing writes those again.
 # A helper added later is launch-only until it is shown to be one of these.
 RESIDENT = frozenset({"proxy.js", "context_service.py", "cheese.py"})
 
@@ -333,7 +353,7 @@ def platform_tool_names(cheese_source: str) -> list[str]:
     `PLATFORM_TOOLS` in this release's `cheese.py`, the one table every harness
     reads. A module of its own, so the CLI's `__main__` block does not run."""
     module = types.ModuleType("cheese_platform_tools")
-    exec(compile(cheese_source, "cheese", "exec"), module.__dict__)  # noqa: S102
+    exec(compile(cheese_source, "cheese", "exec"), module.__dict__)
     return list(module.PLATFORM_TOOLS.names())
 
 
@@ -347,10 +367,49 @@ def hook_module(proxy_source: str, target: dict, platform_tools: list[str]) -> s
 def allow_native_tools(settings: dict, platform_tools: list[str]) -> None:
     """Allow the native server's tools by name, the table's rows included."""
     allowed = settings.setdefault("permissions", {}).setdefault("allow", [])
-    for name in ("invoke", "project_tools", *platform_tools):
+    for name in ("invoke", *platform_tools):
         tool = "mcp__native__" + name
         if tool not in allowed:
             allowed.append(tool)
+
+
+# Remote flags the build would otherwise never see. It offers some tools only
+# when a GrowthBook flag says so, and it fetches those flags only for some
+# logins: a session started with an OAuth token in the environment, as every
+# session here is, fetches none, so Monitor was simply absent and agents waited
+# with `sleep N; tail` instead (2.1.282, measured on the central host: 0 flags
+# fetched; seeding this one entry offers Monitor and the build keeps it across
+# restarts). Monitor's command goes through the shell prefix like Bash, so it
+# runs on the executor. The same flag also makes Bash refuse a foreground
+# command that starts with `sleep` of 25 s or more and point at Monitor
+# (2.1.299), which is the waiting it replaces. The flag name and both effects
+# belong to the pinned build: when the pin moves, `headless_contract.py`'s
+# `remotemonitor` says whether they still hold.
+SEEDED_FLAGS = {"tengu_amber_sentinel": True}
+
+
+def write_claude_state(config: Path, seen: str) -> None:
+    """The build's own state file, `.claude.json`, as a session needs it: no
+    first-run gate to answer, and the flags it would not fetch."""
+    gates = {
+        "hasCompletedOnboarding": True,
+        "autoUpdates": False,
+        "bypassPermissionsModeAccepted": True,
+        "projects": {
+            seen: {
+                "hasTrustDialogAccepted": True,
+                "hasCompletedProjectOnboarding": True,
+            }
+        },
+    }
+    gate_file = config / ".claude.json"
+    previous = json.loads(gate_file.read_text()) if gate_file.exists() else {}
+    # Into the build's own cache, beside whatever flags it did fetch.
+    gates["cachedGrowthBookFeatures"] = {
+        **previous.get("cachedGrowthBookFeatures", {}),
+        **SEEDED_FLAGS,
+    }
+    gate_file.write_text(json.dumps({**previous, **gates}))
 
 
 def launch_only(sources):

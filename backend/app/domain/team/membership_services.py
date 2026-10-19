@@ -12,9 +12,13 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sentences import say
-from app.domain.delivery.addressing import Event, Hand, address
-from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
-from app.domain.notification.models import NotificationType
+from app.domain.addressing import Event, Hand, address
+from app.domain.delivery_events import (
+    Deliver,
+    DeliveryEvent,
+    NotificationType,
+    event_id_for,
+)
 from app.domain.team.models import (
     ApplicationStatus,
     ApplicationType,
@@ -25,6 +29,7 @@ from app.domain.team.models import (
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
     TeamRepository,
+    refuse_admin_grant_by_non_owner,
     refuse_anyone_but_the_owner,
 )
 from app.domain.user.models import User
@@ -32,6 +37,7 @@ from app.domain.user.services import faces_by_handle, handles_by_ids
 
 
 async def _notify(
+    deliver: Deliver,
     session: AsyncSession,
     application: TeamMembershipApplication,
     *,
@@ -42,10 +48,12 @@ async def _notify(
 ) -> None:
     """把这条申请上刚发生的事交给投递账本。
 
+    账本在第 5 层，这一包在第 2 层，写的那一下由服务在构造时递进来（`Deliver`）。
+
     这里的每一件事都长在一条 `team_membership_application` 上，而参与者和它的关系
     只有两种：**卡递给了他**（申请等管理员审、邀请等被邀请的人回应），或者**他等
     的东西有了结果**（申请被批/被拒、邀请被接受/被谢绝/被取消）。两种都是
-    `delivery/addressing.py` 里已经有的关系，所以这里不另写一份「谁会收到」。
+    `addressing.py` 里已经有的关系，所以这里不另写一份「谁会收到」。
 
     下一步一定在参与者手上：这几件事发生的那一刻，平台这边已经做完了。
 
@@ -70,13 +78,35 @@ async def _notify(
     )
 
 
+async def pending_invitations_for(
+    session: AsyncSession, user_id: int
+) -> list[TeamMembershipApplication]:
+    """邀请 ``user_id`` 加入、他还没回答的团队邀请。给「等你处理」读：只读，不发通知，
+    所以不必接投递那一套。"""
+    return await TeamMembershipApplicationRepository(session).pending_invitations_for(
+        user_id
+    )
+
+
+async def pending_requests_answerable_by(
+    session: AsyncSession, user_id: int
+) -> list[TeamMembershipApplication]:
+    """``user_id`` 管的团队里还没审的加入申请。"""
+    return await TeamMembershipApplicationRepository(
+        session
+    ).pending_requests_answerable_by(user_id)
+
+
 class TeamMembershipService:
     @classmethod
-    def from_session(cls, session: AsyncSession) -> "TeamMembershipService":
+    def from_session(
+        cls, session: AsyncSession, deliver: Deliver
+    ) -> "TeamMembershipService":
         return cls(
             session=session,
             team_repo=TeamRepository(session=session),
             application_repo=TeamMembershipApplicationRepository(session=session),
+            deliver=deliver,
         )
 
     def __init__(
@@ -84,10 +114,12 @@ class TeamMembershipService:
         session: AsyncSession,
         team_repo: TeamRepository,
         application_repo: TeamMembershipApplicationRepository,
+        deliver: Deliver,
     ) -> None:
         self._session = session
         self._team_repo = team_repo
         self._app_repo = application_repo
+        self._deliver = deliver
         self._default_page_size = 20
 
     async def _validate_user_can_apply_or_be_invited(
@@ -177,6 +209,7 @@ class TeamMembershipService:
             "message": message or "",
         }
         await _notify(
+            self._deliver,
             self._session,
             saved,
             type_=NotificationType.TEAM_JOIN_REQUEST,
@@ -209,9 +242,13 @@ class TeamMembershipService:
     ) -> TeamMembershipApplication:
         if not await self._team_repo.is_team_at_least_admin(team_id, initiator_user_id):
             raise ForbiddenError(
-                f"User {initiator_user_id} is not authorized to invite members to team {team_id}."  # noqa: E501
+                f"User {initiator_user_id} is not authorized to invite members to team {team_id}."
             )
 
+        if role in (TeamMemberRole.ADMIN, TeamMemberRole.OWNER):
+            await refuse_admin_grant_by_non_owner(
+                self._team_repo, team_id, initiator_user_id
+            )
         team = await self._team_repo.get_by_id(team_id)
         if team is not None:
             # Refused now rather than when it is accepted: an invitation that
@@ -254,6 +291,7 @@ class TeamMembershipService:
             "message": message or "",
         }
         await _notify(
+            self._deliver,
             self._session,
             saved,
             type_=NotificationType.TEAM_INVITATION,
@@ -304,6 +342,7 @@ class TeamMembershipService:
             "inviter": {"type": "user", "id": str(initiator_id)},
         }
         await _notify(
+            self._deliver,
             self._session,
             app,
             type_=NotificationType.TEAM_INVITATION_ACCEPTED,
@@ -340,6 +379,7 @@ class TeamMembershipService:
             "inviter": {"type": "user", "id": str(initiator_id)},
         }
         await _notify(
+            self._deliver,
             self._session,
             app,
             type_=NotificationType.TEAM_INVITATION_DECLINED,
@@ -359,7 +399,7 @@ class TeamMembershipService:
 
         if not await self._team_repo.is_team_at_least_admin(team_id, approver_user_id):
             raise ForbiddenError(
-                f"User {approver_user_id} is not authorized to approve requests for team {team_id}."  # noqa: E501
+                f"User {approver_user_id} is not authorized to approve requests for team {team_id}."
             )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
@@ -394,6 +434,7 @@ class TeamMembershipService:
             "requester": {"type": "user", "id": str(requester_id)},
         }
         await _notify(
+            self._deliver,
             self._session,
             app,
             type_=NotificationType.TEAM_REQUEST_APPROVED,
@@ -410,7 +451,7 @@ class TeamMembershipService:
     ) -> None:
         if not await self._team_repo.is_team_at_least_admin(team_id, rejector_user_id):
             raise ForbiddenError(
-                f"User {rejector_user_id} is not authorized to reject requests for team {team_id}."  # noqa: E501
+                f"User {rejector_user_id} is not authorized to reject requests for team {team_id}."
             )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
@@ -439,6 +480,7 @@ class TeamMembershipService:
             "requester": {"type": "user", "id": str(requester_id)},
         }
         await _notify(
+            self._deliver,
             self._session,
             app,
             type_=NotificationType.TEAM_REQUEST_REJECTED,
@@ -455,7 +497,7 @@ class TeamMembershipService:
     ) -> None:
         if not await self._team_repo.is_team_at_least_admin(team_id, canceler_user_id):
             raise ForbiddenError(
-                f"User {canceler_user_id} is not authorized to cancel invitations for team {team_id}."  # noqa: E501
+                f"User {canceler_user_id} is not authorized to cancel invitations for team {team_id}."
             )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
@@ -484,6 +526,7 @@ class TeamMembershipService:
             "invitedUser": {"type": "user", "id": str(invited_user_id)},
         }
         await _notify(
+            self._deliver,
             self._session,
             app,
             type_=NotificationType.TEAM_INVITATION_CANCELED,
@@ -562,7 +605,7 @@ class TeamMembershipService:
             team_id, requesting_user_id
         ):
             raise ForbiddenError(
-                f"User {requesting_user_id} is not authorized to view requests for team {team_id}."  # noqa: E501
+                f"User {requesting_user_id} is not authorized to view requests for team {team_id}."
             )
         limit = page_size or self._default_page_size
         offset = page_start or 0
@@ -598,7 +641,7 @@ class TeamMembershipService:
             team_id, requesting_user_id
         ):
             raise ForbiddenError(
-                f"User {requesting_user_id} is not authorized to view invitations for team {team_id}."  # noqa: E501
+                f"User {requesting_user_id} is not authorized to view invitations for team {team_id}."
             )
         limit = page_size or self._default_page_size
         offset = page_start or 0

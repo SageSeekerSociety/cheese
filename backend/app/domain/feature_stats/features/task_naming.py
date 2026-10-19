@@ -49,6 +49,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.domain.agent.gateway_admin import AdminKey, GatewayAdmin, ModelUsage
 from app.domain.day_windows import dense_series, utc_day_window
+from app.domain.feature_stats.stats import ratio
 from app.domain.room_task.models import TaskTitle, TaskTitleSource
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,7 @@ async def _gateway_usage(
         else:
             window = await admin.usage(start_iso, end_iso)
             read = GatewayRead("gateway", window.by_key.get(key.key_hash, _ZERO), key)
-    except Exception:  # noqa: BLE001 — an unreachable gateway is unknown, not zero
+    except Exception:  # an unreachable gateway is unknown, not zero
         logger.warning(
             "reading topic naming usage from the gateway failed", exc_info=True
         )
@@ -240,13 +241,6 @@ async def _titles(session: AsyncSession, since: datetime, until: datetime) -> di
         "named": len(first_auto),
         "overridden": overridden,
     }
-
-
-def _ratio(numerator: int | None, denominator: int | None) -> float | None:
-    """``None`` when the denominator is empty — a rate with no base is not 0."""
-    if not denominator or numerator is None:
-        return None
-    return numerator / denominator
 
 
 def _iso(day: date) -> str:
@@ -319,7 +313,7 @@ async def load(
             "overridden": {
                 "value": titles["overridden"],
                 "named": titles["named"],
-                "share": _ratio(titles["overridden"], titles["named"]),
+                "share": ratio(titles["overridden"], titles["named"]),
             },
         },
         # Two lines over the same unit (titles written that day): the platform's

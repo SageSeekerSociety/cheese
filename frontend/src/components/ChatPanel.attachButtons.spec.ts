@@ -12,11 +12,12 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -67,6 +68,8 @@ function mount(width: number) {
 function fileInputs(c: Element): HTMLInputElement[] {
   return Array.from(c.querySelectorAll<HTMLInputElement>('.composer-actions input[type="file"]'))
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('输入区的上传入口', () => {
   it('文件选择框藏起来但没有被 display:none —— 那样 iOS 上按钮就点不动了', () => {

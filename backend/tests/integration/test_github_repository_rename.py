@@ -15,8 +15,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import github_app
-from app.domain.project import forge
+from app.domain.project import forge, github_app
 from app.domain.project.repositories import ProjectGitInstallationRepository
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 

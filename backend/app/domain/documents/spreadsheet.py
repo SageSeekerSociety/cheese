@@ -27,6 +27,7 @@ from io import BytesIO
 import httpx
 
 from app.core.sentences import listing, say
+from app.domain.documents.convert import suffix_of
 
 #: Only `.xlsx`. Recomputing something with no formulas in it is a request
 #: that cannot be meant, and `.xlsm` is left out for the opposite reason: the
@@ -126,12 +127,6 @@ def cells_that_did_not_compute(raw: bytes) -> list[BadCell]:
     return found
 
 
-def suffix_of(path: str) -> str:
-    name = path.rsplit("/", 1)[-1]
-    dot = name.rfind(".")
-    return name[dot:].lower() if dot > 0 else ""
-
-
 async def recalculate(
     raw: bytes, path: str, endpoint: str | None, timeout: float = 120.0
 ) -> tuple[bytes, list[BadCell]]:
@@ -156,14 +151,14 @@ async def recalculate(
                 content=raw,
                 headers={"Content-Type": "application/octet-stream"},
             )
-    except Exception as exc:  # noqa: BLE001 — every transport failure reads alike
+    except Exception as exc:  # every transport failure reads alike
         raise SpreadsheetRecalcUnavailable(say("recalcUnreachable")) from exc
 
     if response.status_code != 200:
         detail = ""
         try:
             detail = str(response.json().get("error") or "")
-        except Exception:  # noqa: BLE001 — a non-JSON body is just no detail
+        except Exception:  # a non-JSON body is just no detail
             detail = ""
         if response.status_code >= 500 or response.status_code in (404, 405):
             # 404 and 405 mean the running renderer predates this endpoint — a

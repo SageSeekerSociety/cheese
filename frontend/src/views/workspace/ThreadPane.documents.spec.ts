@@ -47,6 +47,11 @@ vi.mock('@/stores/workspace', () => ({
   }),
 }))
 vi.mock('@/api/threads', () => ({ getThread: vi.fn(async () => ({ root: null })) }))
+// 对话那一栏会问这段对话里有没有待存的技能提议：这里没有。
+vi.mock('@/api/projectSkills', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/projectSkills')>()),
+  listProjectSkills: vi.fn(async () => ({ data: [], total: 0 })),
+}))
 vi.mock('@/lib/libraryApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/libraryApi')>()),
   listProjectLibrary: vi.fn(async () => ({ data: [], next: null })),
@@ -250,7 +255,7 @@ describe('支线里的资料库文档那一行', () => {
     await waitFor(() => expect(host.reviewEdits).toHaveLength(1))
     expect(host.reviewEdits[0]).toEqual({
       doc: 'library-doc',
-      request: { requester: '', edits } as DocReviewRequest,
+      request: { edits } as DocReviewRequest,
     })
   })
 

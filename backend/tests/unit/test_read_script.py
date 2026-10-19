@@ -17,8 +17,11 @@ import pytest
 from app.domain.skill_library import _NATIVE_SKILL_SRC
 
 READ = _NATIVE_SKILL_SRC / "documents" / "scripts" / "read.py"
+# One requirement list for the fixture and `_read` alike: uv gives each distinct
+# set an environment of its own, so two lists download and build the same
+# packages twice, on the first test that waits for both.
 WITH = ["--with", "pdfplumber", "--with", "python-docx", "--with", "python-pptx"]
-WITH += ["--with", "openpyxl", "--with", "fpdf2"]
+WITH += ["--with", "openpyxl", "--with", "fpdf2", "--with", "pymupdf"]
 
 pytestmark = pytest.mark.skipif(shutil.which("uv") is None, reason="needs uv")
 
@@ -94,8 +97,6 @@ def _read(samples, *files, extra=()):
             "run",
             "-q",
             *WITH,
-            "--with",
-            "pymupdf",
             "python3",
             str(READ),
             *files,

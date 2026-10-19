@@ -467,7 +467,7 @@ def keep_room_files(home: Path, executor: dict | None, url: str, resource: str):
     try:
         with tarfile.open(archive, "w:gz") as bundle:
             bundle.add(room, arcname=CHECKOUT_DIR, recursive=True)
-        digest = hashlib.md5()  # noqa: S324 — the bucket's ETag of one PUT
+        digest = hashlib.md5()  # the bucket's ETag of one PUT
         with archive.open("rb") as source:
             for block in iter(lambda: source.read(1 << 20), b""):
                 digest.update(block)
@@ -619,10 +619,15 @@ def resource_paths(
     return paths[0], paths[1]
 
 
-def resource_tmp(resource: str) -> Path:
+def resource_tmp(resource: str) -> Path | None:
     """The room's TMPDIR, where the launcher pointed its sessions: under this
     account's own directory in `/var/tmp`, by resource alone, so a socket made
-    inside it still fits a socket path."""
+    inside it still fits a socket path. None on Windows, where the launcher
+    leaves sessions on the account's own temporary directory and makes none
+    per room (`machine_launcher`), and where there is no uid to name one by:
+    asking for it there failed every removal on a Windows machine."""
+    if sys.platform == "win32":
+        return None
     path = Path(SESSION_TMP) / f"cheese-{os.getuid()}" / str(uuid.UUID(resource))
     if path.is_symlink() or path.parent.is_symlink():
         raise RuntimeError("resource path is a symlink")
@@ -980,7 +985,7 @@ def main() -> None:
                 home, retained_transcripts(Path.home(), project, room, resource)
             )
         for path in (work, home, resource_tmp(resource)):
-            if path.exists():
+            if path is not None and path.exists():
                 remove_tree(path)
         # Last: until the room's directories are gone, they are a sandboxed
         # room's to have written.

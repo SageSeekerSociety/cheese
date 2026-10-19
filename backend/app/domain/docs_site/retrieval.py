@@ -236,7 +236,7 @@ class IndexSource:
                         for x in rows
                     ]
                 )
-            except Exception:  # noqa: BLE001 — keep the last good copy
+            except Exception:  # keep the last good copy
                 logger.warning("docs index refresh from %s failed", url, exc_info=True)
             self._at = time.monotonic()
         return self._index

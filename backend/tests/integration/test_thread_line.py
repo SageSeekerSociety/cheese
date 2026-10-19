@@ -2,17 +2,32 @@
 main line is told without opening it.
 
 - who took part, the message's author first;
-- once the 支线 became a task, which task it is — what was said there goes on
-  in the task;
+- once the 支线 became a task, the same line: it is the same conversation,
+  now with an owner, and what is said there goes on counting;
 - a message whose 支线 has nothing in it yet and nobody answering has no line;
 - a 支线 where the AI teammate's turn failed before anyone replied still has a
   line, saying the reply failed: the reason is in the 支线, and without the line
-  nobody could find it.
+  nobody could find it;
+- a page of 支线 reads the messages they hang under once, however many there
+  are: who took part comes from the same rows as what the message said;
+- a room's header asks three questions about its 支线 — the page's own list,
+  回复了我, 还在当支线用 — and none of them is asked twice: `moving_topics` is
+  handed the list the page already read.
 """
 
+import re
 import uuid
+from datetime import UTC, datetime
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+import pytest
+from sqlalchemy import event, select
+
+from app.domain.agent.liveness import moving_topics
+from app.domain.agent.models import AgentTurn
+from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import threads_of_rooms
+from app.domain.event_author import AuthorType
+from app.domain.thread import reads as thread_reads
 from app.domain.thread.models import Thread
 from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 from tests.integration.conftest import (
@@ -61,7 +76,22 @@ def test_the_line_names_who_took_part(client):
     assert line["tasks"] == []
 
 
-def test_the_line_names_the_tasks_the_thread_became(client):
+def test_the_line_names_the_tasks_made_from_the_thread(client):
+    tid = _channel(client)
+    root = post_message(client, tid, "alice", {"content": "预览有两个问题"})
+    thread = _thread(client, root["id"], "bob")
+    said = post_message(client, thread, "bob", {"content": "微信里打不开预览"})
+    r = client.post(
+        f"/blocks/{said['id']}/upgrade", headers=session_auth_headers("alice")
+    )
+    assert r.status_code == 200, r.text
+
+    line = _line_under(client, tid, root["id"])
+
+    assert [t["id"] for t in line["tasks"]] == [r.json()["data"]["id"]]
+
+
+def test_a_thread_that_became_the_task_keeps_its_line(client):
     tid = _channel(client)
     root = post_message(client, tid, "alice", {"content": "微信里打不开预览"})
     thread = _thread(client, root["id"], "bob")
@@ -70,10 +100,11 @@ def test_the_line_names_the_tasks_the_thread_became(client):
         f"/blocks/{root['id']}/upgrade", headers=session_auth_headers("alice")
     )
     assert r.status_code == 200, r.text
+    post_message(client, thread, "alice", {"content": "我来看看"})
 
     line = _line_under(client, tid, root["id"])
-
-    assert [t["id"] for t in line["tasks"]] == [r.json()["data"]["id"]]
+    assert line is not None and line["id"] == thread
+    assert line["reply_count"] >= 2
 
 
 def test_an_empty_thread_with_nobody_answering_has_no_line(client):
@@ -247,3 +278,188 @@ def test_a_listed_thread_says_whether_its_message_was_cut(client):
     assert roots[short["id"]]["kind"] == "message"
     assert roots[short["id"]]["author_type"] == "participant"
     assert roots[long["id"]]["truncated"] is True
+
+
+#: Any read of messages by their ids — one array, an IN list, or one id at a
+#: time: a page that read its roots again in another spelling still counts.
+_ROOTS_BY_ID = re.compile(r"FROM blocks\s+WHERE blocks\.id\b", re.IGNORECASE)
+
+
+def _count_matching(client, read, pattern):
+    """How many of the statements ``read`` runs ``pattern`` matches."""
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = client.test_app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        read()
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    return sum(1 for s in statements if pattern.search(s))
+
+
+def _roots_read_while(client, read):
+    """How many times the messages are read by id while ``read`` runs."""
+    return _count_matching(client, read, _ROOTS_BY_ID)
+
+
+def _channel_with_threads(client, n):
+    tid = _channel(client)
+    for i in range(n):
+        root = post_message(client, tid, "alice", {"content": f"问题 {i}"})
+        thread = _thread(client, root["id"], "bob")
+        post_message(client, thread, "bob", {"content": "我这边也是"})
+    return tid
+
+
+def _list_threads(client, tid):
+    r = client.get(f"/topics/{tid}/threads", headers=session_auth_headers("alice"))
+    assert r.status_code == 200, r.text
+    listed = r.json()["data"]
+    return listed["data"] if isinstance(listed, dict) else listed
+
+
+@pytest.mark.parametrize("n", [3, 12])
+def test_a_page_of_threads_reads_their_messages_once(client, n):
+    tid = _channel_with_threads(client, n)
+    rows: list[dict] = []
+    reads = _roots_read_while(client, lambda: rows.extend(_list_threads(client, tid)))
+    assert len(rows) == n
+    assert all(r["participants"] == ["alice", "bob"] for r in rows)
+    assert reads == 1, f"{n} 条支线读了 {reads} 遍根消息"
+
+
+def test_the_people_in_a_thread_still_read_its_message_alone(client):
+    tid = _channel(client)
+    root = post_message(client, tid, "alice", {"content": "微信里打不开预览"})
+    thread = _thread(client, root["id"], "bob")
+    post_message(client, thread, "bob", {"content": "我这边也是"})
+
+    async def _people() -> list[str]:
+        async with client.test_factory() as s:
+            return await thread_reads.people_in(s, uuid.UUID(thread))
+
+    assert client.portal.call(_people) == ["alice", "bob"]
+
+
+#: Any read of a room's 支线 read straight from the table, whichever question it
+#: answers — the page's own list, 回复了我, 还在当支线用 — and however many rows
+#: it takes. A 支线 read by its id is a different question and not counted.
+_THREADS_OF_A_ROOM = re.compile(
+    r"^\s*SELECT threads\.[^;]*?\bFROM threads\s+WHERE threads\.room_id",
+    re.IGNORECASE,
+)
+
+
+def _room_header(client, tid):
+    r = client.get(f"/topics/{tid}", headers=session_auth_headers("alice"))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+@pytest.mark.parametrize("n", [3, 12])
+def test_a_rooms_header_reads_its_threads_no_more_than_three_times(client, n):
+    """A room's header asks three separate questions about its 支线 — the page's
+    own list, 回复了我, 还在当支线用 — and the list it read is handed to
+    `moving_topics`, which used to ask the table a fourth time for the same
+    answer. Four was the count before that hand-down; the assertion says the
+    fourth read stays gone, and the same however many 支线 the room has.
+
+    This is one route's whole budget, not a statement about `moving_topics`:
+    a new question of the header that reads the room's 支线 itself is meant to
+    be shared with the rest, and this ceiling is where that gets noticed. A
+    ceiling rather than the exact three, so merging two of the remaining
+    questions into one query reads as the improvement it is."""
+    tid = _channel_with_threads(client, n)
+
+    reads = _count_matching(
+        client, lambda: _room_header(client, tid), _THREADS_OF_A_ROOM
+    )
+
+    # Both ends: a spelling of the query this pattern does not know would read
+    # as zero and pass the ceiling. The floor only catches that total silence —
+    # a read rewritten in a spelling the pattern skips still hides the fourth
+    # read without making the count reach zero.
+    assert 1 <= reads <= 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"
+
+
+def _a_thread_in(client, tid):
+    """One 支线 of the room."""
+
+    async def _find() -> uuid.UUID:
+        async with client.test_factory() as s:
+            return await s.scalar(
+                select(Thread.id).where(Thread.room_id == uuid.UUID(tid))
+            )
+
+    return client.portal.call(_find)
+
+
+def _a_turn_in(client, thread_id):
+    """A turn delivered into the 支线 a moment ago — one still running."""
+    now = datetime.now(UTC)
+
+    async def _plant() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=thread_id,
+                    continuation_id=uuid.uuid4(),
+                    author="alice",
+                    content="开始吧",
+                    started_at=now,
+                    delivered_at=now,
+                )
+            )
+            await s.commit()
+
+    client.portal.call(_plant)
+
+
+def test_moving_names_the_same_rooms_handed_the_pages_read(client):
+    """`threads=` is a short-cut, not a second rule: handed the page's own read
+    of the room's 支线, `moving_topics` names exactly the rooms it names having
+    read them itself — including a room whose 支线 is where the turn runs."""
+    tid = _channel_with_threads(client, 3)
+    _a_turn_in(client, _a_thread_in(client, tid))
+
+    async def _both() -> tuple[set[uuid.UUID], set[uuid.UUID]]:
+        async with client.test_factory() as alone_session:
+            alone = await moving_topics(alone_session, [uuid.UUID(tid)], running=set())
+        async with client.test_factory() as handed_session:
+            handed = await moving_topics(
+                handed_session,
+                [uuid.UUID(tid)],
+                running=set(),
+                threads=await threads_of_rooms(handed_session, [uuid.UUID(tid)]),
+            )
+        return alone, handed
+
+    alone, handed = client.portal.call(_both)
+
+    assert alone == handed == {uuid.UUID(tid)}
+
+
+def test_moving_does_not_answer_for_a_room_it_was_not_asked_about(client):
+    """The page it is handed may cover more rooms than the question names (a
+    list's whole page). A turn running in another room's 支线 must not make this
+    room moving: only the rooms asked about are answered for."""
+    asked = _channel_with_threads(client, 1)
+    elsewhere = _channel_with_threads(client, 1)
+    _a_turn_in(client, _a_thread_in(client, elsewhere))
+
+    async def _moving() -> set[uuid.UUID]:
+        async with client.test_factory() as s:
+            threads = await threads_of_rooms(
+                s, [uuid.UUID(asked), uuid.UUID(elsewhere)]
+            )
+            assert len(threads) == 2
+            return await moving_topics(
+                s, [uuid.UUID(asked)], running=set(), threads=threads
+            )
+
+    assert client.portal.call(_moving) == set()

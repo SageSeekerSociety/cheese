@@ -31,6 +31,7 @@ import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
@@ -46,6 +47,7 @@ from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.util import LRUCache
 
 from scripts.assert_suite_ran import SuiteDidNotRun, read_quarantine
+from tests.support.counting_session import measures_query_counts
 
 # Strip inherited git env. When the suite runs from the pre-commit HOOK it executes
 # DURING `git commit`, which exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE for
@@ -87,6 +89,7 @@ os.environ["CLOUD_VM_CREDITS_PER_HOUR"] = '{"4c8g": 30}'
 # engine is built from settings.database_url at import time). -------------------
 from app.core.config import settings  # noqa: E402
 from tests import isolation  # noqa: E402
+from tests.support.fast_timings import FastTimings  # noqa: E402
 from tests.support.hang import HANG_S  # noqa: E402
 from tests.support.processes import process_list  # noqa: E402
 
@@ -94,7 +97,7 @@ _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (ser
 # The runner slot this run is on, empty everywhere but a pool machine with more
 # than one. Two runs sharing a machine otherwise share every name below, and the
 # harness drops its databases WITH (FORCE) — see tests/isolation.py.
-_SLOT = os.environ.get("CHEESE_CI_SLOT", "")
+_SLOT = os.environ.get("CHEESEX_TEST_SLOT", os.environ.get("CHEESE_CI_SLOT", ""))
 _INTG_DB_NAME, _CLIENT_DB_NAME = isolation.database_names(_XDIST_WORKER, _SLOT)
 # Postgres server root (no database). Defaults to the TEST server the repo-root
 # docker-compose.yml publishes on :5433 (separate from the dev database on
@@ -115,21 +118,29 @@ settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
 # block of them so two runs sharing a machine cannot land on the same index.
 _REDIS_BASE = re.sub(r"/\d*$", "", os.environ.get("REDIS_URL", settings.redis_url))
 _REDIS_DB = isolation.redis_database(
-    _XDIST_WORKER, int(os.environ.get("CHEESE_CI_REDIS_BASE_DB", "0"))
+    _XDIST_WORKER,
+    int(os.environ.get("CHEESE_CI_REDIS_BASE_DB", "0")),
+    database_count=int(
+        os.environ.get(
+            "CHEESEX_REDIS_DB_COUNT", os.environ.get("CHEESE_CI_VALKEY_DATABASES", "16")
+        )
+    ),
 )
 settings.redis_url = f"{_REDIS_BASE}/{_REDIS_DB}"
 os.environ["REDIS_URL"] = settings.redis_url
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB_NAME}")
 
+# agent_turn_inputs and agent_seat_owner are defined outside app.models and
+# used to be registered by the chat-stack import this file no longer makes. The
+# per-test clear builds its table list from Base.metadata once per process
+# (`_clean_slate_queries`), so they are registered here, before the first clear.
+import app.domain.agent.turn_inputs  # noqa: E402
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
-from app.api.deps import get_broker, get_chat_service, get_work_runner  # noqa: E402
 from app.core.db import Base, get_db  # noqa: E402
 from app.core.db import engine as app_engine  # noqa: E402
 from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.central_provider import Placed  # noqa: E402
-from app.domain.agent.chat import ChatService  # noqa: E402
-from app.domain.agent.compute import ComputePool  # noqa: E402
 from app.domain.agent.device_hub import DeviceCallError  # noqa: E402
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef  # noqa: E402
 from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
@@ -137,7 +148,23 @@ from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
 )
 from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL  # noqa: E402
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
-from app.main import app  # noqa: E402
+
+# NOTE: `app.main` is deliberately NOT imported at module scope. Importing it
+# assembles the whole FastAPI app (`_discover_routers()` imports every module
+# under `app/api/routes/`, which costs ~20s), and a conftest import is paid by
+# every pytest process that collects anything under `tests/` — the pure layer
+# included, where 445 of the 572 files under `tests/unit/` never mention
+# `client` or `TestClient` at all. The two fixtures that drive the app
+# (`client`, `python_client`) import it inside their own bodies, so only a run
+# that actually asks for one of them pays for it.
+#
+# The chat service and the route dependencies (`app.api.deps`,
+# `app.domain.agent.chat`, `app.domain.agent.compute`) are deferred the same
+# way, into the helpers and fixtures that call them: together they are about a
+# third of what this file costs to import without bytecode — a fresh checkout,
+# a review worktree — and a pure test never touches them.
+if TYPE_CHECKING:
+    from app.domain.agent.compute import ComputePool
 from tests.support.collab import install as install_collab  # noqa: E402
 from tests.support.seat_channel import SeatChannel  # noqa: E402
 
@@ -233,7 +260,7 @@ def _topics_with_pending_records() -> set[str]:
     return pending
 
 
-def wait_work_idle() -> None:
+def wait_work_idle(runner=None) -> None:
     """Block until background turns (e.g. a new task's kickoff)
     finish: they run on the TestClient portal loop and write to this worker's DB —
     if a turn is still writing when the next test clears it, the test flakes.
@@ -244,8 +271,14 @@ def wait_work_idle() -> None:
     work teardown can drain. Waiting on idle lifecycles and giving up silently
     combined once to hide the suite's largest single cost: a test that stranded
     a turn paid the whole ceiling here and left no trace but a slower run.
+
+    The `client` fixture passes the runner it started with: by its teardown the
+    test may have replaced `app.api.deps.get_work_runner` with a stand-in.
     """
-    runner = get_work_runner()
+    if runner is None:
+        from app.api.deps import get_work_runner
+
+        runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
         moving = len(runner._tasks) or len(_topics_with_pending_records())
         if not moving:
@@ -349,7 +382,7 @@ class ScriptedSession(Runner):
         # fails instead, naming what broke.
         try:
             self.channel.arrive(self.topic_id, message, agent=self.actor)
-        except Exception as exc:  # noqa: BLE001 — surfaced as the turn's failure
+        except Exception as exc:  # surfaced as the turn's failure
             logging.getLogger(__name__).exception("the scripted session raised")
             if not self.working:
                 self.observe(
@@ -718,14 +751,16 @@ class StubChannel(SeatChannel):
         extra = {"session_id": session_id} if session_id else {}
         self.record(topic_id, agent=agent, type="system", subtype="init", **extra)
 
-    def acknowledges(
+    def took(
         self, topic_id: uuid.UUID, prompt: str, *, agent: str | None = None
-    ) -> None:
-        """The session takes the input: its turn starts and it echoes it back.
+    ) -> str | None:
+        """The session begins on the input it was handed: its turn opens on that
+        input's identity. Returns the input's uuid, or None when the runner has
+        no sent input matching ``prompt``.
 
-        The echo is the receipt that stamps an injected message consumed. A
-        session that never echoes leaves every mid-turn delivery pending, and
-        pending messages are replayed (宁可重复不可丢失)."""
+        This is the half of `acknowledges` a session prints by merely starting.
+        On its own it marks nothing read: a session that begins on an input and
+        never echoes it leaves it pending."""
         session = self._session_for(topic_id, agent)
         identifier = next(
             (
@@ -738,7 +773,7 @@ class StubChannel(SeatChannel):
             None,
         )
         if identifier is None:
-            return
+            return None
         self.record(
             topic_id,
             agent=agent,
@@ -746,6 +781,20 @@ class StubChannel(SeatChannel):
             command_uuid=identifier,
             state="started",
         )
+        return identifier
+
+    def acknowledges(
+        self, topic_id: uuid.UUID, prompt: str, *, agent: str | None = None
+    ) -> None:
+        """The session takes the input: its turn starts and it echoes it back.
+
+        The echo is the receipt that stamps an injected message consumed. A
+        session that never echoes leaves every mid-turn delivery pending, and
+        pending messages are replayed (宁可重复不可丢失). Use `took` alone for a
+        session that starts on the input without echoing it."""
+        identifier = self.took(topic_id, prompt, agent=agent)
+        if identifier is None:
+            return
         self.record(
             topic_id,
             agent=agent,
@@ -920,9 +969,11 @@ async def finish_turn(service, topic_id) -> None:
     await close_topic_subscriptions(service, topic_id)
 
 
-def stub_compute(channel: StubChannel | None = None) -> ComputePool:
+def stub_compute(channel: StubChannel | None = None) -> "ComputePool":
     """A pool holding one screen, for the many tests that build a ChatService
     by hand. Pass the channel when the test asserts against it."""
+    from app.domain.agent.compute import ComputePool
+
     screen = channel or StubChannel()
     return ComputePool([screen.runtime])
 
@@ -946,13 +997,67 @@ def bearer() -> Callable[[str], dict[str, str]]:
     def _headers(handle: str) -> dict[str, str]:
         # Deferred import: the shared helper lives in the integration conftest,
         # and only integration tests request this fixture. Minting here instead
-        # would be a second source of truth for the same token —
-        # tests/unit/test_no_adhoc_auth_helpers.py exists to stop exactly that.
+        # would be a second source of truth for the same token.
         from tests.integration.conftest import session_auth_headers
 
         return session_auth_headers(handle)
 
     return _headers
+
+
+@pytest.fixture
+def fast_timings(monkeypatch) -> FastTimings:
+    """The product's common waits at millisecond scale; undone at teardown.
+
+    Opt in by requesting it: the table in ``tests/support/fast_timings.py`` is
+    applied on the way in, so a test that only needs a retry, a poll or a
+    give-up timeout over reads as a normal test instead of a 50-second wait.
+    ``fast_timings.set(module, "NAME")`` adds a knob the table does not carry.
+
+    Not for a test asserting the arithmetic of a wait — see that module for what
+    is deliberately left out and why.
+    """
+    return FastTimings(monkeypatch).apply()
+
+
+#: The machine's own git configuration, neutralized. `os.devnull` rather than the
+#: literal `/dev/null`: the suite runs on Windows too.
+_HOST_GIT_VARS: tuple[tuple[str, str], ...] = (
+    ("GIT_CONFIG_GLOBAL", os.devnull),
+    ("GIT_CONFIG_SYSTEM", os.devnull),
+    ("GIT_TERMINAL_PROMPT", "0"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _host_git_and_pre_commit_isolated(monkeypatch, tmp_path_factory) -> None:
+    """No test reads the machine's git configuration, and no two tests share
+    pre-commit's store.
+
+    A `~/.gitconfig` or `/etc/gitconfig` that sets `commit.gpgsign` — or a
+    signer of its own — fails every `git commit` the suite makes in a throwaway
+    repository (`tests/support/git_store.ensure_repo` is the first consumer, not
+    the only one), in a test whose subject never mentions git. The strip above
+    removes *inherited* `GIT_*` variables, not the files git reads without them,
+    which is where that setting lives; the null device for both leaves git with
+    no global or system configuration at all.
+
+    `PRE_COMMIT_HOME` is the same leak one layer out: pre-commit keeps its hook
+    environments and a sqlite store under it (default `~/.cache/pre-commit`),
+    and two runs on one machine as one user — the self-hosted runners, or a hook
+    beside a test on a laptop — lock each other out of the one store
+    (`.github/AGENTS.md`; `scripts/test_ci_fast.py` does this for its harness).
+    Each test gets one under this worker's temp instead.
+
+    A test that means to run git or pre-commit against a configuration of its
+    own sets the variable itself, in its own fixture or body: that lands after
+    this one and wins.
+    """
+    for name, value in _HOST_GIT_VARS:
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv(
+        "PRE_COMMIT_HOME", str(tmp_path_factory.mktemp("pre-commit-home"))
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -1129,6 +1234,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     from app.domain.project import forge
     from app.domain.project.models import Project, ProjectForge
     from app.domain.repository import forge_files
+    from app.domain.review import forge_clients
     from tests.support import git_store
 
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))
@@ -1137,8 +1243,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     default_branch = forge.default_branch
     remote_head = forge_files.branch_head
     remote_data = forge_files.repository_data
-    remote_tokens = forge_files.tokens_for_project
-    remote_status = forge_files.status_client
+    remote_status = forge_clients.compare_status
     remote_author_email = forge.ensure_author_email
 
     async def provision_repository(project_id, session, **kwargs):
@@ -1185,36 +1290,26 @@ def stub_project_forge(monkeypatch, tmp_path):
         result = git_store.run(["git", "rev-parse", "--verify", branch], repo, 20, None)
         return result.stdout.strip() if result.returncode == 0 else None
 
-    async def tokens_for_project(project_id, session):
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock
-
+    async def compare_status(project_id, session, *, base, head, release_session=False):
         if not await test_repository(project_id, session):
-            return await remote_tokens(project_id, session)
-        return SimpleNamespace(
-            installation_token=AsyncMock(return_value=("test-token", ""))
-        )
-
-    async def status_client(project_id, session):
-        from types import SimpleNamespace
-
-        if not await test_repository(project_id, session):
-            return await remote_status(project_id, session)
-
-        async def compare_status(*, base, head, **kwargs):
-            repo = git_store.path(project_id)
-            revisions = [
-                git_store.git(repo, "rev-parse", revision).strip()
-                for revision in (base, head)
-            ]
-            if revisions[0] == revisions[1]:
-                return "identical"
-            result = git_store.run(
-                ["git", "merge-base", "--is-ancestor", *revisions], repo, 20, None
+            return await remote_status(
+                project_id,
+                session,
+                base=base,
+                head=head,
+                release_session=release_session,
             )
-            return "ahead" if result.returncode == 0 else "diverged"
-
-        return SimpleNamespace(compare_status=compare_status)
+        repo = git_store.path(project_id)
+        revisions = [
+            git_store.git(repo, "rev-parse", revision).strip()
+            for revision in (base, head)
+        ]
+        if revisions[0] == revisions[1]:
+            return "identical"
+        result = git_store.run(
+            ["git", "merge-base", "--is-ancestor", *revisions], repo, 20, None
+        )
+        return "ahead" if result.returncode == 0 else "diverged"
 
     async def repository_data(project_id, session, path="", **kwargs):
         import base64
@@ -1348,14 +1443,21 @@ def stub_project_forge(monkeypatch, tmp_path):
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
     monkeypatch.setattr(forge, "repository_data", repository_data)
-    monkeypatch.setattr(forge_files, "tokens_for_project", tokens_for_project)
-    monkeypatch.setattr(forge_files, "status_client", status_client)
+    monkeypatch.setattr(forge_clients, "compare_status", compare_status)
 
 
 @pytest.fixture
 def client(
     _pg_schema, stub_hooks: StubChannel, tmp_path, stub_project_forge, monkeypatch
 ) -> Iterator[TestClient]:
+    # Assembling the app is the expensive part of starting a pytest process, so
+    # it happens here rather than at conftest import: only tests that actually
+    # ask for `client` pay for it.
+    from app.api.deps import get_broker, get_chat_service, get_work_runner
+    from app.domain.agent.chat import ChatService
+    from app.domain.agent.compute import ComputePool
+    from app.main import app
+
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
     # is defined by the alembic migrations (create_all can't build the pg ENUMs).
@@ -1372,6 +1474,9 @@ def client(
     # binding — seeded by the migration in prod, re-seeded here after the clear.
     asyncio.run(_clear_client_db(seed_agent_user=True))
     get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
+    # Taken now, not in teardown: by then the test may have replaced
+    # `app.api.deps.get_work_runner` (monkeypatch undoes it after this fixture).
+    work_runner = get_work_runner()
 
     async def override_get_db():
         async with test_factory() as session:
@@ -1383,7 +1488,7 @@ def client(
                 raise
 
     chat_service = ChatService(
-        work_runner=get_work_runner(),
+        work_runner=work_runner,
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -1420,7 +1525,7 @@ def client(
                 # Drain background turns BEFORE leaving the TestClient context:
                 # disposing the engine under a running kickoff turn makes flakes.
                 try:
-                    wait_work_idle()
+                    wait_work_idle(work_runner)
                 finally:
                     # Both pools were used on the portal loop. Close them before
                     # TestClient closes that loop, otherwise asyncpg connections
@@ -1435,8 +1540,8 @@ def client(
         # Leaving the app hands its work over and holds the runner's turns, which
         # is right for a process that exits next. This one goes on to run tests
         # that drive the same runner without an app around it.
-        get_work_runner().start_turns()
-        get_work_runner().own_sessions(True)
+        work_runner.start_turns()
+        work_runner.own_sessions(True)
         asyncio.run(setup_engine.dispose())
 
 
@@ -1829,7 +1934,7 @@ async def _drop_superseded_templates() -> None:
         for name in doomed:
             try:
                 await conn.execute(f'DROP DATABASE IF EXISTS "{name}"')
-            except Exception:  # noqa: BLE001, PERF203 — in use is not an error here
+            except Exception:  # in use is not an error here
                 continue
     finally:
         await conn.close()
@@ -1888,7 +1993,7 @@ def _ensure_template() -> bool:
             _touch_template_use(_TEMPLATE_DB)
             asyncio.run(_drop_superseded_templates())
             return True
-    except Exception:  # noqa: BLE001 — fall back to the slow path, never block
+    except Exception:  # fall back to the slow path, never block
         return False
 
 
@@ -1918,7 +2023,7 @@ def revision_template(revision: str) -> str | None:
                 asyncio.run(_rename_db(building, template))
             _touch_template_use(template)
             return template
-    except Exception:  # noqa: BLE001 — the caller migrates directly instead
+    except Exception:  # the caller migrates directly instead
         return None
 
 
@@ -1975,13 +2080,13 @@ def _create_and_migrate(db_name: str, db_url: str) -> None:
         try:
             asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
             return
-        except Exception:  # noqa: BLE001 — the slow path below is still correct
+        except Exception:  # the slow path below is still correct
             _TEMPLATE_READY = _ensure_template()
             if _TEMPLATE_READY:
                 try:
                     asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
                     return
-                except Exception:  # noqa: BLE001 — same reason
+                except Exception:  # same reason
                     _TEMPLATE_READY = False
     _migrate_fresh_db(db_name, db_url)
 
@@ -2097,9 +2202,25 @@ def _layer_of(item: pytest.Item) -> str:
     return "integration"
 
 
+_READS_ONCE = pytest.mark.reads_once
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Give every collected test exactly one layer marker, and that layer's
     time ceiling unless the test is in the slow baseline.
+
+    Also give every test that counts SQL statements the ``reads_once`` marker,
+    derived from the file's name *or its code* (see
+    ``tests/support/counting_session.py``). Deriving it is the whole point: the
+    family had eighteen members under twelve different names and no marker, so
+    "where is the test that proves this endpoint reads once" was a search across
+    three different keyword spellings. A marker is one readable name for the
+    family: ``pytest -m reads_once``.
+
+    Content is checked as well as the name because the next test in the family
+    will be written by someone who did not know there was a naming convention.
+    The file read is per path, not per item, so the cost is one pass over the
+    test tree.
 
     The CI selections are the whole suite only if every test carries one and
     only one of the three markers: a test carrying none runs in no selection
@@ -2130,6 +2251,13 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             continue
         layer = _layer_of(item)
         item.add_marker(layer)
+        path = os.fspath(item.path) if item.path is not None else ""
+        if (
+            path
+            and item.get_closest_marker("reads_once") is None
+            and measures_query_counts(path)
+        ):
+            item.add_marker(_READS_ONCE)
         if item.nodeid in quarantine:
             # The gate accepts this xfail only when its nodeid and issue
             # match the same quarantine list; other skips still fail.
@@ -2283,7 +2411,19 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
 
 
 @pytest.fixture(scope="session")
-def _pg_schema():
+def _database_slot(testrun_uid):
+    """Only DB users claim resources; xdist workers share this run's identity."""
+    with isolation.claim_slot(
+        slot=_SLOT,
+        owner=testrun_uid,
+        postgres_urls=(settings.database_url, TEST_DATABASE_URL),
+        redis_url=settings.redis_url,
+    ):
+        yield
+
+
+@pytest.fixture(scope="session")
+def _pg_schema(_database_slot):
     """Create + migrate THIS worker's two dedicated databases once per session:
     the integration DB (settings.database_url, bound by the app engines) and the
     client/python_client DB (TEST_DATABASE_URL). Reached via the ``_pg_schema_gate``
@@ -2394,6 +2534,7 @@ async def business_db_factory(db_factory, stub_project_forge):
     installs. Keep this separate so live Forgejo and empty-database contract
     tests retain their deliberately narrower fixture.
     """
+    from app.api.deps import get_broker
     from app.domain.identity.services import IdentityService
 
     get_broker().reset()
@@ -2447,6 +2588,11 @@ async def python_client(
     it. Same postgres test DB + truncate isolation + agent seed as `client`, but
     awaitable inside anyio tests."""
     from httpx import ASGITransport, AsyncClient
+
+    from app.api.deps import get_broker, get_chat_service, get_work_runner
+    from app.domain.agent.chat import ChatService
+    from app.domain.agent.compute import ComputePool
+    from app.main import app
 
     engine = _production_test_engine(TEST_DATABASE_URL)
     test_factory = async_sessionmaker(engine, expire_on_commit=False)

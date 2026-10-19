@@ -19,6 +19,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     AuthenticationRequiredError,
     ConflictError,
@@ -28,7 +29,7 @@ from app.domain.agent import private_chat
 from app.domain.agent.chat import ChatService
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.actor import Actor
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(tags=["agent-control"])
 
@@ -37,7 +38,7 @@ Chat = Annotated[ChatService, Depends(get_chat_service)]
 
 async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver) -> Actor:
     """Whoever is in this room may look at a session here."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         project_id=place.project_id, topic_id=place.conversation_id
     )
@@ -94,7 +95,7 @@ async def executor_target(db: AsyncSession, topic_id: uuid.UUID) -> dict | None:
     Asked of the room's sessions and not of one: they lease the same executor
     today (see `api/routes/execution.py`).
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     resource = str(place.room.resource_id or place.room.id)
     for held in await AgentSessionService(db).places_in_room(place.room_id):
         if held.lease and held.resource_id == resource:
@@ -102,7 +103,11 @@ async def executor_target(db: AsyncSession, topic_id: uuid.UUID) -> dict | None:
     return None
 
 
-@router.post("/topics/{topic_id}/agent/control", operation_id="agent-control")
+@router.post(
+    "/topics/{topic_id}/agent/control",
+    operation_id="agent-control",
+    dependencies=[ROUTE_DECIDES],
+)
 async def control(
     topic_id: uuid.UUID,
     data: ControlIn,
@@ -135,7 +140,7 @@ async def control(
             }
     except ConflictError:
         raise
-    except Exception as exc:  # noqa: BLE001 — the room reads why it failed
+    except Exception as exc:  # the room reads why it failed
         response = {"subtype": "error", "error": str(exc) or type(exc).__name__}
     return ok(
         {

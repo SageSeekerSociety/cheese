@@ -128,57 +128,6 @@ def test_only_someone_signed_in_can_hand_a_sign_in_over(client):
     assert resp.status_code == 401
 
 
-def _enable_github_app_provider(monkeypatch):
-    monkeypatch.setattr(settings, "oauth_enabled_providers", "github_app")
-    monkeypatch.setattr(settings, "oauth_github_app_client_id", "test-client-id")
-    monkeypatch.setattr(settings, "oauth_github_app_client_secret", "test-secret")
-    monkeypatch.setattr(
-        settings, "oauth_github_app_redirect_url", "https://example.com/cb"
-    )
-
-
-def _link_github(client, token: str, project: uuid.UUID, *, in_app: bool) -> str:
-    """Starts connecting GitHub and comes back from GitHub; where the browser lands."""
-    headers = _bearer(token) | ({"X-Cheese-App": "1"} if in_app else {})
-    started = client.get(
-        "/users/me/github-account/authorize-url",
-        params={"return_project_id": str(project)},
-        headers=headers,
-    )
-    assert started.status_code == 200, started.text
-    state = parse_qs(urlsplit(started.json()["data"]["url"]).query)["state"][0]
-    # GitHub is not reached in tests, so the exchange fails: the result is an
-    # error, which is shown wherever a result is.
-    back = client.get(
-        "/users/me/github-account/callback",
-        params={"code": "x", "state": state},
-        follow_redirects=False,
-    )
-    assert back.status_code == 302
-    return back.headers["location"]
-
-
-def test_connecting_from_the_app_shows_the_result_in_the_app(client, monkeypatch):
-    _enable_github_app_provider(monkeypatch)
-    token = seed_user(client, "dai")
-    project = uuid.uuid4()
-
-    landing = urlsplit(_link_github(client, token, project, in_app=True))
-    assert landing.path == "/account/to-app"
-    page = urlsplit(parse_qs(landing.query)["path"][0])
-    assert page.path == f"/projects/{project}/settings"
-    assert parse_qs(page.query)["github_account"] == ["error"]
-
-
-def test_connecting_from_a_browser_stays_in_the_browser(client, monkeypatch):
-    _enable_github_app_provider(monkeypatch)
-    token = seed_user(client, "eve")
-    project = uuid.uuid4()
-
-    landing = urlsplit(_link_github(client, token, project, in_app=False))
-    assert landing.path == f"/projects/{project}/settings"
-
-
 def test_a_feishu_authorization_from_the_app_shows_its_result_in_the_app(client):
     back = client.get(
         "/integrations/feishu/callback",

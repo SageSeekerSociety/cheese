@@ -8,11 +8,13 @@ that mirrors the implementation cannot catch the implementation being wrong.
 
 Stub hooks are `language: system` entries in the fixture's own
 .pre-commit-config.yaml: the command table still comes from a config file,
-and pre-commit is the real scheduler. Set CI_FAST_PRECOMMIT to a pre-commit
-invocation available on the machine (CI provides it via uv — `uvx pre-commit`
-— in every workflow whose discover picks this file up).
+and pre-commit is the real scheduler. CI_FAST_PRECOMMIT overrides which
+pre-commit the runs below use; when it is not set this file picks one the
+machine can actually run (see `precommit_command`), rather than naming a
+binary that may not be installed and reporting every hook as blocked.
 """
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -29,23 +31,41 @@ from unittest import mock
 SCRIPT = Path(__file__).with_name("ci-fast.py")
 
 ALL_HOOKS = [
-    "ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork",
-    "eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet",
-    "repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references",
-    "pyright", "frontend-typecheck",
+    "ruff", "boundary-check", "migration-fork",
+    "eslint", "stylelint", "boundary-check-frontend", "scene-ratchet",
+    "repo-rules", "action-pins", "manual-anchors", "doc-references",
+    "pyright", "frontend-typecheck", "openapi-document",
 ]
-BACKEND_HOOKS = {"ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"}
-FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"}
-GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references"}
+BACKEND_HOOKS = {"ruff", "boundary-check", "migration-fork"}
+# Selected by the pre-push entry point ALONE, on top of FAST_HOOKS — a plain
+# `task ci:fast` run and Required CI's draft job do not run these. Kept in step
+# with `PRE_PUSH_HOOKS` in ci-fast.py.
+PRE_PUSH_HOOKS = {"openapi-document"}
+FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet"}
+GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "doc-references"}
 # Hooks that judge against the merge base, so they are the ones that must report
 # not-run — never a pass — when there is no base or the caller names another one.
-# Kept in step with `MERGE_BASE_HOOKS` in ci-fast.py, minus `file-size`, which
-# is one of the guard hooks this file tracks separately.
+# Kept in step with `MERGE_BASE_HOOKS` in ci-fast.py.
 BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet", "boundary-check"}
 
 
 def git(repo, *args):
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def precommit_command():
+    """What CI_FAST_PRECOMMIT should say on the machine running this file.
+
+    The value has to name something that runs here, or the suite reports the
+    machine instead of the change: a bare `pre-commit` on a checkout without
+    pre-commit installed makes every hook come back `pre-commit unavailable:
+    blocked` and turns the run red for no reason at all. Both workflows pass
+    `uvx pre-commit`, which resolves on a machine that has only uv; a checkout
+    that does have pre-commit on PATH may as well use it directly.
+
+    Only the default: a caller's own CI_FAST_PRECOMMIT still wins.
+    """
+    return "pre-commit" if shutil.which("pre-commit") else "uvx pre-commit"
 
 
 def _cores():
@@ -60,6 +80,47 @@ def _cores():
     return cores()
 
 
+def _imports_app(tree):
+    """Whether a test module imports app code, at any depth.
+
+    The reverse import graph is built over the whole AST, so an import inside a
+    function is an edge like any other; the same reading is what decides that a
+    test which does import app is reachable without being a tree guard.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(a.name == "app" or a.name.startswith("app.") for a in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module and (
+                    node.module == "app" or node.module.startswith("app.")):
+                return True
+    return False
+
+
+def _repository_roots(tree):
+    """Names bound to a directory derived from this file's path (``parents[N]``).
+
+    A test that recursively scans one of these reads a repository tree rather
+    than only the module it lives in, and the import graph has no edge for a
+    read. ``parents[0]`` is the test's own directory and is left out.
+    """
+    roots = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            for inner in ast.walk(node.value):
+                if (isinstance(inner, ast.Subscript)
+                        and isinstance(inner.value, ast.Attribute)
+                        and inner.value.attr == "parents"
+                        and isinstance(inner.slice, ast.Constant)
+                        and isinstance(inner.slice.value, int)
+                        and inner.slice.value >= 1):
+                    roots.add(node.targets[0].id)
+                    break
+    return roots
+
+
 class CiFastTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="ci-fast-test-"))
@@ -71,6 +132,16 @@ class CiFastTest(unittest.TestCase):
         # store. The hooks here are local stubs that install nothing, so each
         # test gets a store of its own.
         self.env = {**os.environ, "PRE_COMMIT_HOME": str(self.tmp / "pre-commit-home")}
+        # The static tier runs the whole-tree guards through `uv run pytest`;
+        # a stub `uv` stands in for it so no fixture needs a real backend.
+        # TREE_GUARD_EXIT makes it fail, and every argv is logged.
+        self.uv_log = self.tmp / "uv-argv"
+        stub = self.tmp / "uvstub"
+        stub.mkdir()
+        (stub / "uv").write_text(
+            f"#!/bin/sh\necho \"$@\" >> {self.uv_log}\nexit ${{TREE_GUARD_EXIT:-0}}\n")
+        (stub / "uv").chmod(0o755)
+        self.env["PATH"] = str(stub) + os.pathsep + self.env["PATH"]
         self.repo = self.tmp / "repo"
         self.repo.mkdir()
         git(self.repo, "init", "-b", "main")
@@ -116,7 +187,7 @@ class CiFastTest(unittest.TestCase):
 
     def run_ci_fast(self, *extra, env_extra=None):
         env = dict(self.env)
-        env.setdefault("CI_FAST_PRECOMMIT", "pre-commit")
+        env.setdefault("CI_FAST_PRECOMMIT", precommit_command())
         if env_extra:
             env.update(env_extra)
         return subprocess.run(
@@ -192,11 +263,9 @@ class CiFastTest(unittest.TestCase):
         self.assertTrue(rep["fallback"])
         # everything ran except the checks that themselves need the merge base
         self.assertTrue((BACKEND_HOOKS | FRONTEND_HOOKS) - BASE_JUDGING_HOOKS <= self.ran_hooks())
-        self.assertNotIn("file-size", self.ran_hooks())
         for hook in BASE_JUDGING_HOOKS:
             self.assertNotIn(hook, self.ran_hooks())
         skipped = {n["id"] for n in rep["not_run"]}
-        self.assertIn("file-size", skipped)
         for hook in BASE_JUDGING_HOOKS:
             self.assertIn(hook, skipped)
 
@@ -209,13 +278,11 @@ class CiFastTest(unittest.TestCase):
         proc = self.run_ci_fast("--base", "release")
         self.assertEqual(proc.returncode, 2, proc.stdout)
         self.assertIn("无法验证", proc.stdout)
-        self.assertNotIn("file-size", self.ran_hooks())
         self.assertNotIn("migration-fork", self.ran_hooks())
         self.assertIn("ruff", self.ran_hooks())  # base-independent hooks still ran
         rep = self.report()
         self.assertEqual(rep["status"], "unknown")
         skipped = {n["id"] for n in rep["not_run"]}
-        self.assertIn("file-size", skipped)
         self.assertIn("migration-fork", skipped)
 
     # --- a stray SKIP in the caller's shell must NOT silently skip a nested
@@ -312,7 +379,7 @@ class CiFastTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         ran = self.ran_hooks()
         self.assertFalse({"eslint", "stylelint", "boundary-check-frontend"} & ran)
-        self.assertTrue({"scene-ratchet", "catalog-ratchet"} <= ran)  # the rest of the tier
+        self.assertIn("scene-ratchet", ran)  # the rest of the tier
         not_run = {item["id"]: item["reason"] for item in self.report()["not_run"]}
         for hook_id in ("eslint", "stylelint", "boundary-check-frontend"):
             self.assertIn(hook_id, not_run)
@@ -400,8 +467,8 @@ class CiFastTest(unittest.TestCase):
         proc = self.run_ci_fast("--pre-push")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         ran = self.ran_hooks()
-        self.assertTrue({"scene-ratchet", "catalog-ratchet"} <= ran)
-        self.assertIn("file-size", ran)
+        self.assertIn("scene-ratchet", ran)
+        self.assertIn("repo-rules", ran)
         self.assertNotIn("blocked", proc.stdout)
         proc = self.run_ci_fast()
         self.assertEqual(proc.returncode, 3, proc.stdout)
@@ -441,6 +508,99 @@ class CiFastTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 2, proc.stdout)
         self.assertIn("eslint", proc.stdout)
         self.assertEqual(self.report()["status"], "unknown")
+
+    # --- the checks the entry point adds on top of the tier: a Required CI
+    # --- step a first push can be the first to break, which a work machine can
+    # --- still run. Added to the flag's selection only — `task ci:fast` and
+    # --- CI's draft tier read FAST_HOOKS, and neither should pay for it
+    def test_pre_push_adds_the_backend_checks_the_tier_does_not(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(PRE_PUSH_HOOKS <= self.ran_hooks())
+
+    def test_without_pre_push_the_added_checks_do_not_run(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertFalse(PRE_PUSH_HOOKS & self.ran_hooks())
+
+    # --- and they follow the scope like every other hook: a frontend-only push
+    # --- does not build the backend's API document
+    def test_pre_push_added_checks_follow_the_backend_scope(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertFalse(PRE_PUSH_HOOKS & self.ran_hooks())
+
+    # --- the whole-tree guards are pytest tests that read the source tree, so
+    # --- the static tier has to run them itself or a push never meets them
+    def test_static_runs_every_tree_guard_on_a_backend_push(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        from ci_fast_backend import TREE_GUARDS
+        argv = self.uv_log.read_text()
+        for name in TREE_GUARDS:
+            self.assertIn(f"tests/unit/{name}", argv)
+        self.assertIn("test_domain_import_guard.py", argv)
+        self.assertIn("tree-guards", {r["id"] for r in self.report()["ran"]})
+
+    # --- the tuple above is written by hand, and a test that reads the tree has
+    # --- no import edge from the file it guards, so nothing else notices it
+    # --- being left out. Judge the shape rather than a marker comment: a unit
+    # --- test that imports nothing from app and does one of these is a
+    # --- whole-tree guard, and the import graph will never select it:
+    # --- names a script root, derives REPO_ROOT, or recursively scans a
+    # --- directory it derived from ``__file__`` (``parents[N]``).
+    # --- Readers of `.github/workflows/` are outside this criterion on purpose:
+    # --- a workflow-only change does not put the tier in backend scope, so an
+    # --- entry here would not run them there either — that needs a lane of its
+    # --- own.
+    def test_every_tree_reading_unit_test_is_in_the_tree_guard_tuple(self):
+        from ci_fast_backend import TREE_GUARDS
+        unit = SCRIPT.parents[2] / "backend" / "tests" / "unit"
+        readers = set()
+        for path in sorted(unit.glob("test_*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            if _imports_app(tree):
+                continue
+            text = "\n".join(
+                node.value for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str))
+            names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+            scanned = {
+                node.func.value.id for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"rglob", "glob", "iterdir"}
+                and isinstance(node.func.value, ast.Name)
+            }
+            if (".claude/scripts" in text or ".github/scripts" in text
+                    or "REPO_ROOT" in names
+                    or scanned & _repository_roots(tree)):
+                readers.add(path.name)
+        missing = readers - set(TREE_GUARDS)
+        self.assertFalse(missing,
+                         f"reads the tree but is not in TREE_GUARDS: {sorted(missing)}")
+
+    def test_a_failing_tree_guard_fails_the_static_tier(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--pre-push", env_extra={"TREE_GUARD_EXIT": "1"})
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("tree-guards", proc.stdout)
+
+    def test_tree_guards_follow_the_backend_scope(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertFalse(self.uv_log.exists())
 
     # --- a plain run is untouched: the node hooks are selected and executed
     # --- exactly as before (the narrowing belongs to the flag, not the tool)
@@ -863,7 +1023,7 @@ class CiFastTest(unittest.TestCase):
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "--tier", "static"],
             cwd=worktree, capture_output=True, text=True,
-            env={**self.env, "CI_FAST_PRECOMMIT": os.environ.get("CI_FAST_PRECOMMIT", "pre-commit")},
+            env={**self.env, "CI_FAST_PRECOMMIT": os.environ.get("CI_FAST_PRECOMMIT", precommit_command())},
             timeout=120,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -1183,14 +1343,14 @@ sys.exit(0)
         rows = {row["id"]: row for row in rep["ran"]}
         self.assertEqual(rows["commit-title"]["result"], "unknown")
         self.assertIn("pull-request", rows["commit-title"]["reason"])
-        self.assertIn("file-size", rows, "the tier judged nothing at all")
+        self.assertIn("repo-rules", rows, "the tier judged nothing at all")
 
     def test_an_unreadable_pull_request_still_judges_the_change(self):
         # The same payload with a check that really fails: the failure must
         # reach the verdict. Aborting at the payload instead reported unknown
         # having executed nothing, so a failure in the same commit went unseen
         # and the draft was green — the false green this tier exists to remove.
-        self.write_hooks(failing={"file-size"})
+        self.write_hooks(failing={"repo-rules"})
         self.make_base_and_head("frontend/src/probe.ts")
         payload = self.tmp / "pull.json"
         payload.write_text("gh: Not Found (HTTP 404)")
@@ -1198,7 +1358,7 @@ sys.exit(0)
                                 env_extra=self.quick_tools())
         self.assertEqual(proc.returncode, 1, proc.stdout)
         self.assertEqual(self.report()["status"], "fail")
-        self.assertIn("file-size", self.ran_hooks())
+        self.assertIn("repo-rules", self.ran_hooks())
 
     def test_quick_pull_request_that_is_not_an_object_is_unknown(self):
         # JSON that parses but is not a PR object — a scalar, a list, a
@@ -1218,7 +1378,7 @@ sys.exit(0)
             report = self.report()
             self.assertEqual(report["status"], "unknown", text)
             self.assertIn("pull-request", " ".join(report["reasons"]), text)
-            self.assertIn("file-size", [row["id"] for row in report["ran"]], text)
+            self.assertIn("repo-rules", [row["id"] for row in report["ran"]], text)
         # ...and a PR object whose title is not a string is the same story: it
         # would reach check-commit-title.py as an argv element and raise there.
         payload = self.tmp / "pull.json"
@@ -1245,9 +1405,9 @@ sys.exit(0)
         # what this test exists to catch. Warm the readiness command first and
         # give the budget room to reach the checks. It is then spent by a real
         # (slow) stub hook, so nothing here is stubbed away.
-        self.write_hooks(slow={"file-size"})
+        self.write_hooks(slow={"repo-rules"})
         self.make_base_and_head("frontend/src/probe.ts")
-        subprocess.run([*shlex.split(self.env.get("CI_FAST_PRECOMMIT", "pre-commit")), "--version"],
+        subprocess.run([*shlex.split(self.env.get("CI_FAST_PRECOMMIT", precommit_command())), "--version"],
                        cwd=self.repo, capture_output=True, env=self.env, timeout=120)
         proc = self.run_ci_fast("--budget", "8", "--timeout", "30")
         self.assertEqual(proc.returncode, 2, proc.stdout)
@@ -1283,11 +1443,10 @@ sys.exit(0)
         for identifier in ("eslint", "stylelint", "boundary-check-frontend"):
             self.assertEqual(rows[identifier]["result"], "unknown", identifier)
         self.assertNotIn("eslint", self.ran_hooks())
-        # The two ratchets are python scripts costing seconds, far too cheap for
-        # a fixed floor to judge: they are left to their own per-check timeout,
-        # so a budget that ran out must still never read as their failure.
-        for identifier in ("scene-ratchet", "catalog-ratchet"):
-            self.assertNotEqual(rows.get(identifier, {}).get("result"), "fail", identifier)
+        # The scene ratchet is a python script costing seconds, far too cheap for
+        # a fixed floor to judge: it is left to its own per-check timeout, so a
+        # budget that ran out must still never read as its failure.
+        self.assertNotEqual(rows.get("scene-ratchet", {}).get("result"), "fail")
 
 
 class SelectionEvidenceTest(unittest.TestCase):
@@ -1371,8 +1530,8 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertIn("tests/unit/test_needs_the_build.py", selected)
 
     def test_backend_harness_omission_follows_imports_only(self):
-        # Naming a file is a selection dependency — the legacy-error ratchet
-        # names every file it counts — but it is not a reason a test needs the
+        # Naming a file is a selection dependency — a tree guard that counts files
+        # names every file it counts — but that is not a reason a test needs the
         # pinned build. Following it here would drop a test this tier can run.
         from ci_fast_backend import select_backend
         self.put("backend/tests/pinned_claude.py", "def claude_binary(): raise SystemExit\n")
@@ -1650,18 +1809,15 @@ class SelectionEvidenceTest(unittest.TestCase):
         # A deleted module is exactly what the full typecheck is for.
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
-    def test_frontend_types_only_input_widens_types_not_the_test_run(self):
-        # A backend route change carries the frontend suite with it through the
-        # digest of the rebuilt document and the regenerated, types-only
-        # src/api/openapi.d.ts. Nothing in frontend/src reads either at runtime,
-        # so the suite would be checking nothing new; the type check is what has
-        # to widen.
+    def test_frontend_declaration_file_widens_types_not_the_test_run(self):
+        # A declaration file — src/api/openapi.d.ts is the one the generator
+        # writes — compiles to no runtime, so the suite would be checking
+        # nothing new; the type check is what has to widen.
         from ci_fast_checks import test_plan
         self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
         self.put("frontend/src/use.ts", "export const x = 1\n")
         plan, omissions = test_plan(
-            self.root, ["backend/openapi.sha256", "frontend/src/api/openapi.d.ts",
-                        "frontend/src/use.ts"],
+            self.root, ["frontend/src/api/openapi.d.ts", "frontend/src/use.ts"],
             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
         self.assertEqual(unit["evidence"]["mode"], "related")
@@ -1669,10 +1825,9 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(unit["evidence"]["roots"], ["src/use.ts"])
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
         self.assertEqual(omissions, [])
-        # Alone, the digest and the declaration run no test at all — that is a
-        # stated omission, not a suite-wide run and not an unknown.
-        plan, omissions = test_plan(self.root, ["backend/openapi.sha256",
-                                                "frontend/src/api/openapi.d.ts"],
+        # Alone, the declaration runs no test at all — that is a stated
+        # omission, not a suite-wide run and not an unknown.
+        plan, omissions = test_plan(self.root, ["frontend/src/api/openapi.d.ts"],
                                     {"frontend": True}, self.root)
         self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
@@ -1744,22 +1899,22 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
     def test_frontend_scope_is_the_paths_the_map_routed_there(self):
-        # The path map routes the document's digest into frontend scope, so a
-        # backend change enters this branch through it. Read from the whole
-        # change, its own .py files counted as frontend runtime content and the
-        # suite ran in full for a document no test can load.
+        # The path map routes some backend files into frontend scope — the doc
+        # skills the editor renders — so a change can enter this branch with
+        # backend .py files beside them. Read from the whole change, those .py
+        # files counted as frontend runtime content and the suite ran in full
+        # for code no test can load.
         from ci_fast_checks import test_plan
         self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
-        changed = ["backend/app/api/projects.py", "backend/openapi.sha256",
-                   "frontend/src/api/openapi.d.ts"]
+        skill = "backend/app/domain/skill_library/doc_writing.md"
+        changed = ["backend/app/api/projects.py", skill, "frontend/src/api/openapi.d.ts"]
         plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root,
-                                    frontend_scope=["backend/openapi.sha256",
-                                                    "frontend/src/api/openapi.d.ts"])
+                                    frontend_scope=[skill, "frontend/src/api/openapi.d.ts"])
         self.assertEqual([o["id"] for o in omissions], ["frontend-unit"])
         self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
         # With no scope from the caller the whole change is read, and a .py file
-        # beside the digest is not something this branch knows how to rule out:
+        # beside them is not something this branch knows how to rule out:
         # it runs in full. The path map is what keeps that from happening, and
         # this is the answer when it has not spoken.
         plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root)
@@ -1801,10 +1956,10 @@ class SelectionEvidenceTest(unittest.TestCase):
         # reads the stylesheet off disk. The suite is what answers for the
         # edit. A deletion with no surviving root is the same case.
         from ci_fast_checks import test_plan
-        self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
-        self.put("frontend/catalog-baseline.json", "{}\n")
-        for changed in (["frontend/src/i18n/messages/en/tasks.json"],
-                        ["frontend/catalog-baseline.json"],
+        self.put("frontend/src/i18n/messages/en/tasks/artifactComparison.json", "{}\n")
+        self.put("frontend/stylelint-baseline.json", "{}\n")
+        for changed in (["frontend/src/i18n/messages/en/tasks/artifactComparison.json"],
+                        ["frontend/stylelint-baseline.json"],
                         ["frontend/src/styles/docBlocks.css"],
                         ["frontend/src/gone.ts"]):
             plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root)
@@ -1829,9 +1984,9 @@ class SelectionEvidenceTest(unittest.TestCase):
         # specs' subject, and they run beside it in the same tier.
         from ci_fast_checks import test_plan
         self.put("frontend/src/views/Index.vue", "<template><p>x</p></template>")
-        self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
+        self.put("frontend/src/i18n/messages/en/tasks/artifactComparison.json", "{}\n")
         plan, omissions = test_plan(
-            self.root, ["frontend/src/views/Index.vue", "frontend/src/i18n/messages/en/tasks.json"],
+            self.root, ["frontend/src/views/Index.vue", "frontend/src/i18n/messages/en/tasks/artifactComparison.json"],
             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
         self.assertEqual(unit["evidence"]["mode"], "related")

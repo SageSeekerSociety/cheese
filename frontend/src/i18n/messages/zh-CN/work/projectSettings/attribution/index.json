@@ -1,7 +1,16 @@
 {
-  "hint": "开启后，新提交会把任务请求者署为共同作者，提交作者仍是 AI 队友。已有提交不受影响",
-  "label": "将任务请求者列为共同作者",
-  "off": "当前已关闭",
-  "on": "当前已开启",
-  "title": "提交署名"
+  "agent": "AI 队友",
+  "agentHint": "PR 和提交都署 {agent} 的名，任务负责人不署名。提交里附任务链接",
+  "expired": "授权已失效，你负责的任务暂由 {agent} 创建 PR",
+  "hint": "已有提交不受影响",
+  "label": "署名给",
+  "signIn": "连接 GitHub",
+  "signInHint": "连接后，你负责的任务用你的账号创建 PR",
+  "manage": "在账号安全中管理",
+  "owner": "任务负责人",
+  "ownerHint": "用任务负责人连接的 GitHub 账号创建 PR，提交作者为负责人，{agent} 列为共同作者。负责人未连接 GitHub 时，PR 由 {agent} 创建，负责人列为共同作者",
+  "signInAgain": "重新授权 GitHub",
+  "title": "提交署名",
+  "unlinked": "未连接 GitHub",
+  "yourGithub": "你的 GitHub 账号"
 }

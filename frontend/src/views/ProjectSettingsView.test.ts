@@ -7,11 +7,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
 import * as ownAgents from '../api/ownAgents'
-import { SudoCancelledError, withSudo } from '../utils/sudo'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
 import { setLocale } from '@/i18n'
+import { PERMISSIONS } from '@/lib/projectPermissions'
 import { seedProjects } from '@/test/seedQueries'
 
 const me = vi.hoisted(() => ({ id: null as string | null }))
@@ -32,10 +32,6 @@ vi.mock('../components/settings/ArchiveProjectSection.vue', () => ({
     template: '<section><button class="archive-confirmed" @click="$emit(\'archive\')">归档</button></section>',
   },
 }))
-vi.mock('../utils/sudo', () => ({
-  SudoCancelledError: class SudoCancelledError extends Error {},
-  withSudo: vi.fn(),
-}))
 vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
   // i18n-data: a stand-in for the real block, titled as it is
   default: { template: '<section><span class="page-section-title">脚本与环境变量</span></section>' },
@@ -45,6 +41,20 @@ vi.mock('vue-router', () => ({
   useRoute: () => router.currentRoute.value,
   useRouter: () => router,
 }))
+
+/** 我在这个项目里坐哪、能做什么：后端在 `GET /projects/{id}` 上说（#3830）。 */
+function asRole(my_role: NonNullable<Project['my_role']>, my_permissions: string[]) {
+  vi.mocked(api.getProject).mockResolvedValue({ id: 'project', name: 'P', my_role, my_permissions } as Project)
+}
+const ALL = PERMISSIONS.map((p) => p.key)
+
+/** 设置目录里的各栏，按显示顺序。项目那一份读回来之前目录还不全，所以先等它读完。 */
+async function navEntries(element: HTMLElement): Promise<(string | undefined)[]> {
+  await vi.waitFor(() => expect(api.getProject).toHaveBeenCalled())
+  await new Promise((resolve) => setTimeout(resolve))
+  const nav = element.querySelector('nav[aria-label="项目设置"]')!
+  return Array.from(nav.querySelectorAll('.so__item'), (a) => a.textContent?.trim())
+}
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -61,16 +71,12 @@ beforeEach(() => {
     agents: [],
     my_connections: [],
   })
-  vi.mocked(api.getProject).mockResolvedValue({ id: 'p1', name: 'P', can_manage_members: false } as Project)
+  asRole('member', [])
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.getGithubConnection).mockResolvedValue({ connected: false })
   vi.mocked(api.getForgeConnection).mockResolvedValue({ kind: 'github_app', connected: false, repo: null, url: null })
-  vi.mocked(api.getForgeAttribution).mockResolvedValue({
-    requester_coauthor: null,
-    effective: true,
-    deployment_default: true,
-  })
+  vi.mocked(api.getCommitCredit).mockResolvedValue({ mode: 'owner' })
 })
 
 // 设置画在盖住整个窗口的一层里（挂在 body 上），一次画一栏：打开哪一栏由 `section` 定。
@@ -93,13 +99,15 @@ async function openSettings(section?: string) {
 
 describe('project settings', () => {
   it.each([
-    ['alice', true],
-    ['bob', false],
-  ])('offers archiving only to the owner (owner=%s)', async (owner, offered) => {
-    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: owner }])
+    ['owner', true],
+    ['admin', false],
+    ['member', false],
+  ] as const)('offers archiving only to the owner (role=%s)', async (role, offered) => {
+    asRole(role, ALL)
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
     const wrapper = await openSettings()
     try {
-      expect(wrapper.element.textContent?.includes('归档项目')).toBe(offered)
+      expect((await navEntries(wrapper.element)).includes('归档项目')).toBe(offered)
     } finally {
       wrapper.unmount()
     }
@@ -118,8 +126,9 @@ describe('project settings', () => {
       expect(wrapper.element.querySelector('[data-testid="github-repository"]')).toBeNull()
       // Nobody has an account on the platform's forge: a link there lands on a sign-in page.
       expect(wrapper.element.querySelector('[data-testid="forge-repository"] a')).toBeNull()
-      expect(wrapper.element.querySelector('[data-testid="forge-attribution"]')?.textContent).toContain('当前已开启')
-      expect(api.setForgeAttribution).not.toHaveBeenCalled()
+      // Commit credit is the project's own choice, whichever forge holds the code.
+      expect(wrapper.element.querySelector('[data-testid="forge-attribution"]')).not.toBeNull()
+      expect(api.setCommitCredit).not.toHaveBeenCalled()
     } finally {
       wrapper.unmount()
     }
@@ -134,7 +143,6 @@ describe('project settings', () => {
       override_handles: null,
       approvals_required: 1,
       default_reviewer: '',
-      dispatch_seat: '',
       merge_method: 'squash',
       github_protection: { enforced, status: enforced ? 'enforced' : 'none' },
     })
@@ -177,62 +185,31 @@ describe('project settings', () => {
     }
   })
 
-  describe('disconnecting the GitHub account', () => {
-    const connection = {
-      id: 5,
-      providerId: 'github_app',
-      providerName: 'GitHub',
-      providerUserId: '42',
-      connectedAt: null,
-      login: 'octocat',
-      tokenExpires: null,
-      hasRefreshToken: false,
+  it('shows the GitHub sign-in account and leaves disconnecting it to account security', async () => {
+    me.id = '7'
+    vi.mocked(api.listOAuthConnections).mockResolvedValue({
+      connections: [
+        {
+          id: 5,
+          providerId: 'github_app',
+          providerName: 'GitHub',
+          providerUserId: '42',
+          connectedAt: null,
+          login: 'octocat',
+          tokenExpires: null,
+          hasRefreshToken: false,
+        },
+      ],
+    })
+    const wrapper = await openSettings('repository')
+    try {
+      await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
+      const labels = Array.from(wrapper.element.querySelectorAll('button'), (b) => b.textContent?.trim())
+      expect(labels).not.toContain('断开')
+      expect(labels).not.toContain('解除关联')
+    } finally {
+      wrapper.unmount()
     }
-
-    beforeEach(() => {
-      me.id = '7'
-      vi.mocked(api.listOAuthConnections).mockResolvedValue({ connections: [connection] })
-    })
-
-    const disconnect = (element: HTMLElement) =>
-      Array.from(element.querySelectorAll('button'))
-        .find((b) => b.textContent?.trim() === '断开')!
-        .click()
-
-    it('confirms identity for the unlink, then disconnects with the ticket', async () => {
-      vi.mocked(withSudo).mockImplementation(async (_purpose, operation) => operation('ticket-1'))
-      vi.mocked(api.deleteOAuthConnection).mockResolvedValue()
-      const wrapper = await openSettings('repository')
-      try {
-        await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
-        disconnect(wrapper.element)
-
-        await vi.waitFor(() => expect(api.deleteOAuthConnection).toHaveBeenCalledWith('7', 5, 'ticket-1'))
-        expect(withSudo).toHaveBeenCalledWith('oauth:unbind', expect.any(Function))
-        await vi.waitFor(() => expect(wrapper.element.textContent).not.toContain('octocat'))
-      } finally {
-        wrapper.unmount()
-      }
-    })
-
-    it('keeps the connection and says nothing when the confirmation is cancelled', async () => {
-      vi.mocked(withSudo).mockRejectedValue(new SudoCancelledError())
-      const wrapper = await openSettings('repository')
-      try {
-        await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
-        const alerts = () => Array.from(wrapper.element.querySelectorAll('[role="alert"]'), (a) => a.textContent)
-        const before = alerts()
-        disconnect(wrapper.element)
-
-        await vi.waitFor(() => expect(withSudo).toHaveBeenCalled())
-        await new Promise((resolve) => setTimeout(resolve))
-        expect(api.deleteOAuthConnection).not.toHaveBeenCalled()
-        expect(wrapper.element.textContent).toContain('octocat')
-        expect(alerts()).toEqual(before)
-      } finally {
-        wrapper.unmount()
-      }
-    })
   })
 
   it('does not offer project-wide model or role controls', async () => {
@@ -256,23 +233,20 @@ describe('project settings', () => {
   })
 
   // 每一栏只放一类事：人一次只为一件事来（换队友 / 调机器 / 定合并规则 / 接仓库）。
-  it('lists the sections in order, with archiving last and only for the owner', async () => {
+  // 「角色和权限」人人看得到，排第一；「频道」「项目地址」各看各的权限；归档只给所有者。
+  const REST = ['AI 队友', '任务命名', '环境', '合并规则', '仓库与署名', 'MCP 服务器', '导出项目']
+  it.each([
+    ['owner', ALL, ['角色和权限', '频道', '项目地址', ...REST, '归档项目']],
+    ['admin', ALL, ['角色和权限', '频道', '项目地址', ...REST]],
+    ['member', [], ['角色和权限', ...REST]],
+    ['member', ['manage_channels'], ['角色和权限', '频道', ...REST]],
+    ['mentor', ['edit_settings'], ['角色和权限', '项目地址', ...REST]],
+  ] as const)('lists the sections a %s with %j may use, in order', async (role, permissions, expected) => {
+    asRole(role, [...permissions])
     seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
     const wrapper = await openSettings()
     try {
-      const nav = wrapper.element.querySelector('nav[aria-label="项目设置"]')!
-      const entries = Array.from(nav.querySelectorAll('.so__item'), (a) => a.textContent?.trim())
-      // 「频道」只给管项目的人：这里的我不管。
-      expect(entries).toEqual([
-        'AI 队友',
-        '任务命名',
-        '环境',
-        '合并规则',
-        '仓库与署名',
-        'MCP 服务器',
-        '导出项目',
-        '归档项目',
-      ])
+      expect(await navEntries(wrapper.element)).toEqual(expected)
     } finally {
       wrapper.unmount()
     }
@@ -280,6 +254,7 @@ describe('project settings', () => {
 
   // 归档完不回首页：首页会把人带进上次待的另一个项目，像是归档没发生、又像跳错了地方。
   it('after archiving, says so and opens the archived projects, where this one now is', async () => {
+    asRole('owner', ALL)
     seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
     vi.mocked(api.archiveProject).mockResolvedValue(undefined as never)
     const wrapper = await openSettings('archive')
@@ -300,27 +275,13 @@ describe('project settings', () => {
     }
   })
 
-  it('lists 频道 first for whoever manages the project', async () => {
-    vi.mocked(api.getProject).mockResolvedValue({ id: 'project', name: 'P', can_manage_members: true } as Project)
-    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
-    const wrapper = await openSettings()
-    try {
-      await vi.waitFor(() => {
-        const nav = wrapper.element.querySelector('nav[aria-label="项目设置"]')!
-        expect(nav.querySelector('.so__item')?.textContent?.trim()).toBe('频道')
-      })
-    } finally {
-      wrapper.unmount()
-    }
-  })
-
   it.each([
     ['agents', ['AI 队友', '默认模型', '成员自己的 Claude Code']],
     // 在哪运行、怎么准备、还能跑多久：环境一页说完。
-    ['environment', ['默认环境', '脚本与环境变量', '额度']],
+    ['environment', ['默认环境', '脚本与环境变量', '额度', '项目和成员预算']],
     // 分支保护是合并规则，不是仓库连接。
     ['merge', ['分支保护']],
-    ['repository', ['GitHub 仓库地址', '连接 GitHub 仓库', '提交署名', '连接 GitHub 账号']],
+    ['repository', ['GitHub 仓库地址', '连接 GitHub 仓库', '提交署名']],
     // 导出打包整个项目，不和任何一栏混在一起。
     ['export', ['导出项目']],
   ])('puts the right blocks in the %s section', async (section, blocks) => {

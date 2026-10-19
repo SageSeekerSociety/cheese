@@ -4,13 +4,13 @@
 // 行左边只有一个 16px 槽：有子话题 → 折叠开关；否则画频道的记号（# / 锁 / 文档）。
 // 空槽也占 16px，否则同层级的标题左缘会参差。
 //
-// 行尾是这一行自己的那盏灯（`light`，父级按 `lib/roomLight.ts` 的四条判据算好）：
-// 黄 = 有事等你，呼吸绿 = 有活在往前走，长绿 = 交付完了你还没看过，红 = 显示在跑但
-// 五分钟没动静。不亮就不画。
+// 行尾是这一行自己的那盏灯（`light`，父级按 `lib/roomLight.ts` 的判据算好）：画
+// 哪一盏、红灯说的是哪件事（在跑却没动静、停下报错没人接手，或者等一位队友等太久
+// 了）都在那一份里，这里只负责把它画出来。不亮就不画。
 //
-// 行右边画的是成员：此刻在这里干活的队友，和房间在等、等太久了的那一位
-// （`TopicRailMembers`），悬停说出是谁、为什么。成员和灯是两回事：灯说这个房间的活
-// 走到哪了，成员说此刻谁在里面。
+// 行右边画的是成员：此刻在这里干活的队友（`TopicRailMembers`），悬停说出是谁、在
+// 做什么。成员和灯是两回事：灯说这个房间的活走到哪了，成员说此刻谁在里面。房间在
+// 等一位队友、等太久了说的是这一行自己的红灯，不画成头像。
 //
 // 有子话题的行，折叠开关另带一层颜色——收起来的后代里：红 = 有成员卡住了，黄 = 有
 // 事等你，绿 = 有活在走。收起来把后代整行都藏掉了，开关上这一点颜色是替它们说的。
@@ -54,7 +54,7 @@ const props = defineProps<{
   stalled: boolean
   /** 这一行此刻画哪盏灯（父级带钟算的）；不亮是 null。 */
   light?: RowLight | null
-  /** 这一行右边画的那几位成员（在干活的、卡住了的），父级带钟算好。 */
+  /** 这一行右边画的那几位成员（此刻在干活的），父级带钟算好。 */
   marks?: RailMemberMark[]
   /** 折叠开关 hover 时说的那句话（里面有什么，父级知道）。 */
   toggleTitle: string
@@ -195,6 +195,7 @@ function onMenuToggle(open: boolean) {
       </span>
     </template>
     <v-list-item-title class="d-flex align-center topic-title">
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the field replaces the title because the person chose Rename; focus moves into it -->
       <v-text-field
         v-if="renaming"
         v-model="draftTitle"
@@ -210,6 +211,7 @@ function onMenuToggle(open: boolean) {
         @keyup.esc="emit('cancel-rename')"
         @blur="emit('commit-rename', draftTitle)"
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
       <template v-else>
         <span
           class="text-truncate"

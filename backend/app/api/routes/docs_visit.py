@@ -27,6 +27,7 @@ from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.request_deps import DbSession
+from app.api.write_access import ROUTE_DECIDES
 from app.core.redis import get_redis_client
 from app.domain.docs_site import access, visits
 from app.domain.docs_site.visits import VisitLimits
@@ -61,7 +62,7 @@ class VisitIn(BaseModel):
         return v if v and _PAGE.match(v) else None
 
 
-@router.post("/visit", status_code=204)
+@router.post("/visit", status_code=204, dependencies=[ROUTE_DECIDES])
 async def record_visit(body: VisitIn, request: Request, db: DbSession) -> Response:
     """Count one reader's visit to the docs, at most once a day.
 
@@ -80,6 +81,6 @@ async def record_visit(body: VisitIn, request: Request, db: DbSession) -> Respon
         return Response(status_code=204)
     try:
         await visits.record(db, visitor=who, user_id=user_id, page=body.page)
-    except Exception:  # noqa: BLE001 — a lost counter must not reach the page
+    except Exception:  # a lost counter must not reach the page
         logger.warning("recording a docs visit failed", exc_info=True)
     return Response(status_code=204)

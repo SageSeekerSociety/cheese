@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent.harness import HarnessEvent, SessionRef
+from app.domain.agent.harness.claude_code.backlog import ClaudeCodeBacklog
+from app.domain.agent.harness.codex.backlog import CodexBacklog
 from app.domain.agent.harness.driven import journal, runner, subscription
 from app.domain.agent.harness.driven.backlog import JournalBacklog
 from app.domain.agent.harness.driven.runner import socket_path
@@ -442,3 +444,22 @@ async def test_a_reader_let_go_mid_write_is_released_after_the_write(
     assert [eid for eid, _ in room.landed] == [
         f"stand-in:{sequence}" for sequence in (2, 2, 4, 4)
     ]
+
+
+def test_both_harnesses_skip_a_record_that_did_not_parse_the_same_way():
+    """What a record means is each harness's own; whether a record that did
+    not parse is read at all is one rule, and it lives in the shared base."""
+    assert ClaudeCodeBacklog.assemble is CodexBacklog.assemble
+
+    asked: list[dict] = []
+
+    class Assembler:
+        def accept(self, record: dict) -> list:
+            asked.append(record)
+            return []
+
+    entry = HarnessEvent(key="0" * 19, eid="x", record=["not", "a", "dict"], age_s=1.0)
+    for backlog in (ClaudeCodeBacklog(None), CodexBacklog(None)):
+        backlog.assembler = Assembler()
+        assert backlog.assemble(entry) == []
+    assert asked == []

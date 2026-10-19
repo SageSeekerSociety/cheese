@@ -26,11 +26,13 @@ const props = defineProps<{
   canCreate: boolean
 }>()
 const emit = defineEmits<{
-  (e: 'open', id: string): void
-  (e: 'join', id: string): void
-  (e: 'leave', id: string): void
-  (e: 'create', channel: { title: string; description: string; membersOnly: boolean }): void
-  (e: 'retry'): void
+  open: [id: string]
+  join: [id: string]
+  leave: [id: string]
+  archive: [id: string]
+  unarchive: [id: string]
+  create: [channel: { title: string; description: string; membersOnly: boolean }]
+  retry: []
 }>()
 const creatingOpen = defineModel<boolean>('creatingOpen', { default: false })
 
@@ -141,28 +143,52 @@ function meta(c: ChannelEntry): { text: string; hint?: string }[] {
             </span>
           </div>
           <span v-if="c.general" class="t-meta c-faint">{{ t('work.channelBrowse.general') }}</span>
-          <template v-else-if="!c.archived">
+          <div v-else class="browse__actions">
+            <template v-if="!c.archived">
+              <BaseButton
+                v-if="c.joined"
+                kind="secondary"
+                size="sm"
+                :loading="busyId === c.id"
+                :disabled="busyId !== null"
+                @click="emit('leave', c.id)"
+              >
+                {{ t('work.channelBrowse.leave') }}
+              </BaseButton>
+              <BaseButton
+                v-else
+                kind="secondary"
+                size="sm"
+                :loading="busyId === c.id"
+                :disabled="busyId !== null"
+                @click="emit('join', c.id)"
+              >
+                {{ t('work.channelBrowse.join') }}
+              </BaseButton>
+              <BaseButton
+                v-if="c.can_administer && (c.open_tasks ?? 0) === 0"
+                data-testid="channel-archive"
+                kind="ghost"
+                size="sm"
+                :loading="busyId === c.id"
+                :disabled="busyId !== null"
+                @click="emit('archive', c.id)"
+              >
+                {{ t('work.projectSettings.channels.archive') }}
+              </BaseButton>
+            </template>
             <BaseButton
-              v-if="c.joined"
+              v-else-if="c.can_administer"
+              data-testid="channel-unarchive"
               kind="secondary"
               size="sm"
               :loading="busyId === c.id"
               :disabled="busyId !== null"
-              @click="emit('leave', c.id)"
+              @click="emit('unarchive', c.id)"
             >
-              {{ t('work.channelBrowse.leave') }}
+              {{ t('work.projectSettings.channels.unarchive') }}
             </BaseButton>
-            <BaseButton
-              v-else
-              kind="secondary"
-              size="sm"
-              :loading="busyId === c.id"
-              :disabled="busyId !== null"
-              @click="emit('join', c.id)"
-            >
-              {{ t('work.channelBrowse.join') }}
-            </BaseButton>
-          </template>
+          </div>
         </li>
       </ul>
     </div>
@@ -246,5 +272,11 @@ function meta(c: ChannelEntry): { text: string; hint?: string }[] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.browse__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
 }
 </style>

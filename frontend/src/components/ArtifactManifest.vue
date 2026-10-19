@@ -185,6 +185,7 @@ watch(
       <li v-if="!rows.length" class="made__empty">
         <BaseEmptyState size="inline" :title="t('project.artifacts.empty')" />
       </li>
+      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- contextmenu bubbles here from the row's focused link or button (the keyboard's Menu key fires it too); the ⋯ button opens the same menu -->
       <li
         v-for="(row, index) in rows"
         :key="row.id"
@@ -236,6 +237,7 @@ watch(
       @update:model-value="renaming = null"
       @primary="rename"
     >
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to type the name; focus moves into the one field it holds -->
       <v-text-field
         v-if="renaming"
         v-model="newName"
@@ -247,6 +249,7 @@ watch(
         autofocus
         @keyup.enter="rename"
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
     </AdaptiveDialog>
 
     <!-- Merge: the same thing was declared as two items; this folds them back into one. -->

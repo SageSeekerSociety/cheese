@@ -1,11 +1,24 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import JSON, MetaData, event, update
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.domain.discussion.models import (
+    Discussion,
+    DiscussionMentionedUser,
+    DiscussionReaction,
+    ReactionType,
+)
 from app.domain.discussion.reaction_services import DiscussionReactionService
+from app.domain.discussion.repositories import (
+    DiscussionReactionRepository,
+    DiscussionRepository,
+    ReactionTypeRepository,
+)
 from app.domain.discussion.services import DiscussionService
 from app.domain.notification.models import NotificationType
 
@@ -72,6 +85,7 @@ def _make_reaction_service(
     reaction_repo = reaction_repo or AsyncMock()
     reaction_type_repo = reaction_type_repo or AsyncMock()
     reaction_type_repo.ensure_defaults = AsyncMock()
+    reaction_repo.summaries_for.return_value = {}
     svc = DiscussionReactionService(
         reaction_repo=reaction_repo,
         reaction_type_repo=reaction_type_repo,
@@ -84,9 +98,18 @@ def _make_discussion_service(
     reaction_service: DiscussionReactionService | AsyncMock | None = None,
     users: AsyncMock | None = None,
     session: AsyncMock | None = None,
+    deliver: AsyncMock | None = None,
 ) -> tuple[DiscussionService, AsyncMock, AsyncMock, AsyncMock]:
+    """The service, with the delivery ledger handed in.
+
+    The mentions a discussion lands go to the ledger, which lives above
+    `discussion`; the composition root passes the real write, so a test passes
+    its own mock. Callers that assert on it pass one in and keep the reference.
+    """
     repo = repo or AsyncMock()
+    repo.children_for.return_value = ({}, {})
     reaction_service = reaction_service or AsyncMock()
+    reaction_service.summaries_for.return_value = {}
     users = users or AsyncMock()
     users.chosen_avatar_ids.return_value = {}
     session = session or AsyncMock()
@@ -95,6 +118,7 @@ def _make_discussion_service(
             repo=repo,
             reaction_service=reaction_service,
             session=session,
+            deliver=deliver or AsyncMock(),
         )
     return svc, repo, reaction_service, users
 
@@ -228,12 +252,11 @@ class TestReactionServiceGetSummary:
             id=2, code="CHEERS", name="Cheers", description="celebration"
         )
         rt_repo.list_active.return_value = [like, cheers]
-        r_repo.count_by_discussion.return_value = {1: 5, 2: 0}
-        r_repo.has_user_reacted.return_value = True
+        r_repo.summaries_for.return_value = {10: {1: (5, True)}}
 
         result = await svc.get_reaction_summary(discussion_id=10, current_user_id=7)
 
-        # NT DiscussionReactionSummary: [{reactionType: {id, code, ...}, count, hasReacted}]  # noqa: E501
+        # NT DiscussionReactionSummary: [{reactionType: {id, code, ...}, count, hasReacted}]
         assert len(result) == 2
         like_entry = result[0]
         assert like_entry["reactionType"]["id"] == 1
@@ -251,8 +274,7 @@ class TestReactionServiceGetSummary:
         svc, r_repo, rt_repo = _make_reaction_service()
         like = _make_reaction_type(id=1)
         rt_repo.list_active.return_value = [like]
-        r_repo.count_by_discussion.return_value = {1: 3}
-        r_repo.has_user_reacted.return_value = False
+        r_repo.summaries_for.return_value = {10: {1: (3, False)}}
 
         result = await svc.get_reaction_summary(discussion_id=10, current_user_id=None)
 
@@ -264,8 +286,7 @@ class TestReactionServiceGetSummary:
         svc, r_repo, rt_repo = _make_reaction_service()
         like = _make_reaction_type(id=1)
         rt_repo.list_active.return_value = [like]
-        r_repo.count_by_discussion.return_value = {1: 2}
-        r_repo.has_user_reacted.return_value = False
+        r_repo.summaries_for.return_value = {10: {1: (2, False)}}
 
         result = await svc.get_reaction_summary(discussion_id=10, current_user_id=7)
 
@@ -385,14 +406,12 @@ class TestCreateDiscussion:
             yield
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_creates_and_returns_dto(self, mock_deliver):
-        svc, repo, rxn_svc, users = _make_discussion_service()
+    async def test_creates_and_returns_dto(self):
+        mock_deliver = AsyncMock()
+        svc, repo, rxn_svc, users = _make_discussion_service(deliver=mock_deliver)
         entity = _make_entity(id=42, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         profile = _make_profile(5)
         users.get_users_by_ids.return_value = {5: profile}
 
@@ -410,9 +429,9 @@ class TestCreateDiscussion:
         mock_deliver.assert_not_awaited()
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_publishes_notification_for_mentions(self, mock_deliver):
-        svc, repo, rxn_svc, users = _make_discussion_service()
+    async def test_publishes_notification_for_mentions(self):
+        mock_deliver = AsyncMock()
+        svc, repo, rxn_svc, users = _make_discussion_service(deliver=mock_deliver)
         entity = _make_entity(
             id=42,
             sender_id=5,
@@ -420,9 +439,7 @@ class TestCreateDiscussion:
             content="hey @user10 @user20",
         )
         repo.create.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {
             5: _make_profile(5),
             10: _make_profile(10),
@@ -479,16 +496,13 @@ class TestCreateDiscussion:
             )
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_filters_non_positive_mention_ids(self, mock_deliver):
+    async def test_filters_non_positive_mention_ids(self):
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(
             id=1, sender_id=5, mentioned_user_ids=[10], content="hello"
         )
         repo.create.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {
             5: _make_profile(5),
             10: _make_profile(10),
@@ -506,16 +520,13 @@ class TestCreateDiscussion:
         assert create_kwargs["mentioned_user_ids"] == [10]
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_deduplicates_mention_ids(self, mock_deliver):
+    async def test_deduplicates_mention_ids(self):
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(
             id=1, sender_id=5, mentioned_user_ids=[10], content="hello"
         )
         repo.create.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {
             5: _make_profile(5),
             10: _make_profile(10),
@@ -533,14 +544,11 @@ class TestCreateDiscussion:
         assert create_kwargs["mentioned_user_ids"] == [10]
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_model_type_uppercased(self, mock_deliver):
+    async def test_model_type_uppercased(self):
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         await svc.create_discussion(
@@ -554,14 +562,11 @@ class TestCreateDiscussion:
         assert create_kwargs["model_type"] == "PROJECT"
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
-    async def test_content_is_stripped(self, mock_deliver):
+    async def test_content_is_stripped(self):
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         await svc.create_discussion(
@@ -586,9 +591,7 @@ class TestGetDiscussion:
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=8, sender_id=5)
         repo.get_by_id.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         result = await svc.get_discussion(8, current_user_id=5)
@@ -610,9 +613,8 @@ class TestGetDiscussion:
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5)
         repo.get_by_id.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 3
+        repo.children_for.return_value = ({1: 3}, {})
         users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         result = await svc.get_discussion(1, current_user_id=5)
@@ -633,8 +635,6 @@ class TestListDiscussions:
         svc, repo, rxn_svc, users = _make_discussion_service()
         entities = [_make_entity(id=i, sender_id=5) for i in range(3)]
         repo.find_all.return_value = (entities, 3)
-        rxn_svc.get_reaction_summary.return_value = []
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         items, page = await svc.list_discussions(
@@ -663,8 +663,6 @@ class TestListDiscussions:
         svc, repo, rxn_svc, users = _make_discussion_service()
         entities = [_make_entity(id=i, sender_id=5) for i in range(2)]
         repo.find_all.return_value = (entities, 5)
-        rxn_svc.get_reaction_summary.return_value = []
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         _, page = await svc.list_discussions(
@@ -730,8 +728,6 @@ class TestListDiscussions:
         svc, repo, rxn_svc, users = _make_discussion_service()
         entities = [_make_entity(id=3, sender_id=5)]
         repo.find_all.return_value = (entities, 4)
-        rxn_svc.get_reaction_summary.return_value = []
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         _, page = await svc.list_discussions(
@@ -773,9 +769,7 @@ class TestUpdateDiscussion:
             },
         )
         repo.update_content.return_value = updated_entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {7: _make_profile(7)}
 
         result = await svc.update_discussion(5, content="new", user_id=7)
@@ -933,9 +927,8 @@ class TestBuildDiscussionDto:
             mentioned_user_ids=[10],
         )
         repo.get_by_id.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = [{"reactionTypeId": 1, "count": 2}]
-        repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 1
+        rxn_svc.summaries_for.return_value = {42: [{"reactionTypeId": 1, "count": 2}]}
+        repo.children_for.return_value = ({42: 1}, {})
         users.get_users_by_ids.return_value = {
             5: _make_profile(5),
             10: _make_profile(10),
@@ -966,9 +959,7 @@ class TestBuildDiscussionDto:
         ts = datetime(2025, 6, 15, 12, 0, 0)
         entity = _make_entity(id=1, sender_id=5, created_at=ts, updated_at=ts)
         repo.get_by_id.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         result = await svc.get_discussion(1, current_user_id=5)
@@ -1007,7 +998,6 @@ class TestBuildDiscussionDto:
         svc, repo, rxn_svc, users = _make_discussion_service()
         entities = [_make_entity(id=1, sender_id=5)]
         repo.find_all.return_value = (entities, 1)
-        rxn_svc.get_reaction_summary.return_value = []
         users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         items, _ = await svc.list_discussions(
@@ -1031,9 +1021,7 @@ class TestBuildDiscussionDto:
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[10, 20])
         repo.get_by_id.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         # Only user 10 has a profile, user 20 does not
         users.get_users_by_ids.return_value = {
             5: _make_profile(5),
@@ -1051,9 +1039,7 @@ class TestBuildDiscussionDto:
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5)
         repo.get_by_id.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         users.get_users_by_ids.return_value = {}
 
         result = await svc.get_discussion(1, current_user_id=5)
@@ -1072,9 +1058,7 @@ class TestLoadUserMap:
         svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[10])
         repo.get_by_id.return_value = entity
-        rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
-        repo.count_children.return_value = 0
         p5 = _make_profile(5, nickname="Alice", avatar_id=50, intro="Hi")
         p10 = _make_profile(10, nickname="Bob", avatar_id=100, intro="Hey")
         users.get_users_by_ids.return_value = {5: p5, 10: p10}
@@ -1124,3 +1108,265 @@ class TestLoadUserMap:
         assert result == {}
         users.get_users_by_ids.assert_not_awaited()
         users.chosen_avatar_ids.assert_not_awaited()
+
+
+@pytest.fixture
+async def discussion_sql():
+    """Exercise real SELECTs without a shared database or global DDL compilers."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    metadata = MetaData()
+    for model in (
+        Discussion,
+        DiscussionMentionedUser,
+        DiscussionReaction,
+        ReactionType,
+    ):
+        table = model.__table__.to_metadata(metadata)
+        for column in table.columns:
+            # Only the test's copied schema loses PostgreSQL sequences/JSONB.
+            column.server_default = None
+            column.default = None
+        if model is Discussion:
+            table.c.content.type = JSON()
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(metadata.create_all)
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            now = datetime(2026, 1, 1, tzinfo=UTC)
+            discussions = []
+            for root_id in range(1, 21):
+                discussions.append(
+                    _make_entity(
+                        id=root_id, created_at=now + timedelta(seconds=root_id)
+                    )
+                )
+                for index in range(1, 5):
+                    discussions.append(
+                        _make_entity(
+                            id=1000 + root_id * 10 + index,
+                            parent_id=root_id,
+                            sender_id=77,
+                            created_at=now + timedelta(seconds=index),
+                            deleted_at=now if index == 4 else None,
+                        )
+                    )
+            discussions.extend(
+                [
+                    _make_entity(id=9000, model_id=11),
+                    _make_entity(id=9001, deleted_at=now),
+                    _make_entity(id=9002, parent_id=1013),
+                ]
+            )
+            for row in discussions:
+                fields = vars(row).copy()
+                fields.pop("mentioned_user_ids")
+                session.add(Discussion(**fields))
+                session.add(DiscussionMentionedUser(discussion_id=row.id, user_id=77))
+            session.add(DiscussionMentionedUser(discussion_id=1, user_id=88))
+            for type_id in range(1, 11):
+                session.add(
+                    ReactionType(
+                        id=type_id,
+                        code=f"T{type_id}",
+                        name=f"Type {type_id}",
+                        description=None,
+                        display_order=type_id,
+                        is_active=type_id != 9,
+                        deleted_at=now if type_id == 10 else None,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            reaction_id = 0
+            for row in discussions:
+                for type_id in (1, 2, 3, 4, 5, 6, 7, 9, 10):
+                    reaction_id += 1
+                    session.add(
+                        DiscussionReaction(
+                            id=reaction_id,
+                            discussion_id=row.id,
+                            user_id=7,
+                            reaction_type_id=type_id,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                for user_id in (8, 9):
+                    reaction_id += 1
+                    session.add(
+                        DiscussionReaction(
+                            id=reaction_id,
+                            discussion_id=row.id,
+                            user_id=user_id,
+                            reaction_type_id=1,
+                            deleted_at=now if user_id == 9 else None,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+            session.add(
+                DiscussionReaction(
+                    id=reaction_id + 1,
+                    discussion_id=1,
+                    user_id=8,
+                    reaction_type_id=2,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+            users = AsyncMock()
+            users.get_users_by_ids.return_value = {
+                uid: _make_profile(uid) for uid in (99, 77)
+            }
+            users.chosen_avatar_ids.return_value = {77: 123}
+            with patch(
+                "app.domain.discussion.services.user_service", return_value=users
+            ):
+                service = DiscussionService(
+                    repo=DiscussionRepository(session),
+                    reaction_service=DiscussionReactionService(
+                        DiscussionReactionRepository(session),
+                        ReactionTypeRepository(session),
+                    ),
+                    session=session,
+                    deliver=AsyncMock(),
+                )
+            yield service, session, engine, users
+    finally:
+        await engine.dispose()
+
+
+async def _sql_page(service, **overrides):
+    options = dict(
+        model_type="PROJECT",
+        model_id=10,
+        parent_id=None,
+        page_start=0,
+        page_size=20,
+        sort_by="createdAt",
+        sort_order="asc",
+        current_user_id=7,
+        include_subs=True,
+        with_reactions=True,
+    )
+    options.update(overrides)
+    return await service.list_discussions(**options)
+
+
+@pytest.mark.anyio
+async def test_discussion_page_query_count_is_constant(discussion_sql, record_property):
+    service, session, engine, users = discussion_sql
+    counts = []
+    for type_count in (2, 8):
+        await session.execute(
+            update(ReactionType)
+            .where(ReactionType.id <= 8)
+            .values(is_active=ReactionType.id <= type_count)
+        )
+        for page_size in (3, 20):
+            session.expire_all()
+            users.reset_mock()
+            statements = []
+
+            def count_select(
+                _conn,
+                _cursor,
+                statement,
+                _params,
+                _context,
+                _many,
+                statements=statements,
+            ):
+                if statement.lstrip().upper().startswith("SELECT"):
+                    statements.append(statement)
+
+            event.listen(engine.sync_engine, "before_cursor_execute", count_select)
+            try:
+                items, page = await _sql_page(service, page_size=page_size)
+            finally:
+                event.remove(engine.sync_engine, "before_cursor_execute", count_select)
+            counts.append(len(statements))
+            assert [item["id"] for item in items] == list(range(1, page_size + 1))
+            assert page["total"] == 20
+            for item in items:
+                assert len(item["reactions"]) == type_count
+                assert item["reactions"][0]["count"] == 2
+                assert item["reactions"][0]["hasReacted"] is True
+                assert item["subDiscussions"]["count"] == 3
+                assert [
+                    child["id"] for child in item["subDiscussions"]["examples"]
+                ] == [
+                    1000 + item["id"] * 10 + 3,
+                    1000 + item["id"] * 10 + 2,
+                ]
+    record_property("select_counts", counts)
+    assert counts[0] > 0
+    assert len(set(counts)) == 1, (
+        f"SELECT counts for (2,8) types x (3,20) rows: {counts}"
+    )
+    users.get_users_by_ids.assert_awaited_once()
+    users.chosen_avatar_ids.assert_awaited_once()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("user_id", [None, 7, 8])
+async def test_discussion_sql_preserves_nested_dtos(discussion_sql, user_id):
+    service, _session, _engine, _users = discussion_sql
+    items, page = await _sql_page(service, current_user_id=user_id, page_size=3)
+    assert page == {
+        "pageStart": 0,
+        "pageSize": 3,
+        "hasMore": True,
+        "nextStart": 3,
+        "total": 20,
+    }
+    assert [user["id"] for user in items[0]["mentionedUsers"]] == [77]
+    assert items[0]["sender"]["id"] == 99
+    for item in items:
+        examples = item["subDiscussions"]["examples"]
+        for dto in [item, *examples]:
+            assert [
+                reaction["reactionType"]["id"] for reaction in dto["reactions"]
+            ] == list(range(1, 9))
+            assert dto["reactions"][0]["count"] == 2
+            assert dto["reactions"][0]["hasReacted"] is (user_id in (7, 8))
+            assert dto["reactions"][1]["count"] == (2 if dto["id"] == 1 else 1)
+            assert dto["reactions"][1]["hasReacted"] is (
+                user_id == 7 or (user_id == 8 and dto["id"] == 1)
+            )
+            assert dto["reactions"][-1]["count"] == 0
+            assert dto["reactions"][-1]["hasReacted"] is False
+        for child in examples:
+            assert child["subDiscussions"] is None
+            assert child["sender"]["avatarId"] == 123
+            assert [user["id"] for user in child["mentionedUsers"]] == [77]
+    last, page = await _sql_page(service, page_start=18, page_size=3)
+    assert [item["id"] for item in last] == [19, 20]
+    assert page["hasMore"] is False
+    assert page["nextStart"] is None
+    empty, page = await _sql_page(service, page_start=20)
+    assert empty == []
+    assert page["total"] == 20
+
+
+@pytest.mark.anyio
+async def test_discussion_sql_optional_details(discussion_sql):
+    service, session, _engine, _users = discussion_sql
+    items, _ = await _sql_page(service, include_subs=False, with_reactions=False)
+    assert all(
+        item["reactions"] == [] and item["subDiscussions"] is None for item in items
+    )
+    children, _ = await _sql_page(service, parent_id=1, include_subs=False)
+    assert [child["id"] for child in children] == [1011, 1012, 1013]
+    assert all(child["subDiscussions"] is None for child in children)
+    await session.execute(
+        update(Discussion).where(Discussion.parent_id == 1).values(created_at=_NOW)
+    )
+    tied = await service.get_discussion(1, current_user_id=None)
+    assert [child["id"] for child in tied["subDiscussions"]["examples"]] == [1013, 1012]
+    await session.execute(
+        update(Discussion).where(Discussion.parent_id == 20).values(deleted_at=_NOW)
+    )
+    without_children = await service.get_discussion(20, current_user_id=None)
+    assert without_children["subDiscussions"] == {"count": 0, "examples": []}

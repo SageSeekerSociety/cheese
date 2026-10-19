@@ -1,0 +1,34 @@
+{
+  "back": "Back to space settings",
+  "basic": {
+    "avatar": "Avatar",
+    "changeAvatar": "Change avatar",
+    "intro": "Introduction",
+    "name": "Name",
+    "save": "Save",
+    "visibleLimit": "Approved, open challenges each publisher can show to members",
+    "visibleLimitInput": "Limit",
+    "visibleLimitInvalid": "The limit must be a whole number of 0 or more",
+    "visibleLimitLabel": "Visible challenge limit",
+    "visibleLimitLimited": "Limited",
+    "visibleLimitRequired": "Enter a limit",
+    "visibleLimitUnlimited": "Unlimited"
+  },
+  "close": "Close space settings",
+  "closeHint": "Close space settings (Esc)",
+  "overlay": "Space settings",
+  "sections": {
+    "categories": "Categories",
+    "topics": "Tags"
+  },
+  "tabs": {
+    "basic": "Basics",
+    "categories": "Categories and tags",
+    "domainGroups": "Email domain groups",
+    "guidance": "Guidance for the AI teammate",
+    "inviteCodes": "Invite codes",
+    "materials": "Library",
+    "templates": "Challenge templates"
+  },
+  "title": "Settings"
+}

@@ -94,7 +94,7 @@ def default_iface(root: Path) -> str | None:
                 iface = cols[0]
                 if (root / iface).is_dir():
                     return iface
-    except OSError:  # noqa: PERF203 — a missing /proc is the container case
+    except OSError:  # a missing /proc is the container case
         pass
     for child in sorted(root.iterdir()):
         if child.is_dir() and child.name != "lo":

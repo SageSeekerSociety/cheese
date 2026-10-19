@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
@@ -42,10 +42,10 @@ from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import ComputeMeterSweeper
 from app.domain.machine.services import HostPool
 from app.domain.run_record.models import RunRecord
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.usage.models import ComputeRun, ResourceUsage
 from tests.executor_release import running
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.microcloud import OFFERING, FakeMicroCloud
 
 LXC = {**OFFERING, "id": 1, "machineTypeName": "standard-lxc"}
@@ -169,6 +169,22 @@ def _host(case, seat) -> CloudHost | None:
             repo = CloudHostRepository(db)
             home = await repo.current_home(seat.session)
             return None if home is None else await repo.get(home.host_id)
+
+    return case.client.portal.call(read)
+
+
+def _homes_on(case, host_id) -> int:
+    """How many homes are left on that host. A home whose ``session_id`` was
+    cleared is no longer the one ``current_home`` finds, so after that the
+    host is what is left to ask by."""
+
+    async def read():
+        async with case.client.test_request_factory() as db:
+            return await db.scalar(
+                select(func.count())
+                .select_from(SandboxHome)
+                .where(SandboxHome.host_id == host_id)
+            )
 
     return case.client.portal.call(read)
 
@@ -547,6 +563,55 @@ def test_an_idle_vm_is_pushed_and_released(cloud):
     assert _host(case, seat).machine_id not in (None, machine)
 
 
+def test_recovering_vms_do_not_hide_an_unrelated_idle_vm(cloud):
+    case = cloud
+    seats = [_room(case, WHOLE_VM) for _ in range(cloud_vm.PER_SWEEP + 1)]
+    for index, seat in enumerate(seats):
+        _working(case, seat)
+        _idle_for(
+            case,
+            seat,
+            timedelta(seconds=settings.cloud_vm_idle_release_s + 600 - index * 60),
+        )
+    pending = {seat.room for seat in seats[:-1]}
+
+    async def sweep():
+        async with case.client.test_request_factory() as db:
+            lifecycle = SandboxLifecycle(
+                db,
+                hub=case.hub,
+                recovering=lambda conversation: conversation in pending,
+            )
+            return await cloud_vm.release_idle(db, lifecycle)
+
+    assert case.client.portal.call(sweep) == 1
+    assert all(_host(case, seat) is not None for seat in seats[:-1])
+    assert _host(case, seats[-1]) is None
+
+
+def test_a_background_command_keeps_a_vm_past_its_idle_release(cloud, monkeypatch):
+    """A VM's keep-alive is its own and longer than a sandbox's. A command the
+    executor still runs for the session holds the VM past the idle release that
+    would otherwise let it go — the shared sandbox cap is shorter than that
+    release, so reading it here would release the VM under the command."""
+    case = cloud
+    seat = _room(case, WHOLE_VM)
+    _working(case, seat)
+    monkeypatch.setattr(
+        execution,
+        "call",
+        AsyncMock(
+            side_effect=lambda lease, method, *a, **k: (
+                {**running(), "running_commands": 1} if method == "ping" else PUSHED
+            )
+        ),
+    )
+    _idle_for(case, seat, timedelta(seconds=settings.cloud_vm_idle_release_s + 60))
+
+    assert _release_idle(case) == 0
+    assert _host(case, seat) is not None
+
+
 def test_a_vm_is_kept_while_its_session_or_room_is_at_work(cloud):
     case = cloud
     seat = _room(case, WHOLE_VM)
@@ -577,6 +642,156 @@ def test_a_vm_is_kept_while_its_session_or_room_is_at_work(cloud):
     assert _release_idle(case) == 0
     assert _host(case, seat) is not None
     assert case.provider.deleted == []
+
+
+def test_a_vm_goes_while_another_task_of_its_room_is_at_work(cloud):
+    """A room's tasks are not its sessions' work: the VM of a session that
+    works in the room itself goes while a task of the room runs, and comes
+    back, new, on the session's next tool call."""
+    case = cloud
+    seat = _room(case, WHOLE_VM)
+    device_id, _ = _working(case, seat)
+    machine = _host(case, seat).machine_id
+    task = open_task(case.client, str(seat.room), "另一件活")
+    _idle_for(case, seat, timedelta(seconds=settings.cloud_vm_idle_release_s + 60))
+
+    async def turn():
+        async with case.client.test_request_factory() as db:
+            db.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=uuid.UUID(task["id"]),
+                    continuation_id=uuid.uuid4(),
+                    author="alice",
+                    started_at=datetime.now(UTC) - timedelta(minutes=1),
+                )
+            )
+            await db.commit()
+
+    case.client.portal.call(turn)
+
+    assert _release_idle(case) == 1
+
+    assert _pushed_on(case, device_id)
+    assert _host(case, seat) is None
+    _sweep(case)
+    assert case.provider.deleted == [machine]
+
+
+def test_an_archived_rooms_idle_vm_goes(cloud):
+    """Nobody unarchives a room to release its VM: the sweep does."""
+    case = cloud
+    seat = _room(case, WHOLE_VM)
+    device_id, _ = _working(case, seat)
+    machine = _host(case, seat).machine_id
+    _idle_for(case, seat, timedelta(seconds=settings.cloud_vm_idle_release_s + 60))
+
+    async def archive():
+        async with case.client.test_request_factory() as db:
+            await db.execute(
+                update(Topic)
+                .where(Topic.id == seat.room)
+                .values(status=TopicStatus.archived)
+            )
+            await db.commit()
+
+    case.client.portal.call(archive)
+
+    assert _release_idle(case) == 1
+
+    assert _pushed_on(case, device_id)
+    assert _host(case, seat) is None
+    _sweep(case)
+    assert case.provider.deleted == [machine]
+
+
+def test_a_vm_whose_session_walked_away_goes(cloud):
+    """A home no session holds is nobody else's to release: the sweep's."""
+    case = cloud
+    seat = _room(case, WHOLE_VM)
+    device_id, _ = _working(case, seat)
+    host = _host(case, seat)
+    machine, host_id = host.machine_id, host.id
+    _idle_for(case, seat, timedelta(seconds=settings.cloud_vm_idle_release_s + 60))
+
+    async def walked_away():
+        async with case.client.test_request_factory() as db:
+            await db.execute(
+                update(SandboxHome)
+                .where(SandboxHome.session_id == seat.session)
+                .values(session_id=None)
+            )
+            await db.commit()
+
+    case.client.portal.call(walked_away)
+
+    assert _release_idle(case) == 1
+
+    # No session is left to push: the home and its machine simply go.
+    assert not _pushed_on(case, device_id)
+    assert _homes_on(case, host_id) == 0
+    _sweep(case)
+    assert case.provider.deleted == [machine]
+
+
+def test_a_vm_a_dead_turn_left_open_does_not_keep(cloud):
+    """A process killed inside a turn leaves its row open and nothing closes
+    it: the VM must not be held by it for good."""
+    case = cloud
+    seat = _room(case, WHOLE_VM)
+    device_id, _ = _working(case, seat)
+    machine = _host(case, seat).machine_id
+    _idle_for(case, seat, timedelta(seconds=settings.cloud_vm_idle_release_s + 60))
+
+    async def corpse():
+        async with case.client.test_request_factory() as db:
+            db.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=seat.room,
+                    continuation_id=uuid.uuid4(),
+                    author="alice",
+                    started_at=datetime.now(UTC) - timedelta(hours=3),
+                )
+            )
+            await db.commit()
+
+    case.client.portal.call(corpse)
+
+    assert _release_idle(case) == 1
+
+    assert _host(case, seat) is None
+    _sweep(case)
+    assert case.provider.deleted == [machine]
+
+
+def test_a_vm_is_not_kept_by_another_seats_turn_in_its_room(cloud):
+    """Another line working in the same room is not this session's work: its
+    own VM goes, and the other line's turn holds nothing of this one's."""
+    case = cloud
+    seat = _room(case, WHOLE_VM)
+    _working(case, seat)
+    _idle_for(case, seat, timedelta(seconds=settings.cloud_vm_idle_release_s + 60))
+
+    async def someone_else():
+        async with case.client.test_request_factory() as db:
+            db.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=seat.room,
+                    continuation_id=uuid.uuid4(),
+                    author="alice",
+                    agent_handle="another-line",
+                    started_at=datetime.now(UTC) - timedelta(minutes=1),
+                )
+            )
+            await db.commit()
+
+    case.client.portal.call(someone_else)
+
+    assert _release_idle(case) == 1
+
+    assert _host(case, seat) is None
 
 
 def test_an_idle_vm_whose_checkpoint_fails_is_released_all_the_same(cloud):

@@ -100,8 +100,9 @@ function key(e: KeyboardEvent) {
   <div class="slider" :class="{ off: disabled }">
     <span class="top"
       ><span class="label">{{ label }}</span
-      ><output>{{ shown }}</output></span
+      ><output aria-hidden="true">{{ shown }}</output></span
     >
+    <!-- eslint-disable-next-line vuejs-accessibility/interactive-supports-focus -- tabindex is 0, or -1 while disabled; the rule cannot read a bound value -->
     <div
       class="area"
       :class="{ settle: settling, held: held !== null }"

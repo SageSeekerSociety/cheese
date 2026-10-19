@@ -28,564 +28,82 @@ call waits for the window to reset.
 The last call may overdraw; it was admitted with credits left, and what it
 spent is spent either way. An unlimited plan refuses nothing, issues nothing
 and draws on nothing; its usage is still recorded.
+
+**How this file is divided.** ``Ledger`` is the whole account, and its two
+halves live one each side of one line: ``ledger_queries.LedgerQueries`` holds
+what only reads — which packs exist, how full each window is, whether a call may
+run — and this module holds what writes: the charges, the deduction, the plan
+pack and the grants. ``Ledger`` inherits the reading half, so a call site keeps
+calling both halves as methods of one object and never has to know which file a
+method is in.
+
+The rules both halves share live beside them, each where it belongs rather than
+in this file: a plan's time windows (``windows``), the rates a call is priced
+at (``rates``), who pays and what their plan allows (``payers``), and what a
+payer may still spend (``balance``). Three of the four decide without a session
+and without a row — ``windows``, ``rates`` and ``balance`` — and none of them
+charges; ``payers`` is the fourth and the one exception, because working out
+who pays needs the team's plan read back, and a person without a personal team
+gets one made on the way (``team_terms``, ``payer_for_person``).
+
+Every name a caller takes from this module is still answered from here: the
+re-exports below are the public path, not a convenience, because callers and
+tests all along have written ``from app.domain.usage.ledger import ...``.
+
+Two things about that face are worth saying rather than letting someone find
+out. Most of the private helpers that used to sit at this module's top level
+(``_live``, ``_order``, ``_balance``, ``_hours`` and the rest) moved with the
+code that reads them, so this path no longer answers them; nothing in the repo
+takes them from here, and ``_TZ`` is re-exported below because ``usage.report``
+does. ``_applies`` and ``_spendable`` are here because this half calls them, not
+for anyone else. And a re-export is not a second definition: a patch put on one
+of these names here would change what this module's own name means and not what
+the module that reads it sees, which is where the patch has to go.
 """
 
 import math
 import uuid
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime
 
-from sqlalchemy import and_, case, or_, select, text, update
+from sqlalchemy import case, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.sentences import NoticeText, say
-from app.domain.team.services import team_service
+from app.domain.usage.balance import (  # noqa: F401
+    Balance,
+    Refusal,
+    _applies,
+    _spendable,
+)
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import spend_to_credits
-from app.domain.usage.models import ComputeGrant, GrantSource, Plan, PlanWindowUse
+from app.domain.usage.ledger_queries import LedgerQueries
+from app.domain.usage.models import ComputeGrant, GrantSource, PlanWindowUse
+from app.domain.usage.payers import (  # noqa: F401
+    Payer,
+    Terms,
+    payer_for_person,
+    payer_for_project,
+    payers_for_projects,
+    team_terms,
+    terms_of,
+)
+from app.domain.usage.rates import RateRow, Rates  # noqa: F401
 from app.domain.usage.repositories import UsageRepository
-
-# Where a month starts and ends for the people using the platform.
-_TZ = ZoneInfo("Asia/Shanghai")
-
-
-def month_of(moment: datetime) -> date:
-    local = moment.astimezone(_TZ)
-    return date(local.year, local.month, 1)
-
-
-def month_end(month: date) -> datetime:
-    """When the month's plan pack lapses and the next month's becomes available."""
-    following = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
-    return datetime(following.year, following.month, 1, tzinfo=_TZ)
-
-
-def week_of(moment: datetime) -> datetime:
-    """The Monday midnight that starts the week ``moment`` falls in."""
-    local = moment.astimezone(_TZ)
-    monday = local.date() - timedelta(days=local.weekday())
-    return datetime(monday.year, monday.month, monday.day, tzinfo=_TZ)
-
-
-@dataclass(frozen=True)
-class Window:
-    """One of a plan's time windows: at most ``credits`` inside it. An hours
-    window starts at a team's first call; a ``calendar`` one is a week or a
-    month."""
-
-    credits: float
-    hours: float | None = None
-    calendar: str | None = None
-
-    @classmethod
-    def of(cls, raw: Mapping) -> "Window":
-        if raw.get("calendar") is not None:
-            return cls(credits=float(raw["credits"]), calendar=str(raw["calendar"]))
-        return cls(credits=float(raw["credits"]), hours=float(raw["hours"]))
-
-    @property
-    def key(self) -> str:
-        """The window's row in ``plan_window_use``."""
-        return self.calendar or f"{self.hours:g}h"
-
-    def fresh_since(self, now: datetime) -> datetime:
-        """A round that started before this has run out."""
-        if self.calendar == "week":
-            return week_of(now)
-        if self.calendar == "month":
-            return datetime.combine(month_of(now), datetime.min.time(), tzinfo=_TZ)
-        assert self.hours is not None
-        return now - timedelta(hours=self.hours)
-
-    def start(self, now: datetime) -> datetime:
-        """When a round that starts with a call at ``now`` began."""
-        return now if self.calendar is None else self.fresh_since(now)
-
-    def resets_at(self, started_at: datetime) -> datetime:
-        if self.calendar == "week":
-            return started_at + timedelta(days=7)
-        if self.calendar == "month":
-            return month_end(month_of(started_at))
-        assert self.hours is not None
-        return started_at + timedelta(hours=self.hours)
-
-
-@dataclass(frozen=True)
-class WindowUse:
-    """How full one window is now. ``resets_at`` is None for an hours window no
-    call has started yet."""
-
-    window: Window
-    credits_used: float
-    resets_at: datetime | None
-
-    @property
-    def full(self) -> bool:
-        return self.credits_used >= self.window.credits
-
-    @property
-    def room(self) -> float:
-        return max(0.0, self.window.credits - self.credits_used)
-
-
-def _window_use(window: Window, row: PlanWindowUse | None, now: datetime) -> WindowUse:
-    if row is not None and row.started_at >= window.fresh_since(now):
-        return WindowUse(window, row.credits_used, window.resets_at(row.started_at))
-    if window.calendar is None:
-        return WindowUse(window, 0.0, None)
-    return WindowUse(window, 0.0, window.resets_at(window.start(now)))
-
-
-#: One model's row in the gateway's rate table: input, output, cache read,
-#: five-minute cache write and, when the gateway names it, one-hour cache write.
-RateRow = tuple[float, float, float, float, float | None]
-
-
-@dataclass(frozen=True)
-class Rates:
-    """USD per token for the model a call will use: fresh prompt tokens, output
-    tokens, prompt tokens read from the provider's cache, prompt tokens written
-    to its five-minute cache, and to its one-hour cache (the five-minute rate
-    when the table names none)."""
-
-    input: float
-    output: float
-    cache_read: float
-    cache_write: float
-    cache_write_1h: float | None = None
-
-    def cost_usd(
-        self,
-        input_tokens: int,
-        output_tokens: int,
-        cache_read_tokens: int = 0,
-        cache_write_tokens: int = 0,
-        cache_write_1h_tokens: int = 0,
-    ) -> float:
-        """What a call costs at these rates, billed the way the gateway bills
-        it: ``input_tokens`` counts every prompt token, cached ones included,
-        and the cached shares are billed at their own rates.
-        ``cache_write_1h_tokens`` is the share of ``cache_write_tokens`` that
-        went to the one-hour cache."""
-        fresh = max(0, input_tokens - cache_read_tokens - cache_write_tokens)
-        hour = min(cache_write_1h_tokens, cache_write_tokens)
-        hour_rate = (
-            self.cache_write if self.cache_write_1h is None else self.cache_write_1h
-        )
-        return (
-            fresh * self.input
-            + cache_read_tokens * self.cache_read
-            + (cache_write_tokens - hour) * self.cache_write
-            + hour * hour_rate
-            + output_tokens * self.output
-        )
-
-    @classmethod
-    def of(cls, model: str, table: Mapping[str, RateRow] | None) -> "Rates | None":
-        """``model``'s rates from the gateway's rate table
-        (``usage.pricing.model_rates``); None when a call to it cannot
-        be charged."""
-        if not table or model not in table:
-            return None
-        return cls(*table[model])
-
-
-@dataclass(frozen=True)
-class Terms:
-    """What a team's plan says about spending."""
-
-    key: str
-    unlimited: bool = False
-    credits_per_period: float | None = None
-    # A windowed plan's windows; a monthly plan has none.
-    windows: tuple[Window, ...] = ()
-    # The model tiers the plan allows; None is every tier.
-    model_tiers: frozenset[str] | None = None
-
-    @classmethod
-    def of(cls, plan: Plan) -> "Terms":
-        return cls(
-            key=plan.key,
-            unlimited=plan.unlimited,
-            credits_per_period=plan.credits_per_period,
-            windows=tuple(Window.of(w) for w in plan.windows or []),
-            model_tiers=(
-                None if plan.model_tiers is None else frozenset(plan.model_tiers)
-            ),
-        )
-
-    @property
-    def issues(self) -> float:
-        """The pack the plan issues each month; 0 when it issues none."""
-        if self.unlimited or self.windowed or not self.credits_per_period:
-            return 0.0
-        return float(self.credits_per_period)
-
-    @property
-    def windowed(self) -> bool:
-        return not self.unlimited and bool(self.windows)
-
-
-async def terms_of(session: AsyncSession, plan_keys: Iterable[str]) -> dict:
-    """Plan key → ``Terms``, for every key given."""
-    keys = sorted(set(plan_keys))
-    if not keys:
-        return {}
-    rows = await session.execute(select(Plan).where(Plan.key.in_(keys)))
-    return {plan.key: Terms.of(plan) for plan in rows.scalars()}
-
-
-async def team_terms(session: AsyncSession, team_id: int) -> Terms:
-    """The terms of the plan a team is on."""
-
-    team = await team_service(session).get_team(team_id)
-    key = team.plan_key if team is not None else "free"
-    return (await terms_of(session, [key]))[key]
-
-
-@dataclass(frozen=True)
-class Payer:
-    """The team that pays for a call, the project it happens in if any, whether
-    that team is someone's personal team, and what its plan allows."""
-
-    team_id: int
-    terms: Terms
-    project_id: uuid.UUID | None = None
-    personal: bool = False
-
-
-async def payer_for_person(session: AsyncSession, user_id: int) -> Payer:
-    """A call a person makes outside any project: their personal team pays."""
-
-    team = await team_service(session).ensure_personal_team(user_id)
-    terms = (await terms_of(session, [team.plan_key]))[team.plan_key]
-    return Payer(team_id=team.id, terms=terms, personal=True)
-
-
-async def payers_for_projects(
-    session: AsyncSession, projects: list
-) -> dict[uuid.UUID, Payer]:
-    """Each project's payer: its team, whoever in the room made the call."""
-
-    teams = await team_service(session).get_teams_by_ids(
-        sorted({p.team_id for p in projects})
-    )
-    terms = await terms_of(session, [t.plan_key for t in teams.values()] + ["free"])
-    out: dict[uuid.UUID, Payer] = {}
-    for project in projects:
-        team = teams.get(project.team_id)
-        out[project.id] = Payer(
-            team_id=project.team_id,
-            terms=terms[team.plan_key if team is not None else "free"],
-            project_id=project.id,
-            personal=team is not None and team.personal_owner_user_id is not None,
-        )
-    return out
-
-
-async def payer_for_project(session: AsyncSession, project_id: uuid.UUID) -> Payer:
-    # deferred-import: tests replace this name on app.domain.project.services
-    from app.domain.project.services import ProjectService
-
-    project = await ProjectService(session).get_or_404(project_id)
-    return (await payers_for_projects(session, [project]))[project.id]
-
-
-def _applies(pack: ComputeGrant, payer: Payer) -> bool:
-    if pack.project_id is not None:
-        return pack.project_id == payer.project_id
-    return pack.team_id == payer.team_id
-
-
-def _live(pack: ComputeGrant, now: datetime) -> bool:
-    return pack.expires_at is None or pack.expires_at > now
-
-
-def _rank(pack: ComputeGrant) -> int:
-    if pack.project_id is not None:
-        return 0
-    if pack.source == GrantSource.PLAN_PERIOD:
-        return 1
-    return 2
-
-
-_FAR = datetime.max.replace(tzinfo=UTC)
-
-
-@dataclass(frozen=True)
-class Refusal:
-    """Why a call may not run, and when it may."""
-
-    message: NoticeText
-    reopens_at: datetime | None
-
-    def retry_after_s(self) -> int:
-        """Seconds a refused caller should wait, an hour when nothing will
-        change on its own."""
-        if self.reopens_at is None:
-            return 3600
-        return max(60, int((self.reopens_at - datetime.now(UTC)).total_seconds()))
-
-
-def _hours(hours: float) -> str:
-    return f"{hours:g}"
-
-
-def _day(at: datetime) -> dict:
-    local = at.astimezone(_TZ)
-    return {"month": local.month, "day": local.day, "time": local.strftime("%H:%M")}
-
-
-def _order(pack: ComputeGrant) -> tuple:
-    # Within a rank, what lapses first is spent first.
-    return (_rank(pack), pack.expires_at or _FAR, pack.created_at, pack.id)
-
-
-def _window_refusal(use: WindowUse) -> Refusal:
-    at = use.resets_at
-    assert at is not None
-    if use.window.calendar == "week":
-        return Refusal(say("creditsWeekFull", **_day(at)), at)
-    if use.window.calendar == "month":
-        local = at.astimezone(_TZ)
-        return Refusal(say("creditsMonthFull", month=local.month, day=local.day), at)
-    assert use.window.hours is not None
-    return Refusal(
-        say("creditsWindowFull", hours=_hours(use.window.hours), **_day(at)), at
-    )
-
-
-@dataclass(frozen=True)
-class Balance:
-    """What a payer may still spend. For a windowed plan, what its fullest
-    window still allows counts alongside the packs, as if it were one."""
-
-    unlimited: bool
-    credits_total: float
-    credits_used: float
-    # When the payer's plan next issues a pack; None when it issues none.
-    resets_at: datetime | None
-    packs: tuple[ComputeGrant, ...] = ()
-    # A windowed plan's windows, each as full as it is now.
-    windows: tuple[WindowUse, ...] = ()
-
-    @property
-    def credits_remaining(self) -> float:
-        return self.credits_total - self.credits_used
-
-    @property
-    def exhausted(self) -> bool:
-        return not self.unlimited and self.credits_remaining <= 0
-
-    def packs_remaining(self) -> float:
-        """What is left of every pack besides the plan's own."""
-        return sum(
-            p.credits_total - p.credits_used
-            for p in self.packs
-            if p.source != GrantSource.PLAN_PERIOD
-        )
-
-    def refusal(self) -> Refusal:
-        full = [w for w in self.windows if w.full]
-        if full:
-            return _window_refusal(max(full, key=lambda w: w.resets_at or _FAR))
-        if self.resets_at is None:
-            return Refusal(say("creditsSpent"), None)
-        at = self.resets_at.astimezone(_TZ)
-        return Refusal(
-            say("creditsMonthSpent", month=at.month, day=at.day), self.resets_at
-        )
-
-    def summary(self) -> dict:
-        """The shape the credit endpoints have always answered with."""
-        return {
-            "unlimited": self.unlimited,
-            "credits_total": self.credits_total,
-            "credits_used": self.credits_used,
-            "credits_remaining": self.credits_remaining,
-            "grants": list(self.packs),
-        }
-
-
-def _spendable(candidates: Iterable[ComputeGrant], payer: Payer) -> list:
-    """Of ``candidates``, what ``payer`` may spend now, in the order a charge
-    drains them. A windowed plan spends no plan pack, even one issued for this
-    month before the plan stopped issuing them."""
-    now = datetime.now(UTC)
-    return sorted(
-        (
-            p
-            for p in candidates
-            if _applies(p, payer)
-            and _live(p, now)
-            and not (payer.terms.windowed and p.source == GrantSource.PLAN_PERIOD)
-        ),
-        key=_order,
-    )
-
-
-def _issued_this_month(candidates: Iterable[ComputeGrant], payer: Payer) -> bool:
-    month = month_of(datetime.now(UTC))
-    return any(
-        p.source == GrantSource.PLAN_PERIOD
-        and p.team_id == payer.team_id
-        and p.period_start == month
-        for p in candidates
-    )
-
-
-def _balance(
-    candidates: list[ComputeGrant],
-    payer: Payer,
-    rows: Mapping[tuple[int, str], PlanWindowUse],
-) -> Balance:
-    packs = _spendable(candidates, payer)
-    # The month's plan pack counts before its first charge writes it.
-    unissued = 0.0
-    if payer.terms.issues and not _issued_this_month(candidates, payer):
-        unissued = payer.terms.issues
-    resets_at = None
-    if payer.terms.issues:
-        resets_at = month_end(month_of(datetime.now(UTC)))
-    windows: tuple[WindowUse, ...] = ()
-    room = 0.0
-    if payer.terms.windowed:
-        now = datetime.now(UTC)
-        windows = tuple(
-            _window_use(w, rows.get((payer.team_id, w.key)), now)
-            for w in payer.terms.windows
-        )
-        room = min(w.room for w in windows)
-    return Balance(
-        unlimited=payer.terms.unlimited,
-        credits_total=sum(p.credits_total for p in packs) + unissued + room,
-        credits_used=sum(p.credits_used for p in packs),
-        resets_at=resets_at,
-        packs=tuple(packs),
-        windows=windows,
-    )
-
-
-class Ledger:
+from app.domain.usage.windows import (  # noqa: F401
+    _TZ,
+    Window,
+    WindowUse,
+    _window_use,
+    month_end,
+    month_of,
+    week_of,
+)
+
+
+class Ledger(LedgerQueries):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
-
-    # ---- reading -----------------------------------------------------------
-
-    async def _candidates(
-        self, payers: Iterable[Payer], *, lock: bool = False
-    ) -> list[ComputeGrant]:
-        """Every pack any of ``payers`` might draw on, expired ones included;
-        ``_applies`` and ``_live`` narrow them per payer."""
-        payers = list(payers)
-        projects = {p.project_id for p in payers if p.project_id is not None}
-        teams = {p.team_id for p in payers}
-        conditions = [
-            and_(
-                ComputeGrant.team_id.in_(teams),
-                ComputeGrant.project_id.is_(None),
-            )
-        ]
-        if projects:
-            conditions.append(ComputeGrant.project_id.in_(projects))
-        stmt = select(ComputeGrant).where(or_(*conditions))
-        if lock:
-            stmt = stmt.with_for_update().execution_options(populate_existing=True)
-        return list((await self._session.execute(stmt)).scalars())
-
-    async def _window_rows(
-        self, payers: Iterable[Payer]
-    ) -> dict[tuple[int, str], PlanWindowUse]:
-        """The window rows of every windowed plan among ``payers``' teams."""
-        teams = {p.team_id for p in payers if p.terms.windowed}
-        if not teams:
-            return {}
-        rows = await self._session.execute(
-            select(PlanWindowUse).where(PlanWindowUse.team_id.in_(teams))
-        )
-        return {(r.team_id, r.window): r for r in rows.scalars()}
-
-    async def window_uses(
-        self, payers: Iterable[Payer]
-    ) -> dict[int, tuple[WindowUse, ...]]:
-        """Team → how full each of its plan's windows is now; only teams on a
-        windowed plan."""
-        payers = list(payers)
-        rows = await self._window_rows(payers)
-        now = datetime.now(UTC)
-        return {
-            p.team_id: tuple(
-                _window_use(w, rows.get((p.team_id, w.key)), now)
-                for w in p.terms.windows
-            )
-            for p in payers
-            if p.terms.windowed
-        }
-
-    async def balance(self, payer: Payer) -> Balance:
-        return _balance(
-            await self._candidates([payer]), payer, await self._window_rows([payer])
-        )
-
-    async def admit(self, payer: Payer) -> Refusal | None:
-        """Whether a call ``payer`` would pay for may run now; None if it may.
-
-        A windowed plan admits while every window has room. Once one is full,
-        only an earmark or bought or granted credits may be spent; with none,
-        the call waits for the window to reset."""
-        if payer.terms.unlimited:
-            return None
-        balance = await self.balance(payer)
-        if payer.terms.windowed:
-            if not any(w.full for w in balance.windows):
-                return None
-            if balance.packs_remaining() > 0:
-                return None
-            return balance.refusal()
-        if balance.exhausted:
-            return balance.refusal()
-        return None
-
-    async def balances(self, payers: Mapping[uuid.UUID, Payer]) -> dict:
-        """``balance`` for many payers at once, in two queries."""
-        candidates = await self._candidates(payers.values())
-        rows = await self._window_rows(payers.values())
-        return {key: _balance(candidates, payer, rows) for key, payer in payers.items()}
-
-    async def earmarks(self, project_id: uuid.UUID) -> list[ComputeGrant]:
-        """Every pack ever earmarked for one project, lapsed ones included."""
-        rows = await self._session.execute(
-            select(ComputeGrant).where(ComputeGrant.project_id == project_id)
-        )
-        return list(rows.scalars())
-
-    async def live_packs(self, team_ids: list[int]) -> dict[int, list[ComputeGrant]]:
-        """Every live pack each of ``team_ids`` holds, oldest first."""
-        if not team_ids:
-            return {}
-        now = datetime.now(UTC)
-        rows = await self._session.execute(
-            select(ComputeGrant)
-            .where(ComputeGrant.team_id.in_(team_ids))
-            .order_by(ComputeGrant.created_at, ComputeGrant.id)
-        )
-        out: dict[int, list[ComputeGrant]] = {}
-        for pack in rows.scalars():
-            if _live(pack, now):
-                out.setdefault(pack.team_id, []).append(pack)
-        return out
-
-    async def team_packs(self, team_id: int) -> list[ComputeGrant]:
-        """Every live pack held by ``team_id``, its project earmarks too."""
-        now = datetime.now(UTC)
-        rows = await self._session.execute(
-            select(ComputeGrant)
-            .where(ComputeGrant.team_id == team_id)
-            .order_by(ComputeGrant.created_at, ComputeGrant.id)
-        )
-        return [p for p in rows.scalars() if _live(p, now)]
 
     # ---- charging ----------------------------------------------------------
 
@@ -763,6 +281,7 @@ class Ledger:
         user_id: int | None = None,
         metered: bool = True,
         calls: int = 1,
+        attribute_to_work: bool = True,
     ) -> float:
         """Write one usage row, naming the team that paid and the credits it
         cost, and charge those credits: the row and the deduction cannot come
@@ -783,6 +302,11 @@ class Ledger:
             route=route,
             turn_id=turn_id,
             user_id=user_id,
+            credit_owner_handle=await CreditBudgets(self._session).owner_of(
+                turn_id, payer.project_id
+            )
+            if attribute_to_work
+            else None,
             team_id=payer.team_id,
             credits=credits,
             metered=metered,

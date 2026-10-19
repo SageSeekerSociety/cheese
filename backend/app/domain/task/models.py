@@ -201,7 +201,7 @@ class TaskMembership(Base):
 
 
 class TaskSubmissionSchemaEntry(Base):
-    """Minimal mapping for task_submission_schema table (ElementCollection in Kotlin)."""  # noqa: E501
+    """Minimal mapping for task_submission_schema table (ElementCollection in Kotlin)."""
 
     __tablename__ = "task_submission_schema"
 
@@ -211,6 +211,21 @@ class TaskSubmissionSchemaEntry(Base):
     index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
     description: Mapped[str] = mapped_column("description", String, nullable=False)
     type: Mapped[int] = mapped_column("type", SmallInteger, nullable=False)
+
+
+class TaskMentor(Base):
+    """Someone the task's publisher chose to join every claimer's project as a
+    mentor (#3830). The claimer agrees to it before claiming; the project made
+    for the claim seats them as mentors."""
+
+    __tablename__ = "task_mentor"
+
+    task_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("task.id", ondelete="CASCADE", name="fk_task_mentor_task_id_task"),
+        primary_key=True,
+    )
+    user_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
 
 
 class TaskTagRelation(Base):

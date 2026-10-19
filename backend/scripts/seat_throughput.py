@@ -33,8 +33,6 @@ COLUMNS = (
     ("output_tokens", 13),
     ("calls", 8),
     ("turn_seconds", 13),
-    ("p50_tps", 13),
-    ("p90_tps", 13),
     ("window_tps", 13),
 )
 NUMERIC = {
@@ -42,8 +40,6 @@ NUMERIC = {
     "output_tokens",
     "calls",
     "turn_seconds",
-    "p50_tps",
-    "p90_tps",
     "window_tps",
 }
 

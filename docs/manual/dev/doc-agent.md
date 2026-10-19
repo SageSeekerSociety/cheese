@@ -10,7 +10,7 @@ covers:
   - frontend/src/components/panels/doc/DocAgentBox.vue
   - backend/app/domain/agent/session_host/
   - backend/app/core/sandbox_auth.py
-  - backend/app/api/auth.py
+  - backend/app/api/auth/
   - backend/app/domain/living_doc/work_edits.py
 ---
 
@@ -73,14 +73,14 @@ covers:
 - 这个评论串到目前为止的每一条；
 - 评论指着的文字，和它所在的那一节（从上面最近的标题到下一个同级或更高级的标题）；
 - 文档全文；
-- 话题里最近 20 条消息；
+- 频道里最近 20 条消息；
 - 最后说明要回答谁的哪一条。
 
 ## 工具与凭据 {#tools}
 
 会话有两张凭据。启动时拿的是文档所属任务的凭据（不属于任务的文档是项目的凭据）：写着项目、任务、这个队友，外加这个评论串（`mint_scoped_token` 的 `resource_id`），只用来经 `/llm/v1/*` 调模型，花费记在项目上。每次提问另签一张代行凭据（`cxdg_`，`sandbox_auth.mint_delegated_credential`），随问题交给会话，工具都用它。代行凭据写着提问人、这个队友、项目和任务、这次回答的编号，以及这一问能不能改文档；有效期是回答上限再加一分钟。
 
-工具是平台工具表里的几项（`sandbox/cheese`），调的就是界面用的那些接口。代行凭据只在 `api/auth.py` 的 `DELEGATED_ROUTES` 列出的接口上有效，按提问人的权限判断，只在签它的那个任务里有效（项目文档的代行凭据在那个项目里有效）。
+工具是平台工具表里的几项（`sandbox/cheese`），调的就是界面用的那些接口。代行凭据只在 `api/auth/` 的 `DELEGATED_ROUTES` 列出的接口上有效，按提问人的权限判断，只在签它的那个任务里有效（项目文档的代行凭据在那个项目里有效）。
 
 | 工具 | 做什么 |
 |---|---|

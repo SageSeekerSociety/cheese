@@ -6,7 +6,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../lib/libraryApi', async () => ({
@@ -27,6 +27,7 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic = {
   id: 'site-frames-topic',
@@ -99,6 +100,8 @@ beforeEach(() => {
   FakeWebSocket.instances = []
   vi.stubGlobal('WebSocket', FakeWebSocket)
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('对话栏把现场的帧转过去', () => {
   it('房间自己的事件行转过去；消息，不转', async () => {

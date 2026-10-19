@@ -29,13 +29,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.staleness import announce_stale
-from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
+from app.domain.block.schemas import AuthorType, BlockKind, BlockOut
 from app.domain.feedback import proposals as proposal_rules
 from app.domain.feedback.schemas import (
     FeedbackCreate,
@@ -45,7 +45,7 @@ from app.domain.feedback.schemas import (
     FeedbackProposalResult,
 )
 from app.domain.feedback.services import FeedbackService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["feedback"])
@@ -74,7 +74,7 @@ async def _actor_in_topic(
     authorize. Copying the order matters: authorize-then-resolve would authorize
     a caller who has not been resolved against this topic yet.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -116,7 +116,11 @@ async def list_feedback_proposals(
     return ok(cards)
 
 
-@router.post("/{topic_id}/feedback-proposals", **typed_response(FeedbackProposalResult))
+@router.post(
+    "/{topic_id}/feedback-proposals",
+    **typed_response(FeedbackProposalResult),
+    dependencies=[ROUTE_DECIDES],
+)
 async def propose_feedback(
     topic_id: uuid.UUID,
     body: FeedbackProposalIn,
@@ -163,7 +167,9 @@ async def propose_feedback(
 
 
 @router.post(
-    "/{topic_id}/feedback-proposals/{block_id}/dismiss", **typed_response(Dismissed)
+    "/{topic_id}/feedback-proposals/{block_id}/dismiss",
+    **typed_response(Dismissed),
+    dependencies=[ROUTE_DECIDES],
 )
 async def dismiss_feedback_proposal(
     topic_id: uuid.UUID,
@@ -190,6 +196,7 @@ async def dismiss_feedback_proposal(
 @router.post(
     "/{topic_id}/feedback-proposals/{block_id}/accept",
     **typed_response(FeedbackDetail),
+    dependencies=[ROUTE_DECIDES],
 )
 async def accept_feedback_proposal(
     topic_id: uuid.UUID,

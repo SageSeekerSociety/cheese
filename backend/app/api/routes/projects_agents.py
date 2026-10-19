@@ -80,6 +80,8 @@ from app.api.auth import ActorResolverDep
 from app.api.member_settings import say_agent_changes
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
+from app.domain.agent.model_catalog import model_choices
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
@@ -91,6 +93,7 @@ from app.domain.agent_instance.schemas import (
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -162,7 +165,7 @@ async def list_project_agents(
     return ok(page(items, len(items)))
 
 
-@router.post("/{project_id}/agents")
+@router.post("/{project_id}/agents", dependencies=[ROUTE_DECIDES])
 async def create_project_agent(
     project_id: uuid.UUID,
     body: AgentInstanceCreate,
@@ -171,9 +174,11 @@ async def create_project_agent(
 ) -> dict:
     """Add an agent to this project. It starts with an empty memory pool."""
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.configure_agents
+    )
     await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
+    service = AgentInstanceService(db, models=model_choices)
     instance = await service.create(
         project_id=project_id,
         handle=body.handle or f"agent-{uuid.uuid4().hex[:8]}",
@@ -189,7 +194,7 @@ async def create_project_agent(
     )
 
 
-@router.put("/{project_id}/agents/{agent_id}")
+@router.put("/{project_id}/agents/{agent_id}", dependencies=[ROUTE_DECIDES])
 async def update_project_agent(
     project_id: uuid.UUID,
     agent_id: uuid.UUID,
@@ -206,9 +211,11 @@ async def update_project_agent(
     context compaction and skills) is said in the project's 综合.
     """
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.configure_agents
+    )
     project = await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
+    service = AgentInstanceService(db, models=model_choices)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     fields = body.model_fields_set
     if "display_name" in fields and body.display_name is not None:
@@ -230,7 +237,7 @@ async def update_project_agent(
     )
 
 
-@router.delete("/{project_id}/agents/{agent_id}")
+@router.delete("/{project_id}/agents/{agent_id}", dependencies=[ROUTE_DECIDES])
 async def deactivate_project_agent(
     project_id: uuid.UUID,
     agent_id: uuid.UUID,
@@ -245,7 +252,9 @@ async def deactivate_project_agent(
     away.
     """
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.configure_agents
+    )
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
@@ -253,7 +262,7 @@ async def deactivate_project_agent(
     return ok({"deleted": True})
 
 
-@router.put("/{project_id}/default-agent")
+@router.put("/{project_id}/default-agent", dependencies=[ROUTE_DECIDES])
 async def set_project_default_agent(
     project_id: uuid.UUID,
     body: ProjectDefaultAgentIn,
@@ -262,7 +271,9 @@ async def set_project_default_agent(
 ) -> dict:
     """Select the existing agent that new rooms start with."""
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.configure_agents
+    )
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.get_in_project(

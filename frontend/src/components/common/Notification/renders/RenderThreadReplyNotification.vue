@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">{{ title }}</div>
-    <div v-if="body" class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
+    <div class="n-title">{{ title }}</div>
+    <div v-if="body" class="n-sub">{{ body }}</div>
   </div>
 </template>
 
@@ -38,10 +38,3 @@ defineExpose({
   content,
 })
 </script>
-
-<style scoped>
-.notification-content {
-  display: flex;
-  flex-direction: column;
-}
-</style>

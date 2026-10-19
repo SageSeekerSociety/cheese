@@ -8,28 +8,11 @@ import { expect, it } from 'vitest'
 
 import NotificationAvatar from './NotificationAvatar.vue'
 
-function question(extra: Record<string, string> = {}): Notification {
-  return {
-    id: 1,
-    type: 'CHEESE_QUESTION',
-    read: false,
-    createdAt: 0,
-    entities: {},
-    contextMetadata: { topicTitle: '预算复核', question: '预算按哪个口径统计', ...extra },
-  }
-}
-
 function view(notification: Notification) {
   return render(NotificationAvatar, {
     props: { notification },
     global: { plugins: [createVuetify({ components, directives })] },
   })
-}
-
-function icon(notification: Notification): Element {
-  const el = view(notification).container.querySelector('.v-icon')
-  if (!el) throw new Error('no icon rendered')
-  return el
 }
 
 function person(over: Partial<EntityInfo> = {}): EntityInfo {
@@ -46,21 +29,6 @@ function from(entities: Record<string, EntityInfo>): Notification {
     contextMetadata: {},
   }
 }
-
-it('an open question shows the waiting mark in the warning colour', () => {
-  const el = icon(question())
-
-  expect(el.classList).toContain('mdi-help-circle-outline')
-  expect(el.classList).toContain('text-warning')
-})
-
-it('an answered question shows the answered mark, no longer the warning colour', () => {
-  const el = icon(question({ answered: '按项目' }))
-
-  expect(el.classList).toContain('mdi-check-circle-outline')
-  expect(el.classList).toContain('text-success')
-  expect(el.classList).not.toContain('text-warning')
-})
 
 it('the person who sent it gets their own face when they have one', () => {
   const { container } = view(from({ sender: person({ avatarUrl: 'https://cdn.example.com/avatars/10' }) }))
@@ -92,4 +60,11 @@ it('a team entity is not drawn as the person who sent it, and is squared off', (
   expect(container.querySelector('.v-img img')?.getAttribute('src')).toBe('https://cdn.example.com/avatars/42')
   const tile = container.querySelector('.v-avatar') as HTMLElement
   expect(tile.style.borderRadius).not.toBe('')
+})
+
+it('with nobody to draw, it shows the faint mark of what kind of thing happened', () => {
+  const { container } = view(from({}))
+
+  expect(container.querySelector('.user-avatar-char')).toBeNull()
+  expect(container.querySelector('.v-icon')?.classList).toContain('mdi-at')
 })
