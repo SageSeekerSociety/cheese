@@ -1,5 +1,4 @@
 {
-  "title": "Cheese credits",
   "balance": {
     "available": "Available credits",
     "planTotal": "Monthly plan credits",
@@ -13,7 +12,6 @@
     "heading": "A plan for the way you research",
     "lede": "Explore available plans or request shared credits for your lab.",
     "forWhom": "View plans for",
-    "personal": "Personal account",
     "back": "Back to credits",
     "loadFailed": "Couldn't load plans",
     "windowTerms": "Usage window limits",

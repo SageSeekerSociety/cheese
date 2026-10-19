@@ -15,6 +15,7 @@ import { fmtPoints } from '@/lib/creditUsage'
 const props = defineProps<{
   plans: PublishedCreditPlan[]
   teams: Pick<Team, 'handle' | 'name'>[]
+  personal?: boolean
   teamHandle: string
   currentPlan: { key: string; name: string } | null
   beta: BetaCredits | null
@@ -27,13 +28,11 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [handle: string]; request: []; retry: [] }>()
 const { t, locale } = useI18n()
 const availablePlans = computed(() =>
-  props.plans.filter((plan) => plan.audience === 'both' || plan.audience === (props.teamHandle ? 'team' : 'personal'))
+  props.plans.filter((plan) => plan.audience === 'both' || plan.audience === (props.personal ? 'personal' : 'team'))
 )
 const pending = computed(() => props.requests.some((item) => item.kind === 'team_plan' && item.status === 'pending'))
 const back = computed(() =>
-  props.teamHandle
-    ? { name: 'TeamsDetailCredits', params: { handle: props.teamHandle } }
-    : { name: 'UserSettingsUsage' }
+  props.teamHandle ? { name: 'TeamsDetailCredits', params: { handle: props.teamHandle } } : { name: 'HomeHub' }
 )
 const terms = (plan: PublishedCreditPlan) =>
   plan.unlimited
@@ -71,7 +70,6 @@ function windowTerms(window: PublishedCreditPlan['windows'][number]) {
               :disabled="busy || loading"
               @change="emit('select', ($event.target as HTMLSelectElement).value)"
             >
-              <option value="">{{ t('usage.plans.personal') }}</option>
               <option v-for="team in teams" :key="team.handle" :value="team.handle">{{ team.name }}</option>
             </select></template
           >
@@ -121,14 +119,14 @@ function windowTerms(window: PublishedCreditPlan['windows'][number]) {
             <li><v-icon icon="mdi-check" size="17" />{{ t('usage.plans.taskUsage') }}</li>
           </ul>
           <BaseButton
-            v-if="teamHandle && canManage"
+            v-if="teamHandle && !personal && canManage"
             kind="primary"
             :disabled="busy || loading || !!error || pending"
             :loading="busy"
             @click="emit('request')"
             >{{ t(pending ? 'usage.offers.pending' : 'usage.offers.teamApply') }}</BaseButton
           >
-          <p v-else class="plans-application-note">
+          <p v-else-if="!personal" class="plans-application-note">
             <NavLink v-if="!teamHandle && !teams.length" :to="{ name: 'HomeTeamsExplore' }">{{
               t('home.nav.newTeam')
             }}</NavLink>

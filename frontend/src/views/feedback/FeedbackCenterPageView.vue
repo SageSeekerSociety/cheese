@@ -94,6 +94,7 @@ const props = defineProps<{
   hotHalfLifeDays: number
   hotThreshold: number
   hotMinItems: number
+  personalTeamHandle?: string
   beta?: BetaCredits | null
   rewards?: CreditRewards | null
   rewardsError?: string | null
@@ -327,7 +328,14 @@ function clearFilters() {
       <div v-if="showRules" id="reward-rules" class="fb-rewards__rules">
         <p>{{ t('usage.rewards.betaRule', { n: beta?.credits ?? 500 }) }}</p>
         <p>{{ t('usage.rewards.feedbackRule', { n: beta?.feedback_credits ?? 100 }) }}</p>
-        <NavLink to="/users/settings/usage">{{ t('usage.rewards.claimLink') }}</NavLink>
+        <NavLink
+          :to="
+            personalTeamHandle
+              ? { name: 'TeamsDetailCredits', params: { handle: personalTeamHandle } }
+              : { name: 'SignIn' }
+          "
+          >{{ t('usage.rewards.claimLink') }}</NavLink
+        >
       </div>
     </section>
 
@@ -518,7 +526,12 @@ function clearFilters() {
             </div>
           </dl>
           <p>{{ t('usage.rewards.summaryNote') }}</p>
-          <NavLink to="/users/settings/usage"
+          <NavLink
+            :to="
+              personalTeamHandle
+                ? { name: 'TeamsDetailCredits', params: { handle: personalTeamHandle } }
+                : { name: 'SignIn' }
+            "
             >{{ t('usage.rewards.history') }}<v-icon icon="mdi-chevron-right" size="16" /></NavLink
         ></template>
         <template v-else

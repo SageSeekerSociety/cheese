@@ -17,8 +17,15 @@ const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => teamData.value?.id ?? 0)
 
 const { usage, loading, error, load } = useCreditUsage(() => getTeamCreditUsage(teamId.value))
-const offers = useCreditOffers(() => teamId.value)
+const personal = computed(() => !!teamData.value?.personal)
+const offers = useCreditOffers(
+  () => teamId.value,
+  () => personal.value
+)
 const canManage = computed(() => ['OWNER', 'ADMIN'].includes(teamData.value?.role ?? ''))
+async function claim() {
+  if (await offers.claim()) await load()
+}
 
 watch(
   teamId,
@@ -39,11 +46,15 @@ watch(
     :error="error"
     :can-manage="canManage"
     :team-handle="teamData?.handle"
+    :personal="personal"
+    :beta="offers.beta.value"
+    :rewards="offers.rewards.value"
     :requests="offers.requests.value"
     :offers-busy="offers.busy.value"
     :offers-error="offers.error.value"
     @retry="load"
     @request="offers.request"
+    @claim="claim"
     @retry-offers="offers.load"
   />
 </template>

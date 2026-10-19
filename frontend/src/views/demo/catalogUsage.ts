@@ -1,5 +1,5 @@
 /**
- * 芝士额度的两页在预览站里的条目：个人设置里的「芝士额度」和团队的「额度」。
+ * 芝士额度的两页在预览站里的条目：个人团队的「额度」和团队的「额度」。
  * 数据照 `/users/me/credits/usage`、`/teams/{id}/credits/usage` 的回答形状写，额度数以点计。
  */
 import type { CreditUsage, UsagePack, UsagePeriod } from '@/lib/creditUsage'
@@ -10,7 +10,6 @@ import CreditOffers from '@/components/usage/CreditOffers.vue'
 import CreditTopUp from '@/components/usage/CreditTopUp.vue'
 import CreditPlansView from '@/views/CreditPlansView.vue'
 import TeamCreditsView from '@/views/teams/detail/CreditsView.vue'
-import UsageSettingsView from '@/views/user/settings/UsageView.vue'
 
 const UI: CatalogNeed[] = ['vuetify', 'i18n', 'router']
 
@@ -204,8 +203,12 @@ export const USAGE_ENTRIES: CatalogEntry[] = [
             { ...PERSON.plan, audience: 'personal', period: 'month' },
             { ...WINDOWED.plan, audience: 'both', period: 'month' },
           ],
-          teams: [{ handle: 'citylab', name: '城市数据实验室' }],
-          teamHandle: '',
+          teams: [
+            { handle: 'alice', name: '林夏' },
+            { handle: 'citylab', name: '城市数据实验室' },
+          ],
+          teamHandle: 'alice',
+          personal: true,
           currentPlan: PERSON.plan,
           beta: { credits: 500, claimed: false, feedback_credits: 100 },
           requests: [],
@@ -291,17 +294,30 @@ export const USAGE_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
-    id: 'usage-settings-view',
-    title: 'UsageSettingsView',
-    about: '个人设置里的「芝士额度」：本月用了多少点、其他额度、每天用量、我的项目、我所在的团队。',
-    file: 'src/views/user/settings/UsageView.vue',
-    component: UsageSettingsView,
+    id: 'personal-credits-view',
+    title: 'PersonalCreditsView',
+    about: '个人团队的「额度」：本月用了多少点、其他额度、每天用量、我的项目、我所在的团队。',
+    file: 'src/views/teams/detail/CreditsView.vue',
+    component: TeamCreditsView,
     needs: UI,
     states: [
       {
         name: '本月用了一半',
         note: '额度数以点计；其他额度写明什么时候用到它。方案名点开看方案包含什么。',
-        props: { usage: PERSON, loading: false, error: null },
+        props: {
+          personal: true,
+          teamHandle: 'alice',
+          canManage: true,
+          beta: { credits: 500, claimed: false, feedback_credits: 100 },
+          rewards: {
+            feedback_count: 1,
+            feedback_credits: 100,
+            items: [{ kind: 'feedback', credits: 100, created_at: '2026-10-18T00:00:00Z' }],
+          },
+          usage: PERSON,
+          loading: false,
+          error: null,
+        },
         expect: '空气质量看板',
       },
       {
@@ -327,7 +343,7 @@ export const USAGE_ENTRIES: CatalogEntry[] = [
       {
         name: '按月发放的方案',
         note: '本月的条和每天的柱子按协作和算力分两色；团队没有问答和写作。',
-        props: { usage: TEAM, loading: false, error: null },
+        props: { usage: TEAM, loading: false, error: null, canManage: true, teamHandle: 'citylab', requests: [] },
         expect: '算力',
       },
       {
