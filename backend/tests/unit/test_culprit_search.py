@@ -106,22 +106,6 @@ async def test_a_probe_that_cannot_judge_names_nobody(db_factory):
     assert reads.dispatched == [COMMITS[3]]
 
 
-async def test_a_verdict_outside_the_protocol_is_not_read_as_a_pass(db_factory):
-    """A forge that answers something else has not judged the probe.
-
-    The protocol lists pass/fail/unknown/running. Anything else is normalized
-    to unknown, so the search stops and names nobody — the planner advances a
-    midpoint on any answer that is not ``fail``, and a stray value must not be
-    allowed to walk past the commit that broke the batch.
-    """
-    project_id = await _project(db_factory)
-    reads = _Reads(lambda sha: "green-ish")
-    finding = await _run(db_factory, reads, COMMITS, project_id)
-    assert finding.state == "unlocated"
-    assert finding.culprit is None
-    assert reads.dispatched == [COMMITS[3]]
-
-
 async def test_the_commit_that_first_failed_is_named(db_factory):
     project_id = await _project(db_factory)
     first_bad = COMMITS.index(COMMITS[4])

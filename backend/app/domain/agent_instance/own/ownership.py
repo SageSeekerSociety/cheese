@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance import account_connections
-from app.domain.agent_instance.models import AgentInstance, OwnAgent, OwnCallers
+from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own.connections import (
     Login,
     _held,
@@ -29,7 +29,6 @@ class Owned:
     instance_id: uuid.UUID
     owner_user_id: int
     harness: str
-    callers: OwnCallers = OwnCallers.owner
     #: The machine holding the model connection it runs on.
     device_id: str | None = None
     #: Or the connection its owner's account holds.
@@ -46,7 +45,6 @@ _OWNED = (
     AgentInstance.id,
     OwnAgent.owner_user_id,
     OwnAgent.harness,
-    OwnAgent.callers,
     OwnAgent.device_id,
     OwnAgent.account_connection_id,
 )
@@ -100,7 +98,6 @@ async def owned_instance(db: AsyncSession, instance_id: uuid.UUID) -> Owned | No
         row.instance_id,
         row.owner_user_id,
         row.harness,
-        row.callers,
         row.device_id,
         row.account_connection_id,
     )
@@ -108,13 +105,10 @@ async def owned_instance(db: AsyncSession, instance_id: uuid.UUID) -> Owned | No
 
 async def owned_in_project(
     db: AsyncSession, project_id: uuid.UUID
-) -> list[tuple[AgentInstance, int, OwnCallers]]:
-    """This project's members' own agents, each with its owner's user id and who
-    may call it — those their owners removed included (``is_active`` false).
-    The callers column rides along because the row holding it is this
-    package's: a reader below that wants it calls this, not ``OwnAgent``."""
+) -> list[tuple[AgentInstance, int]]:
+    """The project's personal agents and their owners, including inactive ones."""
     return [
-        (instance, owned.owner_user_id, owned.callers)
+        (instance, owned.owner_user_id)
         for instance, owned in await owned_rows_in_project(db, project_id)
     ]
 

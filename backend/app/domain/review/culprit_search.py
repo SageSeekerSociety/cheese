@@ -16,7 +16,7 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Literal, cast
+from typing import Literal
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -113,13 +113,7 @@ async def advance(
         verdict = await reads.bisect_verdict(run_id)
         if verdict == "running":
             return Finding("searching")
-        if verdict not in ("pass", "fail", "unknown"):
-            # The protocol says the forge answers one of the three or
-            # "running". Anything else has not judged the probe, so it ends the
-            # step as unknown rather than being handed to advance() as a
-            # verdict it does not know.
-            verdict = "unknown"
-        search = search.advance(cast(culprit_bisect.Verdict, verdict))
+        search = search.advance(verdict)
         await _save(sessions, project_id, head, search)
         return _finding(search)
 
@@ -144,17 +138,14 @@ async def advance(
     return Finding("searching")
 
 
-async def purge(sessions: SessionFactory, *, now: datetime | None = None) -> int:
+async def purge(sessions: SessionFactory, *, now: datetime | None = None) -> None:
     """Drop searches nobody will read again."""
     now = now or datetime.now(UTC)
     async with sessions() as session:
-        result = await session.execute(
+        await session.execute(
             delete(CulpritSearch).where(CulpritSearch.updated_at < now - KEEP_FOR)
         )
         await session.commit()
-    # `execute` returns a CursorResult at runtime, which carries the row count;
-    # the declared `Result` type does not expose it.
-    return getattr(result, "rowcount", 0) or 0
 
 
 def _finding(search: Search) -> Finding:

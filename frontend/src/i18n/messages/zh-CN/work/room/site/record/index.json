@@ -5,6 +5,5 @@
   "memory": "记忆",
   "queue": "排队",
   "recovery": "恢复",
-  "retry": "重试",
-  "wakeWatch": "补跳"
+  "retry": "重试"
 }
