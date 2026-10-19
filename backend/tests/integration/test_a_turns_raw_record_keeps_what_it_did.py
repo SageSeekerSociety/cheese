@@ -202,6 +202,12 @@ class _Bucket(StorageBackend):
     async def exists(self, key: str) -> bool:
         return key in self.objects
 
+    async def delete_prefix(self, prefix: str) -> int:
+        keys = [key for key in self.objects if key.startswith(prefix)]
+        for key in keys:
+            del self.objects[key]
+        return len(keys)
+
     def get_url(self, key: str) -> str:
         return key
 

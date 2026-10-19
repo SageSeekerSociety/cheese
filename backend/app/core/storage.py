@@ -123,6 +123,10 @@ class StorageBackend(ABC):
     def get_url(self, key: str) -> str:
         """Get public URL for the file."""
 
+    async def delete_prefix(self, prefix: str) -> int:
+        """Delete every object whose key starts with ``prefix``; how many."""
+        raise NotImplementedError
+
 
 class LocalStorageBackend(StorageBackend):
     def __init__(self, base_path: str, base_url: str) -> None:
@@ -154,6 +158,18 @@ class LocalStorageBackend(StorageBackend):
 
     async def exists(self, key: str) -> bool:
         return await aiofiles.ospath.exists(self._base_path / key)
+
+    async def delete_prefix(self, prefix: str) -> int:
+        def remove() -> int:
+            gone = 0
+            for path in sorted(self._base_path.rglob("*")):
+                key = path.relative_to(self._base_path).as_posix()
+                if path.is_file() and key.startswith(prefix):
+                    path.unlink()
+                    gone += 1
+            return gone
+
+        return await asyncio.to_thread(remove)
 
     def get_url(self, key: str) -> str:
         return f"{self._base_url}/{key}"
@@ -288,6 +304,21 @@ class S3StorageBackend(StorageBackend):
                     return False
                 raise
             return True
+
+    async def delete_prefix(self, prefix: str) -> int:
+        gone = 0
+        async with self._get_client() as client:
+            pages = client.get_paginator("list_objects_v2").paginate(
+                Bucket=self._bucket, Prefix=prefix
+            )
+            async for page in pages:
+                keys = [{"Key": item["Key"]} for item in page.get("Contents", [])]
+                if keys:
+                    await client.delete_objects(
+                        Bucket=self._bucket, Delete={"Objects": keys, "Quiet": True}
+                    )
+                    gone += len(keys)
+        return gone
 
     async def exists(self, key: str) -> bool:
         async with self._get_client() as client:

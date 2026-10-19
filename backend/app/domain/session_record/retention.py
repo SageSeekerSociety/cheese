@@ -322,4 +322,9 @@ async def _forget(
         if storage is not None:
             for key in filter(None, keys):
                 await storage.delete(key)
+            # And whatever else is filed under the conversation: an object an
+            # expiry could not delete after its commit, or an archive written
+            # for a commit that did not land, is named by no row.
+            for prefix in (service.PREFIX, ARCHIVE_PREFIX):
+                await storage.delete_prefix(f"{prefix}/{conversation_id}/")
         await db.commit()

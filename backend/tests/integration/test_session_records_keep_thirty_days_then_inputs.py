@@ -222,6 +222,27 @@ def test_inputs_are_kept_when_the_old_object_will_not_go(
     ] == [ASKED]
 
 
+def test_an_object_expiry_could_not_delete_goes_with_its_conversation(
+    client, tmp_path, monkeypatch, bucket
+):
+    session, _work = _start(client, tmp_path, bucket)
+    delete = bucket.delete
+
+    async def refuse(key: str) -> bool:
+        raise ConnectionError("the bucket is away")
+
+    monkeypatch.setattr(bucket, "delete", refuse)
+    _expire(client, bucket, days=31)
+    monkeypatch.setattr(bucket, "delete", delete)
+    room = session.ref.topic_id
+    assert [key for key in bucket.objects if key.startswith(f"{service.PREFIX}/")]
+
+    _delete_room(client, room)
+    _forget(client, bucket)
+
+    assert not [key for key in bucket.objects if str(room) in key]
+
+
 def test_a_channel_deleted_while_its_last_records_are_sealed_leaves_no_object(
     client, tmp_path, monkeypatch
 ):
