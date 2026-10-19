@@ -650,12 +650,14 @@ def test_it_carries_its_owners_current_name(client):
             await owner_login.remember(
                 db,
                 laptop,
-                owner_login.ClaudeLogin(
-                    installed=True,
-                    logged_in=True,
-                    auth_method="claude.ai",
-                    subscription_type="pro",
-                ),
+                [
+                    owner_login.ClaudeLogin(
+                        installed=True,
+                        logged_in=True,
+                        auth_method="claude.ai",
+                        subscription_type="pro",
+                    )
+                ],
             )
             await db.commit()
 
@@ -668,7 +670,7 @@ def test_it_carries_its_owners_current_name(client):
 
 def _name_connection(client, device_id, name, as_whom="alice"):
     return client.patch(
-        f"/connector/my/devices/{device_id}/claude-code",
+        f"/connector/my/claude-logins/{device_id}",
         json={"name": name},
         headers=session_auth_headers(as_whom),
     )
@@ -683,7 +685,7 @@ def _machine_reports(client, device_id, **login):
             await owner_login.remember(
                 db,
                 device_id,
-                owner_login.ClaudeLogin(installed=True, logged_in=True, **login),
+                [owner_login.ClaudeLogin(installed=True, logged_in=True, **login)],
             )
             await db.commit()
 
@@ -739,7 +741,7 @@ def test_a_removed_connection_takes_its_name_with_it(client):
     assert _name_connection(client, laptop, "实验室的 Max").status_code == 200
 
     removed = client.delete(
-        f"/connector/my/devices/{laptop}/claude-code",
+        f"/connector/my/claude-logins/{laptop}",
         headers=session_auth_headers("alice"),
     )
 

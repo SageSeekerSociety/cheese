@@ -1146,6 +1146,10 @@
     "s3": {
       "name": "A key on the account fails its check",
       "note": "The service refused the key when it was tested again: marked as failing the check, with what the service said below; it can still be tested again, renamed or removed."
+    },
+    "s4": {
+      "name": "Two logins on one device",
+      "note": "Two Claude accounts logged in on the workstation: one row each, each checked again, renamed and removed on its own; removing one leaves the other in use."
     }
   },
   "thisDeviceView": {

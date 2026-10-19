@@ -21,7 +21,8 @@ from app.domain.agent.harness.claude_code.device_launch import (
     NO_LOGIN_PLACEHOLDER,
     launch_holes,
 )
-from app.domain.agent.place import MODEL_SERVICE_FILE
+from app.domain.agent.place import MODEL_SERVICE_FILE, OWN_LOGIN_ID
+from app.domain.device.login_kind import FIRST_LOGIN
 from tests.unit.test_device_provider import (
     _no_device_identity,  # noqa: F401 — the machine's address, not the database's
     _subscription_screen,
@@ -54,19 +55,34 @@ async def test_an_own_session_is_given_nothing_of_the_metering_proxy(
 
 
 def _launch_on_machine(
-    tmp_path, *, service: dict | None = None, mac: bool = False
+    tmp_path,
+    *,
+    service: dict | None = None,
+    mac: bool = False,
+    login_id: str | None = FIRST_LOGIN,
+    other_service: dict | None = None,
 ) -> dict:
     """Run the launcher the way a machine does, with the platform asking for
-    Claude's ``opus``, and return the environment the started process has.
+    Claude's ``opus`` on the machine's login ``login_id``, and return the
+    environment the started process has.
+
+    The machine holds its first login and one more, ``B7QX``; ``service`` is
+    the model service set on the login the session is told to use, and
+    ``other_service`` one set on the login it is not.
 
     The started process looks its login up with `security`, as Claude Code does
     on macOS. ``mac`` makes the machine one: ``uname`` says Darwin, and its
     `security` records the HOME it ran with under ``keychain_home``."""
     home = tmp_path / "home"
-    login = home / ".cheese" / "claude-login"
-    login.mkdir(parents=True)
+    first = home / ".cheese" / "claude-login"
+    second = home / ".cheese" / "claude-logins" / "B7QX"
+    for login in (first, second):
+        login.mkdir(parents=True)
+    used, unused = (second, first) if login_id == "B7QX" else (first, second)
     if service is not None:
-        (login / MODEL_SERVICE_FILE).write_text(json.dumps(service))
+        (used / MODEL_SERVICE_FILE).write_text(json.dumps(service))
+    if other_service is not None:
+        (unused / MODEL_SERVICE_FILE).write_text(json.dumps(other_service))
     room = home / "room"
     work = room / "work"
     work.mkdir(parents=True)
@@ -97,6 +113,7 @@ def _launch_on_machine(
         "CHEESE_TOKEN": "scoped-token",
         "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
         "ANTHROPIC_MODEL": "opus",
+        **({OWN_LOGIN_ID: login_id} if login_id is not None else {}),
     }
     keychain_home = tmp_path / "keychain-home"
     if mac:
@@ -114,6 +131,8 @@ def _launch_on_machine(
         ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=30
     )
 
+    if not seen.exists():
+        return {"_started": False, "_stderr": result.stderr}
     assert result.returncode == 0, result.stderr
     return {
         **json.loads(seen.read_text()),
@@ -132,6 +151,47 @@ def test_an_own_session_reads_the_login_its_owner_gave_the_platform(tmp_path):
     )
     assert "ANTHROPIC_BASE_URL" not in seen
     assert "ANTHROPIC_AUTH_TOKEN" not in seen
+
+
+def test_an_own_session_on_another_login_reads_that_login_only(tmp_path):
+    """A machine holding two logins: a session added with the second reads the
+    second's directory, and the model service set on the first is not its."""
+    seen = _launch_on_machine(
+        tmp_path,
+        login_id="B7QX",
+        other_service={
+            "base_url": "https://open.bigmodel.cn/api/anthropic",
+            "token": "the-first-logins-key",
+            "model": "glm-4.6",
+        },
+    )
+    assert (
+        seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"]
+        == f"{seen['_home']}/.cheese/claude-logins/B7QX"
+    )
+    assert "ANTHROPIC_BASE_URL" not in seen
+    assert "ANTHROPIC_AUTH_TOKEN" not in seen
+    assert seen["ANTHROPIC_MODEL"] == "opus"
+
+
+def test_an_own_session_on_another_login_calls_its_model_service(tmp_path):
+    seen = _launch_on_machine(
+        tmp_path,
+        login_id="B7QX",
+        service={
+            "base_url": "https://kimi.test/anthropic",
+            "token": "k",
+            "model": "k2",
+        },
+    )
+    assert seen["ANTHROPIC_BASE_URL"] == "https://kimi.test/anthropic"
+    assert seen["ANTHROPIC_MODEL"] == "k2"
+
+
+def test_an_own_session_not_told_its_login_does_not_start(tmp_path):
+    """With two logins on the machine, the launch does not pick one itself."""
+    seen = _launch_on_machine(tmp_path, login_id=None)
+    assert seen["_started"] is False
 
 
 def test_an_own_session_on_a_mac_finds_its_owners_login_keychain(tmp_path):
