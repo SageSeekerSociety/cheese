@@ -16,9 +16,12 @@ commands and turns each command's report into a verdict nobody can fake:
   * Frontend scope only falls back to the full Vitest run when the change
     cannot be narrowed — an edit to one of the frontend config files this
     module watches (FRONTEND_META: the two package manifests, the vite and
-    tsconfig files, .pre-commit-config.yaml), a .github/ edit, a test-harness
-    source or an unknown scope. A config outside that list does not widen by
-    itself: beside a changed source root the related run keeps it narrowed,
+    tsconfig files, .pre-commit-config.yaml), a test-harness source or an
+    unknown scope. A .github/ edit does not widen: no workflow or script under
+    it is imported by the frontend graph, and a routine workflow change was
+    spending the whole 850-second suite on an answer the full tier gives after
+    landing. A config outside that list does not widen by itself: beside a
+    changed source root the related run keeps it narrowed,
     and alone it seeds no root and widens like any other runtime file. A style
     edit, a prose change, a declaration file or a deletion whose
     references went with it keeps the related run seeded by the surviving roots.
@@ -322,14 +325,24 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         # Which paths carry that content is the caller's answer when it has one:
         # the paths the path map routed into frontend scope. A change that also
         # touches the backend brings its .py files along, and those are not
-        # content this suite can execute.
-        carries_runtime = any(not p.endswith((".md", ".d.ts"))
-                              for p in (changed if frontend_scope is None else frontend_scope))
+        # content this suite can execute. Nor is anything under .github/: the
+        # map routes a workflow into frontend scope because it configures the
+        # suite, not because Vitest imports it. Counting it as content made a
+        # workflow-only edit (or a workflow beside one changed component) fall
+        # back to the full 850-second run, which the full tier answers after
+        # landing anyway.
+        runtime_paths = changed if frontend_scope is None else frontend_scope
+        carries_runtime = any(
+            not p.startswith(".github/") and not p.endswith((".md", ".d.ts"))
+            for p in runtime_paths)
         # Config, ambient hooks, test-harness sources and unknown scopes cannot
         # be narrowed: nothing tells the related graph what they affect.
+        # A .github/ edit is not one of them: no workflow or ci script is
+        # imported by the frontend graph, so it leaves the related run seeded
+        # by the surviving roots and, on its own, runs no unit test at all
+        # (frontend-unit is reported as an omission) rather than the full suite.
         unjudgeable = (conservative
                        or any(p in FRONTEND_META for p in changed)
-                       or any(p.startswith(".github/") for p in changed)
                        or any(p.startswith(("frontend/src/test/", "frontend/scripts/")) for p in frontend_paths)
                        or (carries_runtime and not roots)
                        # Last: the scan reads the frontend tree, so it runs only
@@ -378,9 +391,14 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         deleted_sources = [p for p in deleted
                            if p.endswith((".ts", ".tsx", ".vue", ".js", ".jsx"))
                            and not re.search(r"\.(spec|test)\.[cm]?[jt]sx?$", p)]
+        # A .github/ edit does not change the compiler project either: the
+        # narrow project inherits frontend/tsconfig.json and is judged by the
+        # changed files, and no CI script is part of that program. It used to
+        # force the repository's whole typecheck (87s) for the same reason the
+        # full test run was forced — a rule about files that configure the
+        # suite, applied to files the suite never reads.
         full_types = (conservative
                       or any(p in FRONTEND_META or p.endswith(".d.ts") for p in changed)
-                      or any(p.startswith(".github/") for p in changed)
                       or bool(deleted_sources))
         if full_types:
             # Config/ambient/deletion cannot be judged by a project built from a
