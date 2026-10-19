@@ -1024,6 +1024,7 @@ async def _attempt(
     elif spec is not None and not spec.platform:
         selected = await device_for_spec(
             db,
+            agent_handle=row.agent_handle,
             spec=spec.name,
             project=project,
             task=task,

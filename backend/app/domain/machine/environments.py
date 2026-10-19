@@ -26,6 +26,8 @@ from app.domain.agent.environment import (
     works_tasks_of,
 )
 from app.domain.agent.market import cloud_provisionable, cloud_vm_provisionable
+from sqlalchemy import select
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -63,7 +65,20 @@ async def environment_of(
     own = await sessions.environment(row.conversation_id, row.agent_handle)
     if own is not None:
         return stored(own.environment) or default_environment()
-    chosen = default_for(topic, task, project.settings if project else None)
+    instance = await db.scalar(
+        select(AgentInstance).where(
+            AgentInstance.project_id == topic.project_id,
+            AgentInstance.handle == row.agent_handle,
+        )
+    )
+    device = (
+        (instance.configuration or {}).get("execution_device_id") if instance else None
+    )
+    chosen = (
+        Default(Sandbox(spec=TEAM_DEVICES), "agent")
+        if device
+        else default_for(topic, task, project.settings if project else None)
+    )
     written = await sessions.set_environment(
         row.conversation_id,
         row.agent_handle,
@@ -152,6 +167,7 @@ async def device_for_spec(
     task,
     held: str | None,
     is_online,
+    agent_handle: str | None = None,
 ):
     """A device for the team's sandbox pool: one of
     that person's computers serving the project, online, not quarantined and
@@ -166,6 +182,21 @@ async def device_for_spec(
         for device in await devices.healthy_devices_for_project(project.id, is_online)
         if device.supply is Supply.self_hosted
     ]
+    instance = (
+        await db.scalar(
+            select(AgentInstance).where(
+                AgentInstance.project_id == project.id,
+                AgentInstance.handle == agent_handle,
+            )
+        )
+        if agent_handle
+        else None
+    )
+    selected = (
+        (instance.configuration or {}).get("execution_device_id") if instance else None
+    )
+    if selected:
+        candidates = [d for d in candidates if d.device_id == selected]
     refusing = await devices.refusing_sandboxes([d.device_id for d in candidates])
     candidates = [d for d in candidates if d.device_id not in refusing]
     candidates.sort(key=lambda d: d.device_id != held)

@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
+from app.domain.project.models import Project
 from app.domain.agent_instance.own.connections import (
     Login,
     _connection_key,
@@ -39,12 +40,12 @@ def own_name(nickname: str, distinction: str) -> str:
 
 
 def own_role(nickname: str, *, owner_handle: str, on_account: bool = False) -> str:
-    """The owner's personal assistant, on the owner's model connection."""
+    """Member ownership is prompt context; credentials belong to the team."""
     where = (
-        f"你是{nickname}自己的 Claude Code，在平台上、用{nickname}自己的模型账号干活。"
+        f"你是{nickname}的 Claude Code，使用团队在平台上加密保存的模型连接。"
         if on_account
-        else f"你是{nickname}自己的 Claude Code，在{nickname}的电脑上、用{nickname}"
-        "自己配置的模型账号干活。"
+        else f"你是{nickname}的 Claude Code，使用团队设备上保存的模型登录。"
+        "模型进程在保存登录的设备上运行，工具在为你配置的执行设备上运行。"
     )
     return where + (
         f"你是{nickname}的私人助手，对主人{owner_handle}负责。"
@@ -90,7 +91,7 @@ async def rename_for_connection(
         .where(on, AgentInstance.is_active.is_(True))
         .distinct()
     )
-    names: dict[int, tuple[str, dict[str, Login]]] = {}
+    names: dict[tuple[int, int], tuple[str, dict[str, Login]]] = {}
     for project_id, owner_user_id in rows.all():
         await _name_owners_agents(db, project_id, owner_user_id, names)
 
@@ -99,18 +100,20 @@ async def _name_owners_agents(
     db: AsyncSession,
     project_id: uuid.UUID,
     owner_user_id: int,
-    names: dict[int, tuple[str, dict[str, Login]]] | None = None,
+    names: dict[tuple[int, int], tuple[str, dict[str, Login]]] | None = None,
 ) -> None:
     """Name one owner's own agents in a project after their connections, in
     the order they were added. Two on the same plan or model are told apart by
     a number (「（Max 2）」). One whose connection is gone keeps its name."""
-    if names is not None and owner_user_id in names:
-        nickname, by_id = names[owner_user_id]
+    project = await db.get(Project, project_id)
+    key = (project.team_id, owner_user_id) if project else None
+    if names is not None and key in names:
+        nickname, by_id = names[key]
     else:
         nickname = await _nickname_of(db, owner_user_id)
-        by_id = {c.id: c for c in await logins(db, owner_user_id)}
-        if names is not None:
-            names[owner_user_id] = (nickname, by_id)
+        by_id = {c.id: c for c in await logins(db, project.team_id)} if project else {}
+        if names is not None and key is not None:
+            names[key] = (nickname, by_id)
     rows = await db.execute(
         select(
             AgentInstance,

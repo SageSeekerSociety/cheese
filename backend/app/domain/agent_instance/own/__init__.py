@@ -68,21 +68,5 @@ from app.domain.agent_instance.own.ownership import (
 )
 from app.domain.agent_instance.own.ownership import owned_instance as owned_instance
 from app.domain.agent_instance.own.ownership import owner_of as owner_of
-from app.domain.agent_instance.own.settings import _KIND_WORDS as _KIND_WORDS
-from app.domain.agent_instance.own.settings import (
-    HOSTS_SETTING as HOSTS_SETTING,
-)
-from app.domain.agent_instance.own.settings import KINDS_SETTING as KINDS_SETTING
-from app.domain.agent_instance.own.settings import SETTING as SETTING
-from app.domain.agent_instance.own.settings import allowed_hosts as allowed_hosts
-from app.domain.agent_instance.own.settings import allowed_kinds as allowed_kinds
-from app.domain.agent_instance.own.settings import allows as allows
-from app.domain.agent_instance.own.settings import (
-    allows_own_agents as allows_own_agents,
-)
-from app.domain.agent_instance.own.settings import host_refused as host_refused
-from app.domain.agent_instance.own.settings import (
-    kinds_refused_sentence as kinds_refused_sentence,
-)
 from app.domain.agent_instance.own.views import listing as listing
 from app.domain.agent_instance.own.views import my_connections as my_connections

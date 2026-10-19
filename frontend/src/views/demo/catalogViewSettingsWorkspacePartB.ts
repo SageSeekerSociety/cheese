@@ -16,8 +16,9 @@ import {
   SECURITY_PROPS,
 } from './catalogViewSettingsWorkspaceFixtures'
 
+import TeamAgentPicker from '@/components/settings/TeamAgentPicker.vue'
 import { t } from '@/i18n'
-import ModelConnectionsView from '@/views/user/settings/ModelConnectionsView.vue'
+import ModelConnectionsView from '@/views/teams/detail/ModelsView.vue'
 import SecurityView from '@/views/user/settings/SecurityView.vue'
 import ThisDeviceView from '@/views/user/settings/ThisDeviceView.vue'
 
@@ -159,12 +160,56 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
     ],
   },
   {
+    id: 'team-agent-picker',
+    title: 'TeamAgentPicker',
+    file: 'src/components/settings/TeamAgentPicker.vue',
+    get about() {
+      return t('catalog.teamAgentPicker.about')
+    },
+    component: TeamAgentPicker,
+    needs: UI_T,
+    args: {
+      error: '',
+      saving: false,
+      state: {
+        can_manage: true,
+        agents: [],
+        my_connections: [
+          { id: 'platform', kind: 'platform', allowed_models: ['glm-5.2'] },
+          {
+            id: 'subscription-demo',
+            kind: 'subscription',
+            name: 'Lab Max',
+            plan: 'Max',
+            allowed_models: ['sonnet', 'opus'],
+          },
+          { id: 'api-demo', kind: 'api_key', name: 'Research API', allowed_models: ['sonnet'] },
+        ],
+        devices: [
+          { device_id: 'workstation-demo', name: 'Workstation', online: true },
+          { device_id: 'laptop-demo', name: 'Laptop', online: false },
+        ],
+      },
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.teamAgentPicker.name')
+        },
+        get note() {
+          return t('catalog.teamAgentPicker.note')
+        },
+        props: {},
+      },
+    ],
+  },
+  {
     id: 'model-connections-view',
-    title: 'ModelConnectionsView',
+    title: 'ModelsView',
     get about() {
       return t('catalog.modelConnectionsView.about')
     },
-    file: 'src/views/user/settings/ModelConnectionsView.vue',
+    file: 'src/views/teams/detail/ModelsView.vue',
     component: ModelConnectionsView,
     needs: UI_T,
     // 「解除」的确认框和添加、改名的表单都画在 body 上。
@@ -173,6 +218,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
       loading: false,
       error: null,
       connections: MODEL_CONNECTIONS,
+      platformModels: [{ id: 'sonnet', label: 'Claude Sonnet' }],
       held: MODEL_HELD,
       devices: MODEL_SERVICE_DEVICES,
       busy: '',
@@ -233,7 +279,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.modelConnectionsView.s5.note')
         },
         props: {},
-        expect: '保存在账号里',
+        expect: '保存在平台',
         expectSelector: '[data-connection="held-glm"]',
       },
     ],
@@ -274,7 +320,6 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
           online: true,
           team_id: 1,
           screens: [],
-          logins: [MODEL_CONNECTIONS[0]],
         },
         { device_id: 'team-device', name: '数据组工作站', online: false, team_id: 2, screens: [] },
       ],

@@ -42,14 +42,6 @@ export default {
           component: () => import('@/views/user/settings/Notifications.vue'),
         },
         {
-          // 模型连接：这个人的 Claude Code 在各台设备上登录的账号或模型服务（#2991），
-          // 在哪个浏览器里都能看、能解除。
-          path: 'model-connections',
-          name: 'UserSettingsModelConnections',
-          component: () => import('@/views/user/settings/ModelConnections.vue'),
-          meta: { palette: { label: 'account.settings.modelConnections', icon: 'mdi-robot-outline' } },
-        },
-        {
           // 芝士替这个人用的邮箱和飞书。
           path: 'connections',
           name: 'UserSettingsConnections',

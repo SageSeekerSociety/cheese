@@ -39,7 +39,6 @@ import BranchProtectionSection from '@/components/settings/BranchProtectionSecti
 import CreditsPanel from '@/components/settings/CreditsPanel.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
-import OwnAgentsSettings from '@/components/settings/OwnAgentsSettings.vue'
 import ProjectAddressSection from '@/components/settings/ProjectAddressSection.vue'
 import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
 import ProjectCreditBudget from '@/components/settings/ProjectCreditBudget.vue'
@@ -321,15 +320,6 @@ function close() {
                 :save-error="defaultModel.saveError.value"
                 @save="defaultModel.save"
               />
-            </div>
-          </section>
-          <section class="page-section">
-            <div class="page-section-head">
-              <v-icon size="14" class="c-faint">mdi-laptop</v-icon>
-              <span class="page-section-title">{{ t('work.projectSettings.ownAgentsTitle') }}</span>
-            </div>
-            <div class="page-section-body">
-              <OwnAgentsSettings :project-id="projectId" />
             </div>
           </section>
         </template>

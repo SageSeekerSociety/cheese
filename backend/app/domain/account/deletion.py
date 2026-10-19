@@ -4,8 +4,8 @@ The privacy policy promises that a closed account's personal information is
 deleted or anonymised. What goes is everything that says who the person is or
 lets anyone act as them: their address, password, profile, real-name record,
 every way of signing in (sessions, trusted browsers, passkeys, second factor,
-third-party logins), their connected machines, the model keys and services
-they connected, their own agents' access,
+third-party logins), their personal team's devices and model connections,
+their personal team's agents' access,
 their saved integration secrets, their private assistant conversations, the
 notifications addressed to them, and their places in teams, projects and rooms.
 
@@ -49,7 +49,7 @@ from app.domain.notification.models import Notification
 from app.domain.notification.push_models import PushSubscription
 from app.domain.oauth.models import UserOAuthConnection
 from app.domain.passkey.models import PasskeyCredential, PasskeyPrompt
-from app.domain.project.models import ProjectMember
+from app.domain.project.models import Project, ProjectMember
 from app.domain.team.models import (
     ApplicationType,
     Team,
@@ -213,12 +213,22 @@ async def close_account(session: AsyncSession, user_id: int) -> Closed | None:
             )
         )
     )
-    # The model connections they hold: an API key, or a model service and its key.
+    # Personal team connections go; shared team resources outlive the member.
     await session.execute(
-        delete(AccountConnection).where(AccountConnection.owner_user_id == user_id)
+        delete(AccountConnection).where(
+            AccountConnection.team_id.in_(
+                select(Team.id).where(Team.personal_owner_user_id == user_id)
+            )
+        )
     )
-    # Their own agents stay on the rosters where their work is, switched off.
-    own = select(OwnAgent.instance_id).where(OwnAgent.owner_user_id == user_id)
+    # Retire personal-team agents; shared-team agents keep working.
+    own = (
+        select(OwnAgent.instance_id)
+        .join(AgentInstance, AgentInstance.id == OwnAgent.instance_id)
+        .join(Project, Project.id == AgentInstance.project_id)
+        .join(Team, Team.id == Project.team_id)
+        .where(Team.personal_owner_user_id == user_id)
+    )
     await session.execute(
         update(AgentInstance).where(AgentInstance.id.in_(own)).values(is_active=False)
     )

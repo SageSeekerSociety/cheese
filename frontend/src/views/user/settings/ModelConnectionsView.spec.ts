@@ -10,7 +10,7 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import ModelConnectionsView from './ModelConnectionsView.vue'
+import ModelConnectionsView from '../../teams/detail/ModelsView.vue'
 
 import { setLocale, t } from '@/i18n'
 
@@ -26,6 +26,7 @@ afterEach(() => {
 function connection(deviceId: string, extra: Partial<ModelConnection> = {}): ModelConnection {
   return {
     id: deviceId,
+    allowed_models: ['sonnet', 'opus'],
     local_id: 'default',
     device_id: deviceId,
     device_name: deviceId,
@@ -47,6 +48,7 @@ function connection(deviceId: string, extra: Partial<ModelConnection> = {}): Mod
 function heldKey(id: string): AccountConnection {
   return {
     id,
+    allowed_models: ['sonnet'],
     kind: 'api_key',
     name: null,
     key_last4: 'Q7zK',
@@ -160,7 +162,7 @@ describe('ModelConnectionsView', () => {
     const account = screen.getByRole('region', { name: t('account.modelConnections.heldTitle') })
     expect(devices.textContent).toContain(t('account.modelConnections.devicesEmpty'))
     expect(account.textContent).not.toContain(t('account.modelConnections.heldEmpty'))
-    expect(within(devices).getByRole('button', { name: t('account.modelConnections.addService') })).toBeTruthy()
+    expect(within(devices).getByRole('button', { name: t('account.modelConnections.addSubscription') })).toBeTruthy()
     expect(within(account).getByRole('button', { name: t('account.modelConnections.addApiKey') })).toBeTruthy()
     expect(within(account).getByRole('button', { name: t('account.modelConnections.addAccountService') })).toBeTruthy()
 
@@ -174,19 +176,12 @@ describe('ModelConnectionsView', () => {
     )
   })
 
-  it('hands a complete model service to the chosen device, and nothing incomplete', async () => {
+  it('starts subscription login only for the selected device', async () => {
     const view = mount([])
-    await fireEvent.click(screen.getByRole('button', { name: t('account.modelConnections.addService') }))
-    const save = await screen.findByRole('button', { name: t('account.thisDevice.modelServiceSave') })
-
-    await fireEvent.update(screen.getByLabelText(t('account.thisDevice.modelServiceUrl')), 'https://kimi.test')
-    await fireEvent.update(screen.getByLabelText(t('account.thisDevice.modelServiceToken')), 'sk-1')
-    await fireEvent.click(save)
-    expect(view.emitted('service')).toBeUndefined()
-
-    await fireEvent.update(screen.getByLabelText(t('account.thisDevice.modelServiceModel')), 'k2')
-    await fireEvent.click(save)
-    expect(view.emitted('service')).toEqual([['desk', { baseUrl: 'https://kimi.test', token: 'sk-1', model: 'k2' }]])
+    await fireEvent.click(screen.getByRole('button', { name: t('account.modelConnections.addSubscription') }))
+    expect(view.emitted('login')).toBeUndefined()
+    await fireEvent.click(await screen.findByRole('button', { name: t('account.modelConnections.login') }))
+    expect(view.emitted('login')).toEqual([['desk']])
   })
 
   it('keeps an API key on the account only once one is typed, exactly as typed', async () => {
@@ -199,7 +194,18 @@ describe('ModelConnectionsView', () => {
 
     await fireEvent.update(screen.getByLabelText(t('account.modelConnections.apiKeyLabel')), ' sk-ant-1 ')
     await fireEvent.click(save)
-    expect(view.emitted('addHeld')).toEqual([[{ kind: 'api_key', key: 'sk-ant-1', name: '', baseUrl: '', model: '' }]])
+    expect(view.emitted('addHeld')).toEqual([
+      [
+        {
+          kind: 'api_key',
+          key: 'sk-ant-1',
+          name: '',
+          baseUrl: '',
+          model: '',
+          allowedModels: ['opus', 'sonnet', 'haiku'],
+        },
+      ],
+    ])
   })
 
   it('keeps a model service on the account only with an https address and a model', async () => {
@@ -216,7 +222,16 @@ describe('ModelConnectionsView', () => {
     await fireEvent.update(screen.getByLabelText(t('account.thisDevice.modelServiceUrl')), 'https://kimi.test')
     await fireEvent.click(save)
     expect(view.emitted('addHeld')).toEqual([
-      [{ kind: 'model_service', key: 'sk-1', name: '', baseUrl: 'https://kimi.test', model: 'k2' }],
+      [
+        {
+          kind: 'model_service',
+          key: 'sk-1',
+          name: '',
+          baseUrl: 'https://kimi.test',
+          model: 'k2',
+          allowedModels: ['k2'],
+        },
+      ],
     ])
   })
 

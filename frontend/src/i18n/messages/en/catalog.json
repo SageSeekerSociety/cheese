@@ -1134,17 +1134,17 @@
     }
   },
   "modelConnectionsView": {
-    "about": "Model connections in account settings, in two cards. Signed in on devices: the accounts or model services your Claude Code is logged in with on each device, one line each with its name, plan, device (with an online dot) and status; opening a line shows where it is stored and when it was last checked and used, with check again, rename and remove, and the card's top right lets an online device use a custom model service. Kept on your account: API keys and model services, one line each with its name, the key's last four characters and status; opening a line shows the service host and last check, with test, rename and remove, and the card's top right adds an API key or a model service.",
+    "about": "Team Models lists platform models, device logins, and encrypted API keys and model services. Administrators add, recheck, rename and remove connections, and choose their available models.",
     "s1": {
       "name": "No connections",
-      "note": "Logged in on no device and nothing kept on the account: each card says it has nothing yet, and each keeps its own add buttons at its top right."
+      "note": "Each connection card shows its own empty state and keeps its add actions."
     },
     "s2": {
       "name": "Removing on an offline device",
       "note": "Removed while its device is offline: no longer used, and its line is marked as removing; opened, it says it logs out when the device comes online, with no check or remove buttons."
     },
     "s3": {
-      "name": "A key on the account fails its check",
+      "name": "A stored key failed its check",
       "note": "The service refused the key when it was tested again: its line is marked in red as failing the check; opened, it shows what the service said, and it can still be tested again, renamed or removed."
     },
     "s4": {
@@ -1153,7 +1153,7 @@
     },
     "s5": {
       "name": "Both kinds of connection",
-      "note": "Two Claude subscriptions on the workstation, a custom model service on the laptop and an API key on an offline server, plus an API key and a model service kept on the account: each closed to one line with its name, plan, where it is and its status."
+      "note": "Sample data includes device subscriptions, services and API keys, plus platform-held keys and services, one row per connection."
     }
   },
   "channelBrowseView": {
@@ -1600,5 +1600,10 @@
       "name": "No sessions, sleep prevention off",
       "note": "The session list is empty and the switch is off. The computer can sleep when idle."
     }
+  },
+  "teamAgentPicker": {
+    "name": "Choose a team connection",
+    "note": "Choose a connection, an available model, and the device that will execute tasks.",
+    "about": "AI teammates in project settings choose a team connection, one of its models, and an execution device."
   }
 }

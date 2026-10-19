@@ -84,6 +84,14 @@ pub async fn stored_device_ids() -> Vec<String> {
     ids
 }
 
+pub async fn enrollment_profiles() -> std::collections::HashMap<String, String> {
+    let mut found = std::collections::HashMap::new();
+    for (profile, path) in enrollment_configs().await {
+        if let Some(id) = id_in(&path).await { found.insert(id, profile); }
+    }
+    found
+}
+
 async fn profile_for_team(configs: &[(String, std::path::PathBuf)], known: &[String], team_id: u64) -> Option<String> {
     for (profile, path) in configs {
         if id_in(&path).await.is_some_and(|id| known.contains(&id)) {

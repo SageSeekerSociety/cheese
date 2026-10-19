@@ -1,5 +1,4 @@
 {
-  "create": "新建队友",
   "deactivate": "停用",
   "deactivateFailed": "停用失败",
   "deactivateHint": "停用后新频道选不到它，已在用它的频道照常工作",
@@ -8,7 +7,6 @@
   "default": "默认",
   "defaultUnsupported": "暂不支持设置默认队友",
   "edit": "编辑",
-  "empty": "暂无 AI 队友",
   "inactive": "已停用",
   "intro": "每个队友有自己的角色设定、模型和思考强度。新频道默认交给标着「默认」的队友，也可以在频道里另选",
   "loadFailed": "加载 AI 队友失败",

@@ -16,7 +16,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_instance.own import allows_own_agents, owned_in_project
+from app.domain.agent_instance.own import owned_in_project
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import CHEESE_NAME, agent_instance_handle
 from app.domain.membership.ports import TeammateSeat
@@ -116,14 +116,13 @@ async def project_team(
 
     筛在这一次里，因为它要的两个输入都是本包的一行：项目设置里那句「成员可以带自己
     的 agent 进来」、以及谁是谁的 agent。关了那项的项目把成员自己的 agent 收回了
-    ——它们不是「叫不动」，是不在项目里（`own.py` 的 ``allows_own_agents``）；被主人
+    ——它们不是「叫不动」，是不在项目里（`own.py` 的 ``team connection access``）；被主人
     停用的也一样。项目自己的队友无论如何都在，``active`` 照实说：名册上留着它，因为
     它接手的房间还在照常工作。
 
     名字、席位 handle、默认队友这几样也在这里一次收成内置值：名册那一侧认不出
     ``AgentInstance``，也不该认得。"""
     project = await session.get(Project, project_id)
-    withdrawn = not allows_own_agents(project.settings if project is not None else None)
     default_instance_id = (
         project.default_agent_instance_id if project is not None else None
     )
@@ -131,7 +130,7 @@ async def project_team(
     seats: list[TeammateSeat] = []
     for instance in await AgentInstanceService(session).list_for_project(project_id):
         own = owners.get(instance.id)
-        if own is not None and (withdrawn or not instance.is_active):
+        if own is not None and not instance.is_active:
             continue
         seats.append(
             TeammateSeat(

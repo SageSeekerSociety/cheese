@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import hold
 from app.core.config import settings
-from app.core.errors import GatewayUnavailableError, NotFoundError
+from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
@@ -51,7 +51,7 @@ from app.domain.agent.queries import _model_policy_call, _Proposed, task_credit_
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.supply import SUBSCRIPTION
-from app.domain.agent_instance.own import owned_instance
+from app.domain.agent_instance.own import owned_instance, unusable
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.conversation.models import Conversation
 from app.domain.policy import gate
@@ -249,7 +249,7 @@ def _own_model_kwargs(agent, acting_agent, environment) -> dict:
     """A member's own Claude Code: the model it is set to when its owner's
     login can run it, else the account's default; no project catalogue, no
     tier gate and no gateway, which are about the project's credits."""
-    model = own_model(agent.configuration.get("model"))
+    model = own_model(agent.configuration.get("model") or "sonnet")
     env: dict[str, str] = {
         "CHEESE_AGENT_CONFIG": hashlib.sha256(
             json.dumps(
@@ -321,6 +321,10 @@ async def _model_kwargs(
                 else await agents.for_project(project)
             )
         owned = await owned_instance(session, agent.instance_id)
+        if owned is not None:
+            reason = await unusable(session, owned, project.settings)
+            if reason is not None:
+                raise ValidationError(reason)
     if owned is not None:
         return _own_model_kwargs(agent, acting_agent, environment), OWN_ROUTE
     # A saved teammate may override the project main model.

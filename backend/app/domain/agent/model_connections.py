@@ -1,17 +1,4 @@
-"""A person's model connections (#2991): every login their own Claude Code has
-for the platform, across the machines they enrolled, for 「设置 → 模型连接」.
-
-A connection is what a machine last said about one of its logins
-(`owner_login`), each on its own, however many one machine holds: a Claude
-subscription and its plan, an Anthropic API key, or another model service with
-its model and host — never a key, which stays on the machine. Each comes with
-the machine it is kept on, whether that machine is online, and when a session
-of the owner's Claude Code last ran there.
-
-Only its owner reads this. A login that is not logged in is no connection,
-unless its owner removed it while its machine was away and it has not logged
-out yet.
-"""
+"""Device-held team model connections and their latest check and usage."""
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +11,7 @@ from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow, HostedDevi
 from app.domain.device.supply import Supply
 
 
-async def of_owner(db: AsyncSession, owner_user_id: int, hub) -> list[dict]:
+async def of_team(db: AsyncSession, team_id: int, hub) -> list[dict]:
     """The owner's connections, the most recently confirmed first."""
     rows = (
         await db.execute(
@@ -35,7 +22,7 @@ async def of_owner(db: AsyncSession, owner_user_id: int, hub) -> list[dict]:
                 DeviceClaudeLoginRow.device_id == DeviceRow.device_id,
             )
             .where(
-                DeviceRow.owner_user_id == owner_user_id,
+                DeviceRow.team_id == team_id,
                 DeviceRow.supply == Supply.self_hosted,
                 or_(
                     DeviceClaudeLoginRow.logged_in.is_(True),
@@ -57,6 +44,7 @@ async def of_owner(db: AsyncSession, owner_user_id: int, hub) -> list[dict]:
     return [
         {
             **claude_login.view(login),
+            "allowed_models": login.allowed_models,
             "device_id": device_id,
             "device_name": name,
             "online": hub.is_online(device_id),

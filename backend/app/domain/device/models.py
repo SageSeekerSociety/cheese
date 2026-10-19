@@ -27,6 +27,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -188,6 +189,9 @@ class DeviceClaudeLoginRow(Base):
     """
 
     __tablename__ = "claude_logins"
+    allowed_models: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     __table_args__ = (
         UniqueConstraint(
             "device_id", "local_id", name="uq_claude_logins_device_id_local_id"

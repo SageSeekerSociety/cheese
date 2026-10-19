@@ -57,6 +57,7 @@ const PAGE_TITLES: Record<string, string> = {
   TeamsDetailDocs: 'home.nav.teamDocs',
   TeamsDocument: 'home.nav.teamDocs',
   TeamsDetailCompute: 'home.nav.teamCompute',
+  TeamsDetailModels: 'home.nav.teamModels',
   TeamsDetailCredits: 'home.nav.teamCredits',
 }
 const pageTitle = computed(() => t(PAGE_TITLES[String(route.name)] ?? 'home.nav.teamProjects'))
