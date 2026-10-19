@@ -9,6 +9,9 @@ composed here, and every other session keeps the directory it always started
 in.
 """
 
+import os
+import subprocess
+
 import pytest
 
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
@@ -171,9 +174,7 @@ def test_bytes_already_in_hand_do_not_ask_the_machine(monkeypatch):
     assert entry["path"] == CHECKOUT + "/docs/report.pdf"
 
 
-def test_the_checkout_is_opened_on_the_machine(
-    tmp_path, pinned, machine, monkeypatch
-):
+def test_the_checkout_is_opened_on_the_machine(tmp_path, pinned, machine, monkeypatch):
     _prepare(tmp_path, pinned, monkeypatch, TASK)
     request = next(params for method, params in machine if method == "invoke")
     # The machine's own Bash runs it, not this host's; the project's hooks never
@@ -240,6 +241,76 @@ def test_a_machine_that_could_not_be_asked_is_asked_again(monkeypatch):
     # Two attempts per lookup (`task_checkout` asks again once), and the second
     # lookup asked again rather than remembering the failure.
     assert len(asked) == 4
+
+
+def test_a_warning_from_the_cli_is_not_taken_for_the_checkout(tmp_path):
+    """The warning comes out after the path — the resident CLI buffers stderr
+    and flushes it after stdout — so merged it is the last line. The answer is
+    stdout's, so it stays the path."""
+    from app.domain.agent.task_checkout import _CHECKOUT
+
+    checkout = str(tmp_path / "tasks" / TASK)
+    fake = tmp_path / "cheese"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' '{checkout}'\n"
+        "printf '[cheese] snapshot set aside\\n' >&2\n"
+    )
+    fake.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", "-c", _CHECKOUT.format(topic="task")],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == checkout
+
+
+def test_an_answer_that_is_not_a_path_is_a_failure():
+    """An answer whose last line is a notice is not a checkout: the launch
+    falls back to the project view instead of starting where it cannot."""
+    from app.domain.agent import task_checkout as module
+
+    class Client:
+        def call(self, method, params=None, **_):
+            return {
+                "value": {
+                    "stdout": CHECKOUT
+                    + "\n[cheese] 任务在平台上有一份快照，没有自动套用\n"
+                }
+            }
+
+    with pytest.raises(module.TaskCheckoutFailed):
+        module.task_checkout(Client(), TASK, notice=False)
+
+
+def test_a_cached_answer_that_is_not_a_path_is_asked_again(monkeypatch):
+    """A target written when the notice was answered keeps it; the session
+    must ask the machine again rather than treat it as its directory."""
+    from app.domain.agent.executor_transport import RemoteClient
+
+    monkeypatch.setenv("CHEESE_TOPIC", TASK)
+    client = RemoteClient(
+        {
+            "kind": "device",
+            "workspace": ROOM,
+            "working_directory": "[cheese] 任务在平台上有一份快照，没有自动套用",
+        }
+    )
+    asked = []
+
+    def call(method, params=None, **_):
+        asked.append(method)
+        return {"value": {"stdout": CHECKOUT + "\n"}}
+
+    client.call = call
+
+    assert client.working_directory() == CHECKOUT
+    assert client.config["working_directory"] == CHECKOUT
+    assert asked == ["invoke"]
 
 
 def test_a_session_without_its_machine_keeps_the_placeholder(

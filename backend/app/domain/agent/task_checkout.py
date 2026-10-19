@@ -18,6 +18,7 @@ and the session process on another, and `Path.home()` is different on each.
 
 from __future__ import annotations
 
+import os
 import shlex
 import sys
 import uuid
@@ -30,12 +31,27 @@ CHECKOUT_TIMEOUT_MS = 600_000
 #: The command, with the topic substituted in. Its output goes to a file and
 #: only the last line is answered: a first open prints the environment's own
 #: preparation first, and the executor hands back only the front of a
-#: command's output — the path, printed last, would be cut off. The exit status
-#: is the CLI's, for a failure's message to come back with it.
+#: command's output — the path, printed last, would be cut off. stderr goes to
+#: its own file: the CLI's warnings are not the answer, and were the streams
+#: merged, a warning written after the path would be answered as the checkout
+#: (that is exactly what a set-aside snapshot says). The exit status is the
+#: CLI's, and a failure's stderr goes back with it for its message.
 _CHECKOUT = (
-    'out=$(mktemp); cheese worktree {topic} >"$out" 2>&1; '
-    'code=$?; tail -n 1 "$out"; rm -f "$out"; exit $code'
+    "out=$(mktemp); err=$(mktemp); "
+    'cheese worktree {topic} >"$out" 2>"$err"; code=$?; '
+    'tail -n 1 "$out"; '
+    'if [ "$code" -ne 0 ]; then cat "$err" >&2; fi; '
+    'rm -f "$out" "$err"; exit "$code"'
 )
+
+
+def names_a_directory(value):
+    """Whether `value` is a directory name rather than a notice.
+
+    The machine answers where a task's checkout is on the last line of what it
+    said; a warning is not a path. A target file written before this check can
+    still hold one, and a launch must not start at it."""
+    return isinstance(value, str) and os.path.isabs(value)
 
 
 class TaskCheckoutFailed(RuntimeError):
@@ -85,7 +101,12 @@ def task_checkout(client, topic, *, notice=True):
         or said.startswith("Exit code")
     )
     if not failed and last:
-        return last
+        # The answer is the checkout's path and nothing else. Anything else
+        # that reached stdout is not one, and must not become a launch's start
+        # directory: take it as the failure it is.
+        if names_a_directory(last):
+            return last
+        failed = True
     if "workTaskNotInProject" in said:  # a room is not a failure
         return None
     if notice:
