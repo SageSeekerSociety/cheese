@@ -571,6 +571,41 @@ def test_prelaunch_turn_has_one_explanation_and_no_legacy_details(client):
     assert "Retired tool detail" not in json.dumps(items)
 
 
+def test_a_turn_after_the_launch_is_never_called_pre_launch(client):
+    """A turn that ran after the room began keeping raw records, with none of
+    its own to show (not written yet, or expired), is not explained away as
+    one from before the launch."""
+    from app.domain.agent.models import AgentTurn
+    from app.domain.conversation.models import Conversation
+
+    room = _room_for(client)
+
+    async def seed():
+        async with client.test_request_factory() as db:
+            conversation = await db.get(Conversation, room)
+            after = conversation.raw_records_started_at + timedelta(minutes=1)
+            turn = uuid.uuid4()
+            db.add(
+                AgentTurn(
+                    id=turn,
+                    conversation_id=room,
+                    continuation_id=turn,
+                    author="user-1",
+                    content="Work since the launch",
+                    agent_handle="cheese",
+                    started_at=after,
+                    stopped_at=after,
+                )
+            )
+            await db.commit()
+
+    client.portal.call(seed)
+    response = client.get(f"/topics/{room}/transcript")
+    assert response.status_code == 200, response.text
+    items = response.json()["data"]["data"]
+    assert not any(item["meta"].get("before_launch") for item in items), items
+
+
 @pytest.mark.parametrize("harness", [CLAUDE_CODE, CODEX])
 def test_a_turn_keeps_its_thinking_whole_output_and_subagent_scrubbed(
     client, tmp_path, bucket, harness

@@ -29,7 +29,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 import shlex
 import uuid
@@ -504,18 +503,6 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
     if name in _PATH_TOOLS:
         return ToolPreview(short_path(args[key], work_dir=work_dir))
     return ToolPreview(_collapse(args[key])[:PREVIEW_MAX])
-
-
-def call_line(name: str, args: object) -> str:
-    """One call a script made, as the line under the script's step shows its
-    argument: the same preview a step of its own would get, or the arguments
-    themselves when that tool has none."""
-    if not isinstance(args, dict):
-        return ""
-    preview = tool_preview(name, args)
-    if preview.text:
-        return preview.text
-    return _collapse(json.dumps(args, ensure_ascii=False))[:PREVIEW_MAX]
 
 
 # 现场圆点分级: a PLATFORM action (amber dot) vs plain work (neutral dot).

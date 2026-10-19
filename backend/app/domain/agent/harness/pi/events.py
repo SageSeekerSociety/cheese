@@ -16,8 +16,8 @@ Thinking is dropped rather than shown. It is not a message the agent addressed
 to the room, and the room's timeline is what people read — the same call the
 Claude Code path already makes, where hooks never deliver it either.
 
-A tool's return is written onto the step it belongs to (``AgentStepOutput``;
-the room keeps a capped tail of it), and a failed one also marks that step.
+A tool's return stays in the raw journal; a failed one marks its call as
+failed (``AgentStepFailed``).
 
 A model call that failed is the one thing the entry log cannot finish saying.
 pi writes it as an assistant entry that stopped on ``error`` and only then
@@ -29,7 +29,7 @@ A subagent's entries are in the same log (``subagents.py``), each carrying its
 thread (``journal.THREAD``): what it says and calls comes out as the session's
 work, and nothing it does starts or ends the session's turn or counts towards
 it. What a ``Task`` call hands back is the conclusion, and becomes an
-event of its own rather than a line on the step (``AgentToolResult``).
+event of its own (``AgentToolResult``).
 """
 
 import re
@@ -48,16 +48,13 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentRetrying,
-    AgentStepCalls,
     AgentStepFailed,
-    AgentStepOutput,
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
     AgentUserEntry,
     step_error,
 )
-from app.domain.session_record.preview import call_line
 
 # pi stops for a tool call and keeps going; every other reason ends the turn,
 # except a failed call, which ends it only once pi gives up on it (``GAVE_UP``).
@@ -235,9 +232,6 @@ class Assembler:
             steps: list[AgentEvent] = []
             if message.get("isError"):
                 steps.append(AgentStepFailed(call_id=call, text=step_error(returned)))
-            if returned.strip():
-                steps.append(AgentStepOutput(call_id=call, text=returned))
-            steps.extend(_script_calls(call, message))
             return steps
         if role != "assistant":
             return []
@@ -297,9 +291,6 @@ class Assembler:
             steps: list[AgentEvent] = []
             if message.get("isError"):
                 steps.append(AgentStepFailed(call_id=call, text=step_error(returned)))
-            if returned.strip():
-                steps.append(AgentStepOutput(call_id=call, text=returned))
-            steps.extend(_script_calls(call, message))
             return steps
         if role != "assistant" or message.get("stopReason") == FAILED:
             return []
@@ -348,29 +339,3 @@ class Assembler:
             api_error_status=int(status[1]) if status else None,
             harness=self.harness,
         )
-
-
-def _script_calls(call: str, message: dict) -> list[AgentEvent]:
-    """The tools a codemode script called, which pi records on the script's
-    result (``nestedCalls``: each call's name, arguments and how it ended;
-    a call's arguments are left out when they were too long to keep)."""
-    record = message.get("nestedCalls")
-    calls = record.get("calls") if isinstance(record, dict) else None
-    if not isinstance(calls, list) or not calls:
-        return []
-    return [
-        AgentStepCalls(
-            call_id=call,
-            calls=[
-                {
-                    "tool": str(nested.get("name") or ""),
-                    "arg": call_line(
-                        str(nested.get("name") or ""), nested.get("arguments")
-                    ),
-                    "failed": nested.get("status") == "error",
-                }
-                for nested in calls
-                if isinstance(nested, dict)
-            ],
-        )
-    ]
