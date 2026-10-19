@@ -253,8 +253,8 @@ _FEEDBACK_STATUS = {
 
 ENVIRONMENT_SPEC_DESCRIPTION = (
     "沙箱规格：standard 是平台的标准沙箱；vm 是一整台虚拟机做的沙箱，有 sudo，"
-    "能跑 Docker、要 KVM 的任务和内核模块，准备要几分钟；devices_of:<编号> "
-    "是那个人自己接入的电脑上的沙箱。不填就列出这个项目能选的规格和你现在的环境。"
+    "能跑 Docker、要 KVM 的任务和内核模块，准备要几分钟；team_devices "
+    "是团队接入的设备上的沙箱。不填就列出这个项目能选的规格和你现在的环境。"
 )
 
 

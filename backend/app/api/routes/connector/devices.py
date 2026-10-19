@@ -334,7 +334,7 @@ async def agent_socket(
     # A ``Depends(get_db)`` session injected into a WebSocket route is only finalized
     # when the socket CLOSES — so without this commit, the authentication transaction
     # sits `idle in transaction` for the machine's entire uptime (observed: 2.8h),
-    # holding an AccessShareLock on ``device_team`` that made an ALTER TABLE (ACCESS
+    # holding an AccessShareLock on ``device`` that makes an ALTER TABLE (ACCESS
     # EXCLUSIVE) on the device tables queue behind it until it timed out → site-wide
     # brownout (#356). Committing returns the connection to the pool (lock released)
     # for the life of the connection. The resolved identity is a plain dataclass,

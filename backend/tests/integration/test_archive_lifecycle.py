@@ -24,6 +24,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.adapters import platform_line
 from app.domain.delivery.ledger import settle_card
+from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.archive import close_cards_for_archived_topic
@@ -32,6 +33,7 @@ from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered
+from tests.support.devices import enrollment_team
 
 pytestmark = pytest.mark.anyio
 
@@ -517,6 +519,7 @@ async def enrolled(session, *device_ids: str) -> None:
                 name=device_id,
                 token=f"{device_id}-token",
                 owner_user_id=owner,
+                team_id=await enrollment_team(sql_device_service(session), owner),
                 supply=Supply.cloud,
                 created_at=datetime.now(UTC),
             )
