@@ -328,9 +328,18 @@ async def _publish_as_agent(
             content, body.reply_to, prepared
         ):
             raise ConflictError(say("chatPublicationIdReused"))
+        block = previous.get("block")
+        # The same frame a retry got before this check existed: the caller's
+        # socket still sees the stored message come back, and the room's
+        # timeline de-duplicates it by id.
+        if block is not None:
+            await get_broker().publish(
+                str(place.conversation_id),
+                {"type": "assistant_block", "block": block},
+            )
         if turn_id is not None:
             runner.note_session_output(turn_id, tool=False)
-        return previous.get("block")
+        return block
     attachments = await _write_agent_attachments(place, prepared)
     payload, attachment_payloads = (
         await chat.messages.persist_assistant_message_with_attachments(

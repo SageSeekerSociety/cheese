@@ -578,11 +578,17 @@ def test_an_agent_publishes_a_picture_in_the_conversation(client, stub_hooks):
         )
         assert response.status_code == 200, response.text
         frames = []
-        while len(frames) < 2:
+        # Bounded: a missing broadcast must fail here, not block until the
+        # test's own wall clock runs out.
+        for _ in range(20):
             frame = ws.receive_json()
             if frame["type"] == "assistant_block":
                 frames.append(frame)
+                if len(frames) == 2:
+                    break
+    assert len(frames) == 2, frames
     assert [frame["block"]["kind"] for frame in frames] == ["message", "attachment"]
+    assert frames[0]["block"]["content"] == "看这一张"
     shown = frames[1]["block"]
     assert shown["content"].startswith("uploads/")
     assert shown["content"].endswith("/shot.png")
@@ -615,8 +621,8 @@ def test_a_picture_alone_is_a_message(client, stub_hooks):
 
 def test_only_pictures_go_inline(client):
     """A file that is not one of the four raster pictures stays out of the
-    bubble — and the message it came with writes nothing."""
-    topic, headers = room(client)
+    bubble — and neither the message nor a byte of the file is stored."""
+    topic, project_id, headers = room_with_project(client)
     response = publish(
         client,
         topic,
@@ -625,6 +631,7 @@ def test_only_pictures_go_inline(client):
         attachments=[picture("report.png", raw=b"%PDF-1.7 report")],
     )
     assert response.status_code == 422
+    assert uploads_under(project_id) == []
     history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
     assert [b for b in history if b["kind"] == "message"] == []
 
