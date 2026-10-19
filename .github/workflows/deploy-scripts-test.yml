@@ -184,5 +184,8 @@ jobs:
       - name: CI action archive cache
         run: python3 deploy/tests/test_action_archive_cache.py
 
+      - name: Session mirrors leave the box only once archived
+        run: python3 deploy/tests/test_archive_session_mirrors.py
+
       - name: CI runner provisioning
         run: bash deploy/tests/test-ci-runner-provision.sh
