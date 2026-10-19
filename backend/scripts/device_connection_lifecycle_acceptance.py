@@ -513,6 +513,10 @@ SELECT '11111111-1111-1111-1111-111111111111','Acceptance','acceptance',id,
        'off','{}',now(),now()
 FROM team WHERE personal_owner_user_id = 42;
 INSERT INTO hosted_device (device_id,owner_user_id) VALUES ('acceptance-machine',42);
+-- The deployed owner still reads lending rows until this first release replaces it.
+INSERT INTO device_team (id,device_id,team_id,created_at,updated_at)
+SELECT gen_random_uuid(),'acceptance-machine',id,now(),now()
+FROM team WHERE personal_owner_user_id = 42;
 INSERT INTO topics (id,project_id,title,kind,status,is_private,created_at,updated_at)
 VALUES ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111',
         'Acceptance','room','active',false,now(),now());

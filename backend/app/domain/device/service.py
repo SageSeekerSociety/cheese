@@ -189,7 +189,7 @@ class DeviceService:
         await self._repo.delete_device(device_id)
 
     async def delete_platform_provisioned(
-        self, device_id: str, *, actor_user_id: int
+        self, device_id: str, *, actor_user_id: int | None
     ) -> None:
         """The PLATFORM's door: disposing of a machine cheese opened itself
         (#282 决定 2 的不变量).
