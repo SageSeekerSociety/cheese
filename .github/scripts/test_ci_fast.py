@@ -2482,7 +2482,10 @@ class PytestPluginTest(unittest.TestCase):
         self.assertEqual(verdict["result"], "unknown")
         self.assertEqual(verdict["evidence"]["hidden"], ["tests/unit/test_x.py::test_a"])
 
-    def test_skipped_pure_node_is_unknown(self):
+    def test_skipped_pure_node_counts_as_reached(self):
+        # The hosted runner deliberately lacks bubblewrap, sandbox-exec, ripgrep
+        # and tmux; those tests report a setup skip. The node was reached and
+        # declined, so it is not unrun — only a node with no report at all is.
         from ci_fast_checks import validate_evidence
         data = self.drive(
             selected=[("tests/unit/test_x.py::test_a", "pure")],
@@ -2490,8 +2493,8 @@ class PytestPluginTest(unittest.TestCase):
         self.assertEqual(data["executed"],
                          [{"node": "tests/unit/test_x.py::test_a", "when": "setup", "outcome": "skipped"}])
         verdict = validate_evidence(self.evidence(data, ["tests/unit/test_x.py"]))
-        self.assertEqual(verdict["result"], "unknown")
-        self.assertEqual(verdict["evidence"]["unrun"], ["tests/unit/test_x.py::test_a"])
+        self.assertEqual(verdict["result"], "pass")
+        self.assertEqual(verdict["evidence"]["unrun"], [])
 
     def test_teardown_failure_fails(self):
         from ci_fast_checks import validate_evidence

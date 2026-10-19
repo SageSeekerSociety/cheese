@@ -272,14 +272,16 @@ everything is still allowed to answer unknown.
   (never file-name tokens), plus the always-on tree/i18n guard files. The
   pytest run loads a small audit plugin (`-p ci_fast_pytest_plugin`) that
   records, in the same run, which nodes survived `-m`/`-k` (with their
-  fixture-derived layer), which were deselected, and which executed. A green
-  run must show every selected `pure` node executed and none hidden by a
-  filter; a required consumer file's tests are matched by classname module
-  prefix (pytest writes no `file` attribute). Running only the guards never
-  proves a changed module has coverage; a change whose modules have no `pure`
-  consumer at all is unknown. Excluded `integration`/`contract` nodes are the
-  tier working as designed — recorded not-run and owned by full CI — not a
-  silent gap. Unresolvable dynamic imports (`import_module(name)`,
+  fixture-derived layer), which were deselected, and which were reached. A
+  green run must show every selected `pure` node reached and none hidden by a
+  filter; a node the machine skips — it declares a missing capability such as
+  bubblewrap, sandbox-exec, ripgrep or tmux — counts as reached, while a node
+  with no report at all does not. A required consumer file's tests are matched
+  by classname module prefix (pytest writes no `file` attribute). Running only
+  the guards never proves a changed module has coverage; a change whose
+  modules have no `pure` consumer at all is unknown. Excluded
+  `integration`/`contract` nodes are the tier working as designed — recorded
+  not-run and owned by full CI — not a silent gap. Unresolvable dynamic imports (`import_module(name)`,
   `__import__(expr)`) widen conservatively; a giant strongly-connected group may
   select many tests, in which case the run is honest about the size and may end
   unknown.
@@ -384,7 +386,7 @@ everything is still allowed to answer unknown.
 |------|---------|
 | 0 | every selected check actually ran and passed. Not full CI. |
 | 1 | a selected check really failed. |
-| 2 | **unknown** — nothing could be honestly judged: budget/time exhausted, a check killed by signal, a memory-ceiling stop, an empty or skipped test report, a selected file that produced no executed case, an unavailable merge base, a hook/config drift, a worktree that changed during the run, a `--pull-request` payload that could not be read (the title is the only check that costs), or an unreadable report. |
+| 2 | **unknown** — nothing could be honestly judged: budget/time exhausted, a check killed by signal, a memory-ceiling stop, an empty test report, a selected file that produced no test case at all, an unavailable merge base, a hook/config drift, a worktree that changed during the run, a `--pull-request` payload that could not be read (the title is the only check that costs), or an unreadable report. |
 | 3 | **blocked** — a required tool or dependency is missing (`backend/.venv`, `frontend/node_modules`, pre-commit, a machine without `ps`), or the platform is not Linux. |
 
 A single missed memory sample is not blocked. The sampler rides a few misses
