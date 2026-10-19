@@ -435,6 +435,23 @@ def test_a_retried_removal_keeps_the_transcripts_the_first_attempt_archived(
     assert "projects/-room/77d3f6bc.jsonl" in first
 
 
+def test_a_room_with_no_home_on_the_session_host_keeps_its_harness_sessions(
+    tmp_path,
+):
+    """A Codex or pi room's seats leave no room home on the session host, only
+    their harness state; their sessions are archived all the same."""
+    project, resource, room = (str(uuid.uuid4()) for _ in range(3))
+    codex = tmp_path / ".cheese/harness" / project / resource / "codex/seat-a/codex"
+    (codex / "sessions/2026/10/19").mkdir(parents=True)
+    (codex / "sessions/2026/10/19/rollout-1.jsonl").write_bytes(b'{"codex":1}\n')
+    removed = run_cleanup(tmp_path, "remove", project, resource, room)
+    assert removed.returncode == 0, removed.stderr
+    archive = tmp_path / ".cheese/transcripts" / project / room / (resource + ".tar.gz")
+    assert archived_files(archive) == {
+        "codex/seat-a/codex/sessions/2026/10/19/rollout-1.jsonl": b'{"codex":1}\n'
+    }
+
+
 def test_a_link_in_the_transcripts_is_kept_as_a_link_and_never_followed(
     tmp_path, room_home
 ):

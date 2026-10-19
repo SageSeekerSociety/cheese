@@ -1072,7 +1072,9 @@ def main() -> None:
         if found is not None and found[0]["kind"] == "private":
             helper = runpy.run_path(str(private_helper(home, found[1])))
             helper["release"](found[0])
-        if room != "-" and home.exists():
+        # Whether or not the room has a home here: a Codex or pi room's seats
+        # leave only their harness state on the session host.
+        if room != "-":
             retain_transcripts(
                 home,
                 retained_transcripts(Path.home(), project, room, resource),
