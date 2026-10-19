@@ -30,6 +30,21 @@ from app.domain.block.models import (
 from app.domain.identity.handles import agent_handle_column
 
 
+def _after_cursor(
+    after: tuple[datetime, uuid.UUID] | None,
+) -> tuple:
+    """Blocks strictly after a seat's cursor, in the timeline's total order.
+
+    Written as an OR rather than a row comparison so the same predicate reads
+    the same on both sides of the query; ties are broken by id, which is the
+    order every other read of the timeline uses.
+    """
+    if after is None:
+        return ()
+    at, block_id = after
+    return ((Block.created_at > at) | ((Block.created_at == at) & (Block.id > block_id)),)
+
+
 class HistoryQueries:
     """时间线上的定点小读：最近说过什么、某一条之前说过什么。
 
@@ -87,6 +102,58 @@ class HistoryQueries:
                         Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
                     ),
                 ),
+            )
+            .order_by(Block.created_at, Block.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def inputs_after(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        after: tuple[datetime, uuid.UUID] | None,
+        limit: int,
+    ) -> list[Block]:
+        """What a seat has not read yet: the newest ``limit`` blocks, oldest first.
+
+        Everything a participant said, whoever said it and whoever it was
+        addressed to — an AI teammate's reply is a message to the room like any
+        other. The reader drops its own messages; only the reader knows whose
+        they are, and this query is asked once per seat.
+
+        ``after`` is the seat's cursor (``(created_at, id)`` of the last block it
+        read). None means it has read nothing here, and the window is the newest
+        ``limit`` blocks: a teammate newly seated in a long room reads a
+        screenful of it, not the entire history.
+        """
+        newest = (
+            select(Block)
+            .where(
+                Block.conversation_id == conversation_id,
+                participant_blocks(),
+                Block.kind.in_((BlockKind.message, BlockKind.attachment)),
+                *_after_cursor(after),
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(limit)
+        )
+        blocks = list((await self._session.scalars(newest)).all())
+        blocks.reverse()
+        return blocks
+
+    async def notices_after(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        after: tuple[datetime, uuid.UUID] | None,
+    ) -> list[Block]:
+        """The platform notices this seat has not read, oldest first."""
+        stmt = (
+            select(Block)
+            .where(
+                Block.conversation_id == conversation_id,
+                Block.meta[AGENT_NOTICE_META_KEY].as_string().is_not(None),
+                *_after_cursor(after),
             )
             .order_by(Block.created_at, Block.id)
         )

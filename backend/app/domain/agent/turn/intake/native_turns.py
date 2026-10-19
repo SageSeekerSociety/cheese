@@ -133,6 +133,10 @@ class NativeTurns:
             topic_id=topic_id,
             work_id=turn_id,
             pending_ids=set(),
+            # This process assembled no prompt: the window this session was
+            # handed belongs to the process that sent it, and only that one can
+            # say how far it reached.
+            read_through=None,
             reply_to=row.reply_to if row is not None else None,
             roster=None,
             topic_refs=[],

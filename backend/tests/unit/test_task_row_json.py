@@ -77,15 +77,28 @@ def test_rows_are_built_without_pydantic_validation(monkeypatch) -> None:
 def test_assembly_is_faster_than_per_row_validation() -> None:
     tasks = _tasks(1000)
 
-    def best(fn) -> float:
-        runs = []
-        for _ in range(5):
-            start = time.process_time()
-            fn(tasks)
-            runs.append(time.process_time() - start)
-        return min(runs)
+    def timed(fn) -> float:
+        start = time.process_time()
+        fn(tasks)
+        return time.process_time() - start
 
-    new, old = best(_new), best(_old)
+    # Warm both paths, then measure them round by round, alternating which one
+    # goes first. Measuring one path to completion and then the other put a
+    # busy runner's drift — CPU frequency, cache pressure — on whichever ran
+    # second, and flipped this red on CI with the fast path 38% behind.
+    # Interleaved, the same drift lands on both sides.
+    timed(_new)
+    timed(_old)
+    new_runs: list[float] = []
+    old_runs: list[float] = []
+    for round_number in range(7):
+        if round_number % 2:
+            old_runs.append(timed(_old))
+            new_runs.append(timed(_new))
+        else:
+            new_runs.append(timed(_new))
+            old_runs.append(timed(_old))
+    new, old = min(new_runs), min(old_runs)
     # CPU time, not wall clock: a busy CI worker must not turn the faster path
     # red. Measured ~0.77 (26 ms vs 34 ms of CPU per 1000 rows); the rest is
     # ORM attribute reads.
