@@ -21,11 +21,11 @@ from urllib.parse import quote, unquote, urlsplit
 # The task checkout this session starts in. Shipped beside this module in a
 # session host's bundle, where it is found by its bare name (`release.sources`).
 if __package__:
-    from app.domain.agent.task_checkout import task_checkout
+    from app.domain.agent.task_checkout import names_a_directory, task_checkout
 else:
     if str(Path(__file__).resolve().parent) not in sys.path:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from task_checkout import task_checkout
+    from task_checkout import names_a_directory, task_checkout
 
 # How long a request waits out a platform endpoint that is not listening.
 # An app deploy recreates the backend container, and the central session reaches
@@ -793,8 +793,11 @@ class RemoteClient:
             return self._publish_message(payload, args)
 
     def _publish_message(self, payload, args):
-        content = args.get("content")
-        if not isinstance(content, str) or not content.strip():
+        content = args.get("content") or ""
+        attachments = args.get("attachments") or []
+        if not isinstance(content, str) or (
+            not content.strip() and not attachments
+        ):
             raise ValueError("Chat content must be a nonempty string")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
         topic = os.environ.get("CHEESE_TOPIC", "")
@@ -819,6 +822,7 @@ class RemoteClient:
                 "content": content,
                 "request_id": publication_id,
                 **({"reply_to": args["reply_to"]} if args.get("reply_to") else {}),
+                **({"attachments": attachments} if attachments else {}),
             }
         ).encode()
         deadline = time.monotonic() + CONNECT_RETRY_WINDOW_S
@@ -927,7 +931,7 @@ class RemoteClient:
         ``notice``: whether a failure is said on stderr (a launch says so; a
         command's stderr is the agent's)."""
         known = self.config.get("working_directory")
-        if known:
+        if names_a_directory(known):
             return known
         topic = os.environ.get("CHEESE_TOPIC", "")
         if not topic or self.config.get("kind") == "private":
@@ -936,7 +940,7 @@ class RemoteClient:
             return self.config.get("workspace")  # asked from inside the resolve
         with self.working_directory_lock:
             known = self.config.get("working_directory")
-            if known:
+            if names_a_directory(known):
                 return known
             self.resolving_working_directory.yes = True
             try:

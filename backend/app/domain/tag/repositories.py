@@ -1,11 +1,9 @@
 import re
-from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.reads import get_by_ids
+from app.domain.repositories import Repository
 from app.domain.tag.models import Tag
 
 # Matches strings that contain at least one letter or digit (ASCII or Unicode).
@@ -24,9 +22,11 @@ def _use_fts(token: str) -> bool:
     return len(token) > 2 and _HAS_WORD_CHAR_RE.search(token) is not None
 
 
-class TagRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+class TagRepository(Repository[Tag]):
+    model = Tag
+
+    def base_statement(self) -> Select[tuple[Tag]]:
+        return select(Tag).where(Tag.deleted_at.is_(None))
 
     @staticmethod
     def _keyword_filter(token: str):
@@ -91,17 +91,6 @@ class TagRepository:
                 prev_id = prev_ids[-1]
 
         return rows, prev_id, has_more, next_id
-
-    async def get_by_id(self, tag_id: int) -> Tag | None:
-        stmt: Select[tuple[Tag]] = select(Tag).where(
-            Tag.id == tag_id,
-            Tag.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def get_by_ids(self, tag_ids: Sequence[int]) -> dict[int, Tag]:
-        return await get_by_ids(self._session, Tag, tag_ids, Tag.deleted_at.is_(None))
 
     async def get_by_name(self, name: str) -> Tag | None:
         stmt: Select[tuple[Tag]] = select(Tag).where(

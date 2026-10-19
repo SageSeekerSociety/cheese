@@ -178,14 +178,22 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # Pin origin/main to the event's base sha WITHOUT passing a custom --base:
-      # ci-fast.py treats any `--base` other than "origin/main" as unable to be
-      # honored by the merge-base hooks and records it unknown. Pointing the
-      # remote-tracking ref itself keeps the default and the hooks intact.
-      - name: Point origin/main at the merge base
+      # Pin origin/main WITHOUT passing a custom --base: ci-fast.py treats any
+      # `--base` other than "origin/main" as unable to be honored by the
+      # merge-base hooks and records it unknown. Pointing the remote-tracking
+      # ref itself keeps the default and the hooks intact.
+      #
+      # The ref to pin is the base the checked-out merge ref was built on — its
+      # first parent — not the event payload's base sha. Main moves between the
+      # payload and the merge ref, and diffing against the payload then counts
+      # unrelated main commits as part of this PR: measured 2026-10-19, a
+      # backend-only PR selected the frontend suite and spent 333 s running it.
+      - name: Point origin/main at the merge ref's base
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: git fetch --no-tags origin "+$BASE_SHA:refs/remotes/origin/main"
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          BASE_SHA=$(python3 .github/scripts/required-ci.py pr-base "$EVENT_BASE")
+          git fetch --no-tags origin "+$BASE_SHA:refs/remotes/origin/main"
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
