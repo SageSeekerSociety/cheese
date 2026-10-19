@@ -380,8 +380,9 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         # static graph has no edge from the JSON to the specs that read the
         # scenes, so seed the loader. Without this a one-line scene edit
         # widened to the whole suite (measured 900 s, the per-check timeout).
+        # A deleted scene seeds it too: the loader's glob still names the set.
         if any(p.startswith("frontend/src/views/demo/scenes/") and p.endswith(".json")
-               for p in surviving):
+               for p in frontend_paths):
             loader = "src/views/demo/scenes/index.ts"
             if (root / "frontend" / loader).is_file() and loader not in roots:
                 roots.append(loader)
@@ -540,6 +541,7 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         # checkout.
         site = root / "docs" / "site"
         plan.append({"id": "docs-deps", "cwd": site,
+                     "evidence": {"kind": "install"},
                      "command": ["npm", "ci", "--no-audit", "--no-fund"]})
         plan.append({"id": "docs-build", "cwd": site,
                      "env": {"OUT": str(tmp / "docs")},
@@ -766,6 +768,14 @@ def resolve(process, evidence):
         return process
     kind = evidence["kind"]
     rc = process.get("returncode")
+    if kind == "install":
+        # An install that fails is the machine (or the registry) missing a
+        # dependency, not a verdict on the change. Exit 3 says exactly that;
+        # a timeout, memory stop or signal keeps its own result above.
+        if process["result"] == "fail":
+            return {**process, "result": "blocked",
+                    "reason": f"could not install the docs dependencies (exit {rc})"}
+        return process
     if kind == "types":
         detail = {"evidence": {k: v for k, v in evidence.items() if k != "path"}}
         if process["result"] == "pass":

@@ -1988,6 +1988,11 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(unit["evidence"]["roots"], ["src/views/demo/scenes/index.ts"])
         # The docs build holds the same scene's step titles to the fence.
         self.assertTrue(any(p["id"] == "docs-build" for p in plan))
+        # A deleted scene still seeds the loader; its glob names the set.
+        plan, _ = test_plan(self.root, ["frontend/src/views/demo/scenes/gone.json"],
+                            {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "related")
 
     def test_the_docs_build_runs_only_for_docs_or_scene_changes(self):
         from ci_fast_checks import test_plan
@@ -2289,6 +2294,22 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(config["compilerOptions"]["paths"], {"@/*": ["src/*"]})
         self.assertEqual(config["references"], [])
         self.assertEqual(config["files"], [str(self.root / "frontend/src/new.vue")])
+
+    def test_an_install_failure_is_blocked_not_a_verdict(self):
+        # npm ci failing is the machine or the registry missing a dependency,
+        # not the docs being wrong. Exit 3 says that; exit 1 says a change is
+        # red, and an install failure must not be read as one.
+        from ci_fast_checks import resolve
+        failed = resolve({"result": "fail", "returncode": 1, "output": "npm error"},
+                         {"kind": "install"})
+        self.assertEqual(failed["result"], "blocked")
+        self.assertIn("could not install", failed["reason"])
+        self.assertEqual(
+            resolve({"result": "pass", "returncode": 0}, {"kind": "install"})["result"], "pass")
+        # A killed install judged nothing either; it keeps its unknown result.
+        self.assertEqual(
+            resolve({"result": "unknown", "returncode": -9}, {"kind": "install"})["result"],
+            "unknown")
 
 
 class BoundedProcessTest(unittest.TestCase):

@@ -342,7 +342,9 @@ everything is still allowed to answer unknown.
   (`docs/site`, three npm packages, about ten seconds, `OUT` to a temporary
   directory). It checks links, anchors and the scene/fence step titles; full
   CI's guards job runs the same build only after merge, which is how a
-  mismatched step name landed red on main on 2026-10-19.
+  mismatched step name landed red on main on 2026-10-19. The install is its
+  own row, and `npm ci` failing is blocked (a missing dependency), not a red
+  change; the build that follows is the only verdict on the docs.
 
   A narrowed run is seeded with the changed source roots **and** every spec that
   judges a frontend file by reading it off disk rather than importing it
