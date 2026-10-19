@@ -933,10 +933,17 @@ def image_acceptance(options, root: Path) -> int:
                     except httpx.HTTPStatusError as exc:
                         assert exc.response.status_code == 409
                         assert "X-Device-Id" not in exc.response.headers
-                        assert (
-                            exc.response.json()["error"]["message"]
-                            == "device calls are active"
-                        )
+                        async with httpx.AsyncClient(
+                            base_url=url, timeout=10
+                        ) as probe:
+                            health = await probe.get("/healthz")
+                            assert health.status_code == 503
+                            assert health.json()["draining"] is True
+                            resumed = await backend._request(
+                                "POST", "/internal/device-connection/release-resume"
+                            )
+                            assert resumed.json() == {"draining": False}
+                            assert (await probe.get("/healthz")).status_code == 200
                     else:
                         raise AssertionError(
                             "owner accepted drain during an active call"
