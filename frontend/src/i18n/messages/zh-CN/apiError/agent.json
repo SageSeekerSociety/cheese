@@ -67,7 +67,6 @@
   "nounModelService": "模型服务",
   "offeredNeedsPrices": "上架必须同时有输入与输出单价：无价模型会让项目的 max_budget 这道刹车静默失效",
   "ownAgentAddPersonOnly": "只有成员本人能把自己的 Claude Code 加入项目",
-  "ownAgentCallersOwnerOnly": "只有主人能决定谁可以叫自己的 Claude Code",
   "ownAgentConnectionKindRefused": "这个项目不允许这类模型连接",
   "ownAgentConnectionNotFound": "找不到这份模型连接：它不是你的，或已解除、已退出登录",
   "ownAgentNotDefault": "成员自己的 Claude Code 不能设为项目默认的队友",
@@ -123,5 +122,7 @@
   "teammateNotSeatedHere": "这位 AI 队友不在这个频道里，不能在这里工作。把它加进频道，或者换一位队友",
   "topicNotFound": "频道不存在",
   "turnForceStopped": "本轮已被强制停止",
-  "upstreamModelRequired": "上游模型标识不能为空"
+  "upstreamModelRequired": "上游模型标识不能为空",
+  "ownAgentTaskOwnerMessageRequired": "创建任务时，必须引用主人发送的一条消息 ID。",
+  "ownAgentHasNoOwner": "这位 AI 队友没有可以私聊提问的个人主人。"
 }

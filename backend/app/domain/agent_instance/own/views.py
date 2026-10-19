@@ -31,8 +31,8 @@ async def listing(
     is_online,
     project_settings: dict[str, Any] | None,
 ) -> list[dict]:
-    """The members' own agents a project has: whose each one is, who may call
-    it, and the model connection it runs on (None once that is gone) and
+    """The members' own agents a project has: whose each one is, and the
+    model connection it runs on (None once that is gone) and
     whether the project allows that connection. Everyone
     in the project reads that much; the machine holding the connection, and
     whether it is online, only its owner reads (``machine`` is None for
@@ -80,7 +80,6 @@ async def listing(
             {
                 "handle": agent_instance_handle(instance.id),
                 "name": instance.display_name,
-                "callers": owned.callers.value,
                 "owner_handle": owner.username if owner else None,
                 "owner_name": (
                     faces.get(owner.username, (None, None))[0] or owner.username
@@ -112,10 +111,10 @@ async def my_connections(
     """The reader's own connections, for them to add to this project: each
     with whether it is already here and whether the project allows its kind."""
     here = {
-        _connection_key(device_id, account_id)
-        for device_id, account_id in (
+        _connection_key(login_id, account_id)
+        for login_id, account_id in (
             await db.execute(
-                select(OwnAgent.device_id, OwnAgent.account_connection_id)
+                select(OwnAgent.login_id, OwnAgent.account_connection_id)
                 .join(AgentInstance, AgentInstance.id == OwnAgent.instance_id)
                 .where(
                     AgentInstance.project_id == project_id,

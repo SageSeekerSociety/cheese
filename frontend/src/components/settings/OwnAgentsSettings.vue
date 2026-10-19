@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // 成员自己的 Claude Code（#2991）：Claude Code 加上成员的一份模型连接，就是一位属于他的队友，
-// 一个人每份连接可以加入一位，由他自己在这里加入、移出。谁可以叫它由它的主人定：只有自己，
-// 或者项目里的人。它经由成员自己配置的账号把项目内容发给模型，所以默认关闭，由管理者在这里
+// 一个人每份连接可以加入一位，由他自己在这里加入、移出。项目成员都能与它交流。
+// 它经由成员自己配置的账号把项目内容发给模型，所以默认关闭，由管理者在这里
 // 打开，并可以只允许某几类连接、只允许某几家自定义模型服务（按服务地址的主机名）。下面逐行列出已经加入的、各用哪份连接；设备名、在线状态和
 // 加入、移出的按钮只在你自己的那几行。
-import type { OwnAgentCallers, OwnAgentConnection, OwnAgentKind } from '@/types/ownAgents'
+import type { OwnAgentConnection, OwnAgentKind } from '@/types/ownAgents'
 
 import { computed, onMounted, ref } from 'vue'
 
@@ -20,15 +20,11 @@ defineOptions({ name: 'OwnAgentsSettings' })
 
 const props = defineProps<{ projectId: string }>()
 
-const { state, error, saving, load, setAllowed, setKinds, setServiceHosts, setCallers, add, remove } = useOwnAgents(
+const { state, error, saving, load, setAllowed, setKinds, setServiceHosts, add, remove } = useOwnAgents(
   () => props.projectId
 )
 
 const me = myHandle()
-const callerItems = computed(() => [
-  { title: t('work.projectSettings.ownAgents.callersOwner'), value: 'owner' },
-  { title: t('work.projectSettings.ownAgents.callersProject'), value: 'project' },
-])
 
 function kindName(kind: OwnAgentKind): string {
   switch (kind) {
@@ -187,32 +183,11 @@ onMounted(() => load().finally(releaseGate))
           </span>
           <template v-if="a.owner_handle === me">
             <div class="own-agents__mine">
-              <v-select
-                autocomplete="off"
-                class="own-agents__callers"
-                :model-value="a.callers"
-                :items="callerItems"
-                :label="t('work.projectSettings.ownAgents.callersLabel')"
-                :disabled="saving"
-                hide-details
-                density="compact"
-                data-testid="own-agent-callers"
-                @update:model-value="(v: OwnAgentCallers) => setCallers(a.handle, v)"
-              />
               <BaseButton size="sm" :disabled="saving" data-testid="own-agent-remove" @click="remove(a.handle)">
                 {{ t('work.projectSettings.ownAgents.remove') }}
               </BaseButton>
             </div>
-            <p class="t-meta c-muted own-agents__hint">{{ t('work.projectSettings.ownAgents.callersDetail') }}</p>
           </template>
-          <span v-else class="c-muted own-agents__machine">
-            ·
-            {{
-              a.callers === 'project'
-                ? t('work.projectSettings.ownAgents.callersProjectTag')
-                : t('work.projectSettings.ownAgents.callersOwnerTag')
-            }}
-          </span>
         </li>
       </ul>
       <p v-else class="t-body c-muted own-agents__empty">
@@ -306,14 +281,6 @@ onMounted(() => load().finally(releaseGate))
   align-items: center;
   gap: 8px;
   margin-top: 8px;
-}
-
-.own-agents__callers {
-  max-width: 240px;
-}
-
-.own-agents__hint {
-  margin-top: 4px;
 }
 
 .own-agents__add {

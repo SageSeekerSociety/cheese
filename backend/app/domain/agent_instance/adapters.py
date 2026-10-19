@@ -141,8 +141,7 @@ async def project_team(
                 name_source=AgentInstanceService.resolved(instance).name_source.value,
                 active=instance.is_active,
                 is_default=instance.id == default_instance_id,
-                owner_handle=own[0] if own is not None else None,
-                callers=own[1] if own is not None else None,
+                owner_handle=own,
             )
         )
     return seats
@@ -150,20 +149,14 @@ async def project_team(
 
 async def _own_owners(
     session: AsyncSession, project_id: uuid.UUID
-) -> dict[uuid.UUID, tuple[str, str]]:
-    """这个项目里哪些队友是成员自己的：归谁（按 handle），谁能叫它。"""
+) -> dict[uuid.UUID, str]:
+    """这个项目里哪些队友是成员自己的：归谁（按 handle）。"""
 
     owned = await owned_in_project(session, project_id)
     if not owned:
         return {}
     rows = await session.execute(
-        select(User.id, User.username).where(
-            User.id.in_({owner for _, owner, _ in owned})
-        )
+        select(User.id, User.username).where(User.id.in_({owner for _, owner in owned}))
     )
     users: dict[int, str] = {user_id: name for user_id, name in rows.all()}
-    return {
-        instance.id: (users[owner], callers.value)
-        for instance, owner, callers in owned
-        if owner in users
-    }
+    return {instance.id: users[owner] for instance, owner in owned if owner in users}

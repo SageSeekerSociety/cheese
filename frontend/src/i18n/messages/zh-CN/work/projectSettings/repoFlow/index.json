@@ -1,5 +1,4 @@
 {
-  "accountConnected": "已关联 GitHub 账号",
   "connectRepoFailed": "连接 GitHub 仓库失败",
   "installPending": "安装请求已提交，待组织管理员批准",
   "loadFailed": "加载设置失败",

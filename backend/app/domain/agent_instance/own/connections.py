@@ -15,19 +15,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance import account_connections
 from app.domain.agent_instance.models import AccountConnection
-from app.domain.device.login_kind import ConnectionKind, connection_kind
+from app.domain.device.login_kind import (
+    FIRST_LOGIN,
+    ConnectionKind,
+    connection_kind,
+)
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow, HostedDeviceRow
 from app.domain.device.supply import Supply
 
 
 @dataclass(frozen=True)
 class Login:
-    """One of a person's model connections, and how it reaches a model: the
+    """One of a person's model connections, and how it reaches a model: one
     login their own Claude Code has for the platform on one of their machines
-    (a machine holds one, and the connection is named by the machine), or one
-    their account holds (an API key or a model service, named by its row)."""
+    (a machine may hold several), or one their account holds (an API key or a
+    model service). Each is named by its own row."""
 
-    #: What the connection is named by: the machine's id, or the account
+    #: What the connection is named by: the login's record id, or the account
     #: connection's.
     id: str
     kind: ConnectionKind
@@ -52,7 +56,7 @@ def _login(device_id: str, name: str, row: DeviceClaudeLoginRow) -> Login:
     kind = connection_kind(row.auth_method, row.subscription_type)
     service = kind is ConnectionKind.model_service
     return Login(
-        id=device_id,
+        id=row.id,
         device_id=device_id,
         device_name=name,
         kind=kind,
@@ -75,7 +79,7 @@ def _held(row: AccountConnection) -> Login:
 
 
 def _usable():
-    """The conditions under which a machine's login is a connection a session
+    """The conditions under which a login on a machine is a connection a session
     may run on: logged in, on a machine its owner enrolled, and not removed by
     its owner — whatever a backend that predates removals wrote back into
     ``logged_in``, it never touches ``revoked_at``."""
@@ -112,7 +116,13 @@ async def logins_by_owners(
             DeviceClaudeLoginRow.device_id == DeviceRow.device_id,
         )
         .where(DeviceRow.owner_user_id.in_(owner_user_ids), *_usable())
-        .order_by(DeviceClaudeLoginRow.checked_at.desc())
+        # One machine's logins are confirmed in one answer: the first
+        # login first, then the same order on every read.
+        .order_by(
+            DeviceClaudeLoginRow.checked_at.desc(),
+            DeviceClaudeLoginRow.local_id != FIRST_LOGIN,
+            DeviceClaudeLoginRow.local_id,
+        )
     )
     for owner, device_id, name, row in rows:
         result[owner].append(_login(device_id, name, row))
@@ -127,11 +137,11 @@ async def logins_by_owners(
 
 
 def _connection_key(
-    device_id: str | None, account_connection_id: uuid.UUID | None
+    login_id: str | None, account_connection_id: uuid.UUID | None
 ) -> str | None:
     """The `Login.id` of the connection an own agent's row names."""
-    if device_id is not None:
-        return device_id
+    if login_id is not None:
+        return login_id
     return str(account_connection_id) if account_connection_id else None
 
 

@@ -23,10 +23,3 @@ export type User = {
   organization?: string | null
 }
 
-// 实名认证状态
-export enum RealNameStatus {
-  NONE = 'none',
-  VERIFIED = 'verified',
-  PENDING = 'pending',
-  REJECTED = 'rejected',
-}

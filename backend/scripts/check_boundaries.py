@@ -61,8 +61,7 @@ and nothing more.
     ... --self-test   plant each violation the ten contracts exist to catch,
                       in a throwaway tree, and require them to fire
     ... --json        one JSON record on stdout instead of the report; the exit
-                      code is unchanged. The record's shape is fixed in
-                      docs/topics/棘轮页方案 section 3.1.
+                      code is unchanged.
 """
 
 from __future__ import annotations
@@ -146,7 +145,7 @@ CONTRACT_IDS = (
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
 
-#: The check id in the ratchet snapshot, and the longest a `reason` may be.
+#: The check id in JSON output, and the longest a `reason` may be.
 CHECK_ID = "be-contracts"
 REASON_LIMIT = 2000
 
@@ -171,7 +170,7 @@ def _unmatched(warnings, written: set[str]) -> list[str]:
 
 
 # --- the JSON record ---------------------------------------------------------
-# Fixed in docs/topics/棘轮页方案 section 3.1, and written by hand here rather
+# Written by hand here rather
 # than imported from .claude/scripts/ratchet_report.py: this script is run from
 # backend/ and reaching across directories for fifteen lines would tie two CI
 # working directories together. The frontend ratchets share that helper.

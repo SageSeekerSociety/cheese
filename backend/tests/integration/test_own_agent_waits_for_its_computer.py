@@ -73,12 +73,13 @@ async def _own_agent_and_laptop(factory, project_id, topic_id):
                 checked_at=datetime.now(UTC),
             )
         )
+        await db.flush()
         db.add(
             OwnAgent(
                 instance_id=instance.id,
                 owner_user_id=alice.id,
                 harness="claude-code",
-                device_id=laptop,
+                login_id=laptop,
             )
         )
         seat = await AgentInstanceService(db).ensure_identity(instance)

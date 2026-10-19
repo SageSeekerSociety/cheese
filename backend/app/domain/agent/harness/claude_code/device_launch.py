@@ -35,7 +35,9 @@ from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.launch import ExecutorLaunch, MachineLaunch, MachinePlace
 from app.domain.agent.place import (
     CLAUDE_LOGIN_DIR,
+    CLAUDE_LOGINS_DIR,
     MODEL_SERVICE_FILE,
+    OWN_LOGIN_ID,
     OWN_MODEL,
     OWN_MODEL_AUTH,
     OWN_MODEL_BASE_URL,
@@ -44,6 +46,7 @@ from app.domain.agent.place import (
     footprint_root,
     seat_name,
 )
+from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.project_skill.service import (
     project_skill_names,
     publish_session_skill_bundle,
@@ -665,13 +668,16 @@ cheese_launch_phase credentials_selected
     return dataclasses.replace(launch, contract=contract)
 
 
-# A member's own Claude Code on their own machine reads the login its owner gave
-# the platform: the seat keeps its own CLAUDE_CONFIG_DIR, and this directory is
-# its credential store, shared by every such session on the machine so that
-# Claude Code's own refresh renews it for all of them. An inherited token or key
-# would win over it, so none is let through. A service started by launchd has no
-# USER, and Claude Code has been reported unable to find a Keychain login on
-# macOS without it (anthropics/claude-code#77213).
+# A member's own Claude Code on their own machine reads the one login its owner
+# gave the platform there that it was added with (`OWN_LOGIN_ID`, as the machine
+# calls it): the seat keeps its own CLAUDE_CONFIG_DIR, and that login's
+# directory is its credential store, shared by every session on the machine with
+# that login so that Claude Code's own refresh renews it for all of them. The
+# launch stops when the session was not told which login, rather than guess.
+# An inherited token or key would win over it, so none is let through. A
+# service started by launchd has no USER, and Claude Code has been reported
+# unable to find a Keychain login on macOS without it
+# (anthropics/claude-code#77213).
 #
 # On macOS that login is a Keychain item, and `security`, which Claude Code
 # runs to read and renew it, finds the login keychain through HOME: under the
@@ -699,7 +705,10 @@ for name, value in env.items():
 """
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
-OWN_LOGIN="$REAL_HOME/{footprint_root()}/{CLAUDE_LOGIN_DIR}"
+case "${{{OWN_LOGIN_ID}:?which login this session signs in with}}" in
+  {FIRST_LOGIN}) OWN_LOGIN="$REAL_HOME/{footprint_root()}/{CLAUDE_LOGIN_DIR}" ;;
+  *) OWN_LOGIN="$REAL_HOME/{footprint_root()}/{CLAUDE_LOGINS_DIR}/${OWN_LOGIN_ID}" ;;
+esac
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
 if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then

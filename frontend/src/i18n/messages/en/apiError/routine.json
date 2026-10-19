@@ -1,5 +1,4 @@
 {
-  "ownAgentOtherOwnersTask": "This Claude Code is someone else's and only works tasks its owner is responsible for",
   "routineAgentNotInRoom": "The routine must be run by an AI teammate in this channel",
   "routineAlreadyConfirmed": "This routine has already been confirmed",
   "routineConfirmEnable": "confirm and enable this routine",

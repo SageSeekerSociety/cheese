@@ -1,8 +1,7 @@
-"""Bringing a member's own agent in, taking it out, and who may call it.
+"""Bringing a member's own agent into a project and removing it.
 
-Only its owner does any of this. Adding refuses a connection the project does
-not allow; removing leaves the row in place, as a retired teammate's does; and
-changing the callers rewrites what the agent is told whose word it takes.
+Only its owner adds or removes it. Adding requires a connection the project
+allows; removal preserves its memory, as retiring a teammate does.
 """
 
 import uuid
@@ -16,16 +15,14 @@ from app.domain.agent_instance.models import (
     AgentInstance,
     NameSource,
     OwnAgent,
-    OwnCallers,
 )
 from app.domain.agent_instance.own.connections import label, logins
 from app.domain.agent_instance.own.naming import (
     _name_owners_agents,
     own_handle,
     own_name,
-    own_role,
 )
-from app.domain.agent_instance.own.ownership import _nickname_of, owner_of
+from app.domain.agent_instance.own.ownership import _nickname_of
 from app.domain.agent_instance.own.settings import (
     allowed_kinds,
     allows_own_agents,
@@ -65,7 +62,7 @@ async def add(
             OwnAgent.owner_user_id == owner_user_id,
             OwnAgent.account_connection_id == account_id
             if login.on_account
-            else OwnAgent.device_id == login.device_id,
+            else OwnAgent.login_id == login.id,
         )
     )
     if instance is None:
@@ -74,7 +71,7 @@ async def add(
             project_id=project.id,
             handle=own_handle(owner_user_id),
             type_name=None,
-            configuration={"body": own_role(nickname, on_account=login.on_account)},
+            configuration={},
             display_name=own_name(nickname, label(login)),
             name_source=NameSource.human,
         )
@@ -85,7 +82,7 @@ async def add(
                 instance_id=instance.id,
                 owner_user_id=owner_user_id,
                 harness=harness,
-                device_id=login.device_id,
+                login_id=None if login.on_account else login.id,
                 account_connection_id=account_id,
             )
         )
@@ -104,24 +101,3 @@ async def remove(db: AsyncSession, instance_id: uuid.UUID) -> None:
     if instance is not None:
         instance.is_active = False
         await db.flush()
-
-
-async def set_callers(
-    db: AsyncSession, instance_id: uuid.UUID, callers: OwnCallers
-) -> None:
-    """Record who may call this member's own agent, and tell the agent whose
-    word it takes from now on."""
-    row = await db.get(OwnAgent, instance_id)
-    instance = await db.get(AgentInstance, instance_id)
-    if row is None or instance is None:
-        return
-    row.callers = callers
-    owner = await owner_of(db, instance_id)
-    if owner is not None:
-        instance.configuration = {
-            **(instance.configuration or {}),
-            "body": own_role(
-                owner[1], callers, on_account=row.account_connection_id is not None
-            ),
-        }
-    await db.flush()

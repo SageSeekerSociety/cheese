@@ -33,8 +33,16 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.dashboard.user_statistics import UserStatisticsRepository
+from app.domain.delivery.ledger import deliver
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.discussion.reaction_services import DiscussionReactionService
+from app.domain.discussion.repositories import (
+    DiscussionReactionRepository,
+    DiscussionRepository,
+    ReactionTypeRepository,
+)
+from app.domain.discussion.services import DiscussionService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
@@ -58,6 +66,8 @@ __all__ = [
     "get_work_runner",
     "get_passkey_service",
     "get_user_realname_service",
+    "get_user_auth_service",
+    "get_discussion_service",
     "project_device_online",
     "team_device_online",
 ]
@@ -199,6 +209,19 @@ async def get_user_auth_service(
         user_repo=user_repo,
         profile_repo=profile_repo,
         stats_repo=stats_repo,
+    )
+
+
+async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
+    reaction_service = DiscussionReactionService(
+        reaction_repo=DiscussionReactionRepository(session=db),
+        reaction_type_repo=ReactionTypeRepository(session=db),
+    )
+    return DiscussionService(
+        repo=DiscussionRepository(session=db),
+        reaction_service=reaction_service,
+        session=db,
+        deliver=deliver,
     )
 
 
