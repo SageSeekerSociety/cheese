@@ -44,6 +44,7 @@ AGGREGATORS = frozenset(
         "CI required",
         "CI required (draft quick)",
         "scope",
+        "Fail fast",
         "Mark main green",
     }
 )
@@ -120,6 +121,9 @@ def _load_attribution():
     if str(backend) not in sys.path:
         sys.path.insert(0, str(backend))
     try:
+        from app.domain.review.github_pr.failure_logs import (  # noqa: PLC0415
+            _clean_log_line,
+        )
         from app.domain.review.landing_forge import (  # noqa: PLC0415
             BatchCommits,
             CommitChange,
@@ -146,6 +150,7 @@ def _load_attribution():
         BatchCommits,
         CommitChange,
         _failed_test_paths,
+        _clean_log_line,
         _FAILED,
         _blame,
         _names,
@@ -157,6 +162,7 @@ def _load_attribution():
     BatchCommits,
     CommitChange,
     failed_test_paths,
+    clean_log_line,
     FAILED,
     blame_of,
     names_test,
@@ -169,10 +175,18 @@ def _load_attribution():
 # ---------------------------------------------------------------------------
 
 
-def _run(argv: list[str], *, timeout: int = 120) -> str:
+def _run_real(
+    argv: list[str], *, timeout: int = 120, cwd: Path | None = None
+) -> str:
     try:
         proc = subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout, check=False
+            argv,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+            check=False,
+            cwd=cwd,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ReadError(f"{argv[0]} failed: {exc}") from exc
@@ -196,15 +210,56 @@ def _json_of(text: str):
     raise ReadError("gh answered without JSON")
 
 
-def _gh_json(argv: list[str], *, timeout: int = 120):
-    return _json_of(_run(["gh", *argv], timeout=timeout))
+def _gh_json_real(argv: list[str], *, timeout: int = 120):
+    return _json_of(_run_real(["gh", *argv], timeout=timeout))
 
 
-def _api(repo: str, suffix: str, params: dict | None = None):
+def _api_real(repo: str, suffix: str, params: dict | None = None):
     path = f"/repos/{urllib.parse.quote(repo, safe='/')}{suffix}"
     if params:
         path += "?" + urllib.parse.urlencode(params)
-    return _gh_json(["api", path])
+    return _json_of(_run_real(["gh", "api", path]))
+
+
+class _LiveReads:
+    """Every read the report makes, behind one object.
+
+    The self-test swaps a recorded implementation in for this one and calls
+    `collect` for real: a mutation in the live path then shows up as a red
+    self-test, instead of being hidden behind a hand-written copy of it.
+    """
+
+    def api(self, repo: str, suffix: str, params: dict | None = None):
+        return _api_real(repo, suffix, params)
+
+    def gh_json(self, argv: list[str], *, timeout: int = 120):
+        return _gh_json_real(argv, timeout=timeout)
+
+    def run(
+        self, argv: list[str], *, timeout: int = 120, cwd: Path | None = None
+    ) -> str:
+        return _run_real(argv, timeout=timeout, cwd=cwd)
+
+    def platform_token(self) -> str | None:
+        return _platform_token_real()
+
+    def platform_call(self, method: str, path: str, body: dict | None, token: str | None = None):
+        return _platform_call_real(method, path, body, token)
+
+
+READ = _LiveReads()
+
+
+def _run(argv: list[str], *, timeout: int = 120, cwd: Path | None = None) -> str:
+    return READ.run(argv, timeout=timeout, cwd=cwd)
+
+
+def _gh_json(argv: list[str], *, timeout: int = 120):
+    return READ.gh_json(argv, timeout=timeout)
+
+
+def _api(repo: str, suffix: str, params: dict | None = None):
+    return READ.api(repo, suffix, params)
 
 
 def _repo_name(explicit: str | None) -> str:
@@ -234,6 +289,7 @@ class RunFacts:
     id: int
     head: str
     branch: str
+    status: str | None
     conclusion: str | None
     url: str
     jobs: tuple[Job, ...]
@@ -244,6 +300,7 @@ def _run_of(raw: dict) -> RunFacts:
         id=int(raw["id"]),
         head=str(raw.get("head_sha") or ""),
         branch=str(raw.get("head_branch") or ""),
+        status=raw.get("status"),
         conclusion=raw.get("conclusion"),
         url=str(raw.get("html_url") or ""),
         jobs=(),
@@ -401,7 +458,7 @@ def _cases_in(logs: dict[int, str]) -> tuple[str, ...]:
     found: list[str] = []
     for text in logs.values():
         for raw in text.splitlines():
-            line = _clean(raw)
+            line = clean_log_line(raw)
             match = _PYTEST_CASE.search(line)
             if match:
                 found.append(match.group(1))
@@ -410,12 +467,6 @@ def _cases_in(logs: dict[int, str]) -> tuple[str, ...]:
             if match:
                 found.append(f"{match.group(1)} > {match.group(2)}")
     return tuple(_dedupe(found)[:MAX_CASES])
-
-
-def _clean(raw: str) -> str:
-    """Drop the Actions timestamp, the CR and ANSI colour, like landing_watch."""
-    line = re.sub(r"^\d{4}-\d\d-\d\dT[\d:.]+Z\s?", "", raw.rstrip("\r\n"))
-    return re.sub(r"\x1b\[[0-9;]*m", "", line)
 
 
 def _dedupe(items) -> list[str]:
@@ -435,24 +486,35 @@ def _tests_in(logs: dict[int, str]) -> tuple[str, ...]:
     return tuple(sorted(set(found)))
 
 
+#: `_reason`'s answers. `_action` switches on these names, never on a
+#: substring of the sentence: it did once, and `没能读全` did not contain
+#: `读不全`, so an unread batch was reported to the channel as a collision.
+NO_TESTS = "日志里没有点名测试文件"
+UNREAD = "批内提交没能读全，不能钉在单个提交上"
+UNMATCHED = "有失败的测试文件不在任何批内提交的改动里"
+SHARED = "同一个失败文件被批内多个提交改到（对撞）"
+SPLIT = "失败用例分别指向不同提交（对撞）"
+UNIQUE = "唯一 culprit"
+
+
 def _reason(tests: tuple[str, ...], commits: BatchCommits) -> str:
     """Why `_blame` can or cannot name one commit. The matching itself is
-    `landing_watch._names`; this only words the answer."""
+    `landing_watch._names`; this only names the answer."""
     if not tests:
-        return "日志里没有点名测试文件"
+        return NO_TESTS
     if not commits.complete or any(not c.complete for c in commits.changes):
-        return "批内提交没能读全，不能钉在单个提交上"
+        return UNREAD
     matches = [(test, [c.sha for c in commits.changes if names_test(test, c.files)]) for test in tests]
     if any(not hit for _, hit in matches):
-        return "有失败的测试文件不在任何批内提交的改动里"
+        return UNMATCHED
     if any(len(hit) > 1 for _, hit in matches):
-        return "同一个失败文件被批内多个提交改到（对撞）"
+        return SHARED
     common = set(matches[0][1])
     for _, hit in matches[1:]:
         common &= set(hit)
     if len(common) == 1:
-        return "唯一 culprit"
-    return "失败用例分别指向不同提交（对撞）"
+        return UNIQUE
+    return SPLIT
 
 
 def _batch(repo: str, head: str, logs: dict[int, str]) -> Batch:
@@ -466,7 +528,11 @@ def _batch(repo: str, head: str, logs: dict[int, str]) -> Batch:
             runs = _api(
                 repo,
                 "/actions/workflows/required-ci.yml/runs",
-                {"branch": "main", "status": "success", "per_page": 1},
+                {
+                    "branch": _default_branch(repo),
+                    "status": "success",
+                    "per_page": 1,
+                },
             ).get("workflow_runs") or []
             base = str(runs[0]["head_sha"]) if runs else ""
             compare = _compare(repo, base, head) if base and base != head else None
@@ -570,7 +636,7 @@ class TaskRef:
     link: str | None
 
 
-def _platform_token() -> str | None:
+def _platform_token_real() -> str | None:
     token = os.environ.get("OKCHEESE_TOKEN")
     if token:
         return token
@@ -579,7 +645,7 @@ def _platform_token() -> str | None:
     if not (user and password):
         return None
     try:
-        answer = _platform_call(
+        answer = _platform_call_real(
             "POST", "/users/auth/login", {"username": user, "password": password}
         )
         return str(_unwrap(answer)["accessToken"])
@@ -587,7 +653,7 @@ def _platform_token() -> str | None:
         return None
 
 
-def _platform_call(method: str, path: str, body: dict | None, token: str | None = None):
+def _platform_call_real(method: str, path: str, body: dict | None, token: str | None = None):
     api = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(api + path, data=data, method=method)
@@ -596,6 +662,14 @@ def _platform_call(method: str, path: str, body: dict | None, token: str | None 
         request.add_header("Authorization", "Bearer " + token)
     with urllib.request.urlopen(request, timeout=15) as response:
         return json.loads(response.read().decode("utf-8", "replace"))
+
+
+def _platform_token() -> str | None:
+    return READ.platform_token()
+
+
+def _platform_call(method: str, path: str, body: dict | None, token: str | None = None):
+    return READ.platform_call(method, path, body, token)
 
 
 def _unwrap(value):
@@ -682,7 +756,11 @@ def _branches(
     keywords: tuple[str, ...], exclude: tuple[str, ...] = ()
 ) -> tuple[str, ...]:
     try:
-        text = _run(["git", "ls-remote", "--heads", "origin"], timeout=30)
+        text = _run(
+            ["git", "ls-remote", "--heads", "origin"],
+            timeout=30,
+            cwd=REPO_ROOT,
+        )
     except ReadError:
         return ()
     names = [
@@ -754,7 +832,7 @@ def _fix(
     branches = _branches(keywords, (pr_head,) if pr_head else ())
     picked = tuple(sorted(set(strong + medium)))
     if strong:
-        detail = "开放 PR {} 改了失败的测试文件".format(
+        detail = "开放 PR {} 改到了失败用例对应的模块".format(
             "、".join(f"#{n}" for n in strong)
         )
     elif medium:
@@ -807,9 +885,9 @@ def _action(
     fix: Fix | None,
 ) -> str:
     if blamed is None:
-        if "没有点名" in reason:
+        if reason == NO_TESTS:
             return "日志没点名用例：叫回批内全部任务逐条自证，并要求失败 job 补打测试名"
-        if "读不全" in reason or "读不到" in reason:
+        if reason == UNREAD:
             return "批内提交没读全：人工分诊，不指定单一 culprit"
         return "对撞不出：叫回批内全部任务逐条自证，不把红算在单个任务头上"
     if fix and fix.underway:
@@ -829,9 +907,12 @@ def _action(
 def _paragraph(report: Report, batch: Batch, source: Source | None) -> str:
     lines: list[str] = []
     head = report.head[:8]
+    batch_text = (
+        f"批内 {report.total} 个提交" if report.total else "批内提交数未读出"
+    )
     lines.append(
         f"主干红批 run {report.run_id}（head {head}，"
-        f"批内 {report.total} 个提交，结论 {report.conclusion or '未完成'}）"
+        f"{batch_text}，结论 {report.conclusion or '未完成'}）"
     )
     if report.failed_jobs:
         shown = "、".join(job["name"] for job in report.failed_jobs[:6])
@@ -872,7 +953,10 @@ def _paragraph(report: Report, batch: Batch, source: Source | None) -> str:
     else:
         shown = "、".join(c.sha[:8] for c in batch.commits[:10])
         suffix = " 等" if len(batch.commits) > 10 else ""
-        lines.append(f"来源：无单一 culprit；批内提交 {shown}{suffix}")
+        if shown:
+            lines.append(f"来源：无单一 culprit；批内提交 {shown}{suffix}")
+        else:
+            lines.append("来源：无单一 culprit；批内提交没读出来")
     lines.append(f"建议：{report.action}")
     return "\n".join(lines)
 
@@ -883,23 +967,10 @@ def build_report(
     source: Source | None,
     task: TaskRef | None,
     fix: Fix | None,
-    *,
-    fixing_override: bool | None = None,
 ) -> Report:
-    """Turn already-read facts into the paragraph. `fixing_override` exists
-    for the self-test's deliberate violation: it shows what the verdict would
-    be if the author-is-fixing rule were deleted."""
+    """Turn already-read facts into the paragraph."""
     red = _red_leaf_jobs(run.jobs)
-    fix_for_action = fix
-    if fix is not None and fixing_override is not None:
-        fix_for_action = Fix(
-            underway=fixing_override,
-            strong=fix.strong,
-            prs=fix.prs,
-            branches=fix.branches,
-            detail=fix.detail,
-        )
-    action = _action(batch.blamed, batch.reason, source, task, fix_for_action)
+    action = _action(batch.blamed, batch.reason, source, task, fix)
     report = Report(
         run_id=run.id,
         run_url=run.url,
@@ -926,6 +997,35 @@ def build_report(
 
 def collect(repo: str, value: str) -> Report:
     run = load_run(repo, value)
+    if run.status != "completed":
+        red = _red_leaf_jobs(run.jobs)
+        shown = "、".join(job.name for job in red) or "还没有红的 job"
+        action = f"这批还没跑完（{run.status or '未知状态'}）：等它出结论再归因"
+        return Report(
+            run_id=run.id,
+            run_url=run.url,
+            head=run.head,
+            conclusion=run.conclusion,
+            total=0,
+            complete=False,
+            failed_jobs=tuple(
+                {"name": job.name, "conclusion": job.conclusion, "url": job.url}
+                for job in red
+            ),
+            cases=(),
+            tests=(),
+            blamed=None,
+            blame_reason="这批还没跑完",
+            source=None,
+            task=None,
+            fix=None,
+            action=action,
+            paragraph=(
+                f"run {run.id}（head {run.head[:8]}）还没跑完"
+                f"（{run.status or '未知状态'}）；已红 job：{shown}\n"
+                f"建议：{action}"
+            ),
+        )
     if run.conclusion not in FAILED:
         batch = Batch(0, (), True, None, (), (), None, "这批没有红")
         report = build_report(run, batch, None, None, None)
@@ -946,16 +1046,20 @@ def collect(repo: str, value: str) -> Report:
     fix = None
     if batch.blamed:
         commit = next((c for c in batch.commits if c.sha == batch.blamed), None)
-        raw = _api(repo, f"/commits/{batch.blamed}")
-        source = _source(repo, batch.blamed, raw)
-        task = _task(source)
-        fix = _fix(
-            repo,
-            source.pr_author or source.commit_author,
-            batch.tests,
-            commit.files if commit else (),
-            source.pr_head,
-        )
+        try:
+            raw = _api(repo, f"/commits/{batch.blamed}")
+        except ReadError:
+            raw = None
+        if raw is not None:
+            source = _source(repo, batch.blamed, raw)
+            task = _task(source)
+            fix = _fix(
+                repo,
+                source.pr_author or source.commit_author,
+                batch.tests,
+                commit.files if commit else (),
+                source.pr_head,
+            )
     return build_report(run, batch, source, task, fix)
 
 
@@ -985,6 +1089,7 @@ def _recorded(
             "id": run_id,
             "head_sha": head,
             "head_branch": "main",
+            "status": "completed",
             "conclusion": "failure" if gate_red else "success",
             "html_url": f"https://github.com/o/r/actions/runs/{run_id}",
             "name": "Required CI",
@@ -1139,179 +1244,143 @@ def _fixture_collision() -> dict:
     )
 
 
-def _facts_from_fixture(fixture: dict) -> tuple[RunFacts, Batch, Source | None, TaskRef | None, Fix | None]:
-    run = _run_of(fixture["run"])
-    run = RunFacts(**{**asdict(run), "jobs": _jobs_of(fixture["jobs"])})
-    logs = {int(key): text for key, text in fixture["logs"].items()}
-    commits = _batch_from_compare(fixture["compare"], fixture["changes"])
-    tests = _tests_in(logs)
-    blamed = blame_of(tests, commits)
-    batch = Batch(
-        total=commits.total,
-        commits=commits.changes,
-        complete=commits.complete,
-        anchor=fixture["anchor"],
-        tests=tests,
-        cases=_cases_in(logs),
-        blamed=blamed,
-        reason=_reason(tests, commits),
-    )
-    source = None
-    task = None
-    fix = None
-    if blamed:
-        raw = fixture["changes"][blamed]
-        source = _source_from_raw(blamed, raw, fixture["pulls"].get(blamed, []))
-        task = _task_from_raw(fixture["task"])
-        commit = next(c for c in commits.changes if c.sha == blamed)
-        fix = _fix_from_raw(
-            fixture["open_prs"],
-            fixture["pr_files"],
-            fixture["branches"],
-            tests,
-            commit.files,
-            source.pr_head if source else None,
-        )
-    return run, batch, source, task, fix
+class _RecordedReads:
+    """The fixture's answers to every read the live path makes.
+
+    Same seam as `_LiveReads`, so `collect` itself runs against it: the
+    self-test exercises `load_run`, `_batch`, `_source`, `_task` and `_fix`,
+    and a change to any of them is a change to what the self-test asserts.
+    """
+
+    def __init__(self, fixture: dict):
+        self.f = fixture
+
+    def api(self, repo: str, suffix: str, params: dict | None = None):
+        f = self.f
+        if suffix == "":
+            return {"default_branch": "main"}
+        if suffix == f"/actions/runs/{f['run']['id']}":
+            return f["run"]
+        if suffix == f"/actions/runs/{f['run']['id']}/jobs":
+            return {"jobs": f["jobs"]}
+        if suffix == "/git/ref/heads/main-green":
+            return {"object": {"sha": f["anchor"]}}
+        if suffix.startswith("/compare/"):
+            return f["compare"]
+        if suffix.startswith("/commits/"):
+            rest = suffix[len("/commits/") :]
+            if rest.endswith("/pulls"):
+                return f["pulls"].get(rest[: -len("/pulls")], [])
+            return f["changes"].get(rest)
+        if suffix.startswith("/pulls/"):
+            rest = suffix[len("/pulls/") :]
+            if rest.endswith("/files"):
+                number = rest[: -len("/files")]
+                return [
+                    {"filename": name} for name in f["pr_files"].get(number, [])
+                ]
+            for pulls in f["pulls"].values():
+                for pull in pulls:
+                    if str(pull["number"]) == rest:
+                        return pull
+            return None
+        raise ReadError(f"fixture has no answer for {suffix}")
+
+    def gh_json(self, argv: list[str], *, timeout: int = 120):
+        if argv[:2] == ["pr", "list"]:
+            return self.f["open_prs"]
+        raise ReadError(f"fixture has no answer for gh {' '.join(argv)}")
+
+    def run(
+        self, argv: list[str], *, timeout: int = 120, cwd: Path | None = None
+    ) -> str:
+        if argv[:2] == ["gh", "api"]:
+            path = argv[2]
+            if "/actions/jobs/" in path:
+                job = path.split("/actions/jobs/", 1)[1].split("/", 1)[0]
+                return self.f["logs"].get(job, "")
+        if argv[:2] == ["git", "ls-remote"]:
+            return "".join(
+                f"{OTHER}\trefs/heads/{name}\n" for name in self.f["branches"]
+            )
+        raise ReadError(f"fixture has no answer for {' '.join(argv)}")
+
+    def platform_token(self) -> str | None:
+        return "self-test"
+
+    def platform_call(self, method: str, path: str, body: dict | None, token: str | None = None):
+        return self.f["task"]
 
 
-def _source_from_raw(sha: str, raw: dict, pulls: list[dict]) -> Source:
-    message = str((raw.get("commit") or {}).get("message") or "").strip()
-    subject = message.splitlines()[0] if message else ""
-    pr_raw = None
-    if pulls:
-        pr_raw = pulls[0]
-    body = str((pr_raw or {}).get("body") or "")
-    link = TASK_LINK.search(body) or TASK_LINK.search(message)
-    return Source(
-        sha=sha,
-        subject=subject,
-        pr=int(pr_raw["number"]) if pr_raw else None,
-        pr_title=str((pr_raw or {}).get("title") or ""),
-        pr_author=str(((pr_raw or {}).get("user") or {}).get("login") or ""),
-        commit_author=_commit_author(raw),
-        pr_head=str(((pr_raw or {}).get("head") or {}).get("ref") or "") or None,
-        task_id=link.group(1) if link else None,
-        task_link=link.group(0) if link else None,
-        merged_at=str((pr_raw or {}).get("merged_at") or "") or None,
-    )
-
-
-def _task_from_raw(raw: dict | None) -> TaskRef | None:
-    if not raw:
-        return None
-    row = _unwrap(raw)
-    return TaskRef(
-        id=str(row.get("id") or TASK_ID),
-        number=row.get("number"),
-        owner=row.get("owner_handle"),
-        title=row.get("title"),
-        link=None,
-    )
-
-
-def _fix_from_raw(
-    open_prs: list[dict],
-    pr_files: dict[str, list[str]],
-    branches: list[str],
-    tests: tuple[str, ...],
-    files: tuple[str, ...],
-    pr_head: str | None = None,
-) -> Fix:
-    keywords = _keywords(tests, files)
-    branches = [b for b in branches if b != pr_head]
-    ordered = sorted(
-        open_prs,
-        key=lambda row: str(row.get("updatedAt") or ""),
-        reverse=True,
-    )
-    named = [
-        row
-        for row in ordered
-        if any(
-            keyword
-            in (str(row.get("title") or "") + " " + str(row.get("headRefName") or "")).lower()
-            for keyword in keywords
-        )
-    ]
-    candidates = (named or ordered)[:MAX_PR_FILE_READS]
-    strong: list[int] = []
-    medium: list[int] = []
-    for row in candidates:
-        number = int(row["number"])
-        changed = tuple(pr_files.get(str(number), ()))
-        if any(names_test(test, changed) for test in tests):
-            strong.append(number)
-        elif any(names_test(path, changed) for path in files):
-            medium.append(number)
-    picked = tuple(sorted(set(strong + medium)))
-    if strong:
-        detail = "开放 PR {} 改了失败的测试文件".format("、".join(f"#{n}" for n in strong))
-    elif medium:
-        detail = "开放 PR {} 改了 culprit 的同一批文件".format("、".join(f"#{n}" for n in medium))
-    elif branches:
-        detail = "同名分支 {}".format("、".join(branches))
-    else:
-        detail = "作者名下没有改了同一批文件的开放 PR 或同名分支"
-    return Fix(
-        underway=bool(strong or medium or branches),
-        strong=bool(strong),
-        prs=picked,
-        branches=tuple(branches),
-        detail=detail,
-    )
+def _collect_from_fixture(fixture: dict) -> Report:
+    """Run the live collector against a recorded fixture. No network."""
+    global READ
+    was = READ
+    READ = _RecordedReads(fixture)
+    try:
+        return collect("o/r", str(fixture["run"]["id"]))
+    finally:
+        READ = was
 
 
 def self_test() -> int:
     failures: list[str] = []
     cases = 0
 
-    run_a, batch_a, source_a, task_a, fix_a = _facts_from_fixture(_fixture_unique(fixing=True))
-    report_a = build_report(run_a, batch_a, source_a, task_a, fix_a)
+    report_a = _collect_from_fixture(_fixture_unique(fixing=True))
     cases += 1
-    if batch_a.blamed != CULPRIT:
-        failures.append(f"唯一 culprit：得到 {batch_a.blamed}，应为 {CULPRIT}")
+    if report_a.blamed != CULPRIT:
+        failures.append(f"唯一 culprit：得到 {report_a.blamed}，应为 {CULPRIT}")
     if "作者在修" not in report_a.action or "#44" not in report_a.action:
         failures.append(f"作者在修：建议是 {report_a.action!r}")
     if "#1977" not in report_a.paragraph:
         failures.append("作者在修：段落里没有任务 #1977")
     if "test_widget.py::test_it_works" not in report_a.paragraph:
         failures.append("作者在修：段落里没有点名的用例")
+    # The live `_fix` is what put `underway` in the report: removing that rule
+    # turns the assertion above red, which is this case's link to the code.
+    if not report_a.fix or report_a.fix.get("underway") is not True:
+        failures.append("故意违规钉不住：live _fix 没把「作者在修」收进报告")
 
-    run_b, batch_b, source_b, task_b, fix_b = _facts_from_fixture(_fixture_unique(fixing=False))
-    report_b = build_report(run_b, batch_b, source_b, task_b, fix_b)
+    report_b = _collect_from_fixture(_fixture_unique(fixing=False))
     cases += 1
-    if batch_b.blamed != CULPRIT:
-        failures.append(f"无人修：culprit 得到 {batch_b.blamed}")
+    if report_b.blamed != CULPRIT:
+        failures.append(f"无人修：culprit 得到 {report_b.blamed}")
     if "叫回任务 #1977" not in report_b.action:
         failures.append(f"无人修：建议是 {report_b.action!r}")
 
-    run_c, batch_c, source_c, task_c, fix_c = _facts_from_fixture(_fixture_collision())
-    report_c = build_report(run_c, batch_c, source_c, task_c, fix_c)
+    report_c = _collect_from_fixture(_fixture_collision())
     cases += 1
-    if batch_c.blamed is not None:
-        failures.append(f"对撞：culprit 应读不出来，得到 {batch_c.blamed}")
+    if report_c.blamed is not None:
+        failures.append(f"对撞：culprit 应读不出来，得到 {report_c.blamed}")
     if "对撞" not in report_c.blame_reason:
         failures.append(f"对撞：归因是 {report_c.blame_reason!r}")
     if "批内全部任务" not in report_c.action:
         failures.append(f"对撞：建议是 {report_c.action!r}")
 
-    # Deliberate violation: deleting the author-is-fixing rule must change the
-    # first scenario's verdict. If both readings come out the same, the rule is
-    # not load-bearing and this self-test would stay green after it was removed.
+    # A batch nobody could read whole is manual triage, not a collision: the
+    # reason and the action are separate names so they cannot drift apart.
     cases += 1
-    violated = build_report(run_a, batch_a, source_a, task_a, fix_a, fixing_override=False)
-    if violated.action == report_a.action:
-        failures.append(
-            "故意违规：「作者在修」判定去掉后结论没变，说明它没有被自测钉住"
-        )
-    if "叫回任务 #1977" not in violated.action:
-        failures.append(f"故意违规：去掉判定后应落到叫回任务，得到 {violated.action!r}")
+    unread = _action(None, UNREAD, None, None, None)
+    if "人工分诊" not in unread:
+        failures.append(f"读不全：建议是 {unread!r}")
+
+    # A run still going has `conclusion=None`; it must not be reported as
+    # "nothing to blame" while a job is already red.
+    cases += 1
+    running = _fixture_unique(fixing=True)
+    running["run"]["status"] = "in_progress"
+    running["run"]["conclusion"] = None
+    report_running = _collect_from_fixture(running)
+    if "还没跑完" not in report_running.action:
+        failures.append(f"还在跑：建议是 {report_running.action!r}")
+    if "没有要归的责" in report_running.paragraph:
+        failures.append("还在跑：段落说成了没有要归的责")
 
     # Attribution and its wording must agree: whenever `_blame` names a commit,
     # the stated reason has to say so, and the other way round.
     cases += 1
-    if (batch_a.blamed is not None) != (batch_a.reason == "唯一 culprit"):
+    if (report_a.blamed is not None) != (report_a.blame_reason == UNIQUE):
         failures.append("归因与理由不一致：唯一 culprit 的判定和措辞对不上")
 
     if failures:
