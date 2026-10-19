@@ -54,7 +54,7 @@ steps:
     desc: 「随时推送」的约定，所有 agent 都一样。
   - label: 工作目录短名
     check: 工作目录的短名
-    desc: 启动时平台给这个会话的每条命令一个变量 `$T`，值是这次会话的工作目录，命令里写 `cd "$T"` 就不用抄那串 UUID 长路径。只有 claude-code 骨架的会话注入这段：codex、pi 的命令环境里没有它。
+    desc: 启动时平台给这个会话的每条命令一个变量 `$T`，值是这次会话的工作目录，命令里写 `cd "${T:?T is not set}"` 就不用抄那串 UUID 长路径；带上 `:?` 是因为 `cd ""` 会成功且不动地方。只有 claude-code 骨架的会话注入这段：codex、pi 的命令环境里没有它。
   - label: todo 清单
     check: 步骤清单
     desc: 步骤清单（`todo_write`）的用法：多步的活开工时先写计划。

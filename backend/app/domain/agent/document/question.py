@@ -382,11 +382,14 @@ def system_prompt(
         # the whole document guide are in the prompt rather than a skill the
         # agent may not load. The guide points at its blocks reference by the
         # path it has as a skill; here that file follows under the same name.
+        # The mini-app guide is a skill of its own elsewhere, and follows here
+        # under that skill's name, with its reference after it.
         WRITING,
         load_skills(["cheese-docs"]),
         "## references/blocks.md\n\n" + load_skills(["doc-blocks"]),
-        "## references/apps.md\n\n" + load_skills(["doc-apps"]),
         "## references/live-doc.md\n\n" + load_skills(["doc-live"]),
+        "## miniapp 技能\n\n" + load_skills(["miniapp"]),
+        "## miniapp 技能的 references/apps.md\n\n" + load_skills(["doc-apps"]),
     ]
     if goals:
         parts.append(f"## 项目目标\n<项目目标>\n{goals}\n</项目目标>")
