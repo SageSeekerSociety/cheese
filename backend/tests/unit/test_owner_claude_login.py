@@ -217,6 +217,22 @@ def test_probe_reads_only_the_connected_enrollment(tmp_path):
     assert logins[FIRST_LOGIN].subscription_type == "pro"
 
 
+def test_probe_preserves_the_logins_keychain_namespace(tmp_path):
+    env = _machine(tmp_path, installed=True, logged_in=True)
+    login = Path(env["FIRST_LOGIN_DIR"])
+    namespace = str(Path(env["HOME"]) / ".cheese/claude-login")
+    (login / "keychain-config-dir").write_text(namespace)
+    binary = Path(env["PLATFORM_ROOT"]) / "claude/versions" / CLAUDE_PINNED_VERSION
+    binary.write_text(
+        "#!/bin/sh\n"
+        'if [ "$CLAUDE_SECURESTORAGE_CONFIG_DIR" = "$EXPECTED_NAMESPACE" ]; then\n'
+        '  echo \'{"loggedIn":true,"authMethod":"claude.ai"}\'\n'
+        "else echo '{\"loggedIn\":false}'; fi\n"
+    )
+    env["EXPECTED_NAMESPACE"] = namespace
+    assert _ask(env).logged_in
+
+
 @pytest.mark.parametrize(
     "printed",
     [

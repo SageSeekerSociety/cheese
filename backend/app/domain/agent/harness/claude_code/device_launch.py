@@ -34,6 +34,7 @@ from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.launch import ExecutorLaunch, MachineLaunch, MachinePlace
 from app.domain.agent.place import (
+    CLAUDE_KEYCHAIN_FILE,
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
     MODEL_SERVICE_FILE,
@@ -713,6 +714,9 @@ case "${{{OWN_LOGIN_ID}:?which login this session signs in with}}" in
   *) OWN_LOGIN="$REAL_HOME/{ROOT_PLACEHOLDER}/{CLAUDE_LOGINS_DIR}/${OWN_LOGIN_ID}" ;;
 esac
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
+if [ -f "$OWN_LOGIN/{CLAUDE_KEYCHAIN_FILE}" ]; then
+  CLAUDE_SECURESTORAGE_CONFIG_DIR="$(cat "$OWN_LOGIN/{CLAUDE_KEYCHAIN_FILE}")"
+fi
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
 if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
   mkdir -p "$HOME/.cheese/keychain"

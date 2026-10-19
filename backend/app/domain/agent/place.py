@@ -193,7 +193,7 @@ SANDBOXES_DIR = "sandboxes"
 #: (`CLAUDE_SECURESTORAGE_CONFIG_DIR`), so every session on the machine with
 #: that login shares it and Claude Code's own refresh renews it for all of
 #: them. On macOS the login is a Keychain item named after this path; the
-#: connector migrates that item together with the old shared directory.
+#: connector retains that item's namespace when moving the old shared directory.
 #: The connector writes it
 #: (`cli/internal/claudecode`) and the backend's probe reads it; both copies
 #: are held to this one by `tests/unit/test_footprint_root.py`.
@@ -208,6 +208,10 @@ CLAUDE_LOGINS_DIR = "logins/claude-logins"
 #: The launch exports it and the probe reports its model; the connector writes
 #: it (`claudecode.serviceFile`), held to this name by the same test.
 MODEL_SERVICE_FILE = "model-service.json"
+
+#: In a login directory: its stable macOS Keychain namespace. Existing sessions
+#: keep refreshing this same item after the connector moves the login's files.
+CLAUDE_KEYCHAIN_FILE = "keychain-config-dir"
 
 #: A member's own Claude Code on a connection their account holds (#2991): its
 #: session host is the deployment's, and the connection reaches the launch as

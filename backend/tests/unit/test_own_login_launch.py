@@ -67,6 +67,7 @@ def _launch_on_machine(
     login_id: str | None = FIRST_LOGIN,
     other_service: dict | None = None,
     profile: str = ".cheese",
+    credential_namespace: str | None = None,
 ) -> dict:
     """Run the launcher the way a machine does, with the platform asking for
     Claude's ``opus`` on the machine's login ``login_id``, and return the
@@ -85,6 +86,8 @@ def _launch_on_machine(
     for login in (first, second):
         login.mkdir(parents=True)
     used, unused = (second, first) if login_id == "B7QX" else (first, second)
+    if credential_namespace is not None:
+        (used / "keychain-config-dir").write_text(credential_namespace)
     if service is not None:
         (used / MODEL_SERVICE_FILE).write_text(json.dumps(service))
     if other_service is not None:
@@ -158,6 +161,12 @@ def test_an_own_session_reads_the_login_its_owner_gave_the_platform(tmp_path):
     )
     assert "ANTHROPIC_BASE_URL" not in seen
     assert "ANTHROPIC_AUTH_TOKEN" not in seen
+
+
+def test_a_moved_login_keeps_the_active_sessions_keychain_namespace(tmp_path):
+    namespace = str(tmp_path / "original-login")
+    seen = _launch_on_machine(tmp_path, credential_namespace=namespace, mac=True)
+    assert seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == namespace
 
 
 def test_an_own_session_on_another_login_reads_that_login_only(tmp_path):

@@ -1,13 +1,18 @@
 package claudecode
 
 import (
+	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 )
 
-func TestMovingALoginPreservesItsKeychainCredential(t *testing.T) {
+func TestMovingALoginKeepsAnActiveSessionsCredentialUpdates(t *testing.T) {
 	home := ownerHome(t)
 	keychain := filepath.Join(home, "test.keychain-db")
 	if out, err := exec.Command("/usr/bin/security", "create-keychain", "-p", "test", keychain).CombinedOutput(); err != nil {
@@ -41,20 +46,39 @@ fi
 		t.Fatal(err)
 	}
 	const credential = `{"claudeAiOauth":{"accessToken":"synthetic-token","refreshToken":"synthetic-refresh"}}`
-	if err := exec.Command("security", "add-generic-password", "-a", "test", "-s", keychainService(source), "-w", credential).Run(); err != nil {
+	// The fixture follows the pinned Claude build's Keychain protocol. The
+	// connector neither computes these service names nor reads the credential.
+	hash := sha256.Sum256([]byte(source))
+	service := fmt.Sprintf("Claude Code-credentials-%x", hash[:4])
+	if err := exec.Command("security", "add-generic-password", "-a", "test", "-s", service, "-w", credential).Run(); err != nil {
 		t.Fatal(err)
 	}
-	if err := moveLogin(source, destination); err != nil {
+	if err := MigrateLogins(place.Root); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readKeychain(keychainService(destination))
-	if err != nil || string(got) != credential {
-		t.Fatalf("moved login lost its credential: %v", err)
+	reader := filepath.Join(home, "read-login")
+	if err := os.WriteFile(reader, []byte(`#!/bin/sh
+store="${CLAUDE_SECURESTORAGE_CONFIG_DIR:-$CLAUDE_CONFIG_DIR}"
+service="Claude Code-credentials-$(printf %s "$store" | shasum -a 256 | cut -c1-8)"
+exec security find-generic-password -s "$service" -w
+`), 0700); err != nil {
+		t.Fatal(err)
 	}
-	old, err := readKeychain(keychainService(source))
-	if err != nil || old != nil {
-		t.Fatalf("old shared credential remains: %v", err)
+	read := func(expected string) {
+		t.Helper()
+		got, err := Command(context.Background(), reader, destination).Output()
+		if err != nil || string(got) != expected+"\n" {
+			t.Fatalf("enrollment cannot read its latest credential: %v", err)
+		}
 	}
+	read(credential)
+	// A process started before the upgrade still writes the namespace it was
+	// launched with. Its successful refresh must be visible to the enrollment.
+	const refreshed = `{"claudeAiOauth":{"accessToken":"synthetic-updated","refreshToken":"synthetic-refresh-updated"}}`
+	if err := exec.Command("security", "add-generic-password", "-U", "-a", "test", "-s", service, "-w", refreshed).Run(); err != nil {
+		t.Fatal(err)
+	}
+	read(refreshed)
 	if _, err := os.Stat(source); !os.IsNotExist(err) {
 		t.Fatalf("old shared login directory remains: %v", err)
 	}

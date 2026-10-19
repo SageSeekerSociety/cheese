@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 )
@@ -49,7 +50,8 @@ func MigrateLogins(ownerRoot string) error {
 }
 
 func moveLogin(source, destination string) error {
-	if _, err := os.Stat(source); errors.Is(err, os.ErrNotExist) {
+	info, err := os.Stat(source)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
 		return err
@@ -62,17 +64,19 @@ func moveLogin(source, destination string) error {
 	if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
 		return err
 	}
-	finish, err := relocateKeychain(source, destination)
-	if err != nil {
-		return err
+	if info.IsDir() && runtime.GOOS == "darwin" {
+		// Keychain identity is separate from the moved files: a retained Claude
+		// process still refreshes this same item, so copying/deleting it loses updates.
+		store, err := CredentialDir(source)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(source, place.ClaudeKeychain), []byte(store), 0600); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(source, destination); err != nil {
 		return fmt.Errorf("claude: move login: %w", err)
-	}
-	if err := finish(); err != nil {
-		// The old Keychain entry still exists when removal fails. Restore its
-		// directory so a subsequent start can retry the same migration.
-		return errors.Join(err, os.Rename(destination, source))
 	}
 	return nil
 }
