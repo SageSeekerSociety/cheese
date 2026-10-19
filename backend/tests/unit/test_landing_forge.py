@@ -324,6 +324,10 @@ def test_the_failed_tests_are_read_out_of_the_red_jobs_logs():
         "backend/tests/test_a.py",
         "backend/tests/test_b.py",
     ]
+    assert asyncio.run(reads.failed_paths("d", tests_only=True)) == [
+        "backend/tests/test_a.py",
+        "backend/tests/test_b.py",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -421,20 +425,31 @@ def test_static_diagnostics_before_long_test_collection_are_kept(redirect):
 
 
 def test_only_test_failure_lines_are_used_for_test_probes():
-    reads = _reads_failed_log(
+    log = (
         "2026-10-19T02:53:15.7Z   --> tests/integration/test_app_sign_in.py:15:8\n"
         "2026-10-19T02:53:16.0Z FAILED tests/unit/test_a.py::test_x - boom\n"
         "2026-10-19T02:53:17.0Z FAIL src/b.spec.ts > b > fails\n"
     )
-    assert asyncio.run(reads.failed_paths("d", tests_only=True)) == [
-        "src/b.spec.ts",
+    assert _failed_paths(log, tests_only=True) == [
         "tests/unit/test_a.py",
+        "src/b.spec.ts",
     ]
 
 
-async def test_a_static_failure_in_a_test_file_is_not_bisected_by_running_tests():
+@pytest.mark.parametrize(
+    "test_failure",
+    ["", "tests/integration/test_app_sign_in.py", "tests/unit/test_a.py"],
+)
+async def test_a_static_failure_in_a_test_file_is_not_bisected_by_running_tests(
+    test_failure,
+):
     reads = _reads_failed_log(
         "2026-10-19T02:53:15.7Z   --> tests/integration/test_app_sign_in.py:15:8\n"
+        + (
+            f"2026-10-19T02:53:16.0Z FAILED {test_failure}::test_x - boom\n"
+            if test_failure
+            else ""
+        )
     )
     batch = Batch(
         head="d",

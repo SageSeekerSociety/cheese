@@ -135,7 +135,8 @@ class LandingReads(Protocol):
 
     async def failed_paths(self, head: str, *, tests_only: bool = False) -> list[str]:
         """Files named by failed tests or static checks in the red jobs' logs.
-        ``tests_only`` excludes static diagnostics for test reruns."""
+        ``tests_only`` returns no paths when any static diagnostic is present:
+        a test rerun cannot judge that failure, even in the same file."""
         ...
 
     async def is_ancestor(self, commit: str, descendant: str) -> bool:
@@ -482,7 +483,14 @@ class GitHubLandingReads:
             job = actions_job_id(run)
             if job is None:
                 continue
-            found += _failed_paths(await self._job_log(job), tests_only=tests_only)
+            log = await self._job_log(job)
+            paths = _failed_paths(log)
+            if tests_only:
+                tests = _failed_paths(log, tests_only=True)
+                if paths != tests:
+                    return []
+                paths = tests
+            found += paths
         return sorted(set(found))
 
     async def _job_log(self, job_id: int) -> str:
