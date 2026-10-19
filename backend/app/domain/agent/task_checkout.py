@@ -18,7 +18,8 @@ and the session process on another, and `Path.home()` is different on each.
 
 from __future__ import annotations
 
-import os
+import ntpath
+import posixpath
 import shlex
 import sys
 import uuid
@@ -49,9 +50,12 @@ def names_a_directory(value):
     """Whether `value` is a directory name rather than a notice.
 
     The machine answers where a task's checkout is on the last line of what it
-    said; a warning is not a path. A target file written before this check can
-    still hold one, and a launch must not start at it."""
-    return isinstance(value, str) and os.path.isabs(value)
+    said; a warning is not a path. The machine and the session host need not
+    run the same system, so either spelling is a path: a Windows executor names
+    `C:\\...` for a Linux host, and a POSIX executor names `/...` for a Windows
+    one. A target file written before this check can still hold a notice, and a
+    launch must not start at it."""
+    return isinstance(value, str) and (posixpath.isabs(value) or ntpath.isabs(value))
 
 
 class TaskCheckoutFailed(RuntimeError):

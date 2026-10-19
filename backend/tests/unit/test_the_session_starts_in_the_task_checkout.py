@@ -21,6 +21,8 @@ ROOM = "/home/agent/.cheese/home/project/resource/room"
 CHECKOUT = "/home/agent/.cheese/home/project/resource/.cheese/tasks/0a1b2c"
 TASK = "0a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d"
 ROOM_TOPIC = "11111111-2222-3333-4444-555555555555"
+#: The same checkout as a Windows executor's `cheese worktree` names it.
+WINDOWS_CHECKOUT = r"C:\Users\owner\.cheese\tasks\0a1b2c"
 
 
 @pytest.fixture
@@ -66,6 +68,23 @@ def machine(monkeypatch):
     # The forwarded view is a FUSE mount, which a test machine need not have.
     monkeypatch.setattr(client, "take_view", lambda *args, **kwargs: None)
     return asked
+
+
+@pytest.fixture
+def windows_machine(monkeypatch):
+    """A Windows executor's answers: the checkout in its own path spelling."""
+
+    def call(self, method, params=None, **_):
+        if method == "ping":
+            return {"workspace": ROOM}
+        if method == "context_fs":
+            return {"generation": "g1", "entries": {}, "instructions": ""}
+        if method == "invoke":
+            return {"value": {"stdout": WINDOWS_CHECKOUT + "\n"}}
+        raise AssertionError(f"unexpected call {method}")
+
+    monkeypatch.setattr(client.RemoteClient, "call", call)
+    monkeypatch.setattr(client, "take_view", lambda *args, **kwargs: None)
 
 
 def _prepare(tmp_path, pinned, monkeypatch, topic, **target):
@@ -285,6 +304,32 @@ def test_an_answer_that_is_not_a_path_is_a_failure():
 
     with pytest.raises(module.TaskCheckoutFailed):
         module.task_checkout(Client(), TASK, notice=False)
+
+
+def test_a_windows_checkout_is_started_in(
+    tmp_path, pinned, windows_machine, monkeypatch
+):
+    """The executor's spelling is not the session host's: a Windows checkout
+    answered to a Linux host still names the directory, and the host spells it
+    for its own namespace."""
+    import json
+
+    _prepare(tmp_path, pinned, monkeypatch, TASK, local=False)
+    target = json.loads(
+        (tmp_path / "seat" / "remote-session" / "execution.json").read_text()
+    )
+
+    assert target["start_directory"] == "/c/Users/owner/.cheese/tasks/0a1b2c"
+    assert target["start_directory"] == client.session_path(WINDOWS_CHECKOUT)
+
+
+def test_either_path_spelling_is_a_directory():
+    """A notice is not a path in any spelling; a checkout is one in both."""
+    from app.domain.agent.task_checkout import names_a_directory
+
+    assert names_a_directory(WINDOWS_CHECKOUT)
+    assert names_a_directory(CHECKOUT)
+    assert not names_a_directory("[cheese] 任务在平台上有一份快照，没有自动套用")
 
 
 def test_a_cached_answer_that_is_not_a_path_is_asked_again(monkeypatch):
