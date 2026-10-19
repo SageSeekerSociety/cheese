@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import runpy
 import select
@@ -370,10 +371,14 @@ def control(self, params):
 
 
 def prepare(self, payload):
-    room_owner = self.state.parents[5]
+    # The state is <owner>/<root>/home/<project>/<resource>/.cheese/executor,
+    # and the root is the enrollment's (`.cheese`, or `.cheese/profiles/<name>`).
+    root = os.environ.get("CHEESE_PROFILE_ROOT", ".cheese")
+    room_owner = self.state.parents[4 + len(Path(root).parts)]
     home = (
         room_owner
-        / ".cheese/home"
+        / root
+        / "home"
         / str(uuid.UUID(payload["project"]))
         / str(uuid.UUID(payload["resource"]))
     )

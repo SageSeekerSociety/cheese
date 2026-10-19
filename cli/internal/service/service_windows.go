@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/devenv"
 	"github.com/SageSeekerSociety/cheese/cli/internal/host"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
@@ -22,8 +23,7 @@ import (
 )
 
 const (
-	runKey    = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-	valueName = "cheese"
+	runKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 
 	createNoWindow        = 0x08000000
 	createNewProcessGroup = 0x00000200
@@ -35,8 +35,8 @@ func Control(cfgPath, action string) error {
 	case "install":
 		return install(cfgPath)
 	case "uninstall":
-		err := hidden("reg.exe", "delete", runKey, "/v", valueName, "/f").Run()
-		if err != nil && installed() {
+		err := hidden("reg.exe", "delete", runKey, "/v", config.ServiceName(cfgPath), "/f").Run()
+		if err != nil && installed(cfgPath) {
 			return fmt.Errorf("remove the login entry: %w", err)
 		}
 		return nil
@@ -61,14 +61,14 @@ func install(cfgPath string) error {
 		return err
 	}
 	command := fmt.Sprintf(`conhost.exe --headless "%s" run --config "%s"`, self, cfgPath)
-	if out, err := hidden("reg.exe", "add", runKey, "/v", valueName, "/t", "REG_SZ", "/d", command, "/f").CombinedOutput(); err != nil {
+	if out, err := hidden("reg.exe", "add", runKey, "/v", config.ServiceName(cfgPath), "/t", "REG_SZ", "/d", command, "/f").CombinedOutput(); err != nil {
 		return fmt.Errorf("write the login entry: %v: %s", err, out)
 	}
 	return nil
 }
 
-func installed() bool {
-	return hidden("reg.exe", "query", runKey, "/v", valueName).Run() == nil
+func installed(cfgPath string) bool {
+	return hidden("reg.exe", "query", runKey, "/v", config.ServiceName(cfgPath)).Run() == nil
 }
 
 // start runs `cheesehost run` now, detached and windowless, so it outlives
@@ -167,7 +167,7 @@ func Status(cfgPath string) (string, error) {
 	switch {
 	case state.PID(cfgPath) > 0:
 		return "running", nil
-	case installed():
+	case installed(cfgPath):
 		return "stopped", nil
 	}
 	return "not installed", nil

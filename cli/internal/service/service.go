@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	ksvc "github.com/kardianos/service"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/devenv"
@@ -95,7 +96,7 @@ func (p *program) Stop(_ ksvc.Service) error {
 // answer for a machine we do not own.
 func New(cfgPath string) (ksvc.Service, error) {
 	cfg := &ksvc.Config{
-		Name:        serviceName,
+		Name:        config.ServiceName(cfgPath),
 		DisplayName: displayName,
 		Description: description,
 		Arguments:   []string{"run", "--config", cfgPath},
