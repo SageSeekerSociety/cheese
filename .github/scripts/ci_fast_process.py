@@ -64,6 +64,46 @@ def clear_stop():
         _STOPPED = False
 
 
+def _defer_interrupt():
+    """Hold a SIGINT that lands while `Popen` is between fork and return.
+
+    The child is running by the time the signal can be raised, but its pid is
+    assigned to `proc` only after `Popen` returns. A KeyboardInterrupt in that
+    window leaves this function with no handle: the child runs in its own
+    session, where the terminal's Ctrl-C cannot reach it, and nothing here can
+    kill it. Replace the handler for the length of the spawn, then raise the
+    interrupt once the pid is registered and the `finally` that kills the
+    group is in place. Returns `None` where there is nothing to defer: Python
+    delivers signals to the main thread only, so a worker's spawn cannot be
+    interrupted this way.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return None
+    fired = threading.Event()
+    previous = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, lambda *_: fired.set())
+    return fired, previous
+
+
+def _release_interrupt(deferred):
+    """Act as the caller's own SIGINT handler would, now that the pid is known.
+
+    The handler is restored before this runs (the spawn's `finally`), so a
+    signal that lands now raises the ordinary way.
+    """
+    if deferred is None:
+        return
+    fired, previous = deferred
+    if not fired.is_set():
+        return
+    if previous is signal.SIG_IGN:
+        return  # the process ignores Ctrl-C; deferring it changes nothing
+    if callable(previous):
+        previous(signal.SIGINT, None)  # the default handler raises
+        return
+    raise KeyboardInterrupt
+
+
 def environment(extra=None):
     """The caller's environment, minus the verdict-altering variables."""
     env = {k: v for k, v in os.environ.items() if k not in SCRUB}
@@ -125,14 +165,23 @@ def execute(command, cwd, timeout, memory_mib=3072, env=None):
     if not hasattr(os, "killpg"):
         return {**result, "result": "blocked", "output": "Bounded ci:fast needs Linux ps/process groups."}
     with tempfile.TemporaryFile() as output:
+        proc = None
+        refused = None
+        deferred = _defer_interrupt()
         try:
-            proc = subprocess.Popen(
-                command, cwd=cwd, env=environment(env), stdout=output, stderr=output,
-                start_new_session=True,
-            )
-        except OSError as exc:
-            return {**result, "result": "blocked", "output": str(exc)}
-        try:
+            try:
+                proc = subprocess.Popen(
+                    command, cwd=cwd, env=environment(env), stdout=output, stderr=output,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                refused = str(exc)
+            finally:
+                if deferred is not None:
+                    signal.signal(signal.SIGINT, deferred[1])
+            if refused is not None:
+                _release_interrupt(deferred)  # an interrupt during a failed spawn still counts
+                return {**result, "result": "blocked", "output": refused}
             with _RUNNING_LOCK:
                 stopped = _STOPPED
                 if not stopped:
@@ -141,6 +190,9 @@ def execute(command, cwd, timeout, memory_mib=3072, env=None):
                 # The interrupt landed between the spawn and this point; the
                 # snapshot `stop_all` took could not see this group yet.
                 return {**result, "result": "unknown", "reason": "interrupted"}
+            # Registered, so raising here runs the `finally` that kills the
+            # group: a signal that arrived inside `Popen` is not lost.
+            _release_interrupt(deferred)
             misses = 0
             while True:
                 remaining = timeout - (time.monotonic() - start)
@@ -183,9 +235,10 @@ def execute(command, cwd, timeout, memory_mib=3072, env=None):
             result["reason"] = str(exc)
         finally:
             # Also reap children left behind by an otherwise successful wrapper.
-            stop_group(proc)
-            with _RUNNING_LOCK:
-                _RUNNING.discard(proc.pid)
+            if proc is not None:
+                stop_group(proc)
+                with _RUNNING_LOCK:
+                    _RUNNING.discard(proc.pid)
         output.seek(0, os.SEEK_END)
         size = output.tell()
         output.seek(max(0, size - 1024 * 1024))

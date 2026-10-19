@@ -2375,6 +2375,12 @@ class PlanConcurrencyTest(unittest.TestCase):
     def _plan(*pairs):
         return [{"id": check_id, "command": [], "cwd": cwd} for check_id, cwd in pairs]
 
+    @staticmethod
+    def _processes_with(token):
+        """Pids still running a command line holding ``token``."""
+        found = subprocess.run(["pgrep", "-f", token], capture_output=True, text=True)
+        return [int(line) for line in found.stdout.split()]
+
     def test_two_trees_overlap_and_one_tree_never_does(self):
         report, overlaps, peak = self._drive(
             self._plan(("backend-pure", "backend"),
@@ -2409,32 +2415,62 @@ class PlanConcurrencyTest(unittest.TestCase):
 
         `stop_all` kills the groups it can see; a check submitted but not yet
         registered would otherwise run to its own timeout while the scheduler
-        waited for it.
+        waited for it — and it has to be reaped, not just skipped.
         """
         from ci_fast_process import clear_stop, execute, stop_all
+        token = "19.735"
         stop_all()
         try:
             started = time.monotonic()
-            result = execute(["sleep", "20"], tempfile.gettempdir(), 60)
+            result = execute(["sh", "-c", f"exec sleep {token}"],
+                             tempfile.gettempdir(), 60)
         finally:
             clear_stop()
         self.assertLess(time.monotonic() - started, 2)
         self.assertEqual(result["result"], "unknown")
+        self.assertEqual(self._processes_with(token), [])
+
+    def test_a_signal_inside_the_spawn_does_not_leave_the_check_running(self):
+        """A SIGINT inside `Popen` itself has no pid to kill yet.
+
+        The child is forked before `Popen` returns, so a KeyboardInterrupt
+        raised there leaves it running in its own session, where the terminal's
+        Ctrl-C cannot reach it. The interrupt is held until the pid is
+        registered, then raised where the cleanup can kill the group.
+        """
+        import ci_fast_process
+        from ci_fast_process import execute
+        token = "19.734"
+        real_popen = subprocess.Popen
+
+        def popen_then_interrupt(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            os.kill(os.getpid(), signal.SIGINT)
+            return proc
+
+        with mock.patch.object(ci_fast_process.subprocess, "Popen",
+                               popen_then_interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                execute(["sh", "-c", f"exec sleep {token}"],
+                        tempfile.gettempdir(), 60)
+        self.assertEqual(self._processes_with(token), [])
 
     def test_a_previous_interrupt_does_not_poison_the_next_run(self):
-        from ci_fast_process import stop_all
+        from ci_fast_process import execute, stop_all
         module = self._module()
         stop_all()  # a stop raised before this tier started
         report = {"ran": [], "not_run": [], "reasons": []}
-        ran = []
+        results = []
 
         def invoke(identifier, command, cwd, evidence=None, env=None):
-            ran.append(identifier)
+            # A real spawn: a stub that never calls `execute` cannot see the
+            # stop flag this test is about.
+            results.append(execute(["sh", "-c", "exit 0"], tempfile.gettempdir(), 60))
             report["ran"].append({"id": identifier})
-            return {}
+            return results[-1]
 
         module.run_plan_checks(self._plan(("backend-pure", "backend")), invoke, 1, report)
-        self.assertEqual(ran, ["backend-pure"])
+        self.assertEqual([row["result"] for row in results], ["pass"])
 
     def test_an_interrupt_stops_the_checks_the_scheduler_started(self):
         """Ctrl-C has to stop a concurrent check, not wait it out.

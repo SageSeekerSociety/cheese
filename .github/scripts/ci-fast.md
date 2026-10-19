@@ -69,7 +69,10 @@ The ceiling is per check, so `jobs` is also what the machine has to back: at
 stays at 2 and does not grow with the machine. An interrupt (Ctrl-C, or a
 cancelled job) stops every running check before the pool is joined — a check
 runs in its own session, so the signal would otherwise not reach it and the
-tier would wait out its own timeout.
+tier would wait out its own timeout. A signal that lands while a check is
+being forked, before its pid is known, is held until the check is registered
+and then raised where the same cleanup can kill it; the alternative leaves a
+process running in its own session after ci-fast has exited.
 
 For example, `CI_FAST_BUDGET_SECONDS=600 task ci:fast` gives a quota-constrained
 machine ten minutes without changing repository config. Required CI's draft job
