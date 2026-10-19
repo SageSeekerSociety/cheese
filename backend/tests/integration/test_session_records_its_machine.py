@@ -7,6 +7,8 @@ token passed to the next launch. The latter is metadata coverage; transcript
 hydration and actual model recall are outside this fixture.
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import json
 import uuid
 from datetime import UTC, datetime
@@ -79,9 +81,10 @@ async def room(client):
                 code,
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, owner.id),
             )
-            await devices.assign_to_project(
-                device.device_id, project_id, actor_user_id=owner.id
+            await place_in_project_team(
+                devices, device.device_id, project_id, actor_user_id=owner.id
             )
             assigned[name] = device.device_id
         await db.commit()

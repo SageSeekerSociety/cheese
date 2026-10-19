@@ -1,4 +1,3 @@
 {
-  "attached": "Only for {projects}",
   "line": "In use: {project} · {room} · {agent}"
 }

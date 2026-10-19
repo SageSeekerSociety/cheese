@@ -30,7 +30,8 @@ async def main() -> int:
     from app.common.auth import create_access_token
     from app.core.db import async_session_factory
     from app.core.sandbox_auth import mint_scoped_token
-    from app.domain.device.models import DeviceProjectRow
+    from app.domain.device.models import DeviceRow
+    from app.domain.device.supply import Supply
     from app.domain.project.models import Project
     from app.domain.user.models import User
 
@@ -56,8 +57,11 @@ async def main() -> int:
         bound = set(
             (
                 await session.execute(
-                    select(DeviceProjectRow.project_id).where(
-                        DeviceProjectRow.project_id.in_([p.id for p in candidates])
+                    select(Project.id)
+                    .join(DeviceRow, DeviceRow.team_id == Project.team_id)
+                    .where(
+                        Project.id.in_([p.id for p in candidates]),
+                        DeviceRow.supply == Supply.self_hosted,
                     )
                 )
             ).scalars()

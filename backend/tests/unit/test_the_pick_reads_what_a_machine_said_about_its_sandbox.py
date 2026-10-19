@@ -6,6 +6,8 @@ machine said is settled when it connects, by the very check its install runs;
 the placement does not ask it again.
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import json
 import subprocess
 import sys
@@ -26,9 +28,14 @@ OWNER = 1
 
 async def _enrol(service: DeviceService, project_id: uuid.UUID, name: str) -> str:
     device = await service.approve(
-        await service.start(name), owner_user_id=OWNER, supply=Supply.self_hosted
+        await service.start(name),
+        owner_user_id=OWNER,
+        supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, OWNER),
     )
-    await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
+    await place_in_project_team(
+        service, device.device_id, project_id, actor_user_id=OWNER
+    )
     return device.device_id
 
 

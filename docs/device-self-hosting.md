@@ -16,7 +16,7 @@ Enrolled devices provide execution for ordinary rooms: project files, shell comm
 
 - Cheese installs its Claude build at `~/.cheese/claude/versions/<pin>`. It leaves the owner's version store and `~/.local/bin/claude` unchanged.
 - Session configuration, home and worktrees live under Cheese-owned directories. Machine credentials are read from the owner's configuration under the existing authorization; the launcher writes neither the owner's `~/.claude` nor project configuration. Native skills live in the session's `$CLAUDE_CONFIG_DIR/skills/`.
-- This boundary applies to the Cheese integration. A session on an enrolled machine runs its tools in a bubblewrap sandbox (a `devices_of:<owner>` spec), and over the whole machine only when the machine's owner chose that machine for it (`self_hosted`, `where-a-turn-runs.md` §四). Nothing is installed with the owner's sudo: a Linux machine without unprivileged user namespaces says so on its owner's devices page and is given no sandbox.
+- This boundary applies to the Cheese integration. A session on an enrolled machine runs its tools in a bubblewrap sandbox (a `team_devices` spec), and over the whole machine only when an administrator of the device's team chose that machine for it (`self_hosted`, `where-a-turn-runs.md` §四). Nothing is installed with the owner's sudo: a Linux machine without unprivileged user namespaces says so on its team's devices page and is given no sandbox.
 - 装在**他能写的目录**——否则自更新永远失败，且无声（#501）。
 
 ### 为什么这条特别容易破
@@ -93,7 +93,7 @@ Commands without `--profile` address `default`. An explicit login to an already 
 | State | Beside the config | Beside the profile config |
 | tmux | Original per-user socket | Separate stable socket for this profile |
 
-`<user-config>` is `~/.config` on Linux unless `XDG_CONFIG_HOME` is set, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows. The desktop app keeps using the default profile at its existing path.
+`<user-config>` is `~/.config` on Linux unless `XDG_CONFIG_HOME` is set, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows. The desktop app reuses an enrollment of the selected team, or creates a named `team-<id>` profile for a new team.
 
 The connector supplies `CHEESE_PROFILE_ROOT` to execution commands and screens. Backend paths, harness state, executor releases, sandbox records and cleanup resolve that root on the machine. The connector announces `profiles` in `hello`; a connector that does not (one built before profiles) is a default-profile machine, and the hub writes `.cheese` into the paths it resolves itself until its update lands. Uninstall removes the selected profile's service, config and workspace. Uninstalling `default` preserves the other profiles under `profiles/`.
 
@@ -103,9 +103,9 @@ Claude logins belong to the enrollment and its team. The first lives at `<profil
 
 ## 1. 设备入册流程
 
-完整链路（装 → 登录 → 批准 → 上线 → 绑定 → 选用）：
+完整链路（装 → 选择团队并批准 → 上线 → 选用）：
 
-1. **装连接器（目标机器上）**。在「设置 → 设备 → 添加设备」复制这条，或在目标机器直接跑：
+1. **装连接器（目标机器上）**。在团队的「设备 → 接入设备」复制这条，或在目标机器直接跑：
    ```bash
    curl -fsSL <origin>/connector/install.sh | sh
    ```
@@ -119,11 +119,11 @@ Claude logins belong to the enrollment and its team. The first lives at `<profil
 
 2. **`cheesehost link connect <origin>/connector`**。这台机器还没登录，它先走登录：CLI 打 `POST /connector/auth/device/start`，拿回 `device_code`，打印一个 `approve_url`（指向前端 `/connect?code=<code>`），然后**阻塞轮询** `POST /connector/auth/device/poll`，等人批准。
 
-3. **人在网页批准**。打开 `approve_url`，登录后落到前端 `/connect` 审批页（批准**在登录态后面**，没有裸批准按钮）：可给节点改名、可选绑定一个项目，提交即 `POST /connector/connect`——把设备绑到当前用户为 owner，签发**不过期的 durable token**（只能服务端撤销）。
+3. **人在网页批准**。打开 `approve_url`，登录后落到前端 `/connect` 审批页（批准**在登录态后面**，没有裸批准按钮）：可给节点改名、选择所属团队（默认个人团队），提交即 `POST /connector/connect`，写入唯一的 `team_id` 并保留接入人的身份作为来源记录，签发**不过期的 durable token**（只能服务端撤销）。
 
 4. **同一条命令接着上线**。CLI 轮询拿到 token，写入 `~/.config/cheese/config.json`，随即拨出 `WS /connector/agent`，用 durable token 鉴权。握手成功后这台机器在 `device_hub` 里标记为在线。`cheesehost link auto-connect` 可让它开机自动重连。**这一步不需要 sudo**：service 装在当前账户下（Linux 顺带 `loginctl enable-linger`，macOS 是 LaunchAgent），细节和它的边界见 §0。
 
-5. **绑定项目/团队**。在「设置 → 设备」或各团队的「工作电脑」页把设备绑到项目（`assign_to_project`）或团队（`assign_to_team`——团队下**所有项目**都能跑在这台机器上）。只有设备的 owner 能绑，且 owner 必须是该项目/团队的成员。
+5. **团队管理**。设备接入后即属于所选团队。团队管理员在「设备」页改名或移除接入，所有团队项目均可使用。接入人离开团队后没有额外管理权。没有项目级绑定或借给其他团队的操作；同一台电脑为另一团队接入独立 profile。
 
 6. **频道选 device 算力**。两种姿势：
    - **全局**：不配 Cloud 的部署，整个算力池就是 DeviceChannel，每次 agent 请求都落到一台在线的、绑定了该项目的设备。
@@ -213,7 +213,7 @@ For another Anthropic-compatible model service, use `claude login --base-url <ur
 
 ### 5.1 屏幕面板显示什么
 
-- **「设置 → 设备」**（`/users/settings/devices`）：每台设备一个绿/灰圆点（在线/离线，来自 `device_hub.is_online`）、算力节点 id、在为哪些小队提供算力、运行中的 agent 现场 chip（每个 screen 带自己的 agent handle——设备本身不是 agent）。空白 = 还没连接的设备。
+- **团队「设备」页**（`/teams/:handle/compute`）：列出团队的接入、在线状态和只读登录摘要。管理员可以改名、移除和接入设备。桌面端「设置 → 这台设备」只读列出本机各次接入、所属团队和管理页链接。
 - **「现场」面板**：浏览器里**只读**的真终端，字节级 relay 设备上那块 screen 的输出。screen 里跑的是 runner，`claude` 在它下面 headless 运行，所以这里看不到 `claude` 的界面；只能发 `resize` 控制帧，**不能敲键**。空白/连不上 = screen 没开，或你无权看（无权与未知 screen 以同样的 1008 关闭，不可枚举）。
 
 ### 5.2 会话记录走哪条路径
@@ -235,7 +235,7 @@ claude -p 的 stdout（stream-json）               读循环按游标向 runner
 
 ### 5.3 设备离线时的表现
 
-- **设备掉线**：`device_hub.is_online` 转 false，「设置 → 设备」里该设备变灰「离线」，并写着上次在线的时间（`device.last_seen_at`：连上时记一次，连接期间最多每分钟记一次）。连接断开算掉线，连接器 45 秒（三次心跳）没有消息也算：机器睡眠或断网时，代理那头的连接会一直挂着，直到机器醒来才关，所以平台按心跳判断，不等连接关闭。掉线那一刻，已经发出、正在等回话的调用立刻失败（`LinkInterrupted`，结果未知，不会重发），不会等到各自超时。掉线后 15 秒内（`RECONNECT_GRACE_S`）新来的调用等机器重连并发来 hello 再发出；过了这段时间仍没回来，或者这个进程从没见过这台机器，调用立刻失败（`DeviceOffline`）。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
+- **设备掉线**：`device_hub.is_online` 转 false，团队的「设备」页里该设备显示「离线」，并写着上次在线的时间（`device.last_seen_at`：连上时记一次，连接期间最多每分钟记一次）。连接断开算掉线，连接器 45 秒（三次心跳）没有消息也算：机器睡眠或断网时，代理那头的连接会一直挂着，直到机器醒来才关，所以平台按心跳判断，不等连接关闭。掉线那一刻，已经发出、正在等回话的调用立刻失败（`LinkInterrupted`，结果未知，不会重发），不会等到各自超时。掉线后 15 秒内（`RECONNECT_GRACE_S`）新来的调用等机器重连并发来 hello 再发出；过了这段时间仍没回来，或者这个进程从没见过这台机器，调用立刻失败（`DeviceOffline`）。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
 - **会话的环境要用的设备离线**：这次工具调用答「「设备」没有连上平台」（不进沙箱时）或「这个规格的电脑现在都不在线」（某人设备的沙箱），对话和平台工具照常，**不会换到别的规格或别人的设备上**。
 - **解绑/撤销 token**：`DELETE /my/devices/{id}` 或服务端撤销 durable token → 该设备所有 screen 失效、`device_hub` 标记离线、市场 listing 里「自己的设备」在没有别的在线设备时变为不可选。
 
@@ -250,6 +250,6 @@ cheesehost link connect https://<你的站点>/connector    # 先登录：打印
 # 人浏览器打开 approve_url → 登录 → 批准（可命名/绑项目）
 # 同一条命令拿到 token 后装用户级 service 上线——全程不需要 sudo
 
-# 平台侧：在团队「工作电脑」页把设备绑给团队（或在「设置 → 设备」绑项目）
+# 平台侧：在批准页选择所属团队，然后在团队「设备」页管理
 # 频道选 device 算力（不配 Cloud 时就是默认，也可以在房间的工作电脑选择里显式选）
 ```

@@ -12,6 +12,8 @@ repository，正路是走对方的 service。这个文件测的就是那几条�
 
 """
 
+from tests.support.devices import enrollment_team
+
 import uuid
 from datetime import UTC, datetime
 
@@ -183,6 +185,7 @@ async def test_sql_device_service_persists_the_flow_in_the_database(
             code,
             owner_user_id=owner_id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(sql_device_service(session), owner_id),
         )
         await session.commit()
         device_id, token = device.device_id, device.token

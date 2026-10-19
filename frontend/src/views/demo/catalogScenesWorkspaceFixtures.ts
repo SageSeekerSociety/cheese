@@ -131,7 +131,7 @@ export function archivedProject(over: Partial<Project> = {}): Project {
 
 /** 一次被批准（或已被批准过）的设备：后端 `POST /devices/connect` 的回包。 */
 export function deviceApproval(over: Partial<DeviceApproval> = {}): DeviceApproval {
-  return { device_id: 'dev-1', device_name: 'andy-macbook', project_id: null, ...over }
+  return { device_id: 'dev-1', device_name: 'andy-macbook', team_id: 1, ...over }
 }
 
 // ---- 搜索结果（ProjectSearchViewView）--------------------------------------

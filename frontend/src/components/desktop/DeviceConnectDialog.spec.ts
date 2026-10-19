@@ -47,8 +47,8 @@ function mount(stage: 'ask' | 'progress' | 'done') {
     failure: null,
     mac: true,
     deviceName: 'MacBook Air',
-    teams: [],
-    teamIds: [],
+    teams: [{ id: 7, name: '个人团队', handle: 'alice', personal: true }],
+    teamId: 7,
     claudeLoggedIn: false,
     claudePlan: null,
     claudeState: 'idle' as const,
@@ -71,7 +71,7 @@ describe('connecting this device', () => {
   it('connects when asked and accepted', async () => {
     const view = mount('ask')
     await fireEvent.click(await screen.findByText('接入'))
-    expect(view.emitted('connect')).toHaveLength(1)
+    expect(view.emitted('connect')).toEqual([[7]])
   })
 
   it('cancels the connection when closed while it is under way', async () => {
@@ -81,13 +81,11 @@ describe('connecting this device', () => {
     expect(view.emitted('finish')).toBeUndefined()
   })
 
-  it('keeps the name given before finishing', async () => {
+  it('finishes without changing the device enrollment', async () => {
     const view = mount('done')
-    const name = (await screen.findByLabelText('设备名称')) as HTMLInputElement
-    await fireEvent.update(name, '宿舍的 Mac')
-    await fireEvent.click(screen.getByText('完成'))
-    expect(view.emitted('rename')?.at(-1)).toEqual(['宿舍的 Mac'])
+    await fireEvent.click(await screen.findByText('完成'))
     expect(view.emitted('finish')).toHaveLength(1)
     expect(view.emitted('connect')).toBeUndefined()
+    expect(view.emitted('rename')).toBeUndefined()
   })
 })

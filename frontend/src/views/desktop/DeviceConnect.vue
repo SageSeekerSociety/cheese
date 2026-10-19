@@ -1,45 +1,48 @@
 <script setup lang="ts">
-// 接入这台设备的对话框背后的那一半：接入流程（lib/desktop.ts 的 deviceFlow）和接好之后这台设备的
-// 名称、团队、Claude Code（useThisDevice）。挂在 App.vue 上，登录时问的和设置页点的是同一个。
-import { watch } from 'vue'
+import type { MyTeam } from '@/types/devices'
 
-import { useThisDevice } from '@/composables/useThisDevice'
+import { ref, watch } from 'vue'
 
+import { listMyTeams } from '@/api'
 import DeviceConnectDialog from '@/components/desktop/DeviceConnectDialog.vue'
-import { cancelConnecting, deviceFlow, markAsked, startConnecting } from '@/lib/desktop'
+import { t } from '@/i18n'
+import { cancelConnecting, desktopBridge, deviceFlow, markAsked, startConnecting } from '@/lib/desktop'
 import accountService from '@/services/account'
-
-defineOptions({ name: 'DeviceConnect' })
-
-const here = useThisDevice()
+const teams = ref<MyTeam[]>([])
+const error = ref<string | null>(null)
+const available = !!desktopBridge()
 const mac = /Mac/.test(navigator.userAgent)
-
 watch(
-  () => deviceFlow.stage,
-  (stage) => {
-    if (stage === 'done') void here.load()
+  () => deviceFlow.open,
+  async (open) => {
+    if (!open) return
+    error.value = null
+    try {
+      teams.value = (await listMyTeams()).filter(
+        (team) =>
+          (team.personal || team.role === 'OWNER' || team.role === 'ADMIN') &&
+          (deviceFlow.teamId === null || team.id === deviceFlow.teamId)
+      )
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : t('teams.compute.loadFailed')
+    }
   }
 )
-
 function asked() {
-  const userId = accountService.user?.id
-  if (typeof userId === 'number') markAsked(userId)
+  if (accountService.user?.id) markAsked(accountService.user.id)
 }
-
-function connect() {
+function connect(teamId: number) {
   asked()
-  void startConnecting()
+  void startConnecting({ teamId })
 }
-
 function close() {
   asked()
   deviceFlow.open = false
 }
 </script>
-
 <template>
   <DeviceConnectDialog
-    v-if="here.available"
+    v-if="available"
     :open="deviceFlow.open"
     :stage="deviceFlow.stage"
     :steps="deviceFlow.steps"
@@ -47,22 +50,13 @@ function close() {
     :percent="deviceFlow.percent"
     :failure="deviceFlow.failure"
     :mac="mac"
-    :device-name="here.device.value?.name ?? ''"
-    :teams="here.teams.value"
-    :team-ids="here.device.value?.team_ids ?? []"
-    :claude-logged-in="!!here.claudeCode.value?.logged_in"
-    :claude-plan="here.claudeCode.value?.subscription_type ?? null"
-    :claude-service="here.claudeService.value"
-    :claude-state="here.claudeLogin.value"
-    :error="here.error.value"
+    :device-name="deviceFlow.deviceName"
+    :teams="teams"
+    :error="error"
     @connect="connect"
-    @retry="connect"
+    @retry="startConnecting({ teamId: deviceFlow.teamId! })"
     @later="close"
     @finish="close"
     @cancel="cancelConnecting"
-    @rename="here.rename"
-    @teams="here.setTeams"
-    @claude-login="here.logInClaudeCode"
-    @claude-cancel="here.cancelClaudeCodeLogin"
   />
 </template>

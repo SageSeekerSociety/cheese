@@ -8,7 +8,15 @@ import type { ThemePreference } from '@/theme'
 import { storageGetJson, storageRemove, storageSetJson } from '@/lib/browserStorage'
 
 /** What an app can do beyond the window itself; an older app lists fewer. */
-export type DesktopAbility = 'notices' | 'badge' | 'autostart' | 'links' | 'updates' | 'device' | 'modelService'
+export type DesktopAbility =
+  | 'notices'
+  | 'badge'
+  | 'autostart'
+  | 'links'
+  | 'updates'
+  | 'device'
+  | 'modelService'
+  | 'teamEnrollment'
 
 interface CheeseApp {
   /** 'overlay': the title bar is drawn over the page (macOS), so the page leaves room for its buttons. */

@@ -1,5 +1,7 @@
 """A personal assistant is addressable by the team and opens tasks on its owner's word."""
 
+from tests.support.devices import enrollment_team
+
 import asyncio
 import uuid
 from datetime import UTC, datetime
@@ -32,7 +34,10 @@ def _log_in_claude_code(client, handle: str, machine: str = "", **login) -> str:
             devices = sql_device_service(db)
             code = await devices.start(machine or f"{handle}-laptop")
             device = await devices.approve(
-                code, owner_user_id=user.id, supply=Supply.self_hosted
+                code,
+                owner_user_id=user.id,
+                supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, user.id),
             )
             db.add(
                 DeviceClaudeLoginRow(

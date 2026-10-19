@@ -17,6 +17,10 @@
 `_backdate` 那段 docstring 记着这个坑的完整来龙去脉。
 """
 
+from app.domain.device.wiring import sql_device_service
+from tests.support.devices import enrollment_team
+
+
 import asyncio
 import json
 import time
@@ -195,6 +199,7 @@ def _seed_machine_stock(client, owner_handle: str) -> None:
             ).scalar_one()
             session.add(
                 DeviceRow(
+                    team_id=await enrollment_team(sql_device_service(session), owner),
                     device_id="stats-device-1",
                     name="一台设备",
                     token="stats-token-1",

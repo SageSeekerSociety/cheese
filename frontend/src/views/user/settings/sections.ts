@@ -22,7 +22,6 @@ export function settingsGroups(): SettingsGroup[] {
       key: 'devices',
       title: t('account.settings.groups.devices'),
       items: [
-        item('UserSettingsDevices', t('account.settings.devices'), 'mdi-laptop'),
         item('UserSettingsModelConnections', t('account.settings.modelConnections'), 'mdi-robot-outline'),
         item('UserSettingsConnections', t('account.settings.connections'), 'mdi-link-variant'),
       ],

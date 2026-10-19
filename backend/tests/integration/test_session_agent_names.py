@@ -6,6 +6,8 @@ project teammate carries that teammate's name; one that names no teammate
 carries the name of the project's default agent.
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import json
 import uuid
 from datetime import UTC, datetime
@@ -104,8 +106,11 @@ async def _teammates_on_bobs_device(client):
             await devices.start("workstation"),
             owner_user_id=bob,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, bob),
         )
-        await devices.assign_to_project(device.device_id, project_id, actor_user_id=bob)
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=bob
+        )
         topic = await db.get(Topic, topic_id)
         resource = str(topic.resource_id or topic_id)
         leases = {}

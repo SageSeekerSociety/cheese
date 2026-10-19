@@ -1,14 +1,11 @@
 <script setup lang="ts">
-// 在桌面 app 里接入这台设备的对话框：先问一次，接入时逐步显示进度（可取消），接好后顺手设好名称、
-// 提供给哪些团队、Claude Code（样稿 ①②③）。只管画和发事件，接入和存取由 views/desktop/DeviceConnect.vue 做。
+// Select one enrollment team, show progress and report completion.
 import type { MyTeam } from '@/cx_types'
 import type { ConnectFailure, ConnectStep } from '@/lib/desktop'
 
 import { ref, watch } from 'vue'
 
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
-import ClaudeCodeLogin from '@/components/settings/ClaudeCodeLogin.vue'
-import DeviceTeamsPicker from '@/components/settings/DeviceTeamsPicker.vue'
 import { t } from '@/i18n'
 
 defineOptions({ name: 'DeviceConnectDialog' })
@@ -24,33 +21,26 @@ const props = defineProps<{
   mac: boolean
   deviceName: string
   teams: MyTeam[]
-  teamIds: number[]
-  claudeLoggedIn: boolean
-  claudePlan: string | null
-  /** 用其他模型服务时它调用的模型名。 */
-  claudeService?: string | null
-  claudeState: 'idle' | 'preparing' | 'browser'
   error: string | null
 }>()
 
 const emit = defineEmits<{
-  connect: []
+  connect: [teamId: number]
   later: []
   cancel: []
   retry: []
   finish: []
-  rename: [name: string]
-  teams: [ids: number[]]
-  claudeLogin: [console: boolean]
-  claudeCancel: []
 }>()
 
-const name = ref(props.deviceName)
+const teamId = ref<number | null>(null)
 watch(
-  () => props.deviceName,
-  (v) => (name.value = v)
+  () => props.teams,
+  (teams) => {
+    if (!teams.some((team) => team.id === teamId.value))
+      teamId.value = teams.find((team) => team.personal)?.id ?? teams[0]?.id ?? null
+  },
+  { immediate: true }
 )
-
 function title() {
   if (props.stage === 'ask') return t('account.connectFlow.askTitle')
   if (props.stage === 'progress') return t('account.connectFlow.progressTitle')
@@ -72,9 +62,8 @@ function cancelLabel() {
 }
 
 function primary() {
-  if (props.stage === 'ask') emit('connect')
+  if (props.stage === 'ask' && teamId.value !== null) emit('connect', teamId.value)
   else if (props.stage === 'done') {
-    emit('rename', name.value)
     emit('finish')
   } else if (props.stage === 'failed') emit('retry')
 }
@@ -85,7 +74,6 @@ function dismiss(open: boolean) {
   if (props.stage === 'ask') emit('later')
   else if (props.stage === 'progress') emit('cancel')
   else {
-    if (props.stage === 'done') emit('rename', name.value)
     emit('finish')
   }
 }
@@ -120,12 +108,25 @@ function failedAt(f: ConnectFailure) {
     size="sm"
     persistent
     :primary-label="primaryLabel()"
+    :primary-disabled="stage === 'ask' && teamId === null"
     :cancel-label="cancelLabel()"
     @update:model-value="dismiss"
     @primary="primary"
   >
+    <p v-if="error" class="flow__error">{{ error }}</p>
     <div v-if="stage === 'ask'" class="flow">
       <p class="flow__body">{{ t('account.connectFlow.askBody') }}</p>
+      <v-select
+        v-model="teamId"
+        autocomplete="off"
+        :items="teams"
+        item-title="name"
+        item-value="id"
+        :label="t('project.connect.teamLabel')"
+        variant="outlined"
+        hide-details
+        class="mt-3"
+      />
       <p v-if="mac" class="flow__hint">{{ t('account.connectFlow.askMacTools') }}</p>
     </div>
 
@@ -172,34 +173,7 @@ function failedAt(f: ConnectFailure) {
 
     <div v-else-if="stage === 'done'" class="flow">
       <p class="flow__hint">{{ t('account.connectFlow.doneHint') }}</p>
-      <v-text-field
-        v-model="name"
-        autocomplete="off"
-        :label="t('account.thisDevice.name')"
-        variant="outlined"
-        density="comfortable"
-        hide-details
-        class="mt-2"
-        @blur="emit('rename', name)"
-        @keyup.enter="emit('rename', name)"
-      />
-      <div class="flow__section">
-        <div class="flow__label">{{ t('account.thisDevice.teams') }}</div>
-        <div class="flow__hint">{{ t('account.thisDevice.teamsHint') }}</div>
-        <DeviceTeamsPicker :teams="teams" :model-value="teamIds" @update:model-value="(ids) => emit('teams', ids)" />
-      </div>
-      <div class="flow__section flow__section--line">
-        <div class="flow__label">Claude Code</div>
-        <ClaudeCodeLogin
-          :logged-in="claudeLoggedIn"
-          :plan="claudePlan"
-          :service="claudeService"
-          :state="claudeState"
-          @login="(console) => emit('claudeLogin', console)"
-          @cancel="emit('claudeCancel')"
-        />
-      </div>
-      <p v-if="error" class="flow__error">{{ error }}</p>
+      <p class="flow__body">{{ deviceName }}</p>
     </div>
   </AdaptiveDialog>
 </template>
@@ -230,25 +204,6 @@ function failedAt(f: ConnectFailure) {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--danger-ink);
-}
-
-.flow__section {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 8px;
-}
-
-.flow__section--line {
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-}
-
-.flow__label {
-  font-size: 13px;
-  font-weight: 500;
-  line-height: var(--lh-13);
-  color: var(--ink);
 }
 
 .flow__details summary {
