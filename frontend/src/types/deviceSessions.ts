@@ -3,6 +3,7 @@ import type { Environment } from './compute'
 export interface RunningDeviceSession {
   session_id: string
   agent_name: string
+  agent_name_source: string | null
   project_id: string
   project_name: string
   team_id: number

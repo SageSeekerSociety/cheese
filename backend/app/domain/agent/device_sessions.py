@@ -22,6 +22,7 @@ async def running_on(db: AsyncSession, device_id: str) -> list[tuple[Topic, dict
             AgentSession.id,
             AgentSession.agent_handle,
             AgentInstance.display_name,
+            AgentInstance.name_source,
             Project.id,
             Project.name,
             Team.id,
@@ -69,6 +70,7 @@ async def running_on(db: AsyncSession, device_id: str) -> list[tuple[Topic, dict
         .group_by(
             AgentSession.id,
             AgentInstance.display_name,
+            AgentInstance.name_source,
             Project.id,
             Team.id,
             Conversation.id,
@@ -84,6 +86,7 @@ async def running_on(db: AsyncSession, device_id: str) -> list[tuple[Topic, dict
             {
                 "session_id": str(sid),
                 "agent_name": name or handle,
+                "agent_name_source": name_source.value if name_source else None,
                 "project_id": str(project),
                 "project_name": project_name,
                 "team_id": team,
@@ -97,5 +100,5 @@ async def running_on(db: AsyncSession, device_id: str) -> list[tuple[Topic, dict
                 "since": since.isoformat(),
             },
         )
-        for sid, handle, name, project, project_name, team, team_name, conversation, kind, title, task_room, thread_room, central, execution, since, topic in rows
+        for sid, handle, name, name_source, project, project_name, team, team_name, conversation, kind, title, task_room, thread_room, central, execution, since, topic in rows
     ]

@@ -108,7 +108,7 @@
       <p v-else-if="!sessions.length" class="settings-card__desc">{{ t('account.thisDevice.noSessions') }}</p>
       <div v-for="session in sessions" :key="session.session_id" class="srow this-device__work-row">
         <div class="this-device__col">
-          <span>{{ session.agent_name }}</span>
+          <span>{{ teammateName(session.agent_name, session.agent_name_source) }}</span>
           <span class="this-device__muted">{{ session.team_name }} · {{ session.project_name }}</span>
           <NavLink class="this-device__link" :to="sessionLink(session)">{{ session.conversation_title }}</NavLink>
         </div>
@@ -168,6 +168,7 @@ import NavLink from '@/components/common/NavLink.vue'
 import ClaudeCodeLogin from '@/components/settings/ClaudeCodeLogin.vue'
 import DeviceTeamsPicker from '@/components/settings/DeviceTeamsPicker.vue'
 import i18n, { t } from '@/i18n'
+import { teammateName } from '@/lib/agentNames'
 
 defineOptions({ name: 'ThisDeviceView' })
 

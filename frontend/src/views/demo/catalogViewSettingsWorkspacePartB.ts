@@ -257,11 +257,12 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
       sessions: [
         {
           session_id: 'preview-session',
-          agent_name: '代码助手',
+          agent_name: '芝士',
+          agent_name_source: 'default',
           project_id: 'preview-project',
           project_name: '校园协作',
           team_id: 2,
-          team_name: '产品团队',
+          team_name: '数据组',
           conversation_id: 'preview-task',
           conversation_kind: 'task',
           conversation_title: '整理项目文档',
