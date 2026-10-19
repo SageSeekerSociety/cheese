@@ -60,6 +60,11 @@ def footprint_root() -> str:
     return _ROOT
 
 
+def machine_root() -> str:
+    """Execution root, resolved by the enrollment process on the machine."""
+    return "$HOME/${CHEESE_PROFILE_ROOT:-.cheese}"
+
+
 def session_platform_dirs() -> tuple[str, ...]:
     """The platform's directories inside a SESSION home, current one first."""
     return (_ROOT, _PREVIOUS_SESSION_DIR)
@@ -125,7 +130,7 @@ def launcher_path(topic_id: uuid.UUID, seat: str = "") -> str:
     caller that has no seat (recovery of a screen from before seats) asks for
     the room's.
     """
-    return f"$HOME/{_ROOT}/launch/{topic_id}-{seat_name(seat)}.sh"
+    return f"{machine_root()}/launch/{topic_id}-{seat_name(seat)}.sh"
 
 
 def seat_dir(home: str, seat: str = "") -> str:

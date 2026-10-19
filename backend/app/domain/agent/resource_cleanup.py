@@ -191,7 +191,13 @@ def run_command(
 
 
 def sandbox_marker(home: Path) -> Path:
-    return Path.home() / FOOTPRINT_ROOT / SANDBOXES / home.parent.name / home.name
+    return (
+        Path.home()
+        / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+        / SANDBOXES
+        / home.parent.name
+        / home.name
+    )
 
 
 def sandbox_release(home: Path) -> Path | None:
@@ -461,7 +467,9 @@ def keep_room_files(home: Path, executor: dict | None, url: str, resource: str):
         return None
     if not url:
         raise RuntimeError("the room holds files and there is no bucket to keep them")
-    scratch = Path.home() / FOOTPRINT_ROOT / "cleanup"
+    scratch = (
+        Path.home() / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT) / "cleanup"
+    )
     scratch.mkdir(parents=True, exist_ok=True)
     archive = scratch / (str(uuid.UUID(resource)) + ".room.tar.gz")
     try:
@@ -604,7 +612,11 @@ def resource_paths(
 ) -> tuple[Path, Path]:
     project, resource = str(uuid.UUID(project)), str(uuid.UUID(resource))
     paths = tuple(
-        machine_home / FOOTPRINT_ROOT / kind / project / resource
+        machine_home
+        / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+        / kind
+        / project
+        / resource
         for kind in ("home", "work")
     )
     for path in paths:
@@ -643,7 +655,7 @@ def retained_transcripts(machine_home: Path, project: str, room: str, resource: 
     project, room = str(uuid.UUID(project)), str(uuid.UUID(room))
     return (
         machine_home
-        / FOOTPRINT_ROOT
+        / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
         / TRANSCRIPTS_ROOT
         / project
         / room
@@ -927,7 +939,12 @@ def main() -> None:
     if action == "prepare":
         # A timed-out command may arrive after reopening. Once this operation
         # confirmed quiescence, all its delayed retries become read-only.
-        directory = Path.home() / FOOTPRINT_ROOT / "cleanup" / str(uuid.UUID(cleanup))
+        directory = (
+            Path.home()
+            / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+            / "cleanup"
+            / str(uuid.UUID(cleanup))
+        )
         directory.mkdir(parents=True, exist_ok=True)
         receipt = directory / (str(uuid.UUID(resource)) + ".ready")
         with receipt.with_suffix(".lock").open("a") as receipt_lock:

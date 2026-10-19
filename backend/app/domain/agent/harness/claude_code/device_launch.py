@@ -391,8 +391,11 @@ CHEESE_SKILLS"""
     # base64 through the script: the archive is bytes. Single-quoted into the
     # script: the literal `$HOME` in the state is the CONNECTOR's placeholder,
     # and a double-quoted assignment would have the session's own shell expand
-    # it to the ISOLATED home instead.
-    quoted_state = shlex.quote(state)
+    # it to the ISOLATED home instead. The enrollment's root in it is left
+    # outside the quotes: the connector names that root (CHEESE_PROFILE_ROOT)
+    # in this script's environment.
+    root = "${CHEESE_PROFILE_ROOT:-.cheese}"
+    quoted_state = f'"{root}"'.join(shlex.quote(part) for part in state.split(root))
     archive = base64.b64encode(build()).decode()
 
     def holes(system_prompt: str, helper_sources: dict[str, str]) -> tuple[str, str]:

@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/procscreen"
 )
 
@@ -30,11 +31,11 @@ func newTerminalManager() (screens, error) {
 }
 
 func screensDir() (string, error) {
-	base, err := os.UserConfigDir()
+	base, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "cheese", "screens"), nil
+	return filepath.Join(base, place.CurrentRoot(), "screens"), nil
 }
 
 // procScreens is procscreen, seen as screens.

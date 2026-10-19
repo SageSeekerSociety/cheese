@@ -58,7 +58,7 @@ from app.main import app as fastapi_app
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.integration.test_archive_retires_storage import _seed_device
 from tests.pinned_claude import claude_binary
-from tests.support import wire
+from tests.support import machine_path, wire
 from tests.support.hang import HANG_S
 from tests.unit.test_device_provider import FakeHub
 
@@ -1361,7 +1361,7 @@ async def test_a_room_session_is_the_runner_its_screen_started(
     runners: list[subprocess.Popen] = []
 
     def on_machine(state: str) -> Path:
-        return Path(state.replace("$HOME", str(home)))
+        return Path(machine_path.on_machine(state, home))
 
     async def call_executor(device_id, state, method, params, timeout=None):
         assert device_id == "center"
