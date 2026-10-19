@@ -1,7 +1,7 @@
 {
   "sessions": "本机正在运行的 AI 会话",
   "noSessions": "暂无运行中的 AI 会话",
-  "sessionsFailed": "会话和防休眠设置加载失败",
+  "sessionsFailed": "会话或防休眠设置加载失败",
   "sleepFailed": "防休眠设置保存失败",
   "preventSleep": "AI 会话运行时防止休眠",
   "preventSleepHint": "本机有 AI 会话运行时防止系统空闲休眠，会话全部结束后恢复。这个设置对这台电脑的所有接入生效",

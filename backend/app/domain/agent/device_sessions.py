@@ -14,7 +14,7 @@ from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic
 
 
-async def running_on(db: AsyncSession, device_id: str) -> list[dict]:
+async def running_on(db: AsyncSession, device_id: str) -> list[tuple[Topic, dict]]:
     center = AgentSession.runtime_location["device_id"].as_string()
     executor = AgentSession.work_lease["device_id"].as_string()
     rows = await db.execute(
@@ -34,6 +34,7 @@ async def running_on(db: AsyncSession, device_id: str) -> list[dict]:
             center,
             executor,
             func.min(AgentTurn.started_at),
+            Topic,
         )
         .join(Conversation, Conversation.id == AgentSession.conversation_id)
         .join(Project, Project.id == Conversation.project_id)
@@ -59,7 +60,11 @@ async def running_on(db: AsyncSession, device_id: str) -> list[dict]:
         )
         .outerjoin(RoomTask, RoomTask.id == Conversation.id)
         .outerjoin(Thread, Thread.id == Conversation.id)
-        .outerjoin(Topic, or_(Topic.id == Conversation.id, Topic.id == Thread.room_id))
+        .join(
+            Topic,
+            Topic.id
+            == func.coalesce(RoomTask.room_id, Thread.room_id, Conversation.id),
+        )
         .where(or_(center == device_id, executor == device_id))
         .group_by(
             AgentSession.id,
@@ -74,20 +79,23 @@ async def running_on(db: AsyncSession, device_id: str) -> list[dict]:
         .order_by(func.min(AgentTurn.started_at))
     )
     return [
-        {
-            "session_id": str(sid),
-            "agent_name": name or handle,
-            "project_id": str(project),
-            "project_name": project_name,
-            "team_id": team,
-            "team_name": team_name,
-            "conversation_id": str(conversation),
-            "conversation_kind": kind.value,
-            "conversation_title": title or str(conversation),
-            "room_id": str(task_room or thread_room or conversation),
-            "roles": (["center"] if central == device_id else [])
-            + (["executor"] if execution == device_id else []),
-            "since": since.isoformat(),
-        }
-        for sid, handle, name, project, project_name, team, team_name, conversation, kind, title, task_room, thread_room, central, execution, since in rows
+        (
+            topic,
+            {
+                "session_id": str(sid),
+                "agent_name": name or handle,
+                "project_id": str(project),
+                "project_name": project_name,
+                "team_id": team,
+                "team_name": team_name,
+                "conversation_id": str(conversation),
+                "conversation_kind": kind.value,
+                "conversation_title": title or str(conversation),
+                "room_id": str(task_room or thread_room or conversation),
+                "roles": (["center"] if central == device_id else [])
+                + (["executor"] if execution == device_id else []),
+                "since": since.isoformat(),
+            },
+        )
+        for sid, handle, name, project, project_name, team, team_name, conversation, kind, title, task_room, thread_room, central, execution, since, topic in rows
     ]

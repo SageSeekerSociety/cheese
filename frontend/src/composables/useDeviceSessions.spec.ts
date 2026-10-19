@@ -14,6 +14,15 @@ const request = vi.hoisted(() =>
 vi.mock('@/lib/desktop', () => ({ desktopBridge: () => local }))
 vi.mock('@/api', () => ({ listDeviceRunningSessions: request }))
 
+let state!: ReturnType<typeof useDeviceSessions>
+const Host = defineComponent({
+  setup() {
+    state = useDeviceSessions(() => ['a', 'b'])
+    onMounted(state.load)
+    return () => null
+  },
+})
+
 afterEach(() => {
   vi.clearAllMocks()
   vi.useRealTimers()
@@ -21,16 +30,7 @@ afterEach(() => {
 
 it('shows local work, saves a machine preference and stops refreshing after leaving', async () => {
   vi.useFakeTimers()
-  let state!: ReturnType<typeof useDeviceSessions>
-  const view = render(
-    defineComponent({
-      setup() {
-        state = useDeviceSessions(() => ['a', 'b'])
-        onMounted(state.load)
-        return () => null
-      },
-    })
-  )
+  const view = render(Host)
   await vi.waitFor(() =>
     expect(state.sessions.value).toEqual([{ session_id: 'active', roles: ['center', 'executor'] }])
   )
@@ -41,4 +41,15 @@ it('shows local work, saves a machine preference and stops refreshing after leav
   view.unmount()
   await vi.advanceTimersByTimeAsync(10000)
   expect(request.mock.calls.length).toBe(reads)
+})
+
+it('lists local work when the sleep preference cannot be read', async () => {
+  vi.useFakeTimers()
+  local.preventSleep.mockRejectedValueOnce(new Error('Preference unavailable'))
+  const view = render(Host)
+  await vi.waitFor(() =>
+    expect(state.sessions.value).toEqual([{ session_id: 'active', roles: ['center', 'executor'] }])
+  )
+  expect(state.error.value).not.toBe('')
+  view.unmount()
 })

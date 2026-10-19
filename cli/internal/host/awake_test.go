@@ -32,6 +32,7 @@ func TestSleepWorkReadIsDeviceAuthenticated(t *testing.T) {
 func TestConnectorTracksWorkAndReloadsMachinePreference(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir())
 	var count atomic.Int32
 	count.Store(1)
 	read := make(chan struct{}, 64)

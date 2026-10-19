@@ -17,15 +17,21 @@ export function useDeviceSessions(deviceIds: () => string[]) {
   async function load() {
     if (!bridge) return
     try {
-      preventSleep.value = await bridge.preventSleep()
-      const listed = await Promise.all(deviceIds().map(listDeviceRunningSessions))
-      const combined = new Map<string, RunningDeviceSession>()
-      for (const row of listed.flatMap((result) => result.sessions)) {
-        const previous = combined.get(row.session_id)
-        combined.set(row.session_id, { ...row, roles: [...new Set([...(previous?.roles ?? []), ...row.roles])] })
+      const [preference, listed] = await Promise.allSettled([
+        bridge.preventSleep(),
+        Promise.all(deviceIds().map(listDeviceRunningSessions)),
+      ])
+      if (preference.status === 'fulfilled') preventSleep.value = preference.value
+      if (listed.status === 'fulfilled') {
+        const combined = new Map<string, RunningDeviceSession>()
+        for (const row of listed.value.flatMap((result) => result.sessions)) {
+          const previous = combined.get(row.session_id)
+          combined.set(row.session_id, { ...row, roles: [...new Set([...(previous?.roles ?? []), ...row.roles])] })
+        }
+        sessions.value = [...combined.values()]
       }
-      sessions.value = [...combined.values()]
-      error.value = ''
+      error.value =
+        preference.status === 'rejected' || listed.status === 'rejected' ? t('account.thisDevice.sessionsFailed') : ''
     } catch {
       error.value = t('account.thisDevice.sessionsFailed')
     } finally {
