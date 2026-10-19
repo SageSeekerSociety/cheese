@@ -2392,6 +2392,21 @@ class PlanConcurrencyTest(unittest.TestCase):
         self.assertEqual([row["id"] for row in report["ran"]],
                          ["backend-pure", "frontend-unit", "frontend-i18n"])
 
+    def test_the_real_plan_order_does_not_put_two_checks_on_one_tree(self):
+        """The frontend checks are adjacent in the plan the tool builds.
+
+        A fixture that starts with the backend would let two free slots do the
+        whole job: the frontend checks would never compete for one. This order
+        is the one `test_plan` emits, where the same-cwd guard is what keeps
+        them apart.
+        """
+        _report, overlaps, peak = self._drive(
+            self._plan(("frontend-unit", "frontend"),
+                       ("frontend-i18n", "frontend"),
+                       ("backend-pure", "backend")), jobs=2)
+        self.assertEqual(overlaps, [], "checks sharing a tree must not overlap")
+        self.assertEqual(peak, 2, "the other tree still has to start")
+
     def test_one_job_keeps_the_tier_serial(self):
         _report, overlaps, peak = self._drive(
             self._plan(("backend-pure", "backend"), ("frontend-unit", "frontend")),
@@ -2444,17 +2459,26 @@ class PlanConcurrencyTest(unittest.TestCase):
         clear_stop()
         token = f"19.{os.getpid()}"
         real_popen = subprocess.Popen
+        spawned = []
 
         def popen_then_interrupt(*args, **kwargs):
             proc = real_popen(*args, **kwargs)
-            os.kill(os.getpid(), signal.SIGINT)
+            # Only the check's own spawn. `group_rss` runs `ps` through the same
+            # module, and a second SIGINT from there would satisfy the
+            # assertion below after the real handler is back — the test would
+            # pass with the deferred interrupt never released.
+            if not spawned:
+                spawned.append(proc.pid)
+                os.kill(os.getpid(), signal.SIGINT)
             return proc
 
         with mock.patch.object(ci_fast_process.subprocess, "Popen",
                                popen_then_interrupt):
             with self.assertRaises(KeyboardInterrupt):
+                # A short ceiling: with the release deleted, the check runs to
+                # it and the test fails in seconds rather than a minute.
                 execute(["sh", "-c", f"exec sleep {token}"],
-                        tempfile.gettempdir(), 60)
+                        tempfile.gettempdir(), 2)
         self.assertEqual(self._processes_with(token), [])
 
     def test_a_previous_interrupt_does_not_poison_the_next_run(self):

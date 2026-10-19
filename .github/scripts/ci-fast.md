@@ -60,8 +60,9 @@ Each check still keeps its own sampled RSS ceiling, timeout and evidence check,
 so a killed check is reported killed, never folded into a green or into another
 check's result.
 
-`--jobs 1` restores the strictly serial tier. The rows keep the plan's order
-either way, so the report does not depend on which check finished first.
+`--jobs 1` restores the strictly serial tier. The `ran` rows keep the plan's
+order either way, so that part of the report does not depend on which check
+finished first; `not_run` and `reasons` are still appended as checks finish.
 
 The ceiling is per check, so `jobs` is also what the machine has to back: at
 `--jobs 2` a runner may see up to twice the sampled ceiling. The observed peaks
