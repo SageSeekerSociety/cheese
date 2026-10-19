@@ -124,7 +124,15 @@ def message_prompt_line(
 def addressee(
     b, *, recipient: str | None, recipient_instance_id=None
 ) -> str | None:
-    """The seat a block names, when that is not the reader; else None."""
+    """The seat a block names, when that is not the reader; else None.
+
+    ``recipient``/``recipient_instance_id`` are who is reading. A caller that
+    knows neither — a line injected into a running turn, which is by definition
+    for the seat it is injected into — gets no arrow: guessing from the block
+    alone would label the reader's own message as somebody else's.
+    """
+    if recipient is None and recipient_instance_id is None:
+        return None
     recipient_meta = (b.meta or {}).get("agent_recipient")
     if not recipient_meta:
         return None

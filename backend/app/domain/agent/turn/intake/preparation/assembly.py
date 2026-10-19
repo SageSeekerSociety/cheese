@@ -455,10 +455,14 @@ async def _read_window(
 ) -> list[Block]:
     """What this seat has not read: every participant's messages, oldest first.
 
-    Its own are left out — they are already in its transcript, and handing them
-    back is how an agent ends up answering itself. A 支线's message and files
-    are read in on the seat's first turn, because they live in the main line
-    and its cursor (in the 支线's conversation) cannot name them.
+    Only the seat's own TURN OUTPUT is left out — it is already in its
+    transcript, and handing it back is how an agent ends up answering itself.
+    Something the same seat said outside any turn (a `chat_send` made on its
+    own, no turn to attribute it to) is a room message like any other and is
+    read once (`test_what_an_agent_says_in_the_room_is_read_once`). A 支线's
+    message and files are read in on the seat's first turn, because they live
+    in the main line and its cursor (in the 支线's conversation) cannot name
+    them.
     """
     window = await inputs_after(
         session,
@@ -466,7 +470,11 @@ async def _read_window(
         after=cursor,
         limit=settings.agent_input_window_messages,
     )
-    pending = [block for block in window if block.author != seat]
+    pending = [
+        block
+        for block in window
+        if not (block.author == seat and block.turn_id is not None)
+    ]
     pending = _trim_to_chars(pending, settings.agent_input_window_chars)
     if cursor is None:
         pending = [*opening, *pending]
