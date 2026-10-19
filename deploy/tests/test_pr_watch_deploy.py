@@ -69,10 +69,15 @@ case "$1 $2" in
       # The first n such calls fail, n read from commits-fail.
       n=$(cat "$FAKE/commits-fail" 2>/dev/null || echo 0)
       if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$FAKE/commits-fail"; echo "HTTP 502" >&2; exit 1; fi
+      # The next n answers, n read from commits-cut, list fewer commits than the range
+      # holds, as GitHub does past 250.
+      cut=$(cat "$FAKE/commits-cut" 2>/dev/null || echo 0); more=0
+      if [ "$cut" -gt 0 ]; then echo $((cut - 1)) > "$FAKE/commits-cut"; more=300; fi
       # Commits after the merge, from reverts.json: {"<base>...<head>": [message, ...]}, the
       # head commit's message last; every commit is named after the head.
-      jq -r --arg pair "$pair" --arg head "${pair##*...}" \
-        '{commits: [(.[$pair] // [])[] | {sha: $head, commit: {message: .}}]}' "$FAKE/reverts.json" \
+      jq -r --arg pair "$pair" --arg head "${pair##*...}" --argjson more "$more" \
+        '{total_commits: ((.[$pair] // []) | length + $more),
+          commits: [(.[$pair] // [])[] | {sha: $head, commit: {message: .}}]}' "$FAKE/reverts.json" \
         | jq -r "$query"
       exit
     fi
@@ -91,7 +96,7 @@ def run(run_id, status, conclusion, title, deploy="success"):
 
 class DeployRunForAMergedPR(unittest.TestCase):
     def watch(self, runs, live, first=None, ci=None, ci_first=None, red_wait="0", ci_polls=None,
-              reverts=None, commits_fail=0):
+              reverts=None, commits_fail=0, commits_cut=0):
         with tempfile.TemporaryDirectory() as directory:
             fake = Path(directory)
             (fake / "gh").write_text(FAKE_GH)
@@ -110,6 +115,7 @@ class DeployRunForAMergedPR(unittest.TestCase):
                 (fake / f"ci-{n}.json").write_text(json.dumps(listing))
             (fake / "reverts.json").write_text(json.dumps(reverts or {}))
             (fake / "commits-fail").write_text(str(commits_fail))
+            (fake / "commits-cut").write_text(str(commits_cut))
             if first is not None:
                 (fake / "runs-first.json").write_text(json.dumps(first))
             for entry in runs:
@@ -271,7 +277,10 @@ class DeployRunForAMergedPR(unittest.TestCase):
         # The merge's own run is red; the green batch after it is the revert.
         for message in (f'Revert "feat(x): the change (#3055)"\n\nThis reverts commit {MERGE}.',
                         'Revert "feat(x): the change (#3055)" (#3060)\n\nReverts SageSeekerSociety/cheese#3055',
-                        'Revert "feat(x): the change (#3055)" (#3060)'):
+                        'Revert "feat(x): the change (#3055)" (#3060)',
+                        # This repo squashes a revert PR under its own conventional title (27e7f268d).
+                        'revert(x): back out the change (#3055) (#3060)\n\nMain went red after it.',
+                        'revert(x): take them back out (#3001, #3055) (#3060)'):
             with self.subTest(message=message):
                 result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER,
                                     ci=[{"databaseId": 102, "status": "completed", "conclusion": "success",
@@ -319,11 +328,22 @@ class DeployRunForAMergedPR(unittest.TestCase):
     def test_a_failed_revert_lookup_of_the_live_version_is_not_live(self):
         result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER,
                             reverts={f"{MERGE}...{LATER}": [f"Revert it\n\nThis reverts commit {MERGE}."]},
-                            commits_fail=2)
+                            commits_fail=3)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(f"up to dev's {LATER[:9]}; checking again", result.stdout)
+        self.assertEqual(result.stdout.count(f"up to dev's {LATER[:9]}; checking again"), 1, result.stdout)
+        self.assertEqual(result.stdout.count("dev deploy run 9: completed success"), 1, result.stdout)
         self.assertIn(f"after {LATER[:9]} reverted merge {MERGE[:9]}", result.stdout)
         self.assertNotIn("live on dev at", result.stdout)
+
+    def test_a_commit_list_cut_short_is_not_read_as_not_reverted(self):
+        ci = [{"databaseId": 102, "status": "completed", "conclusion": "success", "headSha": LATER},
+              {"databaseId": 101, "status": "completed", "conclusion": "failure", "headSha": MERGE}]
+        result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER, ci=ci,
+                            reverts={f"{MERGE}...{LATER}": [f"Revert it\n\nThis reverts commit {MERGE}."]},
+                            commits_cut=2)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"could not read the commits after merge {MERGE[:9]}", result.stdout)
+        self.assertIn(f"merge {MERGE[:9]} was reverted by {LATER[:9]}", result.stdout)
 
     def test_a_failed_run_listing_does_not_restart_the_red_wait(self):
         # After the red run, every listing fails (an empty answer): the wait

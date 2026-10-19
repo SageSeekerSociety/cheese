@@ -98,20 +98,28 @@ contains() {
 # read as "not reverted". Ancestry alone says $2 contains the merge even after
 # a revert, so a green batch or a live version past a revert would otherwise
 # count as this PR's. Recognised: git revert's "This reverts commit <sha>",
-# GitHub's revert button ("Reverts <repo>#<PR>"), and a `Revert "<merge
-# subject>` headline. The subject comes from subject_of, filled once per merge.
+# GitHub's revert button ("Reverts <repo>#<PR>"), a `Revert "<merge subject>`
+# headline, and this repo's own squash form, a `revert(scope): ... (#<PR>)`
+# headline naming the PR, which carries no other marker (27e7f268d). The
+# subject comes from subject_of, filled once per merge.
 reverter_of() {
-  local merge=$1 sha=$2 pr=$3 commits csha msg reverts="Reverts $REPO#$3([^0-9]|$)"
+  local merge=$1 sha=$2 commits csha msg head
+  local reverts="Reverts $REPO#$3([^0-9]|$)" typed="^[Rr][Ee][Vv][Ee][Rr][Tt][(:].*#$3([^0-9]|$)"
   [ "$sha" != "$merge" ] || return 0
   [ -n "${subject_of[$merge]+set}" ] || { echo unknown; return; }
-  commits=$(gh api "repos/$REPO/compare/$merge...$sha" -q '.commits[]|[.sha, .commit.message]|@tsv' 2>/dev/null) \
+  commits=$(gh api "repos/$REPO/compare/$merge...$sha" \
+              -q '"\(.total_commits) \(.commits|length)", (.commits[]|[.sha, .commit.message]|@tsv)' 2>/dev/null) \
     || { echo unknown; return; }
+  # The compare API lists at most 250 commits; a revert among the rest would
+  # read as no revert, so a truncated list is unknown.
+  [ "$(head -1 <<<"$commits" | awk '{print ($1 == $2) ? "all" : "cut"}')" = all ] || { echo unknown; return; }
   while IFS=$'\t' read -r csha msg; do
-    if [[ "$msg" == *"This reverts commit ${merge:0:7}"* || "$msg" =~ $reverts ]] \
-       || { [ -n "${subject_of[$merge]}" ] && [[ "$msg" == "Revert \"${subject_of[$merge]}"* ]]; }; then
+    head=${msg%%'\n'*}   # @tsv writes a newline as backslash-n
+    if [[ "$msg" == *"This reverts commit ${merge:0:7}"* || "$msg" =~ $reverts || "$head" =~ $typed ]] \
+       || { [ -n "${subject_of[$merge]}" ] && [[ "$head" == "Revert \"${subject_of[$merge]}"* ]]; }; then
       echo "$csha"; return
     fi
-  done <<<"$commits"
+  done < <(tail -n +2 <<<"$commits")
 }
 
 # "<status> <conclusion> <run id>" of main's Required CI for merge $1 of PR $2:
@@ -227,7 +235,9 @@ while :; do
         ended[$p]=1 ok[$p]=1; continue
       fi
       d=$(deploy_of "$merge"); key="merged ${d% *}"
-      if [ "${last[$p]:-}" != "$key" ]; then
+      # "$key live" and "$key unchecked" below are states within this deploy
+      # state; reprinting the deploy line for them would repeat it every poll.
+      if [ "${last[$p]:-}" != "$key" ] && [[ "${last[$p]:-}" != "$key "* ]]; then
         [ -z "$d" ] && say "$p" "merged as ${merge:0:9}; waiting for a dev deploy that contains it" \
                     || say "$p" "dev deploy run ${d##* }: ${d% *}"
         last[$p]=$key
