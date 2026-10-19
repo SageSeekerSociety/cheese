@@ -94,15 +94,16 @@ class OwnAgent(Base):
     roster — and this row is what makes it someone's. A person may have one per
     connection in a project; its owner adds it there and removes it.
 
-    Its connection is either a machine's login (``device_id``) or one its
-    owner's account holds (``account_connection_id``), never both.
+    Its connection is either a login on one of its owner's machines
+    (``login_id``) or one its owner's account holds (``account_connection_id``),
+    never both.
     """
 
     __tablename__ = "own_agents"
     __table_args__ = (
         CheckConstraint(
-            "device_id IS NULL OR account_connection_id IS NULL",
-            name="ck_own_agents_one_connection",
+            "login_id IS NULL OR account_connection_id IS NULL",
+            name="ck_own_agents_login_connection",
         ),
     )
 
@@ -114,16 +115,17 @@ class OwnAgent(Base):
     )
     # Which harness it is: the coding agent the owner logged in on the machine.
     harness: Mapped[str] = mapped_column(String(64), nullable=False)
-    # The model connection it runs on: the login on this machine
-    # (`DeviceClaudeLoginRow`, keyed by the machine). Its sessions run there and
-    # nowhere else — a subscription's login never leaves the machine it was
-    # given on. None once the machine is gone; then it has nothing to run on.
-    device_id: Mapped[str | None] = mapped_column(
+    # The model connection it runs on: one login on one of its owner's machines
+    # (`DeviceClaudeLoginRow`). Its sessions run on that machine, with that
+    # login, and nowhere else — a subscription's login never leaves the machine
+    # it was given on. None once the machine is gone; then it has nothing to
+    # run on.
+    login_id: Mapped[str | None] = mapped_column(
         String(64),
         ForeignKey(
-            "device.device_id",
+            "claude_logins.id",
             ondelete="SET NULL",
-            name="fk_own_agents_device_id_device",
+            name="fk_own_agents_login_id_claude_logins",
         ),
         nullable=True,
         index=True,

@@ -57,17 +57,17 @@ def own_role(
 
 async def rename_for_connection(
     db: AsyncSession,
-    device_id: str | None = None,
+    login_id: str | None = None,
     *,
     account_connection_id: uuid.UUID | None = None,
 ) -> None:
-    """After a machine said what its login is, or an owner renamed a
+    """After a machine said what one of its logins is, or an owner renamed a
     connection, the own agents on that connection take the name it now calls
     for, and their owner's current nickname. A name its owner gave the
     connection outlasts whatever its machine reports (`label`)."""
     on = (
-        OwnAgent.device_id == device_id
-        if device_id is not None
+        OwnAgent.login_id == login_id
+        if login_id is not None
         else OwnAgent.account_connection_id == account_connection_id
     )
     rows = await db.execute(
@@ -100,7 +100,7 @@ async def _name_owners_agents(
     rows = await db.execute(
         select(
             AgentInstance,
-            OwnAgent.device_id,
+            OwnAgent.login_id,
             OwnAgent.account_connection_id,
             OwnAgent.callers,
         )
@@ -113,8 +113,8 @@ async def _name_owners_agents(
         .order_by(AgentInstance.created_at)
     )
     seen: dict[str, int] = {}
-    for instance, device_id, account_id, callers in rows.all():
-        key = _connection_key(device_id, account_id)
+    for instance, login_id, account_id, callers in rows.all():
+        key = _connection_key(login_id, account_id)
         login = by_id.get(key) if key else None
         if login is not None:
             base = label(login)

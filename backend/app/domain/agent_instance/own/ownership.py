@@ -19,6 +19,7 @@ from app.domain.agent_instance.own.connections import (
     logins,
     logins_by_owners,
 )
+from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.user.models import User
 from app.domain.user.services import faces_by_handle
@@ -34,6 +35,8 @@ class Owned:
     device_id: str | None = None
     #: Or the connection its owner's account holds.
     account_connection_id: uuid.UUID | None = None
+    #: The login on that machine it runs on (`DeviceClaudeLoginRow.id`).
+    login_id: str | None = None
 
     @property
     def on_account(self) -> bool:
@@ -47,8 +50,9 @@ _OWNED = (
     OwnAgent.owner_user_id,
     OwnAgent.harness,
     OwnAgent.callers,
-    OwnAgent.device_id,
+    DeviceClaudeLoginRow.device_id,
     OwnAgent.account_connection_id,
+    OwnAgent.login_id,
 )
 
 
@@ -63,6 +67,7 @@ async def owned_by_seat(
     rows = await db.execute(
         select(*_OWNED)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+        .outerjoin(DeviceClaudeLoginRow, DeviceClaudeLoginRow.id == OwnAgent.login_id)
         .where(AgentInstance.project_id == project_id)
     )
     for row in rows:
@@ -83,6 +88,9 @@ async def owned_by_session(
         await db.execute(
             select(*_OWNED)
             .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+            .outerjoin(
+                DeviceClaudeLoginRow, DeviceClaudeLoginRow.id == OwnAgent.login_id
+            )
             .where(
                 AgentInstance.project_id == project_id,
                 AgentInstance.handle == session_handle,
@@ -96,13 +104,15 @@ async def owned_instance(db: AsyncSession, instance_id: uuid.UUID) -> Owned | No
     row = await db.get(OwnAgent, instance_id)
     if row is None:
         return None
+    login = await db.get(DeviceClaudeLoginRow, row.login_id) if row.login_id else None
     return Owned(
         row.instance_id,
         row.owner_user_id,
         row.harness,
         row.callers,
-        row.device_id,
+        login.device_id if login is not None else None,
         row.account_connection_id,
+        row.login_id,
     )
 
 
@@ -126,6 +136,7 @@ async def owned_rows_in_project(
     rows = await db.execute(
         select(AgentInstance, *_OWNED[1:])
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+        .outerjoin(DeviceClaudeLoginRow, DeviceClaudeLoginRow.id == OwnAgent.login_id)
         .where(AgentInstance.project_id == project_id)
         .order_by(AgentInstance.created_at)
     )
@@ -140,10 +151,10 @@ async def connection_of(db: AsyncSession, owned: Owned) -> Login | None:
             db, owned.owner_user_id, owned.account_connection_id
         )
         return _held(row) if row is not None else None
-    if owned.device_id is None:
+    if owned.login_id is None:
         return None
     for login in await logins(db, owned.owner_user_id):
-        if login.device_id == owned.device_id:
+        if login.id == owned.login_id:
             return login
     return None
 
@@ -165,7 +176,7 @@ async def connections_of(
                 owned.on_account,
                 str(owned.account_connection_id)
                 if owned.on_account
-                else owned.device_id,
+                else owned.login_id,
             )
         )
         for owned in owners

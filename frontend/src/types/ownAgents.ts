@@ -6,6 +6,8 @@ type Schemas = components['schemas']
 
 /** 机主自己的 Claude Code 在一台机器上有没有为平台登录，只给机主看。 */
 export interface ClaudeCodeLogin {
+  id: string
+  local_id: string
   installed: boolean
   logged_in: boolean
   /** `model_service` when the owner pointed it at another model service. */

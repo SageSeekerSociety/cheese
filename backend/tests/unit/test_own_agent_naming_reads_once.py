@@ -68,7 +68,7 @@ async def test_rename_reads_each_owners_nickname_and_logins_once(monkeypatch):
     outputs = []
     for project_count in (3, 8):
         db = NamingDB(project_count)
-        await naming.rename_for_connection(db, device_id="device-1")
+        await naming.rename_for_connection(db, login_id="device-1")
         outputs.append(
             [
                 (instance.display_name, instance.configuration["body"])

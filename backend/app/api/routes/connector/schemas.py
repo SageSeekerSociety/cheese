@@ -39,6 +39,8 @@ class BindTeamRequest(BaseModel):
 class ClaudeCodeLoginOut(BaseModel):
     """What a machine last said about its owner's Claude Code login."""
 
+    id: str
+    local_id: str
     installed: bool
     logged_in: bool
     #: `claude.ai` for a subscription, the API key kind, or `model_service`.

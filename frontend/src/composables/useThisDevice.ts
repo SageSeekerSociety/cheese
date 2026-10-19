@@ -96,7 +96,9 @@ export function useThisDevice() {
     error.value = null
     claudeLogin.value = 'preparing'
     try {
-      await bridge.claudeLogin(console, (step) => (claudeLogin.value = step))
+      // The login shown here, logged out, is logged in again rather than another
+      // added beside it: the agents added with it come back with it.
+      await bridge.claudeLogin(console, claudeCode.value?.local_id ?? null, (step) => (claudeLogin.value = step))
       await refreshClaudeCode()
     } catch (e) {
       const why = e as { step?: string; detail?: string }
@@ -106,13 +108,14 @@ export function useThisDevice() {
     }
   }
 
-  /** Points this computer's Claude Code at another model service; the key stays on it. */
+  /** Points the login shown here (a new one when there is none) at another model
+   *  service; the key stays on this computer. */
   async function useModelService(service: ModelServiceInput) {
     if (!bridge?.claudeModelService || claudeLogin.value !== 'idle') return
     error.value = null
     claudeLogin.value = 'preparing'
     try {
-      await bridge.claudeModelService(service, (step) => (claudeLogin.value = step))
+      await bridge.claudeModelService(service, claudeCode.value?.local_id ?? null, (step) => (claudeLogin.value = step))
       await refreshClaudeCode()
     } catch (e) {
       const why = e as { step?: string }
@@ -128,7 +131,7 @@ export function useThisDevice() {
 
   async function logOutClaudeCode() {
     try {
-      await bridge?.claudeLogout()
+      if (claudeCode.value) await bridge?.claudeLogout(claudeCode.value.local_id)
       await refreshClaudeCode()
     } catch (e) {
       fail(e, 'account.thisDevice.claudeLogoutFailed')

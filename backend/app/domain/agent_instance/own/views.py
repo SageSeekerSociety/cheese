@@ -112,10 +112,10 @@ async def my_connections(
     """The reader's own connections, for them to add to this project: each
     with whether it is already here and whether the project allows its kind."""
     here = {
-        _connection_key(device_id, account_id)
-        for device_id, account_id in (
+        _connection_key(login_id, account_id)
+        for login_id, account_id in (
             await db.execute(
-                select(OwnAgent.device_id, OwnAgent.account_connection_id)
+                select(OwnAgent.login_id, OwnAgent.account_connection_id)
                 .join(AgentInstance, AgentInstance.id == OwnAgent.instance_id)
                 .where(
                     AgentInstance.project_id == project_id,
