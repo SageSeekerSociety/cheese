@@ -297,7 +297,7 @@ def _failed_paths(log: str, *, tests_only: bool = False) -> list[str]:
         header = _DIAGNOSTIC_FILE.fullmatch(line)
         if header:
             diagnostic_file = header.group(1)
-            if diagnostic_file.endswith(".go"):
+            if diagnostic_file and diagnostic_file.endswith(".go"):
                 # gofmt -l reports an unformatted file as a bare path.
                 found.append(diagnostic_file)
         elif diagnostic_file and _GROUPED_ERROR.match(line):
