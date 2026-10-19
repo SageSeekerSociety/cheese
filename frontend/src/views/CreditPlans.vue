@@ -7,7 +7,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { createCreditRequest, getBetaCredits, getCreditRequests, getPublishedCreditPlans } from '@/api/creditOffers'
-import { getMyCreditUsage, getTeamCreditUsage } from '@/api/creditUsage'
+import { getTeamCreditUsage } from '@/api/creditUsage'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import CreditPlansView from '@/views/CreditPlansView.vue'
@@ -23,7 +23,10 @@ const loading = ref(false)
 const busy = ref(false)
 const error = ref<string | null>(null)
 const teamHandle = computed(() => (typeof route.query.team === 'string' ? route.query.team : ''))
-const team = computed(() => teams.value.find((item) => item.handle === teamHandle.value))
+const team = computed(() =>
+  teams.value.find((item) => (teamHandle.value ? item.handle === teamHandle.value : item.personal))
+)
+const personal = computed(() => !!team.value?.personal)
 const canManage = computed(() => ['OWNER', 'ADMIN'].includes(team.value?.role ?? ''))
 let version = 0
 async function load() {
@@ -40,14 +43,11 @@ async function load() {
     ])
     if (current !== version) return
     plans.value = catalog.plans
-    teams.value = membership.teams.filter((item) => !item.personal)
+    teams.value = membership.teams
     beta.value = participation
-    const selected = teams.value.find((item) => item.handle === teamHandle.value)
-    if (teamHandle.value && !selected) throw new Error(t('usage.plans.unavailableTeam'))
-    const [usage, pending] = await Promise.all([
-      selected ? getTeamCreditUsage(selected.id) : getMyCreditUsage(),
-      selected ? getCreditRequests(selected.id) : Promise.resolve({ items: [] }),
-    ])
+    const selected = teams.value.find((item) => (teamHandle.value ? item.handle === teamHandle.value : item.personal))
+    if (!selected) throw new Error(t('usage.plans.unavailableTeam'))
+    const [usage, pending] = await Promise.all([getTeamCreditUsage(selected.id), getCreditRequests(selected.id)])
     if (current !== version) return
     currentPlan.value = usage.plan
     requests.value = pending.items
@@ -59,7 +59,7 @@ async function load() {
 }
 async function requestPlan() {
   const selected = team.value
-  if (!selected || !canManage.value || busy.value || loading.value || error.value) return
+  if (!selected || personal.value || !canManage.value || busy.value || loading.value || error.value) return
   busy.value = true
   error.value = null
   try {
@@ -81,7 +81,8 @@ watch(teamHandle, load, { immediate: true })
   <CreditPlansView
     :plans="plans"
     :teams="teams"
-    :team-handle="teamHandle"
+    :team-handle="team?.handle ?? teamHandle"
+    :personal="personal"
     :current-plan="currentPlan"
     :beta="beta"
     :requests="requests"

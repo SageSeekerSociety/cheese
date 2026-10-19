@@ -27,6 +27,7 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { myHandle } from '@/me'
 import { splitOrigin } from '@/views/spaces/model'
 import { TaskDialogs } from '@/views/tasks/components'
 import { useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from '@/views/tasks/composables'
@@ -428,6 +429,7 @@ onMounted(() => {
     @update:model-value="(open: boolean) => (asking = open)"
   >
     <AssistantPanel
+      :personal-team-handle="myHandle()"
       :conversations="assistant.conversations.value"
       :current-id="assistant.current.value"
       :title="assistant.title.value"
@@ -448,6 +450,7 @@ onMounted(() => {
   <v-bottom-sheet v-else-if="!mdAndUp" v-model="asking" class="td-ask-sheet">
     <div class="td-ask-sheet__body">
       <AssistantPanel
+        :personal-team-handle="myHandle()"
         :conversations="assistant.conversations.value"
         :current-id="assistant.current.value"
         :title="assistant.title.value"

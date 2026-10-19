@@ -184,7 +184,6 @@ type Seed = {
   taskId: string;
   feedbackId: string;
   othersProjectId: string;
-  routineRoomId: string;
   routineIds: string[];
 };
 let seeded: Seed | null = null;
@@ -267,11 +266,12 @@ async function routineRoom(page: Page, projectId: string) {
   return { roomId: room.id, agentSeat: teammate.seat_handle };
 }
 
-/** Draft through the isolated backend's agent entrance: a person's create
- * activates the rule and never publishes the configuration notice we check.
+/** Create through the isolated backend's agent entrance — the path a teammate
+ * takes, with the seat's own token. Rules run from the moment they are saved,
+ * whoever saved them; nothing is left in the room for a person to confirm.
  * The signing secret follows the test backend's SANDBOX_TOKEN/JWT_SECRET env;
  * test-secret is the JWT_SECRET pinned by e2e.yml, not a deployment credential. */
-async function draftRoutines(page: Page, roomId: string, agentSeat: string): Promise<string[]> {
+async function agentRoutines(page: Page, roomId: string, agentSeat: string): Promise<string[]> {
   const agentToken = process.env.SANDBOX_TOKEN || createHash("sha256")
     .update(`cheesex:sandbox-signing-secret:v1:${process.env.JWT_SECRET || "test-secret"}`)
     .digest("hex");
@@ -298,13 +298,13 @@ async function draftRoutines(page: Page, roomId: string, agentSeat: string): Pro
       },
     });
     if (!response.ok())
-      throw new Error(`draft routine → ${response.status()} ${await response.text()}`);
+      throw new Error(`agent routine → ${response.status()} ${await response.text()}`);
     const routine = (await response.json()).data as {
-      id: string; state: string; agent_handle: string; proposed_by: string;
+      id: string; state: string; agent_handle: string; created_by: string;
     };
-    expect(routine.state).toBe("draft");
+    expect(routine.state).toBe("active");
     expect(routine.agent_handle).toBe(agentSeat);
-    expect(routine.proposed_by).toBe(agentSeat);
+    expect(routine.created_by).toBe(agentSeat);
     ids.push(routine.id);
   }
   return ids;
@@ -361,8 +361,7 @@ async function seed(page: Page): Promise<Seed> {
     taskId: task.id,
     feedbackId: feedback.id,
     othersProjectId: await othersProject(page),
-    routineRoomId: rules.roomId,
-    routineIds: await draftRoutines(page, rules.roomId, rules.agentSeat),
+    routineIds: await agentRoutines(page, rules.roomId, rules.agentSeat),
   };
   return seeded;
 }
@@ -374,7 +373,7 @@ test.beforeEach(async ({ page }) => {
 test("workspace: inbox, overview, tasks, room, accept card, library, project settings", async ({
   page,
 }) => {
-  const { projectId, roomId, taskId, routineRoomId, routineIds } = await seed(page);
+  const { projectId, roomId, taskId, routineIds } = await seed(page);
   const project = `/projects/${projectId}`;
   await check(page, [
     { name: "inbox", path: "/inbox" },
@@ -394,21 +393,6 @@ test("workspace: inbox, overview, tasks, room, accept card, library, project set
       // The card of the task its creator made on its own (「新建了任务」).
       ready: (page) =>
         page.getByTestId("task-created-post").first().waitFor({ timeout: 45_000 }),
-    },
-    {
-      name: "routine configuration notices",
-      path: `${project}/topics/${routineRoomId}`,
-      ready: visible('[data-testid="notice-confirm"]'),
-      act: async (page) => {
-        const notices = page.locator('details[data-testid="platform-notice"]')
-          .filter({ has: page.getByTestId("notice-confirm") });
-        expect(await notices.count()).toBeGreaterThan(0);
-        for (const notice of await notices.all())
-          await notice.locator(":scope > summary .sys-text").click();
-        await expect(notices.locator(".sys-meta").filter({ hasText: "Settings to confirm" })).toHaveCount(2);
-        await expect(page.locator(".sys-detail").filter({ hasText: "Weekly progress" })).toBeVisible();
-        await expect(page.locator(".sys-detail").filter({ hasText: "Library review" })).toBeVisible();
-      },
     },
     {
       name: "room's members and environments",
@@ -438,7 +422,7 @@ test("workspace: inbox, overview, tasks, room, accept card, library, project set
     },
     { name: "project docs", path: `${project}/docs/charter` },
     {
-      name: "routines with schedule and event drafts",
+      name: "routines with a clock and an event",
       path: `${project}/routines`,
       ready: async (page) => {
         for (const id of routineIds)
@@ -467,7 +451,6 @@ test("account settings and devices", async ({ page }) => {
   await check(page, [
     { name: "profile", path: "/users/settings/profile" },
     { name: "password and security", path: "/users/settings/security" },
-    { name: "usage", path: "/users/settings/usage" },
     { name: "devices", path: "/users/settings/devices" },
     { name: "connections", path: "/users/settings/connections" },
     { name: "public profile", path: "/users/alice" },
@@ -486,6 +469,7 @@ test("teams: shared and personal", async ({ page }) => {
     { name: "team compute", path: "/teams/team-1/compute" },
     { name: "team credits", path: "/teams/team-1/credits" },
     { name: "personal team", path: "/teams/alice" },
+    { name: "personal team credits", path: "/teams/alice/credits" },
   ]);
 });
 

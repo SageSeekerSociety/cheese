@@ -49,17 +49,17 @@ func CurrentRoot() string {
 	return Root
 }
 
-// ClaudeLogin is the directory under Root that holds the first Claude Code login
+// ClaudeLogin is the directory under CurrentRoot that holds the first Claude Code login
 // the machine's owner gives the platform (`cheesehost claude login`), apart
 // from their own `~/.claude`. The backend names it in `place.py`
 // (`CLAUDE_LOGIN_DIR`) and `backend/tests/unit/test_footprint_root.py` fails if
 // the two disagree.
-const ClaudeLogin = "claude-login"
+const ClaudeLogin = "logins/claude-login"
 
-// ClaudeLogins is the directory under Root that holds every further login,
+// ClaudeLogins is the directory under CurrentRoot that holds every further login,
 // one directory each, named by its id. `place.py` names it
 // (`CLAUDE_LOGINS_DIR`), held to this one by the same test.
-const ClaudeLogins = "claude-logins"
+const ClaudeLogins = "logins/claude-logins"
 
 // FirstClaudeLogin is the id of the login in ClaudeLogin, the one a machine had
 // before it could hold several. The backend names it in `login_kind.py`
@@ -71,3 +71,7 @@ const FirstClaudeLogin = "default"
 // --base-url`). The backend's launch and probe name it in `place.py`
 // (`MODEL_SERVICE_FILE`), held to this one by the same test.
 const ModelService = "model-service.json"
+
+// ClaudeKeychain holds a migrated login's security command. It retains the
+// Keychain item shared with sessions started before the files moved.
+const ClaudeKeychain = "keychain"

@@ -13,7 +13,7 @@ looked for, both of which nobody has to set up:
   A repository may gate main in batches instead (#4249): one run covers every
   commit since the last green one, so the commits inside a batch have no run of
   their own — their push was superseded, and their check runs are cancelled.
-  There the failed tests in the red job's log are matched against the files
+  There the failing files in the red job's log are matched against the files
   each commit of the batch changed: when they point at one commit, only that
   task hears; when they point at none or at several, every task in the batch
   hears and is asked to rule itself out. A later green batch that covers those
@@ -106,7 +106,7 @@ UNREAD_FOR = timedelta(minutes=10)
 
 #: What a prompt lists before it says how much it left out.
 PROMPT_COMMITS = 10
-PROMPT_TESTS = 10
+PROMPT_PATHS = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,8 +127,8 @@ class Batch:
     #: and no failure may be pinned on one commit.
     complete: bool
     commits: tuple[BatchCommit, ...]
-    #: The test files the red jobs named.
-    failed_tests: tuple[str, ...]
+    #: The files the red jobs' test failures or static diagnostics named.
+    failed_paths: tuple[str, ...]
     #: The one commit those files point at; None when they point at none, at
     #: several, or at a commit the forge would not let us read whole.
     blamed: str | None
@@ -743,8 +743,8 @@ async def _judge_batch(
         )
     if commits is None:
         commits, base = await _walk_back(reads, project_id, head, memo)
-    tests = tuple(
-        await _once(memo, (project_id, "tests", head), lambda: reads.failed_tests(head))
+    paths = tuple(
+        await _once(memo, (project_id, "paths", head), lambda: reads.failed_paths(head))
     )
     return Judgement(
         ChecksOutcome.failed,
@@ -756,8 +756,8 @@ async def _judge_batch(
             commits=tuple(
                 BatchCommit(change.sha, change.subject) for change in commits.changes
             ),
-            failed_tests=tests,
-            blamed=_blame(tests, commits),
+            failed_paths=paths,
+            blamed=_blame(paths, commits),
             base=base,
         ),
     )
@@ -766,14 +766,14 @@ async def _judge_batch(
 def _searchable(batch: Batch) -> bool:
     """Whether bisecting this batch can say anything the files did not.
 
-    Only a batch read whole gives the search an ordered list to narrow, and
-    only named failed tests give it something to rerun. Everything else is
-    attributed as it was before the search existed.
+    Only a batch read whole gives the search an ordered list to narrow.
+    The caller then checks that its paths come from actual test failures;
+    static diagnostics give a test probe nothing to judge.
     """
     return (
         batch.complete
         and len(batch.commits) >= culprit_bisect.MIN_COMMITS
-        and bool(batch.failed_tests)
+        and bool(batch.failed_paths)
     )
 
 
@@ -790,6 +790,17 @@ async def _search_for_culprit(
     if not reads.main_gate.probe_workflow or not _searchable(batch):
         return batch
 
+    # A test rerun cannot judge a static-check failure, even in a test file.
+    tests = tuple(
+        await _once(
+            memo,
+            (project_id, "test_paths", batch.head),
+            lambda: reads.failed_paths(batch.head, tests_only=True),
+        )
+    )
+    if not tests or tests != batch.failed_paths:
+        return batch
+
     async def step():
         return await culprit_search.advance(
             chat.session_factory,
@@ -798,7 +809,7 @@ async def _search_for_culprit(
             head=batch.head,
             base=batch.base,
             commits=[commit.sha for commit in batch.commits],
-            tests=list(batch.failed_tests),
+            tests=list(tests),
         )
 
     try:
@@ -1068,7 +1079,7 @@ def _batch_checks_failed_prompt(
     batch: Batch,
 ) -> str:
     """The same, for a repository that gates main in batches: the run is on the
-    batch's head, and the log's failed tests say whose commit it is."""
+    batch's head, and the log's failing files say whose commit it is."""
     lines = [
         f"任务「{title}」的提交 {sha[:12]} 落在主干这一批里，合并后的全量检查没通过。"
     ]
@@ -1091,12 +1102,12 @@ def _batch_checks_failed_prompt(
             lines.append(f"- ……另有 {batch.total - len(shown)} 个")
     lines.append("没通过的检查：")
     lines.append("\n".join(f"- {name} {url}".rstrip() for name, url in failed))
-    if batch.failed_tests:
-        lines.append("日志里读到的失败用例：")
-        shown = batch.failed_tests[:PROMPT_TESTS]
+    if batch.failed_paths:
+        lines.append("日志里读到的失败文件：")
+        shown = batch.failed_paths[:PROMPT_PATHS]
         lines += [f"- {test}" for test in shown]
-        if len(batch.failed_tests) > len(shown):
-            lines.append(f"- ……另有 {len(batch.failed_tests) - len(shown)} 个")
+        if len(batch.failed_paths) > len(shown):
+            lines.append(f"- ……另有 {len(batch.failed_paths) - len(shown)} 个")
     if batch.blamed == sha:
         if batch.by_bisect:
             lines.append(
@@ -1104,7 +1115,7 @@ def _batch_checks_failed_prompt(
                 "先按这个方向修。"
             )
         else:
-            lines.append("失败用例所在的文件只有这条线的提交改过，先按这个方向修。")
+            lines.append("失败文件只有这条线的提交改过，先按这个方向修。")
     elif batch.bisect:
         lines.append(
             f"平台在这批里挑提交逐个重跑了失败的用例，也没能定位到是哪一条"
@@ -1113,7 +1124,7 @@ def _batch_checks_failed_prompt(
         )
     else:
         lines.append(
-            "没有哪条在看的线能单独认领这些失败用例，本批每条线都先各自排除："
+            "没有哪条在看的线能单独认领这些失败，本批每条线都先各自排除："
             "确认不是你的改动导致的，就在任务里说明理由；是你的就修。"
         )
     return "\n".join(lines) + "\n" + _how_to_fix(task_id, reopened)

@@ -12,7 +12,6 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,17 +42,19 @@ from app.domain.routine.service._shared import (
 from app.domain.thread.services import answered_in
 
 
-def run_prompt(routine: Routine, run: RoutineRun, previous: str = "") -> str:
-    folder = routine.output_dir or "房间根目录"
+def run_prompt(routine: Routine, run: RoutineRun) -> str:
     lines = [
         f"【{TRIGGER_LABELS[RoutineTrigger(routine.trigger)]}工作】{routine.title}",
-        f"这是规则「{routine.title}」的一次执行（执行 id {run.id}）。"
+        f"这是例行事务「{routine.title}」的一次执行（执行 id {run.id}）。"
         f"{run.trigger_detail}",
         "",
-        f"工作内容：{routine.instructions}",
-        "资料范围："
-        + (routine.context_scope or "按工作内容需要，只用你有权访问的项目内容"),
-        f"结果保存到：{folder}（用 cheese show 放进房间，文件名带上日期）",
+        f"目标：{routine.instructions}",
+    ]
+    if routine.note:
+        lines.append(f"补充说明：{routine.note}")
+    lines += [
+        "用哪些资料、结果放在哪，都按这次的目标自己定；结果文件用 cheese show "
+        "放进房间，文件名带上日期。",
         "",
         "做完后必须交回结果，成功失败都要交：",
         f'cheese_routine_report(run="{run.id}", status="succeeded" 或 "failed", '
@@ -62,8 +63,6 @@ def run_prompt(routine: Routine, run: RoutineRun, previous: str = "") -> str:
         "写清结论，可以分几点，不用在这里再发一遍。",
         "没有交回结果的一次执行会被记为失败。",
     ]
-    if previous:
-        lines += ["", "上一次执行交回的结果：", previous]
     return "\n".join(lines)
 
 
@@ -126,7 +125,7 @@ async def _fire(
         run.error = f"执行者 {routine.agent_handle} 已不在这个项目里"
         run.finished_at = stamp
         return run
-    content = run_prompt(routine, run, await _previous_result(session, routine))
+    content = run_prompt(routine, run)
     batch_size = routine.spec.get("feedback_batch")
     if batch_size:
         batch = await feedback_triage.untriaged(session, batch_size)
@@ -195,18 +194,3 @@ async def _fire(
     )
     run.delivery_event_id = event_id
     return run
-
-
-async def _previous_result(session: AsyncSession, routine: Routine) -> str:
-    """What the rule's last successful run handed back: where this one picks
-    up (last week's report, the feedback already sorted)."""
-    summary = await session.scalar(
-        select(RoutineRun.summary)
-        .where(
-            RoutineRun.routine_id == routine.id,
-            RoutineRun.status == RunStatus.succeeded.value,
-        )
-        .order_by(RoutineRun.finished_at.desc())
-        .limit(1)
-    )
-    return summary or ""

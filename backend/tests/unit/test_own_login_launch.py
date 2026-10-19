@@ -21,7 +21,12 @@ from app.domain.agent.harness.claude_code.device_launch import (
     NO_LOGIN_PLACEHOLDER,
     launch_holes,
 )
-from app.domain.agent.place import MODEL_SERVICE_FILE, OWN_LOGIN_ID
+from app.domain.agent.place import (
+    CLAUDE_LOGIN_DIR,
+    CLAUDE_LOGINS_DIR,
+    MODEL_SERVICE_FILE,
+    OWN_LOGIN_ID,
+)
 from app.domain.device.login_kind import FIRST_LOGIN
 from tests.unit.test_device_provider import (
     _no_device_identity,  # noqa: F401 — the machine's address, not the database's
@@ -61,6 +66,8 @@ def _launch_on_machine(
     mac: bool = False,
     login_id: str | None = FIRST_LOGIN,
     other_service: dict | None = None,
+    profile: str = ".cheese",
+    migrated_keychain: bool = False,
 ) -> dict:
     """Run the launcher the way a machine does, with the platform asking for
     Claude's ``opus`` on the machine's login ``login_id``, and return the
@@ -74,11 +81,21 @@ def _launch_on_machine(
     on macOS. ``mac`` makes the machine one: ``uname`` says Darwin, and its
     `security` records the HOME it ran with under ``keychain_home``."""
     home = tmp_path / "home"
-    first = home / ".cheese" / "claude-login"
-    second = home / ".cheese" / "claude-logins" / "B7QX"
+    first = home / profile / CLAUDE_LOGIN_DIR
+    second = home / profile / CLAUDE_LOGINS_DIR / "B7QX"
     for login in (first, second):
         login.mkdir(parents=True)
     used, unused = (second, first) if login_id == "B7QX" else (first, second)
+    keychain_home = tmp_path / "keychain-home"
+    keychain_used = tmp_path / "migrated-keychain-used"
+    if migrated_keychain:
+        command = used / "keychain/security"
+        command.parent.mkdir()
+        command.write_text(
+            f'#!/bin/sh\nprintf %s "$HOME" > "{keychain_home}"\n'
+            f'touch "{keychain_used}"\n'
+        )
+        command.chmod(0o700)
     if service is not None:
         (used / MODEL_SERVICE_FILE).write_text(json.dumps(service))
     if other_service is not None:
@@ -106,6 +123,7 @@ def _launch_on_machine(
     env = {
         **os.environ,
         "HOME": str(home),
+        "CHEESE_PROFILE_ROOT": profile,
         "CHEESE_HOME": str(room),
         "CHEESE_WORK": str(work),
         "CHEESE_TOPIC": "11111111-1111-1111-1111-111111111111",
@@ -115,7 +133,6 @@ def _launch_on_machine(
         "ANTHROPIC_MODEL": "opus",
         **({OWN_LOGIN_ID: login_id} if login_id is not None else {}),
     }
-    keychain_home = tmp_path / "keychain-home"
     if mac:
         machine = tmp_path / "machine-bin"
         machine.mkdir()
@@ -138,6 +155,7 @@ def _launch_on_machine(
         **json.loads(seen.read_text()),
         "_home": str(home),
         "_keychain_home": keychain_home.read_text() if keychain_home.exists() else None,
+        "_migrated_keychain_used": keychain_used.exists(),
     }
 
 
@@ -147,10 +165,19 @@ def test_an_own_session_reads_the_login_its_owner_gave_the_platform(tmp_path):
     seen = _launch_on_machine(tmp_path)
     assert (
         seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"]
-        == f"{seen['_home']}/.cheese/claude-login"
+        == f"{seen['_home']}/.cheese/logins/claude-login"
     )
     assert "ANTHROPIC_BASE_URL" not in seen
     assert "ANTHROPIC_AUTH_TOKEN" not in seen
+
+
+def test_a_moved_login_uses_its_keychain_command_with_the_owners_home(tmp_path):
+    seen = _launch_on_machine(tmp_path, migrated_keychain=True, mac=True)
+    assert seen["_migrated_keychain_used"]
+    assert seen["_keychain_home"] == seen["_home"]
+    assert seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == (
+        f"{seen['_home']}/.cheese/logins/claude-login"
+    )
 
 
 def test_an_own_session_on_another_login_reads_that_login_only(tmp_path):
@@ -167,11 +194,30 @@ def test_an_own_session_on_another_login_reads_that_login_only(tmp_path):
     )
     assert (
         seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"]
-        == f"{seen['_home']}/.cheese/claude-logins/B7QX"
+        == f"{seen['_home']}/.cheese/logins/claude-logins/B7QX"
     )
     assert "ANTHROPIC_BASE_URL" not in seen
     assert "ANTHROPIC_AUTH_TOKEN" not in seen
     assert seen["ANTHROPIC_MODEL"] == "opus"
+
+
+@pytest.mark.parametrize("login_id", [FIRST_LOGIN, "B7QX"])
+def test_session_uses_only_its_enrollments_login(tmp_path, login_id):
+    seen = _launch_on_machine(
+        tmp_path,
+        profile=".cheese/profiles/research",
+        login_id=login_id,
+        service={
+            "base_url": "https://example.test",
+            "token": "team-key",
+            "model": "team-model",
+        },
+    )
+    assert seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"].startswith(
+        f"{seen['_home']}/.cheese/profiles/research/logins/"
+    )
+    assert seen["ANTHROPIC_AUTH_TOKEN"] == "team-key"
+    assert seen["ANTHROPIC_MODEL"] == "team-model"
 
 
 def test_an_own_session_on_another_login_calls_its_model_service(tmp_path):

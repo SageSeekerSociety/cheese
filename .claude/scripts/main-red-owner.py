@@ -55,7 +55,7 @@ COMPARE_MAX_COMMITS = 250
 COMMIT_MAX_FILES = 300
 LOOK_BACK = 20
 
-#: How many red jobs have their log read for test names. landing_watch reads
+#: How many red jobs have their log read for failing file names. landing_watch reads
 #: three; a diagnosis wants the shape of the whole failure, so five.
 RED_LOGS = 5
 MAX_CASES = 12
@@ -127,7 +127,7 @@ def _load_attribution():
         from app.domain.review.landing_forge import (  # noqa: PLC0415
             BatchCommits,
             CommitChange,
-            _failed_test_paths,
+            _failed_paths,
         )
         from app.domain.review.landing_watch import (  # noqa: PLC0415
             _FAILED,
@@ -149,7 +149,7 @@ def _load_attribution():
     return (
         BatchCommits,
         CommitChange,
-        _failed_test_paths,
+        _failed_paths,
         _clean_log_line,
         _FAILED,
         _blame,
@@ -161,11 +161,11 @@ def _load_attribution():
 (
     BatchCommits,
     CommitChange,
-    failed_test_paths,
+    failed_paths,
     clean_log_line,
     FAILED,
     blame_of,
-    names_test,
+    names_path,
     stem_of,
 ) = _load_attribution()
 
@@ -293,6 +293,7 @@ class RunFacts:
     conclusion: str | None
     url: str
     jobs: tuple[Job, ...]
+    created_at: str = ""
 
 
 def _run_of(raw: dict) -> RunFacts:
@@ -304,6 +305,7 @@ def _run_of(raw: dict) -> RunFacts:
         conclusion=raw.get("conclusion"),
         url=str(raw.get("html_url") or ""),
         jobs=(),
+        created_at=str(raw.get("created_at") or ""),
     )
 
 
@@ -366,14 +368,14 @@ def load_run(repo: str, value: str) -> RunFacts:
 
 
 def load_job_logs(repo: str, jobs: tuple[Job, ...]) -> dict[int, str]:
-    """The tail of each red leaf job's log, up to `RED_LOGS` of them."""
+    """Each red leaf job's log, bounded to the platform's 8 MiB download limit."""
     logs: dict[int, str] = {}
     for job in _red_leaf_jobs(jobs)[:RED_LOGS]:
         if not job.id:
             continue
         try:
             path = f"/repos/{urllib.parse.quote(repo, safe='/')}/actions/jobs/{job.id}/logs"
-            logs[job.id] = _run(["gh", "api", path], timeout=120)[-512 * 1024 :]
+            logs[job.id] = _run(["gh", "api", path], timeout=120)[:8 * 1024 * 1024]
         except ReadError:
             logs[job.id] = ""
     return logs
@@ -396,7 +398,7 @@ class Batch:
     commits: tuple[CommitChange, ...]
     complete: bool
     anchor: str | None
-    tests: tuple[str, ...]
+    paths: tuple[str, ...]
     cases: tuple[str, ...]
     blamed: str | None
     reason: str
@@ -479,32 +481,32 @@ def _dedupe(items) -> list[str]:
     return out
 
 
-def _tests_in(logs: dict[int, str]) -> tuple[str, ...]:
+def _paths_in(logs: dict[int, str]) -> tuple[str, ...]:
     found: list[str] = []
     for text in logs.values():
-        found += failed_test_paths(text)
+        found += failed_paths(text)
     return tuple(sorted(set(found)))
 
 
 #: `_reason`'s answers. `_action` switches on these names, never on a
 #: substring of the sentence: it did once, and `没能读全` did not contain
 #: `读不全`, so an unread batch was reported to the channel as a collision.
-NO_TESTS = "日志里没有点名测试文件"
+NO_PATHS = "日志里没有点名失败文件"
 UNREAD = "批内提交没能读全，不能钉在单个提交上"
-UNMATCHED = "有失败的测试文件不在任何批内提交的改动里"
+UNMATCHED = "有失败的文件不在任何批内提交的改动里"
 SHARED = "同一个失败文件被批内多个提交改到（对撞）"
-SPLIT = "失败用例分别指向不同提交（对撞）"
+SPLIT = "失败文件分别指向不同提交（对撞）"
 UNIQUE = "唯一 culprit"
 
 
-def _reason(tests: tuple[str, ...], commits: BatchCommits) -> str:
+def _reason(paths: tuple[str, ...], commits: BatchCommits) -> str:
     """Why `_blame` can or cannot name one commit. The matching itself is
     `landing_watch._names`; this only names the answer."""
-    if not tests:
-        return NO_TESTS
+    if not paths:
+        return NO_PATHS
     if not commits.complete or any(not c.complete for c in commits.changes):
         return UNREAD
-    matches = [(test, [c.sha for c in commits.changes if names_test(test, c.files)]) for test in tests]
+    matches = [(path, [c.sha for c in commits.changes if names_path(path, c.files)]) for path in paths]
     if any(not hit for _, hit in matches):
         return UNMATCHED
     if any(len(hit) > 1 for _, hit in matches):
@@ -517,13 +519,13 @@ def _reason(tests: tuple[str, ...], commits: BatchCommits) -> str:
     return SPLIT
 
 
-def _batch(repo: str, head: str, logs: dict[int, str]) -> Batch:
-    tests = _tests_in(logs)
+def _batch(repo: str, head: str, logs: dict[int, str], *, before: str = "") -> Batch:
+    paths = _paths_in(logs)
     anchor = _main_green(repo)
     compare = _compare(repo, anchor, head) if anchor else None
     if compare is None:
-        # Without main-green, the last green batch's head is the next best
-        # anchor; a batch after no green at all cannot be bounded.
+        # main-green may have advanced past a historical run. Use a green
+        # run from before this one rather than today's newest green run.
         try:
             runs = _api(
                 repo,
@@ -532,6 +534,7 @@ def _batch(repo: str, head: str, logs: dict[int, str]) -> Batch:
                     "branch": _default_branch(repo),
                     "status": "success",
                     "per_page": 1,
+                    **({"created": f"<{before}"} if before else {}),
                 },
             ).get("workflow_runs") or []
             base = str(runs[0]["head_sha"]) if runs else ""
@@ -552,16 +555,16 @@ def _batch(repo: str, head: str, logs: dict[int, str]) -> Batch:
             except ReadError:
                 changes.pop(sha, None)
         commits = _batch_from_compare(compare, changes)
-    blamed = blame_of(tests, commits)
+    blamed = blame_of(paths, commits)
     return Batch(
         total=commits.total,
         commits=commits.changes,
         complete=commits.complete,
         anchor=anchor,
-        tests=tests,
+        paths=paths,
         cases=_cases_in(logs),
         blamed=blamed,
-        reason=_reason(tests, commits),
+        reason=_reason(paths, commits),
     )
 
 
@@ -717,8 +720,8 @@ class Fix:
     detail: str
 
 
-def _keywords(tests: tuple[str, ...], files: tuple[str, ...]) -> tuple[str, ...]:
-    stems = {stem_of(path).lower() for path in (*tests, *files)}
+def _keywords(paths: tuple[str, ...], files: tuple[str, ...]) -> tuple[str, ...]:
+    stems = {stem_of(path).lower() for path in (*paths, *files)}
     return tuple(sorted(s for s in stems if len(s) >= 5 and s not in GENERIC_STEMS))
 
 
@@ -779,13 +782,13 @@ def _branches(
 def _fix(
     repo: str,
     author: str,
-    tests: tuple[str, ...],
+    paths: tuple[str, ...],
     files: tuple[str, ...],
     pr_head: str | None = None,
 ) -> Fix:
     if not author:
         return Fix(False, False, (), (), "没有可查的作者")
-    keywords = _keywords(tests, files)
+    keywords = _keywords(paths, files)
     rows: list[dict] = []
     try:
         rows += _prs(repo, author, None)
@@ -825,14 +828,14 @@ def _fix(
             changed = _pr_files(repo, number)
         except ReadError:
             continue
-        if any(names_test(test, changed) for test in tests):
+        if any(names_path(path, changed) for path in paths):
             strong.append(number)
-        elif any(names_test(path, changed) for path in files):
+        elif any(names_path(path, changed) for path in files):
             medium.append(number)
     branches = _branches(keywords, (pr_head,) if pr_head else ())
     picked = tuple(sorted(set(strong + medium)))
     if strong:
-        detail = "开放 PR {} 改到了失败用例对应的模块".format(
+        detail = "开放 PR {} 改到了失败文件对应的模块".format(
             "、".join(f"#{n}" for n in strong)
         )
     elif medium:
@@ -867,7 +870,7 @@ class Report:
     complete: bool
     failed_jobs: tuple[dict, ...]
     cases: tuple[str, ...]
-    tests: tuple[str, ...]
+    paths: tuple[str, ...]
     blamed: str | None
     blame_reason: str
     source: dict | None
@@ -885,8 +888,8 @@ def _action(
     fix: Fix | None,
 ) -> str:
     if blamed is None:
-        if reason == NO_TESTS:
-            return "日志没点名用例：叫回批内全部任务逐条自证，并要求失败 job 补打测试名"
+        if reason == NO_PATHS:
+            return "日志没点名失败文件：叫回批内全部任务逐条自证，并要求失败 job 补打诊断文件路径"
         if reason == UNREAD:
             return "批内提交没读全：人工分诊，不指定单一 culprit"
         return "对撞不出：叫回批内全部任务逐条自证，不把红算在单个任务头上"
@@ -922,8 +925,8 @@ def _paragraph(report: Report, batch: Batch, source: Source | None) -> str:
         shown = "；".join(report.cases[:6])
         more = f" 等 {len(report.cases)} 个" if len(report.cases) > 6 else ""
         lines.append(f"失败用例：{shown}{more}")
-    elif report.tests:
-        lines.append("失败用例文件：" + "、".join(report.tests))
+    elif report.paths:
+        lines.append("失败文件：" + "、".join(report.paths))
     lines.append(f"归因：{report.blame_reason}")
     if report.blamed:
         subject = batch.subject(report.blamed)
@@ -983,7 +986,7 @@ def build_report(
             for job in red
         ),
         cases=batch.cases,
-        tests=batch.tests,
+        paths=batch.paths,
         blamed=batch.blamed,
         blame_reason=batch.reason,
         source=asdict(source) if source else None,
@@ -1013,7 +1016,7 @@ def collect(repo: str, value: str) -> Report:
                 for job in red
             ),
             cases=(),
-            tests=(),
+            paths=(),
             blamed=None,
             blame_reason="这批还没跑完",
             source=None,
@@ -1040,7 +1043,7 @@ def collect(repo: str, value: str) -> Report:
             }
         )
     logs = load_job_logs(repo, run.jobs)
-    batch = _batch(repo, run.head, logs)
+    batch = _batch(repo, run.head, logs, before=run.created_at)
     source = None
     task = None
     fix = None
@@ -1056,7 +1059,7 @@ def collect(repo: str, value: str) -> Report:
             fix = _fix(
                 repo,
                 source.pr_author or source.commit_author,
-                batch.tests,
+                batch.paths,
                 commit.files if commit else (),
                 source.pr_head,
             )
@@ -1264,8 +1267,14 @@ class _RecordedReads:
         if suffix == f"/actions/runs/{f['run']['id']}/jobs":
             return {"jobs": f["jobs"]}
         if suffix == "/git/ref/heads/main-green":
-            return {"object": {"sha": f["anchor"]}}
+            return {"object": {"sha": f.get("current_green", f["anchor"])}}
+        if suffix == "/actions/workflows/required-ci.yml/runs":
+            if params and params.get("created") == f"<{f['run'].get('created_at')}":
+                return {"workflow_runs": [{"head_sha": f["anchor"]}]}
+            return {"workflow_runs": [{"head_sha": f.get("current_green", f["anchor"])}]}
         if suffix.startswith("/compare/"):
+            if f.get("current_green") and suffix.startswith(f"/compare/{f['current_green']}..."):
+                return {"status": "behind", "commits": [], "total_commits": 0}
             return f["compare"]
         if suffix.startswith("/commits/"):
             rest = suffix[len("/commits/") :]
@@ -1348,6 +1357,23 @@ def self_test() -> int:
         failures.append(f"无人修：culprit 得到 {report_b.blamed}")
     if "叫回任务 #1977" not in report_b.action:
         failures.append(f"无人修：建议是 {report_b.action!r}")
+
+    # A static failure can precede a long collection listing, and today's
+    # green mark can be newer than the run being diagnosed.
+    cases += 1
+    historical = _fixture_unique(fixing=False)
+    historical["run"]["created_at"] = "2026-10-18T22:00:00Z"
+    historical["current_green"] = "4444444444444444444444444444444444444444"
+    historical["logs"]["11"] = (
+        "2026-10-18T22:00:01Z F401 [*] `uuid` imported but unused\n"
+        "2026-10-18T22:00:02Z   --> tests/unit/test_widget.py:15:8\n"
+        + "2026-10-18T22:00:03Z tests/unit/test_other.py::test_ok\n" * 12000
+    )
+    report_historical = _collect_from_fixture(historical)
+    if report_historical.blamed != CULPRIT or report_historical.total != 2:
+        failures.append(f"历史静态失败：culprit={report_historical.blamed}，批内={report_historical.total}")
+    if report_historical.paths != ("tests/unit/test_widget.py",):
+        failures.append(f"历史静态失败：路径={report_historical.paths}")
 
     report_c = _collect_from_fixture(_fixture_collision())
     cases += 1

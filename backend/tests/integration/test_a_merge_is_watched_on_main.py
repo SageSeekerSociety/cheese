@@ -114,7 +114,7 @@ class _Forge:
     async def commit_change(self, sha):
         return self.changes.get(sha)
 
-    async def failed_tests(self, head):
+    async def failed_paths(self, head, *, tests_only=False):
         return self.failing.get(head, [])
 
     async def is_ancestor(self, commit, descendant):

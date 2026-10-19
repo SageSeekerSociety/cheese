@@ -26,6 +26,7 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
 
 /** 目录中按 name 指路的链接都要有对应路由；路径与正式路由一致，才能画出正确的 href。 */
 const catalogTargets = [
+  { path: '/home', name: 'HomeHub', component: blank },
   { path: '/account/signin', name: 'SignIn', component: blank },
   { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
   // 空间设置那一层的七条子路由（`settings/Index.vue` 的 `SECTIONS`，名字与路径照
@@ -65,7 +66,6 @@ const catalogTargets = [
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
   { path: '/users/settings/devices', name: 'UserSettingsDevices', component: blank },
-  { path: '/users/settings/usage', name: 'UserSettingsUsage', component: blank },
   { path: '/plans', name: 'CreditPlans', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId/participants', name: 'TasksParticipants', component: blank },

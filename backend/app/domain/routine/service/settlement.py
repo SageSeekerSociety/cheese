@@ -210,7 +210,7 @@ async def _announce_finished(session: AsyncSession) -> list[Block]:
             project_id=routine.project_id,
             level=NotificationLevel.light,
             kind=NotificationType.CHANGE_ALERT,
-            title=f"周期任务「{routine.title}」{verdict}",
+            title=f"例行事务「{routine.title}」{verdict}",
             body=body,
             target_handle=routine.owner_handle,
             conversation_id=routine.topic_id,
