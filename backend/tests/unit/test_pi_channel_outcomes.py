@@ -18,6 +18,7 @@ from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_session.services import AgentSessionService
 from tests.turn_log import a_topic
+from tests.support.machine_path import resolved
 
 DEVICE = "dev-outcomes"
 CHANNEL = "test-pi-outcomes"
@@ -33,7 +34,7 @@ class _Hub:
         return machine != "dev-offline"
 
     async def call_executor(self, machine, state, method, params, timeout=660):
-        answer = self._answers[state]
+        answer = self._answers[resolved(state)]
         if isinstance(answer, BaseException):
             raise answer
         return answer

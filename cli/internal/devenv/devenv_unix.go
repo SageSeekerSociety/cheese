@@ -43,7 +43,7 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 	if err != nil {
 		return err
 	}
-	root := filepath.Join(home, place.Root, "runtime")
+	root := filepath.Join(home, place.CurrentRoot(), "runtime")
 	bin := filepath.Join(root, "python", "bin")
 	_, placed := os.Stat(filepath.Join(bin, "python3"))
 	python := placed == nil || !recentEnough("python3")
