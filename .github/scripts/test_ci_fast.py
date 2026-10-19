@@ -1810,7 +1810,6 @@ class SelectionEvidenceTest(unittest.TestCase):
             (["frontend/src/keep.ts"], True),                                   # no merge base / unknown
             (["frontend/src/test/harness.ts", "frontend/src/keep.ts"], False),   # test harness
             (["frontend/package.json", "frontend/src/keep.ts"], False),         # config edit
-            ([".github/workflows/ci-fast.yml", "frontend/src/keep.ts"], False),  # .github edit
             # Not because they are config — because they are the whole change
             # and seed no root, so nothing can narrow them. Either file beside a
             # surviving src root stays `related`.
@@ -1821,6 +1820,43 @@ class SelectionEvidenceTest(unittest.TestCase):
             unit = next(p for p in plan if p["id"] == "frontend-unit")
             self.assertEqual(unit["evidence"]["mode"], "full", changed)
             self.assertFalse(any(p["id"] == "frontend-i18n" for p in plan), changed)
+        # A .github/ edit is not frontend runtime: no workflow or script under
+        # it is imported by the graph, so beside a changed root the related run
+        # stays narrowed (it used to select the whole 850-second suite).
+        for index, changed in enumerate((
+            [".github/workflows/ci-fast.yml", "frontend/src/keep.ts"],
+            [".github/workflows/frontend.yml", "frontend/src/keep.ts"],
+        )):
+            narrow_tmp = self.root / f"narrow-github-{index}"
+            narrow_tmp.mkdir()
+            plan, _ = test_plan(self.root, changed, {"frontend": True}, narrow_tmp,
+                                frontend_scope=["frontend/src/keep.ts"])
+            unit = next(p for p in plan if p["id"] == "frontend-unit")
+            self.assertEqual(unit["evidence"]["mode"], "related", changed)
+            self.assertTrue(any(p["id"] == "frontend-typecheck-changed" for p in plan), changed)
+            self.assertFalse(any(p["id"] == "frontend-typecheck-full" for p in plan), changed)
+        # Alone, a frontend workflow carries no source root and nothing the
+        # suite executes: the unit run is a stated omission, not the full suite
+        # and not an unknown.
+        plan, omissions = test_plan(
+            self.root, [".github/workflows/frontend.yml"], {"frontend": True}, self.root,
+            frontend_scope=[".github/workflows/frontend.yml"])
+        self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
+        self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
+        self.assertEqual([o["id"] for o in omissions],
+                         ["frontend-unit", "frontend-typecheck-changed"])
+        # A path the shared map does not name is not frontend content either:
+        # the caller hands the planner only the paths the map routed into
+        # frontend scope, and the narrowing decision must not read the unknown
+        # path as runtime that has to widen the suite (#4393 fixed the scope
+        # side; this holds the plan side).
+        narrow_tmp = self.root / "narrow-unknown"
+        narrow_tmp.mkdir()
+        plan, _ = test_plan(
+            self.root, ["strange/thing.xyz", "frontend/src/keep.ts"], {"frontend": True},
+            narrow_tmp, frontend_scope=["frontend/src/keep.ts"])
+        self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
+                         "related")
         plan, _ = test_plan(self.root, ["frontend/src/gone.ts", "frontend/src/keep.ts"],
                             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
