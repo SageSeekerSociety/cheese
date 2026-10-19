@@ -66,6 +66,11 @@ def test_a_frontend_diagnostic_matches_a_repository_relative_change():
     )
 
 
+def test_a_cli_diagnostic_matches_a_repository_relative_change():
+    assert _names("./go-diagnostic.go", ("cli/go-diagnostic.go",))
+    assert _names("internal/device/device.go", ("cli/internal/device/device.go",))
+
+
 def test_two_commits_touching_it_blame_nobody():
     commits = _batch(("b", ("backend/a.py",)), ("c", ("backend/a.py",)))
     assert _blame(("backend/tests/test_a.py",), commits) is None

@@ -213,12 +213,13 @@ _TEST_PATH = re.compile(
     r"\.(?:py|pyi|ts|tsx|js|jsx|vue|go|rs|java))"
 )
 
-#: Ruff's full/concise locations, Pyright errors, and tsc/vue-tsc errors.
-_SOURCE_FILE = r"[^\s:()]+\.(?:py|pyi|[cm]?[jt]sx?|vue|css|scss)"
+#: Ruff's full/concise locations, Pyright, tsc/vue-tsc, and Go vet errors.
+_SOURCE_FILE = r"[^\s:()]+\.(?:py|pyi|[cm]?[jt]sx?|vue|css|scss|go)"
 _STATIC_DIAGNOSTIC = re.compile(
     rf"^\s*(?:-->\s+)?({_SOURCE_FILE})(?:"
     r":\d+:\d+(?:\s*$|:\s*[A-Z]+\d+\b|\s+-\s+error:)"
     r"|\(\d+,\d+\):\s*error TS\d+\b"
+    r"|(?<=\.go):\d+:\d+:\s+\S"
     r"|:\d+:\d+\s{2,}\S|:\d+\s+\S"
     r"|:\s+(?:[B-Z]|A -> [B-Z])\s*$)"
 )
@@ -296,6 +297,9 @@ def _failed_paths(log: str, *, tests_only: bool = False) -> list[str]:
         header = _DIAGNOSTIC_FILE.fullmatch(line)
         if header:
             diagnostic_file = header.group(1)
+            if diagnostic_file.endswith(".go"):
+                # gofmt -l reports an unformatted file as a bare path.
+                found.append(diagnostic_file)
         elif diagnostic_file and _GROUPED_ERROR.match(line):
             found.append(diagnostic_file)
         elif not re.match(r"^\s+\d+:\d+\s+warning\s", line):

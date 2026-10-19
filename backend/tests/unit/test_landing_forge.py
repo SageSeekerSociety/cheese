@@ -369,6 +369,19 @@ def test_the_failed_tests_are_read_out_of_the_red_jobs_logs():
             id="tsc",
         ),
         pytest.param(
+            "2026-10-19T02:53:25.1Z # command-line-arguments\n"
+            "2026-10-19T02:53:25.2Z ./go-diagnostic.go:5:28: fmt.Printf format %d "
+            'has arg "not a number" of wrong type string\n',
+            ["./go-diagnostic.go"],
+            id="go-vet",
+        ),
+        pytest.param(
+            "2026-10-19T02:53:25.1Z   internal/device/device.go\n"
+            "2026-10-19T02:53:25.2Z ##[error]gofmt -w the files above\n",
+            ["internal/device/device.go"],
+            id="gofmt",
+        ),
+        pytest.param(
             "2026-10-19T02:53:25.1Z /home/runner/work/cheese/cheese/frontend/src/SignIn.vue\n"
             "2026-10-19T02:53:25.2Z   10:5  error  'unused' is assigned a value but never used"
             "  @typescript-eslint/no-unused-vars\n"
