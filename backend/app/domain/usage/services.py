@@ -17,6 +17,7 @@ from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.project.services import ProjectService
 from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
 from app.domain.usage.budgets import CreditBudgets
@@ -81,8 +82,22 @@ class UsageService:
     async def admit_project(self, project_id: uuid.UUID):
         """Whether a call in this project may run now: None, or the
         ``ledger.Refusal`` saying why not and until when."""
-        payer = await ledger.payer_for_project(self._session, project_id)
-        return await ledger.Ledger(self._session).admit(payer)
+        return (await self.admit_projects([project_id]))[project_id]
+
+    async def admit_projects(
+        self, project_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, ledger.Refusal | None]:
+        """`admit_project` for a batch: project id → ``ledger.Refusal`` or None.
+        Projects missing from the table raise, as the single form does."""
+        wanted = list(dict.fromkeys(project_ids))
+        projects = await ProjectService(self._session).get_projects_by_ids(wanted)
+        for pid in wanted:
+            if pid not in projects:
+                await ProjectService(self._session).get_or_404(pid)
+        payers = await ledger.payers_for_projects(
+            self._session, [projects[pid] for pid in wanted]
+        )
+        return await ledger.Ledger(self._session).admit_many(payers)
 
     async def project_credits_batch(self, projects: list) -> dict[uuid.UUID, dict]:
         """`project_credits` 的批量版：一批项目 → 各自的额度汇总，一条查询取回

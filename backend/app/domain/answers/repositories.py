@@ -191,10 +191,6 @@ class AnswerRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def is_favorited(self, answer_id: int, user_id: int) -> bool:
-        fav = await self._get_favorite(answer_id, user_id)
-        return fav is not None
-
     async def count_favorites(self, answer_id: int) -> int:
         stmt = (
             select(func.count())

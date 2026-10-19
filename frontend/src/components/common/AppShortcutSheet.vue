@@ -67,6 +67,8 @@ const groups = computed<ShortcutGroup[]>(() => {
         { keys: [`${mod}+Enter`], action: t('global.shortcuts.summon', { name: store.agentName }) },
         { keys: ['↑', '↓'], action: t('global.shortcuts.mentionPick') },
         { keys: ['Esc'], action: t('global.shortcuts.mentionClose') },
+        { keys: [`${alt}+V`], action: t('global.shortcuts.voice') },
+        { keys: ['Esc'], action: t('global.shortcuts.voiceCancel') },
       ],
     },
   ]

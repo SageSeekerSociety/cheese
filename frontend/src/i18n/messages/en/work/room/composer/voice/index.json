@@ -1,0 +1,13 @@
+{
+  "cancel": "Discard (Esc)",
+  "denied": "The microphone is blocked. Allow it from the left of the address bar, then try again",
+  "dismiss": "Dismiss",
+  "done": "Done (Enter)",
+  "failed": "This recording couldn't be transcribed. Try again",
+  "left": "{seconds}s left",
+  "recording": "Recording",
+  "start": "Voice input",
+  "thinking": "Tidying up",
+  "usePolished": "Use tidied text",
+  "useRaw": "Use my exact words"
+}

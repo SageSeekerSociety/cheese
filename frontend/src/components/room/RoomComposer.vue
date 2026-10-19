@@ -19,13 +19,14 @@ import type { ChatAttachment, Topic } from '../../cx_types'
 import type { LinkableDocument } from '../../lib/docMentionMenu'
 import type { RefNames } from '../../lib/refChip'
 
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
 import { useComposerText } from '@/composables/useComposerText'
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
+import { useVoiceInput, type VoiceHeard } from '@/composables/useVoiceInput'
 
 import { pastedTextName } from '../../lib/attachments'
 import {
@@ -42,6 +43,7 @@ import ComposerActions from './ComposerActions.vue'
 import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import ComposerEditor from './ComposerEditor.vue'
+import ComposerVoiceBar from './ComposerVoiceBar.vue'
 import MentionMenu from './MentionMenu.vue'
 import ReminderDialog from './ReminderDialog.vue'
 
@@ -78,6 +80,8 @@ const props = defineProps<{
   replyLabel?: string | null
   /** 发一张自己的清单；不给就没有这个入口。 */
   postChecklist?: (steps: string[]) => Promise<boolean>
+  /** 把说的一段交给后端听写；不给就没有麦克风。 */
+  hearVoice?: (wav: Blob) => Promise<VoiceHeard>
 }>()
 
 const checklistOpen = ref(false)
@@ -358,6 +362,7 @@ const enterSends = ref(!coarse?.matches)
 coarse?.addEventListener?.('change', (e: MediaQueryListEvent) => (enterSends.value = !e.matches))
 
 function onComposerKey(e: KeyboardEvent) {
+  if (onVoiceKey(e)) return
   // 翻进资料库之后，Esc 是退回一级的那一步（而不是把整个菜单关掉——@ 还在正文里）。
   // ← 也是；`@` 后面什么都没打时的退格也是——那一下要是删掉了 `@`，整个菜单就没了，
   // 人只是想回上一级。输入法选字时这几个键是给输入法的。
@@ -420,6 +425,154 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (!draft.value.trim() && !props.atts.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
   emit('send', { content, summon: summons(content) })
+}
+
+// ---- 语音输入 ----
+//
+// 说一段，后端听写、整理成字，落在开口时光标所在的地方（人这期间接着打字，那个位置
+// 跟着走）。落下来的是整理后的那一版；旁边那颗「还原原话」换成一字不差的转写，再点
+// 换回来。整理后和原话里的「@名字」都按名册展开成标签，和手打的 @ 一样。
+const VOICE_MAX_SECONDS = 60 // 和后端 voice_max_seconds 同一个数
+const SWAP_LINGER_MS = 8000
+const canVoice = computed(
+  () =>
+    !!props.topic &&
+    !!props.hearVoice &&
+    typeof navigator !== 'undefined' &&
+    !!navigator.mediaDevices?.getUserMedia &&
+    typeof window.AudioContext === 'function'
+)
+/** 刚落下的一段：在正文里的起点、两种写法、现在显示的是哪一种。 */
+let landed: { at: number; polished: string; raw: string; showing: 'polished' | 'raw' } | null = null
+const voiceSwap = ref<'raw' | 'polished' | null>(null)
+let swapTimer = 0
+let ownEdit = false
+
+const voice = useVoiceInput({
+  maxSeconds: VOICE_MAX_SECONDS,
+  hear: (wav) => props.hearVoice!(wav),
+  onHeard: (heard) => landVoice(heard.text, heard.raw),
+})
+const voiceOpen = computed(() => voice.state.value !== 'idle')
+
+// 识别中在光标处放一小段占位；回到空闲（落了字、取消、出错）就收起。
+watch(voice.state, (now, was) => {
+  if (now === 'thinking') composerInput.value?.voiceMarks({ slot: caret.value })
+  else if (was === 'thinking') composerInput.value?.voiceMarks({ slot: null })
+})
+
+function writeAt(at: number, from: string, to: string) {
+  ownEdit = true
+  draft.value = draft.value.slice(0, at) + to + draft.value.slice(at + from.length)
+  caret.value = at + to.length
+  void nextTick(() => (ownEdit = false))
+}
+
+function landVoice(text: string, raw: string) {
+  const at = Math.min(composerInput.value?.voiceSlot() ?? caret.value, draft.value.length)
+  const polished = expandMentions(text.trim())
+  const exact = expandMentions(raw.trim())
+  if (!polished) return
+  writeAt(at, '', polished)
+  // 记号按编辑器里的正文算位置，要等它把这段字放进去之后再标。
+  void nextTick(() => composerInput.value?.voiceMarks({ slot: null, landed: [at, at + polished.length] }))
+  landed = { at, polished, raw: exact, showing: 'polished' }
+  showSwap(polished !== exact ? 'raw' : null)
+  composerInput.value?.focus()
+}
+
+function showSwap(to: 'raw' | 'polished' | null) {
+  window.clearTimeout(swapTimer)
+  voiceSwap.value = to
+  if (to) swapTimer = window.setTimeout(() => (voiceSwap.value = null), SWAP_LINGER_MS)
+}
+
+/** 换成另一种写法：只换那一段，前后别人打的字不动。那一段已经被改过就不换了。 */
+function swapVoice() {
+  if (!landed) return
+  const shown = landed.showing === 'polished' ? landed.polished : landed.raw
+  const next = landed.showing === 'polished' ? landed.raw : landed.polished
+  if (draft.value.slice(landed.at, landed.at + shown.length) !== shown) return showSwap(null)
+  writeAt(landed.at, shown, next)
+  landed.showing = landed.showing === 'polished' ? 'raw' : 'polished'
+  const at = landed.at
+  void nextTick(() => composerInput.value?.voiceMarks({ landed: [at, at + next.length] }))
+  showSwap(landed.showing === 'polished' ? 'raw' : 'polished')
+  composerInput.value?.focus()
+}
+
+// 人自己动了正文，那颗换写法的按钮就该走了：它说的那一段可能已经不是它了。
+watch(draft, () => {
+  if (ownEdit || !voiceSwap.value) return
+  showSwap(null)
+  landed = null
+})
+
+// 按住说话：一开始录，动作行就换成录音条，按着的那颗麦克风连同它抓着的指针一起被卸掉，
+// 它自己再也听不到松手。所以松手在 window 上等，和按钮在不在无关。
+// 只认按着麦克风的那根手指：另一根手指在别处点一下、滚一下，不算松手。录音一结束（说完、
+// 取消、出错）就不再等，免得这一次的松手去结束下一段录音。系统把指针收走（来电、系统
+// 手势）不是「说完了」，这一段丢掉，免得半句话落进正文。
+let stopHold: (() => void) | null = null
+function onVoice(how: 'tap' | 'hold' | 'release' | 'cancel', pointerId?: number) {
+  if (how === 'release') return void voice.finish()
+  if (how === 'cancel') {
+    stopHold?.()
+    voice.cancel()
+    return
+  }
+  // 一段录音没完，就不再开第二段：第二根手指在动作行换走之前也按在麦克风上，不算新的开始。
+  if (voice.state.value !== 'idle') {
+    if (how === 'tap' && voice.state.value === 'recording') void voice.finish()
+    return
+  }
+  if (how === 'hold') {
+    stopHold?.()
+    const release = (e: PointerEvent) => {
+      if (pointerId !== undefined && e.pointerId !== pointerId) return
+      stopHold?.()
+      void voice.finish()
+    }
+    const cancel = (e: PointerEvent) => {
+      if (pointerId !== undefined && e.pointerId !== pointerId) return
+      stopHold?.()
+      voice.cancel()
+    }
+    window.addEventListener('pointerup', release)
+    window.addEventListener('pointercancel', cancel)
+    stopHold = () => {
+      window.removeEventListener('pointerup', release)
+      window.removeEventListener('pointercancel', cancel)
+      stopHold = null
+    }
+  }
+  void voice.start()
+}
+watch(voice.state, (now) => {
+  if (now !== 'recording') stopHold?.()
+})
+onBeforeUnmount(() => stopHold?.())
+
+/** 录音时的键：Enter 说完、Esc 不要了；Alt+V 开始，录着时再按一次说完。认领了返回 true。 */
+function onVoiceKey(e: KeyboardEvent): boolean {
+  if (e.altKey && e.code === 'KeyV' && canVoice.value && !isImeKey(e)) {
+    e.preventDefault()
+    if (voice.state.value === 'idle') void voice.start()
+    else void voice.finish()
+    return true
+  }
+  if (!voiceOpen.value) return false
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    voice.cancel()
+    return true
+  }
+  if (e.key === 'Enter' && !e.shiftKey && !isImeKey(e)) {
+    e.preventDefault()
+    void voice.finish()
+    return true
+  }
+  return false
 }
 
 // 「提醒我」：对话框管填和发，这里只开它，和设好之后说一声几点会提醒。
@@ -490,6 +643,28 @@ defineExpose({
         <v-icon size="14">mdi-close</v-icon>
       </button>
     </div>
+    <!-- 语音没成：麦克风没给，或者这段没听出来。和长文粘贴那条同一种样子，就地说，不弹窗。 -->
+    <div v-if="voice.trouble.value" class="long-paste" role="status">
+      <v-icon size="14">{{
+        voice.trouble.value.kind === 'denied' ? 'mdi-microphone-off' : 'mdi-alert-circle-outline'
+      }}</v-icon>
+      <span class="long-paste__text">
+        {{
+          voice.trouble.value.kind === 'denied'
+            ? t('work.room.composer.voice.denied')
+            : voice.trouble.value.message || t('work.room.composer.voice.failed')
+        }}
+      </span>
+      <button
+        type="button"
+        class="long-paste__x"
+        :aria-label="t('work.room.composer.voice.dismiss')"
+        :title="t('work.room.composer.voice.dismiss')"
+        @click="voice.trouble.value = null"
+      >
+        <v-icon size="14">mdi-close</v-icon>
+      </button>
+    </div>
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
@@ -519,27 +694,46 @@ defineExpose({
         @compositionstart="onCompositionStart"
         @compositionend="onCompositionEnd"
       />
-      <ComposerActions
-        :guided="!!guided"
-        :uploading="attsUploading"
-        :can-send="canSend"
-        :show-image-picker="!mdAndUp"
-        :enter-sends="enterSends"
-        :always-summon="alwaysSummon"
-        :summon-on="summonOn"
-        :summon-ready="summonReady"
-        :agent-name="agentName"
-        :can-checklist="!!postChecklist"
-        :can-remind="!!topic"
-        :collapse-extras="!mdAndUp"
-        @files="emit('files', $event)"
-        @checklist="checklistOpen = true"
-        @toggle-summon="toggleSummon"
-        @remind="reminderOpen = true"
-        @send="sendDraft()"
-      >
-        <template #chips><slot name="composer-chips" /></template>
-      </ComposerActions>
+      <!-- 录音时动作行换成录音条：同一个位置，先让旧的一行快速退下，新的一行减速进来。 -->
+      <Transition name="voice-row" mode="out-in">
+        <div v-if="voiceOpen" key="voice">
+          <ComposerVoiceBar
+            :state="voice.state.value"
+            :elapsed="voice.elapsed.value"
+            :levels="voice.levels.value"
+            :max-seconds="VOICE_MAX_SECONDS"
+            @cancel="voice.cancel()"
+            @done="voice.finish()"
+          />
+        </div>
+        <div v-else key="actions">
+          <ComposerActions
+            :guided="!!guided"
+            :uploading="attsUploading"
+            :can-send="canSend"
+            :show-image-picker="!mdAndUp"
+            :enter-sends="enterSends"
+            :always-summon="alwaysSummon"
+            :summon-on="summonOn"
+            :summon-ready="summonReady"
+            :agent-name="agentName"
+            :can-checklist="!!postChecklist"
+            :can-remind="!!topic"
+            :collapse-extras="!mdAndUp"
+            :can-voice="canVoice"
+            :voice-swap="voiceSwap"
+            @files="emit('files', $event)"
+            @checklist="checklistOpen = true"
+            @toggle-summon="toggleSummon"
+            @remind="reminderOpen = true"
+            @send="sendDraft()"
+            @voice="onVoice"
+            @voice-swap="swapVoice"
+          >
+            <template #chips><slot name="composer-chips" /></template>
+          </ComposerActions>
+        </div>
+      </Transition>
       <ComposerChecklistDialog v-if="postChecklist" v-model="checklistOpen" :post="postChecklist" />
     </div>
     <ReminderDialog v-if="topic" v-model="reminderOpen" :topic-id="topic.id" @set="onReminderSet" />
@@ -618,6 +812,22 @@ defineExpose({
    第二像素靠 box-shadow 加，不靠 border-width——后者会改盒子尺寸，把输入框顶一下。
    这条排在 :focus-within 后面：拖进来的时候光标通常就在输入框里，两条同权，后面
    的赢。 */
+/* 动作行和录音条互换：离场快一档、进场减速停稳（§9.3），只动透明度和一点位移。 */
+.voice-row-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.voice-row-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.voice-row-enter-from,
+.voice-row-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
 .composer--drop .composer-box {
   border-color: var(--muted);
   box-shadow: inset 0 0 0 1px var(--muted);

@@ -34,7 +34,10 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function mount(width: number, extras: { canChecklist?: boolean; canRemind?: boolean }) {
+function mount(
+  width: number,
+  extras: { canChecklist?: boolean; canRemind?: boolean; voiceSwap?: 'raw' | 'polished' }
+) {
   ;(window as unknown as { innerWidth: number }).innerWidth = width
   return render(
     {
@@ -85,6 +88,24 @@ describe('输入框下面那一行', () => {
     expect(screen.queryByLabelText('更多操作')).toBeNull()
     await fireEvent.click(screen.getByLabelText('提醒我'))
     expect(emitted().remind).toHaveLength(1)
+  })
+
+  it('手机上刚说完那段话时：「还原原话」药丸占掉 ⋯ 的位置，八秒后 ⋯ 自己回来', async () => {
+    const { rerender } = mount(375, {
+      canChecklist: true,
+      canRemind: true,
+      voiceSwap: 'raw',
+    })
+    expect(screen.queryByLabelText('更多操作')).toBeNull()
+    // 附件、照片也让开，给「交给谁」的名字留出位置；药丸走了就回来。
+    expect(screen.queryByTitle('上传文件（每个最大 10MB，视频 200MB）')).toBeNull()
+    expect(screen.queryByTitle('发送照片或视频')).toBeNull()
+    screen.getByRole('button', { name: '还原原话' })
+
+    await rerender({ extras: { canChecklist: true, canRemind: true, voiceSwap: null }, collapse: true })
+    screen.getByLabelText('更多操作')
+    screen.getByTitle('上传文件（每个最大 10MB，视频 200MB）')
+    screen.getByTitle('发送照片或视频')
   })
 
   it('桌面上两颗都在外面，没有「更多操作」', () => {

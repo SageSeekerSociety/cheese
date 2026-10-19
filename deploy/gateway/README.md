@@ -134,6 +134,13 @@ DeepSeek-V4.1-Flash-1017 as of 2026-10-17. Set `DEEPSEEK_API_KEY` in
 verified are excluded, including on API failures. See the
 [official changelog](https://api-docs.deepseek.com/updates/).
 
+`qwen-audio-asr` uses Alibaba Bailian (Beijing) for the composer's voice input.
+Set `DASHSCOPE_API_KEY` in `$HOME/gateway/compose/.env`. A workspace that was
+given its own dedicated endpoint also sets `DASHSCOPE_API_BASE` there (for
+example `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com`, whose key is the
+workspace's own); unset, the shared DashScope domain is used. Neither the
+workspace id nor the key belongs in this repository.
+
 The gateway also joins `cheese-meter-gateway`, an internal network shared only
 with the metering proxy, where the proxy's ChatGPT accounts answer at
 `http://metering-proxy:8445/chatgpt/<name>` (deploy/metering-proxy/README.md).
