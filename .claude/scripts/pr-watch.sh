@@ -107,19 +107,21 @@ reverter_of() {
   local reverts="Reverts $REPO#$3([^0-9]|$)" typed="^[Rr][Ee][Vv][Ee][Rr][Tt][(:].*#$3([^0-9]|$)"
   [ "$sha" != "$merge" ] || return 0
   [ -n "${subject_of[$merge]+set}" ] || { echo unknown; return; }
-  commits=$(gh api "repos/$REPO/compare/$merge...$sha" \
-              -q '"\(.total_commits) \(.commits|length)", (.commits[]|[.sha, .commit.message]|@tsv)' 2>/dev/null) \
+  # One compare call lists at most 250 commits, and main takes more than that
+  # in a couple of days, so the range is read page by page. Each page says
+  # "#T <total> <listed>"; a range whose pages do not add up is unknown.
+  commits=$(gh api --paginate "repos/$REPO/compare/$merge...$sha?per_page=100" \
+              -q '"#T \(.total_commits) \(.commits|length)", (.commits[]|[.sha, .commit.message]|@tsv)' 2>/dev/null) \
     || { echo unknown; return; }
-  # The compare API lists at most 250 commits; a revert among the rest would
-  # read as no revert, so a truncated list is unknown.
-  [ "$(head -1 <<<"$commits" | awk '{print ($1 == $2) ? "all" : "cut"}')" = all ] || { echo unknown; return; }
+  [ "$(awk '$1 == "#T" {t = $2; n += $3} END {print (t != "" && t == n) ? "all" : "cut"}' <<<"$commits")" = all ] \
+    || { echo unknown; return; }
   while IFS=$'\t' read -r csha msg; do
     head=${msg%%'\n'*}   # @tsv writes a newline as backslash-n
     if [[ "$msg" == *"This reverts commit ${merge:0:7}"* || "$msg" =~ $reverts || "$head" =~ $typed ]] \
        || { [ -n "${subject_of[$merge]}" ] && [[ "$head" == "Revert \"${subject_of[$merge]}"* ]]; }; then
       echo "$csha"; return
     fi
-  done < <(tail -n +2 <<<"$commits")
+  done < <(awk '$1 != "#T"' <<<"$commits")
 }
 
 # "<status> <conclusion> <run id>" of main's Required CI for merge $1 of PR $2:
@@ -250,8 +252,11 @@ while :; do
           if [ -n "$live" ] && contains "$merge" "$live"; then
             rev=$(reverter_of "$merge" "$live" "$p")
             if [ "$rev" = unknown ]; then
-              [ "${last[$p]:-}" = "$key unchecked" ] \
-                || say "$p" "could not read the commits after merge ${merge:0:9} up to dev's ${live:0:9}; checking again"
+              if [ "${last[$p]:-}" = "$key unchecked" ]; then
+                quiet "$p" "merged; could not check dev's ${live:0:9} for a revert"
+              else
+                say "$p" "could not read the commits after merge ${merge:0:9} up to dev's ${live:0:9}; checking again"
+              fi
               last[$p]="$key unchecked"
             elif [ -n "$rev" ]; then
               say "$p" "stopped watching: dev runs ${live:0:9}, after ${rev:0:9} reverted merge ${merge:0:9}"

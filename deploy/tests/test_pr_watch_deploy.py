@@ -21,8 +21,9 @@ ORDER = [EARLIER, MIDDLE, MERGE, LATER, LATEST]
 
 FAKE_GH = r"""#!/usr/bin/env bash
 # Answers the calls pr-watch.sh makes, from files in $FAKE.
-query=""
-args=("$@")
+query="" paginate=false args=()
+for a in "$@"; do [ "$a" = --paginate ] && paginate=true || args+=("$a"); done
+set -- "${args[@]}"
 for ((i = 0; i < ${#args[@]}; i++)); do
   case "${args[$i]}" in -q|--jq) query="${args[$((i + 1))]}" ;; esac
 done
@@ -64,7 +65,7 @@ case "$1 $2" in
   "run view") jq -r "$query" "$FAKE/jobs-$3.json" ;;
   api\ repos/*/commits/*) jq -r "$query" <<<'{"commit": {"message": "feat(x): the change (#3055)\n\nBody."}}' ;;
   api\ repos/*/compare/*)
-    pair="${2##*/compare/}"
+    pair="${2##*/compare/}"; pair="${pair%%\?*}"
     if [[ "$query" == *commits* ]]; then
       # The first n such calls fail, n read from commits-fail.
       n=$(cat "$FAKE/commits-fail" 2>/dev/null || echo 0)
@@ -74,10 +75,17 @@ case "$1 $2" in
       cut=$(cat "$FAKE/commits-cut" 2>/dev/null || echo 0); more=0
       if [ "$cut" -gt 0 ]; then echo $((cut - 1)) > "$FAKE/commits-cut"; more=300; fi
       # Commits after the merge, from reverts.json: {"<base>...<head>": [message, ...]}, the
-      # head commit's message last; every commit is named after the head.
-      jq -r --arg pair "$pair" --arg head "${pair##*...}" --argjson more "$more" \
-        '{total_commits: ((.[$pair] // []) | length + $more),
-          commits: [(.[$pair] // [])[] | {sha: $head, commit: {message: .}}]}' "$FAKE/reverts.json" \
+      # head commit's message last. Commit i is named i followed by the rest of the head's
+      # sha, the last one the head itself. Like GitHub, one call answers one page of
+      # commits-page commits (default 100); --paginate answers every page.
+      page=$(cat "$FAKE/commits-page" 2>/dev/null || echo 100)
+      jq -c --arg pair "$pair" --arg head "${pair##*...}" --argjson more "$more" \
+            --argjson page "$page" --argjson all "$paginate" '
+        (.[$pair] // []) as $m | ($m | length) as $n
+        | [range(0; $n) as $i | {sha: (if $i == $n - 1 then $head else "\($i)" + $head[($i | tostring | length):] end),
+                                commit: {message: $m[$i]}}] as $c
+        | [range(0; ([$n, 1] | max); $page)] | (if $all then . else .[:1] end)[]
+        | {total_commits: ($n + $more), commits: $c[.:(. + $page)]}' "$FAKE/reverts.json" \
         | jq -r "$query"
       exit
     fi
@@ -96,7 +104,7 @@ def run(run_id, status, conclusion, title, deploy="success"):
 
 class DeployRunForAMergedPR(unittest.TestCase):
     def watch(self, runs, live, first=None, ci=None, ci_first=None, red_wait="0", ci_polls=None,
-              reverts=None, commits_fail=0, commits_cut=0):
+              reverts=None, commits_fail=0, commits_cut=0, commits_page=100):
         with tempfile.TemporaryDirectory() as directory:
             fake = Path(directory)
             (fake / "gh").write_text(FAKE_GH)
@@ -116,6 +124,7 @@ class DeployRunForAMergedPR(unittest.TestCase):
             (fake / "reverts.json").write_text(json.dumps(reverts or {}))
             (fake / "commits-fail").write_text(str(commits_fail))
             (fake / "commits-cut").write_text(str(commits_cut))
+            (fake / "commits-page").write_text(str(commits_page))
             if first is not None:
                 (fake / "runs-first.json").write_text(json.dumps(first))
             for entry in runs:
@@ -292,16 +301,35 @@ class DeployRunForAMergedPR(unittest.TestCase):
                 self.assertIn(f"merge {MERGE[:9]} was reverted by {LATER[:9]}", result.stdout)
                 self.assertNotIn("live on dev", result.stdout)
 
-    def test_a_green_batch_after_an_unrelated_commit_still_counts(self):
+    def test_a_green_batch_after_an_unrelated_revert_still_counts(self):
+        for message in ('Revert "feat(y): another change (#3001)"\n\n'
+                        f'This reverts commit {EARLIER}.',
+                        'revert(y): back out another change (#3001) (#3060)',
+                        # This PR is named only in the body of another PR's revert.
+                        'revert(y): back out #3001\n\nIt broke what #3055 relies on.'):
+            with self.subTest(message=message):
+                result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER,
+                                    ci=[{"databaseId": 102, "status": "completed", "conclusion": "success",
+                                         "headSha": LATER},
+                                        {"databaseId": 101, "status": "completed", "conclusion": "failure",
+                                         "headSha": MERGE}],
+                                    reverts={f"{MERGE}...{LATER}": [message]})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f"live on dev at {LATER[:9]}", result.stdout)
+
+    def test_a_revert_beyond_the_first_page_of_commits_is_found(self):
+        # GitHub lists a long range a page at a time; the revert is on the second page.
+        messages = ["feat(a): one (#3056)", "feat(b): two (#3057)",
+                    "revert(x): back out the change (#3055) (#3060)", "feat(c): three (#3061)",
+                    "feat(d): four (#3062)"]
         result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER,
                             ci=[{"databaseId": 102, "status": "completed", "conclusion": "success",
                                  "headSha": LATER},
                                 {"databaseId": 101, "status": "completed", "conclusion": "failure",
                                  "headSha": MERGE}],
-                            reverts={f"{MERGE}...{LATER}": ['Revert "feat(y): another change (#3001)"\n\n'
-                                                           f'This reverts commit {EARLIER}.']})
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(f"live on dev at {LATER[:9]}", result.stdout)
+                            reverts={f"{MERGE}...{LATER}": messages}, commits_page=2)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"merge {MERGE[:9]} was reverted by {('2' + LATER[1:])[:9]}", result.stdout)
 
     def test_a_merge_reverted_before_the_live_version_is_not_live(self):
         # Main passed on the merge itself; dev then released a commit after its revert.
