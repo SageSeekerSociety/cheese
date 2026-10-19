@@ -1242,7 +1242,11 @@ sys.exit(0)
         expected = max(1.0, (pytest_workers(9216) + vitest_workers(9216) + 1) / _cores())
         if expected > 1:
             self.assertIn("CHEESE_TEST_CEILING_SCALE", row["env"])
-            self.assertEqual(float(row["env"]["CHEESE_TEST_CEILING_SCALE"]), expected)
+            # The report carries the factor rounded to two decimals (ci-fast.py
+            # formats it), so an exact float compare fails on a host whose
+            # demand/cores has more digits (6, 7 and 9 cores).
+            self.assertAlmostEqual(
+                float(row["env"]["CHEESE_TEST_CEILING_SCALE"]), expected, places=2)
         else:
             self.assertNotIn("CHEESE_TEST_CEILING_SCALE", row["env"])
 
