@@ -51,6 +51,7 @@ from app.domain.agent.device_hub import (
     DeviceOffline,
 )
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+from app.domain.agent.harness import SessionRef as Seat
 from app.domain.agent.harness.driven.subscription import Subscription
 from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.reads import (
@@ -104,6 +105,7 @@ from app.domain.agent.session_host.sessions import (
 from app.domain.agent.session_host.sessions import (
     with_pictures as with_pictures,
 )
+from app.domain.session_record import service as session_records
 from app.domain.agent.session_host.starting import (
     RunnerUnsupported as RunnerUnsupported,
 )
@@ -380,6 +382,14 @@ class SessionHost:
         async def call(method: str, params: dict) -> dict:
             return await self._wire().call(running.host, ref, method, params)
 
+        async def records(session: Seat, rows: list[dict]) -> None:
+            # deferred-import: tests replace this name on app.core.db
+            from app.core.db import async_session_factory
+
+            await session_records.append(
+                self._session_factory or async_session_factory, session, rows
+            )
+
         running.mirror.parent.mkdir(parents=True, exist_ok=True)
         subscription = driver.subscription(
             running.seat,
@@ -395,6 +405,9 @@ class SessionHost:
                 terminations,
                 moved,
                 announce,
+                # A session no place owns (a person's 芝士, a document's) has
+                # no conversation to keep a record in (`sessions._seat`).
+                records if _owned(running.seat) else None,
             ),
         )
         running.subscription = subscription
@@ -586,6 +599,12 @@ class SessionHost:
             for reading in stuck:
                 reading.cancel()
             await asyncio.gather(*stuck, return_exceptions=True)
+
+
+def _owned(seat: Seat | None) -> bool:
+    """Whether the session reads into a conversation: an ownerless session's
+    seat is the nil conversation (`sessions._seat`)."""
+    return seat is not None and seat.conversation_id.int != 0
 
 
 def _waiting_for(exc: Exception) -> str:

@@ -786,9 +786,13 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
-- **Transcripts** are not backed up. Claude Code sessions run on the central
-  session host, and their transcripts stay there: the platform does not upload
-  them. Archived-room cleanup keeps a room's transcripts compressed on that host
+- **Session records** (what each session's runner journaled,
+  `session_records`): the last few minutes sit in the table and go out with the
+  DB dump; older runs are gzip objects under `session-records/` in the private
+  `TRANSCRIPT_S3_BUCKET`, which nothing else backs up.
+- **Transcripts** (the CLI's own `.jsonl` files) are not backed up. Claude Code
+  sessions run on the central session host, and their transcripts stay there:
+  the platform does not upload them. Archived-room cleanup keeps a room's transcripts compressed on that host
   for 30 days, then deletes them — see
   [archived-room cleanup deployment](../deploy/README-room-cleanup.md).
   Transcript objects uploaded to the private `TRANSCRIPT_S3_BUCKET` before

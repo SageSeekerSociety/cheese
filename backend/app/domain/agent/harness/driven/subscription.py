@@ -82,6 +82,10 @@ Seat = tuple[uuid.UUID, str]
 #: What one record of a turn's work said about how it is going (``marks``).
 Moved = Callable[[uuid.UUID, frozenset[str]], Awaitable[None]]
 
+#: Where the journal's rows are kept as the raw record of the session: handed
+#: every row, in order, a page at a time, before the room reads any of them.
+Records = Callable[[SessionRef, list[dict]], Awaitable[None]]
+
 #: 一轮开/关的回报，按座位而不是按房间：同一间房里另一个 agent 的一轮开开关关，
 #: 不碰这个座位的「在跑的活」和它的钟。
 SeatActivity = Callable[[uuid.UUID, Seat, uuid.UUID, bool], Awaitable[None]]
@@ -160,6 +164,7 @@ class Subscription[B: Backlog]:
         completions: CompletionConsumer | None = None,
         terminations: TerminationConsumer | None = None,
         moved: Moved | None = None,
+        records: Records | None = None,
     ):
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
@@ -167,6 +172,7 @@ class Subscription[B: Backlog]:
         self.completions = completions
         self.terminations = terminations
         self.moved = moved
+        self.records = records
         self.lock = asyncio.Lock()
         self.forgotten_at = 0.0
         self.disk = ThreadPoolExecutor(
@@ -367,6 +373,7 @@ class Subscription[B: Backlog]:
             finally:
                 self.asking = None
             reader = await self.on_disk(self.reader)
+            await self._record(reader)
             delivered = stale = 0
             # A backlog nobody read for hours is mostly records too old to
             # land. The run of them at the cursor is stepped over in one move:
@@ -443,6 +450,22 @@ class Subscription[B: Backlog]:
                 self.forgotten_at = time.monotonic()
                 await self.on_disk(reader.forget, older_than_s=RETENTION_S)
             return delivered
+
+    async def _record(self, reader: B) -> None:
+        """Hand every row the mirror holds past the raw record's cursor to
+        ``records``, before the room reads it.
+
+        Kept apart from landing on purpose: a record too old to land, one the
+        room refused, one before the first input — the room steps over each,
+        and each is still something the session did. A failure here fails the
+        drain, as the room's own refusal does, and the next drain hands the
+        same rows again; ``records`` keeps a row it has already kept once.
+        """
+        if self.records is None:
+            return
+        while page := await self.on_disk(reader.unrecorded):
+            await self.records(self.session, page)
+            await self.on_disk(reader.recorded, through=page[-1]["sequence"])
 
     async def _end_late(self, entry: HarnessEvent, reader: B) -> None:
         """End the turn a record too old to land closes, saying nothing.

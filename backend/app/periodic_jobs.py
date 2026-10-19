@@ -36,6 +36,7 @@ from app.domain.project import periodic as project_periodic
 from app.domain.review import periodic as review_periodic
 from app.domain.routine import periodic as routine_periodic
 from app.domain.run_record import periodic as run_record_periodic
+from app.domain.session_record import periodic as session_record_periodic
 from app.domain.task import periodic as task_periodic
 from app.domain.task_quiet import periodic as task_quiet_periodic
 from app.domain.topic_membership.services import addressable_seat
@@ -65,6 +66,7 @@ PERIODIC_JOB_NAMES = (
     "subscription usage ingest",
     "backend error flush",
     "run record expiry",
+    "session record seal",
     "notification email drain",
     "notification push drain",
     "notification digest",
@@ -178,6 +180,7 @@ def periodic_jobs(
     )
     backend_log.register_periodic_jobs(jobs)
     run_record_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    session_record_periodic.register_periodic_jobs(jobs, sessions=sessions)
     notification_periodic.register_periodic_jobs(jobs, sessions=sessions)
     delivery_periodic.register_periodic_jobs(
         jobs,
