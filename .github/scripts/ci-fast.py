@@ -58,7 +58,7 @@ import tempfile
 import threading
 import time
 
-from ci_fast_checks import _cores, resolve, test_plan, tree_guard_check
+from ci_fast_checks import _cores, ceiling_scale, resolve, test_plan, tree_guard_check
 from ci_fast_process import clear_stop, dependencies, execute, stop_all
 
 REPO_ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
@@ -706,6 +706,16 @@ def run(args, report, finish, started):
         with tempfile.TemporaryDirectory(prefix="ci-fast-") as tmp:
             plan, omissions = test_plan(Path(REPO_ROOT), changed, scope, Path(tmp),
                                         not base_sha, args.memory_mib, frontend_scope)
+            # A plan that runs two trees at once gives each less wall clock.
+            # Tell the backend tests, whose layer ceilings were measured on a
+            # machine they had to themselves; the factor is in the row's env,
+            # so the report says what allowance the run got.
+            scale = ceiling_scale(plan, args.memory_mib, args.jobs)
+            if scale > 1:
+                for check in plan:
+                    if check["id"] == "backend-pure":
+                        check["env"]["CHEESE_TEST_CEILING_SCALE"] = (
+                            f"{scale:.2f}".rstrip("0").rstrip("."))
             report["not_run"].extend(omissions)
             run_plan(plan)
     for identifier in hooks:
