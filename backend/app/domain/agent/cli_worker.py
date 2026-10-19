@@ -198,7 +198,12 @@ class Handler(socketserver.BaseRequestHandler):
             os.close(descriptor)
         sys.stdin = os.fdopen(0, "r", **payload["stdio"][0])
         sys.stdout = os.fdopen(1, "w", **payload["stdio"][1])
-        sys.stderr = os.fdopen(2, "w", **payload["stdio"][2])
+        # A line at a time, as Python's own stderr is: a command's warning must
+        # reach the caller while it runs, and one a caller merges with stdout
+        # (`2>&1`) has to stay where the command wrote it. Block buffering
+        # here held every warning to the end, after stdout's last line — a
+        # launch that reads the CLI's last line as its answer got the warning.
+        sys.stderr = os.fdopen(2, "w", buffering=1, **payload["stdio"][2])
         done = threading.Event()
 
         def disconnected():
@@ -228,8 +233,10 @@ class Handler(socketserver.BaseRequestHandler):
         except BaseException:
             traceback.print_exc()
             status = 1
-        sys.stdout.flush()
+        # stderr first: a warning written without its newline is still here,
+        # and it was written before stdout's last line.
         sys.stderr.flush()
+        sys.stdout.flush()
         done.set()
         self.request.sendall(
             json.dumps({"status": status, "pid": os.getpid()}).encode() + b"\n"
