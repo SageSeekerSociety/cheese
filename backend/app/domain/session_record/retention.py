@@ -13,7 +13,9 @@ row is its only copy.
 
 A conversation that is gone loses its rows the same way, objects kept:
 `forget_gone` finds the rows of conversations that no longer exist, or belong
-to a channel a person deleted (the channel's own, its tasks', its 支线').
+to a channel a person deleted (the channel's own, its tasks', its 支线'). Where
+there is a bucket it takes only sealed rows: a run still in its row is sealed
+first, on the sealer's clock, and its row goes on a later pass.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from sqlalchemy import (
 
 from app.core.db import SessionFactory
 from app.domain.conversation.models import Conversation
+from app.domain.session_record import service
 from app.domain.session_record.models import SessionRecord
 
 logger = logging.getLogger(__name__)
@@ -79,7 +82,8 @@ async def expire(sessions: SessionFactory, *, now: datetime | None = None) -> in
             .where(SessionRecord.last_at < cutoff)
         )
         await db.commit()
-    return result.rowcount or 0
+    # A DELETE's result is a CursorResult; `execute` is typed as returning Result.
+    return result.rowcount or 0  # type: ignore[attr-defined]
 
 
 async def forget_gone(sessions: SessionFactory) -> int:
@@ -87,7 +91,10 @@ async def forget_gone(sessions: SessionFactory) -> int:
 
     Rows only, never objects: a deleted conversation's transcript stays in the
     bucket by Zhifei's ruling on #4398 (2026-10-19, "R2上的得留 transcripts非常
-    有价值 一定要留"); what goes is the app's way to read it.
+    有价值 一定要留"); what goes is the app's way to read it. With a bucket, a
+    row not yet sealed is left for the sealer, so the conversation's last
+    minutes, and whatever its sessions write after it was deleted, reach the
+    bucket too. Without one the row is the only copy there is, and goes.
     """
     deleted_room = exists().where(
         _rooms.c.id == SessionRecord.conversation_id, _rooms.c.deleted_at.is_not(None)
@@ -101,16 +108,19 @@ async def forget_gone(sessions: SessionFactory) -> int:
         )
         for part in (_tasks, _threads)
     ]
+    query = delete(SessionRecord)
+    if service.bucket() is not None:
+        query = query.where(SessionRecord.object_key.is_not(None))
     async with sessions() as db:
         result = await db.execute(
-            delete(SessionRecord).where(
+            query.where(
                 or_(
                     not_(
                         exists().where(Conversation.id == SessionRecord.conversation_id)
                     ),
                     # A deleted channel keeps its row until its cleanup is
                     # done; what was said in it, and in its tasks and 支线, is
-                    # no longer readable from the moment it is deleted
+                    # to stop being readable once it is deleted
                     # (`TopicService.delete`).
                     deleted_room,
                     *in_deleted_room,
@@ -118,4 +128,4 @@ async def forget_gone(sessions: SessionFactory) -> int:
             )
         )
         await db.commit()
-    return result.rowcount or 0
+    return result.rowcount or 0  # type: ignore[attr-defined]

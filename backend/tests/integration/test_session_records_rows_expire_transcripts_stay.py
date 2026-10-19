@@ -9,6 +9,8 @@ returning those records. A record that only exists in the database (no bucket
 configured) is its only copy, so age does not remove it.
 """
 
+import gzip
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -107,17 +109,24 @@ def test_within_thirty_days_nothing_is_touched(client, tmp_path, monkeypatch, bu
 def test_a_deleted_conversations_transcript_stays_in_the_bucket(
     client, tmp_path, monkeypatch, bucket
 ):
-    session, _work = _start(client, tmp_path, bucket)
+    session, first = _start(client, tmp_path, bucket)
     # A newer turn still in its rows when the channel is deleted.
-    session.write(_turn(str(uuid.uuid4())))
+    last = str(uuid.uuid4())
+    session.write(_turn(last))
     session.drain()
     sealed = dict(bucket.objects)
     room = session.ref.topic_id
 
     _delete_room(client, room)
+    # The sweep and the sealer run on clocks of their own, in either order.
+    _sweep(client, monkeypatch)
+    _seal(client, bucket)
     _sweep(client, monkeypatch)
 
-    assert bucket.objects == sealed
+    # What was sealed before is still there, byte for byte, and the turn that
+    # was not yet sealed reached the bucket too.
+    assert sealed.items() <= bucket.objects.items()
+    assert _works_in(bucket) == {first, last}
     assert _rows(client, room) == 0
 
 
@@ -182,6 +191,15 @@ def test_without_a_bucket_a_deleted_conversation_still_loses_its_records(
     _delete_room(client, room)
     _sweep(client, monkeypatch)
     assert _rows(client, room) == 0
+
+
+def _works_in(bucket: _Bucket) -> set[str]:
+    """The turns whose records the bucket's objects hold."""
+    return {
+        json.loads(line)["record"]["cheese"]["work_id"]
+        for body in bucket.objects.values()
+        for line in gzip.decompress(body).decode().splitlines()
+    }
 
 
 def _delete_room(client, room: uuid.UUID) -> None:
