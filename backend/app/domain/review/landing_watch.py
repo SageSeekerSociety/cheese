@@ -620,7 +620,8 @@ async def _judge_checks(
         covering = await _after(reads, project_id, sha, superseded, memo)
         if covering is not None:
             head, head_checks = covering
-            if named_runs(head_checks, superseded).conclusion in _FAILED:
+            ran = named_runs(head_checks, superseded)
+            if ran is not None and ran.conclusion in _FAILED:
                 return await _judge_batch(
                     reads,
                     sha,
