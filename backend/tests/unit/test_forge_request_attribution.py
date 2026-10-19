@@ -7,8 +7,9 @@ not one), and they bucket the raw response before ``forge_etags`` turns a 304
 into a cached 200.
 
 Only requests carrying a token this platform minted for an installation are
-attributable, and the labels stay at a registered job name (or `other`) plus
-that installation number — no path, URL or token is kept.
+attributable. The aggregate labels stay at a registered job name (or `other`)
+plus installation. The other core non-304 bucket has a fixed resource-family
+breakdown; no path, URL or token is kept.
 """
 
 import asyncio
@@ -128,6 +129,7 @@ async def test_a_raw_304_is_counted_once_before_the_etag_layer_restores_the_body
     assert second.status_code == 200  # restored from the kept answer
     assert _responses("core_rest_non_304", "other", installation) == 1
     assert _responses("core_rest_304", "other", installation) == 1
+    assert _other_endpoints(installation) == {"checks": 1}
 
 
 async def test_graphql_and_the_free_rate_limit_probe_are_not_core_rest():
@@ -187,3 +189,108 @@ def test_export_identifies_the_process_and_its_sample_window():
     started = datetime.fromisoformat(first["started_at"])
     assert started.tzinfo is not None
     assert first["uptime_seconds"] >= 0
+
+
+def _other_endpoints(installation: int) -> dict[str, int]:
+    return {
+        row["labels"]["endpoint"]: row["value"]
+        for row in metrics.registry.export()["counters"].values()
+        if row["name"] == "forge_other_core_rest_non_304_by_endpoint_total"
+        and row["labels"]["installation"] == str(installation)
+    }
+
+
+@pytest.fixture
+def endpoint_registry(monkeypatch):
+    monkeypatch.setattr(metrics, "registry", metrics.MetricsRegistry())
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "endpoint"),
+    [
+        ("GET", "/repos/o/r/pulls/17", "pull_requests"),
+        ("GET", "/repos/o/r/pulls/17/files?page=2", "pull_requests"),
+        ("GET", "/repos/o/r/commits/abc/check-runs?per_page=50", "checks"),
+        ("GET", "/repos/o/r/commits/abc/check-suites", "checks"),
+        ("GET", "/repos/o/r/commits/abc/status", "checks"),
+        ("GET", "/repos/o/r/actions/runs?head_sha=abc", "actions_runs"),
+        ("GET", "/repos/o/r/actions/runs/23/jobs?page=2", "actions_jobs"),
+        ("GET", "/repos/o/r/actions/jobs/24/logs", "actions_jobs"),
+        ("GET", "/repositories/123", "repository"),
+        ("GET", "/repos/o/r", "repository"),
+        ("GET", "/repos/o/r/git/ref/heads/task/a", "branches"),
+        ("GET", "/repos/o/r/branches/task/a", "branches"),
+        ("GET", "/repos/o/r/compare/main...task/a", "comparisons"),
+        ("GET", "/repos/o/r/contents/private/file", "files"),
+        ("GET", "/repos/o/r/git/trees/abc", "files"),
+        ("GET", "/repos/o/r/git/blobs/abc", "files"),
+        ("PATCH", "/repos/o/r/pulls/17", "non_get"),
+        ("GET", "/unrecognised/private/123", "other"),
+        ("GET", "/repositories/123/pulls/17", "pull_requests"),
+        ("GET", "/repositories/123/commits/abc/check-runs", "checks"),
+        ("GET", "/api/v3/repos/o/r/actions/runs", "actions_runs"),
+    ],
+)
+async def test_other_rest_responses_are_grouped_without_resource_identifiers(
+    method, path, endpoint, endpoint_registry
+):
+    installation = 9910010
+    auth = _auth(installation, "ghs_endpoint_group")
+    sent = []
+
+    def handle(request):
+        sent.append(request)
+        return httpx.Response(200, json={})
+
+    async with forge_client(transport=httpx.MockTransport(handle)) as client:
+        await client.request(method, "https://api.invalid" + path, headers=auth)
+
+    assert _other_endpoints(installation) == {endpoint: 1}
+    assert _responses("core_rest_non_304", "other", installation) == 1
+    assert len(sent) == 1
+
+
+async def test_endpoint_details_only_split_the_owned_nonperiodic_core_bucket(
+    endpoint_registry,
+):
+    installation = 9910011
+    auth = _auth(installation, "ghs_endpoint_scope")
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+    async with forge_client(transport=transport) as client:
+        with background_job("pr poll"):
+            await client.get("https://api.invalid/repos/o/r/pulls/17", headers=auth)
+        await client.get("https://api.invalid/repos/o/r/pulls/17")
+        await client.post("https://api.invalid/graphql", headers=auth, json={})
+        await client.get("https://api.invalid/rate_limit", headers=auth)
+        await client.get("https://api.invalid/search/issues?q=private", headers=auth)
+
+    assert _other_endpoints(installation) == {}
+    assert _responses("core_rest_non_304", "pr poll", installation) == 1
+    assert _responses("core_rest_non_304", "other", installation) == 0
+
+
+async def test_resource_ids_and_query_values_do_not_create_endpoint_labels(
+    endpoint_registry,
+):
+    installation = 9910012
+    auth = _auth(installation, "ghs_never_a_label")
+    transport = httpx.MockTransport(lambda request: httpx.Response(404, json={}))
+    async with forge_client(transport=transport) as client:
+        for number in range(30):
+            await client.get(
+                f"https://api.invalid/repos/private-owner/private-repo/pulls/{number}"
+                f"?secret=private-query-{number}",
+                headers=auth,
+            )
+
+    assert _other_endpoints(installation) == {"pull_requests": 30}
+    detail = [
+        row
+        for row in metrics.registry.export()["counters"].values()
+        if row["name"] == "forge_other_core_rest_non_304_by_endpoint_total"
+    ]
+    assert len(detail) == 1
+    assert detail[0]["labels"] == {
+        "installation": str(installation),
+        "endpoint": "pull_requests",
+    }
