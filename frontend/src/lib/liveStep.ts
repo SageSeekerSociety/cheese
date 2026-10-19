@@ -58,6 +58,7 @@ const ARG_KEY: Record<string, string> = {
   cheese_doc_edit: 'reason',
   cheese_task: 'title',
   cheese_close_task: 'conclusion',
+  cheese_task_state: 'note',
   cheese_fetch: 'url',
   cheese_decision: 'text',
   cheese_title: 'text',

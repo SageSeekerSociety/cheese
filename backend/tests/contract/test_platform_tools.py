@@ -90,6 +90,11 @@ CALLS = {
         f"/topics/{TOPIC}/teammate-tasks",
     ),
     "cheese_close_task": ({}, "POST", f"/topics/{TOPIC}/close"),
+    "cheese_task_state": (
+        {"state": "waiting", "note": "等 CI"},
+        "PUT",
+        f"/topics/{TOPIC}/task/progress",
+    ),
     "cheese_describe": (
         {"subject": "fix: x"},
         "POST",
@@ -580,3 +585,20 @@ def test_the_feedback_tool_says_when_to_use_it(machine_is_gone):
     assert "什么时候不该提" in description
     assert "用户的使用方式" in description
     assert "中途" in description
+
+
+def test_the_task_state_tool_offers_exactly_the_states_the_platform_takes():
+    """The tool's file reaches the machine on its own, so its states are a copy;
+    a state the backend refuses, or one it takes that the tool never offers,
+    shows up here instead of as a 422 in someone's task."""
+    from app.domain.agent.harness.codex.tools import platform_tools
+    from app.domain.room_task.models import TaskProgress
+    from app.domain.room_task.progress import NOTE_MAX_CHARS
+
+    tools = platform_tools()
+    schema = next(
+        t for t in tools.PLATFORM_TOOLS.schemas() if t["name"] == "cheese_task_state"
+    )
+    offered = schema["inputSchema"]["properties"]["state"]["enum"]
+    assert set(offered) == {state.value for state in TaskProgress}
+    assert tools.TASK_PROGRESS_NOTE_CHARS == NOTE_MAX_CHARS

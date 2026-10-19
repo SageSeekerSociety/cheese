@@ -1,4 +1,5 @@
-"""平台在一轮还跑着的时候，自己往这一轮里说的两句话。
+"""平台在一轮还跑着的时候，自己往这一轮里说的两句话；和做任务的会话还在跑时，
+问它任务做到哪了的那一句（`StaleProgressReminder`）。
 
 两句话问的是同一件事的两半：这一轮还在跑，而房间里看得见的东西停在原地。看得见的
 有两样——话，和步骤清单——所以是两句，不是一句。分开，是因为它们能分开停：一轮可
@@ -16,15 +17,22 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable, Collection
 from datetime import datetime
 from typing import Protocol
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.domain.agent.harness.prompt import silence_reminder, stale_checklist_reminder
+from app.domain.agent.harness.prompt import (
+    silence_reminder,
+    stale_checklist_reminder,
+    stale_progress_reminder,
+)
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.block.repositories import BlockRepository
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.reads import conversation_progress
 from app.domain.user.services import language_of
 
@@ -182,3 +190,94 @@ async def remind_stale_checklists(chat: TurnNotices, now: datetime) -> int:
             return False
 
     return sum(await asyncio.gather(*(remind(state) for state in due)))
+
+
+class ProgressNotices(Protocol):
+    """问任务状态要用到的入口：一个会话工厂，和往在跑的会话里说一句话的那条路。"""
+
+    @property
+    def session_factory(self) -> async_sessionmaker: ...
+
+    async def notify_running_turn(self, topic_id: uuid.UUID, notice: str) -> object: ...
+
+
+class StaleProgressReminder:
+    """做任务的会话还在跑，而它报的任务状态（`cheese_task_state`）停在原地超过
+    `chat_progress_reminder_after_s`，就问它一句。
+
+    判据只有两样，都不看轮次：这个会话此刻在不在跑（``running`` 给出，会话协议
+    声明的状态：哪些对话上有座位在跑），和离它上一次报状态过了多久。一轮结束不是任何一件事的边界 ——
+    在等构建的会话一轮结束了还在等。从没报过的，从这里第一次看见它在跑时算起。
+    提醒过一次，下一次再从提醒那一刻算起，所以一直不报的会话每过一个阈值听到一次。
+
+    记的两样（第一次看见它在跑、上一次提醒）只在这个进程里：换了进程最多早一个
+    阈值多问一句，问的是一件看板上看得见的事，多问一句不伤人。
+    """
+
+    def __init__(
+        self,
+        chat: ProgressNotices,
+        running: Callable[[AsyncSession], Awaitable[Collection[uuid.UUID]]],
+    ) -> None:
+        self._chat = chat
+        self._running = running
+        self._seen_running: dict[uuid.UUID, datetime] = {}
+        self._reminded: dict[uuid.UUID, datetime] = {}
+
+    async def __call__(self, now: datetime) -> int:
+        async with self._chat.session_factory() as session:
+            running = set(await self._running(session))
+            # 不在跑了的那些，下一次在跑时从头算。
+            for gone in set(self._seen_running) - running:
+                self._seen_running.pop(gone, None)
+                self._reminded.pop(gone, None)
+            if not running:
+                return 0
+            for conversation in running:
+                self._seen_running.setdefault(conversation, now)
+            tasks = (
+                await session.execute(
+                    select(
+                        Task.id,
+                        Task.progress_set_at,
+                        Task.owner_handle,
+                    ).where(Task.id.in_(running), Task.status == TaskStatus.open)
+                )
+            ).all()
+            languages = {
+                task.id: await language_of(session, task.owner_handle) for task in tasks
+            }
+        threshold = settings.chat_progress_reminder_after_s
+        due: list[tuple[uuid.UUID, int | None]] = []
+        for task in tasks:
+            said_at = task.progress_set_at
+            since = max(
+                said_at or self._seen_running[task.id],
+                self._reminded.get(task.id, said_at or self._seen_running[task.id]),
+            )
+            if (now - since).total_seconds() < threshold:
+                continue
+            minutes = (
+                None if said_at is None else int((now - said_at).total_seconds() // 60)
+            )
+            due.append((task.id, minutes))
+
+        async def remind(task_id: uuid.UUID, minutes: int | None) -> bool:
+            self._reminded[task_id] = now
+            try:
+                async with asyncio.timeout(5):
+                    delivered = await self._chat.notify_running_turn(
+                        task_id, stale_progress_reminder(minutes, languages[task_id])
+                    )
+                logger.info(
+                    "task state reminder task=%s stale_min=%s delivered=%s",
+                    task_id,
+                    minutes,
+                    delivered,
+                )
+                return delivered is True
+            except Exception:  # one task must not stop the sweep
+                logger.exception("task state reminder failed (task=%s)", task_id)
+                return False
+
+        return sum(await asyncio.gather(*(remind(t, m) for t, m in due)))

@@ -1,8 +1,6 @@
 {
   "delivered": "Done and unread",
   "mine": "My task",
-  "moving": "Work moving",
-  "red": "Says it's running, but nothing for five minutes",
   "redBounced": "Returned, nobody has come to fix it yet",
   "redUnfinished": "Stopped with an error, nothing for five minutes",
   "redWaiting": "Waiting on a teammate for too long",

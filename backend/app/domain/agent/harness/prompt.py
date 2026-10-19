@@ -42,6 +42,7 @@ from app.domain.agent.harness.notices import (
     publication_prompt,  # noqa: F401
     silence_reminder,  # noqa: F401
     stale_checklist_reminder,  # noqa: F401
+    stale_progress_reminder,  # noqa: F401
     strip_platform_notice,  # noqa: F401
 )
 from app.domain.agent.harness.opening import (
@@ -101,6 +102,19 @@ SUBAGENT_TODO_WRITE = (
 )
 
 
+#: 看板上一件任务显示的是做它的队友自己报的状态（`cheese_task_state`），平台不从
+#: 轮次推断：一轮结束时队友可能还在等构建，也可能早就做完了，只有它自己知道。
+#: 所以什么时候报、报哪一个，要在每一轮都在的规矩里说一次。
+TASK_STATE = (
+    "## 任务状态（cheese_task_state）\n"
+    "在任务里干活时，看板上这件任务显示的是你用 `cheese_task_state` 报的状态，"
+    "平台不替你推断，你这一轮结束了它也照旧。开工时报 working；起了构建、CI 或"
+    "长命令在等结果时报 waiting；没人帮忙走不下去时报 blocked，要人回答的照样用 "
+    "`cheese_ask` 问；这一步做完、递了卡或摆出来等人看时报 review。情况一变就再报"
+    "一次，note 用一句话说在做什么、在等什么或卡在哪。长时间不报，平台会提醒你。"
+)
+
+
 #: 提问也是平台工具：`cheese_ask` 的问题带按钮出现在对话里，答案下一轮带回。各
 #: harness 自带的提问工具大多已关掉，关不掉的只剩 Codex 的
 #: `request_user_input_async`（issue #1880：由模型目录决定，没有配置开关）。它
@@ -122,7 +136,7 @@ WORKING_DIRECTORY = (
     "## 工作目录的短名\n"
     "启动时平台给这个会话的每条命令一个变量 `$T`，值是这次会话的工作目录。别在命令"
     "里抄那条长路径——它是一串 UUID，每条命令都要重打一遍；写成 "
-    "`cd \"${T:?T is not set}\" && …`。带上 `:?`：`cd \"\"` 是成功且不动地方，`T` 没"
+    '`cd "${T:?T is not set}" && …`。带上 `:?`：`cd ""` 是成功且不动地方，`T` 没'
     "带到时命令会在错误的目录里照常跑完。`$T` 在每次会话启动时按当时的位置重新给，换"
     "机器、重建工作区之后它指向的都是新的那一个。"
 )
@@ -313,6 +327,7 @@ def build_system_prompt(
         ALWAYS_PUSH,
         *([WORKING_DIRECTORY] if working_directory else []),
         TODO_WRITE,
+        TASK_STATE,
         ASK_ONLY_CHEESE_ASK,
         WRITING,
         DOC_SKILL,

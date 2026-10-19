@@ -97,7 +97,7 @@ async def _notices_after(chat: ChatService, user_id: int, after: int | None) -> 
 
 async def _waiting(chat: ChatService, user_id: int, handle: str) -> dict:
     async with chat.session_factory() as db:
-        items = await all_waiting(db, chat, handle=handle, user_id=user_id)
+        items = await all_waiting(db, handle=handle, user_id=user_id)
     return {"kind": "waiting", "count": len(items)}
 
 

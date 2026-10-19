@@ -57,6 +57,7 @@
   "cheeseSync": "同步任务代码",
   "cheeseRecover": "恢复任务备份",
   "cheeseCloseTask": "关闭任务",
+  "cheeseTaskState": "报任务状态",
   "cheesePushFix": "更新任务 PR",
   "cheeseFetch": "读取网页",
   "cheeseDocsSearch": "检索文档",

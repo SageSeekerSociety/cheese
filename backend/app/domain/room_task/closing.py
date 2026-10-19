@@ -81,7 +81,7 @@ QUEUED_FOR = timedelta(hours=2)
 
 # The facts `unfinished` reads, as bare tables: the turn intervals belong to
 # the agent domain and the instructions to the delivery domain, and both of
-# those import this module (`agent.liveness` reads `threads` the same way).
+# those import this module.
 _turns = table(
     "agent_turns",
     column("id", Uuid),
@@ -148,8 +148,7 @@ async def unfinished_turns(
     the close stops, and None for a message still waiting for a turn that
     never started.
 
-    A turn counts from the moment its prompt reached the session
-    (`agent.liveness.running_tasks` asks the same of the intervals) until it
+    A turn counts from the moment its prompt reached the session until it
     stops; one a person began counts from the moment it is taken on, so
     their message waiting for the session behind another turn is not lost to
     a close. It counts while it has said something within the orphan sweep's

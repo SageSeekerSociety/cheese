@@ -27,6 +27,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.project.address import Numbered, take_number
 from app.domain.room_task.models import (
     Task,
+    TaskProgress,
     TaskStatus,
     TaskTitleSource,
     people_of,
@@ -58,6 +59,7 @@ class ListedTask:
     title: str
     title_source: TaskTitleSource
     status: TaskStatus
+    progress_state: TaskProgress | None
     owner_handle: str | None
     reporter_handle: str | None
     contributor_handles: tuple[str, ...]
@@ -163,6 +165,7 @@ class TaskRepository:
                 Task.title,
                 Task.title_source,
                 Task.status,
+                Task.progress_state,
                 Task.owner_handle,
                 Task.reporter_handle,
                 Task.contributor_handles,
@@ -183,6 +186,7 @@ class TaskRepository:
                 title=row.title,
                 title_source=row.title_source,
                 status=row.status,
+                progress_state=row.progress_state,
                 owner_handle=row.owner_handle,
                 reporter_handle=row.reporter_handle,
                 contributor_handles=tuple(row.contributor_handles or ()),
