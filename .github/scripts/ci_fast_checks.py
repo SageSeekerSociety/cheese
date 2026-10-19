@@ -206,12 +206,13 @@ def ceiling_scale(plan, memory_mib, jobs):
     that had the machine to itself. When two trees run together, every test in
     the backend still takes the same number of CPU cycles but gets
     ``demand / cores`` times the wall clock, and the pure layer's 10 s ceiling
-    would fail it for the machine sharing rather than for a wait (measured:
-    four workers of the tree guards on a four-core box pushed one test to
-    17.9 s). This returns the factor the backend run multiplies its ceilings by
-    — only when the plan really has another tree to share with, and only above
-    one. Full CI never asks: it runs one tree at a time and keeps the strict
-    numbers.
+    would fail it for the machine sharing rather than for a wait. The factor
+    covers a second tree's demand, not the backend pool itself: a dedicated CI
+    runner ran the whole pure selection at ``-n 4`` with no test over its
+    ceiling, while an overloaded shared box pushed tree guards to 17.7 s. This
+    returns the factor the backend run multiplies its ceilings by — only when
+    the plan really has another tree to share with, and only above one. Full
+    CI never asks: it runs one tree at a time and keeps the strict numbers.
     """
     if jobs <= 1 or len({str(check["cwd"]) for check in plan}) <= 1:
         return 1.0

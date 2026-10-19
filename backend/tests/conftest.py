@@ -2298,6 +2298,22 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         )
 
 
+def _over_ceiling(layer: str, took: float, ceiling: float, scale: float) -> str:
+    """The failure text for a test that outlived its layer's ceiling.
+
+    Names the effective ceiling, and when the run was given a contention
+    factor, the base number and the factor too: a reader who sees 40 s has to
+    know it is 10 s x 4, not a new limit.
+    """
+    allowance = (f"{ceiling:g} s" if scale == 1 else
+                 f"{ceiling:g} s ({_LAYER_CEILING_S[layer]:g} s x {scale:g} for"
+                 " CHEESE_TEST_CEILING_SCALE)")
+    return (f"took {took:.1f} s with setup, over the {layer} layer's {allowance}"
+            " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
+            " for and give it a shorter timer or interval rather than adding it to"
+            " slow_tests.txt.")
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
@@ -2314,15 +2330,7 @@ def pytest_runtest_makereport(
     took = item.stash.get(_SETUP_S, 0.0) + call.duration
     if took > ceiling:
         report.outcome = "failed"
-        allowance = (f"{ceiling:g} s" if scale == 1 else
-                     f"{ceiling:g} s ({_LAYER_CEILING_S[layer]:g} s x {scale:g} for"
-                     " CHEESE_TEST_CEILING_SCALE)")
-        report.longrepr = (
-            f"took {took:.1f} s with setup, over the {layer} layer's {allowance}"
-            " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
-            " for and give it a shorter timer or interval rather than adding it to"
-            " slow_tests.txt."
-        )
+        report.longrepr = _over_ceiling(layer, took, ceiling, scale)
     return report
 
 

@@ -1220,11 +1220,10 @@ sys.exit(0)
         self.assertIn("pure", row["command"])
         self.assertIn("ci_fast_pytest_plugin", row["command"])
 
+    @unittest.skipIf(_cores() < 2, "a one-core box starts no parallel pool")
     def test_quick_tier_tells_the_backend_about_the_tree_it_shares(self):
         # Two trees at once: the backend run gets pytest workers and is told
-        # the wall clock the sharing costs, in the env the report records. A
-        # serial tier (or a backend-only plan) keeps the strict ceilings, which
-        # the unit test above checks directly.
+        # the wall clock the sharing costs, in the env the report records.
         self.write_hooks()
         self.commit_file("backend/app/base.py")
         git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -1237,8 +1236,15 @@ sys.exit(0)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         row = next(r for r in self.report()["ran"] if r["id"] == "backend-pure")
         self.assertIn("-n", row["command"])
-        self.assertIn("CHEESE_TEST_CEILING_SCALE", row["env"])
-        self.assertGreater(float(row["env"]["CHEESE_TEST_CEILING_SCALE"]), 1)
+        # The allowance exists only when the tier's demand outgrows the cores;
+        # a many-core box legitimately writes no factor.
+        from ci_fast_checks import pytest_workers, vitest_workers
+        expected = max(1.0, (pytest_workers(9216) + vitest_workers(9216) + 1) / _cores())
+        if expected > 1:
+            self.assertIn("CHEESE_TEST_CEILING_SCALE", row["env"])
+            self.assertEqual(float(row["env"]["CHEESE_TEST_CEILING_SCALE"]), expected)
+        else:
+            self.assertNotIn("CHEESE_TEST_CEILING_SCALE", row["env"])
 
     def test_quick_backend_does_not_judge_what_the_tier_cannot_run(self):
         # The pinned Claude Code/Codex/pi builds come from the environment; a
@@ -2148,6 +2154,7 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(pytest_workers(3072), min(2, _cores()))
         self.assertEqual(pytest_workers(1024 * 1024), _cores())
 
+    @unittest.skipIf(_cores() < 2, "a one-core box starts no parallel pool")
     def test_backend_plan_uses_workers_and_scales_when_two_trees_run(self):
         from ci_fast_checks import (ceiling_scale, pytest_workers, test_plan,
                                     vitest_workers)
@@ -2165,11 +2172,11 @@ class SelectionEvidenceTest(unittest.TestCase):
         workers = pytest_workers(9216)
         self.assertIn("-n", backend["command"])
         self.assertEqual(backend["command"][backend["command"].index("-n") + 1], str(workers))
-        # Two trees and jobs=2: the backend is told the wall clock it loses,
-        # and only then. The factor is the tier's own demand over the cores.
+        # Two trees and jobs=2: the backend is told the wall clock it loses.
+        # The factor is the tier's own demand over the cores; on a box with
+        # more cores than that demand it is 1 and nothing is written.
         expected = max(1.0, (workers + vitest_workers(9216) + 1) / _cores())
         self.assertEqual(ceiling_scale(plan, 9216, 2), expected)
-        self.assertGreaterEqual(expected, 1.0)
         # One tree at a time keeps the strict ceilings, however many jobs.
         self.assertEqual(ceiling_scale([backend], 9216, 2), 1.0)
         self.assertEqual(ceiling_scale(plan, 9216, 1), 1.0)

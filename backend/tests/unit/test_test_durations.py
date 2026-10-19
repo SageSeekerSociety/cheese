@@ -120,6 +120,53 @@ def test_the_layer_ceiling_scale_comes_from_the_environment(monkeypatch) -> None
             _ceiling_scale()
 
 
+def test_the_scale_reaches_the_item_not_only_the_parser(monkeypatch) -> None:
+    """The parsed factor must be applied at collection, not just accepted.
+
+    Without this the multiplication can be deleted and every test still runs
+    on the strict single-process ceiling — the exact loss the scale exists to
+    prevent, with a green self-test.
+    """
+    from tests import conftest
+
+    class Item:
+        nodeid = "tests/unit/test_x.py::test_a"
+        path = Path("tests/unit/test_x.py")
+        fixturenames = ()
+
+        def __init__(self):
+            self.stash = {}
+            self.markers = []
+
+        def iter_markers(self):
+            return iter(())
+
+        def add_marker(self, marker):
+            self.markers.append(marker)
+
+        def get_closest_marker(self, name):
+            return None
+
+    monkeypatch.setattr(conftest, "_slow_baseline", lambda: frozenset())
+    monkeypatch.setattr(conftest, "_quarantine", lambda: {})
+    monkeypatch.setattr(conftest, "_layer_of", lambda item: "pure")
+    monkeypatch.setattr(conftest, "measures_query_counts", lambda path: False)
+    monkeypatch.setenv("CHEESE_TEST_CEILING_SCALE", "2")
+    item = Item()
+    conftest.pytest_collection_modifyitems([item])
+    assert item.stash[conftest._CEILING] == ("pure", 20, 2)
+
+
+def test_the_over_ceiling_text_names_the_effective_allowance() -> None:
+    from tests.conftest import _over_ceiling
+    scaled = _over_ceiling("pure", 25.0, 20.0, 2)
+    assert "25.0 s with setup" in scaled
+    assert "(10 s x 2 for CHEESE_TEST_CEILING_SCALE)" in scaled
+    strict = _over_ceiling("pure", 25.0, 10.0, 1)
+    assert "10 s" in strict
+    assert "CHEESE_TEST_CEILING_SCALE" not in strict
+
+
 def test_the_report_runs_slowest_first_and_flags_what_a_fix_has_reached() -> None:
     first, second, *never = test_durations.listed_slow_tests()
     report = test_durations.slow_report([_run({first: 2.0, second: 8.0})])
