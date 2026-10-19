@@ -31,6 +31,8 @@
   "cardFiled": "“{task}” submitted, waiting for {reviewer} to review",
   "cardRedescribed": "{actor} edited the review description (synced to the PR)",
   "cardRedescribedDetail": "Title before: {beforeSubject}\nTitle after: {afterSubject}\n\nBody before: {beforeBody}\n\nBody after: {afterBody}",
+  "cardRedelivered": "{actor} replaced the deliverable under review; earlier approvals were cleared, please take another look",
+  "cardRedeliveredDetail": "Before: {before}\nAfter: {after}",
   "cardRejectedClosed": "{who} sent the changes back; the original task is closed",
   "cardRejectedFixing": "{who} sent the changes back; they are being revised",
   "cardVoided": "{actor} voided the review",

@@ -95,6 +95,11 @@ CALLS = {
         "POST",
         f"/topics/{TOPIC}/accept-card/describe",
     ),
+    "cheese_redeliver": (
+        {"deliver_url": "https://site.example/r"},
+        "POST",
+        f"/topics/{TOPIC}/accept-card/redeliver",
+    ),
     "cheese_ready": ({}, "POST", f"/topics/{TOPIC}/ready"),
     "cheese_title": ({"text": "推荐原型"}, "POST", f"/topics/{TOPIC}/title"),
     "cheese_notify": (
@@ -125,7 +130,7 @@ CALLS = {
             "title": "工具清单短了一截",
             "kind": "bug",
             "visibility": "public",
-            "user_said": "用户没有就这个问题说过话",
+            "user_said_absent": True,
         },
         "POST",
         f"/topics/{TOPIC}/feedback-proposals",

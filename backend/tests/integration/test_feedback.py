@@ -190,7 +190,7 @@ def _propose(client, topic: str, token: str, **body) -> dict:
     payload = {
         "title": "沙箱里 make 装不上依赖",
         "what_happened": "make 停在 could not resolve host",
-        "user_said": "用户没有就这个问题说过话，以上是芝士自己观察到的",
+        **({} if "user_said" in body else {"user_said_absent": True}),
         **body,
     }
     return client.post(
@@ -1512,6 +1512,56 @@ def test_proposal_endpoints_need_an_identity(client):
         json={"title": "x", "user_said": "y"},
     )
     assert r.status_code == 401
+
+
+def test_a_card_says_whether_the_user_said_anything(client):
+    """FB-100: the card tells a quote from "the user never spoke about this" by
+    a field, so it never shows an agreed sentence as the user's own words."""
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+
+    assert _propose(client, topic, token).status_code == 200
+    quoted = _propose(
+        client,
+        topic,
+        token,
+        title="另一件事",
+        what_happened="创建了三次都失败",
+        user_said="开台机器？",
+    )
+    assert quoted.status_code == 200, quoted.text
+
+    live = client.get(
+        f"/topics/{topic}/feedback-proposals", headers=session_auth_headers(REPORTER)
+    ).json()["data"]
+    said = {c["payload"]["title"]: c["payload"] for c in live}
+    assert said["沙箱里 make 装不上依赖"]["user_said_absent"] is True
+    assert said["沙箱里 make 装不上依赖"]["user_said"] is None
+    assert said["另一件事"]["user_said_absent"] is False
+    assert said["另一件事"]["user_said"] == "开台机器？"
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        {},
+        {"user_said": "开台机器？", "user_said_absent": True},
+        {"user_said_absent": False},
+    ],
+    ids=["neither", "both", "absent-false-without-quote"],
+)
+def test_a_proposal_must_say_exactly_one_thing_about_what_the_user_said(client, said):
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+    r = client.post(
+        f"/topics/{topic}/feedback-proposals",
+        json={"title": "沙箱里 make 装不上依赖", **said},
+        headers={"X-Cheese-Token": token},
+    )
+    assert r.status_code == 400, r.text
+    assert "exactly one of user_said" in r.text
 
 
 def test_a_proposal_lands_as_a_card_that_a_person_then_sends(client):
@@ -3556,7 +3606,7 @@ async def test_two_sends_of_one_card_at_once_file_one_report(
         json={
             "title": title,
             "what_happened": "make 停在 could not resolve host",
-            "user_said": "用户没有就这个问题说过话，以上是芝士自己观察到的",
+            "user_said_absent": True,
         },
         headers={"X-Cheese-Token": token},
     )

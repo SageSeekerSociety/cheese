@@ -17,15 +17,12 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
-    Column,
     DateTime,
     Enum,
     ForeignKey,
     Integer,
     String,
-    Table,
     UniqueConstraint,
-    Uuid,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -110,29 +107,6 @@ class DeviceAuthCodeRow(Base):
     device_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
-    )
-
-
-# Schema metadata only: the previous deployment may still write these tables.
-# Runtime code no longer maps or queries them; the following release drops them.
-for _name, _target, _type in (
-    ("device_project", "project_id", Uuid),
-    ("device_team", "team_id", BigInteger),
-):
-    Table(
-        _name,
-        Base.metadata,
-        Column("id", Uuid, primary_key=True),
-        Column(
-            "device_id",
-            ForeignKey("device.device_id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-        ),
-        Column(_target, _type, nullable=False, index=True),
-        Column("created_at", DateTime(timezone=True), nullable=False),
-        Column("updated_at", DateTime(timezone=True), nullable=False),
-        UniqueConstraint("device_id", _target, name=f"uq_{_name}"),
     )
 
 

@@ -14,7 +14,7 @@ import { COMPUTE_DEVICES } from './catalogFixtures'
 
 const [LAB, HOME] = COMPUTE_DEVICES
 
-/** 三种规格：平台的标准沙箱（没选时用它）、虚拟机沙箱、成员自己的设备。 */
+/** Standard and VM sandboxes supplied by the platform, plus the team's enrolled devices. */
 export const MARKET_NODES: MarketNodes = {
   nodes: [
     {
@@ -36,13 +36,13 @@ export const MARKET_NODES: MarketNodes = {
       description: '一整台虚拟机给一位 AI 队友：能跑 Docker、KVM、装内核模块。',
     },
     {
-      id: 'devices_of',
-      label: '自己的设备',
-      kind: 'devices_of',
+      id: 'team_devices',
+      label: '团队设备',
+      kind: 'team_devices',
       online: LAB.online || HOME.online,
       current: false,
       detail: `${LAB.name} 在线`,
-      description: '沙箱放在项目成员自己接入的电脑上。',
+      description: '环境放在团队接入的设备上；由团队管理员在「设备」页接入。',
     },
   ],
   active_turns_total: 7,
@@ -99,11 +99,11 @@ export const MARKET_POOLS: MarketPools = {
     },
     {
       kind: 'compute',
-      id: 'devices_of',
-      label: '自己的设备',
+      id: 'team_devices',
+      label: '团队设备',
       tier: 'byo',
       price: '不收费',
-      description: '沙箱放在项目成员自己接入的电脑上。',
+      description: '环境放在团队接入的设备上；由团队管理员在「设备」页接入。',
       available: true,
       default: false,
     },

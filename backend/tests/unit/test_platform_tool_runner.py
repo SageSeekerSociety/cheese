@@ -591,6 +591,20 @@ def test_a_room_tool_refuses_without_a_room():
     assert host.requests == []
 
 
+def test_a_proposal_whose_user_said_nothing_says_so_instead_of_quoting():
+    """「用户没说过话」is a flag the backend can tell apart from the user's
+    words, never a sentence sent in the quote's place."""
+    host = Host()
+    run(
+        "cheese_feedback_propose",
+        {"title": "t", "kind": "bug", "visibility": "public", "user_said_absent": True},
+        host,
+    )
+    body = host.requests[0]["body"]
+    assert body["user_said_absent"] is True
+    assert "user_said" not in body
+
+
 # ---------- the docs ----------
 
 

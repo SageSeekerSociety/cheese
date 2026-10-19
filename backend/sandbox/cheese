@@ -185,8 +185,9 @@ FEEDBACK_DESCRIPTION = (
     "查到答案的事。**先确认这不是用户的使用方式问题**——这条卡问的就是"
     "「平台坏了」和「用户不会用」之间的那句话。\n"
     "\n"
-    "写之前先看 `user_said`:它是必填的,要么引用用户原话,要么照抄那句"
-    "「用户没有就这个问题说过话」。不许猜用户怎么想。\n"
+    "写之前先想清楚用户说过什么:用户就这个问题说过话,就在 `user_said` 里引用原话;"
+    "没说过,就不填 `user_said`,改填 `user_said_absent: true`。两者必须且只能填一个。"
+    "不许猜用户怎么想。\n"
     "\n"
     "同一段对话每天最多两张卡,同一个问题只问一次(指纹去重,人点过「不用」"
     "的不会再问)。超了平台会拒绝,不要重试。\n"
@@ -252,8 +253,8 @@ _FEEDBACK_STATUS = {
 
 ENVIRONMENT_SPEC_DESCRIPTION = (
     "沙箱规格：standard 是平台的标准沙箱；vm 是一整台虚拟机做的沙箱，有 sudo，"
-    "能跑 Docker、要 KVM 的任务和内核模块，准备要几分钟；devices_of:<编号> "
-    "是那个人自己接入的电脑上的沙箱。不填就列出这个项目能选的规格和你现在的环境。"
+    "能跑 Docker、要 KVM 的任务和内核模块，准备要几分钟；team_devices "
+    "是团队接入的设备上的沙箱。不填就列出这个项目能选的规格和你现在的环境。"
 )
 
 
@@ -710,6 +711,17 @@ PLATFORM_TOOLS = ToolTable(
             [],
         ),
         _tool(
+            "cheese_redeliver",
+            "换掉当前任务待审阅那张验收卡交出去的文件或地址，卡和 PR 不变；之前的批准会"
+            "清掉，验收人会收到通知。只换交付物：标题和正文用 cheese_describe，代码的新"
+            "提交用 cheese push-fix。卡已经有了结果的，重新递卡。",
+            {
+                "deliver": _text("换成的文件，任务工作目录里的相对路径，当场留快照"),
+                "deliver_url": _text("换成的地址"),
+            },
+            [],
+        ),
+        _tool(
             "cheese_ready",
             "把当前任务已有的 draft PR 标记为可评审；"
             "请人验收用 cheese_accept_request。",
@@ -863,7 +875,12 @@ PLATFORM_TOOLS = ToolTable(
                     "description": "private 只有管理员、提交者和提出它时"
                     "对话里的人看得见",
                 },
-                "user_said": _text("引用用户原话；用户没说过就照抄那句规定好的"),
+                "user_said": _text("引用用户原话；用户没说过就不填，改填 user_said_absent"),
+                "user_said_absent": {
+                    "type": "boolean",
+                    "description": "用户没有就这个问题说过话时填 true，"
+                    "这时不填 user_said",
+                },
                 "why": {"type": "string"},
                 "what_happened": {"type": "string"},
                 "expectation": {"type": "string"},
@@ -875,7 +892,7 @@ PLATFORM_TOOLS = ToolTable(
                 "environment": {"type": "string"},
                 "tags": _text("逗号分隔"),
             },
-            ["title", "kind", "visibility", "user_said"],
+            ["title", "kind", "visibility"],
         ),
         _tool(
             "cheese_feedback_list",
@@ -1522,6 +1539,17 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         if not body:
             raise ValueError("describe 至少要给 subject 或 body")
         return {"method": "POST", "path": here + "/accept-card/describe", "body": body}
+    if tool == "cheese_redeliver":
+        body = _given(args, "deliver", "deliver_url")
+        if not body:
+            raise ValueError("redeliver 要给 deliver 或 deliver_url")
+        if "deliver" in body:
+            body["deliver"] = _task_relative(body["deliver"], topic)
+        return {
+            "method": "POST",
+            "path": here + "/accept-card/redeliver",
+            "body": body,
+        }
     if tool == "cheese_ready":
         return {"method": "POST", "path": here + "/ready"}
     if tool == "cheese_doc_list":
@@ -1626,6 +1654,8 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "user_said",
             ),
         }
+        if args.get("user_said_absent") is True:
+            body["user_said_absent"] = True
         if args.get("tags"):
             body["tags"] = [
                 value.strip() for value in args["tags"].split(",") if value.strip()
@@ -3441,6 +3471,15 @@ _SAY = {
     "cheese_describe": lambda a, d, e: (
         "验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："
         f"{(d or {}).get('change_subject') or '（空）'}"
+    ),
+    "cheese_redeliver": lambda a, d, e: (
+        "验收卡交出去的那一份已换成 "
+        + (
+            ((d or {}).get("deliverable") or {}).get("filename")
+            or ((d or {}).get("deliverable") or {}).get("url")
+            or "（空）"
+        )
+        + "，之前的批准已清掉，验收人收到了通知。"
     ),
     "cheese_ready": lambda a, d, e: (
         f"PR #{d.get('pr_number')} 已从 draft 翻成 ready：{d.get('pr_url') or ''}"

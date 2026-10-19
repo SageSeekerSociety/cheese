@@ -26,7 +26,7 @@ function mount(current: Environment | null = { kind: 'sandbox', spec: 'standard'
       specs: [
         { spec: 'standard', label: '标准' },
         { spec: 'vm', label: '虚拟机' },
-        { spec: 'devices_of:7', label: '张三的设备' },
+        { spec: 'team_devices', label: '团队设备' },
       ],
     },
     global: { plugins: [createVuetify({ components, directives })] },
@@ -42,7 +42,7 @@ beforeEach(() => {
 })
 
 describe('环境选择', () => {
-  it('指定电脑只能选自己的：别人的电脑点不了，选自己的那台就发它', async () => {
+  it('only allows choosing a device the reader administers and emits that choice', async () => {
     const { emitted } = mount()
     await fireEvent.update(radio('env-self_hosted'))
     expect(radio('env-device-theirs').disabled).toBe(true)
@@ -53,16 +53,16 @@ describe('环境选择', () => {
     expect(emitted().select).toEqual([[{ kind: 'self_hosted', device_id: 'mine' }]])
   })
 
-  it('没有自己的电脑就不能指定电脑', () => {
+  it('disables whole-machine execution when the reader administers no devices', () => {
     mount({ kind: 'sandbox', spec: 'standard' }, [DEVICES[1]])
     expect(radio('env-self_hosted').disabled).toBe(true)
   })
 
   it('沙箱的规格是接口给的那几种，选哪种就发哪种', async () => {
     const { emitted } = mount()
-    await fireEvent.update(radio('env-spec-devices_of:7'))
+    await fireEvent.update(radio('env-spec-team_devices'))
     await fireEvent.click(submit())
-    expect(emitted().select).toEqual([[{ kind: 'sandbox', spec: 'devices_of:7' }]])
+    expect(emitted().select).toEqual([[{ kind: 'sandbox', spec: 'team_devices' }]])
   })
 
   it('取消：只说取消，不发选择', async () => {

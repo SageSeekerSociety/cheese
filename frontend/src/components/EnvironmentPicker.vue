@@ -1,8 +1,7 @@
 <script setup lang="ts">
-// 选一个执行环境，二选一：沙箱（默认），选它要哪种机器（规格，一列对等的选项：标准、
-// 虚拟机、某人的设备……，名字和有哪些都由接口的 `specs` 给）；或者指定我的机器（「我一定要用那
-// 台」：直接在那台电脑上跑，不隔离）。沙箱在哪台机器上是平台的事，不显示；指定机器只
-// 能选自己登记的那几台，别人的列出来但点不了。只发「选了什么」，存到哪由用它的地方定。
+// Choose a sandbox spec from the API or run directly on one whole machine.
+// Sandbox placement is hidden; whole-machine execution requires that device's
+// team administrator. The caller decides where to save the emitted choice.
 import type { Environment, EnvironmentDevice, SandboxSpec } from '../types/compute'
 
 import { computed, ref, useId, watch } from 'vue'

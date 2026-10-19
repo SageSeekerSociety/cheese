@@ -302,24 +302,38 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     id: 'environment-picker',
     title: 'EnvironmentPicker',
     about:
-      '选一个执行环境：沙箱（选规格：标准、虚拟机……），或者指定我的电脑。沙箱在哪台机器上不显示；只能指定自己登记的电脑。',
+      '选一个执行环境：沙箱（选规格：标准、虚拟机、团队设备），或者指定一台设备。沙箱在哪台机器上不显示；只有设备所在团队的管理员能指定设备。',
     file: 'src/components/EnvironmentPicker.vue',
     component: EnvironmentPicker,
     needs: UI,
     states: [
       {
         name: '标准沙箱',
-        note: '默认选中沙箱 · 标准；两台登记的电脑，一台是读者自己的（离线），一台是别人的。',
+        note: '默认选中沙箱 · 标准；团队管理员可以指定两台团队设备，其中一台离线。',
         props: {
           current: { kind: 'sandbox', spec: 'standard' },
-          devices: COMPUTE_DEVICES,
+          devices: COMPUTE_DEVICES.map((device) => ({ ...device, owned: true })),
           specs: [
             { spec: 'standard', label: '标准' },
             { spec: 'vm', label: '虚拟机' },
-            { spec: 'devices_of:7', label: '张三的设备' },
+            { spec: 'team_devices', label: '团队设备' },
           ],
         },
         expect: '只看得到自己的工作目录和本项目的包缓存',
+      },
+      {
+        name: '普通成员',
+        note: '当前队友已在指定设备上运行；普通成员可以查看，不能指定整台设备。',
+        props: {
+          current: { kind: 'self_hosted', device_id: COMPUTE_DEVICES[0].device_id },
+          devices: COMPUTE_DEVICES.map((device) => ({ ...device, owned: false })),
+          specs: [
+            { spec: 'standard', label: '标准' },
+            { spec: 'vm', label: '虚拟机' },
+            { spec: 'team_devices', label: '团队设备' },
+          ],
+        },
+        expect: '只有设备所在团队的管理员能指定',
       },
     ],
   },

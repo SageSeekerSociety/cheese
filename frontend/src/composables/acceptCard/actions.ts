@@ -112,7 +112,7 @@ export function useAcceptCardActions(host: AcceptCardActionsHost) {
     if (!card) return
     acceptBusy.value = true
     try {
-      const updated = await acceptCard(card.id, me.value, card.merge_state.head_sha)
+      const updated = await acceptCard(card.id, me.value, card.merge_state.head_sha, card.deliverable?.revision ?? null)
       if (updated.status === 'conflict') {
         store.error = t('topic.accept.conflict', { agent: store.agentName })
       }

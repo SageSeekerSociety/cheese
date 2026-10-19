@@ -364,8 +364,11 @@ def accept(tok, task, me):
         # not shown one for yet may refuse this accept — the re-read and second attempt below are
         # what pick up the head it has written by then.
         head = shown_head(card, f["pr"])
+        # A card that hands over a file or an address also says which version of it is on the
+        # card; the accept carries it back, the same way it carries the head.
+        revision = (card.get("deliverable") or {}).get("revision")
         ok, detail = post(tok, f"/accept-cards/{card['id']}/accept",
-                          {"decided_by": me, "head_sha": head})
+                          {"decided_by": me, "head_sha": head, "deliverable_revision": revision})
         if ok:
             return f"已采纳 head {head[:8]}"
         if NEVER_SHOWN not in detail or attempt:
@@ -619,7 +622,8 @@ def self_test():
         globals()["gh"], globals()["post"] = fresh_gh, keep_post
         said = accept("tok", {"id": "t", "number": 1, "card": {"id": "c"}}, "me")
         want = [("/accept-cards/c/approve", {"approver_handle": "me"}),
-                ("/accept-cards/c/accept", {"decided_by": "me", "head_sha": H})]
+                ("/accept-cards/c/accept", {"decided_by": "me", "head_sha": H,
+                                             "deliverable_revision": None})]
         if calls != want or not said.startswith("已采纳 head "):
             failures.append(f"卡上还没有版本时也要走到 approve 和 accept: {said!r} {calls!r}")
     finally:

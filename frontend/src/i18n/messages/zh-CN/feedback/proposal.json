@@ -9,6 +9,7 @@
   "submit": "提交反馈",
   "submitted": "已提交",
   "userSaid": "你当时说的",
+  "userSaidNothing": "用户没有就此说过话（{name} 主动发现）",
   "view": "查看这条反馈",
   "why": "判断依据（为什么这不是你的使用方式）"
 }

@@ -2195,7 +2195,8 @@ def _self_test_adopt():
          [p for p, _ in accepted_writes], ["/accept-cards/c1/approve", "/accept-cards/c1/accept"]),
         ("自动采纳：accept 带上验收人和判据判的那个 head",
          [b for _, b in accepted_writes],
-         [{"approver_handle": "me"}, {"decided_by": "me", "head_sha": H}]),
+         [{"approver_handle": "me"},
+          {"decided_by": "me", "head_sha": H, "deliverable_revision": None}]),
         ("自动采纳：采纳了就说采纳，清单里带着 orchestrator_autoaccept 那一行结论",
          ("已采纳 head " + H[:8]) in accepted and verdict in accepted, True),
         # 高风险路径是判据自己在判的（deploy_reasons → high_risk），不是这里另加的一道闸：
