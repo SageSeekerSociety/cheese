@@ -11,6 +11,7 @@ that already named ``preparation`` for one of them still resolves.
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -123,6 +124,11 @@ class TurnContext:
     # not be read again — but kept separate up to that point, because every
     # other question asked of `pending_ids` is about who spoke.
     notice_ids: list[uuid.UUID]
+    # Where this seat's reading stands once this turn finishes cleanly: the
+    # timeline position of the newest block the prompt carried. None when it
+    # carried none. A turn that fails leaves it alone, exactly as it leaves
+    # `consumed_turn` alone.
+    read_through: tuple[datetime, uuid.UUID] | None
     turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None

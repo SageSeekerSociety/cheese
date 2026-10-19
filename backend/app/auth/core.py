@@ -68,10 +68,6 @@ class AuthUserInfo:
     def has_system_role(self, role: SystemRole) -> bool:
         return role in self.system_roles
 
-    def has_domain_role(self, domain: str, resource_id: int, role: Role) -> bool:
-        key = f"{domain}:{resource_id}"
-        return role in self.domain_roles.get(key, set())
-
     def add_domain_role(self, domain: str, resource_id: int, role: Role) -> None:
         key = f"{domain}:{resource_id}"
         if key not in self.domain_roles:
@@ -101,9 +97,6 @@ class RoleHierarchy:
                     result.add(parent)
                     to_check.append(parent)
         return result
-
-    def is_parent_or_equal(self, role: Role, target: Role) -> bool:
-        return target in self.get_all_roles(role)
 
 
 ROLE_HIERARCHY = RoleHierarchy()

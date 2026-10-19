@@ -140,6 +140,21 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
         expect: '3f2a-11cd-90b8',
         expectSelector: '.setup__codes',
       },
+      {
+        get name() {
+          return t('catalog.securityView.s10.name')
+        },
+        get note() {
+          return t('catalog.securityView.s10.note')
+        },
+        props: {
+          showCloseAccount: true,
+          closeError:
+            '这个账号是团队「数据结构课题组」唯一的所有者，这些团队里还有其他成员，或者别人还能进来（有待接受的邀请，或加入不需要审批）。先把所有权转让给其他成员，或取消邀请并开启「加入需要审批」，才能注销',
+        },
+        expect: '先把所有权转让给其他成员',
+        expectSelector: '#security-close-username',
+      },
     ],
   },
   {
@@ -151,7 +166,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
     file: 'src/views/user/settings/ModelConnectionsView.vue',
     component: ModelConnectionsView,
     needs: UI_T,
-    // 「解除」的确认框和「使用自定义模型服务」的表单都画在 body 上。
+    // 「解除」的确认框和添加、改名的表单都画在 body 上。
     teleport: true,
     args: {
       loading: false,
@@ -171,7 +186,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.modelConnectionsView.s1.note')
         },
         props: { connections: [], held: [] },
-        expect: '暂无模型连接',
+        expect: '暂无设备上的登录',
         expectSelector: '.settings-empty',
       },
       {
@@ -198,6 +213,27 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
         },
         expect: '检查未通过',
         expectSelector: '.mc-state--failed',
+      },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s4.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s4.note')
+        },
+        props: { connections: MODEL_CONNECTIONS.filter((c) => c.device_id === 'dev-desk'), held: [] },
+        expect: '实验室的 Pro',
+      },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s5.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s5.note')
+        },
+        props: {},
+        expect: '保存在账号里',
+        expectSelector: '[data-connection="held-glm"]',
       },
     ],
   },

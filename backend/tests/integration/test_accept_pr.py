@@ -283,6 +283,7 @@ class FakeGitHubPrClient:
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
+        self.task_metadata_batches: list[tuple[int, ...]] = []
         self.status_tokens: list[str] = []
         self.head_sha_calls: list[int] = []
         self.check_state_tokens: list[str] = []
@@ -412,6 +413,27 @@ class FakeGitHubPrClient:
             ),
         )
 
+    async def task_pr_metadata(self, *, owner, repo, numbers, token):
+        # deferred-import: pre-batch revisions use this fake's single-PR operation.
+        from app.domain.review.github_pr.task_pr_metadata import (
+            TaskPrMetadata,
+            TaskPrMetadataFailure,
+        )
+
+        if self.status_delay_s:
+            await asyncio.sleep(self.status_delay_s)
+        if self.status_error is not None:
+            raise self.status_error
+        self.task_metadata_batches.append(tuple(numbers))
+        return {
+            number: (
+                TaskPrMetadata(number, pr["head_sha"], pr["state"], pr["merged"])
+                if (pr := self.prs.get(number)) is not None
+                else TaskPrMetadataFailure("missing_pr")
+            )
+            for number in numbers
+        }
+
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
         self.check_state_tokens.append(token)
         if self.check_state_error is not None:
@@ -465,6 +487,9 @@ class FakeGitHubPrClient:
         )
         return github_pr.MergeResult(sha=merge_sha)
 
+    async def branch_comparisons(self, *, owner, repo, pairs, token):
+        raise AssertionError("app_world must supply its Git-backed branch comparisons")
+
     async def compare_status(self, *, owner, repo, base, head, token) -> str | None:
         self.compare_status_calls.append((base, head))
         return self.compare_status_by_pair.get((base, head))
@@ -477,9 +502,6 @@ class FakeGitHubPrClient:
         if not with_comments:
             signals = [s for s in signals if s.kind != "comment"]
         return signals
-
-    async def check_run_names(self, *, owner, repo, ref, token) -> set[str]:
-        return {r["name"] for r in self._derived_check_runs(ref)}
 
     async def update_branch(self, *, owner, repo, number, token) -> bool:
         self.update_branch_calls.append(number)
@@ -559,6 +581,7 @@ def app_world(client, monkeypatch):
             title: str,
             body: str,
             draft: bool = False,
+            as_user_token: str | None = None,
         ) -> OpenedPR:
             if head in recorded["prs_by_head"]:
                 adopted = recorded["prs_by_head"][head]
@@ -647,6 +670,11 @@ def app_world(client, monkeypatch):
                 owner="owner", repo="repo", number=number, token="ghs_app_read"
             )
 
+        async def task_pr_metadata(self, numbers):
+            return await fake.task_pr_metadata(
+                owner="owner", repo="repo", numbers=numbers, token="ghs_app_write"
+            )
+
     async def _tokens_for_project(_project_id, _session):
         return _FakeTokens()
 
@@ -687,6 +715,47 @@ def app_world(client, monkeypatch):
             ("main", head), "ahead" if ahead else "identical"
         )
         return head
+
+    async def branch_comparisons(*, owner, repo, pairs, token):
+        from sqlalchemy import select
+
+        from app.domain.review.github_pr.protocol import BranchComparison
+        from app.domain.room_task.models import Task
+
+        async with client.test_request_factory() as session:
+            rows = (
+                await session.execute(
+                    select(Task.branch_name, Task.project_id).where(
+                        Task.branch_name.in_([branch for branch, _base in pairs])
+                    )
+                )
+            ).all()
+            projects = {branch: project_id for branch, project_id in rows}
+        result = {}
+        for branch, base in pairs:
+            project_id = projects.get(branch)
+            head = (
+                await pr_publish.branch_head(project_id, session, branch)
+                if project_id
+                else None
+            )
+            if head is None:
+                result[(branch, base)] = None
+                continue
+            path = git_store.path(project_id)
+            ahead = int(git_store.git(path, "rev-list", "--count", f"{base}..{head}"))
+            fake.compare_status_by_pair.setdefault(
+                (base, head), "ahead" if ahead else "identical"
+            )
+            status = await fake.compare_status(
+                owner=owner, repo=repo, base=base, head=head, token=token
+            )
+            result[(branch, base)] = BranchComparison(
+                head, int(status in ("ahead", "diverged"))
+            )
+        return result
+
+    monkeypatch.setattr(fake, "branch_comparisons", branch_comparisons)
 
     async def repository_data(project_id, session, path="", **kwargs):
         from urllib.parse import unquote
@@ -3950,13 +4019,13 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(
     """
     from app.domain.review import pr_publish
 
-    async def _looks_ahead(_session, _task_id):
-        return True
+    async def _looks_ahead(_factory, candidates, _blocked):
+        return {task.task_id: True for task in candidates}
 
     # The unlocked pre-check already leaves a carded batch out. A card can
     # still be filed between that check and the lock, so this exercises the
     # locked path on its own.
-    monkeypatch.setattr(pr_publish, "_branch_ahead", _looks_ahead)
+    monkeypatch.setattr(pr_publish, "_github_draft_preflight", _looks_ahead)
     fake = sweeping["fake"]
     pid, tid = _room_with_work(client)
     cid = _make_card(client, tid)

@@ -507,7 +507,7 @@ class TestBundleServiceGetBundleDetail:
 
         mat1 = _make_material(id=1, name="File1")
         mat2 = _make_material(id=2, name="File2")
-        material_repo.get_by_id.side_effect = [mat1, mat2]
+        material_repo.get_by_ids.return_value = {1: mat1, 2: mat2}
 
         dto = await svc.get_bundle_detail(10)
 
@@ -524,11 +524,10 @@ class TestBundleServiceGetBundleDetail:
         repo.get_by_id.return_value = bundle
         repo.get_materials_for_bundle.return_value = [1, 2, 3]
 
-        material_repo.get_by_id.side_effect = [
-            _make_material(id=1),
-            None,
-            _make_material(id=3),
-        ]
+        material_repo.get_by_ids.return_value = {
+            1: _make_material(id=1),
+            3: _make_material(id=3),
+        }
 
         dto = await svc.get_bundle_detail(10)
 
@@ -550,6 +549,7 @@ class TestBundleServiceGetBundleDetail:
         bundle = _make_bundle(id=10, creator_id=42)
         repo.get_by_id.return_value = bundle
         repo.get_materials_for_bundle.return_value = []
+        material_repo.get_by_ids.return_value = {}
 
         dto = await svc.get_bundle_detail(10)
 
@@ -582,16 +582,16 @@ class TestBundleServiceCreateBundle:
             creator_id=5,
         )
         repo.add_material_to_bundle.assert_not_awaited()
-        material_repo.get_by_id.assert_not_awaited()
+        material_repo.get_by_ids.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_creates_with_material_ids(self):
         svc, repo, material_repo = _make_bundle_service()
         repo.create.return_value = _make_bundle(id=20)
-        material_repo.get_by_id.side_effect = [
-            _make_material(id=1),
-            _make_material(id=2),
-        ]
+        material_repo.get_by_ids.return_value = {
+            1: _make_material(id=1),
+            2: _make_material(id=2),
+        }
 
         result = await svc.create_bundle(
             title="Pack",
@@ -601,12 +601,13 @@ class TestBundleServiceCreateBundle:
         )
 
         assert result == {"id": 20}
+        material_repo.get_by_ids.assert_awaited_once_with([1, 2])
         assert repo.add_material_to_bundle.await_count == 2
 
     @pytest.mark.anyio
     async def test_raises_not_found_for_missing_material(self):
         svc, repo, material_repo = _make_bundle_service()
-        material_repo.get_by_id.return_value = None
+        material_repo.get_by_ids.return_value = {}
 
         with pytest.raises(NotFoundError, match="Material not found"):
             await svc.create_bundle(
@@ -616,6 +617,28 @@ class TestBundleServiceCreateBundle:
                 material_ids=[999],
             )
 
+        material_repo.get_by_ids.assert_awaited_once_with([999])
+        repo.create.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_reports_the_first_missing_material_in_the_order_asked(self):
+        """三个 id 缺中间那个：报的是中间那个，bundle 不建，课件表只查一次。"""
+        svc, repo, material_repo = _make_bundle_service()
+        material_repo.get_by_ids.return_value = {
+            1: _make_material(id=1),
+            3: _make_material(id=3),
+        }
+
+        with pytest.raises(NotFoundError) as excinfo:
+            await svc.create_bundle(
+                title="Pack",
+                content="Body",
+                creator_id=5,
+                material_ids=[1, 2, 3],
+            )
+
+        assert excinfo.value.data == {"id": 2}
+        material_repo.get_by_ids.assert_awaited_once_with([1, 2, 3])
         repo.create.assert_not_awaited()
 
     @pytest.mark.anyio
@@ -631,7 +654,7 @@ class TestBundleServiceCreateBundle:
         )
 
         assert result == {"id": 30}
-        material_repo.get_by_id.assert_not_awaited()
+        material_repo.get_by_ids.assert_not_awaited()
         repo.add_material_to_bundle.assert_not_awaited()
 
     @pytest.mark.anyio
@@ -647,7 +670,7 @@ class TestBundleServiceCreateBundle:
         )
 
         assert result == {"id": 31}
-        material_repo.get_by_id.assert_not_awaited()
+        material_repo.get_by_ids.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

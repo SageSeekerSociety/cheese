@@ -1,12 +1,25 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import TypedDict
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.answers.models import Answer, AnswerFavorite, AnswerQueryLog
 from app.domain.discussion.models import DiscussableModelType, Discussion
 from app.domain.questions.models import Attitude, VoteType
+
+
+class AnswerStats(TypedDict):
+    """The per-answer counters a list row shows, already resolved for a viewer."""
+
+    positive_count: int
+    negative_count: int
+    user_vote: str | None
+    favorite_count: int
+    is_favorite: bool
+    comment_count: int
+    view_count: int
 
 
 class AnswerRepository:
@@ -178,10 +191,6 @@ class AnswerRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def is_favorited(self, answer_id: int, user_id: int) -> bool:
-        fav = await self._get_favorite(answer_id, user_id)
-        return fav is not None
-
     async def count_favorites(self, answer_id: int) -> int:
         stmt = (
             select(func.count())
@@ -222,6 +231,120 @@ class AnswerRepository:
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
+
+    async def answer_stats_for_ids(
+        self,
+        *,
+        answer_ids: Sequence[int],
+        viewer_id: int | None = None,
+    ) -> dict[int, AnswerStats]:
+        """Every stat an answer list row shows, for the whole page in one query.
+
+        The list used to ask six times per row — vote counts, the viewer's vote,
+        favourites, the viewer's favourite, comments and views. At the maximum
+        page of 100 that is 600 round trips for one response. Each source is
+        aggregated per ``answer_id`` in a subquery and the four are joined onto
+        the requested ids once, so the round-trip count does not grow with the
+        page.
+
+        ``viewer_id`` is ``None`` for an anonymous reader (or a seat without a
+        user id): the viewer columns then match nothing and resolve to "no vote,
+        not favourited", exactly like asking per answer used to.
+        """
+        ids = list(answer_ids)
+        if not ids:
+            return {}
+
+        answers = (
+            select(Answer.id.label("answer_id")).where(Answer.id.in_(ids)).subquery()
+        )
+        votes = (
+            select(
+                Attitude.attitudable_id.label("answer_id"),
+                func.count()
+                .filter(Attitude.attitude == VoteType.POSITIVE.value)
+                .label("positive_count"),
+                func.count()
+                .filter(Attitude.attitude == VoteType.NEGATIVE.value)
+                .label("negative_count"),
+                func.max(
+                    case((Attitude.user_id == viewer_id, Attitude.attitude))
+                ).label("viewer_vote"),
+            )
+            .where(
+                Attitude.attitudable_id.in_(ids),
+                Attitude.attitudable_type == "ANSWER",
+            )
+            .group_by(Attitude.attitudable_id)
+            .subquery()
+        )
+        favorites = (
+            select(
+                AnswerFavorite.answer_id.label("answer_id"),
+                func.count().label("favorite_count"),
+                func.max(case((AnswerFavorite.user_id == viewer_id, 1), else_=0)).label(
+                    "viewer_favorited"
+                ),
+            )
+            .where(AnswerFavorite.answer_id.in_(ids))
+            .group_by(AnswerFavorite.answer_id)
+            .subquery()
+        )
+        comments = (
+            select(
+                Discussion.model_id.label("answer_id"),
+                func.count().label("comment_count"),
+            )
+            .where(
+                Discussion.model_type == DiscussableModelType.ANSWER.value,
+                Discussion.model_id.in_(ids),
+                Discussion.deleted_at.is_(None),
+            )
+            .group_by(Discussion.model_id)
+            .subquery()
+        )
+        views = (
+            select(
+                AnswerQueryLog.answer_id.label("answer_id"),
+                func.count().label("view_count"),
+            )
+            .where(AnswerQueryLog.answer_id.in_(ids))
+            .group_by(AnswerQueryLog.answer_id)
+            .subquery()
+        )
+
+        stmt = (
+            select(
+                answers.c.answer_id,
+                func.coalesce(votes.c.positive_count, 0).label("positive_count"),
+                func.coalesce(votes.c.negative_count, 0).label("negative_count"),
+                votes.c.viewer_vote.label("user_vote"),
+                func.coalesce(favorites.c.favorite_count, 0).label("favorite_count"),
+                func.coalesce(favorites.c.viewer_favorited, 0).label("is_favorite"),
+                func.coalesce(comments.c.comment_count, 0).label("comment_count"),
+                func.coalesce(views.c.view_count, 0).label("view_count"),
+            )
+            .select_from(answers)
+            .outerjoin(votes, votes.c.answer_id == answers.c.answer_id)
+            .outerjoin(favorites, favorites.c.answer_id == answers.c.answer_id)
+            .outerjoin(comments, comments.c.answer_id == answers.c.answer_id)
+            .outerjoin(views, views.c.answer_id == answers.c.answer_id)
+        )
+
+        result = await self._session.execute(stmt)
+        stats: dict[int, AnswerStats] = {}
+        for row in result.all():
+            user_vote = row.user_vote
+            stats[int(row.answer_id)] = {
+                "positive_count": int(row.positive_count or 0),
+                "negative_count": int(row.negative_count or 0),
+                "user_vote": str(user_vote) if user_vote is not None else None,
+                "favorite_count": int(row.favorite_count or 0),
+                "is_favorite": bool(row.is_favorite),
+                "comment_count": int(row.comment_count or 0),
+                "view_count": int(row.view_count or 0),
+            }
+        return stats
 
     async def list_favorites_by_user(
         self, *, user_id: int, limit: int, offset: int

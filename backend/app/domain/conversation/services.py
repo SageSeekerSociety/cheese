@@ -23,6 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.conversation.models import Conversation, ConversationKind
 
 # Which room a task or a 支线 is in. Bare tables: ``room_task`` and ``thread``
@@ -42,9 +43,13 @@ _inside = union_all(
 #: 数组参数而不是 `IN` 列表：房间按百计，列表每个值绑一个参数，SQL 文本随长度变，
 #: 每次调用都要重新编译一遍。
 _threads_param = bindparam("threads_rooms", type_=ARRAY(Uuid))
-_room_threads = select(_threads.c.id, _threads.c.room_id).where(
-    _threads.c.room_id == any_(_threads_param)
-)
+_room_threads = select(
+    _threads.c.id,
+    _threads.c.room_id,
+    _threads.c.id.in_(
+        select(Conversation.id).where(Conversation.kind == ConversationKind.thread)
+    ),
+).where(_threads.c.room_id == any_(_threads_param))
 
 
 async def project_of(
@@ -80,6 +85,23 @@ async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUI
     return room or conversation_id
 
 
+async def rooms_of(
+    session: AsyncSession, conversations: list[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """`room_of` for a batch in one query: each conversation mapped to its room,
+    itself for a room. The reverse of `rooms_of_inner`, which starts from the
+    rooms."""
+    found = {conversation: conversation for conversation in conversations}
+    if conversations:
+        for inner_id, room_id in await session.execute(
+            select(_inside.c.id, _inside.c.room_id).where(
+                _inside.c.id.in_(conversations)
+            )
+        ):
+            found[inner_id] = room_id
+    return found
+
+
 async def room_of_thread(
     session: AsyncSession, conversation_id: uuid.UUID
 ) -> uuid.UUID | None:
@@ -105,6 +127,27 @@ async def rooms_of_inner(
     return found
 
 
+async def _threads_in_rooms(
+    session: AsyncSession, rooms: list[uuid.UUID]
+) -> tuple[dict[uuid.UUID, uuid.UUID], dict[uuid.UUID, uuid.UUID]]:
+    if not rooms:
+        return {}, {}
+    key = ("threads_in_rooms", tuple(rooms))
+    found, cached = recall(session, key)
+    if found:
+        return cached
+    rows = await session.execute(_room_threads, {"threads_rooms": list(rooms)})
+    all_threads: dict[uuid.UUID, uuid.UUID] = {}
+    still_threads: dict[uuid.UUID, uuid.UUID] = {}
+    for thread_id, room_id, is_thread in rows:
+        all_threads[thread_id] = room_id
+        if is_thread:
+            still_threads[thread_id] = room_id
+    answer = (all_threads, still_threads)
+    remember(session, key, answer)
+    return answer
+
+
 async def threads_of_rooms(
     session: AsyncSession, rooms: list[uuid.UUID]
 ) -> dict[uuid.UUID, uuid.UUID]:
@@ -113,10 +156,8 @@ async def threads_of_rooms(
     A room's tasks are not among them, unlike `rooms_of_inner`: a task is a
     board of its own with a card of its own, and what is said in one is not the
     room's own doings (`waits._last_said`)."""
-    if not rooms:
-        return {}
-    rows = await session.execute(_room_threads, {"threads_rooms": list(rooms)})
-    return {thread_id: room_id for thread_id, room_id in rows}
+    all_threads, _ = await _threads_in_rooms(session, rooms)
+    return dict(all_threads)
 
 
 async def threads_still_threads(
@@ -131,16 +172,8 @@ async def threads_still_threads(
     failures back under the room — a closed piece of work relights its channel
     — and lets what is said in the task clear the room's own failures. The
     register (``conversations.kind``) is what tells the two apart."""
-    if not rooms:
-        return {}
-    stmt = select(_threads.c.id, _threads.c.room_id).where(
-        _threads.c.room_id == any_(_threads_param),
-        _threads.c.id.in_(
-            select(Conversation.id).where(Conversation.kind == ConversationKind.thread)
-        ),
-    )
-    rows = await session.execute(stmt, {"threads_rooms": list(rooms)})
-    return {thread_id: room_id for thread_id, room_id in rows}
+    _, still_threads = await _threads_in_rooms(session, rooms)
+    return dict(still_threads)
 
 
 def conversations_of(room_ids) -> Subquery:

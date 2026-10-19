@@ -19,10 +19,25 @@ from app.domain.block.schemas import BlockOut
 from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.membership.roster import Member
 from app.domain.project.models import Project
 from app.domain.room_task.place import Place, PlaceResolver
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class HumanHandoff:
+    """What the request already read before the writer opens its own session.
+
+    The writer's session is its own on purpose; these rows are what it would
+    otherwise read again. Each field is optional: ``None`` means the request
+    did not read it, and the writer reads it as before. ``roster`` is the
+    :func:`~app.domain.membership.roster.roster` read of the room's project.
+    """
+
+    project: Project | None = None
+    roster: tuple[Member, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +186,12 @@ async def persist_human_message(
             admission = await refuse(
                 session, place, prepared, recipient, author, reply_author
             )
+            # A participant's own message groups under itself when the send
+            # carries no ambient turn: `turn_id` is what puts a send's blocks
+            # together. Mint that id here so the self-reference is one INSERT
+            # column — assigning it after the flush cost an UPDATE and a
+            # whole-row read to resynchronise.
+            self_grouping_id = uuid.uuid4() if attribution_id is None else None
             user_block = await append_output(
                 session,
                 project_id=topic.project_id,
@@ -179,7 +200,8 @@ async def persist_human_message(
                 author_type=AuthorType.participant,
                 content=content,
                 kind=BlockKind.message,
-                turn_id=turn_id,
+                block_id=self_grouping_id,
+                turn_id=self_grouping_id or turn_id,
                 reply_to=reply_uuid,  # B3: thread under another
                 # The sender's own id for this send, echoed straight back on
                 # the broadcast. A client that showed the message the instant
@@ -198,7 +220,6 @@ async def persist_human_message(
             )
             if attribution_id is None:
                 attribution_id = user_block.id
-                user_block.turn_id = attribution_id
             answered = await record_effects(
                 session,
                 place,

@@ -259,6 +259,7 @@ async fn connect_steps(
 pub async fn claude_login(
     running: &Running,
     console: bool,
+    login_id: Option<&str>,
     on_step: &(dyn Fn(&'static str) + Send + Sync),
 ) -> Result<(), Failure> {
     if !running.begin() {
@@ -268,6 +269,9 @@ pub async fn claude_login(
     cmd.args(["claude", "login"]);
     if console {
         cmd.arg("--console");
+    }
+    if let Some(id) = login_id {
+        cmd.args(["--login", id]);
     }
     let mut on_line = |line: &str| {
         if line.contains("Downloading Claude Code") {
@@ -291,6 +295,7 @@ pub async fn claude_model_service(
     base_url: &str,
     token: &str,
     model: &str,
+    login_id: Option<&str>,
     on_step: &(dyn Fn(&'static str) + Send + Sync),
 ) -> Result<(), Failure> {
     if !running.begin() {
@@ -298,6 +303,9 @@ pub async fn claude_model_service(
     }
     let mut cmd = platform::cheesehost();
     cmd.args(["claude", "login", "--base-url", base_url, "--model", model]);
+    if let Some(id) = login_id {
+        cmd.args(["--login", id]);
+    }
     cmd.env("CHEESE_MODEL_TOKEN", token);
     let mut on_line = |line: &str| {
         if line.contains("Downloading Claude Code") {
@@ -310,10 +318,10 @@ pub async fn claude_model_service(
     result.map_err(|e| if cancelled { Failure::cancelled() } else { Failure::at("login", e) })
 }
 
-/// Logs the platform's Claude Code out on this computer.
-pub async fn claude_logout() -> Result<(), String> {
+/// Logs one of the platform's Claude Code logins out on this computer.
+pub async fn claude_logout(login_id: String) -> Result<(), String> {
     let out = platform::cheesehost()
-        .args(["claude", "logout"])
+        .args(["claude", "logout", &login_id])
         .stdin(Stdio::null())
         .output()
         .await

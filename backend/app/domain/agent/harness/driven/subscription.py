@@ -82,6 +82,10 @@ Seat = tuple[uuid.UUID, str]
 #: What one record of a turn's work said about how it is going (``marks``).
 Moved = Callable[[uuid.UUID, frozenset[str]], Awaitable[None]]
 
+#: Where the journal's rows are kept as the raw record of the session: handed
+#: every row, in order, a page at a time, before the room reads any of them.
+Records = Callable[[SessionRef, list[dict]], Awaitable[object]]
+
 #: 一轮开/关的回报，按座位而不是按房间：同一间房里另一个 agent 的一轮开开关关，
 #: 不碰这个座位的「在跑的活」和它的钟。
 SeatActivity = Callable[[uuid.UUID, Seat, uuid.UUID, bool], Awaitable[None]]
@@ -118,6 +122,12 @@ STALE_S = 2 * 3600
 #: the database was away is one the room takes once it is back.
 REFUSED_TIMES = 3
 REFUSED_OVER_S = 10 * 60
+
+#: How many journal pages one drain hands to the raw record. The rest of a
+#: backlog waits for the next drains, in the mirror, so the room is not kept
+#: waiting behind it: measured on a local database, a page of 256 rows takes
+#: about 55 ms to keep.
+RECORD_PAGES = 4
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +170,7 @@ class Subscription[B: Backlog]:
         completions: CompletionConsumer | None = None,
         terminations: TerminationConsumer | None = None,
         moved: Moved | None = None,
+        records: Records | None = None,
     ):
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
@@ -167,6 +178,7 @@ class Subscription[B: Backlog]:
         self.completions = completions
         self.terminations = terminations
         self.moved = moved
+        self.records = records
         self.lock = asyncio.Lock()
         self.forgotten_at = 0.0
         self.disk = ThreadPoolExecutor(
@@ -367,6 +379,7 @@ class Subscription[B: Backlog]:
             finally:
                 self.asking = None
             reader = await self.on_disk(self.reader)
+            await self._record(reader)
             delivered = stale = 0
             # A backlog nobody read for hours is mostly records too old to
             # land. The run of them at the cursor is stepped over in one move:
@@ -443,6 +456,41 @@ class Subscription[B: Backlog]:
                 self.forgotten_at = time.monotonic()
                 await self.on_disk(reader.forget, older_than_s=RETENTION_S)
             return delivered
+
+    async def _record(self, reader: B) -> None:
+        """Hand the rows the mirror holds past the raw record's cursor to
+        ``records``, before the room reads them.
+
+        Kept apart from landing on purpose: a record too old to land, one the
+        room refused, one before the first input — the room steps over each,
+        and each is still something the session did.
+
+        The raw record never holds the room up. A page it refuses is logged
+        and left where it is, and the room is served as before; the next drain
+        hands the same rows again (``records`` keeps a row it already kept
+        once), and the mirror keeps them until it has (``Journal.prune``). A
+        drain hands at most ``RECORD_PAGES`` pages, so a long backlog is
+        recorded over several drains rather than in front of one.
+        """
+        if self.records is None:
+            return
+        for _ in range(RECORD_PAGES):
+            page = await self.on_disk(reader.unrecorded)
+            if not page:
+                return
+            try:
+                await self.records(self.session, page)
+            except Exception:
+                logger.exception(
+                    "raw record refused journal rows %s-%s; kept in the mirror "
+                    "for the next drain topic=%s agent=%s",
+                    page[0]["sequence"],
+                    page[-1]["sequence"],
+                    self.session.topic_id,
+                    self.session.agent_handle,
+                )
+                return
+            await self.on_disk(reader.recorded, through=page[-1]["sequence"])
 
     async def _end_late(self, entry: HarnessEvent, reader: B) -> None:
         """End the turn a record too old to land closes, saying nothing.

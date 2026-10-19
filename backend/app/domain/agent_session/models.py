@@ -212,3 +212,39 @@ class AgentEnvironment(Base):
         JSONB(none_as_null=True), nullable=True
     )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AgentRead(Base):
+    """How far one agent has read one conversation.
+
+    One row per ``(conversation, agent seat)``: each teammate follows the room
+    with its own eyes, the way every person in it does. A room where one seat's
+    reading moved a shared watermark instead would hand whatever it read to
+    nobody else — which is exactly the bug this table exists to end.
+
+    The seat is the authorship handle (``cheese-<instance hex>``), not the
+    resolved project handle a session row is keyed by: handing a conversation to
+    another teammate should start that teammate at the beginning of what it can
+    see, not let it inherit what the previous one read.
+
+    Nothing here is per harness. A session row is, and a change of harness opens
+    a new one; who has read what is not the harness's question.
+    """
+
+    __tablename__ = "agent_reads"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+            name="fk_agent_reads_conversation_id_conversations",
+        ),
+        primary_key=True,
+    )
+    agent_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # The newest block this seat has read, as the timeline orders blocks:
+    # ``(created_at, id)``. Stored together so the predicate is one comparison
+    # and ties (two messages in the same microsecond) cannot loop or skip.
+    read_through_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    read_through_block_id: Mapped[uuid.UUID] = mapped_column()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

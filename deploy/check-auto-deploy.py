@@ -85,32 +85,106 @@ def workflow_runs(repository: str, workflow: str, candidate: str) -> list[dict]:
         page += 1
 
 
+#: The branch a passing push run of Required CI points at its own head. A push
+#: run diffs from it, so a green anchor proves its commit and every commit
+#: behind it since the previous anchor.
+GREEN_REF = "refs/heads/main-green"
+
+#: Outcomes of a Required CI run a later push in the batch supersedes. A commit
+#: whose own run ended this way is still proved by the run that covered it.
+SUPERSEDED_CONCLUSIONS = frozenset({"cancelled", "skipped"})
+
+
+def green_anchor(repository: str) -> str:
+    """The last commit Required CI proved green on main, or ``""`` if none."""
+    try:
+        # `heads/<branch>`, not `refs/heads/<branch>`: GET /git/ref/{ref} takes
+        # the short form (the full spelling belongs to the create endpoint), and
+        # the long form 404s — which would read here as "no anchor yet".
+        return github_json(
+            f"https://api.github.com/repos/{repository}/git/ref/heads/{GREEN_REF.removeprefix('refs/heads/')}"
+        )["object"]["sha"]
+    except HTTPError as error:
+        # No push run has passed yet: nothing to compare against.
+        if error.code == 404:
+            return ""
+        raise
+
+
+def covered_by_green(candidate: str, repository: str) -> bool:
+    """Whether a run that passed covered this commit.
+
+    A green anchor is the head of a run whose diff started at the previous
+    anchor, so it proves every commit between the two — including one whose own
+    run a later push replaced. The compare answers ancestor-or-equal.
+    """
+    anchor = green_anchor(repository)
+    if not anchor:
+        return False
+    comparison = github_json(
+        f"https://api.github.com/repos/{repository}/compare/{candidate}...{anchor}?per_page=1"
+    )
+    return comparison["status"] in ("ahead", "identical")
+
+
+#: Where one candidate's required evidence comes from, per workflow. A workflow
+#: is satisfied by any one of its routes: Required CI reports the gate on the
+#: push that landed the commit on main, and on a merge-queue entry for the same
+#: commit (the queue squashes onto its base and fast-forwards main to it). The
+#: routes are alternatives, not a list that all must be present: a commit merged
+#: directly has no queue run, and one landed through the queue has no push run.
+REQUIRED_RUNS = (
+    ("build.yml", (
+        ({"push", "workflow_dispatch"}, lambda branch: branch == "main"),
+    )),
+    ("required-ci.yml", (
+        ({"push"}, lambda branch: branch == "main"),
+        ({"merge_group"}, lambda branch: branch.startswith("gh-readonly-queue/main/")),
+    )),
+)
+
+
 def ci_ready(candidate: str, say=print) -> bool:
     """Check the latest build and required-CI attempts for this exact main SHA."""
     if not re.fullmatch(r"[0-9a-f]{40}", candidate):
         raise ValueError("the automatic release must name a full commit SHA")
     repository = os.environ["GITHUB_REPOSITORY"]
     ready = True
-    # Required CI runs once per commit, in the merge queue. The queue squashes
-    # each entry onto its base and fast-forwards main to that same commit, so
-    # the queue run's head SHA is the SHA that lands on main.
-    for workflow, events, on_branch in (
-        ("build.yml", {"push", "workflow_dispatch"}, lambda branch: branch == "main"),
-        ("required-ci.yml", {"merge_group"},
-         lambda branch: branch.startswith("gh-readonly-queue/main/")),
-    ):
+    for workflow, routes in REQUIRED_RUNS:
         runs = [run for run in workflow_runs(repository, workflow, candidate)
-                if run["head_sha"] == candidate and on_branch(run["head_branch"] or "")
-                and run["event"] in events
+                if run["head_sha"] == candidate
+                and any(run["event"] in events and on_branch(run["head_branch"] or "")
+                        for events, on_branch in routes)
                 and run["head_repository"]["full_name"] == repository]
         # A rerun keeps its run ID. Its latest update must supersede an older
         # success, including when another run for the same SHA was created later.
         latest = max(runs, key=lambda run: (run["updated_at"], run["id"]), default=None)
-        if (latest is None or any(run["status"] != "completed" for run in runs)
-                or latest["conclusion"] != "success"):
-            seen = ", ".join(f"{run['id']} {run['status']}/{run['conclusion']}" for run in runs) or "none"
-            say(f"Not deploying {candidate}: {workflow} has no successful latest attempt (runs: {seen}).")
-            ready = False
+        if (latest is not None and all(run["status"] == "completed" for run in runs)
+                and latest["conclusion"] == "success"):
+            continue
+        if workflow == "required-ci.yml" and runs:
+            # Nothing here says the gate failed: every run is either a queue
+            # entry that passed (it proves this exact commit) or a batched push
+            # run a later push replaced. A failed run, or one still going, falls
+            # out of this and refuses below.
+            settled = all(
+                (run["event"] == "push" and run["status"] == "completed"
+                 and run["conclusion"] in SUPERSEDED_CONCLUSIONS)
+                or (run["event"] == "merge_group" and run["status"] == "completed"
+                    and run["conclusion"] == "success")
+                for run in runs
+            )
+            # A passing queue run proves the commit by itself. A replaced push
+            # run needs the later batch that covered it — there must be one, so
+            # a commit with no run at all never lands here.
+            if settled and (any(run["event"] == "merge_group" for run in runs)
+                            or covered_by_green(candidate, repository)):
+                say(f"{candidate} has no Required CI result of its own: a queue"
+                    " entry or a later batch run passed and covered it.")
+                continue
+        seen = ", ".join(f"{run['id']} {run['status']}/{run['conclusion']}" for run in runs) or "none"
+        say(f"Not deploying {candidate}: {workflow} has no successful latest attempt (runs: {seen}).")
+        ready = False
     return ready
 
 
@@ -123,14 +197,106 @@ SETTLE_SECONDS = 120
 SETTLE_INTERVAL = 15
 
 
-def ci_ready_settled(candidate: str) -> bool:
+def ci_ready_settled(candidate: str, until: float | None = None) -> bool:
+    """Whether the candidate's runs are ready, re-reading while the run list may
+    still be catching up. `until` caps this settle at a caller's deadline, so a
+    settle inside a wait cannot push the total past the job's budget."""
     deadline = time.monotonic() + SETTLE_SECONDS
+    if until is not None:
+        deadline = min(deadline, until)
     while not ci_ready(candidate):
         if time.monotonic() + SETTLE_INTERVAL > deadline:
             return False
         print(f"Reading {candidate}'s runs again in {SETTLE_INTERVAL} s.")
         time.sleep(SETTLE_INTERVAL)
     return True
+
+
+#: How long the entry point waits for an image build that is still running.
+#: Required CI is the only release event now, and it outlasts the build in the
+#: normal case, so a build still running when the gate finishes is the rare
+#: ordering; giving up on it would leave the commit unreleased until the next
+#: merge. The eligibility job's timeout is sized for this window plus the
+#: initial settle (see deploy-dev.yml).
+BUILD_WAIT_SECONDS = 600
+BUILD_POLL_SECONDS = 15
+
+
+def build_running(candidate: str) -> bool:
+    """Whether this commit's image build has a run that has not finished."""
+    repository = os.environ["GITHUB_REPOSITORY"]
+    runs = [run for run in workflow_runs(repository, "build.yml", candidate)
+            if run["head_sha"] == candidate
+            and run["event"] in ("push", "workflow_dispatch")
+            and (run["head_branch"] or "") == "main"
+            and run["head_repository"]["full_name"] == repository]
+    if not runs:
+        return False
+    latest = max(runs, key=lambda run: (run["updated_at"], run["id"]))
+    return latest["status"] != "completed"
+
+
+def wait_for_build(candidate: str, say=print) -> bool:
+    """Wait out a running image build, then re-check; False when it never fits.
+
+    The settle is capped at this wait's deadline: without that cap it could run
+    its own two minutes past it, and the eligibility job would be killed by its
+    timeout instead of refusing."""
+    deadline = time.monotonic() + BUILD_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        if ci_ready_settled(candidate, until=deadline):
+            return True
+        if not build_running(candidate):
+            return False
+        if time.monotonic() + BUILD_POLL_SECONDS > deadline:
+            return False
+        say(f"{candidate}'s image build is still running; checking again in"
+            f" {BUILD_POLL_SECONDS} s.")
+        time.sleep(BUILD_POLL_SECONDS)
+    return False
+
+
+def waiting_state(candidate: str) -> str:
+    """Why this commit's Required CI may still be to come, as a short state.
+
+    ``""`` — nothing to wait for (a success, a real failure, or no run at all).
+    ``"running"`` — the gate for this exact commit has not finished.
+    ``"superseded"`` — its run was cancelled, and a newer commit on main can
+    cover it (the batched push runs share one concurrency group, so a newer
+    push cancels a queued one, and the newer commit's run diffs over both).
+    ``"cancelled-uncovered"`` — cancelled with nothing newer on main: a manual
+    or infrastructure cancellation. No batch will ever be triggered that diffs
+    over this commit, so it is a refusal, not a wait. (A cancelled run with a
+    newer commit on main is ``"superseded"`` even if that newer commit's own
+    gate later fails: that failure is red on its own run, so the wait there is
+    bounded by a signal somebody sees, not silent.)
+    """
+    repository = os.environ["GITHUB_REPOSITORY"]
+    runs = [run for run in workflow_runs(repository, "required-ci.yml", candidate)
+            if run["head_sha"] == candidate and run["event"] == "push"
+            and (run["head_branch"] or "") == "main"
+            and run["head_repository"]["full_name"] == repository]
+    if not runs:
+        return ""
+    if any(run["status"] != "completed" for run in runs):
+        return "running"
+    latest = max(runs, key=lambda run: (run["updated_at"], run["id"]))
+    if latest["conclusion"] != "cancelled":
+        return ""
+    try:
+        newer = newer_on_main(candidate)
+    except ValueError:
+        newer = []
+    return "superseded" if newer else "cancelled-uncovered"
+
+
+#: The waiting states a release can wait out; ``cancelled-uncovered`` is not one.
+WAITABLE = frozenset({"running", "superseded"})
+
+
+def ci_waiting(candidate: str) -> bool:
+    """Whether Required CI for this commit is still to come rather than failed."""
+    return waiting_state(candidate) in WAITABLE
 
 
 def newer_on_main(candidate: str) -> list[str]:
@@ -259,12 +425,40 @@ def main() -> None:
         return
     if sys.argv[1] == "--ci-only":
         ready = ci_ready_settled(sys.argv[2])
+        # Required CI is the only release event. It outlasts the image build in
+        # the normal case; when it does not, the build is still running here and
+        # no later event will come, so wait for it rather than give up.
+        build_pending = False
+        if not ready and build_running(sys.argv[2]):
+            ready = wait_for_build(sys.argv[2])
+            # The wait gave up while the build was still going. No later event
+            # will release this commit, so the refusal is real; but it cures
+            # itself when the build finishes, and the message has to say that
+            # instead of claiming the build has no successful attempt.
+            build_pending = not ready and build_running(sys.argv[2])
+        # Only a release that was refused asks why it might still come:
+        # a ready one must not pay another run-list read (and must not
+        # fail when that read fails) before its deploy starts.
+        state = "" if ready else waiting_state(sys.argv[2])
+        waiting = state in WAITABLE
+        uncovered = state == "cancelled-uncovered"
         newer = superseded_by(sys.argv[2]) if ready else ""
         if newer:
             print(f"Not deploying {sys.argv[2]}: {newer}, newer on main, has its images and Required CI, "
                   "and its own run releases both.")
+        if waiting:
+            print(f"Not deploying {sys.argv[2]} yet: its Required CI run on main has not finished; "
+                  "that run's completion releases it.")
+        if uncovered:
+            print(f"Not deploying {sys.argv[2]}: its Required CI run was cancelled and no "
+                  "newer commit on main can cover it, so nothing will release it.")
+        if build_pending:
+            print(f"Not deploying {sys.argv[2]}: its image build was still running when the wait "
+                  f"ended ({BUILD_WAIT_SECONDS // 60} min). Re-run this workflow once it finishes.")
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-            output.write(f"ready={str(ready).lower()}\nsuperseded={newer}\n")
+            output.write(f"ready={str(ready).lower()}\nsuperseded={newer}\n"
+                         f"waiting={str(waiting).lower()}\nuncovered={str(uncovered).lower()}\n"
+                         f"build_pending={str(build_pending).lower()}\n")
         return
     rebuilt = sys.argv[1] == "--rebuilt"
     candidate = sys.argv[2] if rebuilt else sys.argv[1]

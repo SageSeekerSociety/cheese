@@ -6,6 +6,8 @@ type Schemas = components['schemas']
 
 /** 机主自己的 Claude Code 在一台机器上有没有为平台登录，只给机主看。 */
 export interface ClaudeCodeLogin {
+  id: string
+  local_id: string
   installed: boolean
   logged_in: boolean
   /** `model_service` when the owner pointed it at another model service. */
@@ -34,14 +36,9 @@ export function modelServiceOf(login: ClaudeCodeLogin | null): string | null {
  *  （`machine`，别人的是 null）。读者自己还能加入的连接在 `my_connections`。
  *  形状由后端定（`app/api/routes/projects_own_agents.py` 的 OwnAgentsOut）。 */
 export type OwnAgentsSettings = Schemas['OwnAgentsOut']
-export type OwnAgentRow = Schemas['OwnAgentOut']
 export type OwnAgentConnection = Schemas['OwnAgentConnectionOut']
-/** 读者自己的一份模型连接，可以加入这个项目；`id` 是存放它的那台设备，或账号里那一份的 id。 */
-export type MyOwnAgentConnection = Schemas['MyConnectionOut']
 /** 连接的类型：Claude 订阅、Anthropic API key、自定义模型服务。 */
 export type OwnAgentKind = Schemas['ConnectionKind']
-/** 谁可以叫它：`owner` 只有主人，`project` 项目里的人都能叫。只有主人能改。 */
-export type OwnAgentCallers = Schemas['OwnCallers']
 
 /** 设置里列出各类连接的先后。 */
 export const OWN_AGENT_KINDS: readonly OwnAgentKind[] = ['subscription', 'api_key', 'model_service']

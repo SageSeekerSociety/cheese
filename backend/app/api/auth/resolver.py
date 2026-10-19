@@ -533,25 +533,6 @@ class ActorResolver:
             self._session, self._cheese_token, project_id=project_id
         )
 
-    def speaks_for_this_rooms_turn(self, topic_id: uuid.UUID) -> bool:
-        """这张凭据就是**这个房间这一轮**的那张令牌吗。
-
-        `Actor.via == "cheese"` 答的是另一个问题 —— 「说话的是不是一个 agent」。
-        项目级的 agent 凭据也是 `cheese`，而它够得着这个项目的每一个房间
-        （`app.api.write_access._CheeseOnly` 上那句话），全局的 sandbox token 更是谁
-        都不是。要「正在这个房间里跑的那一轮」，只能认每一轮现铸的那张 scoped
-        token：它把房间签在 `t` 上，冒不出来，也借不到别的房间去用。
-
-        `s == "project"` 那一档不算：它带着一个起始房间，可它要的正是跨房间的通
-        行，所以它不是「这个房间这一轮」。
-        """
-        if not self._cheese_token:
-            return False
-        claims = scoped_token_claims(self._cheese_token)
-        if claims is None or claims.get("s") == "project":
-            return False
-        return claims.get("t") == str(topic_id)
-
     def _reject_out_of_scope_token(
         self, *, topic_id: uuid.UUID | None, project_id: uuid.UUID | None
     ) -> None:
@@ -640,13 +621,27 @@ class ActorResolver:
         actor: Actor,
         *,
         project_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        topic_id: uuid.UUID | None = None,
+        room: Topic | None = None,
         enforce: bool = False,
     ) -> None:
         """Require a verified participant with access to this conversation's
-        room."""
-        topic_id = await conversations.room_of(self._session, topic_id)
-        await self._refuse_archived_write(project_id=project_id, topic_id=topic_id)
+        room.
+
+        Giving the room row (``Place.room``) is for a caller that already holds
+        it: the room the roster is asked about is that row's, and neither the
+        conversation→room lookup nor the row read behind ``can_access_topic`` is
+        made again. ``topic_id`` alone still works — it may be a task's or a
+        支线's, and is resolved to its room there.
+        """
+        if room is None and topic_id is None:
+            raise ValueError(  # i18n-exempt: programmer invariant, never shown
+                "authorize_topic needs topic_id or room"
+            )
+        await self._refuse_archived_write(
+            project_id=project_id,
+            topic_id=room.id if room is not None else topic_id,
+        )
         if not enforce and not settings.authz_enforce_topic_access:
             return
         self.reject_failed_credential(actor)
@@ -655,23 +650,52 @@ class ActorResolver:
                 return  # Trusted development credential; anonymous access stays denied.
             raise AuthenticationRequiredError(say("signInForRoom"))
         if not await self.can_access_topic(
-            actor, project_id=project_id, topic_id=topic_id
+            actor, project_id=project_id, topic_id=topic_id, room=room
         ):
-            _log.info("topic_access_denied", handle=actor.handle, topic=str(topic_id))
-            room = await TopicRepository(self._session).get(topic_id)
-            if room is not None and room.members_only:
+            if room is not None:
+                room_id = room.id
+            else:
+                assert topic_id is not None  # refused above when both are absent
+                room_id = await conversations.room_of(self._session, topic_id)
+            _log.info("topic_access_denied", handle=actor.handle, topic=str(room_id))
+            row = (
+                room
+                if room is not None
+                else await TopicRepository(self._session).get(room_id)
+            )
+            if row is not None and row.members_only:
                 # Someone outside a private channel is not told it exists: the
                 # answer is the one a channel that was never made gets.
                 raise NotFoundError(say("topicNotFound"))
             raise ForbiddenError(say("topicMemberOnly"))
 
     async def can_access_topic(
-        self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID
+        self,
+        actor: Actor,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID | None = None,
+        room: Topic | None = None,
     ) -> bool:
-        """Check actual membership even on isolated content hosts in dev mode."""
-        topic_id = await conversations.room_of(self._session, topic_id)
-        topic = await TopicRepository(self._session).get(topic_id)
-        rooms = [(topic_id, _private(topic))]
+        """Check actual membership even on isolated content hosts in dev mode.
+
+        ``room`` is the room's row when the caller already holds it: the room
+        asked about is that row's, so neither the conversation→room lookup nor
+        the row read is repeated. Without it, ``topic_id`` is resolved to its
+        room and that row is read.
+        """
+        if room is None:
+            if topic_id is None:
+                raise ValueError(  # i18n-exempt: programmer invariant, never shown
+                    "can_access_topic needs topic_id or room"
+                )
+            topic_id = await conversations.room_of(self._session, topic_id)
+            room = await TopicRepository(self._session).get(topic_id)
+        else:
+            # The room's id, not the conversation's: a task's or a 支线's id
+            # names no room and no roster entry.
+            topic_id = room.id
+        rooms = [(topic_id, _private(room))]
         return topic_id in await self._readable(actor, project_id, rooms)
 
     async def readable_topic_ids(

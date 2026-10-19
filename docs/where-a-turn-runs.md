@@ -163,7 +163,7 @@ macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`�
 
 - **地址永远不在线上。** 机器那半只拨一个地方：`cheese serve` 在**那台机器的磁盘上**写下的那个端口。平台发下去的帧里根本没有主机字段，所以平台就算被攻陷也没法让一台笔记本去扫别的端口。
 - **不是连接器那条链路。** 连接器那条是一轮活的命脉（提示词、控制、会话记录），两端都用一把锁串行发帧；dev server 的静态资源和热更新排在 prompt 前面就是活活拖死一轮。同一条网络路径、同一个网关、同样是拨出——但另一条连接，另一个失效域。
-- **能看的人，本来就能让芝士在那台机器上跑命令。** 预览的门槛是话题所在项目的成员/所有者，这些人在房间里说一句话，芝士就在那台机器上执行，所以「读一个 loopback 端口」不是一道新增的权限，是已有边界里面的一件小事。反过来，页面本身是芝士写的，所以 iframe 拿不到任何凭证：不带 `?token=`（那是页面自己的 JS 读得到的），只有一个按路径限定的 HttpOnly cookie，且 sandbox 不给 `allow-same-origin`。
+- **能看的人，本来就能让芝士在那台机器上跑命令。** 预览的门槛是频道所在项目的成员/所有者，这些人在房间里说一句话，芝士就在那台机器上执行，所以「读一个 loopback 端口」不是一道新增的权限，是已有边界里面的一件小事。反过来，页面本身是芝士写的，所以 iframe 拿不到任何凭证：不带 `?token=`（那是页面自己的 JS 读得到的），只有一个按路径限定的 HttpOnly cookie，且 sandbox 不给 `allow-same-origin`。
 
 **一位队友一条通道。** 一个房间可以坐几位队友，每位在自己的工作树里起自己的 dev server、拨自己的一条通道（按凭据里的房间和队友两项认）；房间的预览跟着登记它的那位队友走。同一位队友换了机器或重开，签发更晚的那份凭据接管，旧的那条被告知原因后退出，不再重拨。
 
@@ -192,14 +192,17 @@ including subprocesses that could outlive a timed-out caller. Unpublished source
 cleanup pending. The platform does not create a
 separate backup of dirty working trees or unpushed commits.
 
-Transcripts are not uploaded; the platform keeps no copy of them. Claude Code runs
-on the central session host, so a room's raw `.claude/projects/**/*.jsonl` files,
-subagent files included, are in its home there. Removing that home first
-compresses them into `~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on
-the same host. The same cleanup operation deletes the archive 30 days later, for
-the reason given beside `TRANSCRIPT_RETENTION` in `room_cleanup/retire.py`: they are kept
-for debugging after the fact, and handing the work on needs only the room's chat,
-living doc and action timeline.
+The CLI's own transcript files are kept permanently in the private bucket,
+beside what the runner journaled (`session_records`, see
+[原始记录](manual/dev/session-records.md)). Every session runs on the central
+session host: a room's raw `.claude/projects/**/*.jsonl` files, subagent files
+included, are in its home there, and Codex's and pi's session files are under the
+resource's harness state (`~/.cheese/harness/<project>/<resource>/`). Removing the
+resource there, whether or not the room has a home on that host, first compresses
+them into `~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on the same host, which
+is then sent to `transcripts/rooms/<project>/<room>/<resource>.tar.gz` in the
+private bucket. The host's archive is deleted 30 days later (`TRANSCRIPT_RETENTION`
+in `room_cleanup/retire.py`), and only once the bucket is found to hold it as sent.
 
 Before cleanup takes ownership of deletion, unarchive cancels it and reuses the
 room's resources. If a stop or worktree move has an unresolved outcome, unarchive reports

@@ -162,14 +162,26 @@ async def team_credits(
     handle: PlatformAdminDep,
 ) -> dict:
     team = await PlanService(db).team(team_id)
-    # 定向额度用题目和项目的名字说清是哪一笔。
-    projects, tasks = ProjectService(db), TaskService.of(db)
+    # 定向额度用题目和项目的名字说清是哪一笔：两边都先收 id 全集，各取一次。
+    tasks = TaskService.of(db)
+    projects_by_id = await ProjectService(db).get_projects_by_ids(
+        list(
+            {
+                uuid.UUID(pack["project_id"])
+                for pack in team["packs"]
+                if pack["project_id"]
+            }
+        )
+    )
+    tasks_by_id = await tasks.get_tasks_by_ids(
+        [pack["task_id"] for pack in team["packs"] if pack["task_id"] is not None]
+    )
     for pack in team["packs"]:
         if pack["project_id"]:
-            project = await projects.get(uuid.UUID(pack["project_id"]))
+            project = projects_by_id.get(uuid.UUID(pack["project_id"]))
             pack["project_name"] = project.name if project else None
         if pack["task_id"] is not None:
-            task = await tasks.get_task(pack["task_id"])
+            task = tasks_by_id.get(pack["task_id"])
             pack["task_name"] = task.name if task else None
     return ok(team)
 

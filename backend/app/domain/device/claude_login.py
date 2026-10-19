@@ -8,6 +8,8 @@ def view(row: DeviceClaudeLoginRow) -> dict:
     """What the machine last said about the login. Never a key: the machine
     does not send one."""
     return {
+        "id": row.id,
+        "local_id": row.local_id,
         "installed": row.installed,
         "logged_in": row.logged_in,
         "auth_method": row.auth_method,

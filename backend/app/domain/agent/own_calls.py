@@ -1,40 +1,34 @@
-"""Who may set a member's own Claude Code to work, at the moment a message does.
-
-A member's own agent (#2991) is called by whoever its owner lets call it: its
-owner alone, or any person in the project. It follows its owner into the
-project's rooms: the first message in which someone it answers to names it
-seats it in that room, as any teammate sits there. Anyone else naming it reaches
-nobody, and is told why beside their message. So is its owner while every login
-they have is of a kind the project does not allow.
-"""
+"""Seat personal agents named in a message and ask their owners privately."""
 
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.sentences import say
 from app.domain.agent.announce import announce
+from app.domain.agent.ask import ask
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own import (
     allows_own_agents,
-    callable_by,
-    why_not,
+    owned_by_seat,
+    owner_of,
 )
+from app.domain.agent_instance.own.admission import why_not
 from app.domain.identity.handles import agent_instance_handle
-from app.domain.notice_meta import (
-    EVENT_TURN_FAILED,
-    SEVERITY_INFO,
-    WHO_HUMAN,
-    notice,
-)
+from app.domain.notice_meta import EVENT_TURN_FAILED, SEVERITY_INFO, WHO_HUMAN, notice
+from app.domain.room_task.place import Place
+from app.domain.topic.models import is_private_chat
 from app.domain.topic_membership.services import TopicMemberService
 
 
 async def seat_if_named(
     session: AsyncSession, project, topic, content: str, author: str
 ) -> None:
-    """Seat the members' own agents this message names in this room, each one
-    the author may call, in a project that lets members bring their own."""
+    """Seat any personal agent named in a project that allows personal agents.
+
+    A private chat keeps its two (`privateChatTwoPeopleOnly`): there only the
+    owner brings their own agent in, since whoever is seated reads the chat."""
     if not content or "<@" not in content:
         return
     if not allows_own_agents(project.settings):
@@ -48,36 +42,72 @@ async def seat_if_named(
             AgentInstance.is_active.is_(True),
         )
     )
-    for own in owned.all():
-        seat = agent_instance_handle(own)
-        if f"<@{seat}>" in content and await callable_by(session, own, author):
-            await TopicMemberService(session).ensure_agent_seat(topic.id, seat)
+    handles = {own: agent_instance_handle(own) for own in owned.all()}
+    seats = {own: seat for own, seat in handles.items() if f"<@{seat}>" in content}
+    if is_private_chat(topic):
+        seats = {
+            own: seat
+            for own, seat in seats.items()
+            if (owner := await owner_of(session, own)) is not None
+            and owner[0] == author
+        }
+    for seat in seats.values():
+        members = TopicMemberService(session)
+        already = seat in await members.agent_handles(topic.id)
+        await members.ensure_agent_seat(topic.id, seat)
+        if not already:
+            await ask_owner_to_join(session, topic, seat)
 
 
-async def refused(session: AsyncSession, project, recipient: dict, author: str):
-    """When this message calls an agent its author may not call, take the call
-    back and say why: the sentence the room is told, or None when the call
-    stands."""
+async def ask_owner_to_join(session: AsyncSession, room, seat: str) -> None:
+    """Ask in the owner's DM when a personal agent gains a room seat."""
+    if (
+        is_private_chat(room)
+        or await owned_by_seat(session, room.project_id, seat) is None
+    ):
+        return
+    await ask(
+        session,
+        place=Place(room=room),
+        seat=seat,
+        body={
+            "to_owner": True,
+            "questions": [
+                {
+                    "question": str(
+                        say(
+                            "ownAgentRoomConsent", room=room.title, room_id=str(room.id)
+                        )
+                    ),
+                    "options": [
+                        {"text": str(say("ownAgentRoomYes"))},
+                        {"text": str(say("ownAgentRoomNo"))},
+                    ],
+                }
+            ],
+        },
+    )
+
+
+async def refused(session: AsyncSession, project, recipient: dict):
+    """Refuse an unavailable connection using the existing project rules."""
     if not recipient.get("mentioned") or not recipient.get("instance_id"):
         return None
-    instance_id = uuid.UUID(recipient["instance_id"])
-    reason = await why_not(session, instance_id, author, project.settings)
-    if reason is None:
-        return None
-    recipient["mentioned"] = False
+    reason = await why_not(
+        session, uuid.UUID(recipient["instance_id"]), project.settings
+    )
+    if reason is not None:
+        recipient["mentioned"] = False
     return reason
 
 
-async def say_refused(session: AsyncSession, place, block, reason: str | None) -> None:
-    """Beside the message, the reason it reached nobody; nothing when the call
-    stood (``refused`` answered None)."""
-    if reason is None:
-        return
-    await announce(
-        session,
-        place_id=place.room_id,
-        task_id=place.inner_id,
-        content=reason,
-        meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
-        turn_id=block.turn_id,
-    )
+async def say_refused(session: AsyncSession, place, block, reason) -> None:
+    if reason is not None:
+        await announce(
+            session,
+            place_id=place.room_id,
+            task_id=place.inner_id,
+            content=reason,
+            meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
+            turn_id=block.turn_id,
+        )

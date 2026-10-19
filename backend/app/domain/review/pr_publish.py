@@ -39,7 +39,9 @@ own copy and the replacement would quietly stop taking effect.
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -71,6 +73,14 @@ from app.domain.project.forge import (
 from app.domain.repository import identity
 from app.domain.review import archive, pr_text
 from app.domain.review.forge_clients import proposal_client, status_client
+from app.domain.review.github_pr.protocol import (
+    BranchComparison,
+    BranchComparisonFailure,
+    BranchComparisonsDeferred,
+    GitHubPrClient,
+    GitHubPrError,
+)
+from app.domain.review.github_pr_status import pr_opener
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from app.domain.review.ports import Announce, RecordInstruction
 from app.domain.review.pr_publish_payload import (
@@ -95,10 +105,20 @@ from app.domain.review.pr_publish_payload import (
     is_draft_title as is_draft_title,
 )
 from app.domain.review.pr_publish_payload import (
+    owner_token as owner_token,
+)
+from app.domain.review.pr_publish_payload import (
+    pr_body_for as pr_body_for,
+)
+from app.domain.review.pr_publish_payload import (
     record_pr as record_pr,
 )
 from app.domain.review.pr_publish_payload import (
     sync_pr_text as sync_pr_text,
+)
+from app.domain.review.ready_rebase import (
+    project_credentials,
+    rebase_behind_before_ready,
 )
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.models import Task, TaskStatus
@@ -224,7 +244,7 @@ async def open_pr_for_card(
     if base is None:
         raise ValueError("Task has no target branch")
 
-    title, body = await _pr_text(
+    title, token, body = await _pr_text(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
     pr = await _open_pr_of_task(client, task)
@@ -234,8 +254,14 @@ async def open_pr_for_card(
             base=base,
             title=title,
             body=body,
+            as_user_token=token,
         )
         pr = opened.pr
+    place = await PlaceResolver(session).resolve(topic_id)
+    if place is not None:
+        body = await pr_body_for(
+            session, place.room, card=card, opened_by=pr_opener(pr)
+        )
     # The PR very often already exists by now: the task's draft PR was opened
     # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
     # failing on GitHub's "already exists". An adopted PR still carries the
@@ -247,12 +273,109 @@ async def open_pr_for_card(
     # Not best-effort: a card that says 等验收 while GitHub still says 草稿 is a
     # delivery nobody can review, and nothing else would ever say so.
     if pr.get("draft") and pr.get("node_id"):
+        # The same step `POST /ready` takes: a behind branch is brought onto
+        # its base first, so the full CI the flag starts reads today's
+        # workflows. A conflict does not stop a card — the poller names it.
+        await rebase_behind_before_ready(
+            session=session,
+            client=client,
+            project_id=project_id,
+            base_branch=base,
+            number=int(pr["number"]),
+            credentials=lambda: project_credentials(project_id, session),
+            status_client=lambda: status_client(project_id, session),
+        )
         await client.mark_ready_for_review(str(pr["node_id"]))
         pr["draft"] = False
     logger.info(
         "PR #%s ready for card %s (%s)", pr.get("number"), card_id, pr.get("html_url")
     )
     return pr
+
+
+@dataclass(frozen=True)
+class _DraftCandidate:
+    task_id: uuid.UUID
+    project_id: uuid.UUID
+    branch: str | None
+    base: str | None
+
+
+async def _github_draft_preflight(
+    session_factory: async_sessionmaker,
+    candidates: list[_DraftCandidate],
+    blocked: set[uuid.UUID],
+) -> dict[uuid.UUID, bool | BranchComparisonFailure] | None:
+    """One project's unlocked reads. None selects the unchanged Forgejo path."""
+    # deferred-import: tests replace this name on app.domain.project.forge
+    from app.domain.project.forge import binding_for_project
+
+    result: dict[uuid.UUID, bool | BranchComparisonFailure] = {
+        task.task_id: False for task in candidates
+    }
+    eligible = [
+        task for task in candidates if task.branch and task.task_id not in blocked
+    ]
+    if not eligible:
+        return result
+    async with session_factory() as session:
+        binding = await binding_for_project(eligible[0].project_id, session)
+        if binding is None:
+            return result
+        if binding.kind == "forgejo":
+            return None
+        if binding.kind != "github_app":
+            return result
+        owner, repo = binding.repo.split("/", 1)
+        quota = await background_quota(eligible[0].project_id, session)
+        comparable = [task for task in eligible if task.base is not None]
+        client = (
+            await proposal_client(eligible[0].project_id, session)
+            if comparable
+            else None
+        )
+        reader = (
+            await status_client(eligible[0].project_id, session) if comparable else None
+        )
+        await release_read_session(session)
+        if not await quota_serves_background(quota):
+            return result
+        # As before, no-base tasks go to the locked path, which makes the final
+        # decision. They are not silently turned into comparisons against main.
+        for task in eligible:
+            if task.base is None:
+                result[task.task_id] = True
+        if not comparable or client is None or reader is None:
+            return result
+        pairs = [
+            (task.branch, task.base)
+            for task in comparable
+            if task.branch and task.base is not None
+        ]
+        token, _ = await client.tokens.installation_token()
+        try:
+            comparisons = await cast(GitHubPrClient, reader).branch_comparisons(
+                owner=owner, repo=repo, pairs=pairs, token=token
+            )
+        except BranchComparisonsDeferred:
+            raise
+        except GitHubPrError as exc:
+            logger.warning(
+                "draft comparison request failed for project %s",
+                eligible[0].project_id,
+                exc_info=True,
+            )
+            for task in comparable:
+                result[task.task_id] = BranchComparisonFailure(str(exc))
+            return result
+    for task in comparable:
+        assert task.branch is not None and task.base is not None
+        comparison = comparisons[(task.branch, task.base)]
+        if isinstance(comparison, BranchComparison):
+            result[task.task_id] = comparison.ahead_by > 0
+        elif isinstance(comparison, BranchComparisonFailure):
+            result[task.task_id] = comparison
+    return result
 
 
 async def sweep_draft_prs(
@@ -272,9 +395,9 @@ async def sweep_draft_prs(
 
     ``quiet_window_s`` limits a pass to tasks whose last activity (newest
     block in their own conversation, or their creation) is inside that many
-    seconds: each candidate costs two GitHub requests (`branch_head` +
-    `compare_status`), and a branch with nothing said for hours is not being
-    pushed to. Only the periodic clock passes it — that is where the cost is.
+    seconds. GitHub branch comparisons are batched outside row claims; only
+    an ahead candidate reaches the locked path's fresh reads. Only the
+    periodic clock passes the activity window.
     An event-driven or catch-up pass leaves it ``None`` and sweeps every open
     task, because those passes are exactly how a push missed while the relay
     was down, or a pass lost to a spent quota, gets made good. Zero or less
@@ -299,33 +422,76 @@ async def sweep_draft_prs(
     )
     async with session_factory() as session:
         wanted = [
-            (t.id, t.project_id)
+            _DraftCandidate(t.id, t.project_id, t.branch_name, t.base_branch)
             for t in await TaskService(session).open_without_pr(
                 active_since=active_since
             )
             if project_id is None or t.project_id == project_id
         ]
-    # A project whose forge refused for quota in this pass: every later task of
-    # it would meet the same refusal, so they wait for the next pass.
+        blocked = (
+            {
+                task_id
+                for task_id in await session.scalars(
+                    select(AcceptCard.task_id).where(
+                        AcceptCard.task_id.in_([task.task_id for task in wanted]),
+                        AcceptCard.status.in_(archive.OPEN_CARD_STATUSES),
+                    )
+                )
+                if task_id is not None
+            }
+            if wanted
+            else set()
+        )
+    projects: dict[uuid.UUID, list[_DraftCandidate]] = {}
+    for task in wanted:
+        projects.setdefault(task.project_id, []).append(task)
+    preflights: dict[
+        uuid.UUID, dict[uuid.UUID, bool | BranchComparisonFailure] | None
+    ] = {}
     out_of_quota: set[uuid.UUID] = set()
-    for task_id, task_project in wanted:
+    for task in wanted:
+        task_id, task_project = task.task_id, task.project_id
         if task_project in out_of_quota:
             counts["skipped"] += 1
             continue
         try:
-            # Most passes find a branch with nothing new on it. Asking the
-            # forge that without the row lock keeps the connection free while
-            # the request is in flight; only a branch that is ahead goes on
-            # to the locked path, which asks again before it opens anything.
-            async with session_factory() as session:
-                ahead = await _branch_ahead(session, task_id)
+            if task_project not in preflights:
+                try:
+                    preflights[task_project] = await _github_draft_preflight(
+                        session_factory, projects[task_project], blocked
+                    )
+                except (ForgeRateLimitedError, BranchComparisonsDeferred):
+                    raise
+                except Exception as exc:
+                    # A request-wide failure is shared by this project; do not
+                    # send the same unusable batch again for every later task.
+                    preflights[task_project] = {
+                        candidate.task_id: BranchComparisonFailure(str(exc))
+                        for candidate in projects[task_project]
+                    }
+            preflight = preflights[task_project]
+            if preflight is None:
+                async with session_factory() as session:
+                    ahead = await _branch_ahead(session, task_id)
+            else:
+                outcome = preflight[task_id]
+                if isinstance(outcome, BranchComparisonFailure):
+                    counts["failed"] += 1
+                    logger.warning(
+                        "draft preflight failed for task %s: %s",
+                        task_id,
+                        outcome.reason,
+                    )
+                    continue
+                ahead = outcome
             if not ahead:
                 counts["skipped"] += 1
                 continue
+            # Bulk results never replace this claim and fresh forge recheck.
             async with session_factory() as session:
                 opened = await _draft_pr_for_one_task(session, task_id)
                 await session.commit()
-        except ForgeRateLimitedError as exc:
+        except (ForgeRateLimitedError, BranchComparisonsDeferred) as exc:
             counts["failed"] += 1
             out_of_quota.add(task_project)
             logger.warning(
@@ -796,8 +962,15 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:
         title=draft_title(task.title or branch),
         body=pr_text.pr_body(room, "", None, who),
         draft=True,
+        as_user_token=await owner_token(session, room, task.id),
     )
     pr = opened.pr
+    await sync_pr_text(
+        client,
+        pr,
+        title=str(pr.get("title") or ""),
+        body=await pr_body_for(session, room, task_id=task.id, opened_by=pr_opener(pr)),
+    )
     logger.info(
         "draft PR #%s opened for task %s (%s)",
         pr.get("number"),

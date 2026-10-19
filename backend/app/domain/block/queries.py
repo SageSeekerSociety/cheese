@@ -64,6 +64,37 @@ async def message_reply_target(
     return await BlockRepository(session).get(block_id)
 
 
+async def block_by_id(session: AsyncSession, block_id: uuid.UUID) -> Block | None:
+    """The block a caller was handed by id, read in its own transaction."""
+    return await BlockRepository(session).get(block_id)
+
+
+async def inputs_after(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    after: tuple[datetime, uuid.UUID] | None,
+    limit: int,
+) -> list[Block]:
+    """What a seat has not read: the newest participant messages after its
+    cursor, oldest first."""
+    return await BlockRepository(session).inputs_after(
+        conversation_id, after=after, limit=limit
+    )
+
+
+async def notices_after(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    after: tuple[datetime, uuid.UUID] | None,
+) -> list[Block]:
+    """The platform notices a seat has not read, oldest first."""
+    return await BlockRepository(session).notices_after(
+        conversation_id, after=after
+    )
+
+
 async def client_delivery_bundle(
     session: AsyncSession,
     conversation_id: uuid.UUID,

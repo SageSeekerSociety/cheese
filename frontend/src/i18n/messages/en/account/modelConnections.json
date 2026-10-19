@@ -13,7 +13,10 @@
   "checked": "Check passed",
   "checkedAt": "Last checked",
   "device": "Device",
-  "empty": "No model connections yet",
+  "devicesEmpty": "No logins on devices yet",
+  "devicesTitle": "Signed in on devices",
+  "heldEmpty": "No connections kept on your account yet",
+  "heldTitle": "Kept on your account",
   "keptOnAccount": "Kept encrypted on your account; runs on Cheese",
   "lastUsed": "Last used",
   "lede": "The model accounts and services your Claude Code uses: those signed in on your devices, and the API keys and model services kept on your account. Keys are never shown here",
@@ -28,7 +31,7 @@
   "ready": "Ready",
   "recheck": "Check again",
   "remove": "Remove",
-  "removeBody": "Claude Code on {device} will log out, and your Claude Code can no longer use it in projects. If the device is offline, it logs out when it comes back online. Claude Code you use yourself on that device is not affected",
+  "removeBody": "This login on {device} will log out, and your Claude Code can no longer use it in projects. If the device is offline, it logs out when it comes back online. Other logins on that device, and the Claude Code you use yourself there, are not affected",
   "removeHeldBody": "The key is deleted from Cheese right away, and Claude Code added to projects with it stops taking work",
   "removeTitle": "Remove this model connection?",
   "removed": "Removed",
@@ -39,8 +42,8 @@
   "revoking": "Removing",
   "revokingHint": "No longer used. It logs out when {device} comes online",
   "saved": "Saved",
-  "serviceHint": "Works with services that speak Anthropic's API, such as GLM, Kimi and DeepSeek. The key is sent straight to the device and kept only there. Once saved, Claude Code on that device uses this service",
-  "serviceHost": "Service at {host}",
+  "serviceHint": "Works with services that speak Anthropic's API, such as GLM, Kimi and DeepSeek. The key is sent straight to the device and kept only there. Once saved, that device has one more model connection, using this service",
   "storedOn": "Stored on",
-  "subscription": "Claude subscription ({plan})"
+  "subscription": "Claude subscription ({plan})",
+  "useService": "Use a custom model service"
 }

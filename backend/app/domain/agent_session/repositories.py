@@ -12,7 +12,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.models import AgentEnvironment, AgentSession
+from app.domain.agent_session.models import AgentEnvironment, AgentRead, AgentSession
 from app.domain.conversation.services import of_room, room_column
 from app.domain.topic.models import Topic
 
@@ -377,4 +377,68 @@ class AgentSessionRepository:
     async def forget_room(self, topic_id: uuid.UUID) -> None:
         await self._session.execute(
             delete(AgentSession).where(of_room(AgentSession.conversation_id, topic_id))
+        )
+
+
+class AgentReadRepository:
+    """Where one seat's reading of one conversation got to.
+
+    Keyed by the seat (the authorship handle), so each teammate in a room has
+    its own cursor and one seat reading a message never takes it from another.
+    """
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def cursor(
+        self, conversation_id: uuid.UUID, agent_handle: str
+    ) -> tuple[datetime, uuid.UUID] | None:
+        """The newest block this seat has read, or None when it has read none."""
+        result = await self._session.execute(
+            select(AgentRead.read_through_at, AgentRead.read_through_block_id).where(
+                AgentRead.conversation_id == conversation_id,
+                AgentRead.agent_handle == agent_handle,
+            )
+        )
+        found = result.first()
+        return (found[0], found[1]) if found is not None else None
+
+    async def advance(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        at: datetime,
+        block_id: uuid.UUID,
+    ) -> None:
+        """Move the seat forward to ``(at, block_id)``; never backward.
+
+        The guarded upsert is what makes a late completion harmless: a retried
+        turn finishing after a newer one must not rewind the seat and hand the
+        conversation back to itself.
+        """
+        stmt = insert(AgentRead).values(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            read_through_at=at,
+            read_through_block_id=block_id,
+            updated_at=datetime.now(UTC),
+        )
+        await self._session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[
+                    AgentRead.conversation_id,
+                    AgentRead.agent_handle,
+                ],
+                set_={
+                    "read_through_at": at,
+                    "read_through_block_id": block_id,
+                    "updated_at": datetime.now(UTC),
+                },
+                where=(AgentRead.read_through_at < at)
+                | (
+                    (AgentRead.read_through_at == at)
+                    & (AgentRead.read_through_block_id < block_id)
+                ),
+            )
         )

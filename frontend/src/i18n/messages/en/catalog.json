@@ -941,33 +941,6 @@
       "note": "The dialog the 'New plan' button pops up: name, applies to, credits and limit, available models all empty awaiting input."
     }
   },
-  "adminRatchetPageView": {
-    "about": "The ratchet screen: where each architecture check stands now, how many are frozen, better or worse than the start. Where the data comes from is on the source line, and the pull result floats on top.",
-    "s1": {
-      "name": "Two collections in the archive",
-      "note": "Default cell: the source line says which commit the data is from, when it was collected and how many collections the archive holds; below, each check's current number and its trend by area."
-    },
-    "s2": {
-      "name": "First load",
-      "note": "No board yet: three fixed-height skeletons, drawing neither an empty table nor an empty state."
-    },
-    "s3": {
-      "name": "Archive unreadable",
-      "note": "This request failed and there's no board in hand: it says 'Archive unreadable', not 'no collections yet' — two things, two lines, retry right beside."
-    },
-    "s4": {
-      "name": "Never collected",
-      "note": "The archive was empty to begin with: it's 'not a single collection yet', offering a 'Pull one now', not drawing it as 'all normal'."
-    },
-    "s5": {
-      "name": "Collected, but no measurement",
-      "note": "The archive has collections yet not one check (a failed collection in the real contract looks like this): it says there's no usable measurement this time, not hiding the failure history."
-    },
-    "s6": {
-      "name": "The failed pull",
-      "note": "Just pressed refresh and CI didn't pull: a red line floats on top; the page keeps the points already stored."
-    }
-  },
   "adminRunRecordsPageView": {
     "about": "The run-records screen: errors the platform hit across projects and the things it handled itself, one kind per row; opening a row shows that kind's most recent full text on the right and which projects and threads it appeared in.",
     "s1": {
@@ -1154,21 +1127,33 @@
     "s9": {
       "name": "Enable two-step: backup codes",
       "note": "The third step: list this set of backup codes, remind that they're shown only this once and each works once, and offer a button to copy the whole set."
+    },
+    "s10": {
+      "name": "Closing refused: still a team's only owner",
+      "note": "The server refuses the close: this person is still the only owner of a team that others are in, or that someone can still enter through a pending invitation or joining without approval. The reason stays in the dialog, names the team, and says to transfer ownership, or cancel the invitations and turn on join approval, first."
     }
   },
   "modelConnectionsView": {
-    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device; and the API keys and model services kept on your account, with the key's last four characters, service host, model and last check, and test, rename and remove.",
+    "about": "Model connections in account settings, in two cards. Signed in on devices: the accounts or model services your Claude Code is logged in with on each device, one line each with its name, plan, device (with an online dot) and status; opening a line shows where it is stored and when it was last checked and used, with check again, rename and remove, and the card's top right lets an online device use a custom model service. Kept on your account: API keys and model services, one line each with its name, the key's last four characters and status; opening a line shows the service host and last check, with test, rename and remove, and the card's top right adds an API key or a model service.",
     "s1": {
       "name": "No connections",
-      "note": "Logged in on no device and nothing kept on the account: the card says there are no model connections, and the buttons to add an API key, add a model service or use one on a device stay at its top right."
+      "note": "Logged in on no device and nothing kept on the account: each card says it has nothing yet, and each keeps its own add buttons at its top right."
     },
     "s2": {
       "name": "Removing on an offline device",
-      "note": "Removed while its device is offline: no longer used, marked as removing, with a line saying it logs out when the device comes online; no check or remove buttons."
+      "note": "Removed while its device is offline: no longer used, and its line is marked as removing; opened, it says it logs out when the device comes online, with no check or remove buttons."
     },
     "s3": {
       "name": "A key on the account fails its check",
-      "note": "The service refused the key when it was tested again: marked as failing the check, with what the service said below; it can still be tested again, renamed or removed."
+      "note": "The service refused the key when it was tested again: its line is marked in red as failing the check; opened, it shows what the service said, and it can still be tested again, renamed or removed."
+    },
+    "s4": {
+      "name": "Two logins on one device",
+      "note": "Two Claude accounts logged in on the workstation: one line each, each opened, checked again, renamed and removed on its own; removing one leaves the other in use."
+    },
+    "s5": {
+      "name": "Both kinds of connection",
+      "note": "Two Claude subscriptions on the workstation, a custom model service on the laptop and an API key on an offline server, plus an API key and a model service kept on the account: each closed to one line with its name, plan, where it is and its status."
     }
   },
   "thisDeviceView": {

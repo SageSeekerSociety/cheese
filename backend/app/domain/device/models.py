@@ -7,8 +7,8 @@ Tables mirror the storage-agnostic dataclasses in ``repository.py``:
 ``device_team`` (device↔team bindings — compute belongs to the team, v4) and
 ``device_health``
 (a machine's rolling failure streak / quarantine — #186) and
-``device_claude_login`` (whether its owner's own Claude Code is logged in for
-the platform — #2991) and ``device_sandbox`` (whether it can give a session a
+``claude_logins`` (each login its owner's own Claude Code has for the platform
+there — #2991) and ``device_sandbox`` (whether it can give a session a
 sandbox). ``SqlDeviceRepository``
 converts between these rows and the dataclasses; the service never sees them.
 """
@@ -31,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps
+from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.supply import Supply
 
 
@@ -160,19 +161,49 @@ class DeviceHealthRow(Base):
     )
 
 
-class DeviceClaudeLoginRow(Base):
-    """Whether the owner's own Claude Code on a machine is logged in for the
-    platform (`cheesehost claude login`), as the machine last answered.
+def _login_record_id(context) -> str:
+    """A login's record id: the machine's own for its first login, which named
+    that login before a machine could hold several (own agents and links made
+    then still say it), and one of its own for every other."""
+    given = context.get_current_parameters()
+    # ``local_id``'s own default is not applied yet when this one runs.
+    if (given.get("local_id") or FIRST_LOGIN) == FIRST_LOGIN:
+        return given["device_id"]
+    return uuid.uuid4().hex
 
-    One row per machine, written each time the backend asks it — when it
-    connects, and before a session of the owner's Claude Code starts on it. The
-    machine is the source of truth; this is what it said, and when.
+
+class DeviceClaudeLoginRow(Base):
+    """One login the owner's own Claude Code has for the platform on a machine
+    (`cheesehost claude login`), as the machine last answered. A machine holds
+    any number of them, each in a directory of its own named by ``local_id``.
+
+    Written each time the backend asks the machine — when it connects, and when
+    its owner asks again. The machine is the source of truth; this is what it
+    said, and when. An own agent runs on one of these (`OwnAgent.login_id`).
     """
 
-    __tablename__ = "device_claude_login"
+    __tablename__ = "claude_logins"
+    __table_args__ = (
+        UniqueConstraint(
+            "device_id", "local_id", name="uq_claude_logins_device_id_local_id"
+        ),
+    )
 
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=_login_record_id
+    )
     device_id: Mapped[str] = mapped_column(
-        ForeignKey("device.device_id", ondelete="CASCADE"), primary_key=True
+        ForeignKey(
+            "device.device_id",
+            ondelete="CASCADE",
+            name="fk_claude_logins_device_id_device",
+        ),
+        nullable=False,
+    )
+    # What the machine calls it: the name of its directory there
+    # (`login_kind.FIRST_LOGIN` for the first one).
+    local_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=FIRST_LOGIN
     )
     # The pinned build is on the machine. Without it nothing is logged in yet.
     installed: Mapped[bool] = mapped_column(Boolean, nullable=False)

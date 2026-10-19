@@ -41,6 +41,8 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from app.core import forge_http, forge_quota
+
 logger = logging.getLogger("cheesex.background")
 
 # Strong references to everything in flight. Entries remove themselves on
@@ -163,12 +165,64 @@ class PeriodicRunner:
         job: Callable[[], Awaitable[Any]],
         *,
         owner_only: bool = True,
+        interval_policy: Callable[[float], float | None] | None = None,
+        pause_wait: Callable[[], float] | None = None,
     ) -> None:
+        if interval_policy is not None and pause_wait is None:
+            raise ValueError(  # i18n-exempt: invalid scheduler setup for developers
+                "a paused interval policy needs a resume wait"
+            )
         self._name = name
         self._interval = interval_seconds
+        self._interval_policy = interval_policy or (lambda interval: interval)
+        self._pause_wait = pause_wait
         self._job = job
         self._owner_only = owner_only
         self._task: asyncio.Task[None] | None = None
+        self._last_started_at: datetime | None = None
+        self._last_succeeded_at: datetime | None = None
+        self._running_since: datetime | None = None
+        self._last_error: str | None = None
+
+    def health(self) -> dict[str, Any]:
+        if self._interval <= 0:
+            status = "disabled"
+        elif self._task is None:
+            status = "not_started"
+        elif self._task.done():
+            status = "stopped"
+        elif self._running_since is not None:
+            status = "running"
+        elif self._last_error is not None:
+            status = "failed"
+        else:
+            status = "waiting"
+        return {
+            "status": status,
+            "last_started_at": self._last_started_at,
+            "last_succeeded_at": self._last_succeeded_at,
+            "running_since": self._running_since,
+            "last_error": self._last_error,
+        }
+
+    def _next_interval_seconds(self) -> float | None:
+        try:
+            interval = self._interval_policy(self._interval)
+            return None if interval is None else max(0.0, interval)
+        except (
+            Exception
+        ):  # i18n-exempt: internal fallback for an invalid interval policy
+            logger.exception("%s: could not select its interval", self._name)
+            return self._interval
+
+    def _pause_wait_seconds(self) -> float:
+        if self._pause_wait is None:
+            return self._interval
+        try:
+            return max(0.1, self._pause_wait())
+        except Exception:  # retry policy on the next base interval
+            logger.exception("%s: could not select its resume wait", self._name)
+            return self._interval
 
     @property
     def name(self) -> str:
@@ -188,12 +242,18 @@ class PeriodicRunner:
         """Begin looping. A non-positive interval means this box does not run
         this job at all — the switch every deployment and every test uses."""
         if self._interval > 0 and self._task is None:
-            wait = self._interval
-            if last_run is not None:
+            interval = self._next_interval_seconds()
+            wait = self._pause_wait_seconds() if interval is None else interval
+            if interval is not None and last_run is not None:
                 since = (datetime.now(UTC) - last_run).total_seconds()
-                wait = max(0.0, self._interval - since)
-            self._task = asyncio.create_task(self._loop(runs, wait), name=self._name)
-            logger.info("%s started (every %ss)", self._name, self._interval)
+                wait = max(0.0, interval - since)
+            self._task = asyncio.create_task(
+                self._loop(runs, wait, interval), name=self._name
+            )
+            if interval is None:
+                logger.info("%s paused until quota reset", self._name)
+            else:
+                logger.info("%s started (every %ss)", self._name, interval)
 
     async def stop(self) -> None:
         if self._task is not None:
@@ -222,6 +282,8 @@ class PeriodicRunner:
         try:
             return await runs.claim(
                 self._name,
+                # Throttling changes the wait, not the lease: a recovered quota
+                # must not remain blocked by the previous slower interval.
                 interval_s=self._interval,
                 who=_PROCESS,
                 now=datetime.now(UTC),
@@ -230,31 +292,123 @@ class PeriodicRunner:
             logger.exception("%s: could not take its tick; running anyway", self._name)
             return True
 
-    async def _loop(self, runs: "RunRecord", wait: float) -> None:
+    async def _loop(
+        self, runs: "RunRecord", wait: float, interval: float | None
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        cycle_started = loop.time()
+        if interval is not None:
+            cycle_started -= interval - wait
+            due_at = cycle_started + interval
+        else:
+            due_at = cycle_started
         while True:
-            await asyncio.sleep(wait)
-            wait = self._interval
+            if interval is None:
+                await asyncio.sleep(wait)
+                interval = self._next_interval_seconds()
+                if interval is None:
+                    wait = self._pause_wait_seconds()
+                    continue
+                due_at = loop.time()
+            else:
+                await asyncio.sleep(max(0.0, due_at - loop.time()))
+                interval = self._next_interval_seconds()
+                if interval is None:
+                    wait = self._pause_wait_seconds()
+                    continue
+                due_at = cycle_started + interval
+                if due_at > loop.time():
+                    continue
+            assert interval is not None
             if not await self._take_tick(runs):
+                cycle_started = loop.time()
+                interval = self._next_interval_seconds()
+                if interval is None:
+                    wait = self._pause_wait_seconds()
+                else:
+                    due_at = cycle_started + interval
                 continue
             try:
-                result = await self._job()
-            except asyncio.CancelledError:
-                # `stop()` cancels this task, and THAT has to end the loop.
-                # But a job can raise the same exception with nobody having
-                # asked this loop to stop: a `wait_for` it ran, a task it
-                # awaited, a session torn down under it. Letting that through
-                # ends the job for the life of the process, with nothing in the
-                # log to say so, which is the failure this class exists to
-                # prevent, one level up from a job that was never scheduled.
-                if _cancellation_requested():
-                    raise
-                logger.exception("%s was cancelled from inside; continuing", self._name)
-                continue
-            except Exception:  # one bad cycle must not end the loop
-                logger.exception("%s failed", self._name)
-                continue
-            if _worth_reporting(result):
-                logger.info("%s: %s", self._name, result)
+                self._last_started_at = self._running_since = datetime.now(UTC)
+                try:
+                    # Tag only the job's own forge requests. The context is
+                    # reset by the context manager on every exit path, so a
+                    # failed or cancelled cycle cannot leak "job" into later
+                    # work; scheduling and pause behaviour are untouched.
+                    with forge_http.background_job(self._name):
+                        result = await self._job()
+                except asyncio.CancelledError:
+                    # `stop()` cancels this task, and THAT has to end the loop.
+                    # But a job can raise the same exception with nobody having
+                    # asked this loop to stop: a `wait_for` it ran, a task it
+                    # awaited, a session torn down under it. Letting that through
+                    # ends the job for the life of the process, with nothing in the
+                    # log to say so, which is the failure this class exists to
+                    # prevent, one level up from a job that was never scheduled.
+                    if _cancellation_requested():
+                        raise
+                    self._last_error = "cancelled inside the job"
+                    logger.exception(
+                        "%s was cancelled from inside; continuing", self._name
+                    )
+                except Exception as exc:  # one bad cycle must not end the loop
+                    self._last_error = type(exc).__name__
+                    logger.exception("%s failed", self._name)
+                else:
+                    self._last_succeeded_at = datetime.now(UTC)
+                    self._last_error = None
+                    if _worth_reporting(result):
+                        logger.info("%s: %s", self._name, result)
+            finally:
+                self._running_since = None
+                cycle_started = loop.time()
+                interval = self._next_interval_seconds()
+                if interval is None:
+                    wait = self._pause_wait_seconds()
+                else:
+                    due_at = cycle_started + interval
+
+
+def periodic_health(
+    jobs: Sequence[PeriodicRunner], *, owns_work: bool
+) -> dict[str, Any]:
+    readings = {
+        job.name: job.health() for job in jobs if owns_work or not job.owner_only
+    }
+    unhealthy = {
+        name: reading["status"]
+        for name, reading in readings.items()
+        if reading["status"] in {"not_started", "stopped", "failed"}
+    }
+    return {
+        "status": "down" if unhealthy else "up",
+        "owns_work": owns_work,
+        "unhealthy": unhealthy,
+        "jobs": readings,
+    }
+
+
+async def watch_periodic_jobs(
+    read: Callable[[], dict[str, Any]], *, interval_s: float = 10, grace_s: float = 60
+) -> None:
+    """Notice clocks that never started or stopped, independently of those clocks."""
+    unseen: dict[str, float] = {}
+    reported: set[str] = set()
+    loop = asyncio.get_running_loop()
+    while True:
+        await asyncio.sleep(interval_s)
+        unhealthy = read()["unhealthy"]
+        unseen = {name: at for name, at in unseen.items() if name in unhealthy}
+        reported.intersection_update(unhealthy)
+        for name, status in unhealthy.items():
+            since = unseen.setdefault(name, loop.time())
+            # Startup discovery gets a minute; it must not hide a clock for
+            # the lifetime of the process. HTTP readiness remains independent.
+            if loop.time() - since >= grace_s and name not in reported:
+                logger.error(
+                    "periodic job %s has stayed %s for %ss", name, status, grace_s
+                )
+                reported.add(name)
 
 
 def _cancellation_requested() -> bool:
@@ -290,12 +444,20 @@ class PeriodicJobs:
         job: Callable[[], Awaitable[Any]],
         *,
         owner_only: bool = True,
+        forge_bound: bool = False,
     ) -> None:
         if name in self._jobs:
             # i18n-exempt: startup wiring error for developers, not a user refusal
             raise ValueError(f"periodic job registered twice: {name!r}")
         self._jobs[name] = PeriodicRunner(
-            name, interval_seconds, job, owner_only=owner_only
+            name,
+            interval_seconds,
+            job,
+            owner_only=owner_only,
+            interval_policy=(
+                forge_quota.background_interval_seconds if forge_bound else None
+            ),
+            pause_wait=forge_quota.background_resume_after if forge_bound else None,
         )
 
     def ordered(self, names: Sequence[str]) -> list[PeriodicRunner]:

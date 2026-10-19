@@ -30,8 +30,8 @@ dependencies = [
     # upload path, with nothing at import time to warn anyone.
     "python-multipart>=0.0.32",
     "pydantic>=2.13.4",
-    "pydantic-settings>=2.14.1",
-    "pyjwt>=2.13.0",
+    "pydantic-settings==2.14.2",
+    "pyjwt==2.15.0",
     "pymupdf4llm>=1.28.0",
     "pyotp>=2.10.0",
     "python-dotenv>=1.2.2",
@@ -54,6 +54,7 @@ dependencies = [
     # app/core/model_images.py decodes an uploaded picture before a model is
     # sent it; the image the app runs must have it.
     "pillow>=12.3.0",
+    "cachetools==7.2.3",
 ]
 
 [dependency-groups]
@@ -73,6 +74,16 @@ dev = [
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.17",
+]
+
+[tool.uv]
+constraint-dependencies = [
+    "aiohttp==3.14.3",
+    "anyio==4.14.2",
+    "cryptography==50.0.0",
+    "multidict==6.9.1",
+    "soupsieve==2.9.0",
+    "urllib3==2.8.0",
 ]
 
 [tool.ruff]
@@ -173,6 +184,12 @@ markers = [
     "pure: no Postgres, no ASGI app — runs on a machine with nothing but Python",
     "contract: one side of a seam real and the other a double",
     "integration: real Postgres, real alembic, real ASGI app",
+    # Not a layer: the tests that assert something is read — or happens —
+    # exactly once: a request's SQL round trips, a batch that must not go per
+    # row, a one-shot effect. Added by `pytest_collection_modifyitems` from the
+    # file's name or its code, never written by hand; `pytest -m reads_once` is
+    # the way to list them.
+    "reads_once: asserts that a thing is read or happens exactly once, not once per row",
 ]
 addopts = ["--strict-markers"]
 # A wedged test must name itself. Without this, one test that never returns

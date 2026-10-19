@@ -47,6 +47,7 @@ import os
 import posixpath
 import re
 import runpy
+import shlex
 import shutil
 import subprocess
 import sys
@@ -321,16 +322,26 @@ PLATFORM_TOOLS = ToolTable(
             "chat_send",
             "Publish a message to the current Cheese room. "
             "Use for user-visible updates and replies; "
-            "ordinary model output is not published.",
+            "ordinary model output is not published. "
+            "Pictures go out with the message through `attachments`, shown in the "
+            "conversation itself — no page to open.",
             {
                 "content": {"type": "string"},
                 "reply_to": {"type": "string"},
+                "attachments": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "随消息直接发进对话的图片路径，每项一张 PNG、JPEG、GIF 或 "
+                        "WebP（工作区相对路径或绝对路径），一次最多 9 张。"
+                        "只发图时 content 可以不写。"
+                    ),
+                },
                 "request_id": _text(
                     "UUID from an uncertain prior result; "
                     "reuse with the same content to retry."
                 ),
             },
-            ["content"],
         ),
         _tool(
             "chat_edit",
@@ -495,14 +506,15 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_app_save",
-            "保存文档中的一个小程序，即嵌在文档中、可以运行的一段程序。讲解原理、结果随条件的变化、"
-            "方案比较、过程推演，或者让读者动手组合时使用；练习题只在用户要求或文档是教学材料时使用。"
-            "code 是一个 Vue 单文件组件：图形自行绘制，控件使用平台的 c- 组件，"
-            "写法和设计规范见 cheese-docs 技能的 references/apps.md。"
+            "保存一个小程序，即读者可以直接操作、可以运行的一段程序，可以嵌进文档，也可以发到聊天。"
+            "讲解原理、结果随条件的变化、方案比较、过程推演，或者让读者动手组合时使用；"
+            "练习题只在用户要求或材料是教学用的时使用。小程序属于 document 指定的那份文档，"
+            "能读它的人才能运行。code 是一个 Vue 单文件组件：图形自行绘制，控件使用平台的 c- 组件，"
+            "写法和设计规范见 miniapp 技能的 references/apps.md。"
             "平台先在浏览器中运行一遍；运行报错、页面没有内容、自查（console.assert）未通过，"
             "或读者操作的控件没有绑定到变量时，不保存，并返回原因。"
-            "不给 app 时新建，返回整个块的写法，由你放进文档；给出 app 时修改该小程序，"
-            "保存为新版本，并同步更新文档中的版本号。",
+            "不给 app 时新建，返回整个块的写法，由你放进文档或聊天消息；给出 app 时修改该小程序，"
+            "保存为新版本，并同步更新所属文档中的版本号，已发到聊天里的不变。",
             {
                 "code": _text("小程序的 Vue 单文件组件：<script setup> 加 <template>"),
                 "title": _text("新建时：小程序的标题，十个字左右"),
@@ -601,6 +613,7 @@ PLATFORM_TOOLS = ToolTable(
                 "owner": _text(
                     "负责人 handle，就是说要做这件事的人；省略是你这一轮回应的那个人"
                 ),
+                "source_message_id": _text("任务所依据的消息 id；成员自己的 AI 必须引用主人发送的消息"),
                 "here": {
                     "type": "boolean",
                     "description": "这条支线原地转为任务填 true；另开任务不填",
@@ -792,6 +805,10 @@ PLATFORM_TOOLS = ToolTable(
             "的选项后面加一个「其他」，点开能自己写答案，所以选项里不要"
             "再放「其他」「都不是」「我自己说」这类兜底项，只写真正的候选。",
             {
+                "to_owner": {
+                    "type": "boolean",
+                    "description": "成员自己的 AI 私聊主人征求同意时填 true；问题只发到你和主人的私聊",
+                },
                 "questions": {
                     "type": "array",
                     "minItems": 1,
@@ -1245,6 +1262,7 @@ def _ask_body(args: dict) -> dict:
     # Identity is supplied by the host credential, never an author in args.
     return {
         "questions": questions,
+        **({"to_owner": True} if args.get("to_owner") is True else {}),
         **({"to": to} if to is not None else {}),
         "request_id": str(uuid.UUID(args["request_id"]))
         if args.get("request_id")
@@ -1339,7 +1357,7 @@ def _has_tz_database() -> bool:
     """这台机器上有 tzdata 吗——没有的话「查不到」说明不了任何事。"""
     try:
         ZoneInfo("UTC")
-    except Exception:  # noqa: BLE001 — 判不出来就是判不出来
+    except Exception:
         return False
     return True
 
@@ -1416,7 +1434,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return plan
     if tool == "chat_send":
         body = {
-            "content": args["content"],
+            "content": args.get("content") or "",
             "request_id": str(uuid.UUID(args["request_id"]))
             if args.get("request_id")
             else str(uuid.uuid4()),
@@ -1462,7 +1480,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "title": args["title"],
                 "summary": args.get("summary") or "",
                 "here": args.get("here") is True,
-                **_given(args, "owner:owner_handle"),
+                **_given(args, "owner:owner_handle", "source_message_id"),
             },
         }
     if tool == "cheese_close_task":
@@ -2131,7 +2149,7 @@ def _doc_links(document: str, host) -> list[str]:
     platform could not say."""
     try:
         found = host.request({"method": "GET", "path": f"/documents/{document}/links"})
-    except Exception:  # noqa: BLE001 — the document reads without its links
+    except Exception:
         return []
     data = found.get("data") or {}
 
@@ -3005,7 +3023,109 @@ def _task(args: dict, host) -> str:
     return _say_task(args, answer.get("data"), host.environ)
 
 
+#: 一条消息最多带几张图；后端 `topics_messages.ATTACHMENTS_PER_MESSAGE` 是同一个数。
+_CHAT_ATTACHMENTS_PER_MESSAGE = 9
+#: 一张随消息发出去的图片的上限，和后端 `library.MAX_FILE_BYTES` 是同一条线。
+_CHAT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
+#: 一次从机器上取回多少字节。构建对一条命令的 stdout 有 30000 字符的上限；
+#: 21000 字节编码成 base64 是 28000 字符，每一片都完整回来。
+_CHAT_ATTACHMENT_CHUNK_BYTES = 21000
+
+
+def _machine_stdout(host, command, request_id) -> str:
+    invoke = getattr(host, "invoke", None)
+    if invoke is None:
+        raise PlatformToolError("这个会话没有可以读文件的机器，发不了附件")
+    receipt = invoke(
+        {"id": request_id, "tool": "Bash"},
+        {"command": command, "timeout": 60000},
+    )
+    if "error" in receipt:
+        raise PlatformToolError(str(receipt["error"]))
+    stdout = (receipt.get("value") or {}).get("stdout") or ""
+    if stdout.startswith("Exit code"):
+        raise PlatformToolError(stdout.strip())
+    return stdout
+
+
+def _read_chat_attachment(host, path, request_id) -> bytes:
+    """机器上这一份文件的字节，分片取回，不让一片超过构建的回传上限。"""
+    quoted = shlex.quote(path)
+    try:
+        size = int(
+            "".join(
+                _machine_stdout(
+                    host, f"wc -c < {quoted}", f"{request_id}-size"
+                ).split()
+            )
+        )
+    except ValueError as exc:
+        raise PlatformToolError(f"读不到文件：{path}") from exc
+    if not size:
+        raise PlatformToolError(f"文件是空的：{path}")
+    if size > _CHAT_ATTACHMENT_MAX_BYTES:
+        raise PlatformToolError(
+            f"{path} 太大（上限 {_CHAT_ATTACHMENT_MAX_BYTES // (1024 * 1024)}MB）"
+        )
+    pieces = []
+    for index in range(-(-size // _CHAT_ATTACHMENT_CHUNK_BYTES)):
+        stdout = _machine_stdout(
+            host,
+            f"dd if={quoted} bs={_CHAT_ATTACHMENT_CHUNK_BYTES} skip={index} "
+            "count=1 status=none | base64",
+            f"{request_id}-{index}",
+        )
+        try:
+            pieces.append(base64.b64decode("".join(stdout.split()), validate=True))
+        except ValueError as exc:
+            raise PlatformToolError(f"读到的不是文件内容：{path}") from exc
+    raw = b"".join(pieces)
+    if len(raw) != size:
+        raise PlatformToolError(f"{path} 在读取时变了，再试一次")
+    return raw
+
+
+def _chat_send(args: dict, host) -> str:
+    """`chat_send`，先把图片在机器上读成字节，再随消息一起发出去。
+
+    后端不认识执行机的路径：图片的字节必须和消息一起到。每张图在这里分片取回、
+    编码进请求体，和 `send_user_file` 交给房间的是同一批字节。
+    """
+    paths = args.get("attachments") or []
+    if not isinstance(paths, list):
+        raise PlatformToolError("attachments 要是文件路径的列表")
+    if len(paths) > _CHAT_ATTACHMENTS_PER_MESSAGE:
+        # 后端只收前 9 张；说清楚，别让同一张图被默默丢掉。
+        raise PlatformToolError(
+            f"一次最多发 {_CHAT_ATTACHMENTS_PER_MESSAGE} 张图，分两次发"
+        )
+    # 执行器把每次 invoke 按 id 记进日志：同一个 id 再来一次，输入不同就拒
+    # （"Request ID already belongs to different input"），输入相同则直接回放
+    # 上一次的结果。所以每次调用要有自己的前缀，否则第二次 `chat_send` 要么
+    # 失败，要么发出去的是同一路径上旧文件的字节。
+    run = uuid.uuid4().hex
+    files = []
+    for index, path in enumerate(paths):
+        if not isinstance(path, str) or not path.strip():
+            raise PlatformToolError("attachments 里每一项都要是一个文件路径")
+        raw = _read_chat_attachment(host, path, f"chat-send-{run}-{index}")
+        name = path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or "image"
+        files.append(
+            {
+                "path": path,
+                "name": name,
+                "content_b64": base64.b64encode(raw).decode("ascii"),
+            }
+        )
+    plan = request_plan("chat_send", args, host.environ)
+    if files:
+        plan["body"]["attachments"] = files
+    data = host.request(plan).get("data")
+    return _say_chat_send(args, data, host.environ)
+
+
 _STEPS = {
+    "chat_send": _chat_send,
     "cheese_task": _task,
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
@@ -3464,7 +3584,7 @@ def _call(
             f"[cheese] {method} {path} 失败 HTTP {e.code}: {raw[:400]}", file=sys.stderr
         )
         sys.exit(1)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"[cheese] {method} {path} 出错: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -3683,7 +3803,7 @@ def _flush_pre_push_reports() -> None:
         else:
             # Nobody to tell: a checkout with no room has no author to reach.
             message.tell_stderr()
-    except Exception:  # noqa: BLE001 — the sync's own outcome is what matters
+    except Exception:
         pass
 
 
@@ -3743,6 +3863,38 @@ def _configure_git_transport(repo: Path, data: dict) -> None:
         print("[cheese] 仓库无法直连，本次通过平台访问", file=sys.stderr)
 
 
+def _commit_as(repo: Path, task_dir: Path, data: dict) -> None:
+    """Make the task's commits by the author the platform names for it
+    (`data["author"]`, `Name <address>`): the task owner on GitHub when the
+    project credits owners, otherwise the AI teammate. Per worktree, because
+    every task of the project shares one repository and each has its own
+    author; an author the launch environment fixed would override it. The
+    repository's own default is the teammate, for a worktree with no task of
+    its own and a platform that names nobody."""
+    _git_task(repo, "config", "user.name", AUTHOR)
+    _git_task(repo, "config", "user.email", f"{AUTHOR}@agent.cheese.local")
+    _git_task(repo, "config", "extensions.worktreeConfig", "true")
+    # With per-worktree config on, the common config is every worktree's: the
+    # project repository's `core.bare` there makes each task's checkout bare
+    # too, and git refuses `add` in it. It belongs to the repository's own.
+    bare = _git_task(
+        repo, "config", "--local", "--type=bool", "--default=false", "--get", "core.bare"
+    )
+    if bare.strip() == "true":
+        own = Path(_git_task(repo, "rev-parse", "--absolute-git-dir").strip())
+        _git_task(
+            repo, "config", "--file", str(own / "config.worktree"), "core.bare", "true"
+        )
+        _git_task(repo, "config", "--local", "--unset", "core.bare")
+    author = data.get("author") or ""
+    name, _, rest = author.partition(" <")
+    email = rest.rstrip(">")
+    if not name or not email:
+        return
+    _git_task(task_dir, "config", "--worktree", "user.name", name)
+    _git_task(task_dir, "config", "--worktree", "user.email", email)
+
+
 def _git_attribution(message_file: str) -> None:
     # The hook belongs to the shared repository, so every worktree of it runs
     # it, including one made with `git worktree add` beside a task's. Only a
@@ -3752,6 +3904,11 @@ def _git_attribution(message_file: str) -> None:
         return
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
+    # Too late for this commit, whose author is already fixed; the next one
+    # follows an owner or a credit setting that changed since the checkout.
+    here = Path.cwd()
+    common = Path(_git_task(here, "rev-parse", "--git-common-dir").strip())
+    _commit_as(common if common.is_absolute() else here / common, here, data)
     trailers = []
     for person in data["coauthors"]:
         if "\n" in person or "\r" in person:
@@ -3986,15 +4143,7 @@ def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
         if not marker.is_absolute():
             marker = task_dir / marker
         marker.write_text(json.dumps(data))
-        _git_task(
-            repo, "config", "user.name", os.environ.get("GIT_AUTHOR_NAME", AUTHOR)
-        )
-        _git_task(
-            repo,
-            "config",
-            "user.email",
-            os.environ.get("GIT_AUTHOR_EMAIL", f"{AUTHOR}@agent.cheese.local"),
-        )
+        _commit_as(repo, task_dir, data)
         hooks = repo / "hooks"
         prepare = hooks / "prepare-commit-msg"
         prepare.write_text('#!/bin/sh\nexec cheese git-attribution "$1"\n')
@@ -4384,7 +4533,7 @@ def _tell_room(content: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=30):
             pass
-    except Exception:  # noqa: BLE001 — the sync's own outcome is what matters
+    except Exception:
         return False
     return True
 
@@ -5337,7 +5486,7 @@ def _raw_request(
         # the download succeeded.
         print(e.read().decode(errors="replace"))
         sys.exit(1)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"[cheese] api {method} {path} 出错: {e}", file=sys.stderr)
         sys.exit(1)
     if out:

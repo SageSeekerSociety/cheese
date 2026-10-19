@@ -143,6 +143,11 @@ class HookWorkState:
     user_text: str
     started_at: datetime
     agent_instance_handle: str | None = None
+    # Where this seat's reading stands once this turn finishes cleanly. The
+    # blocks this turn answers for are `pending_ids`; the window also carried
+    # other seats' messages, which are read but not stamped. None when this
+    # process assembled no prompt (a session recovered on the way up).
+    read_through: tuple[datetime, uuid.UUID] | None = None
     # The model this turn's session was launched on, for the usage row a turn
     # with no reported usage still writes. "" where this process never
     # assembled a turn for the session (a screen recovered on the way up).

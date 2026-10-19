@@ -19,6 +19,16 @@ from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.pr_signals import ReviewSignal
 
 
+def _has_review_comments(row: dict) -> bool:
+    """这条评审是否值得再问一次它的行内评论。
+
+    Forgejo 的评审列表里，每条评审自带 `comments_count`（按评审 id 数的代码
+    评论条数），0 必然对应空列表。字段缺席说明对面不报这个数，那就照旧去取 ——
+    少一次请求不值得用「静默丢意见」来换。
+    """
+    return row.get("comments_count") != 0
+
+
 class ForgejoClient:
     def __init__(self, api_base: str, *, transport=None):
         self.api_base = api_base.rstrip("/")
@@ -208,9 +218,6 @@ class ForgejoClient:
             return "pending", "检查仍在运行"
         return "success", "检查已通过"
 
-    async def check_run_names(self, **kwargs):
-        return {r["name"] for r in await self.list_check_runs(**kwargs)}
-
     async def compare_files(self, *, owner, repo, base, head, token):
         comparison = f"{quote(base, safe='')}...{quote(head, safe='')}"
         data = self._data(
@@ -265,7 +272,10 @@ class ForgejoClient:
                         body=row["body"],
                     )
                 )
-            if with_comments:
+            # 上面那个判断说的是这条评审自己的信号，与它的行内评论无关：空正文
+            # 的评审行内评论照旧要取。这里省掉的是另一件事 —— 列表已经报了这条
+            # 评审没有行内评论，再问一次只会拿回空列表。
+            if with_comments and _has_review_comments(row):
                 comments = await self.pages(
                     prefix + f"/reviews/{row['id']}/comments", token=token
                 )
@@ -341,7 +351,11 @@ class ForgejoPRClient:
             "draft": data["title"].upper().startswith(("WIP:", "[WIP]")),
         }
 
-    async def open_pr(self, *, head, base, title, body, draft=False) -> OpenedPR:
+    async def open_pr(
+        self, *, head, base, title, body, draft=False, as_user_token=None
+    ) -> OpenedPR:
+        # A Forgejo project has no account of the owner's to open it with.
+        del as_user_token
         token, _ = await self.tokens.write_token()
         # Matching both refs prevents adopting another task's proposal.
         existing = await self.client.pages(
@@ -384,6 +398,16 @@ class ForgejoPRClient:
             await self._request("PATCH", f"/pulls/{number}", json=payload)
         )
 
+    async def _commit(self, sha):
+        """Commit `sha` as Forgejo answers it — the one read `commit_subject`
+        and `commit_parents` project from.
+
+        `/git/commits/{sha}`, not `/commits/{sha}`: Forgejo routes the single
+        commit under `/git` (Gitea's GitHub-compatible alias for it is not in
+        Forgejo), which is the path `landing_forge.py` and `forge_files.py`
+        already read a commit at."""
+        return await self._request("GET", f"/git/commits/{quote(sha, safe='')}")
+
     async def commit_subject(self, sha):
         """The first line of commit `sha`'s message, or None when Forgejo
         answers without one — `GitHubPRClient.commit_subject` on this forge.
@@ -392,18 +416,29 @@ class ForgejoPRClient:
         title starts with `WIP:`, so `mark_ready_for_review` below "un-drafts"
         it by rewriting that title. What it rewrites it TO is the placeholder
         minus the prefix — the task's own (Chinese) title — which is why the
-        reader of this method puts a real title on first.
-
-        `/git/commits/{sha}`, not `/commits/{sha}`: Forgejo routes the single
-        commit under `/git` (Gitea's GitHub-compatible alias for it is not in
-        Forgejo), which is the path `landing_forge.py` and `forge_files.py`
-        already read a commit at."""
-        data = await self._request("GET", f"/git/commits/{quote(sha, safe='')}")
+        reader of this method puts a real title on first."""
+        data = await self._commit(sha)
         # `_data` hands back None for a 200 with an empty body (the sibling
         # reader in `landing_forge.parent` guards the same way): no message is
         # the same answer as an empty one, and neither is a crash.
         message = (((data or {}).get("commit") or {}).get("message") or "").strip()
         return message.splitlines()[0] if message else None
+
+    async def commit_parents(self, sha):
+        """The shas of commit `sha`'s parents, first parent first; empty for
+        a root commit — `GitHubPRClient.commit_parents` on this forge.
+
+        Read by `AcceptService.mark_ready` before `commit_subject`: a line
+        that resolved its lag with `git merge main` ends on a two-parent merge
+        commit whose subject is 「merge main into …」, not the title the work
+        lands under. The caller follows the first parent until a single-parent
+        commit turns up."""
+        data = await self._commit(sha)
+        return [
+            str(parent.get("sha"))
+            for parent in ((data or {}).get("parents") or [])
+            if parent.get("sha")
+        ]
 
     async def mark_ready_for_review(self, node_id):
         pr = await self.pr_view(int(node_id))

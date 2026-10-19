@@ -41,6 +41,7 @@ if __package__:
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         SESSION_SOCKET,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
@@ -70,6 +71,7 @@ if __package__:
         write_claude_state,
     )
     from app.domain.agent.harness.claude_code.remote_execution.send_user_file import (
+        chat_send_attachments,
         deliver_send_user_file,
     )
     from app.domain.agent.harness.claude_code.remote_execution.shell_prefix import (
@@ -95,6 +97,7 @@ else:
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         SESSION_SOCKET,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
@@ -131,7 +134,7 @@ else:
         touch_skills,
         write_claude_state,
     )
-    from send_user_file import deliver_send_user_file
+    from send_user_file import chat_send_attachments, deliver_send_user_file
     from shell_prefix import run_in_place, shell
     from shell_stop import deliver_stop
 
@@ -207,6 +210,16 @@ def cheese_source() -> Path:
     if shipped.is_file():
         return shipped
     return Path(__file__).resolve().parents[6] / "sandbox/cheese"
+
+
+# `WORKING_DIRECTORY` — the fixed name this session's working directory also
+# goes by — is imported from `executor_transport`: the name and the way its value
+# crosses to the executor are one thing to that module, not a second declaration
+# here. The line is told about it in its prompt
+# (`harness.prompt.WORKING_DIRECTORY`), and the shell prefix binds it in the
+# command's own shell (`shell_prefix.bind_working_directory`): it is set on this
+# process so the prefix can read it, and deliberately not exported to the
+# executor, where a native session has no such variable.
 
 
 def prepare(
@@ -288,11 +301,34 @@ def prepare(
         seen = placeholder if at_placeholder else info["workspace"]
         if not at_placeholder:
             workspace = Path(info["workspace"])
-    carry_conversation(config, extra_args, seen)
+    # Where the session starts — and what `$T` stands for. A task's session
+    # starts in its own checkout, which is only opened once the machine that
+    # holds the project is at hand: a placeholder session keeps the project
+    # view (there is no checkout to open yet), and takes its checkout when the
+    # platform relaunches it onto the machine (`_take_leased_machine`).
+    start = seen
+    if (
+        not unavailable
+        and not at_placeholder
+        and target.get("kind") != "private"
+        and os.environ.get("CHEESE_TOPIC")
+    ):
+        working = client.working_directory()
+        if working and working != info["workspace"]:
+            start = working if local else session_path(working)
+    # Taking the machine's hands (`acquire`) keeps the credential beside the
+    # target when there is no token file yet; it must not travel inside the
+    # target this writes, nor into the plugin built from it.
+    target.pop("execution_token", None)
+    carry_conversation(config, extra_args, start)
     target = dict(
         target,
         workspace=info["workspace"],
         session_workspace=seen,
+        # Where the session itself starts, when that is not where it sees the
+        # project: a task's session starts in its checkout (`enter` makes the
+        # directory there before it chdirs, so the view stays where it was).
+        start_directory=start,
         # Where its paths are rewritten from once it takes its machine
         # (`RemoteClient.call`): the directory it started in, not the
         # placeholder a session in its own namespace sees.
@@ -423,7 +459,7 @@ def prepare(
     )
     settings_path = directory / "settings.json"
     settings_path.write_text(json.dumps(settings))
-    write_claude_state(config, seen)
+    write_claude_state(config, start)
     servers = {
         "native": {
             "type": "stdio",
@@ -447,6 +483,13 @@ def prepare(
     (directory / "mcp.json").write_text(json.dumps({"mcpServers": servers}))
     env = {
         "HOME": str(home),
+        # The same short name in every session, and this session's own project
+        # under it: what the line can type instead of the path it would
+        # otherwise spell out in every Bash command. It stays on this host — the
+        # shell prefix reads it here and binds it in each command's shell
+        # (`shell_prefix.bind_working_directory`); the executor's environment is
+        # what a native session there would have, with no such variable.
+        WORKING_DIRECTORY: start,
         "CLAUDE_CONFIG_DIR": str(config),
         "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
         "DISABLE_AUTOUPDATER": "1",
@@ -523,8 +566,8 @@ def prepare(
         # `workspace`; `cwd` is where this host holds it, for starting there.
         "command": command if local else [*helper, "enter", str(target_path), *command],
         "env": env,
-        "cwd": seen if local else str(workspace),
-        "workspace": seen,
+        "cwd": start if local else str(workspace),
+        "workspace": start,
         "execution": str(target_path),
     }
     (directory / "launch.json").write_text(json.dumps(launch))
@@ -823,7 +866,12 @@ def transport(config, target_path):
                 payload = request["params"]["arguments"]
                 # The arguments each of these takes, from the call's.
                 picked = {
-                    "chat_send": ("content", "reply_to", "request_id"),
+                    "chat_send": (
+                        "content",
+                        "reply_to",
+                        "attachments",
+                        "request_id",
+                    ),
                 }
                 if tool in picked:
                     payload = {
@@ -863,17 +911,21 @@ def transport(config, target_path):
                     with active_lock:
                         return request["id"] in cancelled
 
-                if tool == "send_user_file":
+                if tool == "chat_send":
+                    if args.get("attachments"):
+                        args = chat_send_attachments(
+                            client, config, args, invoke, payload
+                        )
+                    receipt = client.publish_message(payload, args)
+                elif tool == "send_user_file":
                     receipt = deliver_send_user_file(
                         client, config, payload, args, invoke
                     )
-                elif tool != "chat_send" and tool in cheese.PLATFORM_TOOLS:
+                elif tool in cheese.PLATFORM_TOOLS:
                     receipt = platform_tool(tool, args, payload["id"], invoke)
                 else:
                     receipt = (
-                        client.publish_message(payload, args)
-                        if tool == "chat_send"
-                        else client.permission(payload, args, notice)
+                        client.permission(payload, args, notice)
                         if tool == "permission"
                         else invoke(payload, args, abandoned)
                     )

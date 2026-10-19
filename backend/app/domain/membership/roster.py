@@ -21,6 +21,7 @@ from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.identity.services import IdentityService
 from app.domain.membership.ports import ProjectTeam, TeammateSeat
 from app.domain.membership.repositories import MemberRepository
@@ -75,10 +76,8 @@ class Member:
     # A teammate's ``name_source``: ``default`` while it still carries the name
     # it was born with, which a screen shows in its reader's language.
     name_source: str | None = None
-    # A member's own agent (#2991): who it belongs to, and who may call it —
-    # ``owner`` (that person alone) or ``project`` (any person here).
+    # A personal agent's owner; conversation is open to the team.
     owner_handle: str | None = None
-    callers: str | None = None
 
     def as_dict(self) -> dict:
         """读名册的调用方拿到的那一行。
@@ -110,9 +109,27 @@ class Member:
             row["name_source"] = self.name_source
         if self.owner_handle is not None:
             row["owner_handle"] = self.owner_handle
-        if self.callers is not None:
-            row["callers"] = self.callers
         return row
+
+
+# Semantic dependencies of people, exclusions, bindings and the ProjectTeam
+# port. Include identity-map reads (notably Project and Team), not just SQL
+# emitted on a cache miss. The provider's seat fields depend on own_agents too.
+_ROSTER_TABLES = frozenset(
+    {
+        "projects",
+        "project_members",
+        "project_member_exclusions",
+        "user",
+        "user_profile",
+        "avatar",
+        "team",
+        "team_user_relation",
+        "agent_bindings",
+        "agent_instances",
+        "own_agents",
+    }
+)
 
 
 async def roster(
@@ -141,6 +158,21 @@ async def roster(
     队友那一半由调用方递进来的 ``team`` 读（`ports.py` 的 ``ProjectTeam``）：实例和
     它们在项目里该不该在列，都是第 5 层 ``agent_instance`` 的一行，本包够不着。
     """
+    # A cache hit must not skip the autoflush the SELECT would have triggered.
+    if session.autoflush:
+        await session.flush()
+    key = ("roster", project_id, team)
+    found, members = recall(session, key)
+    if found:
+        return members
+    members = await _read_roster(session, project_id, team=team)
+    remember(session, key, members, tables=_ROSTER_TABLES)
+    return members
+
+
+async def _read_roster(
+    session: AsyncSession, project_id: uuid.UUID, *, team: ProjectTeam
+) -> tuple[Member, ...]:
     projects = ProjectService(session)
     project = await projects.get(project_id)
     rows = [
@@ -191,7 +223,6 @@ async def roster(
                     instance_handle=seat.session_handle,
                     name_source=seat.name_source,
                     owner_handle=seat.owner_handle,
-                    callers=seat.callers,
                 )
             )
             at[seat.seat] = len(rows) - 1
@@ -214,7 +245,6 @@ async def roster(
             instance_handle=seat.session_handle,
             name_source=seat.name_source,
             owner_handle=seat.owner_handle,
-            callers=seat.callers,
         )
     return tuple(rows)
 
@@ -228,10 +258,11 @@ async def roster_rows(
     它们是**渲染**这张表，不是再读一次「项目里有谁」——所以这里只是同一次读的一个形
     状，不是第二个出处。
     """
+    return rows_of(await roster(session, project_id, team=team))
+
+
+def rows_of(members: Sequence[Member]) -> list[dict]:
+    """:func:`roster_rows` for a caller already holding the :func:`roster` read."""
     # No agent calls a member's own agent (#2991): one reading this roster in
     # its prompt would only learn a name it cannot call.
-    return [
-        member.as_dict()
-        for member in await roster(session, project_id, team=team)
-        if member.owner_handle is None
-    ]
+    return [member.as_dict() for member in members if member.owner_handle is None]

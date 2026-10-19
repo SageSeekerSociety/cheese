@@ -17,7 +17,7 @@ from datetime import datetime
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ValidationError
 from app.core.sandbox_auth import (
     AGENT_CREDENTIAL_DEFAULT_TTL_DAYS,
     AGENT_CREDENTIAL_MAX_TTL_DAYS,
@@ -30,6 +30,7 @@ from app.domain.conversation.services import room_of
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project.reads import project_or_404
 from app.domain.topic.repositories import TopicRepository
 
 _DAY_S = 86400
@@ -60,10 +61,7 @@ class ProjectAgentCredentialService:
         self._topics = TopicRepository(session)
 
     async def _get_or_404(self, project_id: uuid.UUID) -> Project:
-        project = await self._projects.get(project_id)
-        if project is None:
-            raise NotFoundError("Project not found")
-        return project
+        return await project_or_404(self._projects, project_id)
 
     async def agent_handle(self, project_id: uuid.UUID) -> str | None:
         """The project's own 芝士, independent of the target room.

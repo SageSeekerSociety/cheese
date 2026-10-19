@@ -46,26 +46,31 @@ def _plan_models(plan: dict) -> list[str]:
 async def _named(db: AsyncSession, report: dict) -> dict:
     """Name the projects, tasks and models the report refers to by id."""
     report["plan"]["models"] = _plan_models(report["plan"])
-    projects, tasks = ProjectService(db), TaskService.of(db)
-    names: dict[str, str | None] = {}
+    tasks = TaskService.of(db)
 
-    async def project_name(pid: str | None) -> str | None:
+    # A project can be a spend row and a pack's target at once: gather both
+    # lists' ids first and ask once, rather than one ``get`` per row.
+    pids = [row["id"] for row in report["projects"]]
+    pids += [pack["project_id"] for pack in report["packs"] if pack["project_id"]]
+    by_id = await ProjectService(db).get_projects_by_ids(
+        list({uuid.UUID(pid) for pid in pids if pid is not None})
+    )
+
+    def project_name(pid: str | None) -> str | None:
         if pid is None:
             return None
-        if pid not in names:
-            project = await projects.get(uuid.UUID(pid))
-            names[pid] = project.name if project else None
-        return names[pid]
+        project = by_id.get(uuid.UUID(pid))
+        return project.name if project else None
+
+    tasks_by_id = await tasks.get_tasks_by_ids(
+        [pack["task_id"] for pack in report["packs"] if pack["task_id"] is not None]
+    )
 
     for row in report["projects"]:
-        row["name"] = await project_name(row["id"])
+        row["name"] = project_name(row["id"])
     for pack in report["packs"]:
-        pack["project_name"] = await project_name(pack["project_id"])
-        task = (
-            await tasks.get_task(pack["task_id"])
-            if pack["task_id"] is not None
-            else None
-        )
+        pack["project_name"] = project_name(pack["project_id"])
+        task = tasks_by_id.get(pack["task_id"]) if pack["task_id"] is not None else None
         pack["task_name"] = task.name if task else None
     return report
 

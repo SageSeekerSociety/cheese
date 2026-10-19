@@ -16,17 +16,15 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from app.auth.audience import seats_only
+from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.agent.harness.prompt import task_section
-from app.domain.agent.prompt import (
-    _pending_platform_notices,
-    _topic_ref_lists,
-    offered_attachments,
-)
+from app.domain.agent.prompt import _topic_ref_lists, offered_attachments
 from app.domain.agent.queries import _acting_handle, _agent_at, require_pinned_seat
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.room.thread_context import thread_context as _thread_context
@@ -43,11 +41,18 @@ from app.domain.agent.turn.intake.preparation.gates import (
 )
 from app.domain.agent.turn.intake.preparation.prompt import build_turn_prompt
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
-from app.domain.agent.turn.state.inputs import _addressed_to, _pending_input_blocks
+from app.domain.agent.turn.state.inputs import _addressed_to
 from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
+from app.domain.agent_instance.own import current_role
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.queries import earlier_message_count, turn_history
+from app.domain.block.models import Block
+from app.domain.block.queries import (
+    block_by_id,
+    earlier_message_count,
+    inputs_after,
+    notices_after,
+)
 from app.domain.deliverables import artifacts as project_artifacts
 from app.domain.living_doc.overview import overview_document
 from app.domain.memory.files_store import memory_index
@@ -95,30 +100,21 @@ async def prepare(
         if topic.status == TopicStatus.archived:
             raise prep.refuse(say("roomArchivedUnarchiveFirst"))
 
-        # Speaker-labelled prompt covering every human message 芝士 hasn't
-        # been handed yet — so messages posted without @芝士 are still seen on
-        # the next summon (spec §7.1 所有消息 AI 都会收到), each tagged with
-        # who said it so 芝士 can tell people apart in a group topic (§8.4).
+        # 这一轮读什么：这条对话里、这个座位上次读到之后的所有参与者消息，
+        # 谁说的都算，说给谁的也算。每个座位各有一份游标（`agent_reads`），
+        # 所以别的队友说过的话对它也是「别人说的」，和人在房间里看到的一样；
+        # 一条消息不再只有一个全局的「谁读过」标记。
         #
         # This conversation's OWN line: a room's history leaves out its
-        # tasks' conversations, and a task's is only its own.
-        history = await turn_history(session, place.conversation_id)
-        # A 支线's first input is the message it hangs under and its files,
-        # which stay in the channel's main line: read them in while no turn
-        # has read them.
+        # tasks' conversations, and a task's is only its own. A 支线's root
+        # message and files stay in the main line; `_read_window` reads them in
+        # on the seat's first turn, and the 支线 section below is built from it.
         opening = await thread_opening(session, place.conversation_id)
         root = opening[0] if opening else None
-        history = [*opening, *history]
-        phases_ms["history"] = (time.monotonic() - started) * 1000
-        pending = _pending_input_blocks(history)
-        # Kept apart from `pending` on purpose: that list answers
-        # 「谁说话了」 for the recipient routing, the replay counter and
-        # the 「没人在等」 bail, and a platform notice is an answer to
-        # none of those. It only rides into the prompt and gets stamped.
-        notices = _pending_platform_notices(history)
-        addressed = next(
-            (block for block in history if block.id == user_block_id),
-            pending[0] if pending else None,
+        addressed = (
+            await block_by_id(session, user_block_id)
+            if user_block_id is not None
+            else None
         )
         recipient = (addressed.meta or {}).get("agent_recipient") if addressed else None
         agents = AgentInstanceService(session)
@@ -144,7 +140,20 @@ async def prepare(
                 )
             )
         acting_agent = pinned_seat or await _acting_handle(session, topic.id, agent)
-        pending = [block for block in pending if _addressed_to(block, agent.handle)]
+        cursor = await AgentSessionService(session).read_cursor(
+            place.conversation_id, acting_agent
+        )
+        pending = await _read_window(
+            session, place, acting_agent, cursor, opening=opening
+        )
+        phases_ms["history"] = (time.monotonic() - started) * 1000
+        # Kept apart from `pending` on purpose: that list answers 「谁说话了」
+        # for the recipient routing, the replay counter and the 「没人在等」
+        # bail, and a platform notice is an answer to none of those. It only
+        # rides into the prompt and gets stamped.
+        notices = await notices_after(
+            session, place.conversation_id, after=cursor
+        )
         # Holds and waiting answers are kept per conversation, as inputs
         # are registered: a task's or a 支线's own, not its room's.
         held = await prep._held_blocks(
@@ -155,27 +164,19 @@ async def prepare(
         )
         pending = [block for block in pending if block.id not in held]
         notices = [block for block in notices if block.id not in held]
-        prompt_pending_ids = [b.id for b in pending]
-        if not pending and user_block_id is not None:
+        # 这一轮要答的是点它的名、或者谁也没点的那些。别的座位的消息只是
+        # 背景：它们不是这一轮的事，盖了「读过」还会让房间里以为别人被问的
+        # 那句话已经有人答了。
+        own_pending = [b for b in pending if _addressed_to(b, agent.handle)]
+        prompt_pending_ids = [b.id for b in own_pending]
+        if not own_pending and user_block_id is not None:
             # 有人召唤，但他那条消息已经被前一轮读进 prompt 了（两个人几乎同时
             # @，第一轮在锁上把两条合并答掉）。再跑一轮就是白烧一轮算力，还会
             # 走下面的 platform_prompt 兜底、把已经答过的话当成平台指令重投一
             # 遍。这里直接收工 —— 只是不跑这一轮，不碰任何排队/锁的逻辑。
             return TurnBail([{"type": "done"}])
-        # 盖章清单比 prompt 清单窄（多 agent 房间，2026-09-28 定）：
-        # 没被 @ 的公共消息每个轮次都看得见，但只由「被人召唤起来的轮次」
-        # 或「房间默认 agent 的轮次」盖章认领；其余在场轮次（另一个 agent
-        # 被 @、平台自检）看过就算。不这么窄，并行的几个轮次会给同一条
-        # 消息各盖一个 consumed_turn，而谁都没答它的话却被所有人收走。
-        claims_backlog = (
-            user_block_id is not None
-            or agent.handle == (await _agent_at(session, place)).handle
-        )
-        pending_ids = [
-            b.id
-            for b in pending
-            if claims_backlog or (b.meta or {}).get("agent_recipient") is not None
-        ]
+        pending_ids = list(prompt_pending_ids)
+        read_through = _newest([*pending, *notices])
         # 图片输入: every pending image is offered to the provider; whether it
         # reaches the model as a native block depends on `embeds_images`, so
         # the prompt is built below, after the provider is picked. A file
@@ -252,7 +253,9 @@ async def prepare(
             else None
         )
         # Read the selected agent once so this turn's role and model agree.
-        role = await agents.system_prompt(agent)
+        role = await current_role(session, agent.instance_id) or (
+            await agents.system_prompt(agent)
+        )
         # 骨架是这个项目跑的那一个（结论 28），不是这个参与者的属
         # 性。这一轮只解析这一次，往下每一处都读它：会话行的键里有骨架，两处
         # 各自解析一次就够把一条会话拆成两条。
@@ -419,6 +422,7 @@ async def prepare(
         memory=memory,
         pending_ids=pending_ids,
         notice_ids=[b.id for b in notices],
+        read_through=read_through,
         prior_progress=prior_progress,
         earlier_messages=earlier_messages,
         thread_context=thread_context,
@@ -439,3 +443,65 @@ async def prepare(
         turn_images=turn_images,
         untitled=untitled,
     )
+
+
+async def _read_window(
+    session,
+    place,
+    seat: str,
+    cursor: tuple[datetime, uuid.UUID] | None,
+    *,
+    opening: list[Block],
+) -> list[Block]:
+    """What this seat has not read: every participant's messages, oldest first.
+
+    Only the seat's own TURN OUTPUT is left out — it is already in its
+    transcript, and handing it back is how an agent ends up answering itself.
+    Something the same seat said outside any turn (a `chat_send` made on its
+    own, no turn to attribute it to) is a room message like any other and is
+    read once (`test_what_an_agent_says_in_the_room_is_read_once`). A 支线's
+    message and files are read in on the seat's first turn, because they live
+    in the main line and its cursor (in the 支线's conversation) cannot name
+    them.
+    """
+    window = await inputs_after(
+        session,
+        place.conversation_id,
+        after=cursor,
+        limit=settings.agent_input_window_messages,
+    )
+    pending = [
+        block
+        for block in window
+        if not (block.author == seat and block.turn_id is not None)
+    ]
+    pending = _trim_to_chars(pending, settings.agent_input_window_chars)
+    if cursor is None:
+        pending = [*opening, *pending]
+    return pending
+
+
+def _trim_to_chars(blocks: list[Block], budget: int) -> list[Block]:
+    """Keep the newest blocks that fit ``budget`` characters.
+
+    The count cap bounds the query; this bounds the tokens. Newest wins because
+    a message said after another is the one an answer can build on.
+    """
+    kept: list[Block] = []
+    total = 0
+    for block in reversed(blocks):
+        size = len(block.content or "")
+        if kept and total + size > budget:
+            break
+        kept.append(block)
+        total += size
+    kept.reverse()
+    return kept
+
+
+def _newest(blocks: list[Block]) -> tuple[datetime, uuid.UUID] | None:
+    """The timeline position to record as read, or None when nothing was read."""
+    if not blocks:
+        return None
+    block = max(blocks, key=lambda b: (b.created_at, b.id))
+    return (block.created_at, block.id)

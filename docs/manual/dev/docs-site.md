@@ -166,12 +166,12 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [验收与采纳](/accept) | 分几次交付时的「采纳」 | 一个 `demo-panel` | 同上 |
 | [提示词注入与上下文管理](/dev/context) | 一轮里上下文窗口怎么被填满，各占多少、谁看得见 | `demo-context` | `gen/prompt.py` 真跑 `build_system_prompt`，按行首的 `## ` 切块，字符数 ÷ 1.6 折成 token |
 | [一条消息怎么变成芝士的一轮](/dev/turn) | 一轮的七步 | `demo-steps` + `embed: turn` | 这一页自己那七节（每步链回本节）；画面是剧本 `scenes/turn.json` |
-| [一条消息怎么变成芝士的一轮](/dev/turn#seats) | 两个队友在同一个话题里并行 | `demo-steps` + `embed: seats` | 「同一话题里的几个 AI 队友」那六节；画面是剧本 `scenes/seats.json` |
+| [一条消息怎么变成芝士的一轮](/dev/turn#seats) | 两个队友在同一个频道里并行 | `demo-steps` + `embed: seats` | 「同一频道里的几个 AI 队友」那六节；画面是剧本 `scenes/seats.json` |
 | [任务 → 分支 → PR → 验收合并](/dev/delivery) | 一条活从开卡到合进主干 | `demo-steps` | 这一页「从任务到验收卡」那六步，采纳那一步是闸门 |
 | [模型调用流程](/dev/llm) | 准入对每个请求回答的三件事 | `demo-sim` | 这一页的准入 JSON 和两条路 |
 | [模型调用流程](/dev/llm) | 一次请求经过哪几站，被拦在哪 | `demo-steps` + `embed: llm` | 这一页各节；画面是剧本 `scenes/llm.json` |
 | [CI 设计](/dev/ci) | 改到哪些路径就跑哪些套件，谁被跳过 | `demo-ci` | `.github/scripts/required-ci-paths.json`，加 `required-ci.yml` 里的套件→工作流；结果和真跑一遍 `required-ci.py` 对过 |
-| [话题预览](/dev/preview) | 凭证、cookie、房间访问权三步怎么换，谁在哪一步被挡 | `demo-flow` | `backend/app/api/preview_host.py` 与 `domain/site/hosting.py` 里的 TTL、cookie 属性和每个请求的检查 |
+| [频道预览](/dev/preview) | 凭证、cookie、房间访问权三步怎么换，谁在哪一步被挡 | `demo-flow` | `backend/app/api/preview_host.py` 与 `domain/site/hosting.py` 里的 TTL、cookie 属性和每个请求的检查 |
 | [部署拓扑](/dev/topology) | 滚动发版时正在跑的轮怎么交接，常驻那层为什么不断 | `demo-flow` | `backend/app/core/ownership.py`、`main.py` 的交接顺序、`handover_timeout_s` |
 | [记忆](/dev/memory#limits) | 三个上限分别在哪一步拦住什么 | `demo-memory` | `domain/memory/files.py` 的常数，`gen/memory_limits.py` 读出来，和 `fit_index` / `limit_breach` 对过 |
 | [记忆](/dev/memory) | 一轮里记忆怎么流转 | `demo-steps` + `embed: memory` | 这一页各节；画面是剧本 `scenes/memory.json` |
@@ -206,7 +206,7 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 
 ## 在文档站登录 {#sign-in}
 
-文档站在自己的域名上时，读不到平台的登录：平台的访问令牌在应用的 `localStorage` 里，那是另一个源。所以平台把登录转交过去，做法和项目网站、话题预览的内容域一样（见[话题预览](/dev/preview#grant)）：
+文档站在自己的域名上时，读不到平台的登录：平台的访问令牌在应用的 `localStorage` 里，那是另一个源。所以平台把登录转交过去，做法和项目网站、频道预览的内容域一样（见[频道预览](/dev/preview#grant)）：
 
 1. 文档站需要知道是谁时（问芝士回 401、开发文档的门回 401），把读者送到 `/api/docs/signin?path=<当前页>`，后端再 303 到平台的 `/docs-signin`：平台在哪由后端的 `FRONTEND_URL` 说了算，不写死在静态页里。
 2. 那一页（`frontend/src/views/DocsSignIn.vue`）在平台上：没登录先去登录，回来接着走；登录了就 `POST /api/docs/grant`，拿到一张 30 秒、只能用一次的凭证，写着这个人和他这一次登录（`sid`）。

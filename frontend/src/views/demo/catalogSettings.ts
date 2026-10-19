@@ -30,11 +30,8 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import { COMPUTE_DEVICES } from './catalogFixtures'
 import {
-  accountConn,
-  accountProps,
   ARCHIVE_PROJECT,
   ARCHIVE_REFUSED,
-  ATTRIBUTION_ITEMS,
   bpProps,
   bpRules,
   callbackNotice,
@@ -49,12 +46,10 @@ import ArchiveProjectSection from '@/components/settings/ArchiveProjectSection.v
 import AttributionSettings from '@/components/settings/AttributionSettings.vue'
 import BranchProtectionSection from '@/components/settings/BranchProtectionSection.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
-import GithubAccountSettings from '@/components/settings/GithubAccountSettings.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 
-/** 六件都吃 vuetify。`GithubAccountSettings` 多一样 i18n：它用 `relTime`，那一个读
- *  当前的 locale（`@/i18n`），不是光装个插件就能画对。 */
+/** 这几件都吃 vuetify；读当前 locale 的（`relTime` 之类）再多一样 i18n。 */
 const UI: CatalogNeed[] = ['vuetify']
 const UI_I18N: CatalogNeed[] = ['vuetify', 'i18n']
 
@@ -205,63 +200,75 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     id: 'settings-attribution',
     title: 'AttributionSettings',
     about:
-      '提交署名：把任务请求者列为共同作者。三档（跟随系统默认 / 开启 / 关闭）由页面算好，这一件只画、只把选中的那一档报上去。',
+      '提交署名：项目的 PR 和提交算任务负责人的，还是算 AI 队友的。选中哪种、存没存上由页面管，这一件只画、只把选中的那一种报上去。',
     file: 'src/components/settings/AttributionSettings.vue',
     component: AttributionSettings,
     needs: UI,
     states: [
       {
-        name: '跟随系统默认（开着）',
-        note: '「跟随系统默认」那一档的名字里带着部署现在的默认值 —— 不然这一档说的是一件查不到的事。下面那句「当前已开启」说的是**落下去之后实际是什么**，选哪一档都要说。',
-        props: { choice: 'default', items: ATTRIBUTION_ITEMS, saving: false, error: null, effective: true },
-        expect: '当前已开启',
+        name: '署名给任务负责人',
+        note: '默认的那一种。下面那句说清这一种落下去之后 PR 由谁开、谁是作者，以及负责人没连接 GitHub 时会怎样。',
+        props: {
+          mode: 'owner',
+          agentName: '芝士',
+          saving: false,
+          error: null,
+          github: { state: 'linked', login: 'HuanCheng65' },
+          manageTo: '/users/settings/security',
+        },
+        expect: '用任务负责人连接的 GitHub 账号创建 PR',
+      },
+      {
+        name: '还没连接 GitHub',
+        note: '署名给任务负责人时，下面那一行说看的人自己的账号：还没连接就给一个就地连接的入口。',
+        props: {
+          mode: 'owner',
+          agentName: '芝士',
+          saving: false,
+          error: null,
+          github: { state: 'none' },
+          manageTo: '/users/settings/security',
+        },
+        expect: '连接后，你负责的任务用你的账号创建 PR',
+      },
+      {
+        name: 'GitHub 授权失效',
+        note: '没有能续期的 token 才算失效：这时他负责的任务改由 AI 队友创建 PR，这一行提示重新授权 GitHub。',
+        props: {
+          mode: 'owner',
+          agentName: '芝士',
+          saving: false,
+          error: null,
+          github: { state: 'expired', login: 'HuanCheng65' },
+          manageTo: '/users/settings/security',
+        },
+        expect: '授权已失效',
+      },
+      {
+        name: '署名给 AI 队友',
+        note: '选项叫「AI 队友」，和频道里改设置那一行说的一样；说明里用项目给 AI 队友起的名字，不写死。',
+        props: {
+          mode: 'agent',
+          agentName: '芝士',
+          saving: false,
+          error: null,
+          github: { state: 'linked', login: 'HuanCheng65' },
+          manageTo: '/users/settings/security',
+        },
+        expect: 'PR 和提交都署 芝士 的名',
       },
       {
         name: '保存失败',
-        note: '存不上时说清是保存失败，不把选择悄悄吞掉（下拉里画的还是刚选的那一档，因为那是人刚点过的）。',
-        props: { choice: 'on', items: ATTRIBUTION_ITEMS, saving: false, error: '保存失败，稍后重试', effective: false },
+        note: '存不上时说清是保存失败，不把选择悄悄吞掉（下拉里画的还是刚选的那一种，因为那是人刚点过的）。',
+        props: {
+          mode: 'agent',
+          agentName: '芝士',
+          saving: false,
+          error: '保存失败，稍后重试',
+          github: { state: 'unknown' },
+          manageTo: '/users/settings/security',
+        },
         expect: '保存失败，稍后重试',
-      },
-    ],
-  },
-  {
-    id: 'settings-github-account',
-    title: 'GithubAccountSettings',
-    about:
-      '连接 GitHub 账号：App 的 user-to-server 授权，独立于登录用的经典 OAuth，连接仓库时确认写权限，并供 credit 归属用；PR 由平台的 App 开。',
-    file: 'src/components/settings/GithubAccountSettings.vue',
-    component: GithubAccountSettings,
-    needs: UI_I18N,
-    states: [
-      {
-        name: '还没连',
-        note: '两件不同的事各有一条流程、各有一颗按钮：这一格只有「连接 GitHub 账号」。',
-        props: accountProps(),
-        expect: '暂无关联账号',
-      },
-      {
-        name: '连上了',
-        note: '连上之后说清是哪个 GitHub 账号、什么时候连的；「断开」是红的 —— 断开之后连不了新仓库，署名也退回登录用的账号或平台地址。',
-        props: accountProps({ conn: accountConn() }),
-        expect: '已连接',
-      },
-      {
-        name: '授权过期了',
-        note: 'user token 过期、也没有能用的续期 token 时才画这一格：照旧画「已连接」，另加一条说明连接仓库失败时该点哪里。有续期 token 时后端自己换新，不提示；`tokenExpires` 为 null 是「不过期」，不是「已过期」。',
-        props: accountProps({ conn: accountConn({ tokenExpires: '2026-01-01T00:00:00Z', hasRefreshToken: false }) }),
-        expect: 'GitHub 授权已过期',
-      },
-      {
-        name: '读失败',
-        note: '四态是这一块自己的：读失败绝不能画成「未连接」，那是一句假话 —— 失败这一档有它自己的样子和自己的话。',
-        props: accountProps({ state: 'error', loadError: '请求超时' }),
-        expect: '请求超时',
-      },
-      {
-        name: '还在读',
-        note: '第一态：一行转圈加一句「加载连接状态中…」。',
-        props: accountProps({ state: 'loading' }),
-        expect: '加载连接状态中',
       },
     ],
   },

@@ -38,7 +38,7 @@ covers:
 
 ## 提案：芝士举手，人决定 {#proposals}
 
-`cheese_feedback_propose`（`backend/sandbox/cheese`）打的落点是 `POST /topics/{topic_id}/feedback-proposals`，落的**不是**一条反馈，而是话题里的一条消息块（`Block`），payload 塞在 `Block.meta.feedback_proposal` 里 —— 那就是人看到的那张卡。`proposal_meta` 把正文连同 `fingerprint` 一起写进卡里，指纹跟着卡走，`dismiss` 端点于是不必从可能已被前端重排过的文本里重算它。
+`cheese_feedback_propose`（`backend/sandbox/cheese`）打的落点是 `POST /topics/{topic_id}/feedback-proposals`，落的**不是**一条反馈，而是频道里的一条消息块（`Block`），payload 塞在 `Block.meta.feedback_proposal` 里 —— 那就是人看到的那张卡。`proposal_meta` 把正文连同 `fingerprint` 一起写进卡里，指纹跟着卡走，`dismiss` 端点于是不必从可能已被前端重排过的文本里重算它。
 
 **agent 不能自己发布**（`FeedbackService.create`）：命中 `IdentityService.is_agent` 就直接 `ForbiddenError`，报错文案点名 `cheese_feedback_propose`，给模型一个下一步而不是死胡同。同一个判断收掉了另一扇门 —— agent 去发送一张已有的卡，仍是 agent 在发布自己，只是分两步走。作者从卡上取（`Block.author`），提交者取验证过的调用者，客户端两样都说了不算。
 
@@ -51,14 +51,14 @@ covers:
 | 顺序 | 限流 | 判据 | 记忆存在哪 |
 | --- | --- | --- | --- |
 | 1 | 拒绝要有记忆 | 指纹在 `FeedbackProposalDismissal` 里 | 表 |
-| 2 | 指纹去重 | 24 小时内同一个指纹提过 | 话题里的消息块 |
-| 3 | 每日配额 | 24 小时内这个话题的卡达到 `settings.feedback_proposals_per_topic_per_day`（默认 2） | 同上 |
+| 2 | 指纹去重 | 24 小时内同一个指纹提过 | 频道里的消息块 |
+| 3 | 每日配额 | 24 小时内这个频道的卡达到 `settings.feedback_proposals_per_topic_per_day`（默认 2） | 同上 |
 
-指纹是 `what_happened` + `repro` **归一化**（折空白、去标点、折大小写）后的 sha256 前 32 位十六进制。这两段为空时才退回去哈希 `title` + `problem`：两个都空的提案会共用空串的哈希，于是同一个话题里的第二张会被「这个问题刚提过」拒掉。指纹**挡不住换一种说法的重提**，那需要嵌入模型；日报配额是它漏掉的那些的兜底 —— 这层限制就这么强，写在这里免得有人把它读得更强。
+指纹是 `what_happened` + `repro` **归一化**（折空白、去标点、折大小写）后的 sha256 前 32 位十六进制。这两段为空时才退回去哈希 `title` + `problem`：两个都空的提案会共用空串的哈希，于是同一个频道里的第二张会被「这个问题刚提过」拒掉。指纹**挡不住换一种说法的重提**，那需要嵌入模型；日报配额是它漏掉的那些的兜底 —— 这层限制就这么强，写在这里免得有人把它读得更强。
 
 「一天」是滚动的 24 小时，不是自然日：自然日午夜清零，紧挨午夜的两分钟里可以提两条一样的。
 
-三道全是「先读后写」，所以 `check` 第一件事是拿话题级事务锁（`pg_advisory_xact_lock`，键 `feedback-proposal:{topic_id}`），持到路由 commit。没有用 `(topic_id, fingerprint)` 唯一索引：指纹不是永久身份，24 小时窗口过了同一个问题可以正当地再提，唯一约束会把那一次变成 500。
+三道全是「先读后写」，所以 `check` 第一件事是拿频道级事务锁（`pg_advisory_xact_lock`，键 `feedback-proposal:{topic_id}`），持到路由 commit。没有用 `(topic_id, fingerprint)` 唯一索引：指纹不是永久身份，24 小时窗口过了同一个问题可以正当地再提，唯一约束会把那一次变成 500。
 
 ## 谁能看见 {#visibility}
 
@@ -202,8 +202,8 @@ docker exec <backend 容器> python -m scripts.feedback_status FB-12 declined \
 ## 边界与坑 {#traps}
 
 - **两处判据会各自漂开。** `may_delete_comment` / `may_delete_feedback` 既在删除前问、又用来填 `can_delete`，只有一处的写法（两处各写一遍就是「按钮画得出来、点下去 403」）。客户端**从不**自己重推这条规则，按钮照 `can_delete` 画。
-- **作者配额只算直接提交。** 每人每 24 小时 `settings.feedback_reports_per_author_per_day`（默认 30）条，且**删除的不减配额** —— 上限管的是「你在产出多少」，删掉一条不是买回额度的方法。提案卡路径不走这条：它已经被话题配额、指纹和「不用」的记忆挡过一遍，而它的作者是那个 agent，不是按发送的人。两处同样是先锁后数。
+- **作者配额只算直接提交。** 每人每 24 小时 `settings.feedback_reports_per_author_per_day`（默认 30）条，且**删除的不减配额** —— 上限管的是「你在产出多少」，删掉一条不是买回额度的方法。提案卡路径不走这条：它已经被频道配额、指纹和「不用」的记忆挡过一遍，而它的作者是那个 agent，不是按发送的人。两处同样是先锁后数。
 - **`Block.meta` 是普通 JSON 列。** `mark_accepted` 整块写一个新 dict，就地改会被 SQLAlchemy 静默丢掉；症状是「同一个请求里生效、下一个请求就失效」。
-- **接受用一把按卡命名的锁**（`feedback-proposal-accept:{block_id}`），和话题锁是两个命名空间。读 `meta` 必须在拿锁**之后**重新 SELECT，READ COMMITTED 下这条 SELECT 才看得见赢家提交的 `accepted_feedback_id`；反过来就是两条逐字相同、而人只按了一次发送的反馈。
+- **接受用一把按卡命名的锁**（`feedback-proposal-accept:{block_id}`），和频道锁是两个命名空间。读 `meta` 必须在拿锁**之后**重新 SELECT，READ COMMITTED 下这条 SELECT 才看得见赢家提交的 `accepted_feedback_id`；反过来就是两条逐字相同、而人只按了一次发送的反馈。
 - **`hot` 计数和 `hot` 列表曾是两条规则。** 有人把「办完了」写成一个字面量 `!= resolved`，`deployed` 加进来时那份拷贝悄悄慢了一个状态。`CLOSED_STATUSES` 就是为这个存在的。
 - **提案卡是快照，正文不是。** 发送时正文取请求体（抽屉是预填的，人可以改完再发），房子（`topic_id` / `project_id`）取 URL 和卡 —— 客户端能说错的东西一律不采信。

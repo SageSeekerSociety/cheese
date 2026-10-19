@@ -42,7 +42,7 @@ covers:
 Claude Code 的一条流常常要几分钟，流到一半断掉的不会重放，所以发布不能重启正在服务的实例。
 
 - **拓扑**：地址归 `gateway-netns` 所有，它只占着网络命名空间：发布的端口 `172.17.0.1:4000`、应用网络上的别名 `litellm`、内部网络 `colors` 上的地址。HAProxy（`gateway-proxy-a` 或 `-b`）跑在它的命名空间里，后面是两个颜色 `litellm-blue`、`litellm-green`，同一份 compose 定义，共用 `litellm-db` 和 `litellm-redis`。平时只运行一个代理、一个颜色。
-- **为什么平时只留一个颜色**：路由器的冷却状态和 `deepseek-flash` 的会话亲和都在进程内存里（`router_settings` 没配 Redis），两个颜色同时接流量，各管各的冷却和亲和，同一个会话会在两边的 RUC 节点之间来回、前缀缓存一直不命中。第二个颜色常驻也只有网关自己崩掉时才有用；真到那一步再考虑，并先把路由状态放进 Redis。
+- **为什么平时只留一个颜色**：路由器的冷却状态在进程内存里，两个颜色同时接流量会各自维护冷却状态。第二个颜色常驻也只有网关自己崩掉时才有用；真到那一步再考虑，并先把路由状态放进 Redis。
 - **一次发布**：先认出正在服务的颜色：容器在运行、在 HAProxy 里既没被排空也不在维护状态的那一个，看的是管理状态而不是某一刻的健康检查。两个都符合（重启发生在排空中途）就取较新的那个；有颜色在运行却一个都不符合，就什么都不动、报失败。然后在空闲的颜色上起新镜像，依次过四关：docker 健康检查；`/health/readiness`（查数据库）；直接对新颜色发一次 `GET /v1/models`（带 master key），它列出的模型必须包括正在服务的颜色列出的每一个，只有本次发布从 `config.yaml` 删掉的除外，所以管理页加在数据库里的模型没加载完不会接流量；HAProxy 自己的检查看到它起来。这里不用 `/health`，它会真的去调每个模型。四关都过，再通过 HAProxy 的运行时 API 一条命令把它设成 ready、把旧颜色设成 drain。HAProxy 不重启，调用方的连接一条都不断；HAProxy 按请求选后端，所以计量代理复用的旧连接，下一个请求就落到新颜色。旧颜色继续把手上的流都传完，脚本每 5 秒读一次它在 HAProxy 里的 `scur`，到 0 才停它，最多等 30 分钟（`GATEWAY_DRAIN_SECONDS`）。到点还有请求没完，就照样停，并在工作流里打一条 `::warning::`，写明切断了几个。
 - **停的时候**：LiteLLM 收到 SIGTERM 会先把在途的流都传完，再把内存里的花销计数和花销日志写进数据库；`stop_grace_period: 60s` 就是留给这一步的，docker 默认的 10 秒到点会 SIGKILL。
 - **重试只在连不上时**：`retry-on conn-failure` 加 `option redispatch`，即颜色拒绝或没接住连接时换另一个颜色再试（HAProxy 3.2 不写 `retry-on` 时默认也是这个，这里写明）。请求已经发出去之后的失败一律不重试：那时 LiteLLM 可能已经调了上游，再发一次就付两次钱。HAProxy 的持续检查用 `/health/liveliness` 而不是 readiness：数据库一抖，readiness 会让两个颜色同时下线。
@@ -51,7 +51,7 @@ Claude Code 的一条流常常要几分钟，流到一半断掉的不会重放�
 - **代理本身的变化也不断流**：`deploy/compose/gateway-proxy.cfg` 或代理的镜像、定义一变，发布就在同一个命名空间里起另一个代理，两个都监听 `:4000`（SO_REUSEPORT），新代理带着从旧代理导出的服务器状态（`server-state-file`，含 drain 标记）启动；它一起来，这个文件就删掉，因为之后颜色都靠运行时 API 切换，留着它，下次重启或崩溃重启的代理会读到过时的 drain 标记，把正在服务的颜色当成已排空。确认它看得到正在服务的颜色后，给旧代理 SIGUSR1 软停：它马上不再接新连接，已经排在它监听队列里的连接由内核转给新代理（`net.ipv4.tcp_migrate_req`），手上的连接照常服务完，空闲连接上的下一个请求照常处理、回 `Connection: close` 再关（`option idle-close-on-response`）。它最多活 35 分钟（`hard-stop-after`）；旧颜色要等它退出才停，因为它带着的流不在新代理的计数里。
 - **只有换地址本身会断流**：`gateway-netns` 的端口、网络或镜像一变就得重建它，所有连接都断，工作流要勾上 `interrupt` 才会执行。
 - **从单容器迁过来那一次**：旧的 `cheese-gateway-litellm-1` 占着 `172.17.0.1:4000` 和别名 `litellm`，docker 不会把它们从一个还在运行的容器上挪走，所以第一次发布要勾 `interrupt`。脚本先把 `litellm-blue` 起好、过完四关（模型清单对照旧容器），然后最多等 10 分钟（`GATEWAY_MIGRATION_QUIET_SECONDS`），等到旧容器没有一条连接在 30 秒内收发过数据（从它的网络命名空间里用 `ss` 看，需要 sudo），再给它 SIGTERM，给在途请求 30 秒（`GATEWAY_MIGRATION_GRACE`），然后启动 `gateway-netns` 和 `gateway-proxy-a`。这段时间里新请求被拒，计量代理连到旧容器的空闲长连接全部作废，每条上的下一个请求会失败一次。代理起不来，或者发布在这一步被取消，都会把旧容器重新拉起。
-- **两个颜色同时运行的那几分钟**：LiteLLM 启动时自己跑数据库迁移，新颜色会在旧颜色还在服务的时候改共享的数据库；LiteLLM 的迁移一般只加不删，但升级上游镜像的那次发布要看一眼迁移里有没有删列或改列。新颜色的冷却和亲和从空开始，所以每次发布后每个会话第一次请求会重新选一次 RUC 节点、丢一次前缀缓存。预算刹车的花销计数在 `coordination_redis` 里，两个颜色共用，不受影响。
+- **两个颜色同时运行的那几分钟**：LiteLLM 启动时自己跑数据库迁移，新颜色会在旧颜色还在服务的时候改共享的数据库；LiteLLM 的迁移一般只加不删，但升级上游镜像的那次发布要看一眼迁移里有没有删列或改列。新颜色的路由冷却状态从空开始。预算刹车的花销计数在 `coordination_redis` 里，两个颜色共用，不受影响。
 
 ## 一个项目一把虚拟 key {#keys}
 
@@ -87,6 +87,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `patch_deepseek_images.py` | 上游只保留 user 消息里的图片；工具结果（Claude Code 读本地图片）在适配后是 tool 消息，补丁让它也保留图片 |
 | `patch_empty_anthropic_text.py` | 丢掉空的 system 文本块、剥掉嵌套 tool_result 里的空文本 |
 | `provider_http_timing.py` | 打 `provider_http_timing` 记录：DNS/TLS/超时/401·403/429/1113 配额/其它 HTTP 错误分类，未知的 500 不会被说成网络原因 |
+| `qwen_asr.py` | 不是补丁：经 LiteLLM 公开的 `custom_provider_map` 注册的 `qwen-asr/` 提供方。阿里百炼的 Qwen-Audio 语音识别只有原生接口，它把「最后一条 user 消息里带 `input_audio`」的对话请求转成百炼请求，system 消息作上下文、`vocabulary` 作热词；按百炼每秒 25 token 的口径把音频时长报成 prompt tokens，由这一行的单价计费 |
 | `check_config.py` | 用 config.yaml 建一个 Router，断言 thinking 与 effort 的转换行为 |
 
 ## 日志里有什么 {#logs}
@@ -164,9 +165,13 @@ GATEWAY_KEY=<项目 key> python3 backend/scripts/gateway_conformance.py \
 - `--deployment <model_info.id>` 只打模型组里的一个部署：LiteLLM 把 `model` 是部署 id 的请求直接路由到那一个部署。按模型组生效的 pre-call 钩子（去掉计费行、会话亲和）这时不起作用，所以钉住部署时缓存未命中只记 warn。
 - 请求逐个发，一个模型几美分；有一项 fail 就退出码 1。失败原因里带供应商的报错原文和模型回答的片段，所以输出是给操作的人看的，别贴进共享日志。
 
-### 订阅与中转：同一个模型挂多条供给 {#supply-rows}
+### 免费、订阅与中转：同一个模型挂多条供给 {#supply-rows}
 
-一个模型组可以有多行（多个 deployment），路由器按 `litellm_params.order` 从小往大用：先用最小 `order` 里健康的，任何错误（配额用完的 429 在内，上下文超长与内容审查除外）都在同一个请求里落到下一档；没写 `order` 的行只在所有带 `order` 的都不健康时才用。所以「订阅额度优先、按量付费兜底」就是订阅那行 `order: 1`、官方 API 那行在后面。被 429 的行冷却约 5 秒后再试。
+一个模型组可以有多行（多个 deployment），路由器按 `litellm_params.order` 从小往大用：先用最小 `order` 里健康的，任何错误（配额用完的 429 在内，上下文超长与内容审查除外）都在同一个请求里落到下一档；只有所有带 `order` 的行都不健康时，才会使用没写 `order` 的行。被 429 的行冷却约 5 秒后重试。
+
+新发现可用的免费供给就接入；同一个模型的供给按免费、已购买的订阅额度、按量付费 API 的顺序设置 `order`。`deepseek-flash` 的自建供给核实与官方别名的模型版本一致后，排在最前面；有可用的免费供给时接在自建之后、官方按量付费 API 之前。
+
+接入前核对供应商当前价格，并用平台实际使用的 API 跑通请求和 `gateway_conformance.py` 的适用检查。仅在供应商客户端内免费的入口，要等平台 API 可用后再上架。
 
 有的上游要自己的请求头（`upstream_headers.py`），按行声明在 `model_info` 里，只发给声明了的那一行，同组兜底的官方行收不到：
 

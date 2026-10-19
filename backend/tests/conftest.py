@@ -19,6 +19,7 @@ import functools
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import signal
@@ -47,6 +48,7 @@ from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.util import LRUCache
 
 from scripts.assert_suite_ran import SuiteDidNotRun, read_quarantine
+from tests.support.counting_session import measures_query_counts
 
 # Strip inherited git env. When the suite runs from the pre-commit HOOK it executes
 # DURING `git commit`, which exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE for
@@ -147,6 +149,7 @@ from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
 )
 from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL  # noqa: E402
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
+from tests.support.machine_path import resolved  # noqa: E402
 
 # NOTE: `app.main` is deliberately NOT imported at module scope. Importing it
 # assembles the whole FastAPI app (`_discover_routers()` imports every module
@@ -535,12 +538,14 @@ class StubChannel(SeatChannel):
         """The seat whose runner is at ``state``: kept on the runner, so a
         channel standing in for a restarted backend that took over the
         runners (``sessions``) reaches them where they are."""
+        # The connector reads both spellings of the root as one directory.
+        state = resolved(state)
         if state.startswith("$HOME/.cheese/gone/"):
             *_, agent, session_id = state.split("/")
             return SimpleNamespace(agent_handle=agent, gone=session_id)
         for runner in self.sessions.values():
             session, placed = runner.placement
-            if placed == state:
+            if resolved(placed) == state:
                 return SimpleNamespace(
                     session=session,
                     agent_handle=runner.actor,
@@ -2147,8 +2152,30 @@ _LAYERS = frozenset({"pure", "contract", "integration"})
 # ceiling read as a worker lost for no reason. The suite-wide `timeout` in
 # pyproject.toml still ends a test that never finishes.
 _LAYER_CEILING_S = {"pure": 10, "contract": 15, "integration": 30}
-_CEILING = pytest.StashKey[tuple[str, float]]()
+_CEILING = pytest.StashKey[tuple[str, float, float]]()
 _SETUP_S = pytest.StashKey[float]()
+
+
+def _ceiling_scale() -> float:
+    """How much wall clock the caller says the run lost to sharing the machine.
+
+    The ceilings above were measured on a run that had the box to itself. The
+    fast tier runs two trees at once and tells this one how much of the CPU it
+    may expect (``ci_fast_checks.ceiling_scale``), so a test is failed for the
+    wait the ceiling exists to find, not for the contention. Full CI leaves the
+    variable unset: one tree, the strict numbers.
+    """
+    raw = os.environ.get("CHEESE_TEST_CEILING_SCALE", "1")
+    try:
+        scale = float(raw)
+    except ValueError as exc:
+        raise pytest.UsageError(
+            f"CHEESE_TEST_CEILING_SCALE must be a number, got {raw!r}") from exc
+    if not math.isfinite(scale) or scale < 1:
+        raise pytest.UsageError(
+            f"CHEESE_TEST_CEILING_SCALE must be finite and at least 1, got {raw!r}")
+    return scale
+
 
 # Tests that took over 60% of their layer's ceiling in some run, so variance
 # alone could push them over it. They are not checked against it until they are
@@ -2201,9 +2228,25 @@ def _layer_of(item: pytest.Item) -> str:
     return "integration"
 
 
+_READS_ONCE = pytest.mark.reads_once
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Give every collected test exactly one layer marker, and that layer's
     time ceiling unless the test is in the slow baseline.
+
+    Also give every test that counts SQL statements the ``reads_once`` marker,
+    derived from the file's name *or its code* (see
+    ``tests/support/counting_session.py``). Deriving it is the whole point: the
+    family had eighteen members under twelve different names and no marker, so
+    "where is the test that proves this endpoint reads once" was a search across
+    three different keyword spellings. A marker is one readable name for the
+    family: ``pytest -m reads_once``.
+
+    Content is checked as well as the name because the next test in the family
+    will be written by someone who did not know there was a naming convention.
+    The file read is per path, not per item, so the cost is one pass over the
+    test tree.
 
     The CI selections are the whole suite only if every test carries one and
     only one of the three markers: a test carrying none runs in no selection
@@ -2223,6 +2266,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     misfiled = []
     slow = _slow_baseline()
     quarantine = _quarantine()
+    scale = _ceiling_scale()
     for item in items:
         declared = {m.name for m in item.iter_markers()} & _LAYERS
         if declared:
@@ -2234,6 +2278,13 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             continue
         layer = _layer_of(item)
         item.add_marker(layer)
+        path = os.fspath(item.path) if item.path is not None else ""
+        if (
+            path
+            and item.get_closest_marker("reads_once") is None
+            and measures_query_counts(path)
+        ):
+            item.add_marker(_READS_ONCE)
         if item.nodeid in quarantine:
             # The gate accepts this xfail only when its nodeid and issue
             # match the same quarantine list; other skips still fail.
@@ -2243,11 +2294,27 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                 )
             )
         if item.nodeid not in slow:
-            item.stash[_CEILING] = (layer, _LAYER_CEILING_S[layer])
+            item.stash[_CEILING] = (layer, _LAYER_CEILING_S[layer] * scale, scale)
     if misfiled:
         raise pytest.UsageError(
             "These tests declare their own layer:\n" + "\n".join(misfiled)
         )
+
+
+def _over_ceiling(layer: str, took: float, ceiling: float, scale: float) -> str:
+    """The failure text for a test that outlived its layer's ceiling.
+
+    Names the effective ceiling, and when the run was given a contention
+    factor, the base number and the factor too: a reader who sees 40 s has to
+    know it is 10 s x 4, not a new limit.
+    """
+    allowance = (f"{ceiling:g} s" if scale == 1 else
+                 f"{ceiling:g} s ({_LAYER_CEILING_S[layer]:g} s x {scale:g} for"
+                 " CHEESE_TEST_CEILING_SCALE)")
+    return (f"took {took:.1f} s with setup, over the {layer} layer's {allowance}"
+            " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
+            " for and give it a shorter timer or interval rather than adding it to"
+            " slow_tests.txt.")
 
 
 @pytest.hookimpl(wrapper=True)
@@ -2262,16 +2329,11 @@ def pytest_runtest_makereport(
     limit = item.stash.get(_CEILING, None)
     if call.when != "call" or limit is None or not report.passed:
         return report
-    layer, ceiling = limit
+    layer, ceiling, scale = limit
     took = item.stash.get(_SETUP_S, 0.0) + call.duration
     if took > ceiling:
         report.outcome = "failed"
-        report.longrepr = (
-            f"took {took:.1f} s with setup, over the {layer} layer's {ceiling:g} s"
-            " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
-            " for and give it a shorter timer or interval rather than adding it to"
-            " slow_tests.txt."
-        )
+        report.longrepr = _over_ceiling(layer, took, ceiling, scale)
     return report
 
 

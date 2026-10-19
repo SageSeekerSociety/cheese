@@ -24,8 +24,10 @@ from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError, mint_session_token
 from app.domain.agent.owner_provider import OWNER_CHANNEL, OwnerChannel
+from app.domain.agent.place import OWN_LOGIN_ID
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -140,14 +142,6 @@ async def _own_session(client, *, environment_on):
         )
         db.add(instance)
         await db.flush()
-        db.add(
-            OwnAgent(
-                instance_id=instance.id,
-                owner_user_id=bob.id,
-                harness="claude-code",
-                device_id=bobs_laptop,
-            )
-        )
         for machine in (bobs_laptop, alices_desk):
             db.add(
                 DeviceClaudeLoginRow(
@@ -157,6 +151,15 @@ async def _own_session(client, *, environment_on):
                     checked_at=datetime.now(UTC),
                 )
             )
+        await db.flush()
+        db.add(
+            OwnAgent(
+                instance_id=instance.id,
+                owner_user_id=bob.id,
+                harness="claude-code",
+                login_id=bobs_laptop,
+            )
+        )
         actor = (await IdentityService(db).ensure_room_agent_user(topic_id)).username
         topic = await db.get(Topic, topic_id)
         topic.default_environment = {
@@ -391,10 +394,9 @@ async def test_an_own_agent_whose_connection_was_removed_starts_nothing(client):
     assert "模型连接已解除" in str(refused.value), "the room is told why"
 
 
-async def _launch_target(client, own, *, leased_on):
-    """The execution target Bob's laptop is handed to start his own Claude
-    Code with, once its lease is ready on ``leased_on`` and that machine
-    answers."""
+async def _launch_env(client, own, *, leased_on):
+    """The environment Bob's laptop is handed to start his own Claude Code
+    with, once its lease is ready on ``leased_on`` and that machine answers."""
     async with client.test_factory() as db:
         row = await AgentSessionService(db).ensure(
             own.topic_id, own.handle, harness="claude-code"
@@ -422,9 +424,71 @@ async def _launch_target(client, own, *, leased_on):
         async with channel.prepare_session(
             session=session, token=token, env={}, precheck=precheck
         ) as prepared:
-            return json.loads(prepared.env["CHEESE_EXECUTION_TARGET"])
+            return precheck.machine, dict(prepared.env)
 
     return client.portal.call(prepare)
+
+
+async def _launch_target(client, own, *, leased_on):
+    """The execution target Bob's laptop is handed with that environment."""
+    _machine, env = await _launch_env(client, own, leased_on=leased_on)
+    return json.loads(env["CHEESE_EXECUTION_TARGET"])
+
+
+async def _on_a_second_login(client, own) -> str:
+    """Bob's laptop holds a second login too, and his agent was added with
+    that one; the first stays logged in. The second's record id."""
+    async with client.test_factory() as db:
+        second = DeviceClaudeLoginRow(
+            device_id=own.bobs_laptop,
+            local_id="B7QX",
+            installed=True,
+            logged_in=True,
+            auth_method="claude.ai",
+            subscription_type="pro",
+            checked_at=datetime.now(UTC),
+        )
+        db.add(second)
+        await db.flush()
+        agent = await db.scalar(
+            select(OwnAgent)
+            .join(AgentInstance, AgentInstance.id == OwnAgent.instance_id)
+            .where(AgentInstance.handle == own.handle)
+        )
+        agent.login_id = second.id
+        await db.commit()
+        return second.id
+
+
+async def test_an_own_session_signs_in_with_the_login_it_was_added_with(
+    client, monkeypatch
+):
+    own = await _own_session(client, environment_on="bob")
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+
+    machine, env = await _launch_env(client, own, leased_on=own.bobs_laptop)
+    assert (machine, env[OWN_LOGIN_ID]) == (own.bobs_laptop, FIRST_LOGIN)
+
+    await _on_a_second_login(client, own)
+    machine, env = await _launch_env(client, own, leased_on=own.bobs_laptop)
+    assert (machine, env[OWN_LOGIN_ID]) == (own.bobs_laptop, "B7QX")
+
+
+async def test_an_own_agent_on_a_removed_login_starts_nothing_beside_one_in_use(
+    client,
+):
+    """Its machine's first login is still logged in, but it is not the one
+    the agent was added with."""
+    own = await _own_session(client, environment_on="alice")
+    second = await _on_a_second_login(client, own)
+    async with client.test_factory() as db:
+        login = await db.get(DeviceClaudeLoginRow, second)
+        login.revoked_at, login.logged_in = datetime.now(UTC), False
+        await db.commit()
+
+    with pytest.raises(ScreenSetupError) as refused:
+        _precheck(client, own, online=lambda device: True)
+    assert "模型连接已解除" in str(refused.value), "the room is told why"
 
 
 async def test_an_own_session_is_told_when_its_executor_is_on_another_machine(

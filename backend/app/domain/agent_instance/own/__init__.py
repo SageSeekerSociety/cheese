@@ -1,7 +1,7 @@
 """A member's own coding agent, as a teammate in a project (#2991).
 
 The row that makes a project's agent someone's (`OwnAgent`) is read in many
-places — where its session runs, what it may be charged, who may call it — and
+places — where its session runs, what it may be charged, whose assistant it is — and
 every one of them asks the same question: is the agent acting here somebody's
 own, and whose. This is that one answer.
 
@@ -15,8 +15,8 @@ until 2026-10-16; the bodies moved into the sibling modules of this package:
   * ``ownership`` — whose own agent a row is (`Owned`, `owned_by_seat`,
     `owned_by_session`, `owned_instance`, `owned_in_project`, `owner_of`);
   * ``naming`` — what one is called and what it is told it is;
-  * ``membership`` — bringing one in, taking it out, who may call it;
-  * ``admission`` — whether it may be used here, and by whom, with the sentence
+  * ``membership`` — bringing one in, taking it out, whose assistant it is;
+  * ``admission`` — whether its connection may be used here, with the sentence
     the room is told when it may not;
   * ``views`` — what the API lists.
 
@@ -34,12 +34,7 @@ other directly rather than through this module, which is what keeps an import in
 the package from re-entering it.
 """
 
-from app.domain.agent_instance.models import OwnCallers as OwnCallers
-from app.domain.agent_instance.own.admission import callable_by as callable_by
-from app.domain.agent_instance.own.admission import may_chat_with as may_chat_with
-from app.domain.agent_instance.own.admission import may_work_for as may_work_for
 from app.domain.agent_instance.own.admission import unusable as unusable
-from app.domain.agent_instance.own.admission import why_not as why_not
 from app.domain.agent_instance.own.connections import Login as Login
 from app.domain.agent_instance.own.connections import _connection_key as _connection_key
 from app.domain.agent_instance.own.connections import _held as _held
@@ -49,10 +44,10 @@ from app.domain.agent_instance.own.connections import label as label
 from app.domain.agent_instance.own.connections import logins as logins
 from app.domain.agent_instance.own.membership import add as add
 from app.domain.agent_instance.own.membership import remove as remove
-from app.domain.agent_instance.own.membership import set_callers as set_callers
 from app.domain.agent_instance.own.naming import (
     _name_owners_agents as _name_owners_agents,
 )
+from app.domain.agent_instance.own.naming import current_role as current_role
 from app.domain.agent_instance.own.naming import own_handle as own_handle
 from app.domain.agent_instance.own.naming import own_name as own_name
 from app.domain.agent_instance.own.naming import own_role as own_role

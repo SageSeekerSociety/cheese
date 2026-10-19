@@ -27,6 +27,7 @@ from app.domain.agent.admission import (
 )
 from app.domain.agent.initial_admission import admitted_initial, seat_instance
 from app.domain.agent.platform_notices import (
+    catching_up_notice,
     delivery_checking_notice,
     delivery_fallback_notice,
 )
@@ -41,16 +42,11 @@ from app.domain.agent.turn.intake.ports import (
     WorkExecutor,
 )
 from app.domain.agent.turn.state.execution import ExecutionState
+from app.domain.agent.turn.store.human import HumanHandoff
 from app.domain.agent.turn_ledger import project_pool
 from app.domain.delivery.agent import DeliveryTargetChanged
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.handles import names_a_person, recipient_seat
-from app.domain.notice_meta import (
-    EVENT_TURN_QUEUED,
-    SEVERITY_INFO,
-    WHO_PLATFORM,
-    notice,
-)
 from app.domain.thread.services import answer_place
 from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 
@@ -107,13 +103,7 @@ class RunnerIntake:
 
     REPLAY_NOTICE_S = 20.0
 
-    _CATCHING_UP_META = notice(
-        EVENT_TURN_QUEUED,
-        severity=SEVERITY_INFO,
-        who=WHO_PLATFORM,
-        detail=say("catchingUpDetail"),
-        detail_label=say("labelWhatHappensNext"),
-    )
+    _CATCHING_UP_TEXT, _CATCHING_UP_META = catching_up_notice()
 
     async def receive_message(
         self,
@@ -127,6 +117,7 @@ class RunnerIntake:
         client_id: str | None = None,
         quoted_context: dict | None = None,
         may_summon: bool = True,
+        handoff: HumanHandoff | None = None,
     ) -> uuid.UUID:
         """Persist one human message now, then deliver it to whoever it named.
 
@@ -155,6 +146,7 @@ class RunnerIntake:
             attachments=attachments,
             client_id=client_id,
             quoted_context=quoted_context,
+            handoff=handoff,
         )
         turn_id = user_block_id
         recipient = next(
@@ -352,7 +344,7 @@ class RunnerIntake:
                     chat_service,
                     topic_id,
                     turn_id,
-                    say("catchingUp"),
+                    self._CATCHING_UP_TEXT,
                     meta=self._CATCHING_UP_META,
                 )
 

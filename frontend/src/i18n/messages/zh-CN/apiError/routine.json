@@ -1,5 +1,4 @@
 {
-  "ownAgentOtherOwnersTask": "这是别人的 Claude Code，只能做它主人负责的任务",
   "routineAgentNotInRoom": "执行者必须是这个频道里的 AI 队友",
   "routineDelete": "删除",
   "routineEventScopeInvalid": "事件范围只能是 room 或 project",

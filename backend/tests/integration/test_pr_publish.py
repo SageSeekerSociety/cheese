@@ -83,6 +83,7 @@ class _FakeClient:
         title: str,
         body: str,
         draft: bool = False,
+        as_user_token: str | None = None,
     ) -> OpenedPR:
         record = {
             "head": head,
@@ -508,7 +509,9 @@ class _GitHub(_FakeClient):
             "node_id": f"PR_node_{number}",
         }
 
-    async def open_pr(self, *, head, base, title, body, draft=False) -> OpenedPR:
+    async def open_pr(
+        self, *, head, base, title, body, draft=False, as_user_token=None
+    ) -> OpenedPR:
         for pr in self.prs.values():
             if (pr["head"]["ref"], pr["base"]["ref"], pr["state"]) == (
                 head,
@@ -602,3 +605,100 @@ def test_a_task_whose_pr_was_closed_gets_a_new_one_and_names_it(client, monkeypa
 
     assert card["pr_number"] == 1792
     assert _task_pr(client, task_id) == 1792
+
+
+class _BehindGitHub(_GitHub):
+    """`_GitHub` that also answers the status read the rebase step makes, and
+    logs the flag flip into the same event list as the forge's update-branch."""
+
+    def __init__(self, events: list[str]):
+        super().__init__("acme", "widgets", _FakeTokens())
+        self.events = events
+
+    async def pr_status(self, number: int):
+        from app.domain.review.github_pr_status import PullRequestStatus
+
+        return PullRequestStatus(
+            head_sha="sha-1",
+            head_ref="topic/abc",
+            base_ref="main",
+            state="open",
+            merged=False,
+            mergeable=None,
+            mergeable_state="unknown",
+            draft=True,
+        )
+
+    async def mark_ready_for_review(self, node_id: str) -> None:
+        self.events.append("mark_ready_for_review")
+        await super().mark_ready_for_review(node_id)
+
+
+class _BehindForge:
+    def __init__(self, events: list[str], ancestry: str):
+        self.events = events
+        self.ancestry = ancestry
+        self.update_calls: list[tuple] = []
+
+    async def compare_status(self, *, owner, repo, base, head, token):
+        return self.ancestry
+
+    async def update_branch(self, *, owner, repo, number, token):
+        self.events.append("update_branch")
+        self.update_calls.append((number, token))
+        return False  # 422: the head does not move, so no waiting in the test
+
+
+def _file_card_on_branch(client, monkeypatch, ancestry: str):
+    from types import SimpleNamespace
+
+    from app.domain.review import pr_publish
+
+    events: list[str] = []
+    github = _BehindGitHub(events)
+    forge = _BehindForge(events, ancestry)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    _task_with_pr(client, tid, github, base="main", state="open")
+    cid = _make_card(client, tid)
+    # Patched for the publish alone: the card read that follows resolves the
+    # real binding and must not see this stand-in.
+    with monkeypatch.context() as patched:
+        patched.setattr(
+            "app.domain.project.forge.binding_for_project",
+            AsyncMock(return_value=SimpleNamespace(repo="acme/widgets")),
+        )
+        patched.setattr(
+            pr_publish, "project_credentials", AsyncMock(return_value=("w", "r"))
+        )
+        patched.setattr(pr_publish, "status_client", AsyncMock(return_value=forge))
+        patched.setattr(pr_publish, "proposal_client", AsyncMock(return_value=github))
+        patched.setattr(pr_publish, "branch_head", AsyncMock(return_value="a" * 40))
+        client.portal.call(
+            lambda: pr_publish._run(
+                client.test_request_factory,
+                card_id=uuid.UUID(cid),
+                topic_id=uuid.UUID(tid),
+                project_id=uuid.UUID(pid),
+            )
+        )
+    return events, forge, github
+
+
+def test_filing_a_card_brings_a_behind_branch_current_before_the_flag(
+    client, monkeypatch
+):
+    """递卡是最常见的转正路径：落后的分支先 update_branch，再翻 ready，
+    否则整轮 CI 跑在分支被切出来那天的检查集上。"""
+    events, forge, github = _file_card_on_branch(client, monkeypatch, "behind")
+
+    assert forge.update_calls == [(1791, "w")]
+    assert events == ["update_branch", "mark_ready_for_review"]
+    assert github.prs[1791]["draft"] is False
+
+
+def test_filing_a_card_leaves_a_current_branch_alone(client, monkeypatch):
+    events, forge, _github = _file_card_on_branch(client, monkeypatch, "ahead")
+
+    assert forge.update_calls == []
+    assert events == ["mark_ready_for_review"]

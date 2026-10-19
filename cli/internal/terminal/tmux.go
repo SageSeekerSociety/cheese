@@ -6,6 +6,7 @@ package terminal
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/runtimepath"
 )
 
@@ -138,6 +140,9 @@ func NewManager() (*Manager, error) {
 	// surviving sessions. A random dir per process would strand them on an orphan
 	// socket (which is exactly what broke in-place update before this).
 	dir := filepath.Join(os.TempDir(), fmt.Sprintf("cheese-%d", os.Getuid()))
+	if root := place.CurrentRoot(); root != place.Root {
+		dir += fmt.Sprintf("-%x", sha256.Sum256([]byte(root)))[:13]
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("terminal: runtime dir: %w", err)
 	}
@@ -157,6 +162,12 @@ func (m *Manager) tmux(args ...string) *exec.Cmd {
 
 // KillServer tears down the whole private tmux server (and every session).
 func (m *Manager) KillServer() { _ = m.tmux("kill-server").Run() }
+
+// RemoveRuntime removes the selected enrollment's private terminal files.
+func (m *Manager) RemoveRuntime() {
+	_ = os.Remove(m.conf)
+	_ = os.Remove(filepath.Dir(m.sock))
+}
 
 // HasSession reports whether a tmux session named `name` already exists in this
 // private server — used to re-adopt a surviving session after the cheese process

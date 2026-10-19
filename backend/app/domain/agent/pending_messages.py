@@ -13,11 +13,11 @@ from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block, consumed_turn
 from app.domain.block.queries import DEFERRED_INPUT, queued_messages
 from app.domain.delivery.agent import redispatch_undelivered
-from app.domain.delivery.input_holds import seat_has_unfinished_input
+from app.domain.delivery.input_holds import seats_with_unfinished_input
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
 from app.domain.run_record.models import RunRecord
-from app.domain.thread.services import answered_in
+from app.domain.thread.services import answered_in_many
 
 _runner = None
 logger = logging.getLogger(__name__)
@@ -165,7 +165,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
     passes over and why; the sweep logs every message it starts, since one it
     finds is one the nudges missed."""
     # deferred-import: breaks the cycle agent.queries -> agent.pending_messages
-    from app.domain.agent.queries import conversation_seat
+    from app.domain.agent.queries import seats_in_conversations
 
     if not runner.owns_sessions or not runner.accepting_turns:
         return 0
@@ -201,18 +201,55 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
                 )
             )
         )
+        # Only messages this scan may start a turn for are asked where they are
+        # answered: that read opens the 支线 of a main-line message, so it may
+        # not run for one already begun or answered.
+        waiting = [
+            block
+            for block in mentioned
+            if block.id not in begun
+            and block.id not in answered
+            and not runner.turn_pending(block.id)
+        ]
+        # A channel's main line is answered in the message's 支线. The messages
+        # of one scan come from a handful of conversations, so the question is
+        # put once for the batch instead of twice per message
+        # (`thread.services.answered_in_many`).
+        answered_in_by_block = await answered_in_many(session, waiting)
+        # The hold each message runs into is keyed by (conversation, seat), and
+        # the seat is the one the message named: the loop checks `acting`
+        # against exactly that before asking. One read answers every pair.
+        holding = await seats_with_unfinished_input(
+            session,
+            [
+                (
+                    answered_in_by_block[block.id],
+                    recipient_seat((block.meta or {}).get("agent_recipient") or {}),
+                )
+                for block in waiting
+            ],
+        )
+        # The seat each waiting message acts under is asked once for the batch:
+        # the messages of one scan come from a handful of conversations, so a
+        # batch read answers them all instead of one `conversation_seat` per
+        # message. The loop still checks the same things in the same order.
+        seats_by_key = await seats_in_conversations(
+            session,
+            [
+                (
+                    answered_in_by_block[block.id],
+                    ((block.meta or {}).get("agent_recipient") or {}).get("handle"),
+                )
+                for block in waiting
+            ],
+        )
         seats = {}
         for block in mentioned:
-            if (
-                block.id in begun
-                or block.id in answered
-                or runner.turn_pending(block.id)
-            ):
+            if block.id not in answered_in_by_block:
                 continue
             recipient = (block.meta or {}).get("agent_recipient") or {}
             handle = recipient.get("handle")
-            # A channel's main line is answered in the message's 支线.
-            conversation = await answered_in(session, block)
+            conversation = answered_in_by_block[block.id]
             key = (conversation, handle)
             if key in seats:
                 continue
@@ -223,7 +260,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             if await chat.has_running_turn(*key):
                 skipped.append((block, "turn_running_in_process"))
                 continue
-            seated = await conversation_seat(session, conversation, handle)
+            seated = seats_by_key[key]
             if seated is None:
                 skipped.append((block, "no_seat"))
                 continue
@@ -237,7 +274,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             if acting != recipient_seat(recipient):
                 skipped.append((block, "other_acting_seat"))
                 continue
-            if await seat_has_unfinished_input(session, conversation, acting):
+            if (conversation, acting) in holding:
                 skipped.append((block, "unfinished_input"))
                 continue
             seats[key] = block

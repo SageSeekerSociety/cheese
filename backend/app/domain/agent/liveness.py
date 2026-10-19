@@ -22,6 +22,7 @@ from typing import Protocol
 from sqlalchemy import Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall
 from app.domain.agent.models import AgentTurn
 from app.domain.room_task.models import Task
 
@@ -171,39 +172,50 @@ async def moving_topics(
     mine = set(ids)
     # 这些话题名下的对话 -> 它所在的房间。支线也算：一条支线里跑的轮次同样是在管
     # 这间房（`topics._working_in_threads` 认的是同一件事）。
-    inner: dict[uuid.UUID, uuid.UUID] = {}
-    for task_id, room_id in (
-        await db.execute(select(Task.id, Task.room_id).where(Task.room_id.in_(ids)))
-    ).all():
-        inner[task_id] = room_id
     if threads is None:
-        threads = {
-            thread_id: room_id
-            for thread_id, room_id in (
-                await db.execute(
-                    select(_threads.c.id, _threads.c.room_id).where(
-                        _threads.c.room_id.in_(ids)
+        found_threads, cached_threads = recall(db, ("threads_in_rooms", tuple(ids)))
+        threads = (
+            dict(cached_threads[0])
+            if found_threads
+            else {
+                thread_id: room_id
+                for thread_id, room_id in (
+                    await db.execute(
+                        select(_threads.c.id, _threads.c.room_id).where(
+                            _threads.c.room_id.in_(ids)
+                        )
                     )
-                )
-            ).all()
-        }
-    inner.update(
-        (thread_id, room_id)
-        for thread_id, room_id in threads.items()
-        if room_id in mine
-    )
-
+                ).all()
+            }
+        )
+    inner: dict[uuid.UUID, uuid.UUID] = {
+        thread_id: room_id for thread_id, room_id in threads.items() if room_id in mine
+    }
     # 刚起来、还开着、而且真送出去了的那些轮次。不是拿房间去 IN：这一份读的是很小
     # 的一张部分索引（`ix_agent_turns_open`），回来之后再在内存里挑出属于这些话题的。
-    arrived = await db.scalars(
-        select(AgentTurn.conversation_id).where(
+    # 落在活上的轮次顺手带回那件活的房间：库里这些开着的轮次是全站的，大多不在这
+    # 批房间里，另拿它们去 `tasks` 查一趟房间，次数就看别的项目此刻有没有在跑了。
+    turns = (
+        select(AgentTurn.conversation_id, Task.room_id)
+        .outerjoin(Task, Task.id == AgentTurn.conversation_id)
+        .where(
             AgentTurn.stopped_at.is_(None),
             AgentTurn.delivered_at.is_not(None),
             AgentTurn.started_at >= now - lookback,
         )
     )
+    # 这个进程手里在跑、库里也许还没送出那一行的，同一趟里问它是哪间房的活：单独
+    # 再查一趟的话，次数就看这个进程此刻有没有在跑别处的轮次了。
+    here = [c for c in running if c not in mine and c not in inner]
+    if here:
+        turns = turns.union_all(select(Task.id, Task.room_id).where(Task.id.in_(here)))
+    arrived = (await db.execute(turns)).all()
+    for conversation, room_id in arrived:
+        if conversation is not None and room_id in mine:
+            inner[conversation] = room_id
+    active = set(running) | {c for c, _ in arrived if c is not None}
     moving: set[uuid.UUID] = set()
-    for conversation in set(running) | {c for c in arrived if c is not None}:
+    for conversation in active:
         if conversation in mine:
             moving.add(conversation)
         elif conversation in inner:

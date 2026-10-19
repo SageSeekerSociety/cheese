@@ -1,9 +1,11 @@
 """Explicit agent publication persists chat without starting another turn."""
 
 import asyncio
+import base64
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -552,3 +554,182 @@ def test_consuming_work_id_only_delivers_when_unambiguous():
     )
     assert consume(live, topic, to("inst-b")) == b
     assert consume(live, topic) == b
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"pixels"
+
+
+def picture(name, raw=PNG):
+    """One attachment the way `chat_send` sends it: bytes, not a room path."""
+    return {
+        "path": f"/executor/{name}",
+        "name": name,
+        "content_b64": base64.b64encode(raw).decode("ascii"),
+    }
+
+
+def test_an_agent_publishes_a_picture_in_the_conversation(client, stub_hooks):
+    """The bytes arrive with the message, land under this room's `uploads/`,
+    and the reader gets both blocks — the words, then the picture."""
+    topic, headers = room(client)
+    with room_socket(client, topic, "alice") as ws:
+        response = publish(
+            client, topic, headers, "看这一张", attachments=[picture("shot.png")]
+        )
+        assert response.status_code == 200, response.text
+        frames = []
+        # Bounded: a missing broadcast must fail here, not block until the
+        # test's own wall clock runs out.
+        for _ in range(20):
+            frame = ws.receive_json()
+            if frame["type"] == "assistant_block":
+                frames.append(frame)
+                if len(frames) == 2:
+                    break
+    assert len(frames) == 2, frames
+    assert [frame["block"]["kind"] for frame in frames] == ["message", "attachment"]
+    assert frames[0]["block"]["content"] == "看这一张"
+    shown = frames[1]["block"]
+    assert shown["content"].startswith("uploads/")
+    assert shown["content"].endswith("/shot.png")
+    assert shown["mime_type"] == "image/png"
+    served = client.get(
+        f"/topics/{topic}/attachments/raw", params={"path": shown["content"]}
+    )
+    assert served.status_code == 200
+    assert served.content == PNG
+    history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
+    assert [b["kind"] for b in history if b["kind"] in ("message", "attachment")] == [
+        "message",
+        "attachment",
+    ]
+
+
+def test_a_picture_alone_is_a_message(client, stub_hooks):
+    """Pictures need no caption: an empty content with attachments is a send."""
+    topic, headers = room(client)
+    response = client.post(
+        f"/topics/{topic}/messages",
+        json={"request_id": str(uuid.uuid4()), "attachments": [picture("shot.png")]},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["kind"] == "message"
+    history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
+    assert [b["kind"] for b in history if b["kind"] == "attachment"] == ["attachment"]
+
+
+def test_only_pictures_go_inline(client):
+    """A file that is not one of the four raster pictures stays out of the
+    bubble — and neither the message nor a byte of the file is stored."""
+    topic, project_id, headers = room_with_project(client)
+    response = publish(
+        client,
+        topic,
+        headers,
+        "这是报告",
+        attachments=[picture("report.png", raw=b"%PDF-1.7 report")],
+    )
+    assert response.status_code == 422
+    assert uploads_under(project_id) == []
+    history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
+    assert [b for b in history if b["kind"] == "message"] == []
+
+
+def uploads_under(project_id):
+    """The bytes this project's rooms hold under `uploads/` — where a
+    publication's pictures land. The room file list hides them on purpose, so
+    a test that wants to count copies has to look at the tree."""
+    root = Path(settings.workspace_root) / ".room-files" / project_id
+    return sorted(p for p in root.rglob("uploads/*/*") if p.is_file())
+
+
+def room_with_project(client):
+    project = post_project(client, json={"name": "Publication"}, owner="alice").json()[
+        "data"
+    ]
+    topic = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Work"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    thread = in_thread(client, topic["id"], "alice")
+    token = mint_scoped_token(project_id=project["id"], topic_id=thread)
+    return thread, project["id"], {"X-Cheese-Token": token}
+
+
+def test_a_retry_of_a_picture_keeps_one_copy(client, stub_hooks):
+    """The same request_id after a lost response returns the stored message
+    and writes no second copy of the bytes: a retry is not a new send."""
+    topic, project_id, headers = room_with_project(client)
+    request_id = str(uuid.uuid4())
+    first = publish(
+        client,
+        topic,
+        headers,
+        "看这一张",
+        request_id=request_id,
+        attachments=[picture("shot.png")],
+    )
+    assert first.status_code == 200, first.text
+    before = uploads_under(project_id)
+    assert len(before) == 1
+    retry = publish(
+        client,
+        topic,
+        headers,
+        "看这一张",
+        request_id=request_id,
+        attachments=[picture("shot.png")],
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["data"]["id"] == first.json()["data"]["id"]
+    assert uploads_under(project_id) == before
+    history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
+    assert [b["kind"] for b in history if b["kind"] in ("message", "attachment")] == [
+        "message",
+        "attachment",
+    ]
+
+
+def test_a_retry_with_a_different_picture_conflicts(client, stub_hooks):
+    """The same id with another picture is another publication: it must be
+    refused, not silently answered with the old message."""
+    topic, project_id, headers = room_with_project(client)
+    request_id = str(uuid.uuid4())
+    first = publish(
+        client,
+        topic,
+        headers,
+        "看这一张",
+        request_id=request_id,
+        attachments=[picture("shot.png")],
+    )
+    assert first.status_code == 200, first.text
+    changed = publish(
+        client,
+        topic,
+        headers,
+        "看这一张",
+        request_id=request_id,
+        attachments=[picture("shot.png", raw=PNG + b"changed")],
+    )
+    assert changed.status_code == 409
+    assert len(uploads_under(project_id)) == 1
+
+
+def test_a_bad_second_picture_writes_nothing(client):
+    """Every picture is checked before any of them is written: the good first
+    one must not be left behind by the bad second one."""
+    topic, project_id, headers = room_with_project(client)
+    response = publish(
+        client,
+        topic,
+        headers,
+        "看这两张",
+        attachments=[picture("ok.png"), picture("bad.png", raw=b"%PDF-1.7 report")],
+    )
+    assert response.status_code == 422
+    assert uploads_under(project_id) == []
+    history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
+    assert [b for b in history if b["kind"] == "message"] == []

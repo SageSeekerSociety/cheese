@@ -933,6 +933,9 @@ def test_this_hosts_environment_stays_here(session, machine):
             CLAUDECODE="1",
             GIT_EDITOR="true",
             CLAUDE_CODE_ENTRYPOINT="sdk-cli",
+            # The session's short name travels inside the command's body, not
+            # in the environment a native session on the executor would see.
+            T=str(machine.workspace),
         ),
     )
     assert code == 0
@@ -949,6 +952,9 @@ def test_this_hosts_environment_stays_here(session, machine):
         "CLAUDE_CODE_MESSAGING_SOCKET",
         "CLAUDE_PID",
         "CLAUDE_CODE_TMPDIR",
+        # Not a secret, but the same rule: a build running natively on the
+        # executor has no `T`, and a room's command must see what it sees.
+        "T",
     ):
         assert secret not in remote, secret
     assert "s3cret-central" not in (machine.workspace / "env.txt").read_text()
@@ -956,6 +962,58 @@ def test_this_hosts_environment_stays_here(session, machine):
     assert remote["GIT_EDITOR"] == "true"
     assert remote["CLAUDE_CODE_ENTRYPOINT"] == "sdk-cli"
     assert remote["EXECUTOR_MARKER"] == "on-the-executor"
+
+
+def test_the_short_name_is_bound_in_the_command(session, machine):
+    """`$T` is the command's to use, without being an environment variable of
+    it: the name is bound in the shell that runs the command, where `cd "$T"`
+    finds it, and the environment listing is the one a native session has."""
+    (machine.workspace / "under T").mkdir()
+    code, output = session.run(
+        session.wrapped('cd "$T/under T" && pwd; env | grep -c "^T=" || true'),
+        env=session.env(T=str(machine.workspace)),
+    )
+    assert code == 0
+    assert output == f"{machine.workspace}/under T\n0\n".encode()
+
+
+def test_the_short_name_is_respelled_where_the_machine_holds_the_project(
+    session, machine
+):
+    """A session started in a directory of its own (`virtual_workspace`, as a
+    member's own session apart from its executor starts) names that directory
+    under `$T`; the command runs on the machine, so the value has to cross with
+    `body` the way every other path a body names does."""
+    own = session.root / "own"
+    target = json.loads(Path(session.target).read_text())
+    target["virtual_workspace"] = str(own)
+    Path(session.target).write_text(json.dumps(target))
+    code, output = session.run(
+        session.wrapped('cd "$T" && pwd'),
+        env=session.env(T=str(own)),
+    )
+    assert (code, output) == (0, f"{machine.workspace}\n".encode())
+
+
+def test_a_session_that_has_not_rented_its_machine_binds_its_placeholder(
+    session, machine
+):
+    """While the target still names the placeholder, only the transport can
+    spell the project — after this point, inside the body. The name is bound
+    single-quoted for that substitution (see
+    `test_the_workspace_has_a_short_name`); once the lease is written the
+    target names the machine and the prefix spells the value itself."""
+    # `executor_transport.DEFERRED_WORKSPACE`: the target a session is started
+    # with before its machine is rented.
+    placeholder = "/unavailable-project"
+    target = json.loads(Path(session.target).read_text())
+    target["workspace"] = placeholder
+    Path(session.target).write_text(json.dumps(target))
+    code, output = session.run(
+        session.wrapped('echo "[${T-unset}]"'),
+        env=session.env(T=placeholder),
+    )
+    assert (code, output) == (0, b"[/unavailable-project]\n")
 
 
 @pytest.mark.parametrize(

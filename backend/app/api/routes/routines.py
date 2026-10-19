@@ -36,10 +36,8 @@ from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import notice_keys, say
 from app.domain.agent_instance.adapters import project_team
-from app.domain.agent_instance.own import may_work_for
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
-from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.routine import service as routines
@@ -415,12 +413,6 @@ async def create_routine(
         owner_handle=body.owner_handle,
         agent_handle=body.agent_handle,
     )
-    # Asked of the rule as made, before it is committed: the service settles who
-    # it is for (a person's rule is their own) and which teammate runs it (the
-    # room's first when none is named), and those two are what the check is about.
-    await _own_agent_works_for(
-        db, place.project_id, row.agent_handle, row.owner_handle or ""
-    )
     presented = await _present_one(db, actor, row)
     await db.commit()
     return ok(presented)
@@ -441,10 +433,6 @@ async def update_routine(
     routine_id: uuid.UUID, body: RoutinePatch, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
-    if body.agent_handle is not None:
-        await _own_agent_works_for(
-            db, row.project_id, body.agent_handle, row.owner_handle or ""
-        )
     row = await RoutineService(db).update(
         row, changes=body.model_dump(exclude_unset=True)
     )
@@ -639,9 +627,3 @@ async def delete_routine_template(
     await db.commit()
     return ok({"deleted": str(template_id)})
 
-
-async def _own_agent_works_for(db, project_id, agent_handle, person: str) -> None:
-    """A routine runs a member's own agent only for that member (#2991)."""
-    project = await ProjectService(db).get_or_404(project_id)
-    if not await may_work_for(db, project_id, agent_handle, person, project.settings):
-        raise ForbiddenError(say("ownAgentOtherOwnersTask"))

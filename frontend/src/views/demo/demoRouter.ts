@@ -65,6 +65,8 @@ const catalogTargets = [
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
   { path: '/users/settings/devices', name: 'UserSettingsDevices', component: blank },
+  { path: '/users/settings/usage', name: 'UserSettingsUsage', component: blank },
+  { path: '/plans', name: 'CreditPlans', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId/participants', name: 'TasksParticipants', component: blank },
   { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },

@@ -195,8 +195,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     request_concurrency: int = Field(default=16, ge=1)
     request_queue_depth: int = Field(default=64, ge=0)
     request_queue_timeout_s: float = Field(default=15.0, ge=0)
-    # How long a rate check may wait on Redis before the request goes through
-    # unchecked: a hung Redis must not hang every request with it.
+    # How long a rate check, or the closed-account check
+    # (``app.core.deleted_accounts``), may wait on Redis before the request goes
+    # through unchecked: a hung Redis must not hang every request with it.
     request_limit_redis_timeout_s: float = Field(default=0.25, gt=0)
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
@@ -450,6 +451,18 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
+    # --- Voice input (app/domain/voice) ---
+    # The composer's microphone: a speech model through the gateway, then a
+    # small model that tidies the transcript into a message. Recorded per
+    # person in voice_inputs and per project in resource_usage; while
+    # voice_input_charged is off the rows cost the project no credits.
+    voice_asr_model: str = "qwen-audio-asr"
+    voice_polish_model: str = "deepseek-flash"
+    voice_input_charged: bool = False
+    voice_max_seconds: int = 60
+    voice_daily_seconds: int = 3600
+    voice_asr_timeout_seconds: float = 30.0
+    voice_polish_timeout_seconds: float = 15.0
     # 项目总览上的「现状」：读项目材料写几句现状的那一问（用项目自己的模型）。
     # 大项目要想一两分钟。
     project_situation_timeout_seconds: float = 240.0
@@ -585,6 +598,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # Generous on purpose: this must never cut a slow-but-live turn, only one
     # that never started. 0 disables it.
     agent_first_output_timeout_s: float = 300.0
+    # 一轮读多少：这个座位上次读过之后的新消息。The count bounds the query and
+    # the characters bound the prompt. A seat that has been away longer than one
+    # window reads the newest part of the conversation; what it skipped stays
+    # behind its cursor and is not handed over later (a room is not a mail
+    # queue, and replaying a day of chatter into one turn helps nobody).
+    agent_input_window_messages: int = 40
+    agent_input_window_chars: int = 12000
     # The wall-clock mark past which a turn is recorded as long. A metric, not
     # a gate: crossing it is written to the turn record (`ceiling_crossed_s`),
     # and nothing ends. With the three gates in place (the session's process or
@@ -814,7 +834,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     forgejo_url: str = ""
     forgejo_api_url: str = ""
     forgejo_admin_token: str = ""
-    forge_attribution_default: bool = True
     forge_event_relay_url: str = ""
     forge_event_secret: str = ""
     # Only the public relay loads the deployment -> shared secret mapping.
@@ -899,14 +918,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     #: 报警，但同一个问题一小时只报一条。
     delivery_overdue_check_interval_s: int = 600
     task_deadline_sweep_interval_s: int = 900
-    #: 叫醒链的两拍（#1343 的定时器、看门狗的心跳）多久核一遍
-    #: （`domain/wake_watch/`，只跑在平台自己那一侧）。比拍的周期密得多就行 ——
-    #: 判停摆的线是 60 分钟，它只决定「多久发现」。0 关闭。
-    wake_watch_interval_s: int = 300
-    #: 判到停摆之后，要不要真的点 #1343 那条线上的座位补一跳
-    #: （`domain/wake_watch/catchup.py`）。关掉就是影子期：只判、只记，判据一个字
-    #: 不变 —— 判据在真实数据上核过之后才默认打开。
-    wake_watch_catchup: bool = True
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having
@@ -917,38 +928,22 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # those and produce merge commits in repos that allow several methods.
     accept_pr_merge_method: str = "squash"
 
-    # --- the platform's own repo: 后台「棘轮」页 and 「CI 与合并队列」页 ---
-    # The ratchet reads its `arch-metrics.yml` snapshots; the CI activity sweep
-    # (every N seconds, 0 disables it) its Actions runs and merge queue.
+    # --- the platform's own repo: CI activity ---
     platform_repository: str = "SageSeekerSociety/cheese"
     ci_activity_sweep_interval_s: int = 300
-    #: How often the backend pulls new `ratchet-snapshot` artifacts. The page
-    #: reads the table and never GitHub, so this clock is what makes a new
-    #: collection visible there; 0 disables the pull and leaves the table as it
-    #: stands. 15 minutes is the design's interval — one listing call per tick,
-    #: and a collection does not need to appear faster than a person reads.
-    ratchet_ingest_interval_s: int = 900
-    #: How many points the page draws. A bound on one response, and the window
-    #: the direction is computed over; the archive keeps everything.
-    ratchet_series_points: int = 60
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared
     # env vars are silently dropped and the feature can never be configured) ---
-    oauth_enabled_providers: str = ""  # comma-separated: "github,google,ruc"
-    oauth_github_client_id: str | None = None
-    oauth_github_client_secret: str | None = None
-    oauth_github_redirect_url: str | None = None
+    oauth_enabled_providers: str = ""  # comma-separated: "github_app,google,ruc"
     oauth_google_client_id: str | None = None
     oauth_google_client_secret: str | None = None
     oauth_google_redirect_url: str | None = None
     oauth_ruc_client_id: str | None = None
     oauth_ruc_client_secret: str | None = None
     oauth_ruc_redirect_url: str | None = None
-    # #192 "连接 GitHub 账号": the cheesex-app GitHub App's own user-to-server
-    # OAuth credential — deliberately separate from oauth_github_client_id
-    # (the login provider above), even though it's the same authorize/token
-    # endpoints. Add "github_app" to oauth_enabled_providers to turn this on.
+    # cheesex-app's user authorization signs in with GitHub. Keep the App's
+    # registered callback URL even though the separate account link is gone.
     oauth_github_app_client_id: str | None = None
     oauth_github_app_client_secret: str | None = None
     oauth_github_app_redirect_url: str | None = None

@@ -290,6 +290,77 @@ class TestTaskSubmissionReviewIntegration:
         assert review["detail"]["score"] == 4
         assert review["detail"]["comment"] == "Could be better."
 
+    def test_patch_and_put_update_the_same_review_in_place(
+        self, setup_submission: dict, api_client: TestClient
+    ):
+        """PATCH 与 PUT 写的是同一条复核，第二次是覆盖不是新增。
+
+        判据在调用方看得见的地方：两次写完之后 GET 到的是 PUT 的值；
+        提交列表里仍然只有一条复核，PUT 要是新建了第二条就会看到两条。
+        """
+        creator = setup_submission["creator"]
+        task_id = setup_submission["task_id"]
+        membership_id = setup_submission["membership_id"]
+        submission_id = setup_submission["submission_id"]
+        url = (
+            f"/tasks/{task_id}/participants/{membership_id}"
+            f"/submissions/{submission_id}/review"
+        )
+        headers = {"Authorization": f"Bearer {creator.token}"}
+
+        created = api_client.post(
+            url,
+            json={"accepted": True, "score": 5, "comment": "First pass"},
+            headers=headers,
+        )
+        assert created.status_code == 200
+
+        patched = api_client.patch(
+            url,
+            json={"accepted": False, "score": 4, "comment": "Second pass"},
+            headers=headers,
+        )
+        assert patched.status_code == 200
+        assert patched.json()["data"]["review"]["detail"] == {
+            "accepted": False,
+            "score": 4,
+            "comment": "Second pass",
+        }
+
+        replaced = api_client.put(
+            url,
+            json={"accepted": True, "score": 3, "comment": "Third pass"},
+            headers=headers,
+        )
+        assert replaced.status_code == 200
+        assert replaced.json()["data"]["review"]["detail"] == {
+            "accepted": True,
+            "score": 3,
+            "comment": "Third pass",
+        }
+
+        fetched = api_client.get(url, headers=headers)
+        assert fetched.status_code == 200
+        assert fetched.json()["data"]["review"]["detail"] == {
+            "accepted": True,
+            "score": 3,
+            "comment": "Third pass",
+        }
+
+        listed = api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            params={"queryReview": "true", "reviewed": "true"},
+            headers=headers,
+        )
+        assert listed.status_code == 200
+        submissions = listed.json()["data"]["submissions"]
+        assert len(submissions) == 1
+        assert submissions[0]["review"]["detail"] == {
+            "accepted": True,
+            "score": 3,
+            "comment": "Third pass",
+        }
+
     def test_update_review_forbidden_for_participant(
         self, setup_submission: dict, api_client: TestClient
     ):

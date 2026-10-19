@@ -14,6 +14,8 @@ from app.domain.agent.models import AgentTurn
 from app.domain.room_task.closing import turns_ended
 from app.domain.room_task.live import turns_moved
 from app.domain.room_task.ports import SweepCheckouts
+from app.domain.room_task.services import TaskService
+from app.domain.usage.budgets import CreditBudgets
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,8 +107,11 @@ class AgentTurnRepository:
                 .on_conflict_do_nothing(index_elements=[AgentTurn.id])
                 .returning(AgentTurn.conversation_id)
             )
+            conversations = list(opened.scalars())
+            if conversations:
+                await self._snapshot_credit_owner(turn_id, conversation_id, started_at)
             if delivered_at is not None:
-                await turns_moved(self._session, opened.scalars())
+                await turns_moved(self._session, conversations)
             return
         self._session.add(
             AgentTurn(
@@ -123,8 +128,26 @@ class AgentTurnRepository:
                 agent_handle=agent_handle,
             )
         )
+        await self._snapshot_credit_owner(turn_id, conversation_id, started_at)
         if delivered_at is not None:
             await turns_moved(self._session, [conversation_id])
+
+    async def _snapshot_credit_owner(
+        self,
+        turn_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        started_at: datetime,
+    ) -> None:
+        task = await TaskService(self._session).get(conversation_id)
+        if task is None:
+            return
+        owner = await TaskService(self._session).credit_owner(task)
+        if owner is None:
+            return
+        budgets = CreditBudgets(self._session)
+        await budgets.snapshot_owner(
+            turn_id, task.id, owner, task.project_id, started_at
+        )
 
     async def mark_delivered(self, turn_id: uuid.UUID, at: datetime) -> None:
         """Stamp the moment the transport accepted this turn's write.
@@ -288,21 +311,25 @@ class AgentTurnRepository:
         )
         return set((await self._session.execute(stmt)).scalars())
 
-    async def close(self, turn_ids: Iterable[uuid.UUID], at: datetime) -> None:
+    async def close(
+        self, turn_ids: Iterable[uuid.UUID], at: datetime
+    ) -> set[uuid.UUID]:
         """End these intervals. Closing is not deleting — the ids stay readable
         next to the blocks that carry them."""
         ids = list(turn_ids)
         if not ids:
-            return
+            return set()
         closed = await self._session.execute(
             update(AgentTurn)
             .where(AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None))
             .values(stopped_at=at)
-            .returning(AgentTurn.conversation_id)
+            .returning(AgentTurn.id, AgentTurn.conversation_id)
         )
-        conversations = list(closed.scalars())
+        rows = closed.all()
+        conversations = [row.conversation_id for row in rows]
         await turns_moved(self._session, conversations)
         await turns_ended(self._session, conversations, machines=self._machines)
+        return {row.id for row in rows}
 
     async def still_open(
         self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]

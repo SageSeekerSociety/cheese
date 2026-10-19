@@ -35,6 +35,7 @@ from app.domain.agent.pending_messages import nudge_messages
 from app.domain.agent.platform_failures import (
     PlatformFailure,
 )
+from app.domain.agent.platform_notices import tools_recovered_notice
 from app.domain.agent.realtime import broker as realtime
 from app.domain.agent.realtime import subscriber_queue
 
@@ -45,6 +46,7 @@ from app.domain.agent.turn.intake.messages import RunnerIntake
 from app.domain.agent.turn.intake.status import WorkStatus
 from app.domain.agent.turn.state.execution import ExecutionPolicy, ExecutionState
 from app.domain.agent.turn.steps.execute import ExecutionEffects, execute
+from app.domain.agent.turn.store.human import HumanHandoff
 from app.domain.agent.turn.store.intervals import open_turn
 from app.domain.agent.turn_ledger import (
     fire_on_done,
@@ -61,11 +63,9 @@ from app.domain.notice_meta import (
     EVENT_DELIVERY_FALLBACK,
     EVENT_DEPLOY_INTERRUPTED,
     EVENT_DISPATCH_UNKNOWN,
-    EVENT_TOOLS_RECOVERED,
     EVENT_TURN_QUEUED,
     SEVERITY_WARN,
     WHO_HUMAN,
-    WHO_PLATFORM,
     notice,
 )
 
@@ -448,6 +448,7 @@ class AgentWorkRunner:
         client_id: str | None = None,
         quoted_context: dict | None = None,
         may_summon: bool = True,
+        handoff: HumanHandoff | None = None,
     ) -> uuid.UUID:
         return await self._intake.receive_message(
             chat_service,
@@ -459,6 +460,7 @@ class AgentWorkRunner:
             client_id=client_id,
             quoted_context=quoted_context,
             may_summon=may_summon,
+            handoff=handoff,
         )
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:
@@ -954,17 +956,7 @@ class AgentWorkRunner:
         )
 
     #: 工具断了是平台的事，平台自己接回来并重发；房间里的人不用动手。
-    _TOOLS_RECOVERED_META = notice(
-        EVENT_TOOLS_RECOVERED,
-        severity=SEVERITY_WARN,
-        who=WHO_PLATFORM,
-        detail=say("toolsRecoveredDetail"),
-        detail_label=say("labelNote"),
-    )
-
-    #: How long a turn waits for its room's replay before the room is told.
-
-    #: 等的是这间房自己的记录接回来，平台自己会往前推，没人需要动手。
+    _TOOLS_RECOVERED_TEXT, _TOOLS_RECOVERED_META = tools_recovered_notice()
 
     def _credential_is_known_expired(self, topic_id: uuid.UUID) -> bool:
         """Does the backend already KNOW this topic's model credential is expired?

@@ -138,7 +138,7 @@ export const SECURITY_PASSKEYS: PasskeyInfo[] = [
   { id: 'pk-1', createdAt: new Date(NOW - 30 * DAY), deviceType: 'multiDevice', backedUp: true },
 ]
 
-/** 一个已关联的第三方账号。 */
+/** 已关联的第三方账号：学校账号和 GitHub。 */
 const SECURITY_CONNECTIONS: InstanceType<typeof SecurityView>['$props']['connections'] = [
   {
     id: 1,
@@ -147,6 +147,16 @@ const SECURITY_CONNECTIONS: InstanceType<typeof SecurityView>['$props']['connect
     providerUserId: '2023010101',
     connectedAt: ago(90 * DAY),
     login: 'wangxiaoming@school.edu',
+    tokenExpires: ago(-DAY),
+    hasRefreshToken: true,
+  },
+  {
+    id: 2,
+    providerId: 'github_app',
+    providerName: 'GitHub',
+    providerUserId: '583231',
+    connectedAt: ago(60 * DAY),
+    login: 'wangxiaoming',
     tokenExpires: ago(-DAY),
     hasRefreshToken: true,
   },
@@ -180,6 +190,9 @@ const SECURITY_SESSIONS: SessionInfo[] = [
 
 /** 两步验证那一屏的两个登录方式摘要 + 三块清单。 */
 export const SECURITY_PROPS = {
+  username: 'wangxiaoming',
+  closingAccount: false,
+  closeError: '',
   webAuthnSupported: true,
   passkeys: SECURITY_PASSKEYS,
   addingPasskey: false,
@@ -206,6 +219,7 @@ export const SECURITY_PROPS = {
 export const SECURITY_DIALOGS = {
   showChangePassword: false,
   showTotp: false,
+  showCloseAccount: false,
   setupStep: 'qr' as const,
   verificationCode: '',
 }
@@ -220,9 +234,12 @@ export const DEVICE_TEAMS: MyTeam[] = [
 
 // ---- 模型连接（`ModelConnectionsView`）-------------------------------------
 
-/** 三种连接各一份：工作站上的 Claude 订阅、笔记本上的自定义模型服务、一台离线机器上的 API key。 */
+/** 三种连接：工作站上的 Claude 订阅、笔记本上的自定义模型服务、一台离线机器上的 API key，
+ *  以及工作站上的第二份订阅（一台设备可以登录几个账号）。 */
 export const MODEL_CONNECTIONS: ModelConnection[] = [
   {
+    id: 'dev-desk',
+    local_id: 'default',
     device_id: 'dev-desk',
     device_name: '工作站',
     online: true,
@@ -238,6 +255,8 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     revoking: false,
   },
   {
+    id: 'dev-laptop',
+    local_id: 'default',
     device_id: 'dev-laptop',
     device_name: '王小明的 MacBook',
     online: true,
@@ -253,6 +272,8 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     revoking: false,
   },
   {
+    id: 'dev-lab',
+    local_id: 'default',
     device_id: 'dev-lab',
     device_name: '实验室服务器',
     online: false,
@@ -265,6 +286,23 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     name: null,
     checked_at: ago(3 * DAY),
     last_used_at: ago(3 * DAY),
+    revoking: false,
+  },
+  {
+    id: 'login-desk-pro',
+    local_id: 'K3V7Q2M8XWZ4TN6PRJ5BHD2C7A',
+    device_id: 'dev-desk',
+    device_name: '工作站',
+    online: true,
+    installed: true,
+    logged_in: true,
+    auth_method: 'claude.ai',
+    subscription_type: 'pro',
+    model: null,
+    service_host: null,
+    name: '实验室的 Pro',
+    checked_at: ago(HOUR / 4),
+    last_used_at: null,
     revoking: false,
   },
 ]

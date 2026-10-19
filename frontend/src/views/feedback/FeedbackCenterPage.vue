@@ -4,9 +4,12 @@ import type { FeedbackTab as TabName } from '@/stores/feedback'
 
 import { computed, onMounted } from 'vue'
 
+import { useCreditOffers } from '@/composables/useCreditOffers'
+
 import FeedbackCenterPageView from './FeedbackCenterPageView.vue'
 
 import { t } from '@/i18n'
+import { myId } from '@/me'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 反馈中心首页 (/feedback)。
@@ -30,6 +33,10 @@ import { useFeedbackStore } from '@/stores/feedback'
 defineOptions({ name: 'FeedbackCenterPage' })
 
 const store = useFeedbackStore()
+const rewards = useCreditOffers()
+function loadRewards() {
+  if (myId()) void rewards.load()
+}
 
 /** 栏位的名字来自词表。**键写成字面量的表**，不拼字符串：i18n 的闸门
  *  （`src/i18n/catalog.spec.ts`）照源码里的字面量认「这个键有人用」，拼出来的键既不算
@@ -94,6 +101,7 @@ function clearFilters() {
 onMounted(() => {
   void store.loadMeta()
   void store.loadList()
+  loadRewards()
 })
 </script>
 
@@ -118,6 +126,10 @@ onMounted(() => {
     :hot-half-life-days="store.hotHalfLifeDays"
     :hot-threshold="store.hotThreshold"
     :hot-min-items="store.hotMinItems"
+    :beta="rewards.beta.value"
+    :rewards="rewards.rewards.value"
+    :rewards-error="rewards.error.value"
+    @retry-rewards="loadRewards"
     @search="onSearch"
     @set-kind="setKind"
     @set-status="setStatus"

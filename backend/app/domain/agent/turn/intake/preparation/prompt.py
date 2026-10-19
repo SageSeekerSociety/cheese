@@ -66,6 +66,7 @@ async def build_turn_prompt(
             embeds_images=embeds_images,
             replied=replied.get(b.id),
             recipient=recipient_handle,
+            recipient_instance_id=recipient_instance_id,
             gone=b.id in gone_files,
             undecodable=b.id in undecodable_files,
         )

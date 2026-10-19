@@ -12,11 +12,9 @@ from starlette.status import (
 from starlette.testclient import TestClient
 
 from app.core.domain_errors import (
-    NotTeamMemberYetError,
     TaskParticipantsReachedLimitError,
     TeamSizeNotEnoughError,
     TeamSizeTooLargeError,
-    UserAlreadyMemberError,
 )
 from app.core.errors import (
     AccessDeniedError,
@@ -168,18 +166,6 @@ class TestDomainErrors:
         assert error.status_code == HTTP_400_BAD_REQUEST
         assert error.data["maxSize"] == 5
         assert error.data["currentSize"] == 6
-
-    def test_user_already_member(self) -> None:
-        error = UserAlreadyMemberError(team_id=1, user_id=2)
-        assert error.status_code == HTTP_409_CONFLICT
-        assert error.data["teamId"] == 1
-        assert error.data["userId"] == 2
-
-    def test_not_team_member_yet(self) -> None:
-        error = NotTeamMemberYetError(team_id=1, user_id=2)
-        assert error.status_code == HTTP_404_NOT_FOUND
-        assert error.data["teamId"] == 1
-        assert error.data["userId"] == 2
 
 
 class TestErrorInheritance:

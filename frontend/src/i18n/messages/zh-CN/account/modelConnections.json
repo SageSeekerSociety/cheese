@@ -13,7 +13,10 @@
   "checked": "检查通过",
   "checkedAt": "上次检查",
   "device": "设备",
-  "empty": "暂无模型连接",
+  "devicesEmpty": "暂无设备上的登录",
+  "devicesTitle": "设备上的登录",
+  "heldEmpty": "暂无保存在账号里的连接",
+  "heldTitle": "保存在账号里",
   "keptOnAccount": "加密保存在账号里，在平台上运行",
   "lastUsed": "上次使用",
   "lede": "你的 Claude Code 使用的模型账号和服务：在设备上登录的，和保存在账号里的 API key、模型服务。密钥都不在这里显示",
@@ -28,7 +31,7 @@
   "ready": "可用",
   "recheck": "重新检查",
   "remove": "解除",
-  "removeBody": "{device}上的 Claude Code 将退出登录，你的 Claude Code 不能再用它在项目里工作。设备不在线时，上线后自动退出。你在这台设备上自己使用的 Claude Code 不受影响",
+  "removeBody": "{device}上的这份登录将退出，你的 Claude Code 不能再用它在项目里工作。设备不在线时，上线后自动退出。这台设备上的其他登录和你自己使用的 Claude Code 不受影响",
   "removeHeldBody": "密钥立即从平台删除，用它加入项目的 Claude Code 不再开始工作",
   "removeTitle": "解除这个模型连接？",
   "removed": "已解除",
@@ -39,8 +42,8 @@
   "revoking": "解除中",
   "revokingHint": "已停止使用。{device}上线后自动退出登录",
   "saved": "已保存",
-  "serviceHint": "支持兼容 Anthropic 接口的服务，如 GLM、Kimi、DeepSeek。密钥直接发送到这台设备，只保存在设备上。保存后，这台设备上的 Claude Code 改用这个服务",
-  "serviceHost": "服务地址 {host}",
+  "serviceHint": "支持兼容 Anthropic 接口的服务，如 GLM、Kimi、DeepSeek。密钥直接发送到这台设备，只保存在设备上。保存后，这台设备上多一份使用这个服务的模型连接",
   "storedOn": "存放在",
-  "subscription": "Claude 订阅（{plan}）"
+  "subscription": "Claude 订阅（{plan}）",
+  "useService": "使用自定义模型服务"
 }

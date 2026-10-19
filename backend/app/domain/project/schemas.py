@@ -77,8 +77,16 @@ class StartStepsOut(BaseModel):
     learned: bool
 
 
-class ForgeAttributionUpdate(BaseModel):
-    requester_coauthor: bool | None
+class CommitCredit(BaseModel):
+    """Who a project's deliveries are credited to, as `credit_mode` reads it."""
+
+    mode: str
+
+
+class CommitCreditUpdate(BaseModel):
+    """Who a project's deliveries are credited to (`identity.CREDIT_MODES`)."""
+
+    mode: Literal["owner", "agent"]
 
 
 class ProjectDefaultModelUpdate(BaseModel):
@@ -86,16 +94,3 @@ class ProjectDefaultModelUpdate(BaseModel):
 
     model: str | None = None
     subagent_model: str | None = None
-
-
-class TaskLinkCreate(BaseModel):
-    task_id: uuid.UUID
-
-
-class TaskLinkOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    project_id: uuid.UUID
-    task_id: uuid.UUID
-    created_at: datetime

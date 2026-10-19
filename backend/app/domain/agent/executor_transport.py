@@ -18,6 +18,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote, unquote, urlsplit
 
+# The task checkout this session starts in. Shipped beside this module in a
+# session host's bundle, where it is found by its bare name (`release.sources`).
+if __package__:
+    from app.domain.agent.task_checkout import names_a_directory, task_checkout
+else:
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from task_checkout import names_a_directory, task_checkout
+
 # How long a request waits out a platform endpoint that is not listening.
 # An app deploy recreates the backend container, and the central session reaches
 # it directly, so every tool call and every chat publication in every live room
@@ -309,6 +318,15 @@ class MachineOutOfReach(RuntimeError):
 # Where a session started before its machine was rented sees the project: the
 # machine, and so the path it holds the project at, does not exist yet.
 DEFERRED_WORKSPACE = "/unavailable-project"
+
+#: The name a session's working directory also goes by (`remote_execution.client`
+#: `prepare`): a fixed name, the same in every session, whose value is the
+#: project that session sees. It never enters a command's environment — a build
+#: running natively on the executor has no such variable, and a room's command
+#: must see exactly what that one sees. The shell prefix binds it in the
+#: command's own shell instead, and the value crosses as part of `body`, so the
+#: transport respells it where it respells every other path a body names.
+WORKING_DIRECTORY = "T"
 
 
 def _retry_connect(attempt: int, deadline: float) -> bool:
@@ -631,6 +649,12 @@ class RemoteClient:
         self.platform_lock = threading.Lock()
         self.platform = None
         self.health = PlatformHealth(config)
+        # One session's tool calls run on several threads (`transport`): the
+        # working directory is resolved once, under this lock, and a thread
+        # that is already inside the resolve (the call it makes to ask the
+        # machine) must not wait for itself.
+        self.working_directory_lock = threading.RLock()
+        self.resolving_working_directory = threading.local()
 
     def execution_token(self):
         if self.config.get("execution_token"):
@@ -769,8 +793,11 @@ class RemoteClient:
             return self._publish_message(payload, args)
 
     def _publish_message(self, payload, args):
-        content = args.get("content")
-        if not isinstance(content, str) or not content.strip():
+        content = args.get("content") or ""
+        attachments = args.get("attachments") or []
+        if not isinstance(content, str) or (
+            not content.strip() and not attachments
+        ):
             raise ValueError("Chat content must be a nonempty string")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
         topic = os.environ.get("CHEESE_TOPIC", "")
@@ -795,6 +822,7 @@ class RemoteClient:
                 "content": content,
                 "request_id": publication_id,
                 **({"reply_to": args["reply_to"]} if args.get("reply_to") else {}),
+                **({"attachments": attachments} if attachments else {}),
             }
         ).encode()
         deadline = time.monotonic() + CONNECT_RETRY_WINDOW_S
@@ -891,6 +919,51 @@ class RemoteClient:
             return False
         return True
 
+    def working_directory(self, *, notice=True):
+        """Where this session's commands start, and what `$T` stands for: its
+        task's checkout once the machine is at hand, else the project view.
+
+        Resolved once and kept — in this client and in the target file beside
+        it, so the command processes after this one read it rather than asking
+        the machine again. Only a real answer is kept: a machine that could not
+        be asked (``task_checkout`` raising) is asked again at the next call,
+        instead of the session's directory being fixed to the project forever.
+        ``notice``: whether a failure is said on stderr (a launch says so; a
+        command's stderr is the agent's)."""
+        known = self.config.get("working_directory")
+        if names_a_directory(known):
+            return known
+        topic = os.environ.get("CHEESE_TOPIC", "")
+        if not topic or self.config.get("kind") == "private":
+            return self.config.get("workspace")
+        if getattr(self.resolving_working_directory, "yes", False):
+            return self.config.get("workspace")  # asked from inside the resolve
+        with self.working_directory_lock:
+            known = self.config.get("working_directory")
+            if names_a_directory(known):
+                return known
+            self.resolving_working_directory.yes = True
+            try:
+                checkout = task_checkout(self, topic, notice=notice)
+            except Exception:  # not kept: the next call asks again
+                self.config["checkout_pending"] = True
+                self._save_target()
+                return self.config.get("workspace")
+            finally:
+                self.resolving_working_directory.yes = False
+            self.config.pop("checkout_pending", None)
+            self.config["working_directory"] = checkout or self.config.get("workspace")
+            self.config["working_directory_lease"] = self.config.get("generation")
+            self._save_target()
+            return self.config["working_directory"]
+
+    def _save_target(self):
+        """Write this client's config back to the target file, whole and atomically
+        (`_replace_file`): the next command is a process of its own."""
+        target_file = self.config.get("target_file")
+        if target_file:
+            _replace_file(target_file, json.dumps(self.config))
+
     def acquire(self, *, deadline, abandoned=None, preparing=None):
         """Take this session's hands through the platform (`lease_path`): the
         machine the lease names becomes where its calls go, and the credential
@@ -962,6 +1035,14 @@ class RemoteClient:
         if result.get("notice") and preparing is not None:
             print(result["notice"], file=preparing, flush=True)
         changed_lease = self.config.get("generation") != target.get("generation")
+        if "working_directory" in self.config and (
+            # Another lease: a checkout resolved on the machine before is not
+            # this one's, even when it holds the project at the same path.
+            target.get("generation") != self.config.get("working_directory_lease")
+            or target.get("workspace") != self.config.get("workspace")
+        ):
+            self.config.pop("working_directory", None)
+            self.config.pop("working_directory_lease", None)
         self.config.update(target)
         # Wall-clock, beside the target: the command start this admits runs in
         # another process (`shell_prefix`), which reads it from there (`call`).
@@ -1241,6 +1322,20 @@ class RemoteClient:
                 deadline=operation_deadline, abandoned=abandoned, preparing=preparing
             )
             workspace = self.config["workspace"]
+            if original_workspace != workspace or self.config.get("checkout_pending"):
+                # The session started somewhere else — before its machine was
+                # rented — or could not ask for its checkout then; its short
+                # name is spelled the machine's way here, into its task's
+                # checkout when it works one (`working_directory`).
+                workspace = self.working_directory()
+            elif (working := self.config.get("working_directory")) and (
+                working != workspace
+            ):
+                # The session works somewhere else than the project view (a
+                # task's checkout), and names paths from there: spell the view's
+                # own path into it for every call, not only the one that
+                # resolved. A room's session has the two equal.
+                original_workspace, workspace = workspace, working
             if params and method == "invoke":
                 params = {**params, "args": dict(params.get("args", {}))}
                 for field in ("file_path", "path", "notebook_path", "command"):

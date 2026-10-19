@@ -8,7 +8,6 @@
 import type { GatewayUsageNumbers } from '@/api'
 
 import { AUDIT, MODELS, PROJECTS } from './gateway'
-import { RATCHET_BOARD, RATCHET_REPO } from './ratchet-board'
 import { APPLICATIONS } from './spaces'
 import { ago, day, usage } from './support'
 
@@ -51,26 +50,6 @@ export function adminRoutes(
     }
   }
   if (path === '/admin/gateway/audit' && method === 'GET') return { data: { items: AUDIT } }
-  // 棘轮：读归档（不碰 GitHub），和去 CI 拉一次新的。刷新的响应**多一块 `refresh`**
-  // —— `listed` 是 CI 上看到几份工件、`stored` 是这次新入库几份，两个数分开是因为
-  // 「CI 上有 50 份」和「这次新存了 1 份」读起来像同一件事、做起来完全是两回事。
-  if (path === '/admin/ratchet' && method === 'GET') return { data: RATCHET_BOARD }
-  if (path === '/admin/ratchet/refresh' && method === 'POST') {
-    return {
-      data: {
-        ...RATCHET_BOARD,
-        refresh: {
-          repo: RATCHET_REPO,
-          listed: 91,
-          stored: 1,
-          already_stored: 90,
-          unreadable: 0,
-          failed: 0,
-          error: '',
-        },
-      },
-    }
-  }
   if (path === '/admin/spaces' && method === 'GET') {
     const status = (url.searchParams.get('status') ?? 'PENDING').toUpperCase()
     return { data: { items: APPLICATIONS.filter((a) => a.reviewStatus === status) } }

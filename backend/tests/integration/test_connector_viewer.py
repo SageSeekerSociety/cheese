@@ -542,9 +542,10 @@ def test_the_owner_sees_claude_code_logged_in_once_they_log_in_on_the_machine(
     to connect again (#2991)."""
     alice = _login_real(client, "alice")
     device_id = _enroll_device(client, alice)["device_id"]
-    answer = {"installed": True, "status": {"loggedIn": False}}
+    status = {"loggedIn": False}
 
     async def exec_(device, argv, *, stdin, timeout):
+        answer = {"installed": True, "logins": [{"id": "default", "status": status}]}
         return {"exit": 0, "stdout": json.dumps(answer) + "\n", "stderr": ""}
 
     monkeypatch.setattr(device_hub, "is_online", lambda device: device == device_id)
@@ -554,7 +555,7 @@ def test_the_owner_sees_claude_code_logged_in_once_they_log_in_on_the_machine(
     )
     assert asked.status_code == 200 and asked.json()["logged_in"] is False
 
-    answer["status"] = {"loggedIn": True, "subscriptionType": "max"}
+    status.update(loggedIn=True, subscriptionType="max")
     asked = client.post(
         f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(alice)
     )

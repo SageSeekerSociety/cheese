@@ -21,6 +21,7 @@ from app.domain.questions.repositories import (
     QuestionRepository,
     QuestionTopicRepository,
 )
+from app.domain.questions.services import question_to_dto
 from app.domain.user.repositories import (
     UserProfileRepository,
     UserRepository,
@@ -75,21 +76,8 @@ async def get_user_followed_questions(
 
     questions = []
     for row in rows:
-        created_at_ms = int(row.created_at.timestamp() * 1000) if row.created_at else 0
-        updated_at_ms = int(row.updated_at.timestamp() * 1000) if row.updated_at else 0
-        dto = {
-            "id": row.id,
-            "title": row.title,
-            "content": None,
-            "type": row.type,
-            "groupId": row.group_id,
-            "bounty": row.bounty,
-            "acceptedAnswerId": row.accepted_answer_id,
-            "createdBy": row.created_by_id,
-            "createdAt": created_at_ms,
-            "updatedAt": updated_at_ms,
-            "topicIds": topic_map.get(row.id, []),
-        }
+        dto = question_to_dto(row, include_content=False)
+        dto["topicIds"] = topic_map.get(row.id, [])
         questions.append(dto)
 
     returned = len(questions)
@@ -139,21 +127,8 @@ async def get_user_questions(
 
     questions = []
     for row in rows:
-        created_at_ms = int(row.created_at.timestamp() * 1000) if row.created_at else 0
-        updated_at_ms = int(row.updated_at.timestamp() * 1000) if row.updated_at else 0
-        dto = {
-            "id": row.id,
-            "title": row.title,
-            "content": None,
-            "type": row.type,
-            "groupId": row.group_id,
-            "bounty": row.bounty,
-            "acceptedAnswerId": row.accepted_answer_id,
-            "createdBy": row.created_by_id,
-            "createdAt": created_at_ms,
-            "updatedAt": updated_at_ms,
-            "topicIds": topic_map.get(row.id, []),
-        }
+        dto = question_to_dto(row, include_content=False)
+        dto["topicIds"] = topic_map.get(row.id, [])
         questions.append(dto)
 
     returned = len(questions)

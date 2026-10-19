@@ -3,6 +3,7 @@
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -21,6 +22,7 @@ from app.domain.agent.queries import _agent_at
 from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent.turn.store.human import (
     CallAdmission,
+    HumanHandoff,
     HumanPreparation,
     persist_human_message,
 )
@@ -38,15 +40,31 @@ from app.domain.topic_membership.services import TopicMemberService
 
 
 async def prepare_human(
-    session: AsyncSession, place: Place, content: str, author: str
+    session: AsyncSession,
+    place: Place,
+    content: str,
+    author: str,
+    *,
+    handoff: HumanHandoff | None = None,
 ) -> HumanPreparation:
+    """Read a person's message in the writer's session. What ``handoff`` carries
+    the request already read, and is used instead of reading it again."""
     topic = place.room
-    project = await load_project(session, topic.project_id)
+    handoff = handoff or HumanHandoff()
+    # Merged without a load, the request's row is this session's identity-map
+    # entry: every later `get` of the project here (`_agent_at`) is answered by it.
+    project = (
+        await session.merge(handoff.project, load=False)
+        if handoff.project is not None
+        else await load_project(session, topic.project_id)
+    )
     if project is None:
         raise NotFoundError(say("projectNotFound"))
     await own_calls.seat_if_named(session, project, topic, content, author)
     agent = await _agent_at(session, place)
-    mentions = await person_mentions(session, topic, content, agent, dm=_is_dm(topic))
+    mentions = await person_mentions(
+        session, topic, content, agent, dm=_is_dm(topic), members=handoff.roster
+    )
     # A two-seat private room addresses its peer only if that peer is an agent.
     seats = (
         await TopicMemberService(session).private_seats(topic.id)
@@ -152,7 +170,7 @@ async def refuse_call(
                 recipient["instance_id"] = str(instance.id)
                 recipient["handle"] = instance.handle
         recipient["mentioned"] = True
-    refused = await own_calls.refused(session, prepared.project, recipient, author)
+    refused = await own_calls.refused(session, prepared.project, recipient)
     return CallAdmission(seat, refused)
 
 
@@ -207,10 +225,11 @@ class HumanMessages:
         attachments: list[dict] | None = None,
         client_id: str | None = None,
         quoted_context: dict | None = None,
+        handoff: HumanHandoff | None = None,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]:
         stored = await persist_human_message(
             self.sessions,
-            prepare=prepare_human,
+            prepare=partial(prepare_human, handoff=handoff),
             refuse=refuse_call,
             record_effects=record_human_effects,
             topic_id=topic_id,

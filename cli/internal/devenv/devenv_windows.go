@@ -35,7 +35,7 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 	if err != nil {
 		return err
 	}
-	root := filepath.Join(home, place.Root, "runtime")
+	root := filepath.Join(home, place.CurrentRoot(), "runtime")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
 	}

@@ -129,4 +129,7 @@ export interface PrChecks {
   state?: string
   mergeable?: boolean | null
   checks?: { name: string; status: string; conclusion: string | null; url?: string }[]
+  /** Only for the task's owner, only when the App opened the PR they would have:
+   * their GitHub sign-in as it stands — absent, expired, or usable. */
+  owner_credit?: 'none' | 'expired' | 'ok' | null
 }

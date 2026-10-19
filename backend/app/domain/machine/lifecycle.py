@@ -10,7 +10,7 @@ tool call (``SandboxHome.active_at``) and the end of the last turn in the
 conversation its session works in. A command the executor is still running for
 the session — a Bash call sent to the background, a long build or test whose
 result the next turn reads (``running_commands``) — keeps an idle sandbox up
-too, but only until ``cloud_sandbox_background_cap_s`` after that activity. A
+too, but only until the spec's ``background_cap_s`` after that activity. A
 process the agent detached itself (``nohup … &``, a dev server) is not work in
 progress and keeps nothing up. A line that has handed its delivery over and is
 waiting on the checks the platform is watching for its card
@@ -135,6 +135,16 @@ def _idle_for(spec: str) -> timedelta:
     return timedelta(seconds=known.idle_s)
 
 
+def _background_cap(spec: str) -> timedelta:
+    """How long a command still running for the session keeps an idle sandbox
+    of ``spec`` up; a spec that no longer exists is held to the standard one's.
+    A whole VM's idle release outlasts a sandbox's, so its cap is longer —
+    a cap shorter than the idle time would hold nothing up."""
+    known = spec_of(spec) or spec_of(STANDARD)
+    assert known is not None
+    return timedelta(seconds=known.background_cap_s)
+
+
 def _pressed_idle() -> timedelta:
     """How long a sandbox on a platform host is kept idle while the pool has
     no room for another one (`cloud_sandbox_idle_stop_pressed_s`)."""
@@ -185,10 +195,17 @@ def _own_turns(session_id, *, correlate=None) -> ColumnElement[bool]:
 
 
 class SandboxLifecycle:
-    def __init__(self, session: AsyncSession, hub=None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        hub=None,
+        *,
+        recovering: Callable[[uuid.UUID], bool] | None = None,
+    ) -> None:
         self._session = session
         self._repo = CloudHostRepository(session)
         self._hub = hub or device_hub
+        self._recovering = recovering
 
     async def sweep(self) -> dict[str, int]:
 
@@ -336,7 +353,7 @@ class SandboxLifecycle:
         left open past ``STALE_TURN`` — a corpse must not hold a machine for
         good either. Asked of a whole cloud VM's session before its VM is
         checkpointed or released (``cloud_vm``)."""
-        return (
+        active = (
             await self._session.scalar(
                 select(AgentTurn.id)
                 .where(
@@ -347,6 +364,17 @@ class SandboxLifecycle:
                 .limit(1)
             )
         ) is not None
+        return active or (
+            self._recovering is not None and self._recovering(conversation_id)
+        )
+
+    async def _session_recovering(self, session_id: uuid.UUID | None) -> bool:
+        if session_id is None or self._recovering is None:
+            return False
+        conversation = await self._session.scalar(
+            select(AgentSession.conversation_id).where(AgentSession.id == session_id)
+        )
+        return conversation is not None and self._recovering(conversation)
 
     async def _idle_since(
         self, home, now: datetime, idle_for: timedelta
@@ -356,6 +384,11 @@ class SandboxLifecycle:
 
         if home.session_id is None:
             return home.active_at
+        if self._recovering is not None:
+            recovering = await self._session_recovering(home.session_id)
+            await self._session.commit()
+            if recovering:
+                return None
         turns = (
             await self._session.execute(
                 select(
@@ -375,7 +408,7 @@ class SandboxLifecycle:
         since = max(home.active_at, turns[1] or home.active_at)
         if now - since < idle_for:
             return None
-        cap = timedelta(seconds=settings.cloud_sandbox_background_cap_s)
+        cap = _background_cap(home.spec)
         if now - since < cap and await self._waiting_on_checks(home):
             # The line has handed its delivery over and is waiting on the
             # checks the platform is watching for its card. The poller wakes
@@ -486,6 +519,9 @@ class SandboxLifecycle:
             return False
         if home.stopped_at is not None and now - home.stopped_at < STOP_HOLD:
             # Another sweep is removing it.
+            await self._session.commit()
+            return False
+        if idle is not None and await self._session_recovering(home.session_id):
             await self._session.commit()
             return False
         unpaid = home.stopped_at is None and idle is None and tell is None

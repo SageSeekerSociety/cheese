@@ -49,12 +49,8 @@ namespace in which HAProxy (`gateway-proxy-a` or `-b`,
 instances, `litellm-blue` and `litellm-green`, sharing the gateway database and
 Redis. Outside a release one proxy and one color run.
 
-Only one color runs at a time on purpose. LiteLLM keeps router cooldowns and
-the `deepseek-flash` session affinity in process memory (`router_settings` has
-no Redis), so two colors taking traffic would each keep their own, and a
-conversation would bounce between RUC nodes and keep missing its prefix cache.
-A second standing color would only help if the gateway crashed on its own;
-that case would also need the router state moved to Redis first.
+Only one color runs outside a release. Router cooldowns live in process memory;
+concurrent colors would keep separate cooldown state.
 
 A release (`deploy/release-gateway.sh`) reads credentials from
 `$HOME/gateway/compose/.env`, pulls the CI-built image, tests image
@@ -132,14 +128,18 @@ because argon refuses explicit caching and LiteLLM would otherwise create a
 USD 1,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
 gateway database's daily spend, so the cap survives releases.
 
-`deepseek-flash` is served by RUC's self-hosted copy first, one deployment per
-RUC key, and by DeepSeek's API when every RUC key fails or is past its 3
-parallel requests. Set `RUC_DEEPSEEK_API_BASE` (the endpoint's address, no
-path) and `RUC_DEEPSEEK_API_KEY_1` to `RUC_DEEPSEEK_API_KEY_9` in
-`$HOME/gateway/compose/.env` before releasing: nine of the ten keys RUC
-issued, all but the one kept for tests. The endpoint admits campus
-addresses only, so a box serving it needs the route in docs/infrastructure.md
-("Campus model API").
+`deepseek-flash` uses DeepSeek's official API, whose alias serves
+DeepSeek-V4.1-Flash-1017 as of 2026-10-17. Set `DEEPSEEK_API_KEY` in
+`$HOME/gateway/compose/.env`. Self-hosted copies whose checkpoint is not
+verified are excluded, including on API failures. See the
+[official changelog](https://api-docs.deepseek.com/updates/).
+
+`qwen-audio-asr` uses Alibaba Bailian (Beijing) for the composer's voice input.
+Set `DASHSCOPE_API_KEY` in `$HOME/gateway/compose/.env`. A workspace that was
+given its own dedicated endpoint also sets `DASHSCOPE_API_BASE` there (for
+example `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com`, whose key is the
+workspace's own); unset, the shared DashScope domain is used. Neither the
+workspace id nor the key belongs in this repository.
 
 The gateway also joins `cheese-meter-gateway`, an internal network shared only
 with the metering proxy, where the proxy's ChatGPT accounts answer at
