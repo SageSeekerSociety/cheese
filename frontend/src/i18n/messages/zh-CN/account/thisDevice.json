@@ -17,7 +17,6 @@
   "enrollments": "接入的团队",
   "noEnrollments": "暂无接入",
   "modelServiceModel": "模型名称",
-  "modelServiceSave": "保存",
   "modelServiceToken": "密钥",
   "modelServiceUrl": "服务地址"
 }

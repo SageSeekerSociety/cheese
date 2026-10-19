@@ -12,9 +12,11 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     JSON,
     Boolean,
     CheckConstraint,
+    Column,
     DateTime,
     Enum,
     ForeignKey,
@@ -23,6 +25,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -75,17 +78,10 @@ class AgentInstance(UuidPk, Timestamps, Base):
 
 
 class OwnAgent(Base):
-    """A project's agent that is one member's own coding agent (#2991): their
-    own Claude Code with one of their model connections — the login they gave
-    the platform on one of their machines (`cheesehost claude login`).
+    """A project teammate backed by a team connection.
 
-    It is still an ``AgentInstance`` — a memory pool, a seat, a name in the
-    roster — and this row is what makes it someone's. A person may have one per
-    connection in a project; its owner adds it there and removes it.
-
-    Its connection is either a login on one of its owner's machines
-    (``login_id``) or one its owner's account holds (``account_connection_id``),
-    never both.
+    The member owner supplies the prompt's ownership context. Connection access
+    follows the project's team, independent of that member's current membership.
     """
 
     __tablename__ = "own_agents"
@@ -104,11 +100,8 @@ class OwnAgent(Base):
     )
     # Which harness it is: the coding agent the owner logged in on the machine.
     harness: Mapped[str] = mapped_column(String(64), nullable=False)
-    # The model connection it runs on: one login on one of its owner's machines
-    # (`DeviceClaudeLoginRow`). Its sessions run on that machine, with that
-    # login, and nowhere else — a subscription's login never leaves the machine
-    # it was given on. None once the machine is gone; then it has nothing to
-    # run on.
+    # The credential device stays the model process's host; tools execute on
+    # the teammate's selected execution device.
     login_id: Mapped[str | None] = mapped_column(
         String(64),
         ForeignKey(
@@ -119,9 +112,7 @@ class OwnAgent(Base):
         nullable=True,
         index=True,
     )
-    # Or the model connection its owner's account holds (`AccountConnection`):
-    # an API key or a model service the platform keeps sealed. Its sessions run
-    # on the deployment's session host. None once its owner removed it.
+    # Or an encrypted team API key or model service, removed with its connection.
     account_connection_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
             "account_model_connections.id",
@@ -134,32 +125,42 @@ class OwnAgent(Base):
 
 
 class AccountConnection(UuidPk, Timestamps, Base):
-    """A model connection a person's account holds rather than one of their
-    machines (#2991): an Anthropic API key, or another model service that
-    speaks Anthropic's API (its address, key and model). A member's own Claude
-    Code on it runs on the deployment's session host, as the project's own
-    agents do, and calls the model with this key.
+    """An encrypted team API key or Anthropic-compatible model service.
 
-    A Claude subscription is never one: its login may not be held by a third
-    party, so it stays on the machine it was given on (`DeviceClaudeLoginRow`),
-    and the kind's CHECK keeps it out of this table.
-
-    The key is sealed (`app.core.crypto`, `Purpose.MODEL_CONNECTION_KEY`, bound
-    to this row); only its last four characters are kept readable, for its
-    owner to tell keys apart.
+    Subscription credentials remain on their device. The platform stores only
+    a sealed key bound to this row and its last four readable characters.
     """
 
     __tablename__ = "account_model_connections"
+    # Schema metadata only while the previous backend serves during rollout.
+    # The follow-up release drops this column after the team-owned code deploys.
+    __table_args__ = (
+        Column(
+            "owner_user_id",
+            Integer,
+            ForeignKey(
+                "user.id",
+                ondelete="CASCADE",
+                name="fk_account_model_connections_owner_user_id_user",
+            ),
+            nullable=True,
+            index=True,
+        ),
+    )
+    __mapper_args__ = {"exclude_properties": ["owner_user_id"]}
 
-    owner_user_id: Mapped[int] = mapped_column(
-        Integer,
+    team_id: Mapped[int] = mapped_column(
+        BigInteger,
         ForeignKey(
-            "user.id",
+            "team.id",
             ondelete="CASCADE",
-            name="fk_account_model_connections_owner_user_id_user",
+            name="fk_account_model_connections_team_id_team",
         ),
         nullable=False,
         index=True,
+    )
+    allowed_models: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
     )
     #: `ConnectionKind`'s ``api_key`` or ``model_service``.
     kind: Mapped[str] = mapped_column(

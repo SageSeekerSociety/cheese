@@ -14,20 +14,7 @@ export interface MyDevice {
   name: string
   online: boolean
   team_id: number
-  logins?: import('./modelConnections').ClaudeCodeLoginState[]
   screens: DeviceScreen[]
-  // Who works on this machine now (each session whose work computer it is), for its owner only.
-  in_use?: DeviceUser[] | null
-}
-
-export interface DeviceUser {
-  project_id: string
-  project_name: string
-  topic_id: string
-  topic_title: string
-  agent_handle: string
-  agent_name: string
-  agent_name_source?: string
 }
 
 // A team the signed-in user belongs to (GET /teams/my-teams) — trimmed to what

@@ -69,6 +69,7 @@ async function mount(overrides: Record<string, unknown> = {}) {
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
           { path: 'docs', name: 'TeamsDetailDocs', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
+          { path: 'models', name: 'TeamsDetailModels', component: blank },
           { path: 'credits', name: 'TeamsDetailCredits', component: blank },
         ],
       },

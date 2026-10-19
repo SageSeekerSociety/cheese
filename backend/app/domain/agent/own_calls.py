@@ -10,9 +10,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.ask import ask
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own import (
-    allows_own_agents,
     owned_by_seat,
-    owner_of,
 )
 from app.domain.agent_instance.own.admission import why_not
 from app.domain.identity.handles import agent_instance_handle
@@ -31,8 +29,6 @@ async def seat_if_named(
     owner brings their own agent in, since whoever is seated reads the chat."""
     if not content or "<@" not in content:
         return
-    if not allows_own_agents(project.settings):
-        return
     owned = await session.scalars(
         select(AgentInstance.id)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
@@ -44,13 +40,6 @@ async def seat_if_named(
     )
     handles = {own: agent_instance_handle(own) for own in owned.all()}
     seats = {own: seat for own, seat in handles.items() if f"<@{seat}>" in content}
-    if is_private_chat(topic):
-        seats = {
-            own: seat
-            for own, seat in seats.items()
-            if (owner := await owner_of(session, own)) is not None
-            and owner[0] == author
-        }
     for seat in seats.values():
         members = TopicMemberService(session)
         already = seat in await members.agent_handles(topic.id)

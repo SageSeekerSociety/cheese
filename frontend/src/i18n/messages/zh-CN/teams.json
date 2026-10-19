@@ -12,9 +12,6 @@
     "cliHint": "其他电脑：安装连接器后，在那台电脑的终端运行命令，并在批准时选择这个团队。",
     "remove": "移除",
     "removeConfirm": "移除「{name}」？此接入将失效，团队不再使用它。",
-    "loginReady": "可用",
-    "loginUnavailable": "不可用",
-    "noLogins": "暂无登录",
     "downloadDesktop": "下载桌面端"
   },
   "members": {

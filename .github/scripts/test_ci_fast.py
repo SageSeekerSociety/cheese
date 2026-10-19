@@ -1799,6 +1799,27 @@ class SelectionEvidenceTest(unittest.TestCase):
                                                     {"name": "/repo/frontend/src/i18n/english.spec.ts"}]}))
         self.assertEqual(validate_evidence(evidence)["result"], "pass")
 
+    def test_frontend_failure_summary_identifies_the_failed_case(self):
+        from ci_fast_checks import validate_evidence
+        path = self.root / "vitest.json"
+        path.write_text(json.dumps({
+            "numPassedTests": 1, "numFailedTests": 1, "numPendingTests": 0,
+            "testResults": [{
+                "name": "/repo/frontend/src/views/models.spec.ts",
+                "status": "failed",
+                "assertionResults": [{
+                    "fullName": "team models rejects another team's device",
+                    "status": "failed",
+                    "failureMessages": ["AssertionError: expected 403, received 200\nstack"],
+                }],
+            }],
+        }))
+        verdict = validate_evidence({"kind": "vitest", "path": str(path)})
+        self.assertEqual(verdict["result"], "fail")
+        self.assertIn("models.spec.ts", verdict["reason"])
+        self.assertIn("team models rejects another team's device", verdict["reason"])
+        self.assertIn("expected 403, received 200", verdict["reason"])
+
     def test_a_suite_that_failed_to_load_is_a_failure_not_an_empty_run(self):
         # Vitest counts a file that failed before running a test in
         # numFailedTestSuites, leaving numFailedTests at 0. The "no tests ran"

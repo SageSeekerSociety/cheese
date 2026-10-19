@@ -62,6 +62,11 @@ export default {
           component: () => import('@/views/teams/detail/Compute.vue'),
         },
         {
+          path: 'models',
+          name: 'TeamsDetailModels',
+          component: () => import('@/views/teams/detail/Models.vue'),
+        },
+        {
           // Credits belong to the team, including the personal team.
           path: 'credits',
           name: 'TeamsDetailCredits',

@@ -12,9 +12,6 @@
     "cliHint": "On another computer, install the connector, run this command, and select this team when approving.",
     "remove": "Remove",
     "removeConfirm": "Remove “{name}”? This enrollment will stop working for the team.",
-    "loginReady": "Available",
-    "loginUnavailable": "Unavailable",
-    "noLogins": "No logins",
     "downloadDesktop": "Download desktop app"
   },
   "members": {

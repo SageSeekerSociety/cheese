@@ -1,31 +1,41 @@
-<!--
-  「模型连接」的画法（#2991）：两张卡。「设备上的登录」是你的 Claude Code 在各台设备上登录的
-  账号或模型服务，可以重新检查、改名、解除，也能让一台在线设备使用自定义模型服务；「保存在账号里」
-  是 API key 和模型服务，可以添加、测试、改名和解除。每份连接收起时是一行摘要（名称、档位、
-  在哪、状态），点这一行就地展开成详情和操作。取数和动作在同目录的 ModelConnections.vue。
--->
 <template>
   <div class="settings-page">
     <header>
-      <h1 class="t-page-title">{{ t('account.settings.modelConnections') }}</h1>
+      <h1 class="t-page-title">{{ t('account.modelConnections.title') }}</h1>
+      <BaseButton kind="ghost" size="sm" :loading="loading" @click="emit('refresh')">{{
+        t('account.modelConnections.recheck')
+      }}</BaseButton>
       <p class="settings-page__lede">{{ t('account.modelConnections.lede') }}</p>
     </header>
 
     <p v-if="error" role="alert" class="mc__notice c-danger">{{ error }}</p>
 
+    <section class="settings-card" :aria-label="t('account.modelConnections.platformTitle')">
+      <div class="settings-card__head">
+        <div class="settings-card__title">{{ t('account.modelConnections.platformTitle') }}</div>
+      </div>
+      <p class="mc-platform mc-note">{{ t('account.modelConnections.platformHint') }}</p>
+      <ul class="mc-platform">
+        <li v-for="model in platformModels" :key="model.id">{{ model.label }}</li>
+      </ul>
+    </section>
+    <p v-if="!canManage" class="mc-note">{{ t('account.modelConnections.readOnly') }}</p>
+    <p v-if="loginCommand" class="mc-note">
+      {{ t('account.modelConnections.loginTerminal') }}<br /><code>{{ loginCommand }}</code>
+    </p>
     <section class="settings-card" :aria-label="t('account.modelConnections.devicesTitle')">
       <div class="settings-card__head mc-head">
         <div class="settings-card__title">{{ t('account.modelConnections.devicesTitle') }}</div>
-        <div class="mc-headbtns">
+        <div v-if="canManage" class="mc-headbtns">
           <!-- The visible text is the short form; the accessible name keeps the full action. -->
           <BaseButton
             kind="ghost"
             size="sm"
             prepend-icon="mdi-plus"
-            :aria-label="t('account.modelConnections.addService')"
-            @click="openService"
+            :aria-label="t('account.modelConnections.addSubscription')"
+            @click="openLogin"
           >
-            {{ t('account.modelConnections.useService') }}
+            {{ t('account.modelConnections.addSubscription') }}
           </BaseButton>
         </div>
       </div>
@@ -73,6 +83,10 @@
             <div class="mc-body__inner">
               <div class="mc-body__pad">
                 <dl class="mc-spec">
+                  <template v-if="!canManage"
+                    ><dt>{{ t('account.modelConnections.models') }}</dt>
+                    <dd>{{ c.allowed_models.join('、') }}</dd></template
+                  >
                   <dt>{{ t('account.modelConnections.storedOn') }}</dt>
                   <dd>
                     {{ c.device_name }} ·
@@ -92,7 +106,24 @@
                 <p v-if="c.revoking" class="mc-note">
                   {{ t('account.modelConnections.revokingHint', { device: c.device_name }) }}
                 </p>
-                <div v-else class="mc-actions">
+                <div v-if="canManage && !c.revoking" class="mc-models">
+                  <v-combobox
+                    v-model="modelDraft[c.id]"
+                    autocomplete="off"
+                    :items="c.allowed_models"
+                    multiple
+                    chips
+                    :label="t('account.modelConnections.models')"
+                  />
+                  <BaseButton
+                    kind="secondary"
+                    size="sm"
+                    :loading="busy === `${c.id}:models`"
+                    @click="emit('setModels', c.id, modelDraft[c.id] ?? [], true)"
+                    >{{ t('account.modelConnections.saveModels') }}</BaseButton
+                  >
+                </div>
+                <div v-if="canManage && !c.revoking" class="mc-actions">
                   <BaseButton
                     kind="secondary"
                     size="sm"
@@ -120,7 +151,7 @@
     <section class="settings-card" :aria-label="t('account.modelConnections.heldTitle')">
       <div class="settings-card__head mc-head">
         <div class="settings-card__title">{{ t('account.modelConnections.heldTitle') }}</div>
-        <div class="mc-headbtns">
+        <div v-if="canManage" class="mc-headbtns">
           <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="openHeld('api_key')">
             {{ t('account.modelConnections.addApiKey') }}
           </BaseButton>
@@ -170,6 +201,10 @@
                   {{ t('account.modelConnections.checkFailed', { reason: h.check_error }) }}
                 </p>
                 <dl class="mc-spec">
+                  <template v-if="!canManage"
+                    ><dt>{{ t('account.modelConnections.models') }}</dt>
+                    <dd>{{ h.allowed_models.join('、') }}</dd></template
+                  >
                   <dt>{{ t('account.modelConnections.storedOn') }}</dt>
                   <dd>{{ t('account.modelConnections.keptOnAccount') }}</dd>
                   <template v-if="h.service_host">
@@ -181,7 +216,24 @@
                   <dt>{{ t('account.modelConnections.checkedAt') }}</dt>
                   <dd>{{ h.checked_at ? relTime(h.checked_at) : t('account.modelConnections.notChecked') }}</dd>
                 </dl>
-                <div class="mc-actions">
+                <div v-if="canManage" class="mc-models">
+                  <v-combobox
+                    v-model="modelDraft[h.id]"
+                    autocomplete="off"
+                    :items="h.allowed_models"
+                    multiple
+                    chips
+                    :label="t('account.modelConnections.models')"
+                  />
+                  <BaseButton
+                    kind="secondary"
+                    size="sm"
+                    :loading="busy === `${h.id}:models`"
+                    @click="emit('setModels', h.id, modelDraft[h.id] ?? [], false)"
+                    >{{ t('account.modelConnections.saveModels') }}</BaseButton
+                  >
+                </div>
+                <div v-if="canManage" class="mc-actions">
                   <BaseButton
                     kind="secondary"
                     size="sm"
@@ -303,43 +355,23 @@
     </AdaptiveDialog>
 
     <AdaptiveDialog
-      :model-value="adding"
-      :title="t('account.modelConnections.addService')"
-      :primary-label="t('account.thisDevice.modelServiceSave')"
-      :primary-loading="busy === 'service'"
-      :primary-disabled="!complete"
-      :close-disabled="busy === 'service'"
-      persistent
-      @update:model-value="adding = false"
-      @primary="save"
+      :model-value="addingLogin"
+      :title="t('account.modelConnections.addSubscription')"
+      :primary-label="t('account.modelConnections.login')"
+      :primary-loading="busy === 'login'"
+      :primary-disabled="!loginDevice"
+      @update:model-value="addingLogin = false"
+      @primary="emit('login', loginDevice)"
     >
-      <template v-if="adding">
-        <p v-if="!devices.length" class="mc-note">{{ t('account.modelConnections.noDevice') }}</p>
-        <template v-else>
-          <v-select
-            v-model="form.deviceId"
-            autocomplete="off"
-            :items="devices"
-            item-title="name"
-            item-value="device_id"
-            :label="t('account.modelConnections.device')"
-          />
-          <v-text-field
-            v-model="form.baseUrl"
-            autocomplete="off"
-            placeholder="https://"
-            :label="t('account.thisDevice.modelServiceUrl')"
-          />
-          <v-text-field
-            v-model="form.token"
-            autocomplete="new-password"
-            type="password"
-            :label="t('account.thisDevice.modelServiceToken')"
-          />
-          <v-text-field v-model="form.model" autocomplete="off" :label="t('account.thisDevice.modelServiceModel')" />
-          <p class="mc-note">{{ t('account.modelConnections.serviceHint') }}</p>
-        </template>
-      </template>
+      <v-select
+        v-model="loginDevice"
+        autocomplete="off"
+        :items="devices"
+        item-title="name"
+        item-value="device_id"
+        :label="t('account.modelConnections.device')"
+      />
+      <p class="mc-note">{{ t('account.modelConnections.loginHint') }}</p>
     </AdaptiveDialog>
   </div>
 </template>
@@ -352,7 +384,6 @@ import type {
   ModelConnection,
   ModelServiceDevice,
 } from '@/types/modelConnections'
-import type { ModelServiceInput } from '@/types/ownAgents'
 
 import { computed, reactive, ref, useId, watch } from 'vue'
 
@@ -364,27 +395,35 @@ import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 import { connectionKind } from '@/types/modelConnections'
 
-defineOptions({ name: 'ModelConnectionsView' })
+defineOptions({ name: 'ModelsView' })
 
-const props = defineProps<{
-  loading: boolean
-  error: string | null
-  connections: ModelConnection[]
-  /** 保存在账号里的 API key 和模型服务。 */
-  held: AccountConnection[]
-  /** 能改用自定义模型服务的设备：自己接入、此刻在线的。 */
-  devices: ModelServiceDevice[]
-  /** 正在进行的动作：`<id>:check`、`<id>:revoke`、`<id>:rename`（id 是账号里那一份的，或设备的）、
-   *  `service` 或 `add`。 */
-  busy: string
-  /** 表单保存成功了几次；变了就关上开着的表单。 */
-  saved: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    canManage?: boolean
+    platformModels?: { id: string; label: string }[]
+    loginCommand?: string | null
+    loading: boolean
+    error: string | null
+    connections: ModelConnection[]
+    /** 保存在账号里的 API key 和模型服务。 */
+    held: AccountConnection[]
+    /** 能改用自定义模型服务的设备：自己接入、此刻在线的。 */
+    devices: ModelServiceDevice[]
+    /** 正在进行的动作：`<id>:check`、`<id>:revoke`、`<id>:rename`（id 是账号里那一份的，或设备的）、
+     *  `service` 或 `add`。 */
+    busy: string
+    /** 表单保存成功了几次；变了就关上开着的表单。 */
+    saved: number
+  }>(),
+  { canManage: true, platformModels: () => [], loginCommand: null }
+)
 
 const emit = defineEmits<{
+  refresh: []
   recheck: [loginId: string]
   revoke: [loginId: string]
-  service: [deviceId: string, service: ModelServiceInput]
+  login: [deviceId: string]
+  setModels: [id: string, models: string[], onDevice: boolean]
   addHeld: [input: AccountConnectionInput]
   checkHeld: [id: string]
   renameHeld: [id: string, name: string]
@@ -393,6 +432,20 @@ const emit = defineEmits<{
 }>()
 
 const uid = useId()
+const modelDraft = reactive<Record<string, string[]>>({})
+watch(
+  () => [props.connections, props.held] as const,
+  ([connections, held]) => {
+    for (const c of [...connections, ...held]) modelDraft[c.id] = [...(c.allowed_models ?? [])]
+  },
+  { immediate: true }
+)
+const addingLogin = ref(false)
+function openLogin() {
+  loginDevice.value = props.devices[0]?.device_id ?? ''
+  addingLogin.value = true
+}
+const loginDevice = ref('')
 
 // 第一次取数还没回来：两张卡里先转圈，不先说「暂无」。
 const firstLoad = computed(() => props.loading && !props.connections.length && !props.held.length)
@@ -442,6 +495,7 @@ function saveHeld() {
     name: heldForm.name.trim(),
     baseUrl: heldForm.baseUrl.trim(),
     model: heldForm.model.trim(),
+    allowedModels: addingKind.value === 'model_service' ? [heldForm.model.trim()] : ['opus', 'sonnet', 'haiku'],
   })
 }
 
@@ -481,38 +535,11 @@ function confirmRemove() {
   removing.value = null
 }
 
-const adding = ref(false)
-const form = reactive({ deviceId: '', baseUrl: '', token: '', model: '' })
-
-function openService() {
-  Object.assign(form, { deviceId: props.devices[0]?.device_id ?? '', baseUrl: '', token: '', model: '' })
-  adding.value = true
-}
-
-// 地址要是 http(s) 网址，密钥和模型名都要有，模型名是一个词：和设备保存前查的一样。
-const complete = computed(
-  () =>
-    props.devices.some((d) => d.device_id === form.deviceId) &&
-    /^https?:\/\/[^\s/]+/.test(form.baseUrl.trim()) &&
-    form.token.trim() !== '' &&
-    /^\S+$/.test(form.model.trim())
-)
-
-function save() {
-  if (!complete.value) return
-  emit('service', form.deviceId, {
-    baseUrl: form.baseUrl.trim(),
-    token: form.token.trim(),
-    model: form.model.trim(),
-  })
-}
-
 // 保存成功才关上表单，并清掉填过的密钥；失败时表单留着，填的东西都还在。
 watch(
   () => props.saved,
   () => {
-    adding.value = false
-    form.token = ''
+    addingLogin.value = false
     addingKind.value = null
     heldForm.key = ''
     renaming.value = null
@@ -522,6 +549,14 @@ watch(
 
 <style scoped src="@/styles/settings-card.css"></style>
 <style scoped>
+.mc-platform {
+  margin: 0;
+  padding: 12px 24px;
+  list-style: none;
+}
+.mc-models {
+  padding-top: 12px;
+}
 .mc__notice {
   margin: 0;
   font-size: 14px;

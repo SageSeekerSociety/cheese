@@ -1,11 +1,4 @@
-"""A person's model connections, wherever they are held.
-
-What one of a member's own agents runs on is one of these: the login their own
-Claude Code has for the platform on one of their machines, or one their account
-holds (an API key or a model service). The two are kept differently and answer
-the same shape (``Login``), so the rest of this package asks one question of a
-connection without knowing where it lives.
-"""
+"""Team model connections, on a device or encrypted on the platform."""
 
 import uuid
 from dataclasses import dataclass
@@ -28,7 +21,7 @@ from app.domain.device.supply import Supply
 class Login:
     """One of a person's model connections, and how it reaches a model: one
     login their own Claude Code has for the platform on one of their machines
-    (a machine may hold several), or one their account holds (an API key or a
+    (a machine may hold several), or one the team stores encrypted on the platform (an API key or a
     model service). Each is named by its own row."""
 
     #: What the connection is named by: the login's record id, or the account
@@ -41,11 +34,12 @@ class Login:
     model: str | None
     #: A model service's host; None for the other kinds.
     service_host: str | None = None
-    #: The machine holding it; None when its owner's account does.
+    #: The machine holding it; None for an encrypted platform-held connection.
     device_id: str | None = None
     device_name: str | None = None
     #: What its owner named the connection.
     name: str | None = None
+    allowed_models: tuple[str, ...] = ()
 
     @property
     def on_account(self) -> bool:
@@ -64,6 +58,7 @@ def _login(device_id: str, name: str, row: DeviceClaudeLoginRow) -> Login:
         model=row.model if service else None,
         service_host=row.service_host if service else None,
         name=row.name,
+        allowed_models=tuple(row.allowed_models),
     )
 
 
@@ -75,6 +70,7 @@ def _held(row: AccountConnection) -> Login:
         model=row.model,
         service_host=account_connections.host_of(row),
         name=row.name,
+        allowed_models=tuple(row.allowed_models),
     )
 
 
@@ -90,22 +86,22 @@ def _usable():
     )
 
 
-async def logins(db: AsyncSession, owner_user_id: int) -> list[Login]:
+async def logins(db: AsyncSession, team_id: int) -> list[Login]:
     """This person's model connections: their machines' logins, the most
-    recently confirmed first, then the ones their account holds, oldest first."""
-    return (await logins_by_owners(db, {owner_user_id}))[owner_user_id]
+    recently confirmed first, then the ones the team stores encrypted on the platform, oldest first."""
+    return (await logins_by_teams(db, {team_id}))[team_id]
 
 
-async def logins_by_owners(
-    db: AsyncSession, owner_user_ids: set[int]
+async def logins_by_teams(
+    db: AsyncSession, team_ids: set[int]
 ) -> dict[int, list[Login]]:
     """The same ordered connections for each owner, read in two queries."""
-    result: dict[int, list[Login]] = {owner: [] for owner in owner_user_ids}
-    if not owner_user_ids:
+    result: dict[int, list[Login]] = {owner: [] for owner in team_ids}
+    if not team_ids:
         return result
     rows = await db.execute(
         select(
-            DeviceRow.owner_user_id,
+            DeviceRow.team_id,
             DeviceRow.device_id,
             DeviceRow.name,
             DeviceClaudeLoginRow,
@@ -115,7 +111,7 @@ async def logins_by_owners(
             DeviceClaudeLoginRow,
             DeviceClaudeLoginRow.device_id == DeviceRow.device_id,
         )
-        .where(DeviceRow.owner_user_id.in_(owner_user_ids), *_usable())
+        .where(DeviceRow.team_id.in_(team_ids), *_usable())
         # One machine's logins are confirmed in one answer: the first
         # login first, then the same order on every read.
         .order_by(
@@ -128,11 +124,11 @@ async def logins_by_owners(
         result[owner].append(_login(device_id, name, row))
     held = await db.scalars(
         select(AccountConnection)
-        .where(AccountConnection.owner_user_id.in_(owner_user_ids))
+        .where(AccountConnection.team_id.in_(team_ids))
         .order_by(AccountConnection.created_at)
     )
     for row in held:
-        result[row.owner_user_id].append(_held(row))
+        result[row.team_id].append(_held(row))
     return result
 
 

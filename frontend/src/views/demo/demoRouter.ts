@@ -61,6 +61,7 @@ const catalogTargets = [
   { path: '/teams/:handle/docs', name: 'TeamsDetailDocs', component: blank },
   { path: '/teams/:handle/docs/:docId', name: 'TeamsDocument', component: blank },
   { path: '/teams/:handle/compute', name: 'TeamsDetailCompute', component: blank },
+  { path: '/teams/:handle/models', name: 'TeamsDetailModels', component: blank },
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
   { path: '/inbox', name: 'inbox', component: blank },
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },

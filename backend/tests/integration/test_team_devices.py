@@ -190,7 +190,6 @@ def test_desktop_enrollments_list_only_current_teams_with_the_raw_device_shape(c
         "team_id": team,
         "last_seen_at": None,
         "screens": [],
-        "logins": [],
     }
     outside = client.get("/connector/my/team-devices", headers=headers["outsider"])
     assert [d["device_id"] for d in outside.json()["devices"]] == [private["device_id"]]
@@ -233,3 +232,23 @@ def test_closing_the_enroller_keeps_the_shared_teams_device(client):
     assert asyncio.run(close_and_read()) == (True, None)
     listed = client.get(f"/connector/teams/{team}/devices", headers=headers["admin"])
     assert [d["device_id"] for d in listed.json()["devices"]] == [shared["device_id"]]
+
+
+def test_device_lists_do_not_include_model_or_project_work_summaries(client):
+    headers, (team, _, _, _) = setup_team(client)
+    device, _ = enroll(client, headers["enroller"], team)
+    for endpoint in (
+        f"/connector/teams/{team}/devices",
+        "/connector/my/team-devices",
+        "/connector/my/devices",
+    ):
+        response = client.get(
+            endpoint,
+            headers=headers["admin"]
+            if endpoint != "/connector/my/devices"
+            else headers["enroller"],
+        )
+        assert response.status_code == 200, response.text
+        [row] = response.json()["devices"]
+        assert row["device_id"] == device["device_id"]
+        assert not {"logins", "claude_code", "in_use"} & row.keys()

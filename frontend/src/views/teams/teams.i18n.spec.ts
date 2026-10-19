@@ -26,7 +26,6 @@ vi.mock('@/api', () => ({
         online: true,
         team_id: 1,
         screens: [{ sid: 's1', agent_handle: 'helper' }],
-        in_use: [],
       },
     ],
   })),
