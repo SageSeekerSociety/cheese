@@ -726,8 +726,12 @@ def retain_transcripts(home: Path, archive: Path, harnesses=()) -> None:
     Claude Code links a resumed session's subagent files to the originals in
     the same tree, and a link out of the home is not ours to read.
     Written under a temporary name and renamed, so an archive under the final
-    name is always whole; a retry after a crash rewrites it from the same home.
+    name is always whole. One already there is kept as it is: it was written
+    before anything of the home was removed, and a retry of a removal that
+    stopped partway would find less of the home than it holds.
     """
+    if archive.is_file():
+        return
     sources = []
     claude = home / ".claude/projects"
     if not claude.is_symlink() and claude.is_dir():
