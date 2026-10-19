@@ -1407,7 +1407,6 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
             assert row.echoed_at is None
             assert row.execution_work_id is None
             assert row.settled_at is None
-            assert row.completed_at is None
             assert row.terminated_at is None
             assert await seat_has_unfinished_input(
                 session, topic_id, identity.recipient_handle
@@ -1652,7 +1651,7 @@ class SlowToReplay(StubChannel):
         self.replayed = asyncio.Event()
 
     async def call(self, handle, method: str, params: dict) -> dict:
-        if method == "events" and handle.session.topic_id == self.slow:
+        if method == "read" and handle.session.topic_id == self.slow:
             await self.replayed.wait()
         return await super().call(handle, method, params)
 

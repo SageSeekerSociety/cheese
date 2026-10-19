@@ -10,8 +10,10 @@ One read of the runner answers three things, and each is taken its own way:
   the runner hands them over again, and an event already applied changes
   nothing the second time.
 - **The records** — what the session wrote, the data plane. They are kept as
-  its raw record (``records``) and shown in the room (``consume``); neither
-  decides anything, and neither holds the events up. A page the raw record
+  its raw record (``records``) and shown in the room (``consume``), each before
+  the events the runner wrote after it (an event names how far the journal had
+  got, ``records``); neither decides anything, and neither holds the events
+  up. A page the raw record
   refuses is read again on the next pass; a record the room keeps refusing is
   stepped over after ``REFUSED_TIMES`` over ``REFUSED_OVER_S``, and one older
   than ``STALE_S`` is not shown at all — the room went on without it.
@@ -26,6 +28,7 @@ last one stopped.
 """
 
 import asyncio
+import dataclasses
 import logging
 import time
 import uuid
@@ -272,8 +275,13 @@ class Reading:
             if isinstance(state, dict):
                 moved = state.get("tasks") != self.state.get("tasks")
                 self.state = state
-            await self._take_records(answer.get("records") or [])
+            rows = list(answer.get("records") or [])
+            # Shown in the order the session did things: the records the
+            # runner had journaled when it wrote an event come before it.
+            showing = await self._archive(rows)
             for event in answer.get("events") or []:
+                if showing:
+                    showing = await self._show_through(rows, event.get("records"))
                 report = self._report(event)
                 if report is not None:
                     await self.hand(
@@ -290,6 +298,8 @@ class Reading:
                 self.acked = max(self.acked, int(event["seq"]))
                 if self.exited is not None:
                     break
+            if showing:
+                await self._show_through(rows, None)
             if moved:
                 await self.controls()
             if self.exited is not None:
@@ -300,27 +310,40 @@ class Reading:
                 except Exception:  # it keeps them for the next runner either way
                     logger.info("could not acknowledge a session's last events")
 
-    async def _take_records(self, rows: list[dict]) -> None:
+    async def _archive(self, rows: list[dict]) -> bool:
+        """Keep ``rows`` as the session's raw record; whether they may be
+        shown now. The raw record never holds the session up: rows it refused
+        are read again on the next pass, and shown then."""
         if not rows:
-            return
-        if self.records is not None:
-            try:
-                await self.records(self.whose.seat, rows)
-            except Exception:
-                # The raw record never holds the session up; the same rows are
-                # read again on the next pass.
-                logger.exception(
-                    "raw record refused journal rows %s-%s topic=%s agent=%s",
-                    rows[0]["sequence"],
-                    rows[-1]["sequence"],
-                    self.whose.seat.topic_id,
-                    self.whose.seat.agent_handle,
-                )
-                return
+            return False
+        if self.records is None:
+            return True
+        try:
+            await self.records(self.whose.seat, rows)
+        except Exception:
+            logger.exception(
+                "raw record refused journal rows %s-%s topic=%s agent=%s",
+                rows[0]["sequence"],
+                rows[-1]["sequence"],
+                self.whose.seat.topic_id,
+                self.whose.seat.agent_handle,
+            )
+            return False
+        return True
+
+    async def _show_through(self, rows: list[dict], through: int | None) -> bool:
+        """Show the rows not shown yet, up to the journal sequence ``through``
+        (all of them for None); whether the room took them, so the rest may
+        follow. A record older than ``STALE_S`` is not shown: the room went on
+        without it."""
         now = datetime.now(UTC)
         for row in rows:
-            record = row.get("record")
             sequence = int(row["sequence"])
+            if self.records_after is not None and sequence <= self.records_after:
+                continue
+            if through is not None and sequence > through:
+                return True
+            record = row.get("record")
             if isinstance(record, dict) and (
                 now - datetime.fromisoformat(row["at"])
             ).total_seconds() < STALE_S:
@@ -337,7 +360,7 @@ class Reading:
                             self.whose.seat.agent_handle,
                             exc_info=True,
                         )
-                        return
+                        return False
                     logger.exception(
                         "stepped over journal record %s the room refused %d times "
                         "over %ds topic=%s agent=%s",
@@ -348,6 +371,7 @@ class Reading:
                         self.whose.seat.agent_handle,
                     )
             self.records_after = sequence
+        return True
 
     def _given_up(self, sequence: int) -> bool:
         times, since = self.refusals.get(sequence, (0, time.monotonic()))
@@ -426,6 +450,12 @@ class Reading:
                 outcome, failure = result_of(
                     self.whose, result, session_id=event.get("session_id")
                 )
+                if (
+                    datetime.now(UTC) - datetime.fromisoformat(event["at"])
+                ).total_seconds() >= STALE_S:
+                    # Read hours late: the work still ends, and the room has
+                    # gone on without it, so it hears nothing of how.
+                    outcome = dataclasses.replace(outcome, text="", late=True)
                 fact = SessionIdle(
                     work,
                     outcome,

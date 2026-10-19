@@ -176,11 +176,12 @@ class SessionHost:
         self._registrar = register
         self._memory = memory
         #: Told the conversation of a session whose runner answered a read, on
-        #: every pass that heard one: proof that its turn is still there, which
-        #: no frame carries (`_pump`). The rail's red light reads it, through
-        #: `realtime.broker.note_alive`.
+        #: every pass that heard one: proof that the session is still there,
+        #: which no frame carries. The stall verdict reads it
+        #: (`TopicService.stall_signal`), through `realtime.broker.note_alive`.
         self._on_alive = on_alive
-        #: Where this backend keeps its copies of the sessions' journals.
+        #: Where this backend keeps its copies of the journals of the sessions
+        #: of a harness that keeps a mirror (`driver.Mirrors`).
         self._mirrors = mirrors or Path(settings.workspace_root) / ".harness"
         self._screens = screens
         self._session_factory = session_factory

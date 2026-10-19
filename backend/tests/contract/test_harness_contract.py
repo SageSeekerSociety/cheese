@@ -21,7 +21,8 @@ else:
   named rather than a hole hidden.
 
 The records are fed through the real translators — each harness's own
-``Assembler`` — never through a stand-in, and never through a lower entry point
+``Assembler``, and for Claude Code the runner before it, which reports how the
+work ended — never through a stand-in, and never through a lower entry point
 than the one the platform itself calls. Claude Code's cells are its stream-json
 records, recorded from the pinned build against the model fixture. A fixture
 checked against a double would agree with the double and say nothing about
@@ -38,11 +39,11 @@ import pytest
 
 from app.domain.agent import service
 from app.domain.agent.harness import HARNESSES, PI, Backlog, SessionRef
-from app.domain.agent.harness.claude_code.events import Assembler as ClaudeAssembler
 from app.domain.agent.harness.codex.events import Assembler as CodexAssembler
 from app.domain.agent.harness.pi.events import Assembler as PiAssembler
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
+from tests.support.claude_results import translated
 from tests.support.contract_harness import ContractHarness, fixtures, vocabulary
 
 VOCABULARY = vocabulary()
@@ -102,11 +103,10 @@ def _kind(event: object) -> str:
 def _translate(harness: str, records: list[dict]) -> list:
     """The records of one harness, through that harness's own real translator."""
     if harness == "claude-code":
-        # One assembler for the whole cell, fed in order, with no facts to
-        # start from: which card a sub-thread is on is learned from the records
-        # themselves, the way the mirror learns it.
-        assembler = ClaudeAssembler({}, "session-1")
-        return [event for r in records for event in assembler.accept(r)]
+        # Through the runner, which journals each record and reports how the
+        # work ended, then the platform's assembler and its reading of that
+        # report: the path a Claude Code record takes to a room.
+        return translated(records)
     if harness == "pi":
         assembler = PiAssembler("session-1", harness=PI)
         return [event for r in records for event in assembler.accept(r)]

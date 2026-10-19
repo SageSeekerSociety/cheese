@@ -28,11 +28,22 @@ from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.agent import session_state
 from app.domain.agent.session_state import SeatKey
 
 # The driver's read of a launch's ending from its runner log
 # (`ClaudeCodeDriver._ended`): the record's marker is what it searches for.
 _ENDING_READ = re.compile(r'sed -n "/([^/]+)/,')
+
+
+class _Epochs:
+    """The database the running test keeps its rooms' books in, while it has
+    one (the ``db_factory`` and ``client`` fixtures set it)."""
+
+    sessions = None
+
+
+EPOCHS = _Epochs()
 
 
 class _Hub:
@@ -166,9 +177,12 @@ class SeatChannel:
     # --- what a test supplies -----------------------------------------------
 
     async def register(self, key: SeatKey) -> int:
-        """Issue a seat's runner its worker epoch. Here, with no database, a
-        counter per seat; a channel whose room keeps its books in one issues
-        it there (`session_state.register`)."""
+        """Issue a seat's runner its worker epoch: where the running test keeps
+        the rooms' books in its database (``EPOCHS``), there, as production
+        issues it (`session_state.register`), so what the runner reports can
+        be applied there; with no database, by a counter per seat."""
+        if EPOCHS.sessions is not None:
+            return await session_state.register(EPOCHS.sessions, key)
         self.epochs[key] = self.epochs.get(key, 0) + 1
         return self.epochs[key]
 

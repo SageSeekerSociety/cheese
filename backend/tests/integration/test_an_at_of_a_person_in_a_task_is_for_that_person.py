@@ -19,6 +19,7 @@ from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.delivery.models import NativeInput
+from app.domain.agent.session_state import running_conversations
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
 from tests.integration.conftest import (
@@ -27,6 +28,19 @@ from tests.integration.conftest import (
     post_message,
     post_project,
 )
+
+
+def _idle(client, conversation: uuid.UUID) -> bool:
+    """Whether the session working this conversation has gone idle, as its
+    runner declared (`session_state`)."""
+
+    async def read() -> bool:
+        async with client.test_request_factory() as session:
+            return conversation not in await running_conversations(
+                session, [conversation]
+            )
+
+    return client.portal.call(read)
 
 
 def _until(predicate, what: str) -> None:
@@ -68,7 +82,10 @@ def _task_after_one_turn(client, tmp_path) -> tuple[StubChannel, str]:
     post_message(client, task["id"], "alice", {"content": "先看一下"})
     _until(lambda: _inputs(client, task_id), "the task's first turn never ran")
     _until(
-        lambda: all(row.completed_at for row in _inputs(client, task_id)),
+        lambda: (
+            all(row.echoed_at for row in _inputs(client, task_id))
+            and _idle(client, task_id)
+        ),
         "the task's first turn never finished",
     )
     return screen, task["id"]

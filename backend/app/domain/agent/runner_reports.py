@@ -37,8 +37,9 @@ from app.domain.delivery.input_identity import InputReceipt
 from app.domain.delivery.receipts import drop_input, fail_read_inputs, record_receipt
 
 
-async def apply(chat, report: Report) -> None:
-    """Apply ``report`` for ``chat``'s rooms, and tell who has to know."""
+async def apply(chat, report: Report) -> bool:
+    """Apply ``report`` for ``chat``'s rooms, and tell who has to know. False
+    when it had been applied before: nothing is done again."""
     key = session_state.SeatKey(
         report.conversation_id, report.agent_handle, report.harness
     )
@@ -55,7 +56,7 @@ async def apply(chat, report: Report) -> None:
             seq=report.seq,
         ):
             await db.commit()
-            return
+            return False
         if isinstance(fact, InputWritten):
             await record_receipt(db, InputReceipt(fact.identity, "accepted"))
         elif isinstance(fact, InputRead):
@@ -111,3 +112,4 @@ async def apply(chat, report: Report) -> None:
         # The seat may take what was waiting for it.
         nudge_messages(chat, report.conversation_id)
         wake_held_deliveries(chat, report.conversation_id, report.agent_handle)
+    return True

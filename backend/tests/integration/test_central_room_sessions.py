@@ -1414,13 +1414,23 @@ async def test_a_room_session_is_the_runner_its_screen_started(
 
     async def exercise():
         session = ref(project, topic)
-        live = await sessions(central).ensure(session, system_prompt="System")
+        room_sessions = sessions(central)
+        live = await room_sessions.ensure(session, system_prompt="System")
         place = await session_place(client.test_request_factory, topic)
         assert place.runtime["state"] == live.ref.state
         assert live.conversation
         state = place.runtime["state"]
+        # What the room registered the runner under, which every later call
+        # of the platform's carries.
+        epoch = room_sessions.host._running[live.ref].launched.epoch
+        assert epoch
 
-        sent = {"input_id": "message-1", "text": "hello", "work_id": str(uuid.uuid4())}
+        sent = {
+            "input_id": "message-1",
+            "text": "hello",
+            "work_id": str(uuid.uuid4()),
+            "epoch": epoch,
+        }
         assert await call_executor("center", state, "send", sent) == {
             "input_id": "message-1"
         }
@@ -1428,9 +1438,14 @@ async def test_a_room_session_is_the_runner_its_screen_started(
             while True:
                 records = [
                     entry["record"]
-                    for entry in (await call_executor("center", state, "events", {}))[
-                        "events"
-                    ]
+                    for entry in (
+                        await call_executor(
+                            "center",
+                            state,
+                            "read",
+                            {"epoch": epoch, "records_after": 0},
+                        )
+                    )["records"]
                 ]
                 if any(record.get("type") == "result" for record in records):
                     break

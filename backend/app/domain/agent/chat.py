@@ -348,9 +348,10 @@ class ChatService(
 
         await confirm_receipt(self._sessions, self.live, receipt)
 
-    async def apply_report(self, report: Report) -> None:
-        """Apply what a seat's runner reported, once (`runner_reports`)."""
-        await runner_reports.apply(self, report)
+    async def apply_report(self, report: Report) -> bool:
+        """Apply what a seat's runner reported, once (`runner_reports`): False
+        when it had been applied before."""
+        return await runner_reports.apply(self, report)
 
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None:
         """End the inputs of a work whose session died inside it. See turn_inputs."""

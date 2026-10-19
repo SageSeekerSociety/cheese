@@ -33,7 +33,7 @@ def room_reader(
     ``reachability(project, topic, work, reachable, reason)``,
     ``live(topic, work, author, blocks)``."""
 
-    async def hear(session, read) -> None:
+    async def hear(session, read):
         event = read.event
         work = uuid.UUID(read.work_id) if read.work_id else None
         if isinstance(event, Received):
@@ -71,9 +71,11 @@ def room_reader(
                 read.text_seen,
                 read.unsolicited,
             )
+        # What the room answered: for a report, whether it was applied now.
         if heard:
-            await heard
-        elif heard is None and rest is not None:
-            await rest(session, read)
+            return await heard
+        if heard is None and rest is not None:
+            return await rest(session, read)
+        return None
 
     return hear

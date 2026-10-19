@@ -258,7 +258,7 @@ class _Session:
             reading = Reading(
                 Whose(self.ref, "cheese", self.ref.topic_id, "cheese", CLAUDE_CODE, ""),
                 remote,
-                epoch=1,
+                epoch=lambda: 1,
                 launch=None,
                 assemble=lambda record: [],
                 show=nothing,

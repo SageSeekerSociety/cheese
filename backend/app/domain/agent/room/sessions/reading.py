@@ -238,9 +238,13 @@ async def _take(
 
 async def _report(svc: pkg.RoomSessions, seat: Seat, live: Live, report: Report) -> bool:
     """What a seat's runner reported: applied to the database first, once
-    (``agent.runner_reports``), then kept in the room's books. True when the
-    session is gone and the reading with it."""
-    await svc._hear(live.session, Read(None, report), required=True)
+    (``agent.runner_reports``), then kept in the room's books. Never ends the
+    reading itself: a session that is gone ends it once its runner has heard
+    the last event was taken."""
+    if await svc._hear(live.session, Read(None, report), required=True) is False:
+        # Applied before (a redelivery): everything that follows from it was
+        # done then.
+        return False
     project, fact = live.session.project_id, report.fact
     if isinstance(fact, SessionRunning) and fact.work_id is not None:
         await svc._activity(project, seat, fact.work_id, True)
@@ -269,7 +273,7 @@ async def _report(svc: pkg.RoomSessions, seat: Seat, live: Live, report: Report)
             # Its runner said so: the conversation is over on this seat, which
             # is death, not an unknown (FB-56).
             svc.dead.add((seat, live.conversation))
-        return True
+        # The reading ends on its own once it has acknowledged this.
     return False
 
 

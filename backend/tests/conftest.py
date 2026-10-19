@@ -168,7 +168,7 @@ from tests.support.machine_path import resolved  # noqa: E402
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
 from tests.support.collab import install as install_collab  # noqa: E402
-from tests.support.seat_channel import SeatChannel  # noqa: E402
+from tests.support.seat_channel import EPOCHS, SeatChannel  # noqa: E402
 
 # Tests exercise the real authz enforcement regardless of the dev .env (which
 # ships it OFF for the conservative dogfood rollout): the .env value must not
@@ -442,16 +442,6 @@ class ScriptedSession(Runner):
         return await super().dispatch(method, params)
 
 
-class _Epochs:
-    """The database the running test keeps its rooms' books in, while it has
-    one (``db_factory``, ``client``): where a stub runner's epoch is issued."""
-
-    sessions = None
-
-
-_EPOCHS = _Epochs()
-
-
 class StubChannel(SeatChannel):
     """A machine pool with no machine behind it.
 
@@ -520,8 +510,14 @@ class StubChannel(SeatChannel):
         # answered.
         self._alive = value
         if not value:
+            said = getattr(self, "ending", None) or ""
             for session in self.sessions.values():
-                session._report_exit(None, getattr(self, "ending", None) or "")
+                # On the runner's own loop, as `record` plays a record: its
+                # journal belongs to that loop's thread.
+                if threading.get_ident() == session.thread:
+                    session._report_exit(None, said)
+                else:
+                    session.loop.call_soon_threadsafe(session._report_exit, None, said)
 
     # --- the channel -------------------------------------------------------
 
@@ -669,17 +665,6 @@ class StubChannel(SeatChannel):
     def controlled(self, topic_id: uuid.UUID, request: dict) -> dict:
         """What the scripted session answers a control with."""
         return {}
-
-    async def register(self, key) -> int:
-        """Where the test keeps the room's books in its database (``_EPOCHS``),
-        a runner's epoch is issued there, as production issues it, so what the
-        runner reports can be applied there; elsewhere, by the seat channel's
-        own counter."""
-        if _EPOCHS.sessions is None:
-            return await super().register(key)
-        from app.domain.agent import session_state
-
-        return await session_state.register(_EPOCHS.sessions, key)
 
     def unlanded(self, topic_id: uuid.UUID, session: ScriptedSession) -> bool:
         """Whether the backend has yet to take something the runner holds: a
@@ -1515,7 +1500,7 @@ def client(
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([stub_hooks.runtime]),
     )
-    _EPOCHS.sessions = test_factory
+    EPOCHS.sessions = test_factory
 
     def override_get_chat_service() -> ChatService:
         # ONE instance, like production's lru_cache. A per-request instance was
@@ -1558,7 +1543,7 @@ def client(
                     finally:
                         c.portal.call(app_engine.dispose)
     finally:
-        _EPOCHS.sessions = None
+        EPOCHS.sessions = None
         app.dependency_overrides.clear()
         # Leaving the app hands its work over and holds the runner's turns, which
         # is right for a process that exits next. This one goes on to run tests
@@ -2574,11 +2559,11 @@ async def db_factory(_pg_schema):
     engine = _production_test_engine(TEST_DATABASE_URL)
     await _clear_client_db()
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    _EPOCHS.sessions = factory
+    EPOCHS.sessions = factory
     try:
         yield factory
     finally:
-        _EPOCHS.sessions = None
+        EPOCHS.sessions = None
         try:
             await _fail_on_background_work("db_factory")
         finally:
@@ -2675,7 +2660,7 @@ async def python_client(
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([stub_hooks.runtime]),
     )
-    _EPOCHS.sessions = test_factory
+    EPOCHS.sessions = test_factory
 
     def override_get_chat_service() -> ChatService:
         # ONE instance, like production's lru_cache. A per-request instance was
@@ -2705,7 +2690,7 @@ async def python_client(
             c.collab = install_collab(monkeypatch, app)  # type: ignore[attr-defined]
             yield c
     finally:
-        _EPOCHS.sessions = None
+        EPOCHS.sessions = None
         app.dependency_overrides.clear()
         try:
             await _fail_on_background_work("python_client")

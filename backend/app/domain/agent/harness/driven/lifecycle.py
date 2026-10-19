@@ -9,7 +9,8 @@ runner of any harness speaks it, and only how it learns each fact is its own.
 
 **Facts, as ordered events.** Each event the runner writes goes to a durable
 outbox (``Outbox``) under a monotonic sequence and the worker epoch it was
-written under:
+written under, naming how far the runner's journal of the session's records
+had got (``records``), so the two are read in the order they happened:
 
 - ``input`` — one input's delivery progress, by the platform's own input id:
   ``written`` (it is on the agent's input), ``read`` (the agent took it in; for
@@ -164,7 +165,10 @@ class Outbox:
         if epoch != self.epoch or not self.epoch:
             raise StaleEpoch(epoch, self.epoch)
 
-    def emit(self, kind: str, **body) -> int:
+    def emit(self, kind: str, *, records: int, **body) -> int:
+        """Write an event; ``records`` is how far the runner's journal had got
+        when it happened, so a reader shows what came before it first."""
+        body["records"] = records
         with self.connection:
             cursor = self.connection.execute(
                 "INSERT INTO lifecycle(epoch, at, event) VALUES (?, ?, ?)",

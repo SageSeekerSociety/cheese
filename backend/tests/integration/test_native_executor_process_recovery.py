@@ -18,6 +18,7 @@ from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness.claude_code.journal import Journal
 from app.main import app
 from tests.conftest import settle_turn
 from tests.integration.conftest import (
@@ -73,7 +74,8 @@ def test_new_full_service_process_reuses_original_native_executor(
                 )
 
         async def call(self, held, method, params):
-            return await asyncio.to_thread(screen.call, method, params)
+            # As the platform calls: its own registration and epoch, none added.
+            return await asyncio.to_thread(screen.call, method, params, epoch=False)
 
     before = Channel()
     old = ChatService(
@@ -120,11 +122,15 @@ def test_new_full_service_process_reuses_original_native_executor(
             assert observed["type"] != "error", observed
 
         async def first_work_id():
-            records = await asyncio.to_thread(screen.records)
+            journal = Journal(machine.state / "records.sqlite")
+            try:
+                records = journal.read()
+            finally:
+                journal.close()
             return next(
                 row["record"]["cheese"]["work_id"]
                 for row in records
-                if row["record"]["cheese"].get("turn_start")
+                if row["record"]["cheese"].get("work_id")
             )
 
         async def replace_backend():

@@ -35,7 +35,11 @@ from app.domain.delivery.input_identity import InputReceipt
 # on it, whether the machine under it is reachable, and what it is in
 # the middle of writing all arrive here (``reads.Read``); the
 # room decides what each one means for it.
-RoomReader = Callable[[SessionRef, Read], Awaitable[None]]
+#
+# A ``Report`` is applied once (``agent.runner_reports``): the reader answers
+# False for one it had applied before, and what follows from it is not done a
+# second time. Every other item answers nothing.
+RoomReader = Callable[[SessionRef, Read], Awaitable[bool | None]]
 
 
 class NativeEvents(Protocol):
@@ -58,7 +62,7 @@ class RoomBooks(Protocol):
 
     async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None: ...
 
-    async def apply_report(self, report: Report) -> None: ...
+    async def apply_report(self, report: Report) -> bool: ...
 
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None: ...
 
@@ -88,13 +92,13 @@ class RoomBooks(Protocol):
 def reader(chat: RoomBooks) -> RoomReader:
     """The room's ear, for ``chat``'s rooms."""
 
-    async def hear(session: SessionRef, read: Read) -> None:
+    async def hear(session: SessionRef, read: Read) -> bool | None:
         event = read.event
         work = uuid.UUID(read.work_id) if read.work_id else None
         if isinstance(event, Received):
             await chat.confirm_prompt_receipt(event.receipt)
         elif isinstance(event, Report):
-            await chat.apply_report(event)
+            return await chat.apply_report(event)
         elif isinstance(event, Writing):
             await publish_live(
                 session.conversation_id,

@@ -44,14 +44,16 @@ logger = logging.getLogger("app.domain.agent.room.sessions")
 
 async def _hear(
     svc: pkg.RoomSessions, session: SessionRef, read: Read, *, required: bool = False
-) -> None:
-    """Hand the room one thing its session said or did. What the room has
-    to hear for its books to be right (``required``) is an error to drop;
-    the rest is only what it shows."""
+) -> bool | None:
+    """Hand the room one thing its session said or did, and what the room
+    answered (``room.reads.RoomReader``). What the room has to hear for its
+    books to be right (``required``) is an error to drop; the rest is only
+    what it shows."""
     if svc.reader is not None:
-        await svc.reader(session, read)
-    elif required:
+        return await svc.reader(session, read)
+    if required:
         raise RuntimeError(f"{svc.label} room reader is not bound")
+    return None
 
 
 def _room(

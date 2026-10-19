@@ -567,7 +567,7 @@ class Runner(runner.Runner[Journal]):
         self.outbox = lifecycle.Outbox(self.journal.connection)
         self.watchdog = lifecycle.Watchdog()
         # What looks at those clocks, while the session works.
-        self.watcher: asyncio.Future | None = None
+        self.watcher: asyncio.TimerHandle | None = None
         # The clock that ended the work under way, once one has.
         self.stuck: str | None = None
         # The platform's inputs read since the session last went idle: what a
@@ -724,7 +724,7 @@ class Runner(runner.Runner[Journal]):
 
     async def close(self) -> None:
         if self.watcher is not None:
-            self.helpers.append(self.watcher)
+            self.watcher.cancel()
         for helper in self.helpers:
             helper.cancel()
         await asyncio.gather(*self.helpers, return_exceptions=True)
@@ -806,7 +806,7 @@ class Runner(runner.Runner[Journal]):
                 text="",
                 usage=None,
             )
-        self.outbox.emit(
+        self._emit(
             lifecycle.EXITED, launch=self.launch, exit_code=status, said=said
         )
         self.journal.remember(LIVE_LAUNCH, "")
@@ -820,7 +820,7 @@ class Runner(runner.Runner[Journal]):
         if not left:
             return
         self._drop_unread("exited")
-        self.outbox.emit(lifecycle.EXITED, launch=left, exit_code=None, said="")
+        self._emit(lifecycle.EXITED, launch=left, exit_code=None, said="")
         self.journal.remember(LIVE_LAUNCH, "")
 
     def _last_words(self, status: int | None) -> str:
@@ -847,6 +847,10 @@ class Runner(runner.Runner[Journal]):
 
     # --- what the session reports --------------------------------------------
 
+    def _emit(self, kind: str, **body) -> None:
+        """Report one fact, after every record journaled so far."""
+        self.outbox.emit(kind, records=self.journal.last(), **body)
+
     def _unread(self) -> list[str]:
         return json.loads(self.journal.recall(UNREAD_INPUTS) or "[]")
 
@@ -867,7 +871,7 @@ class Runner(runner.Runner[Journal]):
         """Report that the agent will never read ``identifier``, under the
         session and work it was written for."""
         written = json.loads(self.journal.recall(f"receipt:{identifier}") or "{}")
-        self.outbox.emit(
+        self._emit(
             lifecycle.INPUT,
             input_id=identifier,
             status=lifecycle.DROPPED,
@@ -909,33 +913,34 @@ class Runner(runner.Runner[Journal]):
         return super().has_news(after) or not self.outbox.empty()
 
     def _watching(self) -> None:
-        """Have the clocks looked at while the session works, when one is on."""
-        if (
-            self.working
-            and self.watchdog.armed()
-            and (self.watcher is None or self.watcher.done())
-        ):
-            self.watcher = asyncio.ensure_future(self._watch())
+        """Have the clocks looked at every ``WATCH_S`` while the session
+        works, when one is on: a timer, not a task, so a session that is not
+        working holds nothing open for them."""
+        if self.working and self.watchdog.armed() and self.watcher is None:
+            self.watcher = asyncio.get_running_loop().call_later(WATCH_S, self._look)
 
-    async def _watch(self) -> None:
-        """While the session works, end work one of the stuck-work clocks says
-        is stuck: the agent is interrupted, and the ``status`` its ending
-        writes names the clock."""
-        while self.working:
-            await asyncio.sleep(WATCH_S)
-            if not self.working or self.stuck is not None:
-                continue
-            fired = self.watchdog.fired(time.monotonic())
-            if fired is None:
-                continue
+    def _look(self) -> None:
+        """End work one of the stuck-work clocks says is stuck: the agent is
+        interrupted, and the ``status`` its ending writes names the clock."""
+        self.watcher = None
+        if not self.working:
+            return
+        fired = None if self.stuck else self.watchdog.fired(time.monotonic())
+        if fired is not None:
             self.stuck = fired
             print(
                 f"work {self.work} stuck ({fired}); interrupting it",
                 file=sys.stderr,
                 flush=True,
             )
-            with contextlib.suppress(Exception):
-                await self.control({"subtype": "interrupt"})
+            self.helpers.append(asyncio.ensure_future(self._interrupt_stuck()))
+        self._watching()
+
+    async def _interrupt_stuck(self) -> None:
+        # A control the session did not answer changes nothing it was doing;
+        # the clock looks again, and the work ends when the session does.
+        with contextlib.suppress(Exception):
+            await self.control({"subtype": "interrupt"})
 
     # --- stdout --------------------------------------------------------------
 
@@ -1143,7 +1148,7 @@ class Runner(runner.Runner[Journal]):
                 self._open(sent)
             if self._taken(identifier):
                 self.run_inputs.append(identifier)
-                self.outbox.emit(
+                self._emit(
                     lifecycle.INPUT,
                     input_id=identifier,
                     status=lifecycle.READ,
@@ -1267,7 +1272,7 @@ class Runner(runner.Runner[Journal]):
         self.run_inputs = []
         self.watchdog.started(time.monotonic())
         self._watching()
-        self.outbox.emit(
+        self._emit(
             lifecycle.STATUS,
             worker_status=lifecycle.RUNNING,
             session_id=self.session_id,
@@ -1277,7 +1282,7 @@ class Runner(runner.Runner[Journal]):
 
     def _finish(self, *, failure: dict | None, text: str, usage: dict | None) -> None:
         """The session went idle: report how the work ended, then forget it."""
-        self.outbox.emit(
+        self._emit(
             lifecycle.STATUS,
             worker_status=lifecycle.IDLE,
             session_id=self.session_id,
@@ -1598,7 +1603,7 @@ class Runner(runner.Runner[Journal]):
             # otherwise — read, settled unread, or gone with the process.
             self._set_unread([*self._unread(), identifier])
             self.watchdog.written(identifier, time.monotonic())
-            self.outbox.emit(
+            self._emit(
                 lifecycle.INPUT,
                 input_id=identifier,
                 status=lifecycle.WRITTEN,
