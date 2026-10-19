@@ -33,13 +33,25 @@ class Host:
         self.raw = raw
         self.invoked = []
         self.published = []
+        #: The executor's journal: an id is answered once, and the same id
+        #: with the same input replays that answer instead of running again.
+        self.journal = {}
 
     def invoke(self, payload, args):
-        self.invoked.append(payload["id"])
+        key = payload["id"]
+        self.invoked.append(key)
         command = args["command"]
+        seen = self.journal.get(key)
+        if seen is not None:
+            if seen[0] != command:
+                raise RuntimeError("Request ID already belongs to different input")
+            return seen[1]
         if command.startswith("wc -c"):
-            return {"value": {"stdout": str(len(self.raw))}}
-        return {"value": {"stdout": base64.b64encode(self.raw).decode("ascii")}}
+            answer = {"value": {"stdout": str(len(self.raw))}}
+        else:
+            answer = {"value": {"stdout": base64.b64encode(self.raw).decode("ascii")}}
+        self.journal[key] = (command, answer)
+        return answer
 
     def request(self, plan):
         self.published.append(plan)
