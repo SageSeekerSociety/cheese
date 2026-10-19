@@ -234,6 +234,7 @@ def inside_the_footprint(text: str) -> None:
     somewhere a new one may be *written*.
     """
     root = f"$HOME/{footprint_root()}"
+    text = text.replace("${CHEESE_PROFILE_ROOT:-.cheese}", footprint_root())
     for reference in re.findall(r"\$HOME/[A-Za-z0-9._/-]+", text):
         assert reference == root or reference.startswith(f"{root}/"), (
             f"{reference} is outside the footprint root, so `cheese uninstall` "
@@ -322,7 +323,9 @@ def test_the_launcher_installs_only_inside_the_footprint():
     fails when that happens: the room launches, works, and leaves its files on
     a machine whose owner has been told the platform is gone.
     """
-    script = machine_launcher.launch_script(command="$AGENT")
+    script = machine_launcher.launch_script(command="$AGENT").replace(
+        "${CHEESE_PROFILE_ROOT:-.cheese}", footprint_root()
+    )
     written = launcher_write_points(script)
     assert written, "the launcher stopped writing anything under the home"
     for directory in written:

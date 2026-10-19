@@ -9,11 +9,13 @@ transition — and only the transition — can be asserted from outside.
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
 from app.domain.review import forge_clients, pr_poll
+from app.domain.review.github_pr.task_pr_metadata import TaskPrMetadata
 from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.room_task.models import TaskStatus
 
@@ -52,7 +54,15 @@ class _Session:
     async def scalars(self, _query):
         return [self.task.id]
 
-    async def get(self, _model, _ident):
+    async def execute(self, _query):
+        row = SimpleNamespace(
+            id=self.task.id,
+            project_id=self.task.project_id,
+            pr_number=self.task.pr_number,
+        )
+        return SimpleNamespace(all=lambda: [row])
+
+    async def get(self, _model, _ident, **_kwargs):
         return self.task
 
     async def scalar(self, _query):
@@ -68,12 +78,21 @@ class _Session:
 class _Client:
     """每一次 `check_runs` 读下一条答案；读了几次留着给断言看。"""
 
+    head = HEAD
+
     def __init__(self, answers):
         self._answers = list(answers)
         self.asked: list[str] = []
+        self.metadata_calls = []
+        self.single_reads = 0
 
     async def pr_status(self, number):
-        return PullRequestStatus(head_sha=HEAD, state="open", merged=False)
+        self.single_reads += 1
+        return PullRequestStatus(head_sha=self.head, state="open", merged=False)
+
+    async def task_pr_metadata(self, numbers):
+        self.metadata_calls.append(tuple(numbers))
+        return {n: TaskPrMetadata(n, self.head, "open", False) for n in numbers}
 
     async def check_runs(self, ref):
         self.asked.append(ref)
@@ -91,6 +110,7 @@ def said(monkeypatch):
         room_id=uuid.uuid4(),
         pr_url="https://github.com/acme/widgets/pull/1542",
         status=TaskStatus.open,
+        closing_since=None,
         pr_checks_head=None,
         pr_checks_state=None,
     )
@@ -143,6 +163,8 @@ def test_running_twice_then_green_wakes_the_line_exactly_once(said):
     # 第四次读到同一个 head 的全绿：没有从 running 过来的那一步，不再说。
     assert run(_Client([GREEN])) == []
     assert client.asked == [HEAD, HEAD, HEAD]
+    assert client.metadata_calls == [(1542,), (1542,), (1542,)]
+    assert client.single_reads == 0
 
 
 def test_the_first_green_a_restarted_process_sees_wakes_nobody(said):
@@ -185,8 +207,7 @@ def test_a_pushed_head_starts_over(said):
     run, _task = said
 
     class _Moved(_Client):
-        async def pr_status(self, number):
-            return PullRequestStatus(head_sha="f" * 40, state="open", merged=False)
+        head = "f" * 40
 
     assert run(_Client([RUNNING])) == []
     assert run(_Moved([GREEN])) == []
@@ -263,3 +284,59 @@ def test_the_poll_query_keeps_tasks_with_a_pending_card():
 )
 def test_the_fold_into_three_words(runs, expected):
     assert pr_poll._checks_state(runs) == expected
+
+
+def test_a_failed_available_batch_never_selects_the_single_pr_read(said):
+    run, _task = said
+
+    class InvalidBatch(_Client):
+        async def task_pr_metadata(self, numbers):
+            return None
+
+    client = InvalidBatch([])
+    assert run(client) == []
+    assert client.single_reads == 0 and client.asked == []
+
+
+def test_a_provider_without_batch_support_keeps_its_existing_read(said):
+    run, _task = said
+    inner = _Client([RUNNING, GREEN])
+
+    class SinglePrClient:
+        async def pr_status(self, number):
+            return await inner.pr_status(number)
+
+        async def check_runs(self, ref):
+            return await inner.check_runs(ref)
+
+    client = SinglePrClient()
+    assert run(client) == []
+    assert run(client) == ["PR #1542 的检查已全绿，可以递卡了"]
+    assert inner.single_reads == 2 and inner.metadata_calls == []
+
+
+def test_a_pr_replaced_while_checks_wait_cannot_receive_the_old_wake(said):
+    run, task = said
+    assert run(_Client([RUNNING])) == []
+
+    class ChangedPr(_Client):
+        async def check_runs(self, ref):
+            result = await super().check_runs(ref)
+            task.pr_number = 999
+            return result
+
+    assert run(ChangedPr([GREEN])) == []
+    assert task.pr_checks_state == "running"
+
+
+def test_a_task_that_starts_closing_while_checks_wait_is_not_woken(said):
+    run, task = said
+    assert run(_Client([RUNNING])) == []
+
+    class ClosingTask(_Client):
+        async def check_runs(self, ref):
+            result = await super().check_runs(ref)
+            task.closing_since = datetime.now(UTC)
+            return result
+
+    assert run(ClosingTask([GREEN])) == []
