@@ -13,13 +13,25 @@
 from __future__ import annotations
 
 import uuid
-from typing import Protocol
+from typing import Literal, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.addressing import NAMES_NOBODY, Event
 from app.domain.block.models import Block
 from app.domain.delivery_events import DeliveryEvent
+
+
+class ProbeRunner(Protocol):
+    """Platform execution of test probes, independent of repository workflows."""
+
+    async def start(
+        self, project_id: uuid.UUID, sha: str, tests: list[str], nonce: str
+    ) -> str | None: ...
+
+    async def verdict(
+        self, project_id: uuid.UUID, run_id: str
+    ) -> Literal["pass", "fail", "unknown", "running"]: ...
 
 
 class SweepCheckouts(Protocol):

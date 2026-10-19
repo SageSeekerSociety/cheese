@@ -262,25 +262,22 @@ class BlockRepository(
     async def last_said_in_turn(
         self, conversation_id: uuid.UUID, turn_id: uuid.UUID
     ) -> str | None:
-        """The words the agent last kept in 现场 during this turn, if any.
+        """The agent's latest published message during this turn, if any.
 
         Read from the rows, not from the turn's in-memory bookkeeping: a turn
         closed by a backend that took it over mid-way (a deploy's handover)
         has none, and the room is what actually knows what was said."""
         stmt = (
-            select(Block.content, Block.meta)
+            select(Block.content)
             .where(
                 Block.conversation_id == conversation_id,
                 Block.turn_id == turn_id,
-                Block.kind == BlockKind.event,
+                Block.kind == BlockKind.message,
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
-            .limit(50)
+            .limit(1)
         )
-        for content, meta in (await self._session.execute(stmt)).all():
-            if isinstance(meta, dict) and meta.get("progress"):
-                return content
-        return None
+        return await self._session.scalar(stmt)
 
     async def has_action(
         self, conversation_id: uuid.UUID, turn_id: uuid.UUID, action: str
@@ -360,59 +357,6 @@ class BlockRepository(
             if meta.pop(PROMPTED_TURN_META_KEY, None) is not None:
                 block.meta = meta
         await self._session.flush()
-
-    async def mark_step_failed(self, block_id: uuid.UUID, error: str) -> Block | None:
-        """Record on a 现场 step that its tool came back an error.
-
-        Written onto the step that is already there rather than as a second
-        block: "it failed" is a property of that one line, and a block of its
-        own would put the verdict somewhere the eye has to pair back up with
-        the action. Same `meta` replacement rule as `mark_consumed` — an
-        in-place mutation of a JSON column never saves.
-
-        Returns the step as it now reads, for whoever tells the room; None when
-        it is gone.
-        """
-        block = await self._session.get(Block, block_id)
-        if block is None:
-            return None
-        meta = {**(block.meta or {}), "failed": True}
-        if error:
-            meta["error"] = error
-        block.meta = meta
-        await self._session.flush()
-        return block
-
-    async def record_step_output(
-        self, block_id: uuid.UUID, output: str, total_bytes: int
-    ) -> Block | None:
-        """Keep on a 现场 step the tail of what its tool printed
-        (``domain/agent/step_output``) and how long the whole was. Same `meta`
-        replacement rule as above."""
-        block = await self._session.get(Block, block_id)
-        if block is None:
-            return None
-        block.meta = {
-            **(block.meta or {}),
-            "output": output,
-            "output_bytes": total_bytes,
-            # When the step last changed: 现场 reads its latest activity off it.
-            "at": datetime.now(UTC).isoformat(),
-        }
-        await self._session.flush()
-        return block
-
-    async def record_step_calls(
-        self, block_id: uuid.UUID, calls: list[dict]
-    ) -> Block | None:
-        """Keep on a 现场 step the tools it called on its own (a script's).
-        Same `meta` replacement rule as above."""
-        block = await self._session.get(Block, block_id)
-        if block is None:
-            return None
-        block.meta = {**(block.meta or {}), "calls": calls}
-        await self._session.flush()
-        return block
 
     async def restate(
         self, block_id: uuid.UUID, *, content: str, meta: dict

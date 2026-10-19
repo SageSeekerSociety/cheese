@@ -124,13 +124,8 @@ class AgentStepFailed:
 
 @dataclass
 class AgentStepOutput:
-    """What a tool call handed back, for the step already on the timeline.
-
-    Like ``AgentStepFailed`` it has no block of its own: it is written onto the
-    step it belongs to, where a reader who opens that line finds what the
-    command printed. The room persists only a capped, redacted tail of it
-    (``step_output``); the harness hands over what it has.
-    """
+    """A translated tool-output signal. Full output stays in the raw journal;
+    this runtime vocabulary does not create or rewrite a display record."""
 
     call_id: str
     text: str = ""

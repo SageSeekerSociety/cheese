@@ -57,7 +57,7 @@ from app.domain.agent.service import (
     AgentUserEntry,
     step_error,
 )
-from app.domain.agent.tool_preview import call_line
+from app.domain.session_record.preview import call_line
 
 # pi stops for a tool call and keeps going; every other reason ends the turn,
 # except a failed call, which ends it only once pi gives up on it (``GAVE_UP``).

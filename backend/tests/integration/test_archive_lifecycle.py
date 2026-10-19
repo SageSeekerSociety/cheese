@@ -804,6 +804,12 @@ async def _make_due(client, cleanup_id) -> None:
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
         operation.due_at = datetime.now(UTC) - timedelta(seconds=1)
+        operation.resources = [
+            {**entry, "expires_at": operation.due_at.isoformat()}
+            if entry.get("retained")
+            else entry
+            for entry in operation.resources
+        ]
         await session.commit()
 
 
@@ -907,6 +913,55 @@ async def test_transcripts_the_bucket_holds_wrongly_outlive_their_expiry(
     assert room.archive.exists()
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, room.cleanup_id)).state == "retained"
+
+
+@pytest.mark.parametrize("failure", ["upload", "verification", "missing_bucket"])
+async def test_transcript_failure_alerts_once_and_backs_off(
+    client, session_host_room, monkeypatch, caplog, failure
+):
+    room = session_host_room
+    room.bucket.refusing = failure == "upload"
+    room.bucket.misreporting = failure == "verification"
+    if failure == "missing_bucket":
+        monkeypatch.setattr(device_storage, "_private_bucket", lambda: None)
+    with caplog.at_level("DEBUG"):
+        _sweep(client)
+        async with client.test_factory() as session:
+            operation = await session.get(RoomCleanup, room.cleanup_id)
+            assert operation.last_error
+            assert operation.failures == 1
+            first_due = operation.due_at
+            assert first_due > datetime.now(UTC)
+            operation.due_at = datetime.now(UTC) - timedelta(seconds=1)
+            await session.commit()
+        _sweep(client)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, room.cleanup_id)
+        assert operation.failures == 2
+        assert operation.due_at > first_due
+    errors = [
+        entry
+        for entry in caplog.records
+        if entry.levelno >= 40
+        and entry.name in {"cheesex.topic.retire", "cheesex.agent.device_storage"}
+    ]
+    assert len(errors) == 1
+    assert room.archive.exists()
+    room.bucket.refusing = False
+    room.bucket.misreporting = False
+    monkeypatch.setattr(device_storage, "_private_bucket", lambda: room.bucket)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, room.cleanup_id)
+        operation.due_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+    _sweep(client)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, room.cleanup_id)
+        assert operation.last_error is None
+        assert operation.failures == 0
+        assert operation.state == "retained"
+        assert operation.due_at > datetime.now(UTC) + timedelta(days=29)
+    assert room.archive.exists()
 
 
 async def test_a_harness_session_linked_out_of_the_harness_is_not_archived(

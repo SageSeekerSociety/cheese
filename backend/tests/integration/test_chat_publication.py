@@ -162,10 +162,9 @@ def test_raw_terminal_output_never_publishes_even_after_stop(client, stub_hooks)
                 break
     assert not any(frame["type"] == "assistant_block" for frame in frames)
     history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
-    output = [block for block in history if block["content"] == stub_hooks.reply]
-    assert output and all(
-        b["kind"] == "event" and b["meta"]["in_room"] is False for b in output
-    )
+    assert not [block for block in history if block["content"] == stub_hooks.reply]
+    records = client.get(f"/topics/{topic}/session-records").json()["data"]["items"]
+    assert any(stub_hooks.reply in str(item["record"]) for item in records)
     assert "chat_send" in stub_hooks.last_system_prompt
     assert "chat_send" in stub_hooks.last_prompt
 
@@ -206,11 +205,10 @@ def test_a_private_chat_only_shows_what_chat_send_sent(client, stub_hooks):
     # between two reads the room could have changed under the assertions.
     after_turn = timeline()
     assert ai_messages(after_turn) == []
-    assert [
-        block["content"]
-        for block in after_turn
-        if block["kind"] == "event" and block["content"] == stub_hooks.reply
-    ]
+    records = client.get(f"/topics/{topic}/session-records", headers=headers).json()[
+        "data"
+    ]["items"]
+    assert any(stub_hooks.reply in str(item["record"]) for item in records)
 
     # One chat_send, exactly one message.
     sent = publish(client, topic, headers, "记好了，偏好写进文档了。")
@@ -235,7 +233,7 @@ def test_publish_during_work_keeps_the_turn_open(client, stub_hooks, monkeypatch
             frame = ws.receive_json()
             if frame["type"] == "turn_started":
                 turn_id = frame["turn_id"]
-            if frame["type"] == "event_block" and frame["block"]["content"] == raw_text:
+            if frame["type"] == "turn_started":
                 break
         assert turn_id is not None
         first = publish(client, topic, headers).json()["data"]
@@ -336,10 +334,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         post_message(client, topic, speaker, {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
-            if (
-                frame["type"] == "event_block"
-                and frame["block"]["content"] == "Internal output"
-            ):
+            if frame["type"] == "turn_started":
                 break
         assert client.portal.call(chat.remind_silent_turns) == 0
         system_event.reset_mock()
@@ -347,7 +342,6 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         assert client.portal.call(chat.remind_silent_turns) == 0
         clock += timedelta(seconds=1)
         client.portal.call(stub_hooks.says, uuid.UUID(topic), "More internal output")
-        assert next_block(ws)["content"] == "More internal output"
         sweep = client.portal.start_task_soon(chat.remind_silent_turns)
         client.portal.call(started.wait)
         assert not sweep.done()
@@ -438,10 +432,7 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
-            if (
-                frame["type"] == "event_block"
-                and frame["block"]["content"] == "Internal output"
-            ):
+            if frame["type"] == "turn_started":
                 break
         # A second agent's turn is live in the same room, and IT is the one
         # holding the topic's active slot. Attribution must still land on the

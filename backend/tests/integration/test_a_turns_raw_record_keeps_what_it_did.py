@@ -11,10 +11,12 @@ Each case drives the real mirror and subscription of the harness against a
 runner journal written here, and reads back through the route a viewer uses.
 """
 
+import base64
 import functools
+import hashlib
 import json
-from datetime import UTC, datetime, timedelta
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import BinaryIO
 
@@ -205,6 +207,11 @@ class _Bucket(StorageBackend):
     def get_url(self, key: str) -> str:
         return key
 
+    async def list_keys(self, prefix: str):
+        for key in sorted(self.objects):
+            if key.startswith(prefix):
+                yield key
+
 
 class _Session:
     """One harness session: a runner journal, and the backend mirroring it."""
@@ -305,6 +312,263 @@ def _seal(client, bucket: _Bucket) -> int:
         return await service.seal(client.test_request_factory, bucket, now=later)
 
     return client.portal.call(run)
+
+
+def test_site_reads_full_raw_records_and_pages_the_same_turn(client, tmp_path):
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    work = str(uuid.uuid4())
+    session.write(_claude_records(work))
+    session.drain()
+    blocks = []
+    before = None
+    while True:
+        response = client.get(
+            f"/topics/{session.ref.topic_id}/transcript",
+            params={
+                "limit": 2,
+                **({"before": before} if before else {}),
+            },
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()["data"]
+        blocks = result["data"] + blocks
+        if not result["has_more"]:
+            break
+        before = result["oldest_id"]
+    raw = [
+        block["meta"]["record"]
+        for block in blocks
+        if "record" in (block.get("meta") or {})
+    ]
+    assert len(raw) == len(_claude_records(work))
+    assert THINKING in json.dumps(raw, ensure_ascii=False)
+    result = next(record for record in raw if record["type"] == "user")
+    output = result["message"]["content"][0]["content"]
+    assert output.startswith("HEAD OF THE OUTPUT")
+    assert output.endswith("LAST LINE OF THE OUTPUT\n")
+    assert SECRET not in output
+
+
+def test_image_pixels_survive_mirroring_and_are_room_authorized(
+    client, tmp_path, bucket, monkeypatch
+):
+    from app.api.routes import topics_session_record_images
+
+    monkeypatch.setattr(topics_session_record_images, "private_storage", lambda: bucket)
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    pixels = b"\x89PNG\r\n\x1a\nexample-image"
+    digest = hashlib.sha256(pixels).hexdigest()
+    session.write(
+        [
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": base64.b64encode(pixels).decode(),
+                            },
+                        }
+                    ]
+                },
+                "cheese": {"work_id": str(uuid.uuid4())},
+            }
+        ]
+    )
+    session.drain()
+    source = session.read()[0]["record"]["message"]["content"][0]["source"]
+    assert source["sha256"] == digest
+    path = f"/topics/{session.ref.topic_id}/session-record-images/{digest}"
+    response = client.get(path)
+    assert response.status_code == 200, response.text
+    assert response.content == pixels
+    assert response.headers["content-type"] == "image/png"
+    stranger = {"X-Cheese-Token": "", **session_auth_headers("stranger")}
+    assert client.get(path, headers=stranger).status_code in (401, 403, 404)
+    other = _room_for(client)
+    assert (
+        client.get(f"/topics/{other}/session-record-images/{digest}").status_code == 404
+    )
+    item = session.read()[0]
+    cursor = service.encode_cursor(
+        (
+            datetime.fromisoformat(item["at"]),
+            item["harness"],
+            item["agent_handle"],
+            item["sequence"],
+        )
+    )
+    exact = f"/topics/{session.ref.topic_id}/session-records/{cursor}"
+    assert client.get(exact).status_code == 200
+    owner = {"X-Cheese-Token": "", **session_auth_headers("user-1")}
+    assert (
+        client.delete(f"/topics/{session.ref.topic_id}", headers=owner).status_code
+        == 200
+    )
+    for endpoint in (path, exact, f"/topics/{session.ref.topic_id}/transcript"):
+        assert client.get(endpoint).status_code == 404
+
+
+def test_agent_history_tools_read_search_and_page_complete_raw_records(
+    client, tmp_path
+):
+    import re
+
+    from tests.unit.test_platform_tool_runner import cheese as tools
+
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    session.write(_claude_records(str(uuid.uuid4())))
+    session.drain()
+
+    class Host:
+        environ = {"CHEESE_TOPIC": str(session.ref.topic_id)}
+
+        def request(self, plan):
+            response = client.request(plan["method"], plan["path"])
+            assert response.status_code == 200, response.text
+            return response.json()
+
+    host = Host()
+    found = tools.run_platform_tool(
+        "cheese_chat_search", {"kind": "event", "query": "HEAD OF THE OUTPUT"}, host
+    )
+    record_id = re.search(r"id=(record:[A-Za-z0-9_-]+)", found)[1]
+    result = ""
+    offset = 0
+    while True:
+        text = tools.run_platform_tool(
+            "cheese_chat_get", {"message_id": record_id, "offset": offset}, host
+        )
+        result += text
+        more = re.search(r"offset=(\d+)", text)
+        if more is None:
+            break
+        offset = int(more[1])
+    assert "HEAD OF THE OUTPUT" in result
+    assert "LAST LINE OF THE OUTPUT" in result
+    assert SECRET not in result
+
+
+def test_channel_record_search_crosses_task_conversations_without_paging_gaps(
+    client, tmp_path
+):
+    from tests.integration.conftest import open_task
+    from tests.unit.test_platform_tool_runner import cheese as tools
+
+    room = _room_for(client)
+    task = open_task(client, str(room), owner="user-1")
+    root = _Session(client, tmp_path, CLAUDE_CODE, room)
+    child_path = tmp_path / "task"
+    child_path.mkdir()
+    child = _Session(client, child_path, CLAUDE_CODE, uuid.UUID(task["id"]))
+
+    def record(label):
+        return {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": f"channel-evidence {label}"}]
+            },
+            "cheese": {"work_id": str(uuid.uuid4())},
+        }
+
+    root.write([record("root")])
+    child.write([record("child-one"), record("child-two")])
+    root.drain()
+    child.drain()
+    for newest, direction in ((True, "before"), (False, "after")):
+        cursor = None
+        found = []
+        while True:
+            response = client.get(
+                f"/topics/{room}/session-records",
+                params={
+                    "channel": True,
+                    "newest": newest,
+                    "q": "channel-evidence",
+                    "limit": 1,
+                    **({direction: cursor} if cursor else {}),
+                },
+            )
+            assert response.status_code == 200, response.text
+            page = response.json()["data"]
+            found += [
+                item["record"]["message"]["content"][0]["text"]
+                for item in page["items"]
+            ]
+            cursor = page["next"]
+            if cursor is None:
+                break
+        assert sorted(found) == [
+            "channel-evidence child-one",
+            "channel-evidence child-two",
+            "channel-evidence root",
+        ]
+
+    class Host:
+        environ = {"CHEESE_TOPIC": str(room)}
+
+        def request(self, plan):
+            response = client.request(plan["method"], plan["path"])
+            assert response.status_code == 200, response.text
+            return response.json()
+
+    result = tools.run_platform_tool(
+        "cheese_chat_search",
+        {"kind": "event", "query": "channel-evidence child-two", "channel": True},
+        Host(),
+    )
+    assert "channel-evidence child-two" in result
+
+
+def test_prelaunch_turn_has_one_explanation_and_no_legacy_details(client):
+    from app.domain.agent.models import AgentTurn
+    from app.domain.block.models import Block, BlockKind
+    from app.domain.conversation.models import Conversation
+    from app.domain.event_author import AuthorType
+
+    room = _room_for(client)
+
+    async def seed():
+        async with client.test_request_factory() as db:
+            conversation = await db.get(Conversation, room)
+            turn = uuid.uuid4()
+            before = datetime.now(UTC) - timedelta(days=1)
+            db.add(
+                AgentTurn(
+                    id=turn,
+                    conversation_id=room,
+                    continuation_id=turn,
+                    author="user-1",
+                    content="Earlier work",
+                    agent_handle="cheese",
+                    started_at=before,
+                    stopped_at=before,
+                )
+            )
+            db.add(
+                Block(
+                    conversation_id=room,
+                    project_id=conversation.project_id,
+                    author="cheese",
+                    author_type=AuthorType.participant,
+                    kind=BlockKind.event,
+                    content="Retired tool detail",
+                    meta={"tool": "Bash", "in_room": False},
+                    turn_id=turn,
+                )
+            )
+            await db.commit()
+
+    client.portal.call(seed)
+    response = client.get(f"/topics/{room}/transcript")
+    assert response.status_code == 200, response.text
+    items = response.json()["data"]["data"]
+    assert len(items) == 1
+    assert items[0]["meta"]["before_launch"] is True
+    assert "Retired tool detail" not in json.dumps(items)
 
 
 @pytest.mark.parametrize("harness", [CLAUDE_CODE, CODEX])

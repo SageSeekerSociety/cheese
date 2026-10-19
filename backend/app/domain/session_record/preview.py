@@ -38,16 +38,6 @@ from dataclasses import dataclass
 #: 预览的长度上限。现场是一行，不是一段。
 PREVIEW_MAX = 120
 
-#: 摊开那一行之后的长度上限。一行管的是扫，这一份管的是看 —— 一条命令连着
-#: heredoc 能有几千字符，而摊开的人要的正是被剪掉的那截。真的封顶时末尾留一个
-#: 省略号，读的人自己就看得出来还有。
-#:
-#: 定在 1200 而不是更宽松：普通命令一两百字符，这个数已经覆盖到长尾，而每条现场
-#: 记录都是永久的。再往上只服务一种情况 —— 往 heredoc 里灌一整个文件 —— 那种东西
-#: 本来就不该在现场读全文，而单行超过约 2KB 的 Postgres 记录会被挪出主表，让每次
-#: 读时间线都多付一次代价。
-DETAIL_MAX = 1200
-
 #: 「这句话是中文吗」—— 有没有汉字就够了，不需要语言识别库。判错的代价只是多走
 #: 一次解析器，而解析器认不出来时又会退回原文，两头都不会把话说坏。
 _HAS_CHINESE = re.compile(r"[一-鿿]")
@@ -470,28 +460,6 @@ def command_preview(command: str, *, work_dir: str = "") -> ToolPreview:
     return ToolPreview(text[:PREVIEW_MAX], action)
 
 
-def tool_detail(name: str, args: dict, preview: ToolPreview) -> str:
-    """摊开这一行时给人看的那一份：参数原文。
-
-    和预览分开算，是因为两者要的东西相反 —— 预览要短、要重写（``cat > x.py
-    <<EOF`` 说成「写文件 x.py」才读得懂），而摊开的人要的恰恰是被重写掉、被剪掉
-    的原文。原文不剪路径、不折行、不换说法，只封顶。
-
-    和那一行说的一样时返回空：摊开之后看见同一句话，等于什么也没摊开。
-    """
-    if not isinstance(args, dict):
-        return ""
-    key = "command" if name in SHELL_TOOLS else _TOOL_ARG.get(name)
-    if key is None or args.get(key) is None:
-        return ""
-    text = str(args[key]).strip()
-    if not text or _collapse(text) == preview.text:
-        return ""
-    if len(text) > DETAIL_MAX:
-        return text[:DETAIL_MAX] + "…"
-    return text
-
-
 def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
     """一次工具调用在现场怎么显示。"""
     if not isinstance(args, dict):
@@ -506,7 +474,7 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
         return ToolPreview()
     if name == "codemode":
         # 一段脚本：那一行写它的第一句（模型多半在那儿写了一句注释说它要干什么），
-        # 跳过开头那行选项。整段在摊开时看（``tool_detail``）。
+        # Skip the leading options; the view expands the complete raw argument.
         for line in str(args.get("code") or "").splitlines():
             line = line.strip()
             if line and not line.startswith("// @options"):
@@ -548,3 +516,54 @@ def call_line(name: str, args: object) -> str:
     if preview.text:
         return preview.text
     return _collapse(json.dumps(args, ensure_ascii=False))[:PREVIEW_MAX]
+
+
+# 现场圆点分级: a PLATFORM action (amber dot) vs plain work (neutral dot).
+# Deterministic by construction — tool-name prefix, or the `cheese` CLI at the
+# head of the command segment 现场 displays. NEVER inferred from natural
+# language, and never from the word appearing somewhere else in the command:
+# the dot and the text on that line have to be about the same thing.
+#: 平台动作在各个 harness 里叫什么。同一件事三种拼法，因为把工具交给模型的机制
+#: 各不相同：MCP 服务器自己加前缀，pi 那边的目录是从 CLI 的命令树生成的，而
+#: `chat_send` 是系统提示每一轮都在点名、于是 extension 额外注册的那个别名。
+#: MCP 那个前缀（`mcp__<服务器>__<工具>`）也要认。claude_code 的服务器注册名是
+#: `native`（见 `harness/claude_code/remote_execution/client.py` 写 mcp.json 时的
+#: `servers = {"native": ...}`），所以真实名字长这样：
+#: `mcp__native__cheese_feedback_propose`；
+#: `mcp__cheese__` 是这套东西还叫 cheese 时的拼法，仍然认（历史行还躺在库里）。
+#: 只认后者会让整件事**静默失效**：前缀认不出来 → 这一格既不算平台动作、中文标签也
+#: 查不到，于是时间线上原样渲染 `mcp__native__…` 配一个中性点，而它看着完全正常。
+_PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
+#: ……但 `mcp__native__` 底下**不都是平台动作**：`invoke` 是这个 harness 搬运读写与
+#: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
+#: 色的点 —— 而那只是读了一个文件。
+_NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
+#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send`、`chat_edit` 和 `todo_write`
+#: 的名字照模型已经认得的说法起；另外两个是平台自己的 MCP 工具。
+_PLATFORM_ALIASES = frozenset(
+    {"chat_send", "chat_edit", "todo_write", "platform_request", "send_user_file"}
+)
+
+#: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
+#: 服务器改名那一天这里会静态地失效，而失效的样子和时间线正常的样子一模一样。
+_MCP_PREFIX = re.compile(r"^mcp__[a-z0-9_]+__")
+
+
+def _short_tool_name(raw_name: str) -> str:
+    """把 MCP 工具名归一成模型看到的那个（`mcp__native__chat_send` → `chat_send`）。"""
+    return _MCP_PREFIX.sub("", raw_name)
+
+
+def _is_platform_tool(raw_name: str, args: dict) -> bool:
+    """True when the tool call is a platform action: a cheese tool under any of
+    the names a harness publishes it as, or a shell command that invokes the
+    machine's `cheese` CLI."""
+    if raw_name in _NOT_A_PLATFORM_TOOL:
+        return False
+    if raw_name.startswith(_PLATFORM_PREFIXES):
+        return True
+    if _short_tool_name(raw_name) in _PLATFORM_ALIASES:
+        return True
+    if raw_name in SHELL_TOOLS and isinstance(args, dict):
+        return bool(cheese_subcommand(str(args.get("command", ""))))
+    return False

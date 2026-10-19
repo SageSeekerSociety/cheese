@@ -11,8 +11,8 @@ Three operations, all on `SessionRecord`:
 - `read` hands a conversation's records back in the order they were written,
   from whichever of the two homes each run is in.
 
-An object, once sealed, is never deleted. How long a row is kept, and so how
-long the app can read a run, is `retention`'s.
+An object, once sealed, is never deleted. The database index expires after
+thirty days; self-describing object keys keep the archive readable afterwards.
 
 What is kept is the journal row as the runner wrote it, the platform's
 `cheese` stamp included. The only change is the scrub (`scrubbed`):
@@ -45,6 +45,13 @@ from app.core.db import SessionFactory
 from app.core.obs import scrub_secrets
 from app.core.storage import StorageBackend, private_storage
 from app.domain.conversation.models import Conversation
+from app.domain.session_record.archive import (
+    INDEX_PREFIX,
+    describe,
+    index_key,
+    object_key,
+)
+from app.domain.session_record.images import keep as keep_images
 from app.domain.session_record.models import SessionRecord
 
 #: How old a record is before the sealer moves it out of the row. Long enough
@@ -186,6 +193,8 @@ async def append(sessions: SessionFactory, stream: Stream, rows: list[dict]) -> 
     Nothing is kept for a conversation that is gone: its records would have
     nowhere to be read from, and the retention sweep would delete their rows anyway.
     """
+    if any(row.get("images") for row in rows):
+        await keep_images(rows, stream.conversation_id, private_storage())
     entries = await asyncio.to_thread(_entries, rows)
     if not entries:
         return 0
@@ -350,10 +359,17 @@ async def _seal_one(
             return False
         entries = [entry for row in run for entry in row.records or []]
         body = await pack(entries)
-        key = f"{PREFIX}/{head.conversation_id}/{uuid.uuid4().hex}.jsonl.gz"
-        # Uploaded before the rows go: a crash in between leaves an object
-        # nothing names, never a run with nothing behind it.
+        key = object_key(run[0], run[-1].last_at)
+        # Verify durable bytes before publishing the index and replacing rows.
+        # A retry may publish another run; reads deduplicate native identities.
         await storage.upload(io.BytesIO(body), key, "application/gzip")
+        if await storage.download(key) != body:
+            raise RuntimeError(f"session record archive verification failed: {key}")
+        # Publication follows verification. Listing data objects would expose
+        # an unverified upload while the database still holds its safe copy.
+        await storage.upload(
+            io.BytesIO(b""), index_key(key), "application/octet-stream"
+        )
         await db.execute(
             delete(SessionRecord).where(SessionRecord.id.in_([r.id for r in run]))
         )
@@ -410,6 +426,8 @@ class RecordOut(BaseModel):
     turn_id: str | None
     agent_handle: str
     harness: str
+    conversation_id: str | None = None
+    cursor: str | None = None
     #: The record as the harness wrote it, scrubbed.
     record: dict[str, Any]
 
@@ -456,6 +474,10 @@ async def read(
     after: Key | None = None,
     limit: int = 200,
     storage: StorageBackend | None = None,
+    before: Key | None = None,
+    newest: bool = False,
+    author: str | None = None,
+    search: str | None = None,
 ) -> Page:
     """A conversation's records (or one turn's) after `after`, oldest first.
 
@@ -471,32 +493,98 @@ async def read(
         query = query.where(SessionRecord.turn_id == turn_id)
     if after is not None:
         query = query.where(SessionRecord.last_at >= after[0])
-    query = query.order_by(SessionRecord.first_at, SessionRecord.id).execution_options(
-        yield_per=50
-    )
+    if before is not None:
+        query = query.where(SessionRecord.first_at <= before[0])
+    if author is not None:
+        query = query.where(SessionRecord.agent_handle == author)
+    order = SessionRecord.last_at.desc() if newest else SessionRecord.first_at
+    query = query.order_by(order, SessionRecord.id).execution_options(yield_per=50)
     found: list[dict] = []
-    async for row in await db.stream_scalars(query):
-        if len(found) > limit:
-            found.sort(key=_key)
-            del found[limit + 1 :]
-            if row.first_at > found[limit]["_at"]:
-                break
-        for entry in await open_run(row, storage):
+    seen: set[Key] = set()
+    opened: set[str] = set()
+
+    def collect(entries: list[dict], turn, agent: str, harness: str) -> None:
+        for entry in entries:
+            if (
+                search is not None
+                and search.casefold()
+                not in json.dumps(entry["record"], ensure_ascii=False).casefold()
+            ):
+                continue
             at = datetime.fromisoformat(entry["at"])
             item = {
                 "sequence": int(entry["sequence"]),
                 "at": at.astimezone(UTC).isoformat(),
-                "turn_id": str(row.turn_id) if row.turn_id else None,
-                "agent_handle": row.agent_handle,
-                "harness": row.harness,
+                "turn_id": str(turn) if turn else None,
+                "agent_handle": agent,
+                "harness": harness,
                 "record": entry["record"],
                 "_at": at,
             }
-            if after is None or _key(item) > after:
-                found.append(item)
-    found.sort(key=_key)
+            key = _key(item)
+            if key in seen or (after is not None and key <= after):
+                continue
+            if before is not None and key >= before:
+                continue
+            seen.add(key)
+            found.append(item)
+
+    # The bucket's index survives the database's thirty-day index. Identity and
+    # time bounds in the key let us skip bodies belonging to other turns and
+    # stop opening runs once the page is full. Objects stay private.
+    archive = storage or bucket()
+    if archive is not None:
+        runs = []
+        async for key in archive.list_keys(f"{INDEX_PREFIX}/{conversation_id}/"):
+            run = describe(key)
+            if turn_id is not None and run["turn_id"] != str(turn_id):
+                continue
+            if author is not None and run["agent_handle"] != author:
+                continue
+            if after is not None and run["last_at"] < after[0]:
+                continue
+            if before is not None and run["first_at"] > before[0]:
+                continue
+            runs.append(run)
+        runs.sort(
+            key=lambda r: r["last_at"] if newest else r["first_at"], reverse=newest
+        )
+        for run in runs:
+            if len(found) > limit:
+                found.sort(key=_key, reverse=newest)
+                del found[limit + 1 :]
+                edge = run["last_at"] if newest else run["first_at"]
+                if edge < found[limit]["_at"] if newest else edge > found[limit]["_at"]:
+                    break
+            body = await archive.download(run["object_key"])
+            opened.add(run["object_key"])
+            if body is None:
+                raise RuntimeError(
+                    f"sealed session records missing: {run['object_key']}"
+                )
+            collect(
+                await asyncio.to_thread(unpack, body),
+                run["turn_id"],
+                run["agent_handle"],
+                run["harness"],
+            )
+    async for row in await db.stream_scalars(query):
+        if row.object_key in opened:
+            continue
+        if len(found) > limit:
+            found.sort(key=_key, reverse=newest)
+            del found[limit + 1 :]
+            edge = row.last_at if newest else row.first_at
+            if edge < found[limit]["_at"] if newest else edge > found[limit]["_at"]:
+                break
+        collect(
+            await open_run(row, storage), row.turn_id, row.agent_handle, row.harness
+        )
+    found.sort(key=_key, reverse=newest)
     page = found[:limit]
     cursor = encode_cursor(_key(page[-1])) if len(found) > limit else None
+    if newest:
+        page.reverse()
     for item in page:
         del item["_at"]
     return Page(page, cursor)

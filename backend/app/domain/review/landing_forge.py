@@ -7,19 +7,20 @@ answer the first three; deployments are GitHub's, read only when the App's
 installation was granted them, and a repository that records none simply has
 none to report.
 
-GitHub also answers the four reads a batched main gate needs (#4249): the run
-whose gate covers a merge commit, the commit `main-green` names, the commits a
-batch covers and what each changed, and the failing files a red job's log names.
-Forgejo answers none of them: it gates each merge on its own, and a commit
-with no runs there has simply not been checked yet.
+GitHub reads the default branch's required checks from branch protection and
+effective rulesets, preserving the expected app. Batch boundaries come from
+those checks on the branch's commits; no repository-owned marker is read.
+GitHub also supplies batch history and failed-job logs. Forgejo judges each
+merge against its effective branch policy; a commit with no runs has not
+been checked yet.
 """
 
-import asyncio
 import logging
 import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from fnmatch import fnmatchcase
 from typing import Literal, Protocol
 from urllib.parse import quote
 
@@ -33,7 +34,6 @@ from app.domain.review.github_pr.failure_logs import (
     _clean_log_line,
     _download_log_tail,
 )
-from app.domain.review.main_gate import MainGate, main_gate_for
 from app.domain.review.superseded_runs import actions_job_id
 
 logger = logging.getLogger("cheesex.review.landing_forge")
@@ -58,6 +58,15 @@ class Check:
     #: that runs beside the batched gate — an image build, say — is another
     #: suite, which is how its failure is told apart from the gate's own.
     suite: int | None = None
+    app_id: int | None = None
+    required: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RequiredCheck:
+    name: str
+    app_id: int | None = None
+    pattern: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,9 +104,11 @@ class BatchCommits:
 
 
 class LandingReads(Protocol):
+    async def configure(self) -> None: ...
+
     @property
-    def main_gate(self) -> MainGate:
-        """What this repository calls the pieces of its batched main gate."""
+    def required_checks(self) -> tuple[RequiredCheck, ...]:
+        """Checks required by the default branch's forge policy."""
         ...
 
     async def merge_sha(self, pr_number: int) -> str | None: ...
@@ -143,24 +154,6 @@ class LandingReads(Protocol):
         """Whether ``descendant`` is ``commit`` or comes after it."""
         ...
 
-    async def dispatch_bisect(
-        self, sha: str, tests: list[str], nonce: str
-    ) -> str | None:
-        """Rerun ``tests`` on ``sha`` in a culprit probe run; the run's id, or
-        None when the forge cannot run one (no permission, no default branch,
-        the run never showed up)."""
-        ...
-
-    async def bisect_verdict(self, run_id: str) -> ProbeVerdict:
-        """``pass``, ``fail``, ``unknown`` or ``running`` for a probe run.
-
-        Only the step that runs the named tests decides: failing is ``fail``,
-        passing is ``pass``. A run that broke anywhere else cannot judge the
-        commit and is ``unknown``; one that has not finished is ``running``,
-        which is not a verdict at all — the caller has to keep waiting rather
-        than end the search."""
-        ...
-
 
 async def reads_for(
     project_id: uuid.UUID, session: AsyncSession
@@ -172,18 +165,11 @@ async def reads_for(
     client = await proposal_client(project_id, session)
     tokens = await tokens_for_project(project_id, session)
     owner, repo = binding.repo.split("/", 1)
-    # Empty means "not resolved from the provider yet" (`repositories.py`
-    # never assumes main); the batched reads simply have no branch to compare
-    # against until it is.
-    branch = binding.default_branch or None
-    gate = await main_gate_for(project_id, session, repo=binding.repo)
     if binding.kind == "github_app":
-        return GitHubLandingReads(
-            client, tokens, binding.api_url, owner, repo, branch=branch, gate=gate
-        )
-    return ForgejoLandingReads(
-        client, tokens, binding.api_url, owner, repo, branch=branch, gate=gate
-    )
+        reads = GitHubLandingReads(client, tokens, binding.api_url, owner, repo)
+    else:
+        reads = ForgejoLandingReads(client, tokens, binding.api_url, owner, repo)
+    return reads
 
 
 _FINISHED_DEPLOYMENT = ("success", "failure", "error")
@@ -228,46 +214,93 @@ _DIAGNOSTIC_FILE = re.compile(rf"^\s*({_SOURCE_FILE})\s*$")
 _GROUPED_ERROR = re.compile(r"^\s+(?:\d+:\d+\s+error\s|\d+:\s+\[[^]]+\]\s)")
 _TAGGED_DIAGNOSTIC = re.compile(r"^\s+(?:NEW|BASELINE GREW):\s+(.+)$")
 
-#: The step in the probe workflow whose failure alone means "the tests fail on
-#: that commit"; the workflow itself is the project's (`main_gate`).
-BISECT_TEST_STEP = "run the named tests"
-#: Looking for a just-dispatched run: GitHub lists it a moment late.
-_RUN_LOOKUPS = 3
-_RUN_LOOKUP_WAIT_S = 3.0
-
 #: A completed check that went red. `cancelled` is not one: a newer push to
 #: main cancels the run it superseded.
-_RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
+_RED_CONCLUSIONS = frozenset(
+    {"failure", "timed_out", "startup_failure", "action_required", "stale"}
+)
 
 #: A completed check that passed, as `merge_state` reads it.
-_PASS_CONCLUSIONS = frozenset({"success", "neutral"})
+_PASS_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 
 
-def gate_run(runs: list[Check], name: str = "") -> Check | None:
+def gate_run(
+    runs: list[Check], required: tuple[RequiredCheck, ...] = ()
+) -> Check | None:
     """The batched gate's own check run among a commit's checks, if any.
 
-    ``name`` is the project's (`main_gate`), not a literal: a repository that
-    does not aggregate its main checks has no such run, and every caller reads
-    that as "this repository gates each merge on its own".
+    Every required context must be present and must report from the app the
+    branch policy names. Missing checks remain pending. Multiple contexts are
+    aggregated without inventing a check name the hosted repository must use.
 
     A re-run leaves more than one run of the same name on a commit; as
     `merge_state._outcome` reads them, any pass wins, a run still going beats
     an old red, and only then is the remaining one the answer."""
-    if not name:
+    if not required:
         return None
-    gates = [run for run in runs if run.name == name]
-    if not gates:
-        return None
-    for run in gates:
-        if run.status == "completed" and run.conclusion in _PASS_CONCLUSIONS:
-            return run
-    for run in gates:
-        if run.status != "completed":
-            return run
-    for run in gates:
-        if run.conclusion in _RED_CONCLUSIONS:
-            return run
-    return gates[0]
+    contexts = []
+    for check in required:
+        if not check.pattern:
+            contexts.append(check)
+            continue
+        names = sorted({run.name for run in runs if fnmatchcase(run.name, check.name)})
+        if not names:
+            return Check(check.name, "queued", None, "")
+        contexts.extend(RequiredCheck(name, check.app_id) for name in names)
+    selected = []
+    for check in contexts:
+        gates = [
+            run
+            for run in runs
+            if run.name == check.name
+            and (check.app_id is None or run.app_id == check.app_id)
+        ]
+        if not gates:
+            selected.append(Check(check.name, "queued", None, ""))
+        else:
+            selected.append(
+                next(
+                    (
+                        run
+                        for run in gates
+                        if run.status == "completed"
+                        and run.conclusion in _PASS_CONCLUSIONS
+                    ),
+                    next(
+                        (run for run in gates if run.status != "completed"),
+                        next(
+                            (
+                                run
+                                for run in gates
+                                if run.conclusion in _RED_CONCLUSIONS
+                            ),
+                            gates[0],
+                        ),
+                    ),
+                )
+            )
+    if len(selected) == 1:
+        return selected[0]
+    pending = any(
+        run.status != "completed"
+        or run.conclusion not in (_PASS_CONCLUSIONS | _RED_CONCLUSIONS | {"cancelled"})
+        for run in selected
+    )
+    red = any(run.conclusion in _RED_CONCLUSIONS for run in selected)
+    cancelled = any(run.conclusion == "cancelled" for run in selected)
+    return Check(
+        ", ".join(check.name for check in required),
+        "in_progress" if pending else "completed",
+        None
+        if pending
+        else "failure"
+        if red
+        else "cancelled"
+        if cancelled
+        else "success",
+        next((run.url for run in selected if run.url), ""),
+        required=tuple(check.name for check in contexts),
+    )
 
 
 def _failed_paths(log: str, *, tests_only: bool = False) -> list[str]:
@@ -318,18 +351,67 @@ class GitHubLandingReads:
         transport=None,
         *,
         branch: str | None = None,
-        gate: MainGate | None = None,
+        required: tuple[RequiredCheck, ...] = (),
     ):
         self._client = client
         self._tokens = tokens
         self._transport = transport
         self._branch = branch
-        self._gate = gate or MainGate()
+        self._required = required
         self._base = f"{api_base.rstrip('/')}/repos/{quote(owner)}/{quote(repo)}"
+        self._graphql_url = api_base.rstrip("/").removesuffix("/v3") + "/graphql"
+        self._owner, self._repo = owner, repo
 
     @property
-    def main_gate(self) -> MainGate:
-        return self._gate
+    def required_checks(self) -> tuple[RequiredCheck, ...]:
+        return self._required
+
+    @property
+    def default_branch(self) -> str | None:
+        return self._branch
+
+    async def configure(self):
+        token, _ = await self._tokens.installation_token()
+        async with forge_client(transport=self._transport, timeout=20.0) as http:
+            response = await http.post(
+                self._graphql_url,
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "query": "query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){defaultBranchRef{name branchProtectionRule{requiredStatusChecks{context app{databaseId}}}}}}",
+                    "variables": {"owner": self._owner, "repo": self._repo},
+                },
+            )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("errors") or not (data.get("data") or {}).get("repository"):
+            raise ForgeUnavailable
+        branch_data = data["data"]["repository"]["defaultBranchRef"]
+        if not branch_data:
+            raise ForgeUnavailable
+        self._branch = branch_data["name"]
+        branch = quote(self._branch, safe="")
+        rules = await self._get(f"/rules/branches/{branch}")
+        required = set()
+        for check in (branch_data.get("branchProtectionRule") or {}).get(
+            "requiredStatusChecks"
+        ) or []:
+            required.add(
+                RequiredCheck(
+                    check["context"], (check.get("app") or {}).get("databaseId")
+                )
+            )
+        for rule in rules:
+            if rule.get("type") == "required_status_checks":
+                for check in rule["parameters"]["required_status_checks"]:
+                    app_id = check.get("integration_id")
+                    required.add(
+                        RequiredCheck(
+                            check["context"], app_id if app_id and app_id > 0 else None
+                        )
+                    )
+        self._required = tuple(
+            sorted(required, key=lambda check: (check.name, check.app_id or 0))
+        )
 
     async def _get(self, path: str, params: dict | None = None):
         token, _ = await self._tokens.installation_token()
@@ -365,10 +447,33 @@ class GitHubLandingReads:
                     conclusion=run.get("conclusion"),
                     url=run.get("html_url") or "",
                     suite=(run.get("check_suite") or {}).get("id"),
+                    app_id=(run.get("app") or {}).get("id"),
                 )
                 for run in runs
             ]
             if len(runs) < 100:
+                break
+            page += 1
+        page = 1
+        while True:
+            data = await self._get(
+                f"/commits/{sha}/status", {"per_page": 100, "page": page}
+            )
+            statuses = data.get("statuses") or []
+            found += [
+                Check(
+                    status["context"],
+                    "completed" if status["state"] != "pending" else "in_progress",
+                    {
+                        "success": "success",
+                        "failure": "failure",
+                        "error": "failure",
+                    }.get(status["state"]),
+                    status.get("target_url") or "",
+                )
+                for status in statuses
+            ]
+            if len(statuses) < 100:
                 return found
             page += 1
 
@@ -409,7 +514,7 @@ class GitHubLandingReads:
         # never deciding while merges keep landing.
         for commit in reversed(ahead):
             runs = await self.checks(commit)
-            gate = gate_run(runs, self._gate.check)
+            gate = gate_run(runs, self._required)
             if gate is None or gate.status != "completed":
                 continue
             if gate.conclusion != "cancelled":
@@ -417,16 +522,20 @@ class GitHubLandingReads:
         return None
 
     async def main_green(self) -> str | None:
-        if not self._gate.green_ref:
+        if not self._branch or not self._required:
             return None
-        try:
-            data = await self._get(
-                f"/git/ref/heads/{quote(self._gate.green_ref, safe='')}"
-            )
-        except ForgeUnavailable:
-            return None
-        sha = (data.get("object") or {}).get("sha")
-        return sha or None
+        commits = await self._get(
+            "/commits", {"sha": self._branch, "per_page": _LOOK_BACK}
+        )
+        for commit in commits:
+            gate = gate_run(await self.checks(commit["sha"]), self._required)
+            if (
+                gate is not None
+                and gate.status == "completed"
+                and gate.conclusion in _PASS_CONCLUSIONS
+            ):
+                return commit["sha"]
+        return None
 
     async def commits_between(self, base: str, head: str) -> BatchCommits | None:
         try:
@@ -578,76 +687,6 @@ class GitHubLandingReads:
             failed = failed or seen
         return failed
 
-    async def dispatch_bisect(
-        self, sha: str, tests: list[str], nonce: str
-    ) -> str | None:
-        if not self._branch or not self._gate.probe_workflow:
-            return None
-        # Ask first: without `actions: write` the POST is a 403 the App would
-        # be counted for.
-        if (await self._tokens.granted_permissions()).get("actions") != "write":
-            return None
-        token, _ = await self._tokens.installation_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        }
-        async with forge_client(transport=self._transport, timeout=20.0) as http:
-            resp = await http.post(
-                f"{self._base}/actions/workflows/"
-                f"{self._gate.probe_workflow}/dispatches",
-                headers=headers,
-                # `ref` must be a branch: a bare commit cannot be dispatched.
-                json={
-                    "ref": self._branch,
-                    "inputs": {"sha": sha, "tests": " ".join(tests), "nonce": nonce},
-                },
-            )
-        if resp.status_code != 204:
-            return None
-        # The run's head is the branch's, so the nonce in its name is the only
-        # thing that ties it to this dispatch.
-        for attempt in range(_RUN_LOOKUPS):
-            if attempt:
-                await asyncio.sleep(_RUN_LOOKUP_WAIT_S)
-            try:
-                data = await self._get(
-                    f"/actions/workflows/{self._gate.probe_workflow}/runs",
-                    {"event": "workflow_dispatch", "per_page": 30},
-                )
-            except ForgeUnavailable:
-                return None
-            for run in data.get("workflow_runs") or []:
-                # `run-name` comes back as `display_title`; `name` is the
-                # workflow's own name, and only a run without a `run-name`
-                # shows its title there.
-                titles = (run.get("display_title"), run.get("name"))
-                if f"culprit {nonce}" in titles and run.get("id"):
-                    return str(run["id"])
-        return None
-
-    async def bisect_verdict(self, run_id: str) -> ProbeVerdict:
-        try:
-            run = await self._get(f"/actions/runs/{quote(run_id, safe='')}")
-            if run.get("status") != "completed":
-                return "running"
-            data = await self._get(
-                f"/actions/runs/{quote(run_id, safe='')}/jobs", {"per_page": 100}
-            )
-        except ForgeUnavailable:
-            return "unknown"
-        conclusions = [
-            step.get("conclusion")
-            for job in data.get("jobs") or []
-            for step in job.get("steps") or []
-            if step.get("name") == BISECT_TEST_STEP
-        ]
-        if "failure" in conclusions:
-            return "fail"
-        if "success" in conclusions:
-            return "pass"
-        return "unknown"
-
     async def _includes(self, deployed: str, sha: str) -> bool:
         if deployed == sha:
             return True
@@ -665,17 +704,37 @@ class ForgejoLandingReads:
         repo: str,
         *,
         branch: str | None = None,
-        gate: MainGate | None = None,
+        required: tuple[RequiredCheck, ...] = (),
     ):
         self._client = client
         self._tokens = tokens
         self._branch = branch
-        self._gate = gate or MainGate()
+        self._required = required
         self._repo = f"/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
 
     @property
-    def main_gate(self) -> MainGate:
-        return self._gate
+    def required_checks(self) -> tuple[RequiredCheck, ...]:
+        return self._required
+
+    async def configure(self):
+        token, _ = await self._tokens.installation_token()
+        forgejo = self._client.client
+        repository = forgejo._data(
+            await forgejo.request("GET", self._repo, token=token)
+        )
+        self._branch = repository["default_branch"]
+        protection = forgejo._data(
+            await forgejo.request(
+                "GET",
+                f"{self._repo}/branches/{quote(self._branch, safe='')}",
+                token=token,
+            )
+        )
+        self._required = tuple(
+            RequiredCheck(name, pattern=True)
+            for name in ((protection or {}).get("status_check_contexts") or [])
+            if protection.get("enable_status_check")
+        )
 
     async def merge_sha(self, pr_number: int) -> str | None:
         return (await self._client.pr_status(pr_number)).merge_commit_sha
@@ -725,11 +784,3 @@ class ForgejoLandingReads:
 
     async def is_ancestor(self, commit: str, descendant: str) -> bool:
         return False
-
-    async def dispatch_bisect(
-        self, sha: str, tests: list[str], nonce: str
-    ) -> str | None:
-        return None
-
-    async def bisect_verdict(self, run_id: str) -> ProbeVerdict:
-        return "unknown"

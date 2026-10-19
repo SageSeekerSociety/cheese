@@ -16,6 +16,7 @@ from app.domain.agent import checkout_sweep
 from app.domain.agent import periodic as agent_periodic
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
+from app.domain.agent.culprit_probes import PlatformProbes
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent_instance.adapters import task_teammate
 from app.domain.block.queries import turn_starts
@@ -167,6 +168,7 @@ def periodic_jobs(
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
         machines=checkout_sweep.sweep,
+        probes=PlatformProbes(sessions),
     )
     machine_periodic.register_periodic_jobs(
         jobs,

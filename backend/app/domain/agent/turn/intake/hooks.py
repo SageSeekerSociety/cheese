@@ -16,34 +16,26 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.sentences import say
 from app.domain.agent import turn_resume
 from app.domain.agent.credits_notice import spent_reason
-from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
 from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
 from app.domain.agent.prompt import _compaction_notice
 from app.domain.agent.room_events import post_system_event
+from app.domain.agent.run_records import record_now
 from app.domain.agent.service import (
     AgentCompacting,
     AgentEvent,
-    AgentMessage,
     AgentResult,
     AgentRetrying,
     AgentSessionInfo,
-    AgentStepCalls,
-    AgentStepFailed,
-    AgentStepOutput,
-    AgentToolResult,
     AgentToolUse,
     AgentUserEntry,
     proves_output,
 )
 from app.domain.agent.session_turn_events import SessionTurnEvents
-from app.domain.agent.step_output import without_output
 from app.domain.agent.turn.intake.assistant import AssistantMessages
 from app.domain.agent.turn.intake.completion import TurnCompletion
 from app.domain.agent.turn.intake.events import (
-    _persist_subagent_result,
-    _persist_tool_event,
     announce_action,
 )
 from app.domain.agent.turn.intake.native_entries import _bind_user_entry
@@ -56,11 +48,6 @@ from app.domain.agent.turn.intake.notes import (
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.state.notices import _TOOL_ACTION, _turn_failure_notice
 from app.domain.agent.turn.steps.hooks import HookActivity, LandedEvent, execute_event
-from app.domain.agent.turn.store.events import (
-    _mark_step_failed,
-    _record_step_calls,
-    _record_step_output,
-)
 from app.domain.agent.turn.store.intervals import turn_credits_refused
 from app.domain.agent.turn_inputs import mark_session_for_turn
 from app.domain.delivery.receipts import inputs_answered_inside
@@ -70,6 +57,7 @@ from app.domain.notice_meta import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.session_record.preview import _short_tool_name
 from app.domain.usage.credits import (
     CREDITS_EXHAUSTED_META,
     credits_event,
@@ -239,80 +227,11 @@ class HookEvents:
                 seat=seat,
                 event=event,
             )
-        elif isinstance(event, AgentMessage):
-            payload = await self.messages.persist_assistant_message(
-                project_id=project_id,
-                topic_id=room_id,
-                text=event.text,
-                turn_id=turn_id,
-                reply_to=(
-                    state.reply_to
-                    if state is not None and state.assistant_count == 0
-                    else None
-                ),
-                roster=state.roster if state is not None else None,
-                topic_refs=state.topic_refs if state is not None else [],
-                eid=eid or event.eid,
-                eids=event.eids,
-                platform_unsolicited=platform_unsolicited,
-                continuation_id=(state.continuation_id if state is not None else None),
-                at=event.at,
-                author=event.agent_handle
-                or (state.acting_agent if state is not None else None),
-                inner_id=inner_id,
-            )
-            if payload is not None:
-                frame = {"type": "event_block", "block": payload}
         elif isinstance(event, AgentToolUse):
             name = _short_tool_name(event.name)
-            args = event.input or {}
-            payload = await _persist_tool_event(
-                sessions,
-                live,
-                project_id=project_id,
-                topic_id=room_id,
-                name=name,
-                tool_input=args,
-                platform=_is_platform_tool(event.name, args),
-                turn_id=turn_id,
-                eid=eid or event.eid,
-                platform_unsolicited=platform_unsolicited,
-                inner_id=inner_id,
-                author=event.agent_handle,
-                at=event.at,
-            )
-            if payload is not None:
-                frame = {"type": "event_block", "block": payload}
-                if state is not None and event.call_id:
-                    state.steps[event.call_id] = uuid.UUID(payload["id"])
             resource = _TOOL_ACTION.get(name)
             if state is not None and resource is not None:
                 await announce_action(sessions, state, resource)
-        elif isinstance(event, AgentStepFailed):
-            # It changes a line that is already on the timeline rather than
-            # adding one, so it goes out as that line, restated. A step whose
-            # call we never saw (a restart mid-turn) is simply not marked — the
-            # timeline is still true, just less helpful.
-            block_id = state.steps.get(event.call_id) if state is not None else None
-            if block_id is not None:
-                payload = await _mark_step_failed(sessions, block_id, event.text)
-                if payload is not None:
-                    frame = {"type": "block_updated", "block": without_output(payload)}
-        elif isinstance(event, AgentStepOutput):
-            # Written onto the step, like a failure. The frame says only that
-            # the step now has output: the text is read when somebody opens it.
-            block_id = state.steps.get(event.call_id) if state is not None else None
-            if block_id is not None:
-                payload = await _record_step_output(sessions, block_id, event.text)
-                if payload is not None:
-                    frame = {"type": "block_updated", "block": without_output(payload)}
-        elif isinstance(event, AgentStepCalls):
-            # The tools a script called, written onto the script's step.
-            block_id = state.steps.get(event.call_id) if state is not None else None
-            if block_id is not None and event.calls:
-                payload = await _record_step_calls(sessions, block_id, event.calls)
-                if payload is not None:
-                    frame = {"type": "block_updated", "block": without_output(payload)}
         elif isinstance(event, AgentCompacting):
             if event.done:
                 await _note_compaction(sessions, live, turn_id, event, channel=channel)
@@ -347,20 +266,6 @@ class HookEvents:
                 inner_id=inner_id,
                 channel=channel,
             )
-        elif isinstance(event, AgentToolResult):
-            payload = await _persist_subagent_result(
-                sessions,
-                live,
-                project_id=project_id,
-                topic_id=room_id,
-                event=event,
-                turn_id=turn_id,
-                eid=eid,
-                platform_unsolicited=platform_unsolicited,
-                inner_id=inner_id,
-            )
-            if payload is not None:
-                frame = {"type": "event_block", "block": payload}
         elif (
             isinstance(event, AgentResult)
             and event.taken_into is None
@@ -438,39 +343,33 @@ class HookEvents:
                         route=state.route if state is not None else None,
                     )
                 if not recovering:
+                    room_meta = dict(meta)
+                    if "error" in room_meta:
+                        # Startup diagnostics are platform records. The room
+                        # gets its notice; full logs belong to the trace view.
+                        await record_now(
+                            sessions,
+                            conversation_id=conversation_id,
+                            content=line,
+                            meta=meta,
+                            turn_id=turn_id,
+                            seat=event.agent_handle
+                            or (state.acting_agent if state is not None else None),
+                        )
+                        room_meta.pop("error")
+                        room_meta.pop("failed", None)
                     payload = await post_system_event(
-                        sessions, room_id, line, turn_id, meta=meta, inner_id=inner_id
+                        sessions,
+                        room_id,
+                        line,
+                        turn_id,
+                        meta=room_meta,
+                        inner_id=inner_id,
                     )
                     if payload is not None:
                         frame = {"type": "event_block", "block": payload}
                         if inner_id is not None:
                             await self.thread_replied(inner_id)
-            if not event.is_error and event.text.strip():
-                # Terminal output, the final response included, stays in
-                # activity: a reply reaches the room only through chat_send,
-                # in a private chat exactly as in any other room.
-                payload = await self.messages.persist_assistant_message(
-                    project_id=project_id,
-                    topic_id=room_id,
-                    text=event.text,
-                    turn_id=turn_id,
-                    reply_to=state.reply_to if state is not None else None,
-                    roster=state.roster if state is not None else None,
-                    topic_refs=state.topic_refs if state is not None else [],
-                    author=event.agent_handle
-                    or (state.acting_agent if state is not None else None),
-                    eid=eid,
-                    platform_unsolicited=platform_unsolicited,
-                    continuation_id=(
-                        state.continuation_id if state is not None else None
-                    ),
-                    closing=result_text_seen,
-                    inner_id=inner_id,
-                )
-                if payload is not None:
-                    if state is not None:
-                        state.assistant_count += 1
-                    frame = {"type": "event_block", "block": payload}
         await execute_event(
             sessions,
             live,
