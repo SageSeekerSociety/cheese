@@ -84,8 +84,10 @@ class HubDevice:
         command's environment, a working directory, an executor's state), as
         this connector reads it. One built before enrollments had roots of their
         own expands only ``$HOME``, and is a default-profile machine, whose root
-        is the footprint root: it is told that root until its update lands."""
-        if self.profiles:
+        is the footprint root: it is told that root until its update lands.
+        Before ``hello`` nothing is known, and the path is left as it is: told
+        `.cheese`, a named profile would work in the default profile's files."""
+        if self.profiles or not self.announced.is_set():
             return value
         return value.replace(ROOT_PLACEHOLDER, footprint_root())
 

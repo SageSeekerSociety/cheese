@@ -192,3 +192,23 @@ def test_a_running_executor_prepares_its_own_room_and_no_other(
         runtime_calls.prepare(
             executor, {"project": project, "resource": str(uuid.uuid4())}
         )
+
+
+async def test_a_connector_that_has_not_said_hello_is_not_told_another_root():
+    """Until hello says what the connector resolves, a named profile told
+    `.cheese` would run in the default profile's workspace."""
+    import asyncio
+
+    from app.domain.agent.device_hub import DeviceHub
+    from app.domain.agent.place import ROOT_PLACEHOLDER
+
+    hub = DeviceHub()
+    transport = _Transport()
+    await hub.attach_device("dev1", transport)
+    home = device_provider.device_home_dir(str(uuid.uuid4()), str(uuid.uuid4()))
+    call = asyncio.create_task(hub.exec("dev1", ["true"], env={"DIR": home}))
+    await asyncio.sleep(0)
+    sent = json.dumps(transport.sent[1:])
+    call.cancel()
+    await asyncio.gather(call, return_exceptions=True)
+    assert ROOT_PLACEHOLDER in sent
