@@ -30,9 +30,6 @@ type Msg struct {
 	T        string `json:"t"`
 	V        int    `json:"v,omitempty"`        // protocol version (hello / welcome)
 	Executor bool   `json:"executor,omitempty"` // resident executor socket calls
-	// Profiles: this connector expands the enrollment's root
-	// (place.RootPlaceholder) in the paths it resolves itself.
-	Profiles bool `json:"profiles,omitempty"`
 	// Which binary is speaking, sent up in `hello`: Build is the sha256 of this
 	// connector's own executable, Target its `<os>-<arch>`. V cannot carry this
 	// — it moves only for a breaking change, so a build missing a compatibly
@@ -158,7 +155,7 @@ func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 		c.mu.Unlock()
 	}()
 
-	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target, Executor: true, Profiles: true})
+	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target, Executor: true})
 
 	// Liveness: reset the read deadline on every pong (and every message below).
 	_ = conn.SetReadDeadline(time.Now().Add(pongWait))

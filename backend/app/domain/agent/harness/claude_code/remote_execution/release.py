@@ -445,15 +445,6 @@ def replace(path, content):
     temporary.replace(path)
 
 
-def expanded_path(path):
-    return os.path.expandvars(
-        path.replace(
-            "${CHEESE_PROFILE_ROOT:-.cheese}",
-            os.environ.get("CHEESE_PROFILE_ROOT", ".cheese"),
-        )
-    )
-
-
 def stage(home, sources, seat="", session_id="", background=False):
     """Install a release into the session that asked for it.
 
@@ -469,15 +460,15 @@ def stage(home, sources, seat="", session_id="", background=False):
     where the release would unmount the forwarded view the command may be
     reading.
     """
-    config = Path(expanded_path(home)) / ".claude"
-    platform_dir = Path(expanded_path(home)) / ".cheese"
+    config = Path(os.path.expandvars(home)) / ".claude"
+    platform_dir = Path(os.path.expandvars(home)) / ".cheese"
     helpers = (
-        Path(expanded_path(seat)) / "remote-execution"
+        Path(os.path.expandvars(seat)) / "remote-execution"
         if seat
         else platform_dir / "remote-execution"
     )
     directory = (
-        Path(expanded_path(seat)) / "remote-session"
+        Path(os.path.expandvars(seat)) / "remote-session"
         if seat
         else platform_dir / "remote-session"
     )
@@ -575,9 +566,9 @@ def stage(home, sources, seat="", session_id="", background=False):
 
 def acknowledge(home, version, seat=""):
     directory = (
-        Path(expanded_path(seat)) / "remote-session"
+        Path(os.path.expandvars(seat)) / "remote-session"
         if seat
-        else Path(expanded_path(home)) / ".cheese/remote-session"
+        else Path(os.path.expandvars(home)) / ".cheese/remote-session"
     )
     replace(
         directory / "release-ready",

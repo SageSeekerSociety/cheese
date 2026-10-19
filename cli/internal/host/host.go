@@ -33,7 +33,6 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
 	"github.com/SageSeekerSociety/cheese/cli/internal/localfs"
-	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/runtimepath"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese/cli/internal/update"
@@ -76,11 +75,6 @@ type sess struct {
 // New builds a Host from cfg. cfgPath locates the shared state file that lets
 // CLI commands see how many screens are live ("" disables that).
 func New(cfg *config.Config, cfgPath string) (*Host, error) {
-	if cfgPath != "" {
-		if err := config.Activate(cfgPath); err != nil {
-			return nil, err
-		}
-	}
 	ctrlURL, err := cfg.ControlURL()
 	if err != nil {
 		return nil, err
@@ -375,9 +369,8 @@ func (h *Host) createSession(m link.Msg) {
 		env = append(env, runtimepath.Var+"="+dirs)
 	}
 	for k, v := range m.Env {
-		env = append(env, k+"="+place.ExpandRoot(v))
+		env = append(env, k+"="+v)
 	}
-	env = append(env, place.ProfileRootEnv+"="+place.CurrentRoot())
 
 	// If a tmux session for this sid already exists (it survived a `cheese update`
 	// re-exec or a server restart), ADOPT it: re-attach to the still-running
@@ -553,7 +546,6 @@ func (h *Host) release(s *sess) {
 }
 
 func resolveScreenWorkDir(workDir string) (string, error) {
-	workDir = place.ExpandRoot(workDir)
 	if workDir == "" {
 		return "", fmt.Errorf("screen has no work directory")
 	}
@@ -615,9 +607,9 @@ func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Ms
 	}
 	env := os.Environ()
 	for k, v := range m.Env {
-		env = append(env, k+"="+place.ExpandRoot(v))
+		env = append(env, k+"="+v)
 	}
-	cmd.Env = append(env, place.ProfileRootEnv+"="+place.CurrentRoot())
+	cmd.Env = env
 	if m.Stdin != "" {
 		cmd.Stdin = strings.NewReader(m.Stdin)
 	}

@@ -201,7 +201,7 @@ def disk(cleanup, live, grace_s, walk=True) -> dict:
     (``cleanup["sandbox_marker"]``); a home without one — a room's own
     directory on a computer that runs it without a sandbox — is counted but
     never called left behind."""
-    root = Path.home() / os.environ.get("CHEESE_PROFILE_ROOT", ".cheese") / "home"
+    root = Path.home() / ".cheese" / "home"
     deadline = time.monotonic() + WALK_S
     live = {(str(project), str(resource)) for project, resource in live}
     homes, left_behind = [], []

@@ -45,7 +45,7 @@ from app.domain.agent import (
     toolchain,
 )
 from app.domain.agent.launch import MachineLaunch, MachinePlace
-from app.domain.agent.place import machine_root, seat_name
+from app.domain.agent.place import seat_name
 from app.domain.agent.resource_cleanup import SESSION_TMP
 
 # The launcher below spells the platform's own directory literally, because the
@@ -350,7 +350,7 @@ def toolchain_fetcher() -> str:
 def toolchain_block() -> str:
     fonts_pin = toolchain.fonts_pin()
     fetcher = toolchain_fetcher()
-    return f"""CHEESE_TOOLCHAIN="$REAL_HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/toolchain"
+    return f"""CHEESE_TOOLCHAIN="$REAL_HOME/.cheese/toolchain"
 export CHEESE_TOOLCHAIN
 export PATH="$CHEESE_TOOLCHAIN/bin:$PATH"
 # Node goes AFTER the machine's own PATH: a member's computer that has a node
@@ -384,7 +384,7 @@ def state_dir(project_id, resource_id, harness: str, agent_handle: str) -> str:
     Two copies of this is how four native-tool lists happened.
     """
     return (
-        f"{machine_root()}/harness/{project_id}/{resource_id}/{harness}/"
+        f"$HOME/.cheese/harness/{project_id}/{resource_id}/{harness}/"
         + hashlib.sha256(agent_handle.encode()).hexdigest()
     )
 
@@ -551,9 +551,9 @@ REAL_HOME="$HOME"
 # Append across relaunches; only phase names and timestamps enter this file.
 cheese_launch_phase() {{
   [ -n "${{EPOCHREALTIME:-}}" ] || return 0
-  [ -d "$REAL_HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/launch" ] || return 0
+  [ -d "$REAL_HOME/.cheese/launch" ] || return 0
   printf '%s %s\\n' "$EPOCHREALTIME" "$1" \\
-    >> "$REAL_HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/launch/$CHEESE_TOPIC.timing" 2>/dev/null || :
+    >> "$REAL_HOME/.cheese/launch/$CHEESE_TOPIC.timing" 2>/dev/null || :
 }}
 cheese_launch_phase started
 CH="${{CHEESE_HOME:?Cheese session home is required}}"
