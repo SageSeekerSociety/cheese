@@ -20,7 +20,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import quote
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +36,9 @@ from app.domain.review.main_gate import MainGate, main_gate_for
 from app.domain.review.superseded_runs import actions_job_id
 
 logger = logging.getLogger("cheesex.review.landing_forge")
+
+#: What a probe run says: a verdict when it finished, ``running`` while it has not.
+ProbeVerdict = Literal["pass", "fail", "unknown", "running"]
 
 
 class ForgeUnavailable(Exception):
@@ -145,7 +148,7 @@ class LandingReads(Protocol):
         the run never showed up)."""
         ...
 
-    async def bisect_verdict(self, run_id: str) -> str:
+    async def bisect_verdict(self, run_id: str) -> ProbeVerdict:
         """``pass``, ``fail``, ``unknown`` or ``running`` for a probe run.
 
         Only the step that runs the named tests decides: failing is ``fail``,
@@ -569,7 +572,7 @@ class GitHubLandingReads:
                     return str(run["id"])
         return None
 
-    async def bisect_verdict(self, run_id: str) -> str:
+    async def bisect_verdict(self, run_id: str) -> ProbeVerdict:
         try:
             run = await self._get(f"/actions/runs/{quote(run_id, safe='')}")
             if run.get("status") != "completed":
@@ -674,5 +677,5 @@ class ForgejoLandingReads:
     ) -> str | None:
         return None
 
-    async def bisect_verdict(self, run_id: str) -> str:
+    async def bisect_verdict(self, run_id: str) -> ProbeVerdict:
         return "unknown"

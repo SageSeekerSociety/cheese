@@ -138,15 +138,14 @@ async def advance(
     return Finding("searching")
 
 
-async def purge(sessions: SessionFactory, *, now: datetime | None = None) -> int:
+async def purge(sessions: SessionFactory, *, now: datetime | None = None) -> None:
     """Drop searches nobody will read again."""
     now = now or datetime.now(UTC)
     async with sessions() as session:
-        result = await session.execute(
+        await session.execute(
             delete(CulpritSearch).where(CulpritSearch.updated_at < now - KEEP_FOR)
         )
         await session.commit()
-    return result.rowcount or 0
 
 
 def _finding(search: Search) -> Finding:
