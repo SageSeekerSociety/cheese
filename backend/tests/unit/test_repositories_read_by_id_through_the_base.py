@@ -18,6 +18,8 @@ The scan reads source, not imports, so it sits in ``TREE_GUARDS``.
 from __future__ import annotations
 
 import ast
+import re
+from functools import cache
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[2] / "app"
@@ -102,12 +104,18 @@ def _hand_reads(node: ast.ClassDef, model: str | None) -> list[int]:
     return lines
 
 
-def judge(sources: dict[str, str], on_base: tuple[tuple[str, str], ...]) -> list[str]:
-    problems: list[str] = []
+@cache
+def _parsed(text: str) -> ast.Module:
+    return ast.parse(text)
+
+
+def _class_graph(
+    sources: dict[str, str],
+) -> tuple[dict[tuple[str, str], ast.ClassDef], dict[str, str | None]]:
     classes: dict[tuple[str, str], ast.ClassDef] = {}
     roots = {"Repository"}
     for path, text in sorted(sources.items()):
-        for node in ast.walk(ast.parse(text)):
+        for node in ast.walk(_parsed(text)):
             if isinstance(node, ast.ClassDef):
                 classes[(path, node.name)] = node
             elif isinstance(node, ast.ImportFrom):
@@ -131,6 +139,12 @@ def judge(sources: dict[str, str], on_base: tuple[tuple[str, str], ...]) -> list
             models[name] = _model_name(node) or inherited
             on_base_names.add(name)
             grew = True
+    return classes, models
+
+
+def judge(sources: dict[str, str], on_base: tuple[tuple[str, str], ...]) -> list[str]:
+    problems: list[str] = []
+    classes, models = _class_graph(sources)
     for path, name in on_base:
         if (path, name) not in classes or name not in models:
             problems.append(f"{path}::{name} 不再继承 Repository")
@@ -146,15 +160,78 @@ def judge(sources: dict[str, str], on_base: tuple[tuple[str, str], ...]) -> list
     return problems
 
 
-def _tree() -> dict[str, str]:
-    return {
-        path.relative_to(APP).as_posix(): path.read_text(encoding="utf-8")
-        for path in APP.rglob("*.py")
+_CLASS_HEADER = re.compile(r"\bclass\s+(\w+)\s*\(([^)]*)\)", re.DOTALL)
+_REPOSITORY_ALIAS = re.compile(r"\bimport\s+Repository\s+as\s+(\w+)")
+_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+
+
+def _class_headers(text: str) -> list[tuple[str, set[str]]]:
+    """Every class that declares bases, as its name and the words in them.
+
+    The base text is a superset of the names the judge resolves (a comment
+    inside the parentheses counts), which is what keeps the filter below
+    from dropping a file.
+    """
+    return [
+        (match.group(1), set(_IDENTIFIER.findall(match.group(2))))
+        for match in _CLASS_HEADER.finditer(text)
+    ]
+
+
+def _sources_from(texts: dict[str, str]) -> dict[str, str]:
+    """Only the files that could hold a subclass of ``Repository``.
+
+    Start from every name that could be the base — ``Repository`` and the
+    aliases it is imported under — and keep the files whose class headers
+    name one of them. A class kept that way puts its own name on the base,
+    so repeat until no name is new: that reaches subclasses of subclasses.
+    The files that declare an alias are kept too, because the judge resolves
+    aliases from the imports it reads. Parsing the whole tree instead took
+    this guard over the pure layer's per-test ceiling.
+    """
+    # Every alias spelling and every alias declaration contains the name it
+    # aliases, so the regex only runs over the files that mention Repository.
+    mentioning = {path: text for path, text in texts.items() if "Repository" in text}
+    aliases = {alias for text in mentioning.values() for alias in _REPOSITORY_ALIAS.findall(text)}
+    on_base = {"Repository"} | aliases
+    headers: dict[str, list[tuple[str, set[str]]]] = {}
+    while True:
+        # The header regex is the expensive part; only a file that names a
+        # base candidate can hold a class on the base.
+        for path, text in texts.items():
+            if path not in headers and any(name in text for name in on_base):
+                headers[path] = _class_headers(text)
+        names = {
+            name
+            for heads in headers.values()
+            for name, bases in heads
+            if bases & on_base
+        }
+        if names <= on_base:
+            break
+        on_base |= names
+    chosen = {
+        path: texts[path]
+        for path, heads in headers.items()
+        if any(bases & on_base for _, bases in heads)
     }
+    for path, text in mentioning.items():
+        if _REPOSITORY_ALIAS.search(text):
+            chosen[path] = text
+    return chosen
+
+
+def _sources() -> dict[str, str]:
+    return _sources_from(
+        {
+            path.relative_to(APP).as_posix(): path.read_text(encoding="utf-8")
+            for path in APP.rglob("*.py")
+        }
+    )
 
 
 def test_repositories_on_the_base_read_by_id_through_it():
-    problems = judge(_tree(), ON_BASE)
+    problems = judge(_sources(), ON_BASE)
     assert problems == [], "\n".join(problems)
 
 
@@ -261,3 +338,44 @@ def test_the_guard_still_bites_on_its_own_cases():
         assert len(judge(sources, on_base)) == expected, label
         ran += 1
     assert ran == len(_BITES) > 0
+
+
+_SOURCES_KEPT = {
+    "direct subclass": (
+        {
+            "a.py": "class A(Repository[Tag]):\n    model = Tag\n",
+            "b.py": "class B(Other):\n    model = Tag\n",
+        },
+        {"a.py"},
+    ),
+    "module-qualified base": (
+        {"a.py": "class A(repositories.Repository[Tag]):\n    model = Tag\n"},
+        {"a.py"},
+    ),
+    "aliased base, alias declared elsewhere": (
+        {
+            "a.py": "from app.domain.repositories import Repository as Base\n",
+            "b.py": "class B(Base):\n    model = Tag\n",
+        },
+        {"a.py", "b.py"},
+    ),
+    "subclass of a subclass": (
+        {
+            "a.py": "class A(Repository[Tag]):\n    model = Tag\n",
+            "b.py": "class B(A):\n    q = 1\n",
+        },
+        {"a.py", "b.py"},
+    ),
+    "nothing on the base": (
+        {"a.py": "class A(Other):\n    model = Tag\n"},
+        set(),
+    ),
+}
+
+
+def test_the_scan_keeps_every_file_the_judge_needs():
+    ran = 0
+    for label, (texts, expected) in _SOURCES_KEPT.items():
+        assert set(_sources_from(texts)) == expected, label
+        ran += 1
+    assert ran == len(_SOURCES_KEPT) > 0
