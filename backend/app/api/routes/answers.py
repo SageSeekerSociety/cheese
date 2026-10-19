@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
 
+from app.api.deps import get_discussion_service
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
@@ -10,13 +11,6 @@ from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.answers.services import AnswersService
-from app.domain.delivery.ledger import deliver
-from app.domain.discussion.reaction_services import DiscussionReactionService
-from app.domain.discussion.repositories import (
-    DiscussionReactionRepository,
-    DiscussionRepository,
-    ReactionTypeRepository,
-)
 from app.domain.discussion.services import DiscussableModelType, DiscussionService
 from app.domain.questions.repositories import QuestionRepository
 from app.domain.user.repositories import UserProfileRepository
@@ -32,21 +26,6 @@ async def get_answers_service(db=Depends(get_db)) -> AnswersService:
         repo=answer_repo,
         question_repo=question_repo,
         profile_repo=profile_repo,
-    )
-
-
-async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
-    discussion_repo = DiscussionRepository(session=db)
-    reaction_repo = DiscussionReactionRepository(session=db)
-    reaction_type_repo = ReactionTypeRepository(session=db)
-    reaction_service = DiscussionReactionService(
-        reaction_repo=reaction_repo, reaction_type_repo=reaction_type_repo
-    )
-    return DiscussionService(
-        repo=discussion_repo,
-        reaction_service=reaction_service,
-        session=db,
-        deliver=deliver,
     )
 
 

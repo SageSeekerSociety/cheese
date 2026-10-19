@@ -33,7 +33,6 @@ from app.domain.docs_site import periodic as docs_periodic
 from app.domain.machine import periodic as machine_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
-from app.domain.ratchet import periodic as ratchet_periodic
 from app.domain.review import periodic as review_periodic
 from app.domain.routine import periodic as routine_periodic
 from app.domain.run_record import periodic as run_record_periodic
@@ -77,7 +76,6 @@ PERIODIC_JOB_NAMES = (
     "routines",
     "task deadline sweep",
     "memory dream",
-    "ratchet ingest",  # forge_bound: GitHub Actions artifact reads
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
     "wake watch",
 )
@@ -193,7 +191,6 @@ def periodic_jobs(
         jobs, sessions=sessions, chat=chat, get_runner=get_runner
     )
     task_periodic.register_periodic_jobs(jobs, sessions=sessions)
-    ratchet_periodic.register_periodic_jobs(jobs, sessions=sessions)
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
     wake_watch_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)

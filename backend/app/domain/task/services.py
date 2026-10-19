@@ -1036,19 +1036,25 @@ class TaskSubmissionService:
             m.id: m for m in memberships_for_task if m.id in membership_ids
         }
 
+        submission_ids = [s.id for s in submissions]
+        entries_by_submission = await self._entry_repo.list_by_submission_ids(
+            submission_ids
+        )
+        reviews_by_submission = (
+            await self._review_repo.get_by_submission_ids(submission_ids)
+            if query_review
+            else {}
+        )
+
         items: list[dict] = []
         for submission in submissions:
             membership = membership_map.get(submission.membership_id)
             if membership is None:
                 continue
-            entries = list(
-                await self._entry_repo.list_by_submission_id(
-                    submission_id=submission.id
-                )
+            entries = entries_by_submission.get(submission.id, [])
+            review: TaskSubmissionReview | None = reviews_by_submission.get(
+                submission.id
             )
-            review: TaskSubmissionReview | None = None
-            if query_review:
-                review = await self._review_repo.get_by_submission_id(submission.id)
             dto = await self._build_submission_dto(
                 submission=submission,
                 membership=membership,
@@ -1091,14 +1097,18 @@ class TaskSubmissionService:
             reviewed=reviewed,
         )
 
+        submission_ids = [submission.id for submission, _, _ in rows]
+        entries_by_submission = await self._entry_repo.list_by_submission_ids(
+            submission_ids
+        )
+        reviews_by_submission = await self._review_repo.get_by_submission_ids(
+            submission_ids
+        )
+
         items: list[dict] = []
         for submission, membership, task in rows:
-            entries = list(
-                await self._entry_repo.list_by_submission_id(
-                    submission_id=submission.id
-                )
-            )
-            review = await self._review_repo.get_by_submission_id(submission.id)
+            entries = entries_by_submission.get(submission.id, [])
+            review = reviews_by_submission.get(submission.id)
             dto = await self._build_submission_dto(
                 submission=submission,
                 membership=membership,

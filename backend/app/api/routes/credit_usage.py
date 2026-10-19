@@ -62,15 +62,15 @@ async def _named(db: AsyncSession, report: dict) -> dict:
         project = by_id.get(uuid.UUID(pid))
         return project.name if project else None
 
+    tasks_by_id = await tasks.get_tasks_by_ids(
+        [pack["task_id"] for pack in report["packs"] if pack["task_id"] is not None]
+    )
+
     for row in report["projects"]:
         row["name"] = project_name(row["id"])
     for pack in report["packs"]:
         pack["project_name"] = project_name(pack["project_id"])
-        task = (
-            await tasks.get_task(pack["task_id"])
-            if pack["task_id"] is not None
-            else None
-        )
+        task = tasks_by_id.get(pack["task_id"]) if pack["task_id"] is not None else None
         pack["task_name"] = task.name if task else None
     return report
 
