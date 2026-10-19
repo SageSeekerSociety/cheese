@@ -17,6 +17,7 @@ import type { RowRefs } from '@/composables/useChatComposer'
 import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { ChatAttachment, Topic } from '../../cx_types'
 import type { LinkableDocument } from '../../lib/docMentionMenu'
+import type { QuotedContext } from '../../lib/quotedContext'
 import type { RefNames } from '../../lib/refChip'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -33,7 +34,6 @@ import {
   expandComposerMentions,
   mentionsAgent as containsAgentMention,
   namesOnlyPeople,
-  withAgentMention as addAgentMention,
 } from '../../lib/composerMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
 import { linkableDocuments } from '../../lib/linkableDocuments'
@@ -43,6 +43,7 @@ import ComposerActions from './ComposerActions.vue'
 import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import ComposerEditor from './ComposerEditor.vue'
+import ComposerSummon from './ComposerSummon.vue'
 import ComposerVoiceBar from './ComposerVoiceBar.vue'
 import MentionMenu from './MentionMenu.vue'
 import ReminderDialog from './ReminderDialog.vue'
@@ -78,10 +79,16 @@ const props = defineProps<{
   attsUploading: boolean
   /** 这条消息回复的是哪一条，读出来的样子（「回复 谁：说了什么」）。不回复时是 null。 */
   replyLabel?: string | null
+  /** 这条消息带着的引用（幻灯片的一页、文档的一段……）。没有时是 null。 */
+  quote?: QuotedContext | null
   /** 发一张自己的清单；不给就没有这个入口。 */
   postChecklist?: (steps: string[]) => Promise<boolean>
   /** 把说的一段交给后端听写；不给就没有麦克风。 */
   hearVoice?: (wav: Blob) => Promise<VoiceHeard>
+  /** 正在这个频道里跑一轮的 AI 队友（handle）。 */
+  busyAgents?: string[]
+  /** 我在这个频道里上一次交给的那位队友：头像平时画它，点一下就交给它。 */
+  lastMate?: string | null
 }>()
 
 const checklistOpen = ref(false)
@@ -96,6 +103,7 @@ const emit = defineEmits<{
   /** 上传失败的那一枚按了重试：房间拿着 File 再传一次。 */
   (e: 'retry-att', index: number): void
   (e: 'clear-reply'): void
+  (e: 'clear-quote'): void
   (e: 'add-library-file', path: string): void
 }>()
 
@@ -194,7 +202,7 @@ const chipNames = computed<RefNames>(() => {
   if (props.agentSeat) mentionNames[props.agentSeat.handle] ??= props.agentSeat.label
   const topicTitles = { ...props.refs.topicTitles }
   for (const tp of props.topicList) topicTitles[tp.id] ??= tp.title
-  return { mentionNames, topicTitles, notified: true }
+  return { mentionNames, topicTitles, notified: true, agentFaces: true }
 })
 const { mdAndUp } = useDisplay()
 const mentionMenu = ref<InstanceType<typeof MentionMenu> | null>(null)
@@ -308,36 +316,89 @@ const keysTitle = computed(() => {
     : t('work.room.composer.keysHintSend')
 })
 
+// ---- 交给谁：发送键左边那颗队友头像（ComposerSummon） ----
+//
+// 这个频道里能交给的 AI 队友：频道自己那位在前，其余是 @ 名单上的队友（别人自带的
+// Claude Code 也在里面：@ 了它，平台会把它请进来并问它的主人，见后端 own_calls）。
+type Mate = { handle: string; label: string }
+const mates = computed<Mate[]>(() => {
+  const list: Mate[] = props.agentSeat ? [props.agentSeat] : []
+  for (const m of props.mentionPool)
+    if (m.agent && !list.some((x) => x.handle === m.handle)) list.push({ handle: m.handle, label: m.label })
+  return list
+})
+// 正文里 @ 到的队友，按出现的顺序。
+const draftMates = computed<Mate[]>(() => {
+  const out: Mate[] = []
+  for (const [, handle] of expandMentions(draft.value).matchAll(/<@([\w-]+)>/g)) {
+    const mate = mates.value.find((m) => m.handle === handle)
+    if (mate && !out.includes(mate)) out.push(mate)
+  }
+  return out
+})
+// 没 @ 任何一位时头像画谁、点一下交给谁：这个频道里上一次交给的那位，没有就是频道自己那位。
+// 从选单里换了一位，这个频道之后就一直是它，直到再换。
+const preferred = ref<string | null>(props.lastMate ?? null)
+watch(
+  () => props.topic?.id,
+  () => (preferred.value = props.lastMate ?? null)
+)
+watch(
+  () => props.lastMate,
+  (handle) => {
+    if (handle) preferred.value = handle
+  }
+)
+const restingMate = computed<Mate | null>(
+  () => mates.value.find((m) => m.handle === preferred.value) ?? mates.value[0] ?? null
+)
+// 名册还没到时头像照样画出来（按名字配色、灰着、点不动），这一行不会因为它晚到而跳一下。
+const shownMates = computed<Mate[]>(() =>
+  draftMates.value.length ? draftMates.value.slice(0, 2) : [restingMate.value ?? { handle: '', label: props.agentName }]
+)
+// 任务负责人那里每句都交给队友：头像常亮，是规则不是开关。和 AI 队友私聊时没有这颗头像。
+const summonFixed = computed(() => props.alwaysSummon && props.handOff !== false)
+const summonShown = computed(() => !(props.alwaysSummon && props.handOff === false))
+const peopleOnly = computed(() => namesOnlyPeople(expandMentions(draft.value), props.agentSeat, props.mentionPool))
+
 // 名册还没到的时候不能替人写这个 @：召唤与否是浏览器按**能不能把名字解析成
 // handle** 算出来的，此刻解析不出来，写进去的 @ 只是一行字，消息照发、它照样不
-// 动。所以这两个入口在那一瞬间是关着的（见 `summonReady`），宁可少一个入口，
+// 动。所以这几个入口在那一瞬间是关着的（见 `summonReady`），宁可少一个入口，
 // 也不要一个点了不算数的入口。
-function withAgentMention(text: string): string {
-  return addAgentMention(
-    text,
-    props.agentSeat,
-    props.mentionPool,
-    props.topicList.filter((t) => t.kind !== 'root')
-  )
+function withAgentMention(text: string, mate: Mate | null = restingMate.value): string {
+  if (!mate || mentionsAgent(expandMentions(text))) return text
+  return `<@${mate.handle}> ${text}`
 }
 
-// 「交给芝士」这颗按钮：它不改任何隐藏状态，它只是替你打那五个字，写完你看得见、
-// 也能自己删掉。
-function toggleSummon() {
-  const agent = props.agentSeat
-  if (!summonOn.value) {
-    draft.value = withAgentMention(draft.value)
-  } else if (agent) {
-    // 只摘掉第一处。正文里别处还提着它（「照 @芝士 说的改」）是在说事，不是在
-    // 叫它，取消这一次召唤不该顺手把那句话也改了。
-    for (const pat of [`<@${agent.handle}>`, `@${agent.label}`, `@${agent.handle}`]) {
-      const at = draft.value.indexOf(pat)
-      if (at < 0) continue
-      const after = at + pat.length
-      draft.value = draft.value.slice(0, at) + draft.value.slice(draft.value[after] === ' ' ? after + 1 : after)
-      break
-    }
+// 摘掉正文里对这位的第一处 @。只摘第一处：正文里别处还提着它（「照 @芝士 说的改」）
+// 是在说事，不是在叫它，取消这一次召唤不该顺手把那句话也改了。
+function withoutMention(text: string, mate: Mate): string {
+  for (const pat of [`<@${mate.handle}>`, `@${mate.label}`, `@${mate.handle}`]) {
+    const at = text.indexOf(pat)
+    if (at < 0) continue
+    const after = at + pat.length
+    return text.slice(0, at) + text.slice(text[after] === ' ' ? after + 1 : after)
   }
+  return text
+}
+
+// 点一下头像：它不改任何隐藏状态，它只是替你打那个 @，写完你看得见、也能自己删掉。
+function toggleSummon() {
+  if (!summonOn.value) draft.value = withAgentMention(draft.value)
+  else draft.value = draftMates.value.reduce(withoutMention, draft.value)
+  void nextTick(() => composerInput.value?.focus?.())
+}
+
+// 从选单里换一位：正文里那枚标签换成这一位。
+function pickMate(handle: string) {
+  const mate = mates.value.find((m) => m.handle === handle)
+  if (!mate) return
+  preferred.value = handle
+  draft.value = withAgentMention(draftMates.value.reduce(withoutMention, draft.value), mate)
+  void nextTick(() => composerInput.value?.focus?.())
+}
+function summonOff() {
+  draft.value = draftMates.value.reduce(withoutMention, draft.value)
   void nextTick(() => composerInput.value?.focus?.())
 }
 
@@ -455,10 +516,14 @@ const voice = useVoiceInput({
 })
 const voiceOpen = computed(() => voice.state.value !== 'idle')
 
-// 识别中在光标处放一小段占位；回到空闲（落了字、取消、出错）就收起。
+// 一开口就在光标处放一枚占位：录着时写「正在听」，整理中写「正在整理」——字会落在这儿。
+// 回到空闲（落了字、取消、出错）就收起。
 watch(voice.state, (now, was) => {
-  if (now === 'thinking') composerInput.value?.voiceMarks({ slot: caret.value })
-  else if (was === 'thinking') composerInput.value?.voiceMarks({ slot: null })
+  if (now === 'recording')
+    composerInput.value?.voiceMarks({ slot: caret.value, slotLabel: t('work.room.composer.voice.listening') })
+  else if (now === 'thinking')
+    composerInput.value?.voiceMarks({ slotLabel: t('work.room.composer.voice.thinking'), slotThinking: true })
+  else if (was) composerInput.value?.voiceMarks({ slot: null })
 })
 
 function writeAt(at: number, from: string, to: string) {
@@ -475,11 +540,33 @@ function landVoice(text: string, raw: string) {
   if (!polished) return
   writeAt(at, '', polished)
   // 记号按编辑器里的正文算位置，要等它把这段字放进去之后再标。
-  void nextTick(() => composerInput.value?.voiceMarks({ slot: null, landed: [at, at + polished.length] }))
+  void nextTick(() => {
+    composerInput.value?.voiceMarks({ slot: null, landed: [at, at + polished.length] })
+    reveal(polished.length)
+  })
   landed = { at, polished, raw: exact, showing: 'polished' }
   showSwap(polished !== exact ? 'raw' : null)
   composerInput.value?.focus()
 }
+
+// 落字：整段先占好位置（输入框一次长到位，不一个字一个字地撑高），再从头逐字显出来，
+// 每 28ms 两个字，前沿四个字半透明。显完了那层琥珀浅底再慢慢退掉。减弱动效时一次显完。
+const REVEAL_STEP_MS = 28
+let revealTimer = 0
+function reveal(length: number) {
+  window.clearInterval(revealTimer)
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  let shown = 0
+  composerInput.value?.voiceMarks({ revealed: 0 })
+  revealTimer = window.setInterval(() => {
+    shown += 2
+    if (shown >= length) {
+      window.clearInterval(revealTimer)
+      composerInput.value?.voiceMarks({ revealed: null })
+    } else composerInput.value?.voiceMarks({ revealed: shown })
+  }, REVEAL_STEP_MS)
+}
+onBeforeUnmount(() => window.clearInterval(revealTimer))
 
 function showSwap(to: 'raw' | 'polished' | null) {
   window.clearTimeout(swapTimer)
@@ -513,9 +600,21 @@ watch(draft, () => {
 // 只认按着麦克风的那根手指：另一根手指在别处点一下、滚一下，不算松手。录音一结束（说完、
 // 取消、出错）就不再等，免得这一次的松手去结束下一段录音。系统把指针收走（来电、系统
 // 手势）不是「说完了」，这一段丢掉，免得半句话落进正文。
+//
+// 按着的时候往左拖：录音条跟着手指挪（阻尼一半），拖过 90px 就「松手取消」，拖回来又恢复。
 let stopHold: (() => void) | null = null
-function onVoice(how: 'tap' | 'hold' | 'release' | 'cancel', pointerId?: number) {
-  if (how === 'release') return void voice.finish()
+const DROP_PX = 90
+const holding = ref(false)
+const dragX = ref(0)
+const armed = ref(false)
+function onVoice(how: 'tap' | 'hold' | 'release' | 'cancel', pointerId?: number, x?: number) {
+  if (how === 'release') {
+    if (armed.value) {
+      stopHold?.()
+      return void voice.cancel()
+    }
+    return void voice.finish()
+  }
   if (how === 'cancel') {
     stopHold?.()
     voice.cancel()
@@ -530,19 +629,33 @@ function onVoice(how: 'tap' | 'hold' | 'release' | 'cancel', pointerId?: number)
     stopHold?.()
     const release = (e: PointerEvent) => {
       if (pointerId !== undefined && e.pointerId !== pointerId) return
+      const drop = armed.value
       stopHold?.()
-      void voice.finish()
+      if (drop) voice.cancel()
+      else void voice.finish()
     }
     const cancel = (e: PointerEvent) => {
       if (pointerId !== undefined && e.pointerId !== pointerId) return
       stopHold?.()
       voice.cancel()
     }
+    const move = (e: PointerEvent) => {
+      if ((pointerId !== undefined && e.pointerId !== pointerId) || x === undefined) return
+      const dx = Math.min(0, e.clientX - x)
+      dragX.value = Math.max(-DROP_PX, dx / 2)
+      armed.value = dx < -DROP_PX
+    }
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', cancel)
+    window.addEventListener('pointermove', move)
+    holding.value = true
     stopHold = () => {
       window.removeEventListener('pointerup', release)
       window.removeEventListener('pointercancel', cancel)
+      window.removeEventListener('pointermove', move)
+      holding.value = false
+      dragX.value = 0
+      armed.value = false
       stopHold = null
     }
   }
@@ -620,63 +733,71 @@ defineExpose({
       @hover="picker.hover"
       @back="picker.backToRoot"
     />
-    <!-- A very long plain-text paste: offer to carry it as a file instead of
-         flooding the box. Inline and non-modal — ignoring it keeps the text
-         exactly as pasted, which is the behavior that was here before. -->
-    <div v-if="longPaste" class="long-paste">
-      <span class="long-paste__text">
-        {{ t('work.room.composer.longPaste.offer', { count: longPaste.text.length }) }}
-      </span>
-      <BaseButton kind="ghost" size="sm" @click="pasteAsAttachment('txt')">
-        {{ t('work.room.composer.longPaste.txt') }}
-      </BaseButton>
-      <BaseButton kind="ghost" size="sm" @click="pasteAsAttachment('md')">
-        {{ t('work.room.composer.longPaste.md') }}
-      </BaseButton>
-      <button
-        type="button"
-        class="long-paste__x"
-        :aria-label="t('work.room.composer.longPaste.keep')"
-        :title="t('work.room.composer.longPaste.keep')"
-        @click="keepLongPaste"
-      >
-        <v-icon size="14">mdi-close</v-icon>
-      </button>
-    </div>
-    <!-- 语音没成：麦克风没给，或者这段没听出来。和长文粘贴那条同一种样子，就地说，不弹窗。 -->
-    <div v-if="voice.trouble.value" class="long-paste" role="status">
-      <v-icon size="14">{{
-        voice.trouble.value.kind === 'denied' ? 'mdi-microphone-off' : 'mdi-alert-circle-outline'
-      }}</v-icon>
-      <span class="long-paste__text">
-        {{
-          voice.trouble.value.kind === 'denied'
-            ? t('work.room.composer.voice.denied')
-            : voice.trouble.value.message || t('work.room.composer.voice.failed')
-        }}
-      </span>
-      <button
-        type="button"
-        class="long-paste__x"
-        :aria-label="t('work.room.composer.voice.dismiss')"
-        :title="t('work.room.composer.voice.dismiss')"
-        @click="voice.trouble.value = null"
-      >
-        <v-icon size="14">mdi-close</v-icon>
-      </button>
-    </div>
+    <!-- 输入框上方只有一种提示条，同一时刻只有一条，贴在盒子顶上：语音没成、贴了一大段、
+         @ 了不在频道里的人（外面从 `strip` 插槽交进来）。就地说，不弹窗；忽略它，正文原样留着。 -->
+    <Transition name="composer-strip">
+      <div v-if="voice.trouble.value" key="voice" class="composer-strip composer-strip--danger" role="status">
+        <v-icon size="16">{{
+          voice.trouble.value.kind === 'denied' ? 'mdi-microphone-off' : 'mdi-alert-circle-outline'
+        }}</v-icon>
+        <span class="composer-strip__text">
+          {{
+            voice.trouble.value.kind === 'denied'
+              ? t('work.room.composer.voice.denied')
+              : voice.trouble.value.message || t('work.room.composer.voice.failed')
+          }}
+        </span>
+        <button
+          type="button"
+          class="composer-strip__x"
+          :aria-label="t('work.room.composer.voice.dismiss')"
+          :title="t('work.room.composer.voice.dismiss')"
+          @click="voice.trouble.value = null"
+        >
+          <v-icon size="14">mdi-close</v-icon>
+        </button>
+      </div>
+      <!-- A very long plain-text paste: offer to carry it as a file instead of
+           flooding the box. Ignoring it keeps the text exactly as pasted. -->
+      <div v-else-if="longPaste" key="paste" class="composer-strip">
+        <v-icon size="16">mdi-file-document-outline</v-icon>
+        <span class="composer-strip__text">
+          {{ t('work.room.composer.longPaste.offer', { count: longPaste.text.length }) }}
+        </span>
+        <BaseButton kind="ghost" size="sm" @click="pasteAsAttachment('txt')">
+          {{ t('work.room.composer.longPaste.txt') }}
+        </BaseButton>
+        <BaseButton kind="ghost" size="sm" @click="pasteAsAttachment('md')">
+          {{ t('work.room.composer.longPaste.md') }}
+        </BaseButton>
+        <button
+          type="button"
+          class="composer-strip__x"
+          :aria-label="t('work.room.composer.longPaste.keep')"
+          :title="t('work.room.composer.longPaste.keep')"
+          @click="keepLongPaste"
+        >
+          <v-icon size="14">mdi-close</v-icon>
+        </button>
+      </div>
+      <div v-else-if="$slots.strip" key="outside" class="composer-strip composer-strip--slot">
+        <slot name="strip" />
+      </div>
+    </Transition>
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
     <div v-guide-anchor="guided ? 'composer-input' : ''" class="composer-box">
-      <!-- 这条消息带着的东西：回复的那条在最前，后面是待发的附件。 -->
+      <!-- 这条消息带着的东西：回复的那条在最前，然后是引用，后面是待发的附件。 -->
       <ComposerChipRow
         :reply-label="replyLabel"
+        :quote="quote"
         :atts="atts"
         :topic-id="topic?.id ?? null"
         @remove-att="(i: number) => emit('remove-att', i)"
         @retry-att="(i: number) => emit('retry-att', i)"
         @clear-reply="emit('clear-reply')"
+        @clear-quote="emit('clear-quote')"
       />
       <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
              半屏——而按钮的数量只会往上加。 -->
@@ -694,46 +815,58 @@ defineExpose({
         @compositionstart="onCompositionStart"
         @compositionend="onCompositionEnd"
       />
-      <!-- 录音时动作行换成录音条：同一个位置，先让旧的一行快速退下，新的一行减速进来。 -->
-      <Transition name="voice-row" mode="out-in">
-        <div v-if="voiceOpen" key="voice">
-          <ComposerVoiceBar
-            :state="voice.state.value"
-            :elapsed="voice.elapsed.value"
-            :levels="voice.levels.value"
-            :max-seconds="VOICE_MAX_SECONDS"
-            @cancel="voice.cancel()"
-            @done="voice.finish()"
-          />
-        </div>
-        <div v-else key="actions">
-          <ComposerActions
+      <ComposerActions
+        :guided="!!guided"
+        :uploading="attsUploading"
+        :can-send="canSend"
+        :show-image-picker="!mdAndUp"
+        :enter-sends="enterSends"
+        :can-checklist="!!postChecklist"
+        :can-remind="!!topic"
+        :can-voice="canVoice"
+        :voice="voice.state.value"
+        :voice-swap="voiceSwap"
+        @files="emit('files', $event)"
+        @checklist="checklistOpen = true"
+        @remind="reminderOpen = true"
+        @send="sendDraft()"
+        @voice="onVoice"
+        @voice-done="voice.finish()"
+        @voice-swap="swapVoice"
+      >
+        <template #chips><slot name="composer-chips" /></template>
+        <template v-if="summonShown" #summon>
+          <ComposerSummon
             :guided="!!guided"
-            :uploading="attsUploading"
-            :can-send="canSend"
-            :show-image-picker="!mdAndUp"
-            :enter-sends="enterSends"
-            :always-summon="alwaysSummon"
-            :summon-on="summonOn"
-            :summon-ready="summonReady"
-            :agent-name="agentName"
-            :can-checklist="!!postChecklist"
-            :can-remind="!!topic"
-            :collapse-extras="!mdAndUp"
-            :can-voice="canVoice"
-            :voice-swap="voiceSwap"
-            @files="emit('files', $event)"
-            @checklist="checklistOpen = true"
-            @toggle-summon="toggleSummon"
-            @remind="reminderOpen = true"
-            @send="sendDraft()"
-            @voice="onVoice"
-            @voice-swap="swapVoice"
-          >
-            <template #chips><slot name="composer-chips" /></template>
-          </ComposerActions>
-        </div>
-      </Transition>
+            :mates="mates"
+            :shown="shownMates"
+            :on="summonOn"
+            :fixed="summonFixed"
+            :ready="summonReady"
+            :busy="busyAgents ?? []"
+            :people-only="peopleOnly"
+            @toggle="toggleSummon"
+            @pick="pickMate"
+            @off="summonOff"
+          />
+        </template>
+        <!-- 录音条：从麦克风的位置往左展开成一整行，说完了再收回麦克风。 -->
+        <template #voice>
+          <Transition name="voice-grow" :duration="{ enter: 320, leave: 180 }">
+            <ComposerVoiceBar
+              v-if="voiceOpen"
+              :state="voice.state.value"
+              :elapsed="voice.elapsed.value"
+              :levels="voice.levels.value"
+              :max-seconds="VOICE_MAX_SECONDS"
+              :holding="holding"
+              :drag-x="dragX"
+              :armed="armed"
+              @cancel="voice.cancel()"
+            />
+          </Transition>
+        </template>
+      </ComposerActions>
       <ComposerChecklistDialog v-if="postChecklist" v-model="checklistOpen" :post="postChecklist" />
     </div>
     <ReminderDialog v-if="topic" v-model="reminderOpen" :topic-id="topic.id" @set="onReminderSet" />
@@ -751,45 +884,69 @@ defineExpose({
      手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
   padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
 }
-/* 长文字粘贴的那条提议：贴着输入框的一行，安静的底，两个按钮。忽略它就是不管，
-   所以它不抢颜色、不遮住输入框。 */
-.long-paste {
+/* 输入框上方的提示条：贴在盒子顶上的一片，安静的底。同一时刻只有一条（模板里是
+   v-if 链），所以它们用同一种样子——语音没成、长文转附件、@ 了频道外的人。 */
+.composer-strip {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  margin-bottom: 6px;
+  gap: 4px 8px;
+  margin: 0 8px;
+  padding: 4px 4px 4px 12px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background: var(--fill);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  font-size: 12px;
-  line-height: var(--lh-12);
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--muted);
 }
-.long-paste__text {
+.composer-strip--danger {
+  background: var(--danger-wash);
+  color: var(--danger-ink);
+}
+.composer-strip--slot {
+  padding: 0;
+}
+.composer-strip--slot > :deep(*) {
+  flex: 1;
+}
+.composer-strip__text {
   flex: 1 1 auto;
   min-width: 0;
+  padding: 4px 0;
 }
-.long-paste__x {
+.composer-strip__x {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border: none;
   background: none;
   border-radius: var(--radius-sm);
-  color: var(--faint);
+  color: inherit;
   cursor: pointer;
-  transition:
-    background-color var(--dur-quick) var(--ease-standard),
-    color var(--dur-quick) var(--ease-standard);
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
-.long-paste__x:hover {
-  background: var(--line-2);
-  color: var(--ink);
+.composer-strip__x:hover {
+  background: var(--fill-2);
+}
+/* 长出来、收回去都是高度过渡（0fr → 1fr 那一招在 Transition 里换成 max-height 不行：
+   高度不定），这里只动透明度和一点位移，离场快一档。 */
+.composer-strip-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.composer-strip-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.composer-strip-enter-from,
+.composer-strip-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 /* 输入区是一个控件。原来输入框和几颗按钮各自浮在页面上，读起来是几个零件而不是
    一件东西——一个圆角描边就把它们收成一块，顺带替掉了上面那条 divider。 */
@@ -812,21 +969,22 @@ defineExpose({
    第二像素靠 box-shadow 加，不靠 border-width——后者会改盒子尺寸，把输入框顶一下。
    这条排在 :focus-within 后面：拖进来的时候光标通常就在输入框里，两条同权，后面
    的赢。 */
-/* 动作行和录音条互换：离场快一档、进场减速停稳（§9.3），只动透明度和一点位移。 */
-.voice-row-enter-active {
+/* 录音条从麦克风的位置往左展开成整行（320ms 减速），说完了 180ms 加速收回麦克风。
+   收起时的形状就是麦克风那一格：28px 宽，贴着右边。 */
+.voice-grow-enter-active :deep(.voice-bar__body) {
   transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
+    clip-path var(--dur-slow) var(--ease-out),
+    opacity 120ms var(--ease-out);
 }
-.voice-row-leave-active {
+.voice-grow-leave-active :deep(.voice-bar__body) {
   transition:
-    opacity var(--dur-quick) var(--ease-in),
-    transform var(--dur-quick) var(--ease-in);
+    clip-path 180ms var(--ease-in),
+    opacity 180ms var(--ease-in);
 }
-.voice-row-enter-from,
-.voice-row-leave-to {
+.voice-grow-enter-from :deep(.voice-bar__body),
+.voice-grow-leave-to :deep(.voice-bar__body) {
+  clip-path: inset(0 0 0 calc(100% - 28px) round var(--radius-md));
   opacity: 0;
-  transform: translateY(4px);
 }
 .composer--drop .composer-box {
   border-color: var(--muted);

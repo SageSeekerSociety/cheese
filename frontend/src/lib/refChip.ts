@@ -10,7 +10,9 @@
 // a click (`installRefChipKeys`), so the same delegated handlers open it. The
 // focusability is written as attributes because chat serialises chips to HTML.
 import { t } from '../i18n'
+import { agentTone } from '../utils/avatar'
 
+import { isAgentHandle } from './authorship'
 import { lookupRef } from './refDirectory'
 
 export interface RefNames {
@@ -33,6 +35,12 @@ export interface RefNames {
    * members); anyone else named in it was not told. Absent: anyone can be.
    */
   reachable?: ReadonlySet<string>
+  /**
+   * Draw an @ that names an AI teammate as the teammate itself — its small face and
+   * name on an amber wash — rather than the solid @chip. The composer does: there that
+   * chip says "this goes to the teammate", which the button beside Send mirrors.
+   */
+  agentFaces?: boolean
 }
 
 /** What a message's `<@handle>` told, with `names` as the room hands them over:
@@ -109,7 +117,10 @@ export function refChip(
     }
   } else if (kind === '@') {
     el.dataset.handle = id
-    if (didNotify(id, names)) el.textContent = `@${names.mentionNames[id] || id}`
+    if (didNotify(id, names) && names.agentFaces && isAgentHandle(id)) {
+      el.classList.add('agent-ref')
+      el.append(agentFace(id), document.createTextNode(names.mentionNames[id] || id))
+    } else if (didNotify(id, names)) el.textContent = `@${names.mentionNames[id] || id}`
     else {
       el.className = 'name-ref'
       el.textContent = names.mentionNames[id] || id
@@ -130,6 +141,33 @@ export function refChip(
     el.setAttribute('tabindex', '0')
   }
   return el
+}
+
+const SVG = 'http://www.w3.org/2000/svg'
+
+/** The teammate's face as the chip's leading mark: the same tile and eyes as CheeseAvatar, in its tone. */
+function agentFace(handle: string): SVGElement {
+  const svg = document.createElementNS(SVG, 'svg')
+  svg.setAttribute('class', 'agent-ref__face')
+  svg.setAttribute('viewBox', '0 0 100 100')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.dataset.tone = String(agentTone(handle))
+  const tile = document.createElementNS(SVG, 'path')
+  tile.setAttribute('d', 'M50 0C88 0 100 12 100 50S88 100 50 100S0 88 0 50S12 0 50 0Z')
+  svg.append(tile)
+  for (const [x, y, w, h, r] of [
+    [42.5, 44.5, 13, 21, 6.5],
+    [66, 46, 10, 16, 5],
+  ]) {
+    const eye = document.createElementNS(SVG, 'rect')
+    eye.setAttribute('x', String(x))
+    eye.setAttribute('y', String(y))
+    eye.setAttribute('width', String(w))
+    eye.setAttribute('height', String(h))
+    eye.setAttribute('rx', String(r))
+    svg.append(eye)
+  }
+  return svg
 }
 
 /** Each reference token in `text`, with where it sits. */

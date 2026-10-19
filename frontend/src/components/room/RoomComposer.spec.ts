@@ -83,6 +83,7 @@ interface Options {
   alwaysSummon?: boolean
   handOff?: boolean
   pool?: MentionPoolEntry[]
+  lastMate?: string | null
 }
 
 /** 回车那条路只在焦点真的在输入框里时才走（走的时候还会问一次
@@ -117,6 +118,7 @@ function mount(opts: Options = {}) {
         atts: opts.atts ?? [],
         attsUploading: opts.attsUploading ?? false,
         replyLabel: opts.replyLabel ?? null,
+        lastMate: opts.lastMate ?? null,
         modelValue: draft.value,
         'onUpdate:modelValue': (v: string) => (draft.value = v),
         onSend,
@@ -149,6 +151,22 @@ async function flush() {
 beforeEach(() => {
   // These assertions read the Chinese copy.
   setLocale('zh-CN')
+  // 「+」的菜单和底部面板是 VOverlay：happy-dom 没有 ResizeObserver、visualViewport，不补上浮层挂不起来。
+  if (!('ResizeObserver' in globalThis)) {
+    ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  }
+  vi.stubGlobal('visualViewport', {
+    width: 390,
+    height: 844,
+    offsetLeft: 0,
+    offsetTop: 0,
+    addEventListener() {},
+    removeEventListener() {},
+  })
   vi.mocked(searchLibraryFiles).mockReset().mockResolvedValue([])
 })
 
@@ -609,17 +627,9 @@ describe('动作行', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  // 带触摸屏的笔记本两样都对，所以按输入方式判断，不按视口宽度。
-  it('桌面上没有「照片」那一颗，触摸屏上才有', () => {
-    const { container } = mount()
-    // happy-dom 的窗口是 1024 宽，也就是 mdAndUp。
-    expect(container.querySelector('.mdi-image-outline')).toBeNull()
-    expect(container.querySelector('.mdi-paperclip')).toBeTruthy()
-  })
-
-  it('私聊里没有「交给芝士」这颗按钮：那儿每条都是说给它听的', () => {
-    const { container } = mount({ alwaysSummon: true })
-    expect(container.querySelector('.summon-btn')).toBeNull()
+  it('和 AI 队友私聊时没有交给谁那颗头像：那儿每条都是说给它听的', () => {
+    const { container } = mount({ alwaysSummon: true, handOff: false })
+    expect(container.querySelector('.summon__btn')).toBeNull()
   })
 
   it('没输法选字时的回车发送，正文按规范形式展开', async () => {
@@ -701,7 +711,7 @@ describe('贴一大段文字：就地给一条转成附件的路', () => {
     const { container, box, draft, onFiles } = mount()
     box().dispatchEvent(pasteText('一句普通的话'))
     await flush()
-    expect(container.querySelector('.long-paste')).toBeNull()
+    expect(container.querySelector('.composer-strip')).toBeNull()
     expect(onFiles).not.toHaveBeenCalled()
     expect(draft.value).toBe('一句普通的话')
   })
@@ -711,7 +721,7 @@ describe('贴一大段文字：就地给一条转成附件的路', () => {
     const { container, box, draft } = mount()
     box().dispatchEvent(pasteText(long))
     await flush()
-    const offer = container.querySelector('.long-paste')
+    const offer = container.querySelector('.composer-strip')
     expect(offer, '贴长文字没有出现转附件的提议').toBeTruthy()
     expect(offer!.textContent).toContain('4001')
     // 忽略它：正文就是粘进来的样子——原来的行为不变。
@@ -723,7 +733,7 @@ describe('贴一大段文字：就地给一条转成附件的路', () => {
     const { container, box } = mount()
     box().dispatchEvent(pasteText(manyLines))
     await flush()
-    expect(container.querySelector('.long-paste')).toBeTruthy()
+    expect(container.querySelector('.composer-strip')).toBeTruthy()
   })
 
   it('「存为 .txt」把那一段从正文里拿掉，换成一份 txt 附件', async () => {
@@ -735,7 +745,7 @@ describe('贴一大段文字：就地给一条转成附件的路', () => {
     await flush()
 
     expect(draft.value).toBe('')
-    expect(container.querySelector('.long-paste')).toBeNull()
+    expect(container.querySelector('.composer-strip')).toBeNull()
     expect(onFiles).toHaveBeenCalledTimes(1)
     const [files] = onFiles.mock.calls[0] as [File[]]
     expect(files).toHaveLength(1)
@@ -760,9 +770,9 @@ describe('贴一大段文字：就地给一条转成附件的路', () => {
     const { container, box, draft, onFiles } = mount()
     box().dispatchEvent(pasteText(long))
     await flush()
-    await fireEvent.click(container.querySelector('.long-paste__x')!)
+    await fireEvent.click(container.querySelector('.composer-strip__x')!)
     await flush()
-    expect(container.querySelector('.long-paste')).toBeNull()
+    expect(container.querySelector('.composer-strip')).toBeNull()
     expect(draft.value).toBe(long)
     expect(onFiles).not.toHaveBeenCalled()
   })
@@ -795,5 +805,63 @@ describe('⌘/Ctrl+Enter 和输入框的按键提示', () => {
     await fireEvent.keyDown(box(), { key: 'Enter', metaKey: true })
 
     expect(onSend).toHaveBeenCalledWith({ content: '看一下', summon: true })
+  })
+})
+
+// 发送键旁边那颗队友头像：这条发出去谁会接手。它读的是正文，点它、换一位写的都是正文里的 @。
+describe('交给谁', () => {
+  const OWN = { handle: 'cheese-0a1b2c3d', label: '我的 Claude Code' }
+  const TWO = [...POOL, { handle: OWN.handle, label: OWN.label, avatar: null, agent: true }]
+  const summon = (container: Element) => container.querySelector<HTMLButtonElement>('.summon__btn')!
+
+  it('任务负责人那里是规则不是开关：点头像不改正文', async () => {
+    const { container, draft } = mount({ alwaysSummon: true, draft: '看看这个' })
+    await fireEvent.click(summon(container))
+    expect(draft.value).toBe('看看这个')
+  })
+
+  it('任务里只 @ 了人：头像跟着说这句不交给队友', async () => {
+    const { container, box } = mount({ alwaysSummon: true })
+    await fillComposer(box(), '@Alice 你看下')
+    expect(summon(container).getAttribute('aria-label')).toBe('这句只说给 @ 到的人')
+  })
+
+  it('右键换一位：正文里那枚标签换成那一位，原来那位拿掉', async () => {
+    const { container, draft } = mount({ pool: TWO, draft: '<@cheese-topica> 看看这个' })
+    await fireEvent.contextMenu(summon(container))
+    await flush()
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')).find((el) =>
+      el.textContent?.includes(OWN.label)
+    )
+    expect(row, '右键没有弹出交给哪位队友').toBeTruthy()
+    await fireEvent.click(row!)
+    expect(draft.value).toBe(`<@${OWN.handle}> 看看这个`)
+  })
+
+  it('换过一位之后，再点头像交给的也是它', async () => {
+    const { container, draft } = mount({ pool: TWO, draft: '看看这个' })
+    await fireEvent.contextMenu(summon(container))
+    await flush()
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')).find((el) =>
+      el.textContent?.includes(OWN.label)
+    )
+    await fireEvent.click(row!)
+    await fireEvent.click(summon(container))
+    expect(draft.value).toBe('看看这个')
+    await fireEvent.click(summon(container))
+    expect(draft.value).toBe(`<@${OWN.handle}> 看看这个`)
+  })
+
+  it('平时点一下交给的是这个频道里上次交给的那位', async () => {
+    const { container, draft } = mount({ pool: TWO, lastMate: OWN.handle, draft: '看看这个' })
+    await fireEvent.click(summon(container))
+    expect(draft.value).toBe(`<@${OWN.handle}> 看看这个`)
+  })
+
+  it('只有一位队友时右键不弹选单', async () => {
+    const { container } = mount({ draft: '看看这个' })
+    await fireEvent.contextMenu(summon(container))
+    await flush()
+    expect(document.querySelector('[role="menuitemradio"]')).toBeNull()
   })
 })
