@@ -1445,6 +1445,42 @@ button:not(.v-btn) {
   background: transparent;
   text-decoration: none;
 }
+/* 输入框里 @ 了一位 AI 队友（lib/refChip 的 agentFaces）：前面一枚它的小头像，琥珀浅底配
+   深琥珀字。它说的是「这条交给它」——和发送键旁边那颗头像是同一件事，所以长得像那颗
+   头像，不像通知一个人的实心 @。 */
+.mention.agent-ref {
+  padding: 0 5px 0 3px;
+  color: var(--accent-ink);
+  background: var(--accent-wash);
+}
+.mention.agent-ref:hover {
+  background: var(--accent-wash);
+}
+.agent-ref__face {
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  margin-right: 3px;
+  vertical-align: -0.17em;
+}
+.agent-ref__face path {
+  fill: var(--agent-tone-0);
+}
+.agent-ref__face[data-tone='1'] path {
+  fill: var(--agent-tone-1);
+}
+.agent-ref__face[data-tone='2'] path {
+  fill: var(--agent-tone-2);
+}
+.agent-ref__face[data-tone='3'] path {
+  fill: var(--agent-tone-3);
+}
+.agent-ref__face[data-tone='4'] path {
+  fill: var(--agent-tone-4);
+}
+.agent-ref__face rect {
+  fill: var(--agent-ink);
+}
 /* 文件 chip 前那个 mdi 图标。 */
 .file-ref__icon {
   margin-right: 3px;

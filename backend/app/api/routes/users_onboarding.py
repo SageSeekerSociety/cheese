@@ -42,7 +42,7 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BaseError, NotFoundError
 from app.db.session import get_db
-from app.domain.agent.environment import Sandbox, devices_of, dump
+from app.domain.agent.environment import Sandbox, TEAM_DEVICES, dump
 from app.domain.agent_instance.adapters import default_teammate, project_team
 from app.domain.delivery.ledger import deliver, settle
 from app.domain.device.wiring import sql_device_service
@@ -177,10 +177,11 @@ async def _work_on_own_computer(
     assert me.user_id is not None
     try:
         async with session.begin_nested():
-            await sql_device_service(session).assign_to_project(
-                device_id, project.id, actor_user_id=me.user_id
-            )
-            environment = Sandbox(spec=devices_of(me.user_id))
+            if not await sql_device_service(session).serves_project(
+                device_id, project.id
+            ):
+                return False
+            environment = Sandbox(spec=TEAM_DEVICES)
             await check_allowed(session, project, environment, me)
             room = await TopicService(session).lock_for_execution(project.root_topic_id)
             room.default_environment = dump(environment)

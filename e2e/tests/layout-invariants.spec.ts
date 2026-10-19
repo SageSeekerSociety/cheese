@@ -792,8 +792,8 @@ test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围�
   }
 });
 
-// 房间的输入框：输入框下面那一行按钮只会越加越多（附件、照片、清单、提问、提醒、
-// 交给芝士、发送）。触屏上按钮之间要拉开、能点的范围要撑到 44×44，同样几颗在桌面
+// 房间的输入框：输入框下面那一行（「+」、麦克风、交给谁那颗队友头像、发送）。
+// 触屏上按钮之间要拉开、能点的范围要撑到 44×44，同样几颗在桌面
 // 上放得下，到手机上就会顶出输入框的边、或者互相盖住。所以这里在真触屏（pointer:
 // coarse）的手机宽度和桌面宽度各量一次：没有一颗伸出输入框，每一颗手指都点得中。
 test.describe('房间输入框：下面那一行放得下，手指点得中', () => {
@@ -818,7 +818,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
         const r = el.getBoundingClientRect();
         const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim().slice(0, 16);
         if (r.left < edge.left - 0.5 || r.right > edge.right + 0.5) outside.push(`「${name}」${Math.round(r.left)}–${Math.round(r.right)}`);
-        // 挤不下时按钮先被压窄，字折成两行（「交给」竖着排），还没伸出去就已经坏了。
+        // 挤不下时按钮先被压窄，字折成两行（比如「还原原话」竖着排），还没伸出去就已经坏了。
         // 只量字（文字节点），图标和 Vuetify 的叠层不算行。
         const lines = new Set<number>();
         const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -875,7 +875,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
       const got = await measureComposer(page);
       expect(got, `${size.width}：没找到输入框`).not.toBeNull();
       if (size.width < 960) expect(got!.coarse, '手机这一档要在触屏下量').toBe(true);
-      // 附件 + 交给芝士 + 发送，至少这三颗；一颗都没量到就是范围选错了。
+      // 「+」、队友头像、发送，至少这三颗；一颗都没量到就是范围选错了。
       expect(got!.count, `${size.width}`).toBeGreaterThanOrEqual(3);
       expect(got!.outside, `${size.width}：伸出输入框的按钮`).toEqual([]);
       expect(got!.wrapped, `${size.width}：被压窄、字折了行的按钮`).toEqual([]);
@@ -958,7 +958,6 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
     const paths = [
       '/users/settings/security',
       '/users/settings/profile',
-      '/users/settings/devices',
       `${projectPath}/settings/agents`,
     ];
     const seen: { path: string; left: number; width: number }[] = [];

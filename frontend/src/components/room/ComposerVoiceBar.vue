@@ -1,9 +1,10 @@
 <script setup lang="ts">
-// 录音时输入框下面那一行：✕ · 计时 · 声波 · ✓。它和动作行占同一个位置，录音一开始
-// 两行交换（外面做过渡），所以人的视线不用离开输入框。
+// 录音时的那一条：✕、计时、声波。它从麦克风的位置往左展开成一整行，盖住「+」，停在
+// 麦克风的右边缘；「说完了」是发送键原地变成的 ✓（ComposerActions），所以这一条里没有
+// 它——按下和说完都在右下角这一块。
 //
-// ✓ 站在发送键的位置、也是这一行唯一的琥珀块：录音时发不了消息，「说完了」就是这
-// 一刻让事情往下走的那一个（设计系统 §1.6）。
+// 按住说话时，整条跟着手指往左挪（阻尼一半）；拖过一段就变成危险色浅底，松手就丢掉这段。
+// 这时候头顶冒一句「松手结束，左滑取消」——只在按着的时候出现，松手就走。
 //
 // 只吃 props、只往上发事件：录不录、发不发，都在 useVoiceInput。
 import type { VoiceState } from '@/composables/useVoiceInput'
@@ -18,11 +19,16 @@ const props = defineProps<{
   elapsed: number
   levels: number[]
   maxSeconds: number
+  /** 按住说话中（手指还按着）。 */
+  holding?: boolean
+  /** 手指往左拖了多少像素（负数），整条跟着挪。 */
+  dragX?: number
+  /** 拖过线了：松手就丢掉这段。 */
+  armed?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'cancel'): void
-  (e: 'done'): void
 }>()
 
 const thinking = computed(() => props.state === 'thinking')
@@ -35,68 +41,139 @@ const clock = computed(() => {
   const s = Math.floor(props.elapsed)
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 })
+const holdTip = computed(() =>
+  props.armed ? t('work.room.composer.voice.releaseToDrop') : t('work.room.composer.voice.holdTip')
+)
 </script>
 
 <template>
   <div
     class="voice-bar"
-    :class="{ 'voice-bar--thinking': thinking }"
+    :class="{
+      'voice-bar--thinking': thinking,
+      'voice-bar--holding': holding,
+      'voice-bar--armed': armed,
+    }"
     role="group"
     :aria-label="t('work.room.composer.voice.recording')"
   >
-    <BaseButton
-      kind="ghost"
-      class="voice-bar__icon"
-      icon="mdi-close"
-      size="sm"
-      :title="t('work.room.composer.voice.cancel')"
-      :aria-label="t('work.room.composer.voice.cancel')"
-      @click="emit('cancel')"
-    />
-    <span class="voice-bar__dot" aria-hidden="true" />
-    <span class="voice-bar__clock" :class="{ 'voice-bar__clock--ending': ending }" aria-live="polite">{{ clock }}</span>
-    <!-- 声波：最近几秒的音量，从右往左走。识别中收成一条细线。 -->
-    <div class="voice-bar__wave" aria-hidden="true">
-      <i
-        v-for="(level, i) in levels"
-        :key="i"
-        :style="{ transform: `scaleY(${thinking ? 0.12 : 0.12 + level * 0.88})` }"
-      />
+    <!-- 按着时头顶那一句：它在会被裁剪的那一块（__body）外面，展开、收回的 clip-path
+         裁不到它。 -->
+    <Transition name="voice-tip">
+      <div v-if="holding && !thinking" class="voice-bar__tip" :class="{ 'voice-bar__tip--armed': armed }">
+        <v-icon size="14">{{ armed ? 'mdi-close' : 'mdi-chevron-left' }}</v-icon
+        >{{ holdTip }}
+      </div>
+    </Transition>
+    <div class="voice-bar__body">
+      <div
+        class="voice-bar__track"
+        :class="{ 'voice-bar__track--drag': !!dragX }"
+        :style="{ translate: `${dragX ?? 0}px 0` }"
+      >
+        <BaseButton
+          kind="ghost"
+          class="voice-bar__icon voice-bar__part voice-bar__part--3"
+          icon="mdi-close"
+          size="sm"
+          :title="t('work.room.composer.voice.cancel')"
+          :aria-label="t('work.room.composer.voice.cancel')"
+          @click="emit('cancel')"
+        />
+        <span class="voice-bar__dot voice-bar__part voice-bar__part--2" aria-hidden="true" />
+        <span
+          class="voice-bar__clock voice-bar__part voice-bar__part--2"
+          :class="{ 'voice-bar__clock--ending': ending }"
+          aria-live="polite"
+          >{{ clock }}</span
+        >
+        <!-- 声波：最近几秒的音量，从右往左走。整理中压成一条线，上面走一道扫光。 -->
+        <div class="voice-bar__wave voice-bar__part" aria-hidden="true">
+          <i
+            v-for="(level, i) in levels"
+            :key="i"
+            :style="{ transform: `scaleY(${thinking ? 0.12 : 0.12 + level * 0.88})` }"
+          />
+          <span class="voice-bar__sheen" />
+        </div>
+      </div>
     </div>
-    <button
-      type="button"
-      class="voice-bar__done"
-      :disabled="thinking"
-      :title="t('work.room.composer.voice.done')"
-      :aria-label="t('work.room.composer.voice.done')"
-      @click="emit('done')"
-    >
-      <span v-if="thinking" class="voice-bar__spin" aria-hidden="true" />
-      <v-icon v-else size="18">mdi-check</v-icon>
-    </button>
   </div>
 </template>
 
 <style scoped>
 .voice-bar {
+  position: relative;
+  height: 100%;
+  min-height: 28px;
+}
+/* 展开 / 收回的过渡在外面（RoomComposer 的 voice-grow 裁的就是这一块），这是展开后的样子。 */
+.voice-bar__body {
   display: flex;
   align-items: center;
+  height: 100%;
+  border-radius: var(--radius-md);
+  background: var(--fill);
+  clip-path: inset(0 0 0 0 round var(--radius-md));
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+/* 按住说话时手指在麦克风上，录音条不接这根指针的事件（松手、拖动由外面全局接）。 */
+.voice-bar--holding {
+  pointer-events: none;
+}
+.voice-bar--armed .voice-bar__body {
+  background: var(--danger-wash);
+}
+.voice-bar__track {
+  display: flex;
+  flex: 1;
+  align-items: center;
   gap: 4px;
-  min-height: 36px;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  /* 松手弹回原位：减速停稳。拖着的时候跟手，不加过渡。 */
+  transition: translate var(--dur-base) var(--ease-out);
+}
+.voice-bar__track--drag {
+  transition: none;
+}
+/* 展开时内容从右往左依次淡入：先声波，再计时，最后 ✕。 */
+.voice-bar__part {
+  animation: voice-part-in var(--dur-base) var(--ease-out) 60ms both;
+}
+.voice-bar__part--2 {
+  animation-delay: 90ms;
+}
+.voice-bar__part--3 {
+  animation-delay: 120ms;
+}
+@keyframes voice-part-in {
+  from {
+    opacity: 0;
+    transform: translateX(4px);
+  }
 }
 .voice-bar__icon {
+  flex: none;
   width: 28px;
   height: 28px;
 }
-/* 正在录：一颗呼吸的红点。识别中它不再亮——那时候已经不在收音了。 */
+.voice-bar--armed .voice-bar__icon {
+  color: var(--danger-ink);
+  background: var(--surface);
+}
+/* 正在录：一颗呼吸的红点。整理中它不再亮——那时候已经不在收音了。 */
 .voice-bar__dot {
   flex: none;
   width: 8px;
   height: 8px;
-  margin: 0 2px 0 4px;
+  margin: 0 2px 0 2px;
   border-radius: 50%;
   background: var(--danger);
-  animation: voice-breathe 1.6s var(--ease-standard) infinite;
+  animation:
+    voice-part-in var(--dur-base) var(--ease-out) 90ms both,
+    voice-breathe 1.6s var(--ease-standard) infinite;
   transition: opacity var(--dur-quick) var(--ease-standard);
 }
 .voice-bar--thinking .voice-bar__dot {
@@ -114,15 +191,23 @@ const clock = computed(() => {
 .voice-bar__clock--ending {
   color: var(--warn-ink);
 }
+.voice-bar--armed .voice-bar__clock {
+  color: var(--danger-ink);
+  font-weight: 600;
+}
 .voice-bar__wave {
+  position: relative;
   flex: 1;
   min-width: 0;
   height: 24px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 2px;
   padding: 0 6px;
   overflow: hidden;
+  /* 最左边那几根淡出去，像是从这一行外面流进来的。 */
+  mask-image: linear-gradient(90deg, transparent 0, currentcolor 40px);
 }
 /* 每根条只变 scaleY：不碰布局，一帧几十根也不重排。 */
 .voice-bar__wave i {
@@ -142,61 +227,84 @@ const clock = computed(() => {
     transform var(--dur-base) var(--ease-out),
     background-color var(--dur-base) var(--ease-standard);
 }
-.voice-bar__done {
-  position: relative;
-  flex: none;
-  display: inline-grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--accent-on);
-  cursor: pointer;
+.voice-bar--armed .voice-bar__wave i {
+  background: var(--danger);
+}
+/* 整理中：压平的那条线上走一道扫光——机器正在做事（§9.6）。 */
+.voice-bar__sheen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--surface), transparent) no-repeat;
+  background-size: 40% 100%;
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease-standard);
+}
+.voice-bar--thinking .voice-bar__sheen {
+  opacity: 0.9;
+  animation: voice-sweep 1.2s linear infinite;
+}
+/* 按着时头顶那一句：靠右，落在麦克风上方。 */
+.voice-bar__tip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 12px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px 6px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--inverse-surface);
+  color: var(--inverse-ink);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: nowrap;
+  box-shadow: var(--shadow-1);
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.voice-bar__tip--armed {
+  background: var(--danger-ink);
+  color: var(--surface);
+}
+.voice-tip-enter-active {
   transition:
-    background-color var(--dur-quick) var(--ease-standard),
-    transform var(--dur-press) var(--ease-standard);
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
-.voice-bar__done:hover:not(:disabled) {
-  background: var(--accent-press);
+.voice-tip-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
 }
-.voice-bar__done:active:not(:disabled) {
-  transform: scale(0.92);
-}
-.voice-bar__done:disabled {
-  cursor: default;
-}
-.voice-bar__spin {
-  width: 14px;
-  height: 14px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: voice-spin 0.7s linear infinite;
+.voice-tip-enter-from,
+.voice-tip-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 @keyframes voice-breathe {
   50% {
     opacity: 0.35;
   }
 }
-@keyframes voice-spin {
+@keyframes voice-sweep {
+  from {
+    background-position: -60% 0;
+  }
   to {
-    transform: rotate(360deg);
+    background-position: 160% 0;
   }
 }
-/* 关掉动画之后意思还在：红点照样是实心的，转圈换成静止的半圈。 */
+/* 关掉动画之后意思还在：红点照样是实心的，压平的线不扫光，计时还在走。 */
 @media (prefers-reduced-motion: reduce) {
   .voice-bar__dot,
-  .voice-bar__spin {
+  .voice-bar--thinking .voice-bar__sheen {
+    animation: none;
+  }
+  .voice-bar__part {
     animation: none;
   }
 }
 @media (pointer: coarse) {
-  .voice-bar {
-    min-height: 44px;
-  }
-  .voice-bar__done::before {
+  .voice-bar__icon::before {
     content: '';
     position: absolute;
     top: 50%;

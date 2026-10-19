@@ -8,6 +8,10 @@ happens to carry, since a session placed on the answer authenticates with that
 login and nothing else.
 """
 
+from app.domain.device.wiring import sql_device_service
+from tests.support.devices import enrollment_team
+
+
 import json
 import os
 import subprocess
@@ -278,6 +282,7 @@ async def _device(factory, supply: Supply) -> str:
         await session.flush()
         session.add(
             DeviceRow(
+                team_id=await enrollment_team(sql_device_service(session), owner.id),
                 device_id=device_id,
                 name="laptop",
                 token=f"tok-{device_id}",

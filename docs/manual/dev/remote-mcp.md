@@ -68,8 +68,8 @@ covers:
 本地命令由房间机器上的执行器起：仓库里的那条按**它自己 checkout 里**的定义（`bootstrap.process_servers()` 挑没有 `url` 的）；设置里加的和队友类型自带的那条，定义写进执行目标的 `mcp_commands`（设置里加的同名时优先），由 `RemoteClient` 随调用带过去。平台在旁边管三件事（`remote_mcp/local.py`）：
 
 - **能拿到哪些密钥。** 一条命令第一次被用到时，`RemoteClient._local_start` 问 `POST {mcp_path}/{name}/start`，拿回 `values`：主干上（或设置里）**这个名字的定义**里出现的 `${VAR}` 中已经填了值的那几个；设置里加的远程服务器的请求头密钥（`CHEESE_MCP_*`）永远不给命令。值随调用交给执行器（`params.values`），执行器起进程时展开 `command`、`args`、`env`、`cwd` 里的 `${VAR}`；值不写进会话机上的任何文件。设置页明说：这个值在项目机器上，芝士读得到。
-- **在成员自己的电脑上，要电脑的主人允许。** 同一个请求还拿回 `allowed`：项目机器是成员的电脑（`mcp_machines.machine`，`Supply` 不是 `cloud`）时，是主人允许过的命令指纹；平台的机器上是 `None`，谁也不问。执行器起进程前对**它真要跑的那条定义**（`${VAR}` 不展开）算指纹（`runtime_calls.server_fingerprint`），不在清单上就不起，报错以 `MCP_APPROVAL_REQUIRED` 开头带上指纹和命令；`RemoteClient.local_outcome` 把它报成 `awaiting`，后端在 `project_mcp_approvals` 记一条，连同命令写在哪（`source`：仓库、设置、类型）和谁写的，主人在「等你处理」里答（`POST /mcp/approvals/{id}`，只有设备主人能答）。允许过的同一条命令不再问，命令一改指纹就变，再问一次。所有答复的摘要写进执行目标（`mcp_decided`），所以一有答复，空转的会话会带着新清单重启。成员自己启动的 Claude Code（设备启动，没有 `mcp_path`）不问：那台电脑是他自己的，也是他自己开的会话。
-- **上次运行得怎样。** 网关把每个服务器第一次列工具的结果报给 `POST {mcp_path}/{name}/run`：成功是 `running`，失败是 `failed` 带日志最后 12 行（执行器起进程失败时把 `mcp-<hash>.log` 的末尾接在报错后面），等主人是 `awaiting`；网关关门时把报过 `running` 的改回 `idle`。`running` 只信 12 小时（`RUNNING_FOR`）：一个和会话一起死掉的网关说不出它停了。存在 `project_mcp_runs`，设置页读它。
+- **在团队自有设备上，要设备所属团队的管理员允许。** 同一个请求还拿回 `allowed`：项目机器是成员的电脑（`mcp_machines.machine`，`Supply` 不是 `cloud`）时，是团队管理员允许过的命令指纹；平台的机器上是 `None`，谁也不问。执行器起进程前对**它真要跑的那条定义**（`${VAR}` 不展开）算指纹（`runtime_calls.server_fingerprint`），不在清单上就不起，报错以 `MCP_APPROVAL_REQUIRED` 开头带上指纹和命令；`RemoteClient.local_outcome` 把它报成 `awaiting`，后端在 `project_mcp_approvals` 记一条，连同命令写在哪（`source`：仓库、设置、类型）和谁写的，团队管理员在「等你处理」里答（`POST /mcp/approvals/{id}`，只有设备所属团队的管理员能答）。允许过的同一条命令不再问，命令一改指纹就变，再问一次。所有答复的摘要写进执行目标（`mcp_decided`），所以一有答复，空转的会话会带着新清单重启。成员自己启动的 Claude Code（设备启动，没有 `mcp_path`）不问：那台电脑是他自己的，也是他自己开的会话。
+- **上次运行得怎样。** 网关把每个服务器第一次列工具的结果报给 `POST {mcp_path}/{name}/run`：成功是 `running`，失败是 `failed` 带日志最后 12 行（执行器起进程失败时把 `mcp-<hash>.log` 的末尾接在报错后面），等团队管理员是 `awaiting`；网关关门时把报过 `running` 的改回 `idle`。`running` 只信 12 小时（`RUNNING_FOR`）：一个和会话一起死掉的网关说不出它停了。存在 `project_mcp_runs`，设置页读它。
 
 平台在机器上放 Node 24（`node` / `npm` / `npx`）和 uv（`uv` / `uvx`），排在机器自己的 PATH 后面：成员电脑上已有的 node 照用（`toolchain.py`、`machine_launcher.py`）。Docker、Deno、Bun 不提供。
 
@@ -79,7 +79,7 @@ covers:
 
 `state` 是一份密封的 JSON，装着这次流程的全部，并在 `single_use_state` 里先占一个 jti；回调落在 `GET /api/mcp/oauth/callback`：先 `claim()` 那个 jti（只能用一次），再按 RFC 9207 核对 `iss`——指向别的授权服务器要拒，授权服务器声明了会带 `iss` 却没带也要拒——换 token 时带上 RFC 8707 的 `resource`。到期前 60 秒刷新；服务器回 401 就刷新一次再试；刷新被拒标 `needs_reconnect`。断开时尽力撤销。
 
-设置里添加和编辑服务器（`POST` / `PUT` / `DELETE /projects/{id}/mcp/servers…`，`kind` 是 `remote` 或 `command`）要「配置 AI 队友」的权限。改了一条命令，它在成员电脑上的指纹就变了，主人会被再问一次。改了地址或换了登录方式，已有的连接和请求头一并清掉（`_forget_credentials`），免得一个密钥被送到不是给它的主机。
+设置里添加和编辑服务器（`POST` / `PUT` / `DELETE /projects/{id}/mcp/servers…`，`kind` 是 `remote` 或 `command`）要「配置 AI 队友」的权限。改了一条命令，它在成员电脑上的指纹就变了，团队管理员会被再问一次。改了地址或换了登录方式，已有的连接和请求头一并清掉（`_forget_credentials`），免得一个密钥被送到不是给它的主机。
 
 ## 凭据：放在哪，谁看得到 {#credentials}
 

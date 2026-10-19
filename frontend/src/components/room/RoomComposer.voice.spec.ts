@@ -306,4 +306,53 @@ describe('语音输入', () => {
     expect(screen.getByRole('status').textContent).toContain('今天的语音输入已经用完')
     expect(draft.value).toBe('原来的字')
   })
+
+  it('按住说话时往左拖过一段再松手：这段不要了，正文不动', async () => {
+    hearVoice.mockResolvedValue({ text: '好的', raw: '好的' })
+    const { draft } = mount('原来的字')
+
+    const mic = screen.getByRole('button', { name: '语音输入' })
+    await fireEvent.pointerDown(mic, { button: 0, pointerId: 1, clientX: 300 })
+    await new Promise((r) => setTimeout(r, 300))
+    await flush()
+    speak(1)
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 150 }))
+    await flush()
+    screen.getByText('松手取消')
+    window.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 1, clientX: 150 }))
+    await flush()
+
+    expect(hearVoice).not.toHaveBeenCalled()
+    expect(draft.value).toBe('原来的字')
+  })
+
+  it('往左拖了一点又拖回来，松手照样说完', async () => {
+    hearVoice.mockResolvedValue({ text: '好的', raw: '好的' })
+    const { draft } = mount('')
+
+    const mic = screen.getByRole('button', { name: '语音输入' })
+    await fireEvent.pointerDown(mic, { button: 0, pointerId: 1, clientX: 300 })
+    await new Promise((r) => setTimeout(r, 300))
+    await flush()
+    speak(1)
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 150 }))
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 290 }))
+    window.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 1, clientX: 290 }))
+    await flush()
+
+    expect(hearVoice).toHaveBeenCalledTimes(1)
+    expect(draft.value).toBe('好的')
+  })
+
+  it('录着的时候，字会落的那个地方写着「正在听」；落了字就收起', async () => {
+    hearVoice.mockResolvedValue({ text: '好的', raw: '好的' })
+    const { box } = mount('')
+
+    await startTalking()
+    expect(box().textContent).toContain('正在听')
+    speak(1)
+    await done()
+    expect(box().textContent).not.toContain('正在听')
+    expect(box().textContent).toContain('好的')
+  })
 })

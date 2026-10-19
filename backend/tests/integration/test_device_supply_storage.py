@@ -7,6 +7,8 @@ show — a field that never survives a write is the same bug as not storing it, 
 it is the failure the whole decision is meant to end.
 """
 
+from tests.support.devices import enrollment_team
+
 import importlib.util
 import uuid
 from datetime import UTC, datetime
@@ -55,11 +57,13 @@ def test_both_supplies_round_trip_and_only_cloud_is_reclaimable(
             await service.start("microcloud-box"),
             owner_user_id=1,
             supply=Supply.cloud,
+            team_id=await enrollment_team(service, 1),
         )
         mine = await service.approve(
             await service.start("my-desktop"),
             owner_user_id=1,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(service, 1),
         )
         await db_session.flush()
         db_session.expunge_all()  # force a genuine read, not the identity map

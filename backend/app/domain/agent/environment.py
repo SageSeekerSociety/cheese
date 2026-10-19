@@ -33,7 +33,6 @@ from app.core.sentences import say
 from app.domain.agent.models import AgentTurn
 from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
-from app.domain.user.models import User as UserRow
 
 #: The platform's machines, the default for a new agent.
 STANDARD = "standard"
@@ -42,6 +41,7 @@ STANDARD = "standard"
 VM = "vm"
 #: One person's own enrolled computers: ``devices_of:<user id>``.
 DEVICES_OF = "devices_of:"
+TEAM_DEVICES = "team_devices"
 
 
 async def room_is_busy(session: AsyncSession, room_id: uuid.UUID) -> bool:
@@ -87,7 +87,11 @@ def stored(raw: object) -> Sandbox | SelfHosted | None:
     """An environment read back from storage; None when nothing is stored."""
     if not raw:
         return None
-    return _ENVIRONMENT.validate_python(raw)
+    environment = _ENVIRONMENT.validate_python(raw)
+    # Stop propagating the previous stored spec before its cleanup migration.
+    if isinstance(environment, Sandbox) and environment.spec.startswith(DEVICES_OF):
+        return Sandbox(spec=TEAM_DEVICES)
+    return environment
 
 
 def dump(environment: Sandbox | SelfHosted | None) -> dict | None:
@@ -132,6 +136,13 @@ def spec_of(name: str) -> Spec | None:
             idle_s=settings.cloud_vm_idle_release_s,
             background_cap_s=settings.cloud_vm_background_cap_s,
         )
+    if name == TEAM_DEVICES:
+        return Spec(
+            name,
+            platform=False,
+            idle_s=settings.cloud_sandbox_idle_stop_s,
+            background_cap_s=settings.cloud_sandbox_background_cap_s,
+        )
     if name.startswith(DEVICES_OF):
         owner = name.removeprefix(DEVICES_OF)
         if owner.isdigit():
@@ -171,11 +182,4 @@ async def works_tasks_of(
     device = await devices.get_device(device_id)
     if device is None:
         return False
-    if project.team_id in await devices.list_teams(device_id):
-        return True
-    owner = (
-        await session.scalar(select(UserRow).where(UserRow.username == owner_handle))
-        if owner_handle
-        else None
-    )
-    return owner is not None and owner.id == device.owner_user_id
+    return device.team_id == project.team_id

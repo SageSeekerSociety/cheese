@@ -440,21 +440,23 @@ async def _seed_team_projects(session, team_id: int, users: dict[str, int]) -> i
     return made
 
 
-async def _seed_devices(session, users: dict[str, int], team_id: int, project: Project) -> int:
+async def _seed_devices(session, users: dict[str, int], team_id: int) -> int:
     owner_id = users[OWNER]
     service = device_service_for_session(session)
     wanted = ["演示工作站", "演示笔记本"]
-    owned = await service.list_owned(owner_id)
-    if any(device.name in wanted for device in owned):
+    devices = await service.list_devices_for_team(team_id)
+    if any(device.name in wanted for device in devices):
         return 0
     made = 0
     for name in wanted:
         code = await service.start(name)
-        device = await service.approve(
-            code, owner_user_id=owner_id, supply=Supply.self_hosted, name=name
+        await service.approve(
+            code,
+            owner_user_id=owner_id,
+            team_id=team_id,
+            supply=Supply.self_hosted,
+            name=name,
         )
-        await service.assign_to_team(device.device_id, team_id, actor_user_id=owner_id)
-        await service.assign_to_project(device.device_id, project.id, actor_user_id=owner_id)
         made += 1
     return made
 
@@ -551,7 +553,7 @@ async def seed() -> None:
         assert first_project is not None
         totals["skills"] = await _seed_skills(session, first_project)
         totals["team_projects"] = await _seed_team_projects(session, team_id, users)
-        totals["devices"] = await _seed_devices(session, users, team_id, first_project)
+        totals["devices"] = await _seed_devices(session, users, team_id)
         totals["integrations"] = await _seed_integrations(session, users)
 
         await session.commit()

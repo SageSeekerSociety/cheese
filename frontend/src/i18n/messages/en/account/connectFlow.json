@@ -1,12 +1,12 @@
 {
-  "askBody": "Once connected, your AI teammates can run tasks on this device. You can change this, and which teams it serves, in Settings → This device",
+  "askBody": "Choose the team for this device. Its admins will manage the enrollment.",
   "askMacTools": "The first time, macOS may ask to install the Command Line Developer Tools, which takes a few minutes",
   "askTitle": "Connect this device",
   "cancel": "Cancel",
   "close": "Close",
   "connect": "Connect",
   "details": "Details",
-  "doneHint": "You can change all of this later in Settings → This device",
+  "doneHint": "The device is enrolled. Manage it on the team’s Devices page.",
   "doneTitle": "This device is connected",
   "failed": {
     "at": "\"{step}\" didn't finish. Try again later",

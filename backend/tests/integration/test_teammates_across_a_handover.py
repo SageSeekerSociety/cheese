@@ -225,7 +225,8 @@ def test_waiting_messages_for_two_teammates_both_get_their_turn(client):
 
     _until(
         lambda: (
-            _heard(channel, room, "修一下登录页") is not None
+            len(_prompts(channel, room)) == 2
+            and _heard(channel, room, "修一下登录页") is not None
             and _heard(channel, room, "看一下注册页") is not None
         ),
         "a waiting message never got its turn",

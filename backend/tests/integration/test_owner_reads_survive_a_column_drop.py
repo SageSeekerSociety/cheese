@@ -28,7 +28,7 @@ async def _project(db_session, handle: str = "alice") -> uuid.UUID:
             "INSERT INTO projects"
             " (id, name, owner_handle, team_id, ai_mode, settings,"
             " created_at, updated_at)"
-            " VALUES (:id, :name, :owner, :team, 'off', '{}', now(), now())"
+            " VALUES (:id, :name, :owner, :team, 'collaborative', '{}', now(), now())"
         ),
         {
             "id": project_id,

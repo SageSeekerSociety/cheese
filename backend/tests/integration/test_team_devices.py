@@ -1,245 +1,235 @@
-"""Compute belongs to the team (execution-architecture v4).
-
-A machine registered for a team (为团队注册设备) is usable by every project of that
-team — without an explicit per-project assignment. This is the team-ownership layer:
-bind a device to a team once, and the team's projects can run on it.
-``SqlDeviceRepository.list_devices_by_project`` backs both the affinity routing and
-the self-hosted pool's availability, so testing it here proves the behavior for both.
-"""
+"""Team enrollment, management and project isolation over the public API."""
 
 import asyncio
-import uuid
 from datetime import UTC, datetime
 
-from app.domain.device.models import DeviceRow, HostedDeviceRow
-from app.domain.device.sql_repository import SqlDeviceRepository
-from app.domain.project.repositories import ProjectRepository
-from app.domain.team.models import Team, TeamMemberRole
+from sqlalchemy import select
+
+from app.domain.device.wiring import sql_device_service
+from app.domain.project.models import Project
 from app.domain.team.repositories import TeamRepository
-from app.domain.team.services import TeamService
 from app.domain.user.models import User
-from tests.integration.conftest import post_project
+from tests.conftest import seed_user
+from tests.integration.conftest import a_team
 
 
-def _now() -> datetime:
-    return datetime.now(UTC)
+def setup_team(client):
+    tokens = {
+        name: {"Authorization": f"Bearer {seed_user(client, name)}"}
+        for name in ("enroller", "admin", "member", "outsider")
+    }
 
-
-def _project(client, name: str = "P") -> str:
-    return post_project(client, json={"name": name}, owner="andyl").json()["data"]["id"]
-
-
-def test_project_can_use_a_device_registered_for_its_team(client):
-    team_pid = _project(client, "team-project")
-    other_pid = _project(client, "other-project")
-
-    async def seed() -> None:
-        async with client.test_factory() as s:
-            user = User(
-                username="dave",
-                email="dave@example.io",
-                created_at=_now(),
-                updated_at=_now(),
-            )
-            s.add(user)
-            await s.flush()
-            team = Team(
-                name="Team Cheese",
-                handle=f"t-{uuid.uuid4().hex[:12]}",
-                intro="i",
-                description="d",
-                avatar_id=0,
-                created_at=_now(),
-                updated_at=_now(),
-            )
-            s.add(team)
-            await s.flush()
-            s.add(
-                DeviceRow(
-                    device_id="devteam01",
-                    name="Dave's box",
-                    token="tok-devteam01",
-                    owner_user_id=user.id,
-                    created_at=_now(),
-                )
-            )
-            s.add(HostedDeviceRow(device_id="devteam01", owner_user_id=user.id))
-            await s.flush()
-            # 为团队注册设备: bind the machine to the team (NOT to any project).
-            await SqlDeviceRepository(s).assign_team("devteam01", team.id)
-            # Link only the team-project to that team.
-            proj = await ProjectRepository(s).get(uuid.UUID(team_pid))
-            proj.team_id = team.id
-            await s.commit()
-
-    async def devices_for(pid: str) -> list[str]:
-        async with client.test_factory() as s:
-            found = await SqlDeviceRepository(s).list_devices_by_project(uuid.UUID(pid))
-            return [d.device_id for d in found]
-
-    asyncio.run(seed())
-    # The team's project sees the team machine via the device_team binding — no
-    # explicit device_project row needed.
-    assert "devteam01" in asyncio.run(devices_for(team_pid))
-    # A project NOT on that team does not — compute is scoped to the team context.
-    assert "devteam01" not in asyncio.run(devices_for(other_pid))
-
-    # The team's own compute view lists exactly its registered machines.
-    async def team_devices(team_name: str) -> list[str]:
-        async with client.test_factory() as s:
-            from sqlalchemy import select
-
-            from app.domain.team.models import Team
-
-            tid = (
-                await s.scalars(select(Team.id).where(Team.name == team_name))
-            ).first()
-            found = await SqlDeviceRepository(s).list_devices_by_team(int(tid))
-            return [d.device_id for d in found]
-
-    assert asyncio.run(team_devices("Team Cheese")) == ["devteam01"]
-
-
-def test_device_team_binding_is_idempotent_and_removable(client):
-    async def run() -> tuple[list[int], list[int]]:
-        async with client.test_factory() as s:
-            user = User(
-                username="erin", email="erin@x.io", created_at=_now(), updated_at=_now()
-            )
-            s.add(user)
-            await s.flush()
-            s.add(
-                DeviceRow(
-                    device_id="devteam02",
-                    name="Erin's box",
-                    token="tok-devteam02",
-                    owner_user_id=user.id,
-                    created_at=_now(),
-                )
-            )
-            s.add(HostedDeviceRow(device_id="devteam02", owner_user_id=user.id))
-            await s.flush()
-            repo = SqlDeviceRepository(s)
-            await repo.assign_team("devteam02", 7)
-            await repo.assign_team("devteam02", 7)  # idempotent — no duplicate row
-            await repo.assign_team("devteam02", 9)
-            bound = sorted(await repo.list_team_ids("devteam02"))
-            await repo.unassign_team("devteam02", 7)
-            after = sorted(await repo.list_team_ids("devteam02"))
-            await s.commit()
-            return bound, after
-
-    bound, after = asyncio.run(run())
-    assert bound == [7, 9]
-    assert after == [9]
-
-
-def test_personal_project_uses_owners_personal_team_devices(client):
-    """个人 = 单人真团队 (v4): a personal project belongs to its owner's personal
-    team — a machine registered there reaches every personal
-    project of that user with zero per-project setup."""
-    personal_pid = _project(client, "andyl-personal")
-
-    async def seed() -> str:
-        async with client.test_factory() as s:
-            # `_project` created the project as owner "andyl" — that registered
-            # andyl, whose personal team the project was put in.
-            from app.domain.user.repositories import UserRepository
-
-            user = await UserRepository(s).get_by_username("andyl")
-            assert user is not None
-            stranger = User(
-                username="mallory",
-                email="mallory@example.io",
-                created_at=_now(),
-                updated_at=_now(),
-            )
-            s.add(stranger)
-            await s.flush()
-            svc = TeamService(TeamRepository(session=s))
-            mine = await svc.ensure_personal_team(user.id)
-            again = await svc.ensure_personal_team(user.id)
-            assert again.id == mine.id  # idempotent — one personal team per user
-            theirs = await svc.ensure_personal_team(stranger.id)
-            for did, owner in (("devper01", user), ("devper02", stranger)):
-                s.add(
-                    DeviceRow(
-                        device_id=did,
-                        name=f"{owner.username}'s box",
-                        token=f"tok-{did}",
-                        owner_user_id=owner.id,
-                        created_at=_now(),
+    async def seed():
+        async with client.test_factory() as db:
+            ids = dict(
+                (
+                    await db.execute(
+                        select(User.username, User.id).where(User.username.in_(tokens))
                     )
-                )
-                s.add(HostedDeviceRow(device_id=did, owner_user_id=owner.id))
-            await s.flush()
-            repo = SqlDeviceRepository(s)
-            await repo.assign_team("devper01", mine.id)
-            await repo.assign_team("devper02", theirs.id)
-            await s.commit()
-            return str(mine.id)
-
-    async def devices_for(pid: str) -> list[str]:
-        async with client.test_factory() as s:
-            found = await SqlDeviceRepository(s).list_devices_by_project(uuid.UUID(pid))
-            return [d.device_id for d in found]
-
-    mine_id = int(asyncio.run(seed()))
-    found = asyncio.run(devices_for(personal_pid))
-    # The owner's personal-team machine routes to their team-less project…
-    assert "devper01" in found
-    # …but another user's personal machine never leaks in.
-    assert "devper02" not in found
-
-    # Once the project joins a shared team, the personal fallback is out of play:
-    # only explicit assignments + that team's machines apply.
-    async def move_to_shared_team() -> None:
-        async with client.test_factory() as s:
-            team = Team(
-                name="Shared",
-                handle=f"t-{uuid.uuid4().hex[:12]}",
-                intro="i",
-                description="d",
-                avatar_id=0,
-                created_at=_now(),
-                updated_at=_now(),
+                ).all()
             )
-            s.add(team)
-            await s.flush()
-            proj = await ProjectRepository(s).get(uuid.UUID(personal_pid))
-            proj.team_id = team.id
-            await s.commit()
+            team = await a_team(db)
+            other = await a_team(db)
+            repo = TeamRepository(db)
+            await repo.add_member(team, ids["enroller"], 1)
+            await repo.add_member(team, ids["admin"], 1)
+            await repo.add_member(team, ids["member"], 2)
+            await repo.add_member(other, ids["outsider"], 0)
+            project = Project(team_id=team, name="Team work", owner_handle="admin")
+            outside = Project(team_id=other, name="Other work", owner_handle="outsider")
+            db.add_all([project, outside])
+            await db.commit()
+            return team, other, project.id, outside.id
 
-    asyncio.run(move_to_shared_team())
-    assert "devper01" not in asyncio.run(devices_for(personal_pid))
-    assert mine_id > 0  # sanity: the personal team really was provisioned
+    return tokens, asyncio.run(seed())
 
 
-def test_ensure_personal_team_makes_a_real_single_member_team(client):
-    """The personal team is a REAL team: one row flagged personal_owner_user_id,
-    with the user as its OWNER member — not a synthetic no-team state."""
+def enroll(client, headers, team_id=None):
+    code = client.post(
+        "/connector/auth/device/start", json={"device_name": "Computer"}
+    ).json()["device_code"]
+    response = client.post(
+        "/connector/connect",
+        headers=headers,
+        json={"device_code": code, "team_id": team_id},
+    )
+    assert response.status_code == 200, response.text
+    return response.json(), code
 
-    async def run() -> tuple[bool, int, int]:
-        async with client.test_factory() as s:
-            user = User(
-                username="frank",
-                email="frank@example.io",
-                created_at=_now(),
-                updated_at=_now(),
-            )
-            s.add(user)
-            await s.flush()
-            repo = TeamRepository(session=s)
-            team = await TeamService(repo).ensure_personal_team(user.id)
-            members = await repo.list_members_of_team(team.id)
-            await s.commit()
+
+def test_team_admin_can_manage_another_members_enrollment(client):
+    headers, (team, _, _, _) = setup_team(client)
+    device, _ = enroll(client, headers["enroller"], team)
+    renamed = client.patch(
+        f"/connector/my/devices/{device['device_id']}",
+        headers=headers["admin"],
+        json={"name": "Team computer"},
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "Team computer"
+
+
+def test_enroller_loses_management_when_leaving_and_leaves_resource_with_team(client):
+    headers, (team, _, project, outside) = setup_team(client)
+    device, code = enroll(client, headers["enroller"], team)
+    did = device["device_id"]
+
+    async def leave():
+        async with client.test_factory() as db:
+            user = await db.scalar(select(User.id).where(User.username == "enroller"))
+            relation = await TeamRepository(db).get_member_relation(team, user)
+            relation.deleted_at = datetime.now(UTC)
+            await db.commit()
+
+    asyncio.run(leave())
+    for name in ("enroller", "member", "outsider"):
+        response = client.patch(
+            f"/connector/my/devices/{did}", headers=headers[name], json={"name": "No"}
+        )
+        assert response.status_code == 403, (name, response.text)
+    listed = client.get(f"/connector/teams/{team}/devices", headers=headers["admin"])
+    assert [d["device_id"] for d in listed.json()["devices"]] == [did]
+    assert listed.json()["can_manage"] is True
+    member_view = client.get(
+        f"/connector/teams/{team}/devices", headers=headers["member"]
+    )
+    assert member_view.json()["can_manage"] is False
+    assert (
+        client.get(
+            f"/connector/teams/{team}/devices", headers=headers["enroller"]
+        ).status_code
+        == 403
+    )
+
+    async def routing():
+        async with client.test_factory() as db:
+            service = sql_device_service(db)
+            return await service.serves_project(
+                did, project
+            ), await service.serves_project(did, outside)
+
+    assert asyncio.run(routing()) == (True, False)
+    for name in ("enroller", "member", "outsider"):
+        assert (
+            client.delete(
+                f"/connector/my/devices/{did}", headers=headers[name]
+            ).status_code
+            == 403
+        )
+    assert (
+        client.delete(
+            f"/connector/my/devices/{did}", headers=headers["admin"]
+        ).status_code
+        == 200
+    )
+    poll = client.post("/connector/auth/device/poll", json={"device_code": code})
+    assert poll.json() == {"status": "pending"}
+
+
+def test_remaining_admin_can_revoke_the_departed_enrollers_directory_grant(client):
+    headers, (team, _, _, _) = setup_team(client)
+    device, _ = enroll(client, headers["enroller"], team)
+    path = f"/connector/my/devices/{device['device_id']}/directories"
+    granted = client.post(
+        path,
+        headers=headers["enroller"],
+        json={"path": "/home/team/work", "platform": "linux", "scope": "user"},
+    )
+    assert granted.status_code == 200, granted.text
+    grant_id = granted.json()["id"]
+
+    async def leave():
+        async with client.test_factory() as db:
+            user = await db.scalar(select(User.id).where(User.username == "enroller"))
+            relation = await TeamRepository(db).get_member_relation(team, user)
+            relation.deleted_at = datetime.now(UTC)
+            await db.commit()
+
+    asyncio.run(leave())
+    listed = client.get(path, headers=headers["admin"])
+    assert [g["id"] for g in listed.json()["directories"]] == [grant_id]
+    assert (
+        client.delete(f"{path}/{grant_id}", headers=headers["enroller"]).status_code
+        == 404
+    )
+    removed = client.delete(f"{path}/{grant_id}", headers=headers["admin"])
+    assert removed.status_code == 200, removed.text
+    assert client.get(path, headers=headers["admin"]).json()["directories"] == []
+
+
+def test_personal_default_and_independent_second_team_enrollment(client):
+    headers, (team, other, _, _) = setup_team(client)
+    personal, _ = enroll(client, headers["enroller"])
+    shared, _ = enroll(client, headers["enroller"], team)
+    assert personal["team_id"] != shared["team_id"]
+    assert personal["device_id"] != shared["device_id"]
+    assert shared["team_id"] == team
+    code = client.post("/connector/auth/device/start", json={}).json()["device_code"]
+    for actor, tid in (("member", team), ("enroller", other)):
+        response = client.post(
+            "/connector/connect",
+            headers=headers[actor],
+            json={"device_code": code, "team_id": tid},
+        )
+        assert response.status_code == 403, response.text
+
+
+def test_desktop_enrollments_list_only_current_teams_with_the_raw_device_shape(client):
+    headers, (team, other, _, _) = setup_team(client)
+    shared, _ = enroll(client, headers["enroller"], team)
+    private, _ = enroll(client, headers["outsider"], other)
+
+    listed = client.get("/connector/my/team-devices", headers=headers["member"])
+
+    assert listed.status_code == 200, listed.text
+    [device] = listed.json()["devices"]
+    assert device == {
+        "device_id": shared["device_id"],
+        "name": "Computer",
+        "online": False,
+        "team_id": team,
+        "last_seen_at": None,
+        "screens": [],
+        "logins": [],
+    }
+    outside = client.get("/connector/my/team-devices", headers=headers["outsider"])
+    assert [d["device_id"] for d in outside.json()["devices"]] == [private["device_id"]]
+    assert client.get("/connector/my/team-devices").status_code == 401
+
+
+def test_team_lending_endpoints_are_gone(client):
+    headers, (team, _, _, _) = setup_team(client)
+    device, _ = enroll(client, headers["enroller"], team)
+    did = device["device_id"]
+    assert client.post(
+        f"/connector/my/devices/{did}/teams",
+        headers=headers["enroller"],
+        json={"team_id": team},
+    ).status_code in (404, 405)
+    assert client.delete(
+        f"/connector/my/devices/{did}/teams/{team}", headers=headers["enroller"]
+    ).status_code in (404, 405)
+
+
+def test_closing_the_enroller_keeps_the_shared_teams_device(client):
+    from app.domain.account.deletion import close_account
+
+    headers, (team, _, project, _) = setup_team(client)
+    shared, _ = enroll(client, headers["enroller"], team)
+    personal, _ = enroll(client, headers["enroller"])
+
+    async def close_and_read():
+        async with client.test_factory() as db:
+            user = await db.scalar(select(User.id).where(User.username == "enroller"))
+            await close_account(db, user)
+            await db.commit()
+        async with client.test_factory() as db:
+            devices = sql_device_service(db)
             return (
-                team.personal_owner_user_id == user.id,
-                len(members),
-                members[0].role,
+                await devices.serves_project(shared["device_id"], project),
+                await devices.get_device(personal["device_id"]),
             )
 
-    flagged, member_count, role = asyncio.run(run())
-    assert flagged
-    assert member_count == 1
-    assert role == TeamMemberRole.OWNER
+    assert asyncio.run(close_and_read()) == (True, None)
+    listed = client.get(f"/connector/teams/{team}/devices", headers=headers["admin"])
+    assert [d["device_id"] for d in listed.json()["devices"]] == [shared["device_id"]]

@@ -6,12 +6,14 @@ platform's, which asks nobody."""
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.device.models import DeviceProjectRow, DeviceRow, DeviceTeamRow
+from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.project.models import Project
+from app.domain.team.models import Team, TeamUserRelation
+from app.domain.team.protocol import TeamMemberRole
 from app.domain.remote_mcp.local import Machine
 from app.domain.user.models import User
 
@@ -21,8 +23,9 @@ async def owners(db: AsyncSession, device_ids: Sequence[str]) -> dict[str, str]:
     if not device_ids:
         return {}
     found = await db.execute(
-        select(DeviceRow.device_id, User.username)
-        .join(User, User.id == DeviceRow.owner_user_id)
+        select(DeviceRow.device_id, func.coalesce(Team.handle, User.username))
+        .join(Team, Team.id == DeviceRow.team_id)
+        .outerjoin(User, User.id == Team.personal_owner_user_id)
         .where(DeviceRow.device_id.in_(list(device_ids)))
     )
     return {device_id: handle for device_id, handle in found}
@@ -41,11 +44,16 @@ async def names(db: AsyncSession, device_ids: Sequence[str]) -> dict[str, str]:
 
 
 async def owned(db: AsyncSession, handle: str) -> list[str]:
-    """The devices this person owns."""
+    """The devices whose team this person administers."""
     found = await db.scalars(
         select(DeviceRow.device_id)
-        .join(User, User.id == DeviceRow.owner_user_id)
-        .where(User.username == handle)
+        .join(TeamUserRelation, TeamUserRelation.team_id == DeviceRow.team_id)
+        .join(User, User.id == TeamUserRelation.user_id)
+        .where(
+            User.username == handle,
+            TeamUserRelation.deleted_at.is_(None),
+            TeamUserRelation.role.in_([TeamMemberRole.OWNER, TeamMemberRole.ADMIN]),
+        )
     )
     return list(found)
 
@@ -57,20 +65,16 @@ async def machine(
     bound to the project's team. None for any other id."""
     team = await db.scalar(select(Project.team_id).where(Project.id == project_id))
     found = await db.execute(
-        select(DeviceRow.device_id, DeviceRow.supply, User.username)
-        .join(User, User.id == DeviceRow.owner_user_id)
+        select(
+            DeviceRow.device_id,
+            DeviceRow.supply,
+            func.coalesce(Team.handle, User.username),
+        )
+        .join(Team, Team.id == DeviceRow.team_id)
+        .outerjoin(User, User.id == Team.personal_owner_user_id)
         .where(
             DeviceRow.device_id == device_id,
-            or_(
-                DeviceRow.device_id.in_(
-                    select(DeviceProjectRow.device_id).where(
-                        DeviceProjectRow.project_id == project_id
-                    )
-                ),
-                DeviceRow.device_id.in_(
-                    select(DeviceTeamRow.device_id).where(DeviceTeamRow.team_id == team)
-                ),
-            ),
+            DeviceRow.team_id == team,
         )
     )
     row = found.first()

@@ -55,7 +55,7 @@ async def list_nodes(runner: Runner) -> dict:
     detail = {
         STANDARD: cloud,
         VM: cloud,
-        "devices_of": (say("nodeDeviceOnline"), say("nodeDeviceOffline")),
+        "team_devices": (say("nodeDeviceOnline"), say("nodeDeviceOffline")),
     }
     nodes = [
         {

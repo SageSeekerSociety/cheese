@@ -30,7 +30,7 @@ class DeviceAttribution:
 
     actor_user_id: int
     actor_handle: str
-    owner_user_id: int
+    owner_user_id: int | None
     project_id: uuid.UUID | None  # set only when the call came from inside a screen
     device_id: str
     screen: HubScreen | None
@@ -69,6 +69,8 @@ async def resolve_device_actor(
             device_id=device.device_id,
             screen=screen,
         )
+    if device.owner_user_id is None:
+        return None
     owner_handle = await owner_handle_of(device.owner_user_id)
     return DeviceAttribution(
         actor_user_id=device.owner_user_id,

@@ -8,13 +8,15 @@ human.
 import asyncio
 import socket
 import time
+import uuid
+
 
 import httpx
 import pytest
 import uvicorn
 
 from tests.conftest import seed_user
-from tests.integration.conftest import join_project_team, post_project
+from tests.integration.conftest import post_project
 
 
 def _login(client, handle: str) -> str:
@@ -30,7 +32,7 @@ def _bearer(token: str) -> dict:
 
 def test_full_device_flow_start_approve_poll(client):
     # A project the device will be bound to.
-    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
+    post_project(client, json={"name": "P"}, owner="alice")
     token = _login(client, "alice")
 
     # 1. start — the client (frozen cli) gets a code + an approve link.
@@ -54,7 +56,6 @@ def test_full_device_flow_start_approve_poll(client):
         "/connector/connect",
         json={
             "device_code": code,
-            "project_id": project["id"],
             "device_name": "alice-studio",
         },
         headers=_bearer(token),
@@ -66,7 +67,7 @@ def test_full_device_flow_start_approve_poll(client):
     assert "agent_handle" not in approved
     # The human-chosen name won over the cli-proposed one (fixes an "unnamed" node).
     assert approved["device_name"] == "alice-studio"
-    assert approved["project_id"] == project["id"]
+    assert approved["team_id"] is not None
 
     # 4. poll after approval → durable token + id the cli persists.
     done = client.post("/connector/auth/device/poll", json={"device_code": code})
@@ -181,10 +182,16 @@ def test_the_human_door_creates_the_hosted_subtype(client):
     recorded: list[Supply] = []
 
     class Recording(DeviceService):
-        async def approve(self, code_value, *, owner_user_id, supply, name=None):
+        async def approve(
+            self, code_value, *, owner_user_id, team_id, supply, name=None
+        ):
             recorded.append(supply)
             return await super().approve(
-                code_value, owner_user_id=owner_user_id, supply=supply, name=name
+                code_value,
+                owner_user_id=owner_user_id,
+                supply=supply,
+                name=name,
+                team_id=team_id,
             )
 
     def _recording_service(db: DbSession) -> DeviceService:
@@ -239,37 +246,25 @@ def test_connect_requires_login(client):
     assert r.status_code == 401
 
 
-@pytest.mark.parametrize("member", [False, True])
-def test_project_binding_requires_membership_before_approval(client, member):
-    owner = _login(client, "binding-owner")
-    project = post_project(
-        client,
-        json={"name": "Private project"},
-        headers=_bearer(owner),
-        owner="binding-owner",
-    ).json()["data"]
+def test_removed_project_assignment_is_rejected_without_consuming_code(client):
     token = _login(client, "device-owner")
-    if member:
-        join_project_team(client, project["id"], "device-owner")
     code = client.post(
         "/connector/auth/device/start", json={"device_name": "test-device"}
     ).json()["device_code"]
     response = client.post(
         "/connector/connect",
-        json={"device_code": code, "project_id": project["id"]},
+        json={"device_code": code, "project_id": str(uuid.uuid4())},
         headers=_bearer(token),
     )
-    assert response.status_code == (200 if member else 403), response.text
+    assert response.status_code == 400, response.text
     polled = client.post(
         "/connector/auth/device/poll", json={"device_code": code}
     ).json()
-    assert polled["status"] == ("approved" if member else "pending")
-    if not member:
-        # A denied project binding must leave the enrollment usable.
-        retry = client.post(
-            "/connector/connect", json={"device_code": code}, headers=_bearer(token)
-        )
-        assert retry.status_code == 200, retry.text
+    assert polled["status"] == "pending"
+    retry = client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(token)
+    )
+    assert retry.status_code == 200, retry.text
 
 
 def test_agent_ws_rejects_unknown_token(client):
