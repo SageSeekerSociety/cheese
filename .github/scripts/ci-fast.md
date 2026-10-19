@@ -274,14 +274,16 @@ everything is still allowed to answer unknown.
   records, in the same run, which nodes survived `-m`/`-k` (with their
   fixture-derived layer), which were deselected, and which were reached. A
   green run must show every selected `pure` node reached and none hidden by a
-  filter; a node the machine skips — it declares a missing capability such as
-  bubblewrap, sandbox-exec, ripgrep or tmux — counts as reached, while a node
-  with no report at all does not. A required consumer file's tests are matched
-  by classname module prefix (pytest writes no `file` attribute). Running only
-  the guards never proves a changed module has coverage; a change whose
-  modules have no `pure` consumer at all is unknown. Excluded
-  `integration`/`contract` nodes are the tier working as designed — recorded
-  not-run and owned by full CI — not a silent gap. Unresolvable dynamic imports (`import_module(name)`,
+  filter; a node the machine skips because the reason names a capability this
+  machine lacks (bubblewrap, sandbox-exec, ripgrep, tmux) counts as reached;
+  any other skip — a plain `@pytest.mark.skip`, a feature-flag `skipif`, an
+  xfail — and a node with no report at all do not. A required consumer file's
+  tests are matched by classname module prefix (pytest writes no `file`
+  attribute). Running only the guards never proves a changed module has
+  coverage; a change whose modules have no `pure` consumer at all is unknown.
+  Excluded `integration`/`contract` nodes are the tier working as designed —
+  recorded not-run and owned by full CI — not a silent gap. Unresolvable
+  dynamic imports (`import_module(name)`,
   `__import__(expr)`) widen conservatively; a giant strongly-connected group may
   select many tests, in which case the run is honest about the size and may end
   unknown.
@@ -384,7 +386,7 @@ everything is still allowed to answer unknown.
 
 | code | meaning |
 |------|---------|
-| 0 | every selected check actually ran and passed. Not full CI. |
+| 0 | every selected check was reached and nothing failed. Not full CI. |
 | 1 | a selected check really failed. |
 | 2 | **unknown** — nothing could be honestly judged: budget/time exhausted, a check killed by signal, a memory-ceiling stop, an empty test report, a selected file that produced no test case at all, an unavailable merge base, a hook/config drift, a worktree that changed during the run, a `--pull-request` payload that could not be read (the title is the only check that costs), or an unreadable report. |
 | 3 | **blocked** — a required tool or dependency is missing (`backend/.venv`, `frontend/node_modules`, pre-commit, a machine without `ps`), or the platform is not Linux. |

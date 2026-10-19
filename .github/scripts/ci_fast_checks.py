@@ -5,9 +5,9 @@ Required CI path map; this module turns "frontend" / "backend" into concrete
 commands and turns each command's report into a verdict nobody can fake:
 
   * A green suite needs a readable report that shows the selected tests actually
-    ran. An empty selection, a skipped test, a missing report, a selected file
-    with no executed case, or a process that died by signal is unknown (exit 2),
-    never a pass. Running only the always-on guards never proves a changed
+    ran. An empty selection, a skipped test that does not name a capability this
+    machine lacks, a missing report, a selected file with no executed case, or a
+    process that died by signal is unknown (exit 2), never a pass. Running only the always-on guards never proves a changed
     module has coverage — its consumer files must appear in the report: the
     specs that read the tree off disk run whatever changed, so passing only them
     is an empty selection wearing their exit code.
@@ -571,6 +571,25 @@ def _runs(cases, required):
     return [r for r in required if not any(_covers(name, r) for name in names)]
 
 
+#: Skip reasons that name a capability the hosted runner deliberately lacks.
+#: Only these count as reached; any other skip may hide a real failure.
+_CAPABILITY_SKIPS = ("bubblewrap", "sandbox-exec", "this machine has no ripgrep", "needs tmux")
+
+
+def _declares_missing_capability(entry):
+    """Whether a skip says the machine lacks what the test needs.
+
+    pytest prints the reason as ``Skipped: <reason>`` in the longrepr half of
+    the report. Anything else — a plain ``@pytest.mark.skip``, a feature-flag
+    ``skipif``, an xfail (the plugin records it as ``xfail: ...``) — is not
+    this case and must keep the node unrun.
+    """
+    if entry.get("outcome") != "skipped":
+        return False
+    reason = str(entry.get("reason") or "")
+    return reason.startswith("Skipped: ") and any(cap in reason for cap in _CAPABILITY_SKIPS)
+
+
 def _audit(evidence, details):
     """Verify the pure nodes the run selected actually ran.
 
@@ -578,24 +597,24 @@ def _audit(evidence, details):
     nodes, the nodes ``-m``/``-k`` removed with their layer, and every outcome —
     so this checks what a JUnit report alone cannot: that no pure node was
     hidden by a filter, and that every selected pure node was reached. A node
-    the machine skips declares a missing capability (bubblewrap, sandbox-exec,
-    ripgrep, tmux) and counts as reached; a node with no report at all does
-    not. An excluded ``integration``/``contract`` node is the layer working as
-    designed (recorded as not_run, owned by full CI), not treated as missing
-    coverage; a required file with no pure node at all is the same, but a
-    change whose modules have no pure consumer at all is unknown.
+    the machine skips because it lacks a named capability (bubblewrap,
+    sandbox-exec, ripgrep, tmux) counts as reached; any other skip, and a node
+    with no report at all, does not. An excluded ``integration``/``contract``
+    node is the layer working as designed (recorded as not_run, owned by full
+    CI), not treated as missing coverage; a required file with no pure node at
+    all is the same, but a change whose modules have no pure consumer at all is
+    unknown.
     """
     data = json.loads(Path(evidence["nodes"]).read_text())
     selected_pure = {item["node"] for item in data.get("selected", []) if item.get("layer") == "pure"}
     hidden = sorted(item["node"] for item in data.get("deselected", []) if item.get("layer") == "pure")
     executed = data.get("executed", [])
-    # A skip is the test itself saying this machine cannot run it; the node was
-    # reached and declined, not missed. The hosted runner deliberately lacks
-    # those capabilities, so counting skips as unrun made every full selection
-    # unknown there.
+    # The hosted runner deliberately lacks bubblewrap, sandbox-exec, ripgrep
+    # and tmux, so those skips are the environment declining the test, not a
+    # node the run missed. Every other skip stays unrun.
     ran = {e["node"] for e in executed
            if (e.get("when") == "call" and e.get("outcome") == "passed")
-           or e.get("outcome") == "skipped"}
+           or _declares_missing_capability(e)}
     failures = sum(e.get("outcome") in ("failed", "error") for e in executed)
     unrun = sorted(selected_pure - ran)
     pure_files = {node.split("::", 1)[0] for node in selected_pure}
