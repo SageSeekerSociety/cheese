@@ -228,6 +228,7 @@
               autocomplete="off"
               :label="t('account.security.closeUsernameLabel')"
             />
+            <p v-if="closeError" class="setup__error" role="alert">{{ closeError }}</p>
           </v-card-text>
           <v-card-actions>
             <v-spacer />
@@ -382,6 +383,8 @@ const props = defineProps<{
   qrCodeData: string
   verifyError: string
   backupCodes: string[]
+  /** Why the server refused to close the account, kept in the dialog until it closes. */
+  closeError: string
 }>()
 
 const emit = defineEmits<{

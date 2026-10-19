@@ -140,6 +140,20 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
         expect: '3f2a-11cd-90b8',
         expectSelector: '.setup__codes',
       },
+      {
+        get name() {
+          return t('catalog.securityView.s10.name')
+        },
+        get note() {
+          return t('catalog.securityView.s10.note')
+        },
+        props: {
+          showCloseAccount: true,
+          closeError: '这个账号是团队「数据结构课题组」唯一的所有者，先把所有权转让给其他成员，才能注销',
+        },
+        expect: '先把所有权转让给其他成员',
+        expectSelector: '#security-close-username',
+      },
     ],
   },
   {

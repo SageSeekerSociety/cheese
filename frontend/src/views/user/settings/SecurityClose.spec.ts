@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Security from './Security.vue'
 
+import { ApiError } from '@/api/http'
 import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
 import AccountService from '@/services/account'
@@ -108,5 +109,20 @@ describe('closing the account', () => {
     await waitFor(() => expect(UserApi.closeAccount).toHaveBeenCalledWith('ada', 'ticket-1'))
     await waitFor(() => expect(AccountService.logout).toHaveBeenCalled())
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/'))
+  })
+
+  it('keeps a refusal in the dialog and signs nothing out', async () => {
+    const refusal = 'This account is the only owner of “Lab”. Transfer ownership to another member before closing it'
+    vi.mocked(UserApi.closeAccount).mockRejectedValueOnce(new ApiError(409, refusal, 'ConflictError'))
+    const { view, router } = await renderPage()
+    const field = await openDialog(view)
+    await fireEvent.update(field, 'ada')
+
+    await fireEvent.submit(field.closest('form')!)
+
+    await waitFor(() => expect(view.getByText(refusal)).toBeTruthy())
+    expect(view.getByLabelText('Username')).toBeTruthy()
+    expect(AccountService.logout).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.path).toBe('/settings')
   })
 })

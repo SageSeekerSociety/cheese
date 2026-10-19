@@ -195,8 +195,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     request_concurrency: int = Field(default=16, ge=1)
     request_queue_depth: int = Field(default=64, ge=0)
     request_queue_timeout_s: float = Field(default=15.0, ge=0)
-    # How long a rate check may wait on Redis before the request goes through
-    # unchecked: a hung Redis must not hang every request with it.
+    # How long a rate check, or the closed-account check
+    # (``app.core.deleted_accounts``), may wait on Redis before the request goes
+    # through unchecked: a hung Redis must not hang every request with it.
     request_limit_redis_timeout_s: float = Field(default=0.25, gt=0)
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and

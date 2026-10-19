@@ -1127,6 +1127,10 @@
     "s9": {
       "name": "Enable two-step: backup codes",
       "note": "The third step: list this set of backup codes, remind that they're shown only this once and each works once, and offer a button to copy the whole set."
+    },
+    "s10": {
+      "name": "Closing refused: still a team's only owner",
+      "note": "The server refuses the close: this person is still the only owner of a team others are in. The reason stays in the dialog, names the team, and says to transfer ownership first."
     }
   },
   "modelConnectionsView": {

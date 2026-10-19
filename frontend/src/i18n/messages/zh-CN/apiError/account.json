@@ -30,5 +30,7 @@
   "usernameReserved": "该用户名是平台保留字，请换一个",
   "accountCloseUsernameMismatch": "输入的用户名和你的账号不一致",
   "accountCloseNotOwnViaAdmin": "不能在管理后台注销你自己的账号，请在个人设置中注销",
+  "accountCloseAgent": "{handle} 是 agent 的账号，只有人的账号可以注销",
+  "accountCloseOwnsTeams": "这个账号是团队 {teams} 唯一的所有者，先把所有权转让给其他成员，才能注销",
   "accountAlreadyClosed": "这个账号已经注销"
 }

@@ -199,3 +199,234 @@ def test_backing_out_closes_nothing(client):
     assert mistyped.status_code == 422, mistyped.text
     assert _can_sign_in(client, person.handle)
     assert client.get("/users/me", headers=_auth(person.token)).status_code == 200
+
+
+def test_an_admin_cannot_close_an_agents_account(client, monkeypatch):
+    from app.core.config import settings
+    from app.domain.identity.services import IdentityService
+    from app.domain.machine.models import HOST_OWNER
+
+    admin = sign_in(client, _handle("ops"))
+    monkeypatch.setattr(settings, "platform_admin_handles", [admin.handle])
+
+    async def ensure_host_pool() -> None:
+        async with client.test_factory() as session:
+            await IdentityService(session).ensure_agent_user(handle=HOST_OWNER)
+            await session.commit()
+
+    client.portal.call(ensure_host_pool)
+
+    refused = client.request(
+        "DELETE", f"/admin/users/{HOST_OWNER}", headers=_auth(admin.token)
+    )
+
+    assert refused.status_code == 400, refused.text
+    still = client.get(
+        "/closed-accounts",
+        params={"handles": HOST_OWNER},
+        headers=_auth(admin.token),
+    )
+    assert still.json()["data"]["handles"] == []
+
+
+def test_a_closed_readers_entries_stay_in_the_real_name_access_log(client):
+    from app.domain.user.models import User
+    from app.domain.user.repositories import UserRealNameRepository
+
+    target = sign_in(client, _handle("target"))
+    gone = sign_in(client, _handle("gone-reader"))
+    stays = sign_in(client, _handle("live-reader"))
+
+    async def ids() -> dict[str, int]:
+        async with client.test_factory() as session:
+            rows = await session.execute(
+                select(User.username, User.id).where(
+                    User.username.in_([target.handle, gone.handle, stays.handle])
+                )
+            )
+            return dict(rows.all())
+
+    by_handle = client.portal.call(ids)
+
+    async def read_by(*readers: str) -> None:
+        async with client.test_factory() as session:
+            repo = UserRealNameRepository(session)
+            for reader in readers:
+                await repo.create_access_log(
+                    accessor_id=by_handle[reader],
+                    target_id=by_handle[target.handle],
+                    access_reason="roster",
+                    ip_address="127.0.0.1",
+                    access_type="EXPORT",
+                )
+            await session.commit()
+
+    # Oldest first: the live reader's entry sits behind the closed one's.
+    client.portal.call(read_by, stays.handle, gone.handle, gone.handle)
+    assert (
+        _close(
+            client, gone.token, username=gone.handle, ticket=_ticket(client, gone.token)
+        ).status_code
+        == 200
+    )
+
+    def page(size: int, start: int | None = None) -> dict:
+        params: dict = {"pageSize": size}
+        if start is not None:
+            params["pageStart"] = start
+        r = client.get(
+            f"/users/{by_handle[target.handle]}/identity/access-logs",
+            params=params,
+            headers=_auth(target.token),
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]
+
+    whole = page(20)
+    assert [e["accessor"]["username"] for e in whole["logs"]] == [
+        gone.handle,
+        gone.handle,
+        stays.handle,
+    ]
+    assert whole["page"]["total"] == 3
+    assert not whole["page"]["hasMore"]
+
+    first = page(2)
+    assert len(first["logs"]) == 2
+    assert first["page"]["hasMore"]
+    rest = page(2, first["page"]["nextStart"])
+    assert [e["accessor"]["username"] for e in rest["logs"]] == [stays.handle]
+
+
+def _shared_team(client, owner: str, *others: str) -> tuple[int, dict[str, int]]:
+    """A shared team ``owner`` owns with ``others`` as members; its id, and
+    each person's user id."""
+    from datetime import UTC, datetime
+
+    from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
+    from tests.integration.conftest import registered
+
+    async def make() -> tuple[int, dict[str, int]]:
+        async with client.test_factory() as session:
+            now = datetime.now(UTC)
+            team = Team(
+                name=f"Lab {uuid.uuid4().hex[:6]}",
+                handle=f"t-{uuid.uuid4().hex[:12]}",
+                intro="",
+                description="",
+                avatar_id=1,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(team)
+            await session.flush()
+            ids = {h: await registered(session, h) for h in (owner, *others)}
+            for handle, user_id in ids.items():
+                role = (
+                    TeamMemberRole.OWNER if handle == owner else TeamMemberRole.MEMBER
+                )
+                session.add(
+                    TeamUserRelation(
+                        team_id=team.id,
+                        user_id=user_id,
+                        role=role,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            await session.commit()
+            return team.id, ids
+
+    return client.portal.call(make)
+
+
+def _owner_of(client, team_id: int) -> list[int]:
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+
+    async def read() -> list[int]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(TeamUserRelation.user_id).where(
+                    TeamUserRelation.team_id == team_id,
+                    TeamUserRelation.role == TeamMemberRole.OWNER,
+                    TeamUserRelation.deleted_at.is_(None),
+                )
+            )
+            return list(rows)
+
+    return client.portal.call(read)
+
+
+def test_the_only_owner_of_a_shared_team_must_hand_it_on_first(client):
+    owner = sign_in(client, _handle("lead"))
+    member = sign_in(client, _handle("member"))
+    team_id, ids = _shared_team(client, owner.handle, member.handle)
+
+    refused = _close(
+        client, owner.token, username=owner.handle, ticket=_ticket(client, owner.token)
+    )
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "accountCloseOwnsTeams"
+    assert "Lab " in refused.json()["error"]["message"]  # names the team
+    assert _can_sign_in(client, owner.handle)
+    assert _owner_of(client, team_id) == [ids[owner.handle]]
+
+    handed = client.put(
+        f"/teams/{team_id}/owner",
+        json={"userId": ids[member.handle]},
+        headers=_auth(owner.token),
+    )
+    assert handed.status_code == 200, handed.text
+    closed = _close(
+        client, owner.token, username=owner.handle, ticket=_ticket(client, owner.token)
+    )
+
+    assert closed.status_code == 200, closed.text
+    assert _owner_of(client, team_id) == [ids[member.handle]]
+
+
+def test_the_admin_route_refuses_the_only_owner_of_a_shared_team(client, monkeypatch):
+    from app.core.config import settings
+
+    admin = sign_in(client, _handle("ops"))
+    monkeypatch.setattr(settings, "platform_admin_handles", [admin.handle])
+    owner = sign_in(client, _handle("lead"))
+    member = sign_in(client, _handle("member"))
+    team_id, ids = _shared_team(client, owner.handle, member.handle)
+
+    refused = client.request(
+        "DELETE", f"/admin/users/{owner.handle}", headers=_auth(admin.token)
+    )
+
+    assert refused.status_code == 409, refused.text
+    assert _can_sign_in(client, owner.handle)
+    assert _owner_of(client, team_id) == [ids[owner.handle]]
+
+
+def test_a_personal_team_or_a_team_of_one_does_not_hold_closing(client):
+    from app.domain.team.repositories import TeamRepository
+    from app.domain.team.services import TeamService
+    from app.domain.user.models import User
+
+    person = sign_in(client, _handle("solo"))
+    _shared_team(client, person.handle)
+
+    async def personal_team() -> None:
+        async with client.test_factory() as session:
+            user_id = await session.scalar(
+                select(User.id).where(User.username == person.handle)
+            )
+            await TeamService(TeamRepository(session)).ensure_personal_team(user_id)
+            await session.commit()
+
+    client.portal.call(personal_team)
+
+    closed = _close(
+        client,
+        person.token,
+        username=person.handle,
+        ticket=_ticket(client, person.token),
+    )
+
+    assert closed.status_code == 200, closed.text

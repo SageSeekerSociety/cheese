@@ -9,6 +9,11 @@ they connected, their own agents' access,
 their saved integration secrets, their private assistant conversations, the
 notifications addressed to them, and their places in teams, projects and rooms.
 
+An account that is the only owner of a shared team other people are in is not
+closed until it hands that team on: nothing else can ever give the team an
+owner again, as GitHub also requires before deleting an account. A personal
+team, or a shared team nobody else is in, does not hold it.
+
 What stays is what other people still need: messages, documents and tasks
 they wrote in shared rooms (shown as 「已注销用户」), records of who read
 their real-name data, usage and billing records, and their consent records,
@@ -22,8 +27,12 @@ the same handle would inherit authority and authorship it never had.
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+
+from app.core.errors import ConflictError
+from app.core.sentences import listing, say
 
 from app.domain.admin.models import PlatformAdmin
 from app.domain.agent_instance.models import (
@@ -40,7 +49,8 @@ from app.domain.notification.push_models import PushSubscription
 from app.domain.oauth.models import UserOAuthConnection
 from app.domain.passkey.models import PasskeyCredential, PasskeyPrompt
 from app.domain.project.models import ProjectMember
-from app.domain.team.models import TeamUserRelation
+from app.domain.team.models import Team, TeamUserRelation
+from app.domain.team.protocol import TeamMemberRole
 from app.domain.topic.models import TopicMembership, TopicReadState
 from app.domain.user.models import (
     User,
@@ -69,9 +79,38 @@ class Closed:
     handle: str
 
 
+async def teams_only_they_own(session: AsyncSession, user_id: int) -> list[str]:
+    """Names of the shared teams ``user_id`` is the only owner of while someone
+    else is still in them."""
+    mine = aliased(TeamUserRelation)
+    other = aliased(TeamUserRelation)
+    someone_else = exists().where(
+        other.team_id == Team.id,
+        other.user_id != user_id,
+        other.deleted_at.is_(None),
+    )
+    another_owner = someone_else.where(other.role == TeamMemberRole.OWNER)
+    rows = await session.scalars(
+        select(Team.name)
+        .join(mine, mine.team_id == Team.id)
+        .where(
+            mine.user_id == user_id,
+            mine.role == TeamMemberRole.OWNER,
+            mine.deleted_at.is_(None),
+            Team.deleted_at.is_(None),
+            Team.personal_owner_user_id.is_(None),
+            someone_else,
+            ~another_owner,
+        )
+        .order_by(Team.name)
+    )
+    return list(rows)
+
+
 async def close_account(session: AsyncSession, user_id: int) -> Closed | None:
     """Close the account in the caller's transaction; None when there is no
-    live account by that id. The caller commits, then calls
+    live account by that id. Refused (409) while it is the only owner of a
+    shared team others are in. The caller commits, then calls
     ``app.core.deleted_accounts.mark_deleted`` so access tokens already issued
     stop working before they expire."""
     user = await session.scalar(
@@ -79,6 +118,11 @@ async def close_account(session: AsyncSession, user_id: int) -> Closed | None:
     )
     if user is None:
         return None
+    owned = await teams_only_they_own(session, user_id)
+    if owned:
+        raise ConflictError(
+            say("accountCloseOwnsTeams", teams=listing(owned, quoted=True))
+        )
     now = datetime.now(UTC)
     handle = user.username
 

@@ -14,9 +14,10 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.deleted_accounts import mark_deleted
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.account.deletion import close_account
+from app.domain.identity.services import IdentityService
 from app.domain.user.services import user_by_handle
 
 
@@ -37,6 +38,11 @@ async def close_account_for_owner(
     user = await user_by_handle(db, handle)
     if user is None:
         raise NotFoundError(say("accountNotFound", handle=handle))
+    # An agent's account — the platform's own, such as the host pool, or a
+    # room's — is nobody's to ask about by email, and closing it deletes the
+    # devices and seats the platform runs on.
+    if await IdentityService(db).is_agent(user.username):
+        raise BadRequestError(say("accountCloseAgent", handle=user.username))
     closed = await close_account(db, user.id)
     if closed is None:
         raise NotFoundError(say("accountNotFound", handle=handle))

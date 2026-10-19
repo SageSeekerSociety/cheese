@@ -13,6 +13,7 @@
     v-model:show-close-account="showCloseAccount"
     :username="currentUserName ?? ''"
     :closing-account="closingAccount"
+    :close-error="closeError"
     :web-authn-supported="webAuthnSupported"
     :passkeys="passkeys"
     :adding-passkey="addingPasskey"
@@ -55,7 +56,7 @@ import type { OAuthConnectionInfo } from '@/cx_types'
 import type { PasskeyInfo, SessionInfo } from '@/types/apiUsers'
 import type { SetupStep } from './SecurityView.vue'
 
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser'
@@ -418,15 +419,20 @@ const handleSignOutOthers = async () => {
 
 const showCloseAccount = ref(false)
 const closingAccount = ref(false)
+const closeError = ref('')
+watch(showCloseAccount, () => (closeError.value = ''))
 
 const handleCloseAccount = async (username: string) => {
   closingAccount.value = true
+  closeError.value = ''
   try {
     await withSudo('account:delete', (sudoTicket) => UserApi.closeAccount(username, sudoTicket))
   } catch (error) {
     closingAccount.value = false
     if (error instanceof SudoCancelledError) return
-    fail(error, t('account.security.closeFailed'))
+    // In the dialog, not a toast: a refusal such as a team still to hand on
+    // says what to do first, and has to stay readable while they go do it.
+    closeError.value = axiosErrorMessage(error, t('account.security.closeFailed'))
     return
   }
   // The account is gone: nothing this tab holds signs in as it any more.

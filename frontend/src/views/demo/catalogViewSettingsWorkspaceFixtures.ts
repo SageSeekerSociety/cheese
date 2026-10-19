@@ -192,6 +192,7 @@ const SECURITY_SESSIONS: SessionInfo[] = [
 export const SECURITY_PROPS = {
   username: 'wangxiaoming',
   closingAccount: false,
+  closeError: '',
   webAuthnSupported: true,
   passkeys: SECURITY_PASSKEYS,
   addingPasskey: false,
