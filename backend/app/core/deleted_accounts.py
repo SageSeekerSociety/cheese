@@ -45,7 +45,7 @@ async def mark_deleted(user_id: int) -> None:
             str(int(time.time())).encode(),
             ex=settings.access_token_expires_seconds + _GRACE_S,
         )
-    except Exception as error:  # noqa: BLE001 — the account is closed either way
+    except Exception as error:  # the account is closed either way
         _log.warning(
             "closed_account_not_marked", user_id=user_id, error=str(error)[:200]
         )
@@ -60,7 +60,7 @@ async def issued_before_closing(user_id: int, issued_at: int | None) -> bool:
         return False
     try:
         closed_at = await client.get(_key(user_id))
-    except Exception as error:  # noqa: BLE001 — fail open, see module docstring
+    except Exception as error:  # fail open, see module docstring
         _log.warning("closed_account_unchecked", error=str(error)[:200])
         return False
     if closed_at is None:
