@@ -90,7 +90,7 @@ async def _user_token(db: AsyncSession, actor: Actor) -> tuple[int, str]:
         else None
     )
     if user is None or token is None:
-        raise ForbiddenError(say("githubAccountLinkFirst"))
+        raise ForbiddenError(say("githubSignInFirst"))
     return user.id, token
 
 

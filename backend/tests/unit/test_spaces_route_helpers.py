@@ -1,7 +1,10 @@
-"""Unit tests for helper functions in app/api/routes/spaces.py."""
+"""Unit tests for helpers in app/api/routes/spaces.py and analytics wiring."""
 
 import pytest
+from fastapi.routing import APIRoute
 
+from app.api import deps, space_deps
+from app.api.routes import spaces_analytics
 from app.core.errors import BadRequestError
 
 
@@ -73,3 +76,21 @@ def test_patch_space_visible_task_limit_rejects_string_number():
 
     with pytest.raises(ValueError):
         PatchSpaceRequest(visibleTaskLimit="1")  # type: ignore[arg-type]
+
+
+def test_participant_export_uses_the_shared_realname_factory():
+    route = next(
+        route
+        for route in spaces_analytics.router.routes
+        if isinstance(route, APIRoute)
+        and route.path.endswith("/analytics/participants/export")
+    )
+    dependency_calls = set()
+    pending = [route.dependant]
+    while pending:
+        dependant = pending.pop()
+        dependency_calls.add(dependant.call)
+        pending.extend(dependant.dependencies)
+
+    assert deps.get_user_realname_service in dependency_calls
+    assert not hasattr(space_deps, "get_space_user_realname_service")

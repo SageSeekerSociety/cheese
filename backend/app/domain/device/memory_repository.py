@@ -39,6 +39,14 @@ class InMemoryDeviceRepository:
     async def get_device(self, device_id: str) -> Device | None:
         return self._devices.get(device_id)
 
+    async def get_devices(self, device_ids: Sequence[str]) -> dict[str, Device]:
+        found: dict[str, Device] = {}
+        for device_id in device_ids:
+            device = self._devices.get(device_id)
+            if device is not None:
+                found[device_id] = device
+        return found
+
     async def note_last_seen(self, device_id: str, at: datetime) -> None:
         device = self._devices.get(device_id)
         if device is not None:

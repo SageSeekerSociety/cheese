@@ -626,12 +626,6 @@ class HttpxGitHubPrClient:
         status = resp.json().get("status")
         return status if isinstance(status, str) else None
 
-    async def check_run_names(
-        self, *, owner: str, repo: str, ref: str, token: str
-    ) -> set[str]:
-        runs = await self._check_runs(owner, repo, ref, token)
-        return {str(run.get("name")) for run in runs if run.get("name")}
-
     async def review_signals(
         self,
         *,

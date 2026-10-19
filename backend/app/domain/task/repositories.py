@@ -5,6 +5,7 @@ from typing import cast
 from sqlalchemy import CTE, Select, and_, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.reads import get_by_ids
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
 from app.domain.task.models import (
@@ -45,6 +46,11 @@ class TaskRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_ids(self, task_ids: Sequence[int]) -> dict[int, Task]:
+        return await get_by_ids(
+            self._session, Task, task_ids, Task.deleted_at.is_(None)
+        )
 
     @staticmethod
     def joined_by(user_id: int):
