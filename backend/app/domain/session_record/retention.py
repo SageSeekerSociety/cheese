@@ -12,7 +12,8 @@ A conversation that is gone takes everything with it, the archive included.
 `session_records` has no foreign key to `conversations` for exactly that
 reason: a cascade would delete the rows and leave their objects in the bucket
 with nothing left that names them. `forget_gone` finds the rows of
-conversations that no longer exist and deletes their objects and then them.
+conversations that no longer exist, or are channels a person deleted, and
+deletes their objects and then them.
 
 Records still in their rows (no private bucket configured, so never sealed)
 are not expired: the archive needs the bucket.
@@ -24,7 +25,18 @@ import io
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, distinct, exists, not_, select
+from sqlalchemy import (
+    DateTime,
+    Uuid,
+    column,
+    delete,
+    distinct,
+    exists,
+    not_,
+    or_,
+    select,
+    table,
+)
 
 from app.core.db import SessionFactory
 from app.core.storage import StorageBackend
@@ -40,6 +52,13 @@ EVERY_S = 600
 ARCHIVE_PREFIX = "archive/user-messages"
 #: Runs expired, and gone conversations forgotten, per pass.
 PER_PASS = 200
+
+#: The two columns of `topics` this reads: which conversations are channels a
+#: person deleted. Declared here rather than imported, as `machine.admin` does:
+#: the topic package sits above this one.
+_rooms = table(
+    "topics", column("id", Uuid), column("deleted_at", DateTime(timezone=True))
+)
 
 
 def is_input(record: dict) -> bool:
@@ -154,10 +173,19 @@ async def forget_gone(sessions: SessionFactory, storage: StorageBackend) -> int:
                 await db.execute(
                     select(distinct(SessionRecord.conversation_id))
                     .where(
-                        not_(
+                        or_(
+                            not_(
+                                exists().where(
+                                    Conversation.id == SessionRecord.conversation_id
+                                )
+                            ),
+                            # A deleted channel keeps its row until its cleanup
+                            # is done; what it said is gone from the moment it
+                            # is deleted (`TopicService.delete`).
                             exists().where(
-                                Conversation.id == SessionRecord.conversation_id
-                            )
+                                _rooms.c.id == SessionRecord.conversation_id,
+                                _rooms.c.deleted_at.is_not(None),
+                            ),
                         )
                     )
                     .limit(PER_PASS)

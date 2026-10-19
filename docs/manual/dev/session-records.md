@@ -1,7 +1,7 @@
 ---
 title: 原始记录
 kind: 参考
-summary: 每个会话的 harness 记下的每一条记录，原样保存、写入时去掉凭据、只增不改；最近几分钟在表里，更早的封存进私有桶。
+summary: 每个会话的 harness 记下的每一条记录，原样保存、写入时去掉凭据、只增不改；最近几分钟在表里，更早的封存进私有桶，留 30 天，之后只留会话收到的输入。
 covers:
   - backend/app/domain/session_record/
   - backend/app/api/routes/topics_session_records.py
@@ -32,6 +32,14 @@ covers:
 - 表上有触发器，拒绝任何 UPDATE。封存是删短段、写长段，记录内容不变。
 
 镜像的保留（`RETENTION_S`）只删原始记录已经留下的行：镜像在 `state` 里记着 `recorded` 游标，第一次记录时从落地游标起步，平台开始记录之前房间已经读过的那些不补。
+
+## 留多久 {#retention}
+
+封存的记录留 30 天（`retention.RETENTION`，和 CLI 自己的记录文件一样长）。巡检 `session record retention` 每十分钟看一次：过了 30 天的一段，先把其中会话收到的输入（Claude Code 回放的输入、Codex 的 `userMessage`、pi 的 user 消息；平台替人拼的那一段也算）单独打成一段，放进私有桶 `archive/user-messages/<对话>/`，读回来核对无误后，才删掉原来那段的对象和行。这份输入跟对话一样长。
+
+对话删掉了（频道一删除就算，不等清理做完），它的行、对象和那份输入一起删。所以 `session_records` 不设到 `conversations` 的外键：级联只会删掉行，留下桶里没人指的对象。
+
+没配私有桶的部署不过期，记录一直留在行里。
 
 原始记录从不挡住房间：每次拉取在房间读之前最多交 4 页（`RECORD_PAGES`），写不进去的那一页记一条错误日志、留在镜像里，房间照常往下读，下一次拉取再交。
 

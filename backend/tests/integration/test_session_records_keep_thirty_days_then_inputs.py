@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.session_record import retention, service
 from app.domain.session_record.models import SessionRecord
+from tests.integration.conftest import session_auth_headers
 from tests.integration.test_a_turns_raw_record_keeps_what_it_did import (
     _Bucket,
     _claude_records,
@@ -131,7 +132,8 @@ def test_a_deleted_conversation_keeps_no_records_and_no_archive(
     _seal(client, bucket)
 
     room = session.ref.topic_id
-    gone = client.delete(f"/topics/{room}")
+    owner = {"X-Cheese-Token": "", **session_auth_headers("user-1")}
+    gone = client.delete(f"/topics/{room}", headers=owner)
     assert gone.status_code == 200, gone.text
     _forget(client, bucket)
 
