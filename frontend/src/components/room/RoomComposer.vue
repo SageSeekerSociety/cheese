@@ -511,22 +511,38 @@ watch(draft, () => {
 // 按住说话：一开始录，动作行就换成录音条，按着的那颗麦克风连同它抓着的指针一起被卸掉，
 // 它自己再也听不到松手。所以松手在 window 上等，和按钮在不在无关。
 // 只认按着麦克风的那根手指：另一根手指在别处点一下、滚一下，不算松手。录音一结束（说完、
-// 取消、出错）就不再等，免得这一次的松手去结束下一段录音。
+// 取消、出错）就不再等，免得这一次的松手去结束下一段录音。系统把指针收走（来电、系统
+// 手势）不是「说完了」，这一段丢掉，免得半句话落进正文。
 let stopHold: (() => void) | null = null
-function onVoice(how: 'tap' | 'hold' | 'release', pointerId?: number) {
+function onVoice(how: 'tap' | 'hold' | 'release' | 'cancel', pointerId?: number) {
   if (how === 'release') return void voice.finish()
-  if (voice.state.value === 'recording' && how === 'tap') return void voice.finish()
+  if (how === 'cancel') {
+    stopHold?.()
+    voice.cancel()
+    return
+  }
+  // 一段录音没完，就不再开第二段：第二根手指在动作行换走之前也按在麦克风上，不算新的开始。
+  if (voice.state.value !== 'idle') {
+    if (how === 'tap' && voice.state.value === 'recording') void voice.finish()
+    return
+  }
   if (how === 'hold') {
+    stopHold?.()
     const release = (e: PointerEvent) => {
       if (pointerId !== undefined && e.pointerId !== pointerId) return
       stopHold?.()
       void voice.finish()
     }
+    const cancel = (e: PointerEvent) => {
+      if (pointerId !== undefined && e.pointerId !== pointerId) return
+      stopHold?.()
+      voice.cancel()
+    }
     window.addEventListener('pointerup', release)
-    window.addEventListener('pointercancel', release)
+    window.addEventListener('pointercancel', cancel)
     stopHold = () => {
       window.removeEventListener('pointerup', release)
-      window.removeEventListener('pointercancel', release)
+      window.removeEventListener('pointercancel', cancel)
       stopHold = null
     }
   }

@@ -13,7 +13,7 @@
 // （设计系统 §10.4，`AdaptiveMenu`）。附件和照片留在外面，它们是最常点的。
 import type { MenuAction } from '@/components/common/menuAction'
 
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
@@ -61,8 +61,8 @@ const emit = defineEmits<{
   (e: 'toggle-summon'): void
   (e: 'remind'): void
   (e: 'send'): void
-  /** 麦克风：`tap` 点一下开始，`hold` 按住开始（带按着的那个指针），`release` 按住之后松手。 */
-  (e: 'voice', how: 'tap' | 'hold' | 'release', pointerId?: number): void
+  /** 麦克风：`tap` 点一下开始，`hold` 按住开始（带按着的那个指针），`release` 按住之后松手，`cancel` 系统收走了这个指针。 */
+  (e: 'voice', how: 'tap' | 'hold' | 'release' | 'cancel', pointerId?: number): void
   (e: 'voice-swap'): void
 }>()
 
@@ -90,8 +90,12 @@ function onFilePicked(e: Event) {
 const HOLD_MS = 250
 let holdTimer = 0
 let held = false
+// 按着这颗麦克风的那根手指。只认它：录音结束、动作行重新出现后，原来那根手指的松手
+// 会落在新画出来的麦克风上，它没按过，不能当成一次轻点又开一段录音。
+let downId: number | null = null
 function micDown(e: PointerEvent) {
-  if (e.button !== 0) return
+  if (e.button !== 0 || downId !== null) return
+  downId = e.pointerId
   held = false
   ;(e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId)
   const pointer = e.pointerId
@@ -101,19 +105,25 @@ function micDown(e: PointerEvent) {
   }, HOLD_MS)
 }
 function micUp(e: PointerEvent) {
-  if (e.button !== 0) return
+  if (e.button !== 0 || e.pointerId !== downId) return
   window.clearTimeout(holdTimer)
-  emit('voice', held ? 'release' : 'tap')
+  downId = null
+  const wasHeld = held
   held = false
+  emit('voice', wasHeld ? 'release' : 'tap')
 }
-function micCancel() {
+function micCancel(e: PointerEvent) {
+  if (e.pointerId !== downId) return
   window.clearTimeout(holdTimer)
-  if (held) emit('voice', 'release')
+  downId = null
+  const wasHeld = held
   held = false
+  if (wasHeld) emit('voice', 'cancel')
 }
 function micKey(e: MouseEvent) {
   if (e.detail === 0) emit('voice', 'tap')
 }
+onBeforeUnmount(() => window.clearTimeout(holdTimer))
 
 // 清单、提醒：桌面上是两颗图标，手机上是 ⋯ 里的两行。只剩一样时不收，
 // 一颗 ⋯ 里只有一行，比那一颗本身还多点一下。
@@ -232,7 +242,6 @@ const summonText = computed(() => ({
       @pointerdown="micDown"
       @pointerup="micUp"
       @pointercancel="micCancel"
-      @lostpointercapture="micCancel"
       @click="micKey"
       @contextmenu.prevent
     />

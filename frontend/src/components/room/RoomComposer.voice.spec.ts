@@ -175,6 +175,72 @@ describe('语音输入', () => {
     expect(screen.getByRole('button', { name: '说完了（Enter）' })).toBeTruthy()
   })
 
+  it('按住说话：录音先结束了，原来那根手指再松开，不会又开一段', async () => {
+    const { draft, box } = mount('原来的字')
+
+    const mic = screen.getByRole('button', { name: '语音输入' })
+    await fireEvent.pointerDown(mic, { button: 0, pointerId: 1 })
+    await new Promise((r) => setTimeout(r, 300))
+    await flush()
+    speak(1)
+    // 按着不放、用 Esc 取消：动作行和麦克风回来了，那根手指还按着。
+    expect(pressInComposer(box(), 'Escape')).toBe(true)
+    await flush()
+    // 松手落在重新画出来的麦克风上：它没被按过，不能当成一次轻点。
+    await fireEvent.pointerUp(screen.getByRole('button', { name: '语音输入' }), {
+      button: 0,
+      pointerId: 1,
+    })
+    await flush()
+
+    expect(screen.queryByRole('button', { name: '说完了（Enter）' })).toBeNull()
+    expect(hearVoice).not.toHaveBeenCalled()
+    expect(draft.value).toBe('原来的字')
+  })
+
+  it('按住说话：第二根手指也按在麦克风上，松它不算松手', async () => {
+    hearVoice.mockResolvedValue({ text: '好的', raw: '好的' })
+    const { draft } = mount('')
+
+    const mic = screen.getByRole('button', { name: '语音输入' })
+    // 两根手指都赶在动作行换走之前按下、都过了「按住」的阈值：两个定时器在同一个
+    // 同步任务里到点，不靠渲染时序来决定谁先。
+    vi.useFakeTimers()
+    await fireEvent.pointerDown(mic, { button: 0, pointerId: 1 })
+    await fireEvent.pointerDown(mic, { button: 0, pointerId: 2 })
+    vi.advanceTimersByTime(300)
+    vi.useRealTimers()
+    await flush()
+    speak(1)
+    window.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 2 }))
+    await flush()
+    // 第二根手指抬起时，第一根还按着，录音不该结束。
+    expect(screen.getByRole('button', { name: '说完了（Enter）' })).toBeTruthy()
+    expect(hearVoice).not.toHaveBeenCalled()
+
+    window.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 1 }))
+    await flush()
+    expect(hearVoice).toHaveBeenCalledTimes(1)
+    expect(draft.value).toBe('好的')
+  })
+
+  it('系统把指针收走：这一段丢掉，半句话不进正文', async () => {
+    const { draft } = mount('原来的字')
+
+    const mic = screen.getByRole('button', { name: '语音输入' })
+    await fireEvent.pointerDown(mic, { button: 0, pointerId: 1 })
+    await new Promise((r) => setTimeout(r, 300))
+    await flush()
+    speak(1)
+    // 来电、系统手势：用户没有松手，也没有说「说完了」。
+    window.dispatchEvent(new PointerEvent('pointercancel', { button: 0, pointerId: 1 }))
+    await flush()
+
+    expect(hearVoice).not.toHaveBeenCalled()
+    expect(draft.value).toBe('原来的字')
+    expect(screen.getByRole('button', { name: '语音输入' })).toBeTruthy()
+  })
+
   it('「还原原话」换成一字不差的转写，再点换回来', async () => {
     hearVoice.mockResolvedValue({ text: '周四之前改好。', raw: '嗯周三不对周四之前改好' })
     const { draft } = mount('前面')
