@@ -2,7 +2,9 @@
   "accountServiceHint": "Works with services that speak Anthropic's API, such as GLM, Kimi and DeepSeek. Before saving, Cheese sends the model one minimal message to test it. The key is stored encrypted on Cheese and only its last four characters are shown. Your Claude Code runs on Cheese with it, and usage is billed to that service's account",
   "actionFailed": "That didn't work. Try again later",
   "addAccountService": "Add a model service",
+  "addAccountServiceShort": "Model service",
   "addApiKey": "Add an API key",
+  "addApiKeyShort": "API key",
   "addService": "Use a custom model service on a device",
   "apiKey": "Anthropic API key",
   "apiKeyHint": "Before saving, Cheese asks Anthropic for its model list with this key, which costs nothing. The key is stored encrypted on Cheese and only its last four characters are shown. Your Claude Code runs on Cheese with it, and usage is billed to this key",
@@ -13,7 +15,10 @@
   "checked": "Check passed",
   "checkedAt": "Last checked",
   "device": "Device",
-  "empty": "No model connections yet",
+  "devicesEmpty": "No logins on devices yet",
+  "devicesTitle": "Signed in on devices",
+  "heldEmpty": "No connections kept on your account yet",
+  "heldTitle": "Kept on your account",
   "keptOnAccount": "Kept encrypted on your account; runs on Cheese",
   "lastUsed": "Last used",
   "lede": "The model accounts and services your Claude Code uses: those signed in on your devices, and the API keys and model services kept on your account. Keys are never shown here",
@@ -40,7 +45,7 @@
   "revokingHint": "No longer used. It logs out when {device} comes online",
   "saved": "Saved",
   "serviceHint": "Works with services that speak Anthropic's API, such as GLM, Kimi and DeepSeek. The key is sent straight to the device and kept only there. Once saved, that device has one more model connection, using this service",
-  "serviceHost": "Service at {host}",
   "storedOn": "Stored on",
-  "subscription": "Claude subscription ({plan})"
+  "subscription": "Claude subscription ({plan})",
+  "useService": "Use a custom model service"
 }
