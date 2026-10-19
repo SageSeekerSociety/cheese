@@ -20,6 +20,7 @@ import StarterKit from '@tiptap/starter-kit'
 
 import { createComposerCode } from '../../lib/composerCode'
 import { docText, offsetAt, posAt, replaceText, textChange, textContent } from '../../lib/composerDoc'
+import { createVoiceMarks, type VoiceMarkMeta, voiceMarksKey } from '../../lib/composerVoiceMarks'
 import { plainRefs } from '../../lib/refChip'
 import { createTokenChips, tokenChipsKey } from '../../lib/tokenChips'
 
@@ -93,6 +94,7 @@ onMounted(() => {
       NewLine,
       createTokenChips({ names: () => props.names }),
       createComposerCode(),
+      createVoiceMarks(),
     ],
     content: textContent(text.value),
     editorProps: {
@@ -201,6 +203,17 @@ defineExpose({
     const { doc, selection } = ed.state
     return offsetAt(doc, selection.to) - offsetAt(doc, selection.from)
   },
+  /** 语音输入的两个记号（识别中的占位、刚落下的字），见 lib/composerVoiceMarks。 */
+  voiceMarks(meta: VoiceMarkMeta) {
+    const ed = editor.value
+    if (ed) ed.view.dispatch(ed.state.tr.setMeta(voiceMarksKey, meta))
+  },
+  /** 识别中那个占位现在在正文的第几个字前面（人这期间接着打了字，它跟着走）。 */
+  voiceSlot(): number | null {
+    const ed = editor.value
+    const slot = ed ? voiceMarksKey.getState(ed.state)?.slot : null
+    return ed && slot != null ? offsetAt(ed.state.doc, slot) : null
+  },
   /** 输入法正在组字：这时候不去改正文，否则会打断它。 */
   composing(): boolean {
     return !!editor.value?.view.composing
@@ -263,5 +276,54 @@ defineExpose({
 }
 .composer-editor__host :deep(.composer-code-line--fence) {
   color: var(--muted);
+}
+/* 语音识别中：字会落在这儿。扫光是「机器正在做」，说得出正在发生的事（§9.6）。 */
+.composer-editor__host :deep(.composer-voice-slot) {
+  display: inline-block;
+  width: 64px;
+  height: 14px;
+  margin: 0 2px;
+  vertical-align: -2px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--fill-2) 0%, var(--line-2) 40%, var(--fill-2) 80%);
+  background-size: 200% 100%;
+  animation: composer-voice-sweep 1.1s linear infinite;
+}
+/* 刚说进来的那段：淡入停稳，琥珀底慢慢退掉——它从哪来，一眼看得到。 */
+.composer-editor__host :deep(.composer-voice-landed) {
+  border-radius: 3px;
+  animation:
+    composer-voice-in var(--dur-base) var(--ease-out),
+    composer-voice-wash 1.6s var(--ease-standard) forwards;
+}
+@keyframes composer-voice-sweep {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@keyframes composer-voice-in {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
+}
+@keyframes composer-voice-wash {
+  from {
+    background-color: var(--accent-wash);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-editor__host :deep(.composer-voice-slot) {
+    animation: none;
+  }
+  .composer-editor__host :deep(.composer-voice-landed) {
+    animation: composer-voice-wash 1.6s var(--ease-standard) forwards;
+  }
 }
 </style>

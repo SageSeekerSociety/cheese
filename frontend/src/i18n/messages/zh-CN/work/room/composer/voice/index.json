@@ -1,0 +1,13 @@
+{
+  "cancel": "不要了（Esc）",
+  "denied": "麦克风没打开。在浏览器地址栏左边允许使用麦克风，再试一次",
+  "dismiss": "关掉",
+  "done": "说完了（Enter）",
+  "failed": "这段没识别出来，可以再试一次",
+  "left": "还剩 {seconds} 秒",
+  "recording": "正在录音",
+  "start": "语音输入",
+  "thinking": "整理中",
+  "usePolished": "用整理后的",
+  "useRaw": "还原原话"
+}

@@ -19,11 +19,20 @@ import yaml
 from litellm.proxy.pass_through_endpoints.llm_provider_handlers import (
     anthropic_passthrough_logging_handler,
 )
+from litellm.proxy.types_utils.utils import get_instance_fn
 from litellm.proxy.utils import create_model_info_response
+from litellm.utils import custom_llm_setup
 
 
 def main() -> None:
     config = yaml.safe_load(Path(sys.argv[1]).read_text())
+    # The proxy registers these before it builds its router; a row on one of
+    # them names a provider LiteLLM does not know otherwise.
+    litellm.custom_provider_map = [
+        {"provider": item["provider"], "custom_handler": get_instance_fn(item["custom_handler"])}
+        for item in config["litellm_settings"].get("custom_provider_map") or []
+    ]
+    custom_llm_setup()
     router = litellm.Router(model_list=config["model_list"])
     request = {
         "thinking": {"type": "adaptive"},

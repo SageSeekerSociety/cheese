@@ -20,7 +20,7 @@ import type { QuotedContext } from '../lib/quotedContext'
 import { computed, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
-import { editMessage, summonAgent } from '../api'
+import { editMessage, hearVoice as hearVoiceIn, summonAgent } from '../api'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock } from '../lib/authorship'
 import { replySnippet } from '../lib/blockDisplay'
@@ -363,6 +363,13 @@ export function useChatComposer(deps: ChatComposerDeps) {
     if (document.visibilityState === 'hidden') flushComposerOnHide()
   })
 
+  /** 输入框里说的一段：交给后端听写，回来整理好的字和原话。还没有话题时没有麦克风。 */
+  function hearVoice(wav: Blob): Promise<{ text: string; raw: string }> {
+    const id = topic()?.id
+    if (!id) return Promise.reject(new Error(t('work.room.composer.voice.failed')))
+    return hearVoiceIn(id, wav)
+  }
+
   return {
     draft,
     draftQuote,
@@ -394,6 +401,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
     retryBusy,
     retryNow,
     onComposerSend,
+    hearVoice,
     rememberComposer,
     restoreComposer,
     flushComposer,
