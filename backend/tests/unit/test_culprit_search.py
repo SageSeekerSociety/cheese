@@ -155,3 +155,43 @@ async def test_a_forge_that_cannot_probe_falls_back(db_factory):
     # Nothing was learned, and no row is left behind for a search nobody ran.
     async with db_factory() as session:
         assert await session.scalar(select(CulpritSearch)) is None
+
+
+class _RecordingReads(_Reads):
+    """Remembers which tests each probe was dispatched with."""
+
+    def __init__(self, verdict):
+        super().__init__(verdict)
+        self.test_sets: list[tuple[str, ...]] = []
+
+    async def dispatch_bisect(self, sha, tests, nonce):
+        self.test_sets.append(tuple(tests))
+        return await super().dispatch_bisect(sha, tests, nonce)
+
+
+async def test_probes_keep_the_tests_the_search_started_with(db_factory):
+    """A re-run of the batch's gate can name a different set of failing tests;
+    every probe has to ask the same question for the answers to compare."""
+    project_id = await _project(db_factory)
+    reads = _RecordingReads(lambda sha: "fail" if COMMITS.index(sha) >= 4 else "pass")
+    finding = await culprit_search.advance(
+        db_factory,
+        reads,
+        project_id=project_id,
+        head="head",
+        base=None,
+        commits=COMMITS,
+        tests=["tests/unit/test_old.py"],
+    )
+    while finding.state == "searching":
+        finding = await culprit_search.advance(
+            db_factory,
+            reads,
+            project_id=project_id,
+            head="head",
+            base=None,
+            commits=COMMITS,
+            tests=["tests/unit/test_new.py"],
+        )
+    assert finding.state == "located"
+    assert set(reads.test_sets) == {("tests/unit/test_old.py",)}
