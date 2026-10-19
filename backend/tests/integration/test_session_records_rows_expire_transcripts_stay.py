@@ -1,12 +1,13 @@
 """A session's transcript stays in the bucket for good; the app can read it for
-thirty days, and not at all once its conversation is deleted.
+thirty days, and no longer once its conversation is deleted and its last
+records are sealed.
 
 The rules, stated without the code (a decision to keep transcripts
-permanently, #4398): a sealed transcript object is never
-deleted, neither when it is older than thirty days nor when its conversation
-is deleted; what goes is the database's copy of the index, so the app stops
-returning those records. A record that only exists in the database (no bucket
-configured) is its only copy, so age does not remove it.
+permanently, #4398): a sealed transcript object is never deleted, neither when
+it is older than thirty days nor when its conversation is deleted; what goes is
+the database's copy of the index, so the app stops returning those records. A
+record that only exists in the database (no bucket configured) is its only
+copy, so age does not remove it.
 """
 
 import gzip
