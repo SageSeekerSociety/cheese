@@ -8,8 +8,11 @@
 #   --enqueue  squash-merge once `pr-review.sh ready` prints 可递 for the current
 #              head. Re-read the head before merging and pin the mutation to it.
 #              Never arm auto-merge. Without this flag, observe only.
-#   After merging, follow Required CI's push-to-main run for the merge commit
-#   (or the containing batch when its run was superseded). A red main fails the watch.
+#   After merging, follow Required CI's push-to-main runs of main commits that
+#   contain the merge: passed as soon as any of them succeeded. A red run is not
+#   final while a newer containing batch may still fix main; the watch fails
+#   once the newest containing run is red and nothing newer starts within
+#   PR_WATCH_MAIN_RED_WAIT seconds (default 3600).
 #   --deploy   after a PR merges, follow the dev deploys (deploy-dev.yml) of
 #              main commits that contain it: deployed as soon as any of them
 #              succeeded, otherwise the newest one's result.
@@ -33,6 +36,10 @@ DEV_VERSION_URL=https://okcheese.com/api/version
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 INTERVAL=${PR_WATCH_INTERVAL:-60}
 QUIET=${PR_WATCH_QUIET:-3600}
+# Main goes red after a merge mostly because of another PR in the same batch,
+# and the batch after it usually fixes main within half an hour; an hour with no
+# newer batch means nobody is fixing it, so the watch gives up then.
+MAIN_RED_WAIT=${PR_WATCH_MAIN_RED_WAIT:-3600}
 enqueue=0 deploy=0 prs=()
 for a in "$@"; do
   case "$a" in
@@ -44,7 +51,7 @@ for a in "$@"; do
 done
 [ ${#prs[@]} -gt 0 ] || { echo "usage: $0 [--enqueue] [--deploy] PR..." >&2; exit 2; }
 
-declare -A last ended ok spoke main_last
+declare -A last ended ok spoke main_last red_run red_since
 say() { echo "$(date -u +%H:%M:%SZ) #$1 $2"; spoke[$1]=$(date +%s); }
 quiet() { # $1 PR, $2 where it is waiting; speaks only after QUIET seconds of silence
   [ $(( $(date +%s) - ${spoke[$1]:-0} )) -ge "$QUIET" ] && say "$1" "no change in $((QUIET / 60)) min: $2"
@@ -85,22 +92,23 @@ contains() {
   gh api "repos/$REPO/compare/$1...$2" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$'
 }
 
-main_ci_of() { # exact merge's run, or a successful containing batch if it was cancelled
-  local merge=$1 id st co sha newest= passed=
+# "<status> <conclusion> <run id>" of main's Required CI for $1: the newest
+# successful run on a main commit containing it, or else the newest such run
+# not cancelled, or nothing. Once a containing run has succeeded the merge has
+# passed, whatever its own run or a later batch did.
+main_ci_of() {
+  local merge=$1 id st co sha newest=
   while read -r id st co sha; do
     [ "$sha" = "$merge" ] || contains "$merge" "$sha" || continue
-    [ "$co" = cancelled ] && continue
-    [ -n "$newest" ] || newest="$st $co $id"
-    if [ "$sha" = "$merge" ]; then echo "$st $co $id"; return; fi
-    # A later failed batch does not revoke an earlier green batch containing
-    # this merge; keep the newest such success for a watcher that restarts.
-    if [ "$st $co" = "completed success" ] && [ -z "$passed" ]; then
-      passed="$st $co $id"
+    if [ "$co" != cancelled ]; then
+      [ "$st $co" = "completed success" ] && { echo "$st $co $id"; return; }
+      [ -n "$newest" ] || newest="$st $co $id"
     fi
+    # Runs come newest first; those older than the merge's own cannot contain it.
+    [ "$sha" = "$merge" ] && break
   done < <(gh run list -R "$REPO" --workflow required-ci.yml --event push --branch main --limit 30 \
              --json databaseId,status,conclusion,headSha \
              -q '.[]|"\(.databaseId) \(.status) \(.conclusion // "" | if . == "" then "none" else . end) \(.headSha)"')
-  [ -z "$passed" ] || { echo "$passed"; return; }
   [ -z "$newest" ] || echo "$newest"
 }
 
@@ -148,8 +156,19 @@ while :; do
       case "$c" in
         "completed success "*) ;;
         "completed failure "*|"completed timed_out "*|"completed action_required "*|"completed startup_failure "*|"completed stale "*)
-          say "$p" "stopped watching: main Required CI failed after merge ${merge:0:9}"
-          ended[$p]=1; continue ;;
+          # The newest containing run is red. A newer batch may still fix main,
+          # so wait for one; each newer red run restarts the wait.
+          if [ "${red_run[$p]:-}" != "${c##* }" ]; then
+            red_run[$p]=${c##* } red_since[$p]=$(date +%s)
+            say "$p" "main is red after merge ${merge:0:9} (run ${c##* }); waiting up to $((MAIN_RED_WAIT / 60)) min for a newer main batch containing it"
+          fi
+          if [ $(( $(date +%s) - ${red_since[$p]} )) -ge "$MAIN_RED_WAIT" ]; then
+            say "$p" "stopped watching: main Required CI failed after merge ${merge:0:9} (run ${c##* }; no newer batch in $((MAIN_RED_WAIT / 60)) min)"
+            ended[$p]=1
+          else
+            quiet "$p" "merged; main is red (run ${c##* }), waiting for a newer batch"
+          fi
+          continue ;;
         *) quiet "$p" "merged; waiting for main Required CI"; continue ;;
       esac
       if [ "$deploy" = 0 ]; then

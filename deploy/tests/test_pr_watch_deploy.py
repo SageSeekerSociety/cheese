@@ -72,7 +72,7 @@ def run(run_id, status, conclusion, title, deploy="success"):
 
 
 class DeployRunForAMergedPR(unittest.TestCase):
-    def watch(self, runs, live, first=None, ci=None, ci_first=None):
+    def watch(self, runs, live, first=None, ci=None, ci_first=None, red_wait="0"):
         with tempfile.TemporaryDirectory() as directory:
             fake = Path(directory)
             (fake / "gh").write_text(FAKE_GH)
@@ -101,7 +101,7 @@ class DeployRunForAMergedPR(unittest.TestCase):
             result = subprocess.run(
                 ["bash", str(WATCH), "--deploy", "3055"], capture_output=True, text=True, timeout=20,
                 env={**os.environ, "PATH": f"{fake}:{os.environ['PATH']}", "FAKE": str(fake),
-                     "PR_WATCH_INTERVAL": "0"})
+                     "PR_WATCH_INTERVAL": "0", "PR_WATCH_MAIN_RED_WAIT": red_wait})
         return result
 
     def test_a_cancelled_deploy_of_an_earlier_build_is_not_this_prs_deploy(self):
@@ -195,6 +195,54 @@ class DeployRunForAMergedPR(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("main Required CI run 102: completed success", result.stdout)
         self.assertIn(f"live on dev at {LATER[:9]}", result.stdout)
+
+    def test_a_newer_green_batch_passes_a_merge_whose_own_main_run_failed(self):
+        # Another PR in the merge's batch broke main; the next batch but one fixed
+        # it and was released, while the deploys of the red commits were skipped.
+        ci = [{"databaseId": 104, "status": "completed", "conclusion": "success", "headSha": LATEST},
+              {"databaseId": 103, "status": "completed", "conclusion": "failure", "headSha": LATER},
+              {"databaseId": 101, "status": "completed", "conclusion": "failure", "headSha": MERGE},
+              {"databaseId": 100, "status": "completed", "conclusion": "cancelled", "headSha": EARLIER}]
+        runs = [run(12, "completed", "success", f"Deploy {LATEST}"),
+                run(11, "completed", "skipped", f"Deploy {LATER}", deploy="skipped"),
+                run(10, "completed", "skipped", f"Deploy {MERGE}", deploy="skipped")]
+        result = self.watch(runs, live=LATEST, ci=ci)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("main Required CI run 104: completed success", result.stdout)
+        self.assertIn(f"live on dev at {LATEST[:9]}", result.stdout)
+
+    def test_a_red_main_after_the_merge_waits_for_the_next_batch(self):
+        result = self.watch([run(9, "completed", "success", f"Deploy {LATER}")], live=LATER, red_wait="3600",
+                            ci_first=[{"databaseId": 101, "status": "completed", "conclusion": "failure",
+                                       "headSha": MERGE}],
+                            ci=[{"databaseId": 102, "status": "completed", "conclusion": "success",
+                                 "headSha": LATER},
+                                {"databaseId": 101, "status": "completed", "conclusion": "failure",
+                                 "headSha": MERGE}])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"main is red after merge {MERGE[:9]} (run 101)", result.stdout)
+        self.assertIn("main Required CI run 102: completed success", result.stdout)
+        self.assertNotIn("stopped watching", result.stdout)
+
+    def test_a_red_main_with_no_newer_batch_fails_once_the_wait_runs_out(self):
+        result = self.watch([run(9, "completed", "success", f"Deploy {MERGE}")], live=MERGE, red_wait="2",
+                            ci=[{"databaseId": 101, "status": "completed", "conclusion": "failure",
+                                 "headSha": MERGE}])
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"main is red after merge {MERGE[:9]} (run 101)", result.stdout)
+        self.assertIn("stopped watching: main Required CI failed after merge", result.stdout)
+
+    def test_a_newer_red_batch_that_still_contains_the_merge_fails_the_watch(self):
+        result = self.watch([run(9, "completed", "success", f"Deploy {MERGE}")], live=MERGE,
+                            ci=[{"databaseId": 102, "status": "completed", "conclusion": "failure",
+                                 "headSha": LATER},
+                                {"databaseId": 101, "status": "completed", "conclusion": "failure",
+                                 "headSha": MERGE}])
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("main Required CI run 102: completed failure", result.stdout)
+        self.assertIn(f"stopped watching: main Required CI failed after merge {MERGE[:9]} (run 102",
+                      result.stdout)
+        self.assertNotIn("live on dev", result.stdout)
 
     def test_a_cancelled_deploy_waits_for_the_next_converging_release(self):
         result = self.watch([run(10, "completed", "success", f"Deploy {LATER}")], live=LATER,
