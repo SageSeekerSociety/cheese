@@ -82,6 +82,50 @@ def test_a_batch_whose_commits_were_not_all_read_says_at_least():
     assert "各自排除" in prompt
 
 
+def _prompt(batch: Batch) -> str:
+    return _batch_checks_failed_prompt(
+        title="t",
+        task_id="id",
+        sha="b",
+        failed=[("CI required", "u")],
+        reopened=False,
+        batch=batch,
+    )
+
+
+def test_a_bisected_blame_says_the_search_named_this_commit():
+    """The file match and a probe run are different evidence; the task is told
+    which one named it, so it does not look for a file change that is not there."""
+    batch = Batch(
+        head="d",
+        total=6,
+        complete=True,
+        commits=(BatchCommit("b", "feat: b"),),
+        failed_tests=("tests/unit/test_x.py",),
+        blamed="b",
+        by_bisect=True,
+    )
+    prompt = _prompt(batch)
+    assert "逐个重跑" in prompt
+    assert "失败用例所在的文件" not in prompt
+
+
+def test_a_search_that_named_nobody_says_so_and_why():
+    batch = Batch(
+        head="d",
+        total=6,
+        complete=True,
+        commits=(BatchCommit("b", "feat: b"),),
+        failed_tests=("tests/unit/test_x.py",),
+        blamed=None,
+        bisect="probe budget spent",
+    )
+    prompt = _prompt(batch)
+    assert "没能定位" in prompt
+    assert "探测次数用完" in prompt
+    assert "各自排除" in prompt
+
+
 def test_a_neutral_run_counts_as_a_pass():
     """`merge_state` treats neutral as passing; the watcher reads it the same."""
     runs = [
