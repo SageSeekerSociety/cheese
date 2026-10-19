@@ -1,7 +1,7 @@
 """A machine holds any number of Claude Code logins, each its own connection
 
 Revision ID: e81c7f29ab40
-Revises: b3c41f7e9a20
+Revises: 8f2c5d1a9b47
 Create Date: 2026-10-18
 
 Until now a machine had one login for its owner's own Claude Code
@@ -48,7 +48,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "e81c7f29ab40"
-down_revision: str | Sequence[str] | None = "b3c41f7e9a20"
+down_revision: str | Sequence[str] | None = "8f2c5d1a9b47"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

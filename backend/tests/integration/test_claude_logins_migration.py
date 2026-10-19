@@ -20,7 +20,7 @@ import asyncpg
 
 from tests.integration.migration_replay import ReplayDatabase, database_at, seed_room
 
-BEFORE = "b3c41f7e9a20"
+BEFORE = "8f2c5d1a9b47"
 AFTER = "e81c7f29ab40"
 
 _NOW = datetime.now(UTC)
