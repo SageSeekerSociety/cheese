@@ -80,11 +80,13 @@ def test_assembly_is_faster_than_per_row_validation() -> None:
     def best(fn) -> float:
         runs = []
         for _ in range(5):
-            start = time.perf_counter()
+            start = time.process_time()
             fn(tasks)
-            runs.append(time.perf_counter() - start)
+            runs.append(time.process_time() - start)
         return min(runs)
 
     new, old = best(_new), best(_old)
-    # Measured ~0.78 (27 ms vs 34 ms per 1000 rows); the rest is ORM attribute reads.
+    # CPU time, not wall clock: a busy CI worker must not turn the faster path
+    # red. Measured ~0.77 (26 ms vs 34 ms of CPU per 1000 rows); the rest is
+    # ORM attribute reads.
     assert new < old * 0.95, (new, old)
