@@ -149,6 +149,21 @@ def test_a_record_nested_deeper_than_python_recurses_is_kept_whole():
     assert kept == {"password": "***", "leaf": "bottom"}
 
 
+def test_a_field_named_for_a_credential_loses_its_whole_value_and_only_that():
+    kept = service.scrubbed(
+        {
+            "password": 84213377,
+            "api_key": ["first half", "second half"],
+            "Basic usage": "Run the tool with --help",
+            "input_tokens": 1200,
+        }
+    )
+    assert kept["password"] == "***"
+    assert kept["api_key"] == "***"
+    assert "Run the tool with --help" in kept.values()
+    assert kept["input_tokens"] == 1200
+
+
 async def test_a_session_the_platform_reads_hands_its_rows_to_the_raw_record():
     channel = Counting()
     kept: list[dict] = []

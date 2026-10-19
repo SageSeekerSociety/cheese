@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -119,25 +120,30 @@ def scrubbed(value: Any) -> Any:
 
 
 def _masked(key: object, value: Any) -> str | None:
-    """The field's value masked as `scrub_secrets` masks ``key=value``, or
-    None when that rule leaves it alone.
+    """``***`` for a field `scrub_secrets` would take for a credential by its
+    name, or None for any other.
 
     A credential in a record is often a field of its own (a tool's
     ``{"password": ...}``, an env map's ``{"GITHUB_TOKEN": ...}``); the key
-    rule only sees it when the name and the value are in one string.
+    rule only sees it when the name and the value are in one string. The name
+    is what makes it a credential, so the whole value goes, whatever it holds
+    (a number, a list): the rule itself stops at the first space, quote or
+    comma, and would leave the rest of a passphrase behind. An empty or null
+    value has nothing to hide and is kept as it was.
     """
-    if not (isinstance(key, str) and isinstance(value, str)) or not value:
+    if not isinstance(key, str) or value is None or value in ("", [], {}):
         return None
-    # The name is what makes it a credential, so the whole value goes,
-    # whatever it holds: the key=value rule itself stops at the first space,
-    # quote or comma, and would leave the rest of a passphrase behind.
     return "***" if _names_a_credential(key) else None
 
 
 @functools.lru_cache(maxsize=4096)
 def _names_a_credential(key: str) -> bool:
     """Whether `scrub_secrets`'s key=value rule takes ``key`` for a credential's
-    name, asked with a value no other rule touches."""
+    name, asked with a value no other rule touches. A name with a space in it
+    is prose ("Basic usage", which the auth-scheme rule would take), never the
+    name of a credential."""
+    if any(c.isspace() for c in key):
+        return False
     return scrub_secrets(f"{key}=x") != f"{key}=x"
 
 
@@ -384,6 +390,24 @@ def _unpack(body: bytes) -> list[dict]:
 @dataclass(frozen=True)
 class Page:
     items: list[dict]
+    next: str | None
+
+
+class RecordOut(BaseModel):
+    """One record as the read route hands it out."""
+
+    sequence: int
+    at: str
+    turn_id: str | None
+    agent_handle: str
+    harness: str
+    #: The record as the harness wrote it, scrubbed.
+    record: dict[str, Any]
+
+
+class PageOut(BaseModel):
+    items: list[RecordOut]
+    #: The cursor to read on from, while there are more.
     next: str | None
 
 

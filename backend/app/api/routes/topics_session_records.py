@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.topics_deps import _actor_in_place
 from app.core.errors import NotFoundError
 from app.core.sentences import say
@@ -26,7 +26,7 @@ from app.domain.session_record import service
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.get("/{topic_id}/session-records")
+@router.get("/{topic_id}/session-records", **typed_response(service.PageOut))
 async def session_records(
     topic_id: uuid.UUID,
     db: DbSession,
