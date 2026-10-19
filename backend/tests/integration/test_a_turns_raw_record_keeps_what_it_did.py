@@ -35,7 +35,7 @@ from tests.integration.test_same_handle_note_and_timed_delivery import _project,
 SECRET = "ghp_" + "Zx81kQ3mN5pR7tV9wY2aB4cD6eF8gH0jK1lM"
 THINKING = "The failing test reads the config twice; check the loader before the cache."
 #: A credential a tool was handed as a field of its own, not inside a string.
-FIELD_SECRET = "hunter2-" + "plain-text"
+FIELD_SECRET = "correct horse, " + "battery staple"
 #: A tool's output far past the 8 KiB the timeline keeps: its head, a
 #: credential, a NUL (binary output carries them), 60 KB of lines, then its
 #: last line.
@@ -408,6 +408,28 @@ def test_what_the_room_steps_over_is_still_kept(client, tmp_path):
     kept = session.read(turn_id=work)
     assert len(kept) == len(_claude_records(work))
     assert THINKING in repr(kept)
+
+
+def test_a_record_nested_deep_is_kept_and_read_back(client, tmp_path):
+    """An MCP result can nest far deeper than a person would write; the session
+    still did it, and the record still has to read back."""
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    work = str(uuid.uuid4())
+    records = _claude_records(work)
+    expected = [_as_stored(r) for r in records]
+    deep: dict = {"leaf": "bottom"}
+    for _ in range(1200):
+        deep = {"child": deep}
+    for each in (records, expected):
+        each[2]["message"]["content"][0]["input"]["result"] = deep
+    session.write(records)
+    session.drain()
+    kept = session.read(turn_id=work)
+    # Compared as JSON text, keys sorted (JSONB keeps no key order): comparing
+    # the objects themselves would recurse past the limit.
+    assert json.dumps([i["record"] for i in kept], sort_keys=True) == json.dumps(
+        expected, sort_keys=True
+    )
 
 
 def test_who_may_not_read_the_room_may_not_read_its_record(client, tmp_path):

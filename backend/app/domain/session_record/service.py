@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import gzip
 import io
 import json
@@ -125,13 +126,19 @@ def _masked(key: object, value: Any) -> str | None:
     ``{"password": ...}``, an env map's ``{"GITHUB_TOKEN": ...}``); the key
     rule only sees it when the name and the value are in one string.
     """
-    if not (isinstance(key, str) and isinstance(value, str)):
+    if not (isinstance(key, str) and isinstance(value, str)) or not value:
         return None
-    pair = _UNSTORABLE.sub("�", f"{key}={value}")
-    masked = scrub_secrets(pair)
-    if masked != pair and masked.startswith(f"{key}="):
-        return masked[len(key) + 1 :]
-    return None
+    # The name is what makes it a credential, so the whole value goes,
+    # whatever it holds: the key=value rule itself stops at the first space,
+    # quote or comma, and would leave the rest of a passphrase behind.
+    return "***" if _names_a_credential(key) else None
+
+
+@functools.lru_cache(maxsize=4096)
+def _names_a_credential(key: str) -> bool:
+    """Whether `scrub_secrets`'s key=value rule takes ``key`` for a credential's
+    name, asked with a value no other rule touches."""
+    return scrub_secrets(f"{key}=x") != f"{key}=x"
 
 
 def _entries(rows: list[dict]) -> list[dict]:

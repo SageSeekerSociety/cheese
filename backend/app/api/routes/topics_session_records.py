@@ -12,6 +12,7 @@ conversation's transcript may read its raw record.
 import uuid
 
 from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
@@ -33,7 +34,7 @@ async def session_records(
     turn_id: uuid.UUID | None = None,
     after: str | None = Query(None, max_length=512),
     limit: int = Query(200, ge=1, le=500),
-) -> dict:
+) -> JSONResponse:
     """The conversation's raw records after the cursor `after`, oldest first.
 
     `next` is the cursor of the last record on this page while there are more,
@@ -51,4 +52,7 @@ async def session_records(
     page = await service.read(
         db, place.conversation_id, turn_id=turn_id, after=cursor, limit=limit
     )
-    return ok({"items": page.items, "next": page.next})
+    # Rendered by the json module rather than the response model: a record
+    # is whatever the harness wrote, and pydantic gives up on one nested
+    # past about 250 levels, where json goes on.
+    return JSONResponse(ok({"items": page.items, "next": page.next}))
