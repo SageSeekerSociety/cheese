@@ -1,16 +1,13 @@
-from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.avatars.models import Avatar
-from app.domain.reads import get_by_ids
+from app.domain.repositories import Repository
 
 
-class AvatarRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+class AvatarRepository(Repository[Avatar]):
+    model = Avatar
 
     async def list_by_type(self, avatar_type: str) -> list[Avatar]:
         stmt: Select[tuple[Avatar]] = (
@@ -20,14 +17,6 @@ class AvatarRepository:
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
-
-    async def get_by_id(self, avatar_id: int) -> Avatar | None:
-        stmt: Select[tuple[Avatar]] = select(Avatar).where(Avatar.id == avatar_id)
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def get_by_ids(self, avatar_ids: Sequence[int]) -> dict[int, Avatar]:
-        return await get_by_ids(self._session, Avatar, avatar_ids)
 
     async def get_default(self) -> Avatar | None:
         stmt: Select[tuple[Avatar]] = (

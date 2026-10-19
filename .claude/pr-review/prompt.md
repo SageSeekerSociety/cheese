@@ -120,16 +120,32 @@ say.
   (grep for every changed public name), error paths that now swallow or
   misreport.
 - Lens B, checks that do not bite: for each test the PR adds or changes,
-  revert the non-test part in a separate copy and run the test; a test that
+  revert the non-test part in a copy of its own and run the test; a test that
   stays green without the change protects nothing. Where the precomputed
   facts already report that test `PROVEN`, take that as the answer instead of
-  building a tree to see it again. Mocks or fixtures that hide the behaviour
-  under test; a test that asserts the implementation instead of the effect;
-  things that pass locally and fail in CI (paths, env vars, ordering,
-  timeouts, ratchet baselines and generated files the PR forgot to update);
-  rules in AGENTS.md and the nearest directory AGENTS.md that the change
-  violates — including the rules injected into this review, which is where the
-  rules for these exact paths are.
+  building a tree to see it again.
+
+  Run these mutations in parallel, not one after another. Give each test its
+  own detached copy (`git worktree add --detach <path> <pinned sha>`), revert
+  into it the non-test part of the change, and start each check in the
+  background — as many at once as the machine can hold — so the runs are in
+  flight before you read the diff; then read the diff and collect results as
+  they finish, so the reading overlaps the runs. One copy per mutation: two
+  reverts in one tree would report each other as the change. Remove the
+  copies afterwards.
+
+  Run the narrowest command that exercises the test — the test file, or one
+  test by name, not the whole suite where the runner can select what it
+  needs. Keep a line per check: what was reverted, the exact command, and
+  whether it went red or green; that record is what the lens reports, and a
+  check with no command behind it is not one.
+
+  Mocks or fixtures that hide the behaviour under test; a test that asserts
+  the implementation instead of the effect; things that pass locally and fail
+  in CI (paths, env vars, ordering, timeouts, ratchet baselines and generated
+  files the PR forgot to update); rules in AGENTS.md and the nearest
+  directory AGENTS.md that the change violates — including the rules injected
+  into this review, which is where the rules for these exact paths are.
 
   An auxiliary case that also passes on the baseline is not a finding. A test
   file may hold boundary cases that are meant to pass either way, and only

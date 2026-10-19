@@ -27,7 +27,7 @@ import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -102,6 +102,49 @@ def _response_bucket(request: httpx.Request, status_code: int) -> str:
     return "core_rest_non_304"
 
 
+type _OtherRestEndpoint = Literal[
+    "pull_requests",
+    "checks",
+    "actions_runs",
+    "actions_jobs",
+    "repository",
+    "branches",
+    "comparisons",
+    "files",
+    "non_get",
+    "other",
+]
+
+
+def _other_rest_endpoint(request: httpx.Request) -> _OtherRestEndpoint:
+    """A fixed resource family, never a URL, repository, ref or user value."""
+    if request.method != "GET":
+        return "non_get"
+    path = request.url.path
+    if path.startswith("/api/v3/"):
+        path = path.removeprefix("/api/v3")
+    match path.strip("/").split("/"):
+        case ["repositories", _, *resource] | ["repos", _, _, *resource]:
+            match resource:
+                case []:
+                    return "repository"
+                case ["pulls", *_]:
+                    return "pull_requests"
+                case ["commits", _, "check-runs" | "check-suites" | "status", *_]:
+                    return "checks"
+                case ["actions", "runs", _, "jobs", *_] | ["actions", "jobs", *_]:
+                    return "actions_jobs"
+                case ["actions", "runs", *_]:
+                    return "actions_runs"
+                case ["git", "ref" | "refs", "heads", *_] | ["branches", *_]:
+                    return "branches"
+                case ["compare", *_]:
+                    return "comparisons"
+                case ["contents", *_] | ["git", "trees" | "blobs", *_]:
+                    return "files"
+    return "other"
+
+
 async def _count_request(request: httpx.Request) -> None:
     """Count one attempt that is about to be sent, when it is attributable.
 
@@ -139,6 +182,16 @@ async def _count_response(response: httpx.Response) -> None:
         f"forge_responses_{bucket}_total",
         {"job": job, "installation": str(installation)},
     ).inc()
+    if job == JOB_OTHER and bucket == "core_rest_non_304":
+        # A breakdown of the existing other bucket, not additional requests or
+        # an exact bill. Ten fixed values bound series even for arbitrary URLs.
+        metrics.registry.counter(
+            "forge_other_core_rest_non_304_by_endpoint_total",
+            {
+                "installation": str(installation),
+                "endpoint": _other_rest_endpoint(request),
+            },
+        ).inc()
 
 
 @asynccontextmanager
