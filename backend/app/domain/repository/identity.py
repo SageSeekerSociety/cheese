@@ -77,7 +77,7 @@ class Attribution:
     author: GitIdentity | None
     #: `CREDIT_OWNER` or `CREDIT_AGENT`.
     mode: str = CREDIT_OWNER
-    #: The owner's git identity — their GitHub one when linked.
+    #: The owner's git identity — their GitHub one when signed in with it.
     owner: GitIdentity | None = None
     #: People the task declares as having written part of it.
     contributors: tuple[GitIdentity, ...] = ()
