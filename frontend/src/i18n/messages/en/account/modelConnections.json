@@ -28,7 +28,7 @@
   "ready": "Ready",
   "recheck": "Check again",
   "remove": "Remove",
-  "removeBody": "Claude Code on {device} will log out, and your Claude Code can no longer use it in projects. If the device is offline, it logs out when it comes back online. Claude Code you use yourself on that device is not affected",
+  "removeBody": "This login on {device} will log out, and your Claude Code can no longer use it in projects. If the device is offline, it logs out when it comes back online. Other logins on that device, and the Claude Code you use yourself there, are not affected",
   "removeHeldBody": "The key is deleted from Cheese right away, and Claude Code added to projects with it stops taking work",
   "removeTitle": "Remove this model connection?",
   "removed": "Removed",
@@ -39,7 +39,7 @@
   "revoking": "Removing",
   "revokingHint": "No longer used. It logs out when {device} comes online",
   "saved": "Saved",
-  "serviceHint": "Works with services that speak Anthropic's API, such as GLM, Kimi and DeepSeek. The key is sent straight to the device and kept only there. Once saved, Claude Code on that device uses this service",
+  "serviceHint": "Works with services that speak Anthropic's API, such as GLM, Kimi and DeepSeek. The key is sent straight to the device and kept only there. Once saved, that device has one more model connection, using this service",
   "serviceHost": "Service at {host}",
   "storedOn": "Stored on",
   "subscription": "Claude subscription ({plan})"

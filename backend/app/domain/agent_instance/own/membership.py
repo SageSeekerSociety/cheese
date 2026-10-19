@@ -62,7 +62,7 @@ async def add(
             OwnAgent.owner_user_id == owner_user_id,
             OwnAgent.account_connection_id == account_id
             if login.on_account
-            else OwnAgent.device_id == login.device_id,
+            else OwnAgent.login_id == login.id,
         )
     )
     if instance is None:
@@ -82,7 +82,7 @@ async def add(
                 instance_id=instance.id,
                 owner_user_id=owner_user_id,
                 harness=harness,
-                device_id=login.device_id,
+                login_id=None if login.on_account else login.id,
                 account_connection_id=account_id,
             )
         )

@@ -78,7 +78,7 @@
         </div>
       </div>
 
-      <div v-for="c in connections" :key="c.device_id" class="mc-row" :data-connection="c.device_id">
+      <div v-for="c in connections" :key="c.id" class="mc-row" :data-connection="c.id">
         <div class="mc-row__head">
           <div class="mc-row__id">
             <div class="mc-row__name">{{ c.name || kindLabel(c) }}</div>
@@ -115,15 +115,15 @@
             size="sm"
             :disabled="!c.online"
             :title="c.online ? undefined : t('account.modelConnections.offlineHint')"
-            :loading="busy === `${c.device_id}:check`"
-            @click="emit('recheck', c.device_id)"
+            :loading="busy === `${c.id}:check`"
+            @click="emit('recheck', c.id)"
           >
             {{ t('account.modelConnections.recheck') }}
           </BaseButton>
-          <BaseButton kind="ghost" size="sm" @click="openRename(c.device_id, c.name, true)">
+          <BaseButton kind="ghost" size="sm" @click="openRename(c.id, c.name, true)">
             {{ t('account.modelConnections.rename') }}
           </BaseButton>
-          <BaseButton kind="ghost" size="sm" :loading="busy === `${c.device_id}:revoke`" @click="removing = c">
+          <BaseButton kind="ghost" size="sm" :loading="busy === `${c.id}:revoke`" @click="removing = c">
             {{ t('account.modelConnections.remove') }}
           </BaseButton>
         </div>
@@ -308,13 +308,13 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  recheck: [deviceId: string]
-  revoke: [deviceId: string]
+  recheck: [loginId: string]
+  revoke: [loginId: string]
   service: [deviceId: string, service: ModelServiceInput]
   addHeld: [input: AccountConnectionInput]
   checkHeld: [id: string]
   renameHeld: [id: string, name: string]
-  renameDevice: [deviceId: string, name: string]
+  renameDevice: [loginId: string, name: string]
   removeHeld: [id: string]
 }>()
 
@@ -389,7 +389,7 @@ function kindLabel(c: ModelConnection): string {
 
 const removing = ref<ModelConnection | null>(null)
 function confirmRemove() {
-  if (removing.value) emit('revoke', removing.value.device_id)
+  if (removing.value) emit('revoke', removing.value.id)
   removing.value = null
 }
 

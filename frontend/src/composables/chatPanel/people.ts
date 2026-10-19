@@ -9,6 +9,7 @@ import { reactive } from 'vue'
 
 import { useRoomRoster } from '../../components/room/composables/useRoomRoster'
 import { useAgentNaming } from '../useAgentNaming'
+import { useClosedAuthors } from '../useClosedAuthors'
 
 /** 这一栏问得出的「谁是谁」：名册、称呼，加上 chips 读的那两张表。 */
 export function usePanelPeople(deps: {
@@ -30,9 +31,12 @@ export function usePanelPeople(deps: {
 
   // 名册、座位、显示名、头像 —— 见 room/composables/useRoomRoster。
   // 房间名册和项目名册是两份，因为 AI 队友的座位只在前者上。
+  // 注销了的作者署「已注销用户」：问哪几位由调用方定（它手上有时间线），见 useClosedAuthors。
+  const closedAuthors = useClosedAuthors()
   const roster = useRoomRoster({
     topic: deps.topic,
     members: deps.members,
+    closed: () => closedAuthors.closed.value,
     author: deps.author,
     onError: deps.onError,
   })
@@ -48,5 +52,5 @@ export function usePanelPeople(deps: {
     alwaysSummon: deps.alwaysSummon,
   })
 
-  return { refMaps, mentionNames, topicTitles, roster, naming }
+  return { refMaps, mentionNames, topicTitles, roster, naming, closedAuthors }
 }
