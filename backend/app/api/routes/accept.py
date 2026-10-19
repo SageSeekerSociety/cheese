@@ -14,7 +14,7 @@ from app.api.deps import get_chat_service, get_work_runner
 from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.db import release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
@@ -51,6 +51,7 @@ from app.domain.review.models import DeliverableKind
 from app.domain.review.schemas import (
     AcceptCardCreate,
     AcceptCardDescribe,
+    AcceptCardOut,
     AcceptCardReassign,
     AcceptCardRedeliver,
     AcceptDecision,
@@ -270,7 +271,11 @@ async def describe_card(
     return ok(await _accept_service(db).describe(card))
 
 
-@router.post("/topics/{topic_id}/accept-card/redeliver", dependencies=[ROUTE_DECIDES])
+@router.post(
+    "/topics/{topic_id}/accept-card/redeliver",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(AcceptCardOut),
+)
 async def redeliver_card(
     topic_id: uuid.UUID,
     body: AcceptCardRedeliver,
