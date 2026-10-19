@@ -328,6 +328,14 @@ class TeamRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
+    async def has_owner(self, team_id: int) -> bool:
+        stmt = select(TeamUserRelation.id).where(
+            TeamUserRelation.team_id == team_id,
+            TeamUserRelation.deleted_at.is_(None),
+            TeamUserRelation.role == TeamMemberRole.OWNER,
+        )
+        return (await self._session.execute(stmt.limit(1))).first() is not None
+
     async def list_admin_and_owner_ids(self, team_id: int) -> set[int]:
         stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
             and_(

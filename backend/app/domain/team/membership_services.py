@@ -157,6 +157,13 @@ class TeamMembershipService:
             return "pending"
         return "none"
 
+    async def _refuse_if_ownerless(self, team_id: int) -> None:
+        """A shared team whose only owner closed their account while nobody
+        else was in it (``app.domain.account.deletion``) has no owner, and
+        nothing can give it one: whoever joined would be stuck in it."""
+        if not await self._team_repo.has_owner(team_id):
+            raise ConflictError(say("teamHasNoOwner"))
+
     async def join(self, *, user_id: int, team: Team, message: str | None) -> str:
         """Join ``team``, or ask to — whichever its ``join_approval`` says.
 
@@ -167,6 +174,8 @@ class TeamMembershipService:
         status = await self.join_status(team.id, user_id)
         if status != "none":
             return status
+        # Asking would wait for an owner or admin who is not there either.
+        await self._refuse_if_ownerless(team.id)
         if not team.join_approval:
             # deferred-import: tests replace this name on app.domain.team.services
             from app.domain.team.services import check_team_locking_status
@@ -328,6 +337,7 @@ class TeamMembershipService:
             "MEMBER": TeamMemberRole.MEMBER,
         }
         member_role = role_mapping.get(app.role, TeamMemberRole.MEMBER)
+        await self._refuse_if_ownerless(team_id)
 
         await self._update_status(app, ApplicationStatus.ACCEPTED, processor_id=user_id)
         await self._team_repo.add_member(team_id, user_id, member_role)

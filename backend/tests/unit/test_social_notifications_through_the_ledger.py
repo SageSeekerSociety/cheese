@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
+from app.core.errors import ConflictError
 from app.domain.delivery.ledger import deliver
 from app.domain.delivery.models import Delivery
 from app.domain.notification.models import Notification, NotificationType
@@ -239,8 +240,8 @@ async def test_a_join_request_is_recorded_before_it_is_sent(db_factory):
 async def test_a_request_to_a_team_with_no_admins_notifies_nobody(db_factory):
     """没有管理员可审的团队：谁也不通知，账本上也不留行。
 
-    「谁也没点到」是常态，不是异常 —— 寻址给出空名单的时候，投递这一侧什么都不
-    做，所以调用点不必自己先判一次「有没有人要通知」。
+    这样的团队连所有者也没有（所有者注销时团队里只剩他），申请本身就被拒绝
+    （``TeamMembershipService.join``），所以投递这一侧根本走不到。
     """
     async with db_factory() as session:
         requester = await _user(session, "requester")
@@ -257,7 +258,8 @@ async def test_a_request_to_a_team_with_no_admins_notifies_nobody(db_factory):
         session.add(team)
         await session.flush()
 
-        await _service(session).join(user_id=requester, team=team, message=None)
+        with pytest.raises(ConflictError):
+            await _service(session).join(user_id=requester, team=team, message=None)
         await session.commit()
 
         assert await _ledger_rows(session) == []

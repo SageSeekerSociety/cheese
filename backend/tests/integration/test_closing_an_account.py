@@ -430,3 +430,66 @@ def test_a_personal_team_or_a_team_of_one_does_not_hold_closing(client):
     )
 
     assert closed.status_code == 200, closed.text
+
+
+def _user_id(client, handle: str) -> int:
+    from app.domain.user.models import User
+
+    async def read() -> int:
+        async with client.test_factory() as session:
+            return await session.scalar(select(User.id).where(User.username == handle))
+
+    return client.portal.call(read)
+
+
+def test_nobody_joins_a_team_left_without_an_owner(client):
+    """An owner alone in a shared team may close (above), but nobody may then
+    come in: a member there could never get an owner."""
+    owner = sign_in(client, _handle("leaver"))
+    invited = sign_in(client, _handle("invited"))
+    passerby = sign_in(client, _handle("passerby"))
+    team_id, _ = _shared_team(client, owner.handle)
+    invitation = client.post(
+        f"/teams/{team_id}/invitations",
+        json={"userId": _user_id(client, invited.handle)},
+        headers=_auth(owner.token),
+    )
+    assert invitation.status_code == 201, invitation.text
+    invitation_id = invitation.json()["data"]["invitation"]["id"]
+    opened = client.patch(
+        f"/teams/{team_id}/join-link",
+        json={"approval": False},
+        headers=_auth(owner.token),
+    )
+    assert opened.status_code == 200, opened.text
+    assert (
+        _close(
+            client,
+            owner.token,
+            username=owner.handle,
+            ticket=_ticket(client, owner.token),
+        ).status_code
+        == 200
+    )
+
+    accepted = client.post(
+        f"/users/me/team-invitations/{invitation_id}/accept",
+        headers=_auth(invited.token),
+    )
+    joined = client.post(f"/teams/{team_id}/join", headers=_auth(passerby.token))
+
+    assert accepted.status_code == 409, accepted.text
+    assert joined.status_code == 409, joined.text
+    from app.domain.team.models import TeamUserRelation
+
+    async def live_members() -> list[int]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(TeamUserRelation.user_id).where(
+                    TeamUserRelation.team_id == team_id,
+                    TeamUserRelation.deleted_at.is_(None),
+                )
+            )
+            return list(rows)
+
+    assert client.portal.call(live_members) == []

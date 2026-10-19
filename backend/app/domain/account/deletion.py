@@ -12,7 +12,8 @@ notifications addressed to them, and their places in teams, projects and rooms.
 An account that is the only owner of a shared team other people are in is not
 closed until it hands that team on: nothing else can ever give the team an
 owner again, as GitHub also requires before deleting an account. A personal
-team, or a shared team nobody else is in, does not hold it.
+team, or a shared team nobody else is in, does not hold it; nobody can join
+the ownerless team that leaves (``app.domain.team.membership_services``).
 
 What stays is what other people still need: messages, documents and tasks
 they wrote in shared rooms (shown as 「已注销用户」), records of who read
