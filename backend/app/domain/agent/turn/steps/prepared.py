@@ -3,6 +3,7 @@
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from app.domain.agent.harness import SessionRef
@@ -45,6 +46,10 @@ class PreparedSend:
     roster: list[dict]
     topic_refs: list[dict]
     consumed_ids: list[uuid.UUID]
+    # Where the seat's reading stands when this turn finishes cleanly. Kept
+    # apart from `consumed_ids`: those are the blocks this turn answers for and
+    # stamps, while the window it read also carried other seats' messages.
+    read_through: tuple[datetime, uuid.UUID] | None
     turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None
