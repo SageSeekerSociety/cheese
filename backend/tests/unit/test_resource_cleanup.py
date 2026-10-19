@@ -412,6 +412,46 @@ def test_removal_keeps_the_rooms_transcripts_compressed_on_the_host(
     }
 
 
+def test_a_retried_removal_keeps_the_transcripts_the_first_attempt_archived(
+    tmp_path, room_home
+):
+    """A removal that died partway, after `.claude` was gone but before the
+    rest of the home was, is tried again; the archive the first attempt wrote
+    is the only copy of the Claude Code sessions, and it stays."""
+    project, resource, room, home, archive = room_home
+    pi = tmp_path / ".cheese/harness" / project / resource / "pi/seat-b/sessions"
+    pi.mkdir(parents=True)
+    (pi / "s2.jsonl").write_bytes(b'{"pi":1}\n')
+    assert run_cleanup(tmp_path, "remove", project, resource, room).returncode == 0
+    first = archived_files(archive)
+    # What the first attempt left behind had it stopped inside the home's
+    # removal: the home without its `.claude`, the harness state untouched.
+    (home / ".cache").mkdir(parents=True)
+    (home / ".cache/left.txt").write_bytes(b"x")
+
+    retried = run_cleanup(tmp_path, "remove", project, resource, room)
+    assert retried.returncode == 0, retried.stderr
+    assert archived_files(archive) == first
+    assert "projects/-room/77d3f6bc.jsonl" in first
+
+
+def test_a_room_with_no_home_on_the_session_host_keeps_its_harness_sessions(
+    tmp_path,
+):
+    """A Codex or pi room's seats leave no room home on the session host, only
+    their harness state; their sessions are archived all the same."""
+    project, resource, room = (str(uuid.uuid4()) for _ in range(3))
+    codex = tmp_path / ".cheese/harness" / project / resource / "codex/seat-a/codex"
+    (codex / "sessions/2026/10/19").mkdir(parents=True)
+    (codex / "sessions/2026/10/19/rollout-1.jsonl").write_bytes(b'{"codex":1}\n')
+    removed = run_cleanup(tmp_path, "remove", project, resource, room)
+    assert removed.returncode == 0, removed.stderr
+    archive = tmp_path / ".cheese/transcripts" / project / room / (resource + ".tar.gz")
+    assert archived_files(archive) == {
+        "codex/seat-a/codex/sessions/2026/10/19/rollout-1.jsonl": b'{"codex":1}\n'
+    }
+
+
 def test_a_link_in_the_transcripts_is_kept_as_a_link_and_never_followed(
     tmp_path, room_home
 ):

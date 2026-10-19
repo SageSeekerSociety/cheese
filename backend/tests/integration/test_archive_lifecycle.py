@@ -1,9 +1,12 @@
 """Archival persists a configurable grace period without deleting resources."""
 
 import asyncio
+import hashlib
+import http.server
 import os
 import subprocess
 import tarfile
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,6 +19,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.device_failures import DeviceOffline
 from app.core.errors import ConflictError
+from app.domain.agent import device_storage
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.adapters import platform_line
@@ -658,8 +662,63 @@ class LocalDevice:
         }
 
 
+class PrivateBucket:
+    """The private bucket, as far as a room's cleanup uses it: a presigned PUT
+    URL a machine sends to over HTTP, and what the bucket then reports."""
+
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+        self.refusing = False
+        # Takes the PUT but reports another size for it, as a truncated or
+        # replaced object would read back.
+        self.misreporting = False
+        bucket = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_PUT(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                if bucket.refusing:
+                    self.send_response(503)
+                else:
+                    bucket.objects[self.path.lstrip("/")] = body
+                    self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    async def presign(self, key: str, operation: str, expires_s: int) -> str:
+        return f"http://127.0.0.1:{self.server.server_port}/{key}"
+
+    async def stat(self, key: str):
+        body = self.objects.get(key)
+        if body is None:
+            return None
+        return (len(body) + self.misreporting, hashlib.md5(body).hexdigest())
+
+    def transcripts(self) -> dict[str, bytes]:
+        return {
+            key: body
+            for key, body in self.objects.items()
+            if key.startswith("transcripts/")
+        }
+
+
 @pytest.fixture
-async def session_host_room(client, monkeypatch, tmp_path):
+def private_bucket(monkeypatch):
+    bucket = PrivateBucket()
+    monkeypatch.setattr(device_storage, "private_storage", lambda: bucket)
+    # The bucket here is on loopback, past any proxy the environment names.
+    monkeypatch.setenv("no_proxy", "*")
+    yield bucket
+    bucket.server.shutdown()
+
+
+@pytest.fixture
+async def session_host_room(client, monkeypatch, tmp_path, private_bucket):
     """An archived room whose home, on the session host, holds a main session
     transcript and a subagent's."""
     room_id, cleanup_id = await archived_room(client, monkeypatch)
@@ -687,9 +746,41 @@ async def session_host_room(client, monkeypatch, tmp_path):
         / str(room_id)
         / f"{resource_id}.tar.gz"
     )
+    harness = machine / ".cheese/harness" / str(project_id) / str(resource_id)
     return SimpleNamespace(
-        room_id=room_id, cleanup_id=cleanup_id, home=home, archive=archive
+        room_id=room_id,
+        cleanup_id=cleanup_id,
+        home=home,
+        archive=archive,
+        harness=harness,
+        bucket=private_bucket,
     )
+
+
+def _with_codex_and_pi(room) -> dict[str, bytes]:
+    """Give the room a Codex session and a pi one (and a pi subagent's), where
+    those harnesses write them; what the archive holds of all its sessions."""
+    codex = room.harness / "codex/seat-a/codex/sessions/2026/10/19"
+    pi = room.harness / "pi/seat-b/sessions"
+    child = room.harness / "pi/seat-b/subagents/agent-c/sessions"
+    for directory in (codex, pi, child):
+        directory.mkdir(parents=True)
+    (codex / "rollout-1.jsonl").write_bytes(b'{"said":"codex"}\n')
+    (pi / "s2.jsonl").write_bytes(b'{"said":"pi"}\n')
+    (child / "s3.jsonl").write_bytes(b'{"said":"pi child"}\n')
+    return {
+        "projects/-room/s1.jsonl": b'{"said":"main"}\n',
+        "projects/-room/s1/subagents/agent-a.jsonl": b'{"said":"sub"}\n',
+        "codex/seat-a/codex/sessions/2026/10/19/rollout-1.jsonl": b'{"said":"codex"}\n',
+        "pi/seat-b/sessions/s2.jsonl": b'{"said":"pi"}\n',
+        "pi/seat-b/subagents/agent-c/sessions/s3.jsonl": b'{"said":"pi child"}\n',
+    }
+
+
+def _bundled(body: bytes, tmp_path: Path) -> dict[str, bytes]:
+    copy = tmp_path / f"{uuid.uuid4()}.tar.gz"
+    copy.write_bytes(body)
+    return _archived_files(copy)
 
 
 def _sweep(client) -> dict:
@@ -766,6 +857,88 @@ async def test_a_room_reopened_while_its_transcripts_are_kept_lets_them_expire(
     await _make_due(client, room.cleanup_id)
     assert _sweep(client) == {"completed": 1, "pending": 0}
     assert not room.archive.exists()
+
+
+async def test_an_archived_rooms_transcripts_are_in_the_bucket_after_they_expire(
+    client, session_host_room, tmp_path
+):
+    room = session_host_room
+    sessions = _with_codex_and_pi(room)
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+    # In the bucket from the removal on, not only once the host's copy is due.
+    assert room.bucket.transcripts() != {}
+    await _make_due(client, room.cleanup_id)
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+
+    # The host's copy is gone; the bucket's holds every session of the room,
+    # Claude Code's, Codex's and pi's.
+    assert not room.archive.exists()
+    [body] = room.bucket.transcripts().values()
+    assert _bundled(body, tmp_path) == sessions
+
+
+async def test_transcripts_the_bucket_did_not_take_outlive_their_expiry(
+    client, session_host_room
+):
+    room = session_host_room
+    room.bucket.refusing = True
+    _sweep(client)
+    await _make_due(client, room.cleanup_id)
+    _sweep(client)
+
+    # The host's copy is the only one, so it stays, and is due again.
+    assert room.archive.exists()
+    assert room.bucket.transcripts() == {}
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, room.cleanup_id)).state == "retained"
+
+
+async def test_transcripts_the_bucket_holds_wrongly_outlive_their_expiry(
+    client, session_host_room
+):
+    room = session_host_room
+    room.bucket.misreporting = True
+    _sweep(client)
+    await _make_due(client, room.cleanup_id)
+    _sweep(client)
+
+    # The bucket took a PUT but does not hold what the host sent, so the
+    # host's copy is still the only good one.
+    assert room.archive.exists()
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, room.cleanup_id)).state == "retained"
+
+
+async def test_a_harness_session_linked_out_of_the_harness_is_not_archived(
+    client, session_host_room, tmp_path
+):
+    room = session_host_room
+    sessions = _with_codex_and_pi(room)
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "codex/sessions").mkdir(parents=True)
+    (elsewhere / "codex/sessions/other.jsonl").write_bytes(b'{"not":"ours"}\n')
+    (room.harness / "codex/seat-z").symlink_to(elsewhere, target_is_directory=True)
+    _sweep(client)
+
+    # Every session the harnesses wrote, and nothing the link points at.
+    [body] = room.bucket.transcripts().values()
+    assert _bundled(body, tmp_path) == sessions
+
+
+async def test_transcripts_kept_before_they_were_sent_are_sent_before_they_go(
+    client, session_host_room, tmp_path
+):
+    room = session_host_room
+    room.bucket.refusing = True
+    _sweep(client)
+    kept = _archived_files(room.archive)
+    room.bucket.refusing = False
+    await _make_due(client, room.cleanup_id)
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+
+    assert not room.archive.exists()
+    [body] = room.bucket.transcripts().values()
+    assert _bundled(body, tmp_path) == kept
 
 
 async def test_a_device_other_than_the_session_host_keeps_no_transcripts(

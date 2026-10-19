@@ -108,6 +108,46 @@ def key_for(project_id: uuid.UUID, resource_id: str) -> str:
     return f"{KEY_PREFIX}/{project_id}/{uuid.UUID(resource_id)}.tar.gz"
 
 
+#: Where in the private bucket an archived room's session transcripts are
+#: kept, for good: nothing deletes under it (decided on #4398, 2026-10-19:
+#: every agent trace is kept permanently).
+TRANSCRIPTS_PREFIX = "transcripts/rooms"
+
+
+def transcripts_key(project_id: uuid.UUID, room_id: uuid.UUID, resource_id: str):
+    """One object per resource generation, as on the session host
+    (`resource_cleanup.retained_transcripts`)."""
+    return (
+        f"{TRANSCRIPTS_PREFIX}/{project_id}/{room_id}/{uuid.UUID(resource_id)}.tar.gz"
+    )
+
+
+async def transcripts_upload_url(key: str) -> str:
+    """Where a machine sends a room's retained transcripts. Raises when there
+    is no private bucket: the machine's copy is then the only one, and stays."""
+    bucket = _private_bucket()
+    if bucket is None:
+        # i18n-exempt: a cleanup's reason for waiting, for the logs and the row
+        raise RuntimeError("no private bucket to keep the transcripts in")
+    return await bucket.presign(key, "put_object", URL_TTL_S)
+
+
+async def transcripts_kept(key: str, sent: dict) -> bool:
+    """Whether the bucket holds ``key`` as the machine sent it (size and MD5)."""
+    bucket = _private_bucket()
+    stored = await bucket.stat(key) if bucket is not None else None
+    if stored != (sent["size"], sent["md5"]):
+        logger.error(
+            "retained transcripts not kept: the bucket holds %s for %s, the "
+            "machine sent %s",
+            stored,
+            key,
+            (sent["size"], sent["md5"]),
+        )
+        return False
+    return True
+
+
 def _private_bucket():
     try:
         return private_storage()

@@ -26,6 +26,7 @@ from app.domain.agent import (
     device_provider,
     environment_runner,
     machine_launcher,
+    place,
     resource_cleanup,
 )
 from app.domain.agent.harness.claude_code.remote_execution import (
@@ -282,6 +283,23 @@ def test_the_teardown_looks_where_the_launcher_built():
         machine_home, str(uuid.uuid4()), str(uuid.uuid4())
     ):
         inside_the_footprint("$HOME" + str(path).removeprefix(str(machine_home)))
+
+
+def test_the_teardown_archives_the_harness_sessions_where_the_launcher_put_them(
+    tmp_path,
+):
+    """Codex's and pi's session files are under the state directory the
+    launcher names; a teardown that looks one directory over keeps none of
+    them, and says nothing."""
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    for harness, inside in (("codex", "codex/sessions"), ("pi", "sessions")):
+        state = machine_launcher.state_dir(project, resource, harness, "cheese")
+        built = state.replace(
+            "$HOME/" + place.ROOT_PLACEHOLDER, str(tmp_path / ".cheese")
+        )
+        (Path(built) / inside).mkdir(parents=True)
+    kept = resource_cleanup.harness_sessions(tmp_path, project, resource)
+    assert {name.split("/")[0] for _path, name in kept} == {"codex", "pi"}
 
 
 # Where the launch script puts something on the machine. Two shapes, because a
