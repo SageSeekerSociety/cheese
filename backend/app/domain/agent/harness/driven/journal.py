@@ -121,10 +121,16 @@ class Journal:
         return count, last or after
 
     def prune(self, before: str) -> None:
+        """Drop what the room took before ``before``, and only what the raw
+        record has kept too, where a raw record is kept of this journal."""
+        through = int(self.recall("landed") or 0)
+        kept = self.recall("recorded")
+        if kept is not None:
+            through = min(through, int(kept))
         with self.connection:
             self.connection.execute(
                 f"DELETE FROM {self.table} WHERE sequence <= ? AND recorded_at < ?",
-                (int(self.recall("landed") or 0), before),
+                (through, before),
             )
 
     def remember(self, key: str, value: str) -> None:

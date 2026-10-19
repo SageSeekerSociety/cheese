@@ -226,6 +226,7 @@ class PiDriver:
             readers.activity,
             launched.conversation,
             moved=readers.moved,
+            records=readers.records,
         )
 
     def images(self, images: tuple[Image, ...]) -> list:

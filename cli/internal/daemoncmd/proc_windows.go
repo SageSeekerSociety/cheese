@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/windows"
+
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 )
 
@@ -57,14 +59,32 @@ func removeSelf(exe string) error {
 
 const createNoWindow = 0x08000000
 
+func lockEnrollment(path string) (func(), error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	var overlapped windows.Overlapped
+	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlapped); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return func() { file.Close() }, nil
+}
+
 // stopFootprintProcesses ends every process started from a program under
 // root — the executor's python, claude, the shell and tools it placed. Windows
 // will not delete a file a running program was started from, so without this
 // uninstall stops halfway with the rooms still running.
-func stopFootprintProcesses(root string) {
+func stopFootprintProcesses(root string, keepShared bool) {
 	// The root travels in the environment: -Command folds any argument after
-	// it into the script text.
-	script := `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+	// it into the script text. With keepShared, what other enrollments run
+	// from under it (their profiles, the shared Claude install) keeps running.
+	keep := ""
+	if keepShared {
+		keep = ` -and -not $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\profiles\', [StringComparison]::OrdinalIgnoreCase) -and -not $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\claude\', [StringComparison]::OrdinalIgnoreCase) -and -not $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\tools\', [StringComparison]::OrdinalIgnoreCase)`
+	}
+	script := `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\', [StringComparison]::OrdinalIgnoreCase)` + keep + ` } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.Env = append(os.Environ(), "CHEESE_FOOTPRINT="+root)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}

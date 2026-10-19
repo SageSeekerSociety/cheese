@@ -192,14 +192,15 @@ including subprocesses that could outlive a timed-out caller. Unpublished source
 cleanup pending. The platform does not create a
 separate backup of dirty working trees or unpushed commits.
 
-Transcripts are not uploaded; the platform keeps no copy of them. Claude Code runs
+The CLI's own transcript files are not uploaded. What the platform keeps of a
+session is what its runner journaled (`session_records`, see
+[原始记录](manual/dev/session-records.md)), not these files. Claude Code runs
 on the central session host, so a room's raw `.claude/projects/**/*.jsonl` files,
 subagent files included, are in its home there. Removing that home first
 compresses them into `~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on
 the same host. The same cleanup operation deletes the archive 30 days later, for
 the reason given beside `TRANSCRIPT_RETENTION` in `room_cleanup/retire.py`: they are kept
-for debugging after the fact, and handing the work on needs only the room's chat,
-living doc and action timeline.
+for debugging after the fact.
 
 Before cleanup takes ownership of deletion, unarchive cancels it and reuses the
 room's resources. If a stop or worktree move has an unresolved outcome, unarchive reports
