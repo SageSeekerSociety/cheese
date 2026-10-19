@@ -80,7 +80,7 @@ function windowUsed(w: UsageWindow): string {
               ? t('usage.period.unlimited')
               : used === null || total === null
                 ? '—'
-                : t('usage.points', { n: points(Math.max(0, total - used) + (otherCredits ?? 0)) })
+                : t('usage.points', { n: points(Math.max(0, total - used + (otherCredits ?? 0))) })
           }}</strong>
         </div>
         <div>

@@ -169,6 +169,30 @@ describe('芝士额度', () => {
       expect(within(month).getByText(new RegExp(`^${spent}\\D`))).toBeTruthy()
   })
 
+  it.each([
+    {
+      name: 'a plan overdraft before a reward arrives',
+      spent: 550,
+      packs: [{ ...PACK, credits_total: 500, credits_remaining: 500 }],
+      available: '450 点',
+    },
+    {
+      name: 'a reward overdraft before another reward arrives',
+      spent: 500,
+      packs: [
+        { ...PACK, credits_total: 500, credits_remaining: -50 },
+        { ...PACK, id: 'g2', credits_total: 100, credits_remaining: 100 },
+      ],
+      available: '50 点',
+    },
+  ])('deducts $name from available credits', async ({ spent, packs, available }) => {
+    const view = show(
+      usage({ period: { ...PERIOD, credits_used: spent, used_ratio: 1, remaining_ratio: 0 }, packs })
+    )
+    const month = await view.findByRole('region', { name: '本月' })
+    expect(within(month).getByText(available)).toBeTruthy()
+  })
+
   it('past the plan, the bar splits by what each line used', async () => {
     const view = show(
       usage({
