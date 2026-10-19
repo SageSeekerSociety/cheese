@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
+from app.api.routes.connector.schemas import RunningDeviceSessionsOut
 from app.core.errors import ForbiddenError, NotFoundError, UnauthorizedError
 from app.domain.agent.device_sessions import running_on
 from app.domain.device import owner_reads
@@ -16,7 +17,12 @@ from app.domain.team.services import team_service
 router = APIRouter(prefix="/connector", tags=["connector"])
 
 
-@router.get("/devices/{device_id}/running-sessions")
+# Connector clients consume raw JSON, so document it without the platform envelope.
+@router.get(
+    "/devices/{device_id}/running-sessions",
+    response_model=None,
+    responses={200: {"model": RunningDeviceSessionsOut}},
+)
 async def device_sessions(device_id: str, resolver: ActorResolverDep, db: DbSession):
     actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
@@ -37,7 +43,11 @@ async def device_sessions(device_id: str, resolver: ActorResolverDep, db: DbSess
     return {"sessions": [row for topic, row in placed if topic.id in readable]}
 
 
-@router.get("/device/running-sessions")
+@router.get(
+    "/device/running-sessions",
+    response_model=None,
+    responses={200: {"model": RunningDeviceSessionsOut}},
+)
 async def connector_sessions(
     db: DbSession, token: Annotated[str | None, Header(alias="X-Cheese-Session")] = None
 ):

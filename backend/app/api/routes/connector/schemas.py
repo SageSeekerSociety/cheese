@@ -19,6 +19,26 @@ class DevicePollRequest(BaseModel):
     device_code: str
 
 
+class RunningDeviceSessionOut(BaseModel):
+    session_id: str
+    agent_name: str
+    agent_name_source: str | None
+    project_id: str
+    project_name: str
+    team_id: int
+    team_name: str
+    conversation_id: str
+    conversation_kind: Literal["room", "task", "thread"]
+    conversation_title: str
+    room_id: str
+    roles: list[Literal["center", "executor"]]
+    since: str
+
+
+class RunningDeviceSessionsOut(BaseModel):
+    sessions: list[RunningDeviceSessionOut]
+
+
 class ConnectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     device_code: str
