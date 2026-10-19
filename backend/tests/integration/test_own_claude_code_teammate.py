@@ -1,19 +1,13 @@
-"""A member's own Claude Code as a teammate in a project (#2991).
-
-It belongs to its owner, who adds it to a project that lets members bring
-their own — one per model connection they logged in on a machine — and removes
-it again. It runs on the account its owner set up, so its owner decides
-who may call it — by naming it, giving it a task they are responsible for, or
-chatting with it: themselves alone, which is where it starts, or any person in
-the project. No agent calls it.
-"""
+"""A personal assistant is addressable by the team and opens tasks on its owner's word."""
 
 import asyncio
 import uuid
 from datetime import UTC, datetime
 
+import pytest
 from sqlalchemy import select
 
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness.claude_code import owner_login
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
@@ -101,6 +95,293 @@ def _members(client, project_id, viewer):
 def _own_row(rows, owner):
     found = [row for row in rows if row.get("owner_handle") == owner]
     return found[0] if found else None
+
+
+@pytest.mark.parametrize("author", ["alice", "bob", None])
+def test_its_task_cites_a_message_from_its_owner(client, author):
+    project, room = _project_with_bob(client)
+    seat = _bring_in(client, project, "alice")
+    client.post(f"/topics/{room}/join", headers=session_auth_headers("bob"))
+    post_message(client, room, "alice", {"content": f"<@{seat}> 你好"})
+    message = (
+        post_message(client, room, author, {"content": "做这件事"}) if author else None
+    )
+    response = client.post(
+        f"/topics/{room}/teammate-tasks",
+        json={
+            "title": "更新说明",
+            "summary": "更新说明文件",
+            **({"source_message_id": message["id"]} if message else {}),
+        },
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=project,
+                topic_id=room,
+                agent_handle=seat,
+            )
+        },
+    )
+    if author == "alice":
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["owner_handle"] == "alice"
+        assert response.json()["data"]["source_block_id"] == message["id"]
+        again = client.post(
+            f"/topics/{room}/teammate-tasks",
+            json={
+                "title": "再次更新说明",
+                "summary": "另一件任务",
+                "source_message_id": message["id"],
+            },
+            headers={
+                "X-Cheese-Token": mint_scoped_token(
+                    project_id=project,
+                    topic_id=room,
+                    agent_handle=seat,
+                )
+            },
+        )
+        assert again.status_code == 200, again.text
+        assert again.json()["data"]["id"] != response.json()["data"]["id"]
+    else:
+        assert response.status_code == 403, response.text
+        assert (
+            response.json()["error"]["i18n"]["key"]
+            == "ownAgentTaskOwnerMessageRequired"
+        )
+
+
+def _open_task_as(client, project, room, seat, message_id):
+    return client.post(
+        f"/topics/{room}/teammate-tasks",
+        json={
+            "title": "更新说明",
+            "summary": "更新说明文件",
+            "source_message_id": message_id,
+        },
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=project, topic_id=room, agent_handle=seat
+            )
+        },
+    )
+
+
+def test_a_task_citing_its_owners_private_word_does_not_show_it_to_others(client):
+    project, room = _project_with_bob(client)
+    seat = _bring_in(client, project, "alice")
+    client.post(f"/topics/{room}/join", headers=session_auth_headers("bob"))
+    post_message(client, room, "alice", {"content": f"<@{seat}> 你好"})
+
+    async def instance_handle():
+        from app.domain.agent_instance.models import AgentInstance
+        from app.domain.identity.handles import agent_instance_handle
+
+        async with client.test_factory() as db:
+            rows = await db.execute(
+                select(AgentInstance.id, AgentInstance.handle).where(
+                    AgentInstance.project_id == uuid.UUID(project)
+                )
+            )
+            return next(h for i, h in rows if agent_instance_handle(i) == seat)
+
+    private = client.get(
+        f"/projects/{project}/private-chat",
+        params={"user_handle": "alice", "agent_handle": asyncio.run(instance_handle())},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    word = post_message(client, private["id"], "alice", {"content": "同意 私密内容"})
+
+    made = _open_task_as(client, project, room, seat, word["id"])
+
+    assert made.status_code == 200, made.text
+    assert made.json()["data"]["owner_handle"] == "alice"
+    related = client.get(
+        f"/topics/{made.json()['data']['id']}/related",
+        headers=session_auth_headers("bob"),
+    )
+    assert related.status_code == 200, related.text
+    assert "私密内容" not in related.text
+
+
+def test_a_task_cannot_cite_its_owners_message_from_another_project(client):
+    project, room = _project_with_bob(client)
+    seat = _bring_in(client, project, "alice")
+    post_message(client, room, "alice", {"content": f"<@{seat}> 你好"})
+    other = new_project(client, "Elsewhere", owner="carol")
+    join_project_team(client, other["id"], "alice")
+    there = client.post(
+        "/topics",
+        json={"project_id": other["id"], "title": "There"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    word = post_message(client, there["id"], "alice", {"content": "别处的话"})
+
+    made = _open_task_as(client, project, room, seat, word["id"])
+
+    assert made.status_code == 403, made.text
+    assert made.json()["error"]["i18n"]["key"] == "ownAgentTaskOwnerMessageRequired"
+
+
+def test_naming_it_in_someone_elses_private_chat_does_not_seat_it(client):
+    project, _room = _project_with_bob(client)
+    seat = _bring_in(client, project, "alice")
+    join_project_team(client, project, "carol")
+
+    def dm(user, peer):
+        return client.get(
+            f"/projects/{project}/private-chat",
+            params={"user_handle": user, "peer_handle": peer},
+            headers=session_auth_headers(user),
+        ).json()["data"]["id"]
+
+    def seated(chat, viewer):
+        rows = client.get(
+            f"/topics/{chat}/members", headers=session_auth_headers(viewer)
+        ).json()["data"]["data"]
+        return seat in {row["member_handle"] for row in rows}
+
+    bob_carol = dm("bob", "carol")
+    post_message(client, bob_carol, "bob", {"content": f"<@{seat}> 总结一下"})
+    alice_carol = dm("alice", "carol")
+    post_message(client, alice_carol, "alice", {"content": f"<@{seat}> 总结一下"})
+
+    assert not seated(bob_carol, "bob")
+    assert seated(alice_carol, "alice")
+
+
+def test_added_to_a_room_it_asks_its_owner_privately(client):
+    project, room = _project_with_bob(client)
+    seat = _bring_in(client, project, "alice")
+    joined = client.post(f"/topics/{room}/join", headers=session_auth_headers("bob"))
+    assert joined.status_code == 200, joined.text
+    added = client.post(
+        f"/topics/{room}/members",
+        json={"handle": seat},
+        headers=session_auth_headers("bob"),
+    )
+    assert added.status_code == 200, added.text
+
+    async def questions():
+        from app.domain.block.models import Block
+        from app.domain.topic.models import Topic
+        from app.domain.topic_membership.services import TopicMemberService
+
+        async with client.test_factory() as db:
+            rows = await db.execute(
+                select(Block, Topic)
+                .join(Topic, Block.conversation_id == Topic.id)
+                .where(
+                    Block.project_id == uuid.UUID(project),
+                    Block.author == seat,
+                )
+            )
+            return [
+                (
+                    b.content,
+                    b.meta,
+                    t.id,
+                    await TopicMemberService(db).private_seats(t.id),
+                )
+                for b, t in rows
+            ]
+
+    found = asyncio.run(questions())
+    asks = [r for r in found if (r[1] or {}).get("options")]
+    assert len(asks) == 1, found
+    content, meta, conversation, participants = asks[0]
+    assert str(conversation) != room
+    assert set(participants) == {"alice", seat}
+    assert meta["asked"] == ["alice"]
+    assert room in content
+    hidden = client.get(
+        f"/topics/{conversation}/blocks", headers=session_auth_headers("bob")
+    )
+    assert hidden.status_code in (403, 404), hidden.text
+
+
+def test_asking_its_owner_keeps_the_question_out_of_the_room_live_feed(
+    client, monkeypatch
+):
+    from app.domain.agent.realtime.broker import get_broker
+
+    project, room = _project_with_bob(client)
+    seat = _bring_in(client, project, "alice")
+    added = client.post(
+        f"/topics/{room}/members",
+        json={"handle": seat},
+        headers=session_auth_headers("alice"),
+    )
+    assert added.status_code == 200, added.text
+    frames = []
+
+    async def capture(channel, frame):
+        frames.append((str(channel), frame))
+
+    monkeypatch.setattr(get_broker(), "publish", capture)
+    response = client.post(
+        f"/topics/{room}/asks",
+        json={
+            "to_owner": True,
+            "questions": [
+                {
+                    "question": "私人请求是否同意",
+                    "options": [{"text": "同意"}, {"text": "不同意"}],
+                }
+            ],
+        },
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=project,
+                topic_id=room,
+                agent_handle=seat,
+            )
+        },
+    )
+    assert response.status_code == 200, response.text
+    block = response.json()["data"]["blocks"][0]
+    private = block["conversation_id"]
+    assert private != room
+
+    async def drain():
+        await asyncio.sleep(0)
+
+    client.portal.call(drain)
+    matching = [
+        (channel, frame)
+        for channel, frame in frames
+        if (frame.get("block") or {}).get("id") == block["id"]
+    ]
+    assert [channel for channel, frame in matching] == [private], frames
+    answered = post_message(
+        client, private, "alice", {"content": "同意", "reply_to": block["id"]}
+    )
+    assert answered["meta"]["agent_recipient"]["mentioned"] is True
+
+
+def test_an_existing_personal_agent_uses_its_current_owner_role(client):
+    from app.domain.agent_instance.models import AgentInstance, OwnAgent
+    from app.domain.agent_instance.own import current_role
+
+    project, _room = _project_with_bob(client)
+    _bring_in(client, project, "alice")
+
+    async def role():
+        async with client.test_factory() as db:
+            instance = await db.scalar(
+                select(AgentInstance)
+                .join(OwnAgent)
+                .where(AgentInstance.project_id == uuid.UUID(project))
+            )
+            instance.configuration = {"body": "obsolete private-agent caller policy"}
+            await db.commit()
+        async with client.test_factory() as db:
+            return await current_role(db, instance.id)
+
+    instructions = asyncio.run(role())
+    assert "obsolete private-agent caller policy" not in instructions
+    assert "alice" in instructions
+    assert "to_owner=true" in instructions
+    assert "source_message_id" in instructions
 
 
 def test_it_is_in_a_project_only_once_its_owner_adds_it(client):
@@ -226,7 +507,7 @@ def test_only_a_manager_closes_the_project_to_them(client):
     assert listed["allowed"] is True and listed["can_manage"] is False
 
 
-def test_its_owner_calls_it_and_nobody_else_does(client):
+def test_another_member_can_mention_it(client):
     project_id, room_id = _project_with_bob(client)
     seat = _bring_in(client, project_id, "alice")
 
@@ -236,19 +517,7 @@ def test_its_owner_calls_it_and_nobody_else_does(client):
     theirs = post_message(client, room_id, "bob", {"content": f"<@{seat}> 帮我改"})
 
     assert (mine["meta"] or {})["agent_recipient"]["mentioned"] is True
-    assert (theirs["meta"] or {})["agent_recipient"]["mentioned"] is False
-    # bob is told, in the room, whose it is.
-    blocks = client.get(
-        f"/topics/{room_id}/blocks", headers=session_auth_headers("bob")
-    ).json()["data"]["data"]
-    told = [
-        b
-        for b in blocks
-        if b["kind"] == "event"
-        and "alice" in (b["content"] or "")
-        and (b.get("meta") or {}).get("in_room", True) is not False
-    ]
-    assert told, "the room says why bob's call reached nobody"
+    assert (theirs["meta"] or {})["agent_recipient"]["mentioned"] is True
 
 
 def test_a_project_closed_to_them_stops_its_owner_calling_it(client):
@@ -266,7 +535,7 @@ def test_a_project_closed_to_them_stops_its_owner_calling_it(client):
     assert (after["meta"] or {})["agent_recipient"]["mentioned"] is False
 
 
-def test_it_works_only_its_owners_tasks(client):
+def test_other_members_can_assign_it_without_a_platform_owner_gate(client):
     project_id, room_id = _project_with_bob(client)
     seat = _bring_in(client, project_id, "alice")
     bobs = open_task(client, room_id, "bob 的任务", owner="bob")
@@ -282,7 +551,7 @@ def test_it_works_only_its_owners_tasks(client):
         json={"agent_handle": seat},
         headers=session_auth_headers("alice"),
     )
-    assert refused.status_code == 403, refused.text
+    assert refused.status_code == 200, refused.text
     assert given.status_code == 200, given.text
 
     handed = client.patch(
@@ -291,10 +560,10 @@ def test_it_works_only_its_owners_tasks(client):
         headers=session_auth_headers("alice"),
     )
     assert handed.status_code == 200, handed.text
-    assert handed.json()["data"].get("agent_handle") in (None, "")
+    assert handed.json()["data"]["agent_handle"] == seat
 
 
-def test_nobody_else_chats_with_it_privately(client):
+def test_another_member_can_chat_with_it_privately(client):
     project_id, _room = _project_with_bob(client)
     _bring_in(client, project_id, "alice")
     own = client.get(
@@ -323,7 +592,7 @@ def test_nobody_else_chats_with_it_privately(client):
         params={"user_handle": "alice", "agent_handle": handle},
         headers=session_auth_headers("alice"),
     )
-    assert theirs.status_code == 403, theirs.text
+    assert theirs.status_code == 200, theirs.text
     assert mine.status_code == 200, mine.text
 
 
@@ -496,68 +765,6 @@ def test_only_its_owner_names_a_machines_connection(client):
     assert own["name"] == "alice的 Claude Code（Max）"
 
 
-def _open_to_project(client, project_id, seat, as_whom="alice"):
-    return client.put(
-        f"/projects/{project_id}/own-agents/{seat}/callers",
-        json={"callers": "project"},
-        headers=session_auth_headers(as_whom),
-    )
-
-
-def test_its_owner_opens_it_to_the_project(client):
-    project_id, room_id = _project_with_bob(client)
-    seat = _bring_in(client, project_id, "alice")
-    joined = client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
-    assert joined.status_code == 200, joined.text
-
-    opened = _open_to_project(client, project_id, seat)
-    assert opened.status_code == 200, opened.text
-    assert _own_row(_members(client, project_id, "bob"), "alice")["callers"] == (
-        "project"
-    )
-
-    called = post_message(client, room_id, "bob", {"content": f"<@{seat}> 帮我改"})
-    assert (called["meta"] or {})["agent_recipient"]["mentioned"] is True
-
-    bobs = open_task(client, room_id, "bob 的任务", owner="bob")
-    given = client.patch(
-        f"/topics/{bobs['id']}/task",
-        json={"agent_handle": seat},
-        headers=session_auth_headers("bob"),
-    )
-    assert given.status_code == 200, given.text
-
-
-def test_only_its_owner_decides_who_calls_it(client):
-    project_id, room_id = _project_with_bob(client)
-    seat = _bring_in(client, project_id, "alice")
-    joined = client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
-    assert joined.status_code == 200, joined.text
-
-    refused = _open_to_project(client, project_id, seat, as_whom="bob")
-
-    assert refused.status_code == 403, refused.text
-    still = post_message(client, room_id, "bob", {"content": f"<@{seat}> 帮我改"})
-    assert (still["meta"] or {})["agent_recipient"]["mentioned"] is False
-
-
-def test_closing_it_again_stops_the_others_calling_it(client):
-    project_id, room_id = _project_with_bob(client)
-    seat = _bring_in(client, project_id, "alice")
-    client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
-    _open_to_project(client, project_id, seat)
-
-    closed = client.put(
-        f"/projects/{project_id}/own-agents/{seat}/callers",
-        json={"callers": "owner"},
-        headers=session_auth_headers("alice"),
-    )
-    assert closed.status_code == 200, closed.text
-
-    after = post_message(client, room_id, "bob", {"content": f"<@{seat}> 再来"})
-    assert (after["meta"] or {})["agent_recipient"]["mentioned"] is False
-
-
 ROUTINE = {
     "title": "每周进展",
     "instructions": "整理本周的进展",
@@ -577,9 +784,8 @@ def _rules_in(client, project_id, room_id, viewer):
     return r.json()["data"]["data"]
 
 
-def test_a_routine_runs_only_with_an_agent_its_owner_may_use(client):
-    """A routine a person sets is theirs and runs at once, so it runs a
-    member's own agent only when that person is one it answers to."""
+def test_another_member_can_schedule_it(client):
+    """Scheduling has no personal-agent caller gate."""
     project_id, room_id = _project_with_bob(client)
     seat = _bring_in(client, project_id, "alice")
     post_message(client, room_id, "alice", {"content": f"<@{seat}> 看一下"})
@@ -592,9 +798,9 @@ def test_a_routine_runs_only_with_an_agent_its_owner_may_use(client):
         headers=session_auth_headers("bob"),
     )
 
-    assert refused.status_code == 403, refused.text
+    assert refused.status_code == 200, refused.text
     rules = _rules_in(client, project_id, room_id, "alice")
-    assert not [r for r in rules if r.get("agent_handle") == seat], rules
+    assert [r for r in rules if r.get("agent_handle") == seat], rules
 
     mine = client.post(
         f"/topics/{room_id}/routines",
@@ -611,9 +817,8 @@ def test_a_routine_runs_only_with_an_agent_its_owner_may_use(client):
     )
 
 
-def test_a_routine_naming_no_agent_runs_only_one_its_owner_may_use(client):
-    """With no teammate named, a routine runs the room's first one; when that
-    is a member's own agent, it is still only its owner's to set."""
+def test_a_routine_can_use_the_rooms_personal_agent(client):
+    """The room's personal agent remains selectable by another member."""
     project_id, room_id = _project_with_bob(client)
     seat = _bring_in(client, project_id, "alice")
     post_message(client, room_id, "alice", {"content": f"<@{seat}> 看一下"})
@@ -636,5 +841,5 @@ def test_a_routine_naming_no_agent_runs_only_one_its_owner_may_use(client):
         headers=session_auth_headers("bob"),
     )
 
-    assert refused.status_code == 403, refused.text
-    assert _rules_in(client, project_id, room_id, "alice") == []
+    assert refused.status_code == 200, refused.text
+    assert len(_rules_in(client, project_id, room_id, "alice")) == 1

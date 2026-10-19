@@ -39,8 +39,6 @@ export type OwnAgentsSettings = Schemas['OwnAgentsOut']
 export type OwnAgentConnection = Schemas['OwnAgentConnectionOut']
 /** 连接的类型：Claude 订阅、Anthropic API key、自定义模型服务。 */
 export type OwnAgentKind = Schemas['ConnectionKind']
-/** 谁可以叫它：`owner` 只有主人，`project` 项目里的人都能叫。只有主人能改。 */
-export type OwnAgentCallers = Schemas['OwnCallers']
 
 /** 设置里列出各类连接的先后。 */
 export const OWN_AGENT_KINDS: readonly OwnAgentKind[] = ['subscription', 'api_key', 'model_service']
