@@ -24,8 +24,7 @@ from app.domain.agent_instance.own.settings import (
 async def unusable(
     db: AsyncSession, owned: Owned, project_settings: dict[str, Any] | None
 ) -> str | None:
-    """Why a member's own agent cannot work here even for someone it answers
-    to, as the sentence the room is told: its connection is gone, or is of a
+    """Why a member's own agent cannot work here, as the sentence the room is told: its connection is gone, or is of a
     kind the project does not allow, or calls a model service at a host the
     project does not list. None when it can (it may still have to wait for its
     machine to come online)."""

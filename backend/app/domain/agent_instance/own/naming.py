@@ -18,7 +18,11 @@ from app.domain.agent_instance.own.connections import (
     label,
     logins,
 )
-from app.domain.agent_instance.own.ownership import _nickname_of
+from app.domain.agent_instance.own.ownership import (
+    _nickname_of,
+    owned_instance,
+    owner_of,
+)
 
 
 def own_handle(owner_user_id: int) -> str:
@@ -52,6 +56,17 @@ def own_role(nickname: str, *, owner_handle: str, on_account: bool = False) -> s
         "在主人明确同意之前，不在那个房间行动。私聊中的确认题写明房间 id；"
         "需要了解主人的答复时，读取你和主人的私聊记录。"
     )
+
+
+async def current_role(db: AsyncSession, instance_id: uuid.UUID) -> str | None:
+    """What a member's own agent is told it is, built from its owner as they
+    are now rather than read off its stored configuration; None when it is not
+    anyone's own."""
+    owned = await owned_instance(db, instance_id)
+    owner = await owner_of(db, instance_id) if owned is not None else None
+    if owned is None or owner is None:
+        return None
+    return own_role(owner[1], on_account=owned.on_account, owner_handle=owner[0])
 
 
 async def rename_for_connection(

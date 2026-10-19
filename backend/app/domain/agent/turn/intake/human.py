@@ -60,7 +60,7 @@ async def prepare_human(
     )
     if project is None:
         raise NotFoundError(say("projectNotFound"))
-    await own_calls.seat_if_named(session, project, topic, content)
+    await own_calls.seat_if_named(session, project, topic, content, author)
     agent = await _agent_at(session, place)
     mentions = await person_mentions(
         session, topic, content, agent, dm=_is_dm(topic), members=handoff.roster

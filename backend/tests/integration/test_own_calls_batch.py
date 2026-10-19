@@ -59,6 +59,6 @@ async def test_a_message_seats_personal_agents_of_different_owners(
             f"<@{agent_instance_handle(i)}>" for i in (mine, theirs, uuid.uuid4())
         )
         await own_calls.seat_if_named(
-            session, SimpleNamespace(settings={SETTING: True}), topic, content
+            session, SimpleNamespace(settings={SETTING: True}), topic, content, "u"
         )
     assert set(seated) == {agent_instance_handle(mine), agent_instance_handle(theirs)}

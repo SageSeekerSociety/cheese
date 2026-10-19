@@ -537,6 +537,7 @@ async def create_teammate_task(
         )
         if (
             source is None
+            or source.project_id != place.project_id
             or owner_identity is None
             or source.author != owner_identity[0]
         ):
@@ -578,7 +579,15 @@ async def create_teammate_task(
         raise UnprocessableEntityError(say("taskOwnerNotInProject"))
     # What the person said that this turn answers is where the task came from;
     # in a 支线 that is usually a reply, not the message the 支线 hangs under.
-    asked = source or await asked_in(
+    # The owner's word may have been given in their private chat with the
+    # agent; it is the task's source only when said where the task is made,
+    # since the source is quoted to everyone who opens the task.
+    cited = (
+        source
+        if source is not None and source.conversation_id == place.conversation_id
+        else None
+    )
+    asked = cited or await asked_in(
         db,
         place.conversation_id,
         actor.handle,
@@ -586,6 +595,7 @@ async def create_teammate_task(
     )
     owner = (
         named
+        or (source.author if source is not None else None)
         or (asked.author if asked is not None else None)
         or (origin.author if origin is not None else None)
     )

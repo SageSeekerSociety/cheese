@@ -31,8 +31,8 @@ async def listing(
     is_online,
     project_settings: dict[str, Any] | None,
 ) -> list[dict]:
-    """The members' own agents a project has: whose each one is, who may call
-    it, and the model connection it runs on (None once that is gone) and
+    """The members' own agents a project has: whose each one is, and the
+    model connection it runs on (None once that is gone) and
     whether the project allows that connection. Everyone
     in the project reads that much; the machine holding the connection, and
     whether it is online, only its owner reads (``machine`` is None for

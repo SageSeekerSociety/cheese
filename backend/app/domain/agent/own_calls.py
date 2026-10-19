@@ -12,6 +12,7 @@ from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own import (
     allows_own_agents,
     owned_by_seat,
+    owner_of,
 )
 from app.domain.agent_instance.own.admission import why_not
 from app.domain.identity.handles import agent_instance_handle
@@ -21,8 +22,13 @@ from app.domain.topic.models import is_private_chat
 from app.domain.topic_membership.services import TopicMemberService
 
 
-async def seat_if_named(session: AsyncSession, project, topic, content: str) -> None:
-    """Seat any personal agent named in a project that allows personal agents."""
+async def seat_if_named(
+    session: AsyncSession, project, topic, content: str, author: str
+) -> None:
+    """Seat any personal agent named in a project that allows personal agents.
+
+    A private chat keeps its two (`privateChatTwoPeopleOnly`): there only the
+    owner brings their own agent in, since whoever is seated reads the chat."""
     if not content or "<@" not in content:
         return
     if not allows_own_agents(project.settings):
@@ -38,6 +44,13 @@ async def seat_if_named(session: AsyncSession, project, topic, content: str) -> 
     )
     handles = {own: agent_instance_handle(own) for own in owned.all()}
     seats = {own: seat for own, seat in handles.items() if f"<@{seat}>" in content}
+    if is_private_chat(topic):
+        seats = {
+            own: seat
+            for own, seat in seats.items()
+            if (owner := await owner_of(session, own)) is not None
+            and owner[0] == author
+        }
     for seat in seats.values():
         members = TopicMemberService(session)
         already = seat in await members.agent_handles(topic.id)

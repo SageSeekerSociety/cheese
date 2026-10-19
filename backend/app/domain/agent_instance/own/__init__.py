@@ -47,6 +47,7 @@ from app.domain.agent_instance.own.membership import remove as remove
 from app.domain.agent_instance.own.naming import (
     _name_owners_agents as _name_owners_agents,
 )
+from app.domain.agent_instance.own.naming import current_role as current_role
 from app.domain.agent_instance.own.naming import own_handle as own_handle
 from app.domain.agent_instance.own.naming import own_name as own_name
 from app.domain.agent_instance.own.naming import own_role as own_role
