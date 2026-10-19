@@ -125,14 +125,17 @@ def chat_send_attachments(client, config, args, invoke, payload):
     """
     paths = args.get("attachments") or []
     if not isinstance(paths, list):
+        # i18n-exempt: the agent reads this tool refusal, not a person's screen
         raise RuntimeError("attachments must be a list of file paths")
     if len(paths) > MAX_CHAT_SEND_ATTACHMENTS:
+        # i18n-exempt: the agent reads this tool refusal, not a person's screen
         raise RuntimeError(
             f"one message carries at most {MAX_CHAT_SEND_ATTACHMENTS} pictures"
         )
     files = []
     for index, path in enumerate(paths):
         if not isinstance(path, str) or not path.strip():
+            # i18n-exempt: the agent reads this tool refusal, not a person's screen
             raise RuntimeError("each attachment must be a file path")
         machine, _ = send_user_file_paths(
             path, config, anchor=client.working_directory()
@@ -142,6 +145,7 @@ def chat_send_attachments(client, config, args, invoke, payload):
             invoke, machine, f"{payload['id']}-chat-{index}-stat"
         )
         if size > MAX_SEND_USER_FILE_BYTES:
+            # i18n-exempt: the agent reads this tool refusal, not a person's screen
             raise RuntimeError(
                 f"{path} is larger than "
                 f"{MAX_SEND_USER_FILE_BYTES // (1024 * 1024)}MB"
@@ -150,6 +154,7 @@ def chat_send_attachments(client, config, args, invoke, payload):
             invoke, machine, f"{payload['id']}-chat-{index}"
         )
         if not raw:
+            # i18n-exempt: the agent reads this tool refusal, not a person's screen
             raise RuntimeError(f"{path} is empty")
         files.append(
             {

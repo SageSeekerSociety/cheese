@@ -219,6 +219,7 @@ async def _agent_attachments(
     kept: list[dict] = []
     for item in items[:ATTACHMENTS_PER_MESSAGE]:
         if not item.content_b64:
+            # i18n-exempt: the agent reads this tool refusal, not a person's screen
             raise ValidationError(
                 "An agent sends a file by its bytes, not by a path"
             )
@@ -234,6 +235,7 @@ async def _agent_attachments(
             )
         mime = raster_images.sniff(raw[:12])
         if mime is None:
+            # i18n-exempt: the agent reads this tool refusal, not a person's screen
             raise ValidationError(
                 "Only pictures (PNG, JPEG, GIF, WebP) go into the conversation; "
                 "other files go out with `cheese show`"
