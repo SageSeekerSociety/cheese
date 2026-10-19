@@ -66,11 +66,14 @@ class SessionRecord(UuidPk, Base):
             "last_at",
             postgresql_where="object_key IS NULL",
         ),
-        # What the retention sweep picks up: sealed runs, oldest first.
+        # What the retention sweep picks up: sealed runs that are not archives
+        # (the predicate is `retention._EXPIRING`, spelled the same).
         Index(
-            "ix_session_records_sealed",
+            "ix_session_records_expiring",
             "last_at",
-            postgresql_where="object_key IS NOT NULL",
+            postgresql_where=(
+                "object_key IS NOT NULL AND NOT starts_with(object_key, 'archive/')"
+            ),
         ),
     )
 

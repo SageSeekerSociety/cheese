@@ -181,6 +181,47 @@ def test_an_unreadable_run_holds_up_neither_expiry_nor_deletion(
     assert [item["record"]["message"]["content"] for item in kept] == [ASKED]
 
 
+def test_a_run_whose_object_cannot_be_read_holds_up_no_other(
+    client, tmp_path, monkeypatch, bucket
+):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    _first, _ = _start(client, tmp_path / "a", bucket)
+    broken = next(iter(bucket.objects))
+    second, work = _start(client, tmp_path / "b", bucket)
+    read = bucket.download
+
+    async def flaky(key: str) -> bytes | None:
+        if key == broken:
+            raise ConnectionError("the bucket is away")
+        return await read(key)
+
+    monkeypatch.setattr(bucket, "download", flaky)
+    _expire(client, bucket, days=31)
+
+    kept = second.read(turn_id=work)
+    assert [item["record"]["message"]["content"] for item in kept] == [ASKED]
+
+
+def test_inputs_are_kept_when_the_old_object_will_not_go(
+    client, tmp_path, monkeypatch, bucket
+):
+    session, work = _start(client, tmp_path, bucket)
+
+    async def refuse(key: str) -> bool:
+        raise ConnectionError("the bucket is away")
+
+    monkeypatch.setattr(bucket, "delete", refuse)
+    _expire(client, bucket, days=31)
+
+    kept = session.read(turn_id=work)
+    assert [item["record"]["message"]["content"] for item in kept] == [ASKED]
+    assert [
+        e["record"]["message"]["content"]
+        for e in _archived(bucket, session.ref.topic_id)
+    ] == [ASKED]
+
+
 def test_a_channel_deleted_while_its_last_records_are_sealed_leaves_no_object(
     client, tmp_path, monkeypatch
 ):

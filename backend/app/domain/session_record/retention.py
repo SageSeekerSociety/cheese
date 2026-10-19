@@ -29,6 +29,7 @@ from collections.abc import Set as AbstractSet
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
+    text,
     DateTime,
     Uuid,
     column,
@@ -108,11 +109,23 @@ def _children(entries: list[dict]) -> set[str]:
 
 
 async def sweep(sessions: SessionFactory) -> dict[str, int]:
-    """The periodic job: forget gone conversations, then expire old runs."""
+    """The periodic job: forget gone conversations, then expire old runs. Each
+    half runs whatever happened to the other."""
     storage = service.bucket()
-    forgotten = await forget_gone(sessions, storage)
-    expired = 0 if storage is None else await expire(sessions, storage)
+    forgotten = expired = 0
+    try:
+        forgotten = await forget_gone(sessions, storage)
+    except Exception:
+        logger.exception("forgetting gone conversations' session records failed")
+    if storage is not None:
+        expired = await expire(sessions, storage)
     return {"expired": expired, "forgotten": forgotten}
+
+
+#: Sealed runs that are not archives: what expiry walks. Spelled as SQL text
+#: because the partial index `ix_session_records_expiring` is declared with this
+#: same predicate, and only the same spelling lets the planner use it.
+_EXPIRING = text("object_key IS NOT NULL AND NOT starts_with(object_key, 'archive/')")
 
 
 async def expire(
@@ -123,8 +136,8 @@ async def expire(
 ) -> int:
     """Expire sealed runs older than `RETENTION`, keeping their inputs; how many.
 
-    A run that cannot be expired (its object unreadable) is logged and left
-    for the next pass; the runs behind it are not held up by it.
+    A run that cannot be expired (its object unreadable, the bucket away) is
+    logged and left for the next pass; the runs behind it are not held up.
     """
     cutoff = (now or datetime.now(UTC)) - RETENTION
     expired = 0
@@ -148,8 +161,7 @@ async def _expire_one(
     async with sessions() as db:
         query = (
             select(SessionRecord)
-            .where(SessionRecord.object_key.is_not(None))
-            .where(SessionRecord.object_key.not_like(f"{ARCHIVE_PREFIX}/%"))
+            .where(_EXPIRING)
             .where(SessionRecord.last_at < cutoff)
             .order_by(SessionRecord.last_at)
             .limit(1)
@@ -160,24 +172,31 @@ async def _expire_one(
         run = (await db.execute(query)).scalar_one_or_none()
         if run is None:
             return None
-        assert run.object_key is not None
+        run_id, old_key = run.id, run.object_key
+        assert old_key is not None
         try:
             await _replace_with_inputs(db, storage, run)
         except Exception:
-            logger.exception("could not expire session record run %s", run.id)
+            logger.exception("could not expire session record run %s", run_id)
             await db.rollback()
-            failed.add(run.id)
+            failed.add(run_id)
             return False
+    # The old object goes only once the run that named it is gone, so a
+    # failure up to here leaves the run whole. One that fails now is left in
+    # the bucket, said in the log; the inputs are safe either way.
+    try:
+        await storage.delete(old_key)
+    except Exception:
+        logger.exception("expired session record object not deleted: %s", old_key)
     return True
 
 
 async def _replace_with_inputs(db, storage: StorageBackend, run: SessionRecord) -> None:
-    """Write the run's inputs as a run of their own, then remove the run, its
-    object last before the commit: a failure before then leaves the run whole."""
+    """Write the run's inputs as an archive run, read it back, and replace the
+    run with it in one commit. The run's own object is the caller's to delete."""
     assert run.object_key is not None
     body = await storage.download(run.object_key)
-    # An object already gone (a pass that deleted it and then failed to
-    # commit) has nothing left to keep: the row goes on its own.
+    # An object already gone has nothing left to keep: the row goes on its own.
     entries = [] if body is None else service.unpack(body)
     children = _children(entries)
     entries = [e for e in entries if is_input(e["record"], children)]
@@ -214,14 +233,14 @@ async def _replace_with_inputs(db, storage: StorageBackend, run: SessionRecord) 
         if archive is not None:
             db.add(archive)
         await db.flush()
-        if body is not None:
-            await storage.delete(run.object_key)
-        await db.commit()
     except Exception:
-        # The archive object would otherwise outlive a run that was kept.
+        # Nothing names the archive object yet: it goes with the attempt.
         if archive_key is not None:
             await storage.delete(archive_key)
         raise
+    # A commit that fails may still have landed, so the archive object stays
+    # whatever happens: at worst it is one more object nothing names.
+    await db.commit()
 
 
 async def forget_gone(sessions: SessionFactory, storage: StorageBackend | None) -> int:
@@ -265,26 +284,42 @@ async def forget_gone(sessions: SessionFactory, storage: StorageBackend | None) 
             .scalars()
             .all()
         )
+    forgotten = 0
     for conversation_id in gone:
-        async with sessions() as db:
-            # The rows this deletes are exactly the ones whose objects go: a
-            # run the sealer commits meanwhile is not among them, and is found
-            # on the next pass with its object.
-            keys = (
-                (
-                    await db.execute(
-                        delete(SessionRecord)
-                        .where(SessionRecord.conversation_id == conversation_id)
-                        .returning(SessionRecord.object_key)
-                    )
+        try:
+            await _forget(sessions, storage, conversation_id)
+        except Exception:
+            # The next pass tries this one again; the others go on now.
+            logger.exception("could not forget session records of %s", conversation_id)
+            continue
+        forgotten += 1
+    return forgotten
+
+
+async def _forget(
+    sessions: SessionFactory,
+    storage: StorageBackend | None,
+    conversation_id: uuid.UUID,
+) -> None:
+    async with sessions() as db:
+        # The rows this deletes are exactly the ones whose objects go: a run
+        # the sealer commits meanwhile is not among them, and is found on the
+        # next pass with its object.
+        keys = (
+            (
+                await db.execute(
+                    delete(SessionRecord)
+                    .where(SessionRecord.conversation_id == conversation_id)
+                    .returning(SessionRecord.object_key)
                 )
-                .scalars()
-                .all()
             )
-            # Objects before the commit: if one cannot be deleted, the rows
-            # come back and the next pass tries again.
-            if storage is not None:
-                for key in filter(None, keys):
-                    await storage.delete(key)
-            await db.commit()
-    return len(gone)
+            .scalars()
+            .all()
+        )
+        # Objects before the commit: if one cannot be deleted, the rows come
+        # back and the next pass tries again (deleting an absent object is
+        # not an error).
+        if storage is not None:
+            for key in filter(None, keys):
+                await storage.delete(key)
+        await db.commit()
