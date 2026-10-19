@@ -577,17 +577,25 @@ def _audit(evidence, details):
     The sidecar records the selection the run itself made — its selected pure
     nodes, the nodes ``-m``/``-k`` removed with their layer, and every outcome —
     so this checks what a JUnit report alone cannot: that no pure node was
-    hidden by a filter, and that every selected pure node executed. An excluded
-    ``integration``/``contract`` node is the layer working as designed (recorded
-    as not_run, owned by full CI), not treated as missing coverage; a required
-    file with no pure node at all is the same, but a change whose modules have
-    no pure consumer at all is unknown.
+    hidden by a filter, and that every selected pure node was reached. A node
+    the machine skips declares a missing capability (bubblewrap, sandbox-exec,
+    ripgrep, tmux) and counts as reached; a node with no report at all does
+    not. An excluded ``integration``/``contract`` node is the layer working as
+    designed (recorded as not_run, owned by full CI), not treated as missing
+    coverage; a required file with no pure node at all is the same, but a
+    change whose modules have no pure consumer at all is unknown.
     """
     data = json.loads(Path(evidence["nodes"]).read_text())
     selected_pure = {item["node"] for item in data.get("selected", []) if item.get("layer") == "pure"}
     hidden = sorted(item["node"] for item in data.get("deselected", []) if item.get("layer") == "pure")
     executed = data.get("executed", [])
-    ran = {e["node"] for e in executed if e.get("when") == "call" and e.get("outcome") == "passed"}
+    # A skip is the test itself saying this machine cannot run it; the node was
+    # reached and declined, not missed. The hosted runner deliberately lacks
+    # those capabilities, so counting skips as unrun made every full selection
+    # unknown there.
+    ran = {e["node"] for e in executed
+           if (e.get("when") == "call" and e.get("outcome") == "passed")
+           or e.get("outcome") == "skipped"}
     failures = sum(e.get("outcome") in ("failed", "error") for e in executed)
     unrun = sorted(selected_pure - ran)
     pure_files = {node.split("::", 1)[0] for node in selected_pure}
