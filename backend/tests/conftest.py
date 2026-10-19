@@ -19,6 +19,7 @@ import functools
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import signal
@@ -2148,8 +2149,30 @@ _LAYERS = frozenset({"pure", "contract", "integration"})
 # ceiling read as a worker lost for no reason. The suite-wide `timeout` in
 # pyproject.toml still ends a test that never finishes.
 _LAYER_CEILING_S = {"pure": 10, "contract": 15, "integration": 30}
-_CEILING = pytest.StashKey[tuple[str, float]]()
+_CEILING = pytest.StashKey[tuple[str, float, float]]()
 _SETUP_S = pytest.StashKey[float]()
+
+
+def _ceiling_scale() -> float:
+    """How much wall clock the caller says the run lost to sharing the machine.
+
+    The ceilings above were measured on a run that had the box to itself. The
+    fast tier runs two trees at once and tells this one how much of the CPU it
+    may expect (``ci_fast_checks.ceiling_scale``), so a test is failed for the
+    wait the ceiling exists to find, not for the contention. Full CI leaves the
+    variable unset: one tree, the strict numbers.
+    """
+    raw = os.environ.get("CHEESE_TEST_CEILING_SCALE", "1")
+    try:
+        scale = float(raw)
+    except ValueError as exc:
+        raise pytest.UsageError(
+            f"CHEESE_TEST_CEILING_SCALE must be a number, got {raw!r}") from exc
+    if not math.isfinite(scale) or scale < 1:
+        raise pytest.UsageError(
+            f"CHEESE_TEST_CEILING_SCALE must be finite and at least 1, got {raw!r}")
+    return scale
+
 
 # Tests that took over 60% of their layer's ceiling in some run, so variance
 # alone could push them over it. They are not checked against it until they are
@@ -2240,6 +2263,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     misfiled = []
     slow = _slow_baseline()
     quarantine = _quarantine()
+    scale = _ceiling_scale()
     for item in items:
         declared = {m.name for m in item.iter_markers()} & _LAYERS
         if declared:
@@ -2267,11 +2291,27 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                 )
             )
         if item.nodeid not in slow:
-            item.stash[_CEILING] = (layer, _LAYER_CEILING_S[layer])
+            item.stash[_CEILING] = (layer, _LAYER_CEILING_S[layer] * scale, scale)
     if misfiled:
         raise pytest.UsageError(
             "These tests declare their own layer:\n" + "\n".join(misfiled)
         )
+
+
+def _over_ceiling(layer: str, took: float, ceiling: float, scale: float) -> str:
+    """The failure text for a test that outlived its layer's ceiling.
+
+    Names the effective ceiling, and when the run was given a contention
+    factor, the base number and the factor too: a reader who sees 40 s has to
+    know it is 10 s x 4, not a new limit.
+    """
+    allowance = (f"{ceiling:g} s" if scale == 1 else
+                 f"{ceiling:g} s ({_LAYER_CEILING_S[layer]:g} s x {scale:g} for"
+                 " CHEESE_TEST_CEILING_SCALE)")
+    return (f"took {took:.1f} s with setup, over the {layer} layer's {allowance}"
+            " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
+            " for and give it a shorter timer or interval rather than adding it to"
+            " slow_tests.txt.")
 
 
 @pytest.hookimpl(wrapper=True)
@@ -2286,16 +2326,11 @@ def pytest_runtest_makereport(
     limit = item.stash.get(_CEILING, None)
     if call.when != "call" or limit is None or not report.passed:
         return report
-    layer, ceiling = limit
+    layer, ceiling, scale = limit
     took = item.stash.get(_SETUP_S, 0.0) + call.duration
     if took > ceiling:
         report.outcome = "failed"
-        report.longrepr = (
-            f"took {took:.1f} s with setup, over the {layer} layer's {ceiling:g} s"
-            " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
-            " for and give it a shorter timer or interval rather than adding it to"
-            " slow_tests.txt."
-        )
+        report.longrepr = _over_ceiling(layer, took, ceiling, scale)
     return report
 
 

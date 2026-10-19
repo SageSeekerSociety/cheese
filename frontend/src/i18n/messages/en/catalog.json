@@ -1134,22 +1134,26 @@
     }
   },
   "modelConnectionsView": {
-    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device; and the API keys and model services kept on your account, with the key's last four characters, service host, model and last check, and test, rename and remove.",
+    "about": "Model connections in account settings, in two cards. Signed in on devices: the accounts or model services your Claude Code is logged in with on each device, one line each with its name, plan, device (with an online dot) and status; opening a line shows where it is stored and when it was last checked and used, with check again, rename and remove, and the card's top right lets an online device use a custom model service. Kept on your account: API keys and model services, one line each with its name, the key's last four characters and status; opening a line shows the service host and last check, with test, rename and remove, and the card's top right adds an API key or a model service.",
     "s1": {
       "name": "No connections",
-      "note": "Logged in on no device and nothing kept on the account: the card says there are no model connections, and the buttons to add an API key, add a model service or use one on a device stay at its top right."
+      "note": "Logged in on no device and nothing kept on the account: each card says it has nothing yet, and each keeps its own add buttons at its top right."
     },
     "s2": {
       "name": "Removing on an offline device",
-      "note": "Removed while its device is offline: no longer used, marked as removing, with a line saying it logs out when the device comes online; no check or remove buttons."
+      "note": "Removed while its device is offline: no longer used, and its line is marked as removing; opened, it says it logs out when the device comes online, with no check or remove buttons."
     },
     "s3": {
       "name": "A key on the account fails its check",
-      "note": "The service refused the key when it was tested again: marked as failing the check, with what the service said below; it can still be tested again, renamed or removed."
+      "note": "The service refused the key when it was tested again: its line is marked in red as failing the check; opened, it shows what the service said, and it can still be tested again, renamed or removed."
     },
     "s4": {
       "name": "Two logins on one device",
-      "note": "Two Claude accounts logged in on the workstation: one row each, each checked again, renamed and removed on its own; removing one leaves the other in use."
+      "note": "Two Claude accounts logged in on the workstation: one line each, each opened, checked again, renamed and removed on its own; removing one leaves the other in use."
+    },
+    "s5": {
+      "name": "Both kinds of connection",
+      "note": "Two Claude subscriptions on the workstation, a custom model service on the laptop and an API key on an offline server, plus an API key and a model service kept on the account: each closed to one line with its name, plan, where it is and its status."
     }
   },
   "thisDeviceView": {
