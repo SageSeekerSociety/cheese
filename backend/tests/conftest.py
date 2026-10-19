@@ -147,7 +147,7 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef  # noqa: E402
 from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
     Journal as ClaudeJournal,
 )
-from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL  # noqa: E402
+from app.domain.agent.harness.driven import lifecycle  # noqa: E402
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
 from tests.support.machine_path import resolved  # noqa: E402
 
@@ -430,7 +430,9 @@ class ScriptedSession(Runner):
             gone = (self.topic_id, self.actor, self.session_id) in self.channel.gone
             return {
                 "session_id": self.session_id,
-                "input_protocol": INPUT_PROTOCOL,
+                "lifecycle": lifecycle.PROTOCOL,
+                "launch": self.launch,
+                "worker_epoch": self.outbox.epoch,
                 "working": self.working,
                 "work_id": self.work if self.working else None,
                 "tasks": dict(self.tasks),
@@ -438,6 +440,16 @@ class ScriptedSession(Runner):
                 "capabilities": list(self.capabilities),
             }
         return await super().dispatch(method, params)
+
+
+class _Epochs:
+    """The database the running test keeps its rooms' books in, while it has
+    one (``db_factory``, ``client``): where a stub runner's epoch is issued."""
+
+    sessions = None
+
+
+_EPOCHS = _Epochs()
 
 
 class StubChannel(SeatChannel):
@@ -504,11 +516,12 @@ class StubChannel(SeatChannel):
     @alive.setter
     def alive(self, value: bool) -> None:
         # The agent process ending is something a runner hears at once
-        # (``Runner._announce_exit``): a read it holds is answered.
+        # (``Runner._announce_exit``): it reports it, and a read it holds is
+        # answered.
         self._alive = value
         if not value:
             for session in self.sessions.values():
-                session.announce()
+                session._report_exit(None, getattr(self, "ending", None) or "")
 
     # --- the channel -------------------------------------------------------
 
@@ -529,6 +542,9 @@ class StubChannel(SeatChannel):
                 launch.resume_session_id or self.new_session_id,
                 agent,
             )
+            # Named by the launch that started it, as the screen names a real
+            # runner (``CHEESE_RUNNER_LAUNCH``).
+            runner.launch = launch.launch_name or runner.launch
             self.sessions[key] = runner
         runner.placement = self.seats[key]
         runner.project_id = session.project_id
@@ -654,7 +670,20 @@ class StubChannel(SeatChannel):
         """What the scripted session answers a control with."""
         return {}
 
+    async def register(self, key) -> int:
+        """Where the test keeps the room's books in its database (``_EPOCHS``),
+        a runner's epoch is issued there, as production issues it, so what the
+        runner reports can be applied there; elsewhere, by the seat channel's
+        own counter."""
+        if _EPOCHS.sessions is None:
+            return await super().register(key)
+        from app.domain.agent import session_state
+
+        return await session_state.register(_EPOCHS.sessions, key)
+
     def unlanded(self, topic_id: uuid.UUID, session: ScriptedSession) -> bool:
+        """Whether the backend has yet to take something the runner holds: a
+        record past what it took, or an event it has not acknowledged."""
         # Its own connection: this is asked from the test's thread, and the
         # runner's belongs to the portal loop's.
         journal = ClaudeJournal(session.state / "records.sqlite")
@@ -662,25 +691,13 @@ class StubChannel(SeatChannel):
             written = journal.connection.execute(
                 "SELECT MAX(sequence) FROM records"
             ).fetchone()[0]
+            taken = int(journal.recall("records_taken") or 0)
+            events = journal.connection.execute(
+                "SELECT 1 FROM lifecycle WHERE epoch != 0 LIMIT 1"
+            ).fetchone()
         finally:
             journal.close()
-        if not written:
-            return False
-        mirror = self.mirror(topic_id, session.actor)
-        if mirror is None or not mirror.exists():
-            return True
-        journal = ClaudeJournal(mirror)
-        try:
-            return int(journal.recall("landed") or 0) < written
-        finally:
-            journal.close()
-
-    def mirror(self, topic_id: uuid.UUID, agent: str) -> Path | None:
-        """Where the backend mirrors the seat's journal."""
-        runner = self.sessions.get((topic_id, agent))
-        if runner is None:
-            return None
-        return self._mirror_of(runner.placement[0], agent)
+        return bool(written and taken < written) or events is not None
 
     # --- what the session prints ------------------------------------------
 
@@ -1498,6 +1515,7 @@ def client(
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([stub_hooks.runtime]),
     )
+    _EPOCHS.sessions = test_factory
 
     def override_get_chat_service() -> ChatService:
         # ONE instance, like production's lru_cache. A per-request instance was
@@ -1540,6 +1558,7 @@ def client(
                     finally:
                         c.portal.call(app_engine.dispose)
     finally:
+        _EPOCHS.sessions = None
         app.dependency_overrides.clear()
         # Leaving the app hands its work over and holds the runner's turns, which
         # is right for a process that exits next. This one goes on to run tests
@@ -2554,9 +2573,12 @@ async def db_factory(_pg_schema):
     """
     engine = _production_test_engine(TEST_DATABASE_URL)
     await _clear_client_db()
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    _EPOCHS.sessions = factory
     try:
-        yield async_sessionmaker(engine, expire_on_commit=False)
+        yield factory
     finally:
+        _EPOCHS.sessions = None
         try:
             await _fail_on_background_work("db_factory")
         finally:
@@ -2653,6 +2675,7 @@ async def python_client(
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([stub_hooks.runtime]),
     )
+    _EPOCHS.sessions = test_factory
 
     def override_get_chat_service() -> ChatService:
         # ONE instance, like production's lru_cache. A per-request instance was
@@ -2682,6 +2705,7 @@ async def python_client(
             c.collab = install_collab(monkeypatch, app)  # type: ignore[attr-defined]
             yield c
     finally:
+        _EPOCHS.sessions = None
         app.dependency_overrides.clear()
         try:
             await _fail_on_background_work("python_client")

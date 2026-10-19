@@ -64,8 +64,11 @@ class _Session:
         if "deliveries" in sql or "agent_turns" in sql:
             # No write-up in progress, and no waiting message has been taken.
             return []
-        if "blocks" in sql:
+        if "blocks" in sql and "consumed_turn" in sql:
             return list(self._waiting)
+        if "blocks" in sql:
+            # Nothing was read and then failed.
+            return []
         # The overdue scan: the one task this test closes.
         return [self._task.id]
 

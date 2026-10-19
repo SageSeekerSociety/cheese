@@ -29,14 +29,16 @@ from app.domain.agent.platform_failures import classify_session_start
 from app.domain.agent.reads import (
     Abandoned,
     CaughtUp,
-    Completed,
     ControlsMoved,
     Ended,
     Moved,
     Reachable,
     Read,
     Received,
-    Terminated,
+    Report,
+    SessionExited,
+    SessionIdle,
+    SessionRunning,
     Working,
     Writing,
 )
@@ -102,14 +104,14 @@ def _owning(svc: pkg.RoomSessions, seat: Seat) -> None:
         )
 
 
-def _listen(svc: pkg.RoomSessions, seat: Seat, *, recovered: bool = False) -> None:
+def _listen(svc: pkg.RoomSessions, seat: Seat) -> None:
     live = svc.live.get(seat)
     if live is None:
         return
     if seat not in svc.tasks or svc.tasks[seat].done():
         svc.caught[seat] = asyncio.Event()
         svc.tasks[seat] = asyncio.create_task(
-            svc._poll(seat, live, recovered, svc.caught[seat]),
+            svc._poll(seat, live, svc.caught[seat]),
             name=f"{svc.label} reading {seat[0]}/{seat[1]}",
         )
 
@@ -128,10 +130,9 @@ async def _poll(
     svc: pkg.RoomSessions,
     seat: Seat,
     live: Live,
-    recovered: bool,
     caught: asyncio.Event,
 ) -> None:
-    reading = svc.host.read(live.ref, recovered=recovered)
+    reading = svc.host.read(live.ref)
     pending: asyncio.Future | None = None
     try:
         while True:
@@ -187,10 +188,8 @@ async def _take(
         svc.pulse(seat, event.marks)
     elif isinstance(event, Received):
         await svc._hear_receipt(event.receipt)
-    elif isinstance(event, Completed):
-        await svc._hear_completion(event.completion)
-    elif isinstance(event, Terminated):
-        await svc._hear_termination(event.termination)
+    elif isinstance(event, Report):
+        return await _report(svc, seat, live, event)
     elif isinstance(event, Writing):
         # What the agent is in the middle of writing, under its own name.
         work = work or svc.work.get(seat)
@@ -234,6 +233,43 @@ async def _take(
             read.text_seen,
             read.unsolicited,
         )
+    return False
+
+
+async def _report(svc: pkg.RoomSessions, seat: Seat, live: Live, report: Report) -> bool:
+    """What a seat's runner reported: applied to the database first, once
+    (``agent.runner_reports``), then kept in the room's books. True when the
+    session is gone and the reading with it."""
+    await svc._hear(live.session, Read(None, report), required=True)
+    project, fact = live.session.project_id, report.fact
+    if isinstance(fact, SessionRunning) and fact.work_id is not None:
+        await svc._activity(project, seat, fact.work_id, True)
+    elif isinstance(fact, SessionIdle) and fact.work_id is not None:
+        result = fact.result
+        await svc._consume(
+            project,
+            seat[0],
+            fact.work_id,
+            result,
+            f"{svc.harness}:{report.conversation_id}:{report.agent_handle}"
+            f":{report.epoch}:{report.seq}",
+            # The closing text was already landed as its own message; the
+            # result must not publish it twice.
+            not result.is_error,
+            fact.unsolicited,
+        )
+        await svc._activity(project, seat, fact.work_id, False)
+        # 会话空闲时问一次记忆：agent 该写的记忆按规矩写在回复之前，所以它停下
+        # 来就是它写完的时刻。
+        await svc.reconcile_memory(live.session)
+        svc._went_quiet(live.session)
+    elif isinstance(fact, SessionExited) and fact.current:
+        if svc.live.get(seat) is live:
+            svc.live.pop(seat, None)
+            # Its runner said so: the conversation is over on this seat, which
+            # is death, not an unknown (FB-56).
+            svc.dead.add((seat, live.conversation))
+        return True
     return False
 
 

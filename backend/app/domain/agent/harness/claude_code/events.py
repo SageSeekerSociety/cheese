@@ -7,9 +7,13 @@ several content blocks, so the events a record comes out as each get their own
 id: the record's ``uuid`` (Claude Code's, stable across a re-read) plus the
 block's index.
 
-What a call was (its name and description) is a ``fact``: worked out once, in
-journal order, when a page is mirrored (``bind``), and read back by every later
-pass.
+What a call was (its name and description) rides on the record that brings its
+result back: the runner saw the call made and stamps it there (``cheese.calls``),
+so a record reads the same whenever and wherever it is read.
+
+How the work ended is not read here: the runner reports it in the lifecycle
+protocol (`driven/lifecycle.py`), and a ``result`` record is only something the
+session wrote.
 
 A tool's return is written onto the step it belongs to (``AgentStepOutput``),
 and a failed one also marks that step. A subagent's return is its conclusion,
@@ -17,9 +21,7 @@ which otherwise reaches only the thread that spawned it, so it becomes an event
 of its own instead.
 """
 
-import json
 import re
-from collections.abc import Mapping, MutableMapping
 from datetime import datetime
 
 from app.domain.agent.harness import CLAUDE_CODE
@@ -27,14 +29,12 @@ from app.domain.agent.service import (
     AgentCompacting,
     AgentEvent,
     AgentMessage,
-    AgentResult,
     AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
     AgentStepOutput,
     AgentToolResult,
     AgentToolUse,
-    AgentUsage,
     step_error,
 )
 
@@ -145,74 +145,14 @@ def _message(record: dict) -> dict:
     return record
 
 
-def bind(record: dict, facts: Mapping[str, str]) -> dict[str, str]:
-    """The facts this record establishes, given the ones already known.
-
-    ``facts`` maps ``call:<call id>`` to the call's name and description, and
-    ``error`` to the API's refusal of the turn, when it refused one.
-    """
-    learned: dict[str, str] = {}
-    message = _message(record)
-    kind = message.get("type")
-    if record.get("type") == "result":
-        learned["error"] = ""
-    elif kind == "assistant" and message.get("error"):
-        # The API refused the turn; the result that follows says only that it
-        # failed, and this is the one record that says how.
-        learned["error"] = str(message["error"])
-    if kind == "assistant":
-        for block in (message.get("message") or {}).get("content") or []:
-            if not isinstance(block, dict) or block.get("type") != "tool_use":
-                continue
-            call = str(block.get("id"))
-            name = str(block.get("name") or "")
-            given = block.get("input")
-            arguments: dict = given if isinstance(given, dict) else {}
-            learned[f"call:{call}"] = json.dumps(
-                {"name": name, "description": str(arguments.get("description") or "")},
-                ensure_ascii=False,
-            )
-    return learned
-
-
 class Assembler:
-    """Records in, room events out."""
+    """Records in, room events out. Holds nothing between records."""
 
-    def __init__(self, facts: MutableMapping[str, str], session_id: str | None = None):
-        self.facts = facts
+    def __init__(self, session_id: str | None = None):
         self.session_id = session_id
-
-    def _rate_limit(self) -> dict | None:
-        """The account's window as the turn last heard it, taken: the next
-        turn hears its own."""
-        try:
-            info = json.loads(self.facts.pop("rate_limit", "") or "null")
-        except ValueError:
-            return None
-        return info if isinstance(info, dict) else None
-
-    def _call(self, call: str) -> dict:
-        try:
-            return json.loads(self.facts.get(f"call:{call}") or "{}")
-        except ValueError:
-            return {}
 
     def accept(self, record: dict) -> list[AgentEvent]:
         kind = record.get("type")
-        if kind == "result":
-            # Before the facts: the result is read with what the turn left.
-            ended = self._result(record)
-            self.facts.update(bind(record, self.facts))
-            return [ended]
-        if kind == "rate_limit_event":
-            # Kept for the turn's end: a window that refused the account says
-            # when it resets, and that decides what the room is told.
-            info = record.get("rate_limit_info")
-            if isinstance(info, dict):
-                self.facts["rate_limit"] = json.dumps(info)
-            return []
-        # Facts first: a record may name a call it also makes.
-        self.facts.update(bind(record, self.facts))
         if kind == "system" and record.get("subtype") == "init":
             stamp = record.get("cheese") or {}
             return [
@@ -228,7 +168,8 @@ class Assembler:
         if message.get("type") == "assistant":
             return _authored(self._assistant(message), record, self.session_id)
         if message.get("type") == "user" and not message.get("isReplay"):
-            return _authored(self._returned(message), record, self.session_id)
+            calls = (record.get("cheese") or {}).get("calls") or {}
+            return _authored(self._returned(message, calls), record, self.session_id)
         return []
 
     def _assistant(self, message: dict) -> list[AgentEvent]:
@@ -265,7 +206,7 @@ class Assembler:
                 )
         return events
 
-    def _returned(self, message: dict) -> list[AgentEvent]:
+    def _returned(self, message: dict, calls: dict) -> list[AgentEvent]:
         content = (message.get("message") or {}).get("content")
         events: list[AgentEvent] = []
         for index, block in enumerate(content if isinstance(content, list) else []):
@@ -273,7 +214,9 @@ class Assembler:
                 continue
             call = str(block.get("tool_use_id"))
             said = _text(block.get("content"))
-            made = self._call(call)
+            made = calls.get(call)
+            if not isinstance(made, dict):
+                made = {}
             if block.get("is_error"):
                 said = TOOL_USE_ERROR.sub(r"\1", said)
                 if INTERRUPTED in said:
@@ -310,73 +253,3 @@ class Assembler:
         if subtype == "status":
             return _compacting(record)
         return []
-
-    def _result(self, record: dict) -> AgentResult:
-        stamp = record.get("cheese") or {}
-        common = {
-            "session_id": str(record.get("session_id") or "") or self.session_id,
-            "agent_handle": stamp.get("agent_handle"),
-            "harness": CLAUDE_CODE,
-            "rate_limit": self._rate_limit(),
-        }
-        if stamp.get("interrupted"):
-            # Somebody took the work away. That ends the turn; it is not a
-            # failure of anything, and saying 「出错了」 would tell the room so.
-            return AgentResult(text="", **common)
-        if not record.get("is_error"):
-            return AgentResult(
-                text=str(record.get("result") or ""),
-                input_work_completed=True,
-                usage=_usage(record),
-                **common,
-            )
-        # Failure is `is_error` and only that: an API error arrives with
-        # subtype "success" and terminal_reason "api_error". The kind rides in
-        # the text, where the room's classifier reads it (`billing` is how a
-        # spent balance is told from a bad key).
-        reason = self.facts.get("error") or str(
-            record.get("terminal_reason") or record.get("subtype") or ""
-        )
-        told = [str(e) for e in record.get("errors") or [] if str(e)]
-        errors = told or [reason]
-        # A run that fails before it asks the model anything (a conversation it
-        # cannot resume) carries no result, only the build's own words for it.
-        said = str(record.get("result") or "").strip() or "\n".join(told)
-        status = record.get("api_error_status")
-        return AgentResult(
-            text=f"{said}（{reason}）" if said else f"AI 服务拒绝了请求（{reason}）",
-            is_error=True,
-            errors=errors,
-            api_error_status=status if isinstance(status, int) else None,
-            **common,
-        )
-
-
-def _usage(record: dict) -> AgentUsage | None:
-    """What the turn reports it used: every token it sent, cached or not, and
-    what the build prices it at. The model is the one that did most of it.
-    Charged only where nothing else meters it (`turn.intake.completion`)."""
-    usage = record.get("usage")
-    if not isinstance(usage, dict):
-        return None
-
-    def count(name: str) -> int:
-        value = usage.get(name)
-        return value if isinstance(value, int) else 0
-
-    by_model = record.get("modelUsage")
-    model = ""
-    if isinstance(by_model, dict) and by_model:
-        model = max(
-            by_model,
-            key=lambda name: (by_model[name] or {}).get("outputTokens") or 0,
-        )
-    cost = record.get("total_cost_usd")
-    return AgentUsage(
-        model=model,
-        input_tokens=count("input_tokens")
-        + count("cache_creation_input_tokens")
-        + count("cache_read_input_tokens"),
-        output_tokens=count("output_tokens"),
-        cost_usd=float(cost) if isinstance(cost, int | float) else 0.0,
-    )

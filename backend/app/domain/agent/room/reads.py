@@ -18,26 +18,21 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.live_frames import publish_live
 from app.domain.agent.reads import (
     Abandoned,
-    Completed,
     Reachable,
     Read,
     Received,
-    Terminated,
+    Report,
     Working,
     Writing,
 )
 from app.domain.agent.service import AgentEvent
-from app.domain.delivery.input_identity import (
-    InputReceipt,
-    WorkCompletion,
-    WorkTermination,
-)
+from app.domain.delivery.input_identity import InputReceipt
 
 # Where the room hears its sessions: one item at a time, each for the session
 # that produced it, in the order its sessions were read. What the session said
-# and did, when it started and stopped working, which inputs it took in, how
-# its work ended — completed, terminated, or abandoned with nobody left to
-# report on it — whether the machine under it is reachable, and what it is in
+# and did, when it started and stopped working, which inputs it took in, what
+# its runner reported (``Report``), work abandoned with nobody left to report
+# on it, whether the machine under it is reachable, and what it is in
 # the middle of writing all arrive here (``reads.Read``); the
 # room decides what each one means for it.
 RoomReader = Callable[[SessionRef, Read], Awaitable[None]]
@@ -63,9 +58,7 @@ class RoomBooks(Protocol):
 
     async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None: ...
 
-    async def confirm_work_completion(self, completion: WorkCompletion) -> None: ...
-
-    async def confirm_work_termination(self, termination: WorkTermination) -> None: ...
+    async def apply_report(self, report: Report) -> None: ...
 
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None: ...
 
@@ -100,10 +93,8 @@ def reader(chat: RoomBooks) -> RoomReader:
         work = uuid.UUID(read.work_id) if read.work_id else None
         if isinstance(event, Received):
             await chat.confirm_prompt_receipt(event.receipt)
-        elif isinstance(event, Completed):
-            await chat.confirm_work_completion(event.completion)
-        elif isinstance(event, Terminated):
-            await chat.confirm_work_termination(event.termination)
+        elif isinstance(event, Report):
+            await chat.apply_report(event)
         elif isinstance(event, Writing):
             await publish_live(
                 session.conversation_id,

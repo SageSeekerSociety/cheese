@@ -7,10 +7,9 @@ import uuid
 
 from app.domain.agent.reads import (
     Abandoned,
-    Completed,
     Reachable,
     Received,
-    Terminated,
+    Report,
     Working,
     Writing,
 )
@@ -22,8 +21,7 @@ def room_reader(
     events=None,
     activity=None,
     receipts=None,
-    completions=None,
-    terminations=None,
+    reports=None,
     abandoned=None,
     reachability=None,
     live=None,
@@ -31,8 +29,7 @@ def room_reader(
 ) -> RoomReader:
     """``events(project, topic, work, event, eid, text_seen, unsolicited)``,
     ``activity(project, topic, work, active, agent_handle=...)``,
-    ``receipts(receipt)``, ``completions(completion)``,
-    ``terminations(termination)``, ``abandoned(work)``,
+    ``receipts(receipt)``, ``reports(report)``, ``abandoned(work)``,
     ``reachability(project, topic, work, reachable, reason)``,
     ``live(topic, work, author, blocks)``."""
 
@@ -41,10 +38,8 @@ def room_reader(
         work = uuid.UUID(read.work_id) if read.work_id else None
         if isinstance(event, Received):
             heard = receipts and receipts(event.receipt)
-        elif isinstance(event, Completed):
-            heard = completions and completions(event.completion)
-        elif isinstance(event, Terminated):
-            heard = terminations and terminations(event.termination)
+        elif isinstance(event, Report):
+            heard = reports and reports(event)
         elif isinstance(event, Abandoned):
             heard = abandoned and abandoned(work)
         elif isinstance(event, Working):

@@ -90,10 +90,6 @@ from app.domain.agent.mentions import (
     _topic_refs,  # noqa: F401
     project_refs_text,  # noqa: F401 — 现有发送路由仍使用此导出
 )
-from app.domain.agent.pending_messages import (
-    finish_work,
-    finish_work_termination,
-)
 from app.domain.agent.prewarm import SeatPrewarm
 from app.domain.agent.profiles import ProfileRegistry
 
@@ -117,6 +113,8 @@ from app.domain.agent.queries import (
     _Proposed,
 )
 from app.domain.agent.recovery import SessionRecovery
+from app.domain.agent import runner_reports
+from app.domain.agent.reads import Report
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
 
@@ -149,15 +147,7 @@ from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
 from app.domain.agent.turn_usage import record_turn_usage
 from app.domain.agent_instance.services import ResolvedAgent
-from app.domain.delivery.input_identity import (
-    InputReceipt,
-    WorkCompletion,
-    WorkTermination,
-)
-from app.domain.delivery.receipts import (
-    complete_work_inputs,
-    terminate_work_inputs,
-)
+from app.domain.delivery.input_identity import InputReceipt
 from app.domain.policy import gate
 
 #: How many rooms replay their sessions' backlog at once. Each replay writes
@@ -310,7 +300,6 @@ class ChatService(
             charge_spend=self.charge_turn_spend,
             defer_drain=self._schedule_deferred_drain,
             effects=CompletionEffects(
-                complete_inputs=complete_work_inputs,
                 record_usage=record_turn_usage,
                 own_waiting=own_limit.after_turn,
             ),
@@ -359,21 +348,9 @@ class ChatService(
 
         await confirm_receipt(self._sessions, self.live, receipt)
 
-    async def confirm_work_completion(self, completion: WorkCompletion) -> None:
-        """Settle a journaled completion without process-local work context."""
-
-        await finish_work(self, completion, complete_work_inputs)
-
-    async def confirm_work_termination(self, termination: WorkTermination) -> None:
-        """Record that a work interval ended without completing.
-
-        Separate from :meth:`confirm_work_completion` on purpose: a terminated
-        work must never reach the completion path, which is what stamps
-        ``completed_at`` and consumes blocks. This one only frees the seat so a
-        new input can be taken.
-        """
-
-        await finish_work_termination(self, termination, terminate_work_inputs)
+    async def apply_report(self, report: Report) -> None:
+        """Apply what a seat's runner reported, once (`runner_reports`)."""
+        await runner_reports.apply(self, report)
 
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None:
         """End the inputs of a work whose session died inside it. See turn_inputs."""

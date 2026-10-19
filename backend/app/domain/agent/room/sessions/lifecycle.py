@@ -210,7 +210,7 @@ async def replay(svc: pkg.RoomSessions, session: SessionRef) -> None:
     seat = svc._seat_of(session)
     if seat not in svc.live:
         return
-    svc._listen(seat, recovered=True)
+    svc._listen(seat)
     reading = svc.tasks[seat]
     await svc.caught[seat].wait()
     failure = (

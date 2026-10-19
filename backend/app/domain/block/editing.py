@@ -30,6 +30,7 @@ from app.domain.block.models import (
     Block,
     BlockKind,
     consumed_turn,
+    read_failed,
 )
 from app.domain.block.ports import Dispatcher, Notifier, RecordInstruction
 from app.domain.block.repositories import BlockRepository
@@ -114,7 +115,10 @@ async def edit_message[Sent: EditedText](
         raise ValidationError("content must not be blank")
     sent = await normalize_text(session, block, editor, text)
     before = block.content
-    already_read = consumed_turn(block) is not None
+    # Read and answered — or at least not failed after it was read: a message
+    # whose reading ended in a failure was never answered, and editing it
+    # asks it again.
+    already_read = consumed_turn(block) is not None and read_failed(block) is None
     await blocks.replace_content(block, sent.text, checklist=checklist)
     summoned = False
     if sent.roster is not None:

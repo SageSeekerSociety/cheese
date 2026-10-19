@@ -1,4 +1,4 @@
-"""The session-stop transaction: exact input completion, usage and pending claims.
+"""The session-stop transaction: usage, the read cursor and pending claims.
 
 NativeInput/Delivery authority remains in delivery. Named same-session effects
 are composed above this store; none can commit or publish ahead of this commit.
@@ -22,20 +22,6 @@ from app.domain.block.output_effects import consume_prompt, withdraw_prompt_clai
 from app.domain.block.queries import turn_history
 
 
-class CompleteInputs(Protocol):
-    async def __call__(
-        self,
-        session: AsyncSession,
-        *,
-        project_id: uuid.UUID,
-        conversation_id: uuid.UUID,
-        recipient_handle: str | None,
-        harness: str,
-        native_session_id: str,
-        work_id: uuid.UUID,
-    ) -> set[uuid.UUID]: ...
-
-
 class RecordUsage(Protocol):
     async def __call__(
         self,
@@ -55,7 +41,6 @@ class OwnWaiting(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CompletionEffects:
-    complete_inputs: CompleteInputs
     record_usage: RecordUsage
     own_waiting: OwnWaiting
 
@@ -110,55 +95,39 @@ async def settle_work(
 ) -> str | None:
     """Commit all stop effects together, before any waiting or success notice."""
     async with sessions() as session:
-        # Exact native completion locks inputs BEFORE touching timeline blocks.
-        # Synthetic error / identity-less results cannot release a held batch.
-        if (
-            not result.is_error
-            and result.input_work_completed
-            and result.session_id
-            and result.harness
-            and result.agent_handle == state.acting_agent
-        ):
-            await effects.complete_inputs(
-                session,
-                project_id=state.project_id,
-                conversation_id=state.topic_id,
-                recipient_handle=result.agent_handle,
-                harness=result.harness,
-                native_session_id=result.session_id,
-                work_id=state.work_id,
-            )
         await effects.record_usage(
             session, state, usages, gateway_charged=gateway_charged
         )
         fed = list(state.pending_ids | set(await delivered_unread(session, state)))
-        if result.is_error:
+        # What the seat has heard: for a native harness, what its runner said
+        # the session read in this work — read is delivered, whatever came of
+        # the work after (`delivery.receipts.record_receipt` consumed it then);
+        # the non-native path has always taken a clean stop as delivery.
+        heard = (
+            result.inputs_read if result.harness is not None else not result.is_error
+        )
+        if not heard and result.is_error:
+            # A prompt the session never took is not one it read.
             await withdraw_prompt_claims(session, fed)
-        else:
+        if result.harness is None and heard:
+            # Non-native providers never register NativeInput batches.
+            await consume_prompt(session, fed, state.work_id)
+        if heard:
             # The seat has now read everything this prompt carried — including
             # other seats' messages, which it read but does not answer for and
-            # so is not in `fed`. A failed turn moves nothing, the same rule
-            # `consumed_turn` follows, and a prompt the session never took is
-            # not one it read: a native harness tells us which of the two
-            # happened, and the non-native path has always taken a clean stop
-            # as delivery.
-            heard = result.harness is None or result.input_work_completed
-            if result.harness is None:
-                # Non-native providers never register NativeInput batches.
-                await consume_prompt(session, fed, state.work_id)
-            if heard:
-                # A turn recovered by this process has no assembled window of
-                # its own — the process that assembled it is gone — so what it
-                # read is taken from the blocks THIS turn stamped.
-                position = state.read_through or await _consumed_position(session, state)
-                if position is not None:
-                    at, block_id = position
-                    await AgentSessionService(session).advance_read(
-                        conversation_id=state.topic_id,
-                        agent_handle=state.acting_agent,
-                        at=at,
-                        block_id=block_id,
-                    )
+            # so is not in `fed`. A turn recovered by this process has no
+            # assembled window of its own — the process that assembled it is
+            # gone — so what it read is taken from the blocks THIS turn
+            # stamped.
+            position = state.read_through or await _consumed_position(session, state)
+            if position is not None:
+                at, block_id = position
+                await AgentSessionService(session).advance_read(
+                    conversation_id=state.topic_id,
+                    agent_handle=state.acting_agent,
+                    at=at,
+                    block_id=block_id,
+                )
         waiting = (
             await effects.own_waiting(session, state, result) if own_route else None
         )

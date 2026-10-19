@@ -7,14 +7,12 @@ below the core and below the harness packages it reads with, so neither has to
 know the other.
 """
 
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
-from app.domain.agent.service import AgentEvent
-from app.domain.delivery.input_identity import (
-    InputReceipt,
-    WorkCompletion,
-    WorkTermination,
-)
+from app.domain.agent.service import AgentEvent, AgentResult
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 
 
 @dataclass(frozen=True)
@@ -62,21 +60,6 @@ class Received:
 
 
 @dataclass(frozen=True)
-class Completed:
-    """The harness's own record that the work finished, and which inputs it
-    answered."""
-
-    completion: WorkCompletion
-
-
-@dataclass(frozen=True)
-class Terminated:
-    """The work ended without completing: taken away, or failed."""
-
-    termination: WorkTermination
-
-
-@dataclass(frozen=True)
 class Reachable:
     """The machine the work runs on went out of reach (with what was seen), or
     came back."""
@@ -101,7 +84,96 @@ class CaughtUp:
 
 @dataclass(frozen=True)
 class ControlsMoved:
-    """What the session's controls show changed (Claude Code's)."""
+    """What the session's controls show changed: its background tasks."""
+
+
+# --- what a runner reports in the lifecycle protocol --------------------------
+#
+# A runner that speaks the protocol (`harness/driven/lifecycle.py`) reports
+# facts, and each one is read as a ``Report`` naming the event it came from. Its
+# reader applies it and its effects in one transaction (``session_state.take``)
+# and only then lets the reading go on; the reading acknowledges it to the
+# runner after that.
+
+
+@dataclass(frozen=True)
+class InputWritten:
+    """The input is on the agent's input: written, not read yet."""
+
+    identity: InputIdentity
+
+
+@dataclass(frozen=True)
+class InputRead:
+    """The agent took the input in: it is delivered."""
+
+    receipt: InputReceipt
+
+
+@dataclass(frozen=True)
+class InputDropped:
+    """The agent will never read the input (``reason``, the runner's)."""
+
+    identity: InputIdentity
+    reason: str
+
+
+@dataclass(frozen=True)
+class SessionRunning:
+    """The session started working, on ``work_id`` (the room's work it is
+    attributed to; one the session started on its own when ``unsolicited``)."""
+
+    work_id: uuid.UUID | None
+    unsolicited: bool = False
+
+
+@dataclass(frozen=True)
+class SessionIdle:
+    """The session went idle. ``result`` is how the work it was doing ended,
+    in the room's vocabulary; ``read_inputs`` the platform inputs it read since
+    it last went idle, which a failure (``result.is_error``) is attached to."""
+
+    work_id: uuid.UUID | None
+    result: AgentResult
+    read_inputs: tuple[uuid.UUID, ...] = ()
+    #: The failure's kind (`lifecycle`), None for a clean ending.
+    failure: str | None = None
+    unsolicited: bool = False
+
+
+@dataclass(frozen=True)
+class SessionExited:
+    """The agent process ``launch`` is gone. ``current`` is whether it is the
+    one this reading reads (a runner also reports the ending of the process
+    before it, when that one died with its runner)."""
+
+    launch: str
+    current: bool
+    exit_code: int | None = None
+    #: What it said, when it ended before it ever came up.
+    said: str = ""
+
+
+@dataclass(frozen=True)
+class Report:
+    """One event a runner reported, and where it came from: the seat, the
+    epoch of the runner that delivered it, and its own ``(epoch, seq)``."""
+
+    conversation_id: uuid.UUID
+    agent_handle: str
+    harness: str
+    worker_epoch: int
+    epoch: int
+    seq: int
+    at: datetime
+    fact: (
+        InputWritten
+        | InputRead
+        | InputDropped
+        | SessionRunning
+        | SessionIdle
+        | SessionExited
+    )
 
 
 @dataclass(frozen=True)
@@ -117,8 +189,7 @@ class Read:
         | Abandoned
         | Working
         | Received
-        | Completed
-        | Terminated
+        | Report
         | Reachable
         | Moved
         | CaughtUp

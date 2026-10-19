@@ -13,8 +13,6 @@ from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
-from app.domain.delivery.input_identity import WorkCompletion
-from app.domain.delivery.models import NativeInput
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -260,25 +258,6 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
                 ):
                     await asyncio.sleep(0.01)
             async with factory() as observer:
-                inputs = list(
-                    await observer.scalars(
-                        select(NativeInput).where(
-                            NativeInput.conversation_id == conversation,
-                            NativeInput.work_id == first_turn,
-                        )
-                    )
-                )
-                assert inputs
-                own = inputs[0]
-                duplicate = WorkCompletion(
-                    own.project_id,
-                    conversation,
-                    own.recipient_handle,
-                    own.harness,
-                    own.native_session_id,
-                    first_turn,
-                    tuple(row.input_id for row in inputs),
-                )
                 other_before = await observer.get(AgentTurn, second_turn)
                 assert other_before.stopped_at is None
             assert screen.writes == [
@@ -289,8 +268,6 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
             screen.says(conversation, "first output", agent=first_seat)
             screen.stops(conversation, "first output", agent=first_seat)
             await until_frame(browser, "turn_finished", turn_id=first_turn)
-            await chat.confirm_work_completion(duplicate)
-            await chat.confirm_work_completion(duplicate)
             assert chat.session_took_over(conversation, second_turn)
             assert str(second_turn) in broker.active_turn_ids(str(conversation))
             assert str(first_turn) not in broker.active_turn_ids(str(conversation))

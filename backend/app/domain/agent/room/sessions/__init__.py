@@ -85,8 +85,6 @@ from app.domain.delivery.input_identity import (
     InputIdentity,
     InputReceipt,
     InputRegistrar,
-    WorkCompletion,
-    WorkTermination,
 )
 
 # 同级子模块从**定义它们的模块**取，不经过包 `__init__` 的名字空间：
@@ -294,12 +292,6 @@ class RoomSessions:
     async def _hear_receipt(self, receipt: InputReceipt) -> None:
         return await _books._hear_receipt(self, receipt)
 
-    async def _hear_completion(self, completion: WorkCompletion) -> None:
-        return await _books._hear_completion(self, completion)
-
-    async def _hear_termination(self, termination: WorkTermination) -> None:
-        return await _books._hear_termination(self, termination)
-
     async def reconcile_memory(self, session: SessionRef) -> None:
         return await _books.reconcile_memory(self, session)
 
@@ -350,16 +342,16 @@ class RoomSessions:
     def _owning(self, seat: Seat) -> None:
         _reading._owning(self, seat)
 
-    def _listen(self, seat: Seat, *, recovered: bool = False) -> None:
-        _reading._listen(self, seat, recovered=recovered)
+    def _listen(self, seat: Seat) -> None:
+        _reading._listen(self, seat)
 
     def _clock_read_s(self, seat: Seat) -> float:
         return _reading._clock_read_s(self, seat)
 
     async def _poll(
-        self, seat: Seat, live: Live, recovered: bool, caught: asyncio.Event
+        self, seat: Seat, live: Live, caught: asyncio.Event
     ) -> None:
-        return await _reading._poll(self, seat, live, recovered, caught)
+        return await _reading._poll(self, seat, live, caught)
 
     async def _take(
         self, seat: Seat, live: Live, read: Read, caught: asyncio.Event

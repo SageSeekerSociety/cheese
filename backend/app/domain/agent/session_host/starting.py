@@ -18,6 +18,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -40,6 +41,7 @@ from app.domain.agent.session_host.sessions import (
     _mirror,
     _Running,
     _seat,
+    key,
     with_pictures,
 )
 
@@ -114,6 +116,8 @@ async def start(
                 _mirror(svc._mirrors, ref, access, driver),
             )
             svc._running[ref] = running
+        if launched.lifecycle is not None and not launched.epoch:
+            launched = await register(svc, host, ref, running, launched)
         running.launched = launched
         running.spec, running.access = spec, access
         running.answering = True
@@ -122,10 +126,30 @@ async def start(
             working=False,
             model=spec.model,
             conversation=launched.conversation,
-            takes_inputs=driver.takes_inputs(
-                {"input_protocol": launched.input_protocol}
-            ),
+            takes_inputs=driver.takes_inputs({"lifecycle": launched.lifecycle}),
         )
+
+
+async def register(
+    svc: SessionHost, host: str, ref: SessionRef, running: _Running, launched: Launched
+) -> Launched:
+    """Register a runner that reports in the lifecycle protocol: issue its
+    seat a new worker epoch and hand it to the runner, with the clocks it ends
+    stuck work by. From here on only this registration changes anything."""
+    epoch = await svc._register(key(ref, running.seat, running.acting))
+    await svc._look(
+        host,
+        ref,
+        "register",
+        {
+            "epoch": epoch,
+            "watchdog": {
+                "no_progress_s": settings.agent_no_progress_s,
+                "unread_s": settings.agent_unread_grace_s,
+            },
+        },
+    )
+    return replace(launched, epoch=epoch)
 
 
 async def adopt(svc: SessionHost, found: list[tuple[SessionRef, Access]]) -> None:
@@ -194,7 +218,8 @@ async def attach(
         found.conversation,
         frozenset(status.get("capabilities") or ()),
         "",
-        status.get("input_protocol"),
+        status.get("lifecycle"),
+        status.get("launch"),
     )
     if LONG_POLL not in launched.capabilities:
         raise RunnerUnsupported(
@@ -213,8 +238,9 @@ async def attach(
             _mirror(svc._mirrors, ref, access, driver),
         )
         svc._running[ref] = running
-    else:
-        running.launched = launched
+    if launched.lifecycle is not None:
+        launched = await register(svc, host, ref, running, launched)
+    running.launched = launched
     running.answering = True
     running.stopping = False
     running.owed = found.working

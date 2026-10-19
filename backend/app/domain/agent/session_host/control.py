@@ -3,7 +3,7 @@
 ``status`` is what its runner says it is now, without starting anything;
 ``stop`` takes the work away and leaves the session standing; ``memory`` and
 ``control`` hand a request to the runner and bring its answer back;
-``control_state`` reads what the session's controls show off its mirror alone.
+``control_state`` is what the session's controls show, as its runner last said.
 ``release`` is this process forgetting a session it holds: it exits once idle,
 and the reading under way ends after its pass.
 
@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from app.core.config import settings
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
+from app.domain.agent.harness.driven.reporting import Reading
 from app.domain.agent.session_host.contract import SessionRef, SessionStatus
 from app.domain.agent.session_host.sessions import keeps_memory
 
@@ -38,7 +39,9 @@ async def stop(svc: SessionHost, ref: SessionRef) -> bool:
         return False
     method, key = svc._driver(ref).stop
     try:
-        answer = await svc._look(host, ref, method, {})
+        answer = await svc._look(
+            host, ref, method, {}, epoch=running.launched.epoch if running else 0
+        )
     except (DeviceOffline, DeviceCallError, TimeoutError):
         logger.warning("stopping a session on the host failed", exc_info=True)
         return False
@@ -86,7 +89,7 @@ async def memory(svc: SessionHost, ref: SessionRef, request: dict) -> dict | Non
     if running is None or not keeps_memory(ref.harness):
         return None
     try:
-        return await svc._wire().call(running.host, ref, "memory", request)
+        return await svc._call(running, ref, "memory", request)
     except (DeviceCallError, DeviceOffline):
         return None
 
@@ -94,15 +97,20 @@ async def memory(svc: SessionHost, ref: SessionRef, request: dict) -> dict | Non
 async def control(svc: SessionHost, ref: SessionRef, request: dict) -> dict:
     """One control request to the session, to its response."""
     running = svc._started(ref)
-    return await svc._wire().call(running.host, ref, "control", {"request": request})
+    return await svc._call(running, ref, "control", {"request": request})
 
 
 async def control_state(svc: SessionHost, ref: SessionRef) -> dict:
-    """What the session's controls show, from its mirror alone; {} for a
-    harness that has none."""
+    """What the session's controls show: its background tasks and what it
+    came up with, as its runner last said they stand (`lifecycle`); {} for a
+    harness whose runner does not say."""
     running = svc._running.get(ref)
-    driver = svc._driver(ref)
-    show = getattr(driver, "control_state", None)
-    if running is None or show is None:
+    reading = running.subscription if running is not None else None
+    if not isinstance(reading, Reading):
         return {}
-    return await show(running.mirror)
+    state = reading.state
+    ready = state.get("ready")
+    return {
+        "tasks": state.get("tasks") or {},
+        "state": {"init": ready} if ready else {},
+    }

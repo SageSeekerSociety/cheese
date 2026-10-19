@@ -54,6 +54,7 @@ from app.domain.block.models import (
     EDITED_AT_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
     PROMPTED_TURN_META_KEY,
+    READ_FAILED_META_KEY,
     Block,
     BlockKind,
     prompt_attempts,
@@ -304,8 +305,8 @@ class BlockRepository(
     async def mark_consumed(
         self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
     ) -> None:
-        """Stamp human blocks as read, by the turn `turn_id` whose clean Stop
-        showed the session got through them.
+        """Stamp human blocks as read, into the work `turn_id`, once the
+        session's runner reported it read them.
 
         This is what makes the next turn's pending window a fact instead of a
         guess (see CONSUMED_TURN_META_KEY). `meta` is a plain JSON column, so the
@@ -317,6 +318,16 @@ class BlockRepository(
         stmt = select(Block).where(Block.id.in_(block_ids))
         for block in (await self._session.scalars(stmt)).all():
             block.meta = {**(block.meta or {}), CONSUMED_TURN_META_KEY: str(turn_id)}
+        await self._session.flush()
+
+    async def mark_read_failed(self, block_ids: list[uuid.UUID], failure: str) -> None:
+        """Say on these read blocks that the work they were read into failed
+        (``READ_FAILED_META_KEY``), replacing ``meta`` as ``mark_consumed`` does."""
+        if not block_ids:
+            return
+        stmt = select(Block).where(Block.id.in_(block_ids))
+        for block in (await self._session.scalars(stmt)).all():
+            block.meta = {**(block.meta or {}), READ_FAILED_META_KEY: failure}
         await self._session.flush()
 
     async def bump_prompt_attempts(

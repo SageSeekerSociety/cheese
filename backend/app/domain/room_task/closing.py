@@ -50,7 +50,7 @@ from app.core.config import settings
 from app.core.db import after_own_commit
 from app.core.sentences import say
 from app.domain.block.models import Block
-from app.domain.block.queries import queued_messages
+from app.domain.block.queries import queued_messages, read_failed_messages
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
@@ -245,14 +245,26 @@ async def unfinished_turns(
         left += [
             Unfinished(message.content, None)
             for message in waiting
-            if message.id not in taken
-            and (
-                by is None
-                or ((message.meta or {}).get("agent_recipient") or {}).get("handle")
-                == by
-            )
+            if message.id not in taken and _for(message, by)
         ]
+    # A message that was read and then got no answer: the work it was read
+    # into failed. Read is not answered.
+    left += [
+        Unfinished(message.content, None)
+        for message in await session.scalars(
+            read_failed_messages(now - QUEUED_FOR, task_id)
+        )
+        if _for(message, by)
+    ]
     return left
+
+
+def _for(message: Block, by: str | None) -> bool:
+    """Whether a message is for ``by``'s work (any agent's when None)."""
+    return (
+        by is None
+        or ((message.meta or {}).get("agent_recipient") or {}).get("handle") == by
+    )
 
 
 class StopsWork(Protocol):

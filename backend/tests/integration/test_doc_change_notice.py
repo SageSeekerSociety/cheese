@@ -13,6 +13,7 @@ without being told is a wall you hit after ten minutes of work.
 """
 
 import uuid
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 
 import pytest
@@ -30,7 +31,6 @@ from app.domain.delivery.input_identity import (
     InputIdentity,
     InputReceipt,
     InputRegistrar,
-    ReceiptConsumer,
 )
 from app.main import app
 from tests.conftest import stub_compute
@@ -95,7 +95,7 @@ class _Screen:
         self,
         session: SessionRef | None = None,
         work_id: uuid.UUID | None = None,
-        receipts: ReceiptConsumer | None = None,
+        receipts: Callable[[InputReceipt], Awaitable[None]] | None = None,
     ) -> None:
         self.session = session
         self.work_id = work_id

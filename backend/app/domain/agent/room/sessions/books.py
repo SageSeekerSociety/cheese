@@ -1,12 +1,13 @@
 """What the room hears, and the books kept from it.
 
 ``_hear`` is the one door: one thing a session said or did, handed to the room's
-reader. Around it sit the three reads the delivery ledger produces
-(``_hear_receipt``, ``_hear_completion``, ``_hear_termination``), the room's
-memory reconciliation (``reconcile_memory``, ``memory``), and the room's own
-account of the open turn — ``pulse`` records a mark, ``verdict`` asks whether
-the seat's clocks show a turn stuck in a way nothing else notices, and
-``_end_by_verdict`` ends one.
+reader. Around it sit the receipt a runner's acceptance produces
+(``_hear_receipt``), the room's memory reconciliation (``reconcile_memory``,
+``memory``), and, for a harness whose runner keeps no stuck-work clocks of its
+own (`harness/driven/lifecycle.py`'s ``Watchdog``), the room's account of the
+open turn — ``pulse`` records a mark, ``verdict`` asks whether the seat's clocks
+show a turn stuck in a way nothing else notices, and ``_end_by_verdict`` ends
+one.
 
 ``_consume`` and ``_activity`` are the two shapes everything here takes: an event
 to the room (or to the platform's own queue, when the work is the platform's), and
@@ -29,20 +30,14 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
 from app.domain.agent.reads import (
-    Completed,
     Read,
     Received,
-    Terminated,
     Working,
 )
 from app.domain.agent.room import sessions as pkg
 from app.domain.agent.room.sessions.records import Clock, Live
 from app.domain.agent.service import AgentResult
-from app.domain.delivery.input_identity import (
-    InputReceipt,
-    WorkCompletion,
-    WorkTermination,
-)
+from app.domain.delivery.input_identity import InputReceipt
 
 logger = logging.getLogger("app.domain.agent.room.sessions")
 
@@ -70,24 +65,6 @@ async def _hear_receipt(svc: pkg.RoomSessions, receipt: InputReceipt) -> None:
     await svc._hear(
         svc._room(identity.project_id, identity.conversation_id),
         Read(str(identity.work_id), Received(receipt)),
-        required=True,
-    )
-
-
-async def _hear_completion(svc: pkg.RoomSessions, completion: WorkCompletion) -> None:
-    await svc._hear(
-        svc._room(completion.project_id, completion.conversation_id),
-        Read(str(completion.work_id), Completed(completion)),
-        required=True,
-    )
-
-
-async def _hear_termination(
-    svc: pkg.RoomSessions, termination: WorkTermination
-) -> None:
-    await svc._hear(
-        svc._room(termination.project_id, termination.conversation_id),
-        Read(str(termination.work_id), Terminated(termination)),
         required=True,
     )
 
