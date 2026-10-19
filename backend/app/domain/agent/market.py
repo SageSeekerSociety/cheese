@@ -112,9 +112,8 @@ def compute_listings(
     device_online: bool | None = None,
 ) -> list[PoolListing]:
     """The sandbox specs on offer on this deployment: the platform's machines,
-    a whole VM of the platform's, and people's own computers — each person's
-    are a spec of their own in a project (``environment.devices_of``), listed
-    here once. ``device_online`` scopes the last to a project's machines; left
+    a whole VM of the platform's, and the team's enrolled computers.
+    ``device_online`` scopes the last to a project's team; left
     as None (the global 市场) it asks whether any machine is connected."""
     if device_online is None:
         # deferred-import: tests replace this name on app.domain.agent.device_hub

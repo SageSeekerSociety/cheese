@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.domain.agent import execution
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.user.models import User
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
 from tests.integration.test_sandbox_idle_stop import (
@@ -21,6 +22,7 @@ from tests.integration.test_sandbox_idle_stop import (
     tool_call,
     working_on,
 )
+from tests.support.devices import enrollment_team
 
 CHECKPOINT = {
     "method": "control",
@@ -41,6 +43,7 @@ def _a_cloud_machine(case, device_id: str) -> None:
                     name=device_id,
                     token=f"{device_id}-token",
                     owner_user_id=owner,
+                    team_id=await enrollment_team(sql_device_service(db), owner),
                     supply=Supply.cloud,
                     created_at=datetime.now(UTC),
                 )

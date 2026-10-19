@@ -6,7 +6,7 @@ from tests.integration.migration_replay import database_at
 
 
 def test_existing_connection_gets_personal_team_and_old_backend_can_still_insert():
-    with database_at("c9e25a7b38f1") as db:
+    with database_at("d1f37c8a46b2") as db:
         user = db.fetchval(
             'INSERT INTO "user" (username, email, created_at, updated_at) VALUES ($1, $2, now(), now()) RETURNING id',
             "model-migration-" + uuid.uuid4().hex[:8],

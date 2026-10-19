@@ -28,7 +28,7 @@ export interface MarketNode {
   id: string
   label: string
   // Which sandbox spec this node IS — the same id the 市场 catalogue lists.
-  kind: 'standard' | 'vm' | 'devices_of'
+  kind: 'standard' | 'vm' | 'team_devices'
   online: boolean
   // Whether an unconfigured topic lands on this node.
   current: boolean

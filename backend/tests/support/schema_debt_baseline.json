@@ -22,8 +22,6 @@
     "compute_runs.topic_id",
     "conversations.project_id",
     "device_health.device_id",
-    "device_project.device_id",
-    "device_team.device_id",
     "dispatches.place_id",
     "docs_questions.user_id",
     "docs_visits.user_id",

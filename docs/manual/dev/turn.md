@@ -121,7 +121,7 @@ steps:
 
 ### 每位队友一个执行环境 {#seats-machine}
 
-执行环境按 `(对话, 队友)` 记在 `agent_environments` 上（`agent.environment`），不跟会话行，所以换骨架开出的新会话行还是同一个环境。它是两种之一：某种规格的沙箱（`{"kind": "sandbox", "spec": ...}`），或者一台人自己接入的电脑、不进沙箱（`{"kind": "self_hosted", "device_id": ...}`）。规格之间是平级的：`standard` 和 `vm` 是平台的机器，`devices_of:<用户 id>` 是那个人接入这个项目的电脑。沙箱从不点名机器，放在哪台由规格定（`machine/environments.py` 的 `device_for_spec`，平台的规格交给 `HostPool.place`）；不进沙箱只有那台电脑的主人本人能选，AI 队友不能。
+执行环境按 `(对话, 队友)` 记在 `agent_environments` 上（`agent.environment`），不跟会话行，所以换骨架开出的新会话行还是同一个环境。它是两种之一：某种规格的沙箱（`{"kind": "sandbox", "spec": ...}`），或者指定一台团队设备、不进沙箱（`{"kind": "self_hosted", "device_id": ...}`）。规格之间是平级的：`standard` 和 `vm` 是平台的机器，`team_devices` 是项目所在团队接入的设备。沙箱从不点名机器，放在哪台由规格定（`machine/environments.py` 的 `device_for_spec`，平台的规格交给 `HostPool.place`）；指定整台设备只有设备所在团队的管理员能选，AI 队友不能。
 
 一位队友第一次要手时（`machine/session_work._attempt`），平台按 任务的默认 → 房间的默认（`topics.default_environment`）→ 项目的默认 → 标准沙箱 取一份写成它自己的（`environments.environment_of`），之后默认再改也不动它。工作目录是队友的：每条会话在它那台机器上按自己这一代（`execution_request.generation`，落在租约的 `resource_id` 上）开一份工作目录和执行器状态（`device_home_dir`），几位队友互不看见对方没推送的改动。
 

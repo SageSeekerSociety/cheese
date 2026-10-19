@@ -1,6 +1,6 @@
 """Each agent's execution environment in a conversation: what it is, what a new
-agent gets, which sandbox specs a project is offered, and the device a sandbox
-of a person's spec is placed on (``agent.environment``).
+agent gets, which sandbox specs a project is offered, and the team device a
+sandbox is placed on (``agent.environment``).
 
 Changing one agent's environment is ``session_work.switch_environment``; the
 machine it then works on is settled on its next tool call (``session_work``).
@@ -169,10 +169,9 @@ async def device_for_spec(
     is_online,
     agent_handle: str | None = None,
 ):
-    """A device for the team's sandbox pool: one of
-    that person's computers serving the project, online, not quarantined and
-    able to make a sandbox — and, for a task, allowed to work its owner's
-    tasks. The one the session already holds comes first while it qualifies.
+    """A device for the team's sandbox pool: online, not quarantined and
+    able to make a sandbox. Every team member's tasks can use it.
+    The one the session already holds comes first while it qualifies.
     None when there is no such device now."""
     wanted = spec_of(spec)
     assert wanted is not None and not wanted.platform

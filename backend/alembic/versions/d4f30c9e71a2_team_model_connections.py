@@ -1,7 +1,7 @@
 """Give platform-held model connections a team owner.
 
 Revision ID: d4f30c9e71a2
-Revises: c9e25a7b38f1
+Revises: d1f37c8a46b2
 """
 
 from alembic import op
@@ -10,7 +10,7 @@ from sqlalchemy.dialects import postgresql
 from migration_helpers import with_lock_retries
 
 revision = "d4f30c9e71a2"
-down_revision = "c9e25a7b38f1"
+down_revision = "d1f37c8a46b2"
 branch_labels = None
 depends_on = None
 
