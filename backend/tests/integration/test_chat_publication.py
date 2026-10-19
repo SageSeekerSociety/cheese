@@ -5,6 +5,7 @@ import base64
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -624,5 +625,104 @@ def test_only_pictures_go_inline(client):
         attachments=[picture("report.png", raw=b"%PDF-1.7 report")],
     )
     assert response.status_code == 422
+    history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
+    assert [b for b in history if b["kind"] == "message"] == []
+
+
+def uploads_under(project_id):
+    """The bytes this project's rooms hold under `uploads/` — where a
+    publication's pictures land. The room file list hides them on purpose, so
+    a test that wants to count copies has to look at the tree."""
+    root = Path(settings.workspace_root) / ".room-files" / project_id
+    return sorted(p for p in root.rglob("uploads/*/*") if p.is_file())
+
+
+def room_with_project(client):
+    project = post_project(client, json={"name": "Publication"}, owner="alice").json()[
+        "data"
+    ]
+    topic = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Work"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    thread = in_thread(client, topic["id"], "alice")
+    token = mint_scoped_token(project_id=project["id"], topic_id=thread)
+    return thread, project["id"], {"X-Cheese-Token": token}
+
+
+def test_a_retry_of_a_picture_keeps_one_copy(client, stub_hooks):
+    """The same request_id after a lost response returns the stored message
+    and writes no second copy of the bytes: a retry is not a new send."""
+    topic, project_id, headers = room_with_project(client)
+    request_id = str(uuid.uuid4())
+    first = publish(
+        client,
+        topic,
+        headers,
+        "看这一张",
+        request_id=request_id,
+        attachments=[picture("shot.png")],
+    )
+    assert first.status_code == 200, first.text
+    before = uploads_under(project_id)
+    assert len(before) == 1
+    retry = publish(
+        client,
+        topic,
+        headers,
+        "看这一张",
+        request_id=request_id,
+        attachments=[picture("shot.png")],
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["data"]["id"] == first.json()["data"]["id"]
+    assert uploads_under(project_id) == before
+    history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
+    assert [b["kind"] for b in history if b["kind"] in ("message", "attachment")] == [
+        "message",
+        "attachment",
+    ]
+
+
+def test_a_retry_with_a_different_picture_conflicts(client, stub_hooks):
+    """The same id with another picture is another publication: it must be
+    refused, not silently answered with the old message."""
+    topic, project_id, headers = room_with_project(client)
+    request_id = str(uuid.uuid4())
+    first = publish(
+        client,
+        topic,
+        headers,
+        "看这一张",
+        request_id=request_id,
+        attachments=[picture("shot.png")],
+    )
+    assert first.status_code == 200, first.text
+    changed = publish(
+        client,
+        topic,
+        headers,
+        "看这一张",
+        request_id=request_id,
+        attachments=[picture("shot.png", raw=PNG + b"changed")],
+    )
+    assert changed.status_code == 409
+    assert len(uploads_under(project_id)) == 1
+
+
+def test_a_bad_second_picture_writes_nothing(client):
+    """Every picture is checked before any of them is written: the good first
+    one must not be left behind by the bad second one."""
+    topic, project_id, headers = room_with_project(client)
+    response = publish(
+        client,
+        topic,
+        headers,
+        "看这两张",
+        attachments=[picture("ok.png"), picture("bad.png", raw=b"%PDF-1.7 report")],
+    )
+    assert response.status_code == 422
+    assert uploads_under(project_id) == []
     history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
     assert [b for b in history if b["kind"] == "message"] == []

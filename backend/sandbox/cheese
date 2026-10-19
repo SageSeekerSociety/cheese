@@ -3100,11 +3100,16 @@ def _chat_send(args: dict, host) -> str:
         raise PlatformToolError(
             f"一次最多发 {_CHAT_ATTACHMENTS_PER_MESSAGE} 张图，分两次发"
         )
+    # 执行器把每次 invoke 按 id 记进日志：同一个 id 再来一次，输入不同就拒
+    # （"Request ID already belongs to different input"），输入相同则直接回放
+    # 上一次的结果。所以每次调用要有自己的前缀，否则第二次 `chat_send` 要么
+    # 失败，要么发出去的是同一路径上旧文件的字节。
+    run = uuid.uuid4().hex
     files = []
     for index, path in enumerate(paths):
         if not isinstance(path, str) or not path.strip():
             raise PlatformToolError("attachments 里每一项都要是一个文件路径")
-        raw = _read_chat_attachment(host, path, f"chat-send-{index}")
+        raw = _read_chat_attachment(host, path, f"chat-send-{run}-{index}")
         name = path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or "image"
         files.append(
             {

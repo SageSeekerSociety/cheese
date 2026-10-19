@@ -63,6 +63,25 @@ class StoredAssistant:
     attachments: tuple[dict, ...] = ()
 
 
+async def stored_publication(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    topic_id: uuid.UUID,
+    author: str,
+    publication_id: str,
+) -> dict | None:
+    """The result a request with this id already stored, or None.
+
+    `chat_send`'s retry path asks before it reads or writes any attachment: a
+    retry of a message the room already has must not leave a second copy of
+    the bytes behind. The decision stays here, under the same key and the same
+    input rule `persist_assistant_message` applies.
+    """
+    key = action_key(topic_id, "chat-publish", author, publication_id)
+    async with sessions() as session:
+        return await idem.stored_result(session, key)
+
+
 async def persist_assistant_message(
     sessions: async_sessionmaker[AsyncSession],
     *,
@@ -107,6 +126,15 @@ async def persist_assistant_message(
         publication_input = {
             "text": text,
             "reply_to": str(reply_to) if reply_to else None,
+            # The pictures are part of what this request_id stands for: the
+            # same id with a different picture is a different publication, not
+            # a retry. The digest is stable across a retry; the stored path is
+            # not (each upload gets its own directory).
+            **(
+                {"attachments": [a.get("digest") for a in attachments]}
+                if attachments
+                else {}
+            ),
         }
         if publication_id is not None:
             publication_key = action_key(

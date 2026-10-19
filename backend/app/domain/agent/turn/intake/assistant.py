@@ -11,7 +11,10 @@ from app.domain.agent.mentions import _expand_mention_names, announce_mentions
 from app.domain.agent.queries import _agent_handle
 from app.domain.agent.turn.intake.events import _persist_room_event
 from app.domain.agent.turn.state.live import LiveWork
-from app.domain.agent.turn.store.assistant import persist_assistant_message
+from app.domain.agent.turn.store.assistant import (
+    persist_assistant_message,
+    stored_publication as find_stored_publication,
+)
 from app.domain.event_author import AuthorType
 from app.domain.topic.models import Topic
 from app.domain.topic.reads import load_topic
@@ -45,6 +48,20 @@ class AssistantMessages:
             # None means backfill has no roster; [] means private, not missing.
             roster = await self._read_roster(session, project_id, topic)
         return _expand_mention_names(text, roster, topic_refs), roster
+
+    async def stored_publication(
+        self, *, topic_id: uuid.UUID, author: str, publication_id: str
+    ) -> dict | None:
+        """The result this publication id already stored, if it stored one.
+
+        The retry path reads this before it names any attachment, so a retry
+        of a message the room already has writes no second copy of the bytes."""
+        return await find_stored_publication(
+            self.sessions,
+            topic_id=topic_id,
+            author=author,
+            publication_id=publication_id,
+        )
 
     async def persist_assistant_message(
         self,
