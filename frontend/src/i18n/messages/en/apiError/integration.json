@@ -107,7 +107,7 @@
   "mcpServerNotAdded": "This server was not added in project settings",
   "mcpServerNameTaken": "The project already has a server named {name}",
   "mcpApprovalNotFound": "This run request no longer exists",
-  "mcpApprovalOwnerOnly": "Only the owner of this device can decide",
+  "mcpApprovalOwnerOnly": "Only an administrator of this device’s team can decide",
   "mcpCommandInvalid": "This command could not be parsed",
   "mcpEnvNameInvalid": "Environment variable names use only letters, digits and underscores, and do not start with a digit",
   "mcpServerUrlRequired": "The address cannot be empty"

@@ -54,7 +54,7 @@ _SHARING_WORDS = (
 #: 几条静态门禁指向同一条纪律，修法写一次。规则：分享出去的是成果本身，不是进入
 #: 用户电脑的钥匙。修法是模块接缝：授权只出现在主人命名空间
 #: `/my/devices/{device_id}/...` 下（`backend/app/api/routes/local_dirs.py`），
-#: 端点在响应前先 `_require_owned_device` 或（不接 device_id 的）`_require_user`；
+#: 端点在响应前先 `_require_managed_device` 或（不接 device_id 的）`_require_user`；
 #: 别的路由模块不许 import `app.domain.local_fs`，
 #: 唯一放行的是设备连上来时推授权表的 `push_grants_on_connect`
 #: （connector/devices.py）。
@@ -62,7 +62,7 @@ _SHARING_WORDS = (
 _REPAIR_LOCAL_FS = (
     "修法：授权只出现在主人命名空间 /my/devices/{device_id}/... 下（"
     "backend/app/api/routes/local_dirs.py）；碰 device_id 的端点先 "
-    "_require_owned_device、不碰的端点先 _require_user；别的路由模块不许 import "
+    "_require_managed_device、不碰的端点先 _require_user；别的路由模块不许 import "
     "app.domain.local_fs（唯一放行 push_grants_on_connect）。"
     "规则/文档：docs/manual/dev/local-fs.md#api、#traps。"
     "复查：cd backend && uv run pytest tests/unit/test_local_fs_sharing_guard.py -q"
@@ -108,7 +108,7 @@ def test_every_directory_endpoint_checks_device_ownership():
             )
             continue
         source = ast.dump(handler)
-        if "_require_owned_device" not in source:
+        if "_require_managed_device" not in source:
             unchecked.append(handler.name)
 
     assert unchecked == [], (

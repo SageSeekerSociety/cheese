@@ -4,7 +4,7 @@
 // the download instead.
 import { reactive } from 'vue'
 
-import { ApiError, connectDevice, deviceProposedName, listMyDevices } from '../api'
+import { ApiError, connectDevice, deviceProposedName, listAccessibleDevices, listMyTeams } from '../api'
 
 import { storageGet, storageSet } from './browserStorage'
 import { desktopCan } from './desktopApp'
@@ -69,6 +69,7 @@ interface TauriGlobal {
 
 export interface ConnectOptions {
   knownDeviceIds: string[]
+  teamId: number
   approve: (code: string) => Promise<void>
   onStep: (step: ConnectStep) => void
   onPercent: (value: number) => void
@@ -78,6 +79,7 @@ export interface DesktopBridge {
   connectThisMachine: (options: ConnectOptions) => Promise<void>
   cancelConnect: () => Promise<void>
   thisDevice: () => Promise<string | null>
+  thisDevices: () => Promise<string[]>
   /** Logs in the login this computer calls `loginId` again, or adds one when it is null. */
   claudeLogin: (
     console: boolean,
@@ -110,10 +112,10 @@ function failure(err: unknown): ConnectFailure {
  *  predates connecting step by step (it updates itself within hours). */
 export function desktopBridge(): DesktopBridge | null {
   const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__
-  if (!tauri?.core || !desktopCan('device')) return null
+  if (!tauri?.core || !desktopCan('teamEnrollment')) return null
   const { invoke, Channel } = tauri.core
   return {
-    async connectThisMachine({ knownDeviceIds, approve, onStep, onPercent }) {
+    async connectThisMachine({ knownDeviceIds, teamId, approve, onStep, onPercent }) {
       let approveError: ConnectFailure | null = null
       const progress = new Channel<Progress>()
       progress.onmessage = (message) => {
@@ -126,7 +128,7 @@ export function desktopBridge(): DesktopBridge | null {
         })
       }
       try {
-        await invoke('connect_this_machine', { knownDeviceIds, progress })
+        await invoke('connect_this_machine', { knownDeviceIds, teamId, progress })
       } catch (err) {
         throw approveError ?? failure(err)
       }
@@ -136,6 +138,9 @@ export function desktopBridge(): DesktopBridge | null {
     },
     async thisDevice() {
       return (await invoke('this_device')) as string | null
+    },
+    async thisDevices() {
+      return (await invoke('this_devices')) as string[]
     },
     async claudeLogin(console, loginId, onStep, profile = 'default') {
       const progress = new Channel<Progress>()
@@ -175,7 +180,7 @@ export function desktopBridge(): DesktopBridge | null {
 
 async function myDevices() {
   try {
-    return (await listMyDevices()).devices
+    return (await listAccessibleDevices()).devices
   } catch (e) {
     // The connector answers a user with no device yet as if nobody were signed in.
     if (e instanceof ApiError && e.status === 401) return []
@@ -193,6 +198,8 @@ export const deviceFlow = reactive({
   percent: null as number | null,
   failure: null as ConnectFailure | null,
   deviceId: null as string | null,
+  deviceName: '',
+  teamId: null as number | null,
 })
 
 const CORE_STEPS: ConnectStep[] = ['download', 'approve', 'start']
@@ -225,7 +232,7 @@ async function untilOnline(deviceId: string | null): Promise<boolean> {
  *  computer connected before, shows the dialog only when a step needs the
  *  person, and closes it again once connected. Asked while one is under way,
  *  it shows that one. */
-export async function startConnecting(options: { quiet?: boolean } = {}) {
+export async function startConnecting(options: { quiet?: boolean; teamId?: number } = {}) {
   const bridge = desktopBridge()
   if (!bridge) return
   if (deviceFlow.stage === 'progress') {
@@ -241,17 +248,30 @@ export async function startConnecting(options: { quiet?: boolean } = {}) {
   deviceFlow.steps = [...CORE_STEPS]
   deviceFlow.current = null
   try {
+    const teams = await listMyTeams()
+    const teamId = options.teamId ?? teams.find((team) => team.personal)?.id
+    if (teamId === undefined) throw new Error('No team selected')
+    deviceFlow.teamId = teamId
+    const before = await bridge.thisDevices()
+    const known = (await myDevices()).filter((device) => device.team_id === teamId)
     await bridge.connectThisMachine({
-      knownDeviceIds: (await myDevices()).map((d) => d.device_id),
+      knownDeviceIds: known.map((d) => d.device_id),
+      teamId,
       onStep: enter,
       onPercent: (value) => (deviceFlow.percent = value),
       approve: async (code) => {
         const { device_name } = await deviceProposedName(code)
-        await connectDevice(code, device_name ?? undefined)
+        await connectDevice(code, device_name ?? undefined, teamId)
       },
     })
     enter('start')
-    deviceFlow.deviceId = await bridge.thisDevice()
+    const ids = await bridge.thisDevices()
+    const after = await myDevices()
+    const enrolled =
+      after.find((d) => ids.includes(d.device_id) && d.team_id === teamId && !before.includes(d.device_id)) ??
+      after.find((d) => ids.includes(d.device_id) && d.team_id === teamId)
+    deviceFlow.deviceId = enrolled?.device_id ?? null
+    deviceFlow.deviceName = enrolled?.name ?? ''
     if (!(await untilOnline(deviceFlow.deviceId))) {
       stop({ step: 'start', detail: '' })
       return
@@ -278,6 +298,11 @@ function stop(why: ConnectFailure) {
   }
   deviceFlow.failure = why
   deviceFlow.stage = 'failed'
+}
+
+export function requestConnecting(teamId?: number) {
+  deviceFlow.teamId = teamId ?? null
+  Object.assign(deviceFlow, { open: true, stage: 'ask', failure: null })
 }
 
 export async function cancelConnecting() {
@@ -309,7 +334,7 @@ export async function offerToConnect(userId: number) {
   if (mine?.online) return
   if (mine) {
     // Connected before: bring it back without asking.
-    await startConnecting({ quiet: true })
+    await startConnecting({ quiet: true, teamId: mine.team_id })
     return
   }
   if (asked(userId)) return

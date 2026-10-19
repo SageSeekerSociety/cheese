@@ -15,7 +15,7 @@ def test_market_lists_ai_pools_and_sandbox_specs(client):
     assert ai_default["available"] and ai_default["price"] and ai_default["description"]
     # The specs an agent's sandbox can have: the platform's, a VM of the
     # platform's, and people's own computers. Nothing that does not exist.
-    assert {p["id"] for p in data["compute"]} == {"standard", "vm", "devices_of"}
+    assert {p["id"] for p in data["compute"]} == {"standard", "vm", "team_devices"}
     # Exactly one is what an agent nothing was chosen for gets.
     assert [p["id"] for p in data["compute"] if p["default"]] == ["standard"]
     assert all(p["price"] and p["description"] for p in data["compute"])

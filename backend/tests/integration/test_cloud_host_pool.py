@@ -8,6 +8,10 @@ session home is released after the idle hold, never while a session left work
 on it that it did not push.
 """
 
+from tests.support.devices import enrollment_team
+from app.domain.device.wiring import sql_device_service
+
+
 import asyncio
 import logging
 import uuid
@@ -22,7 +26,7 @@ from app.core.config import Settings, settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
-from app.domain.device.models import DeviceProjectRow, DeviceRow, DeviceTeamRow
+from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
@@ -269,6 +273,7 @@ def _warm_machine_ready(case: Case) -> str:
             )
             db.add(
                 DeviceRow(
+                    team_id=await enrollment_team(sql_device_service(db), owner.id),
                     device_id="warm-1",
                     name="warm-1",
                     token="warm-token",
@@ -445,21 +450,13 @@ def test_a_full_host_takes_a_warm_machine_before_creating_one(pool):
         async with pool.client.test_request_factory() as db:
             row = await db.get(DeviceRow, warm)
             owner = await UserRepository(db).get_by_handle(HOST_OWNER)
-            teams = (
-                await db.scalars(
-                    select(DeviceTeamRow).where(DeviceTeamRow.device_id == warm)
-                )
-            ).all()
-            projects = (
-                await db.scalars(
-                    select(DeviceProjectRow).where(DeviceProjectRow.device_id == warm)
-                )
-            ).all()
-            return row.owner_user_id == owner.id, teams, projects
+            from app.domain.device.wiring import sql_device_service
 
-    owned_by_pool, teams, projects = pool.run(device)
-    # The device is the platform's: no team or project lists it as theirs.
-    assert owned_by_pool and teams == [] and projects == []
+            visible = await sql_device_service(db).list_devices_for_team(row.team_id)
+            return row.owner_user_id == owner.id, visible
+
+    owned_by_pool, visible = pool.run(device)
+    assert owned_by_pool and visible == []
 
 
 def test_with_the_warm_pool_empty_a_new_host_is_created(pool):
@@ -731,6 +728,7 @@ def test_the_device_owner_admits_tool_calls_only_on_live_hosts(pool):
             owner = await IdentityService(db).ensure_agent_user(handle=HOST_OWNER)
             db.add(
                 DeviceRow(
+                    team_id=await enrollment_team(sql_device_service(db), owner.id),
                     device_id="host-device",
                     name="host",
                     token="host-token",

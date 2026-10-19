@@ -45,11 +45,21 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
     id: 'connect-view',
     title: 'ConnectViewView',
     about:
-      '设备审批页的画面：命令行把 `<origin>/connect?code=…` 交给已登录的人，他在这里给这台机器起个名、点一下，机器就归他所有、此后可以接活。这一半只收 props、只发 approve —— 读地址、预填命令行提上来的名字、调后端在容器 `ConnectView.vue` 里。',
+      '设备审批页：命令行提供链接，登录后选择接入的团队并命名。设备属于团队，由团队管理员管理。这一半只收 props、只发 approve —— 读地址、预填命令行提上来的名字、调后端在容器 `ConnectView.vue` 里。',
     file: 'src/views/ConnectViewView.vue',
     component: ConnectViewView,
     needs: UI_T,
-    args: { loading: false, error: null, approved: null, proposedName: '' },
+    args: {
+      loading: false,
+      error: null,
+      approved: null,
+      proposedName: '',
+      teams: [
+        { id: 1, handle: 'demo', name: '个人', personal: true },
+        { id: 2, handle: 'data', name: '数据组', role: 'ADMIN' },
+      ],
+      teamId: 1,
+    },
     states: [
       {
         name: '链接里没有设备码',
@@ -59,9 +69,9 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '还没登录',
-        note: '批准会把机器绑到一个真实账号上，所以没登录时先请他去登录；登录完路由把他带回这一页。',
+        note: '登录后选择接入团队；登录完路由回到这一页。',
         props: { code: 'ABCD-1234', loggedIn: false },
-        expect: '请先登录，再批准这台设备归你所有',
+        expect: '登录后选择团队并批准设备接入',
       },
       {
         name: '等批准',
@@ -77,7 +87,7 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '已批准',
-        note: '批完了：一颗勾，说清设备「叫什么」已绑到你，剩下的交给命令行的 `link connect` 去完成。',
+        note: '批完了：一颗勾，说清设备「叫什么」已接入所选团队，剩下的交给命令行的 `link connect` 去完成。',
         props: { code: 'ABCD-1234', loggedIn: true, approved: deviceApproval() },
         expect: '设备已连接',
       },

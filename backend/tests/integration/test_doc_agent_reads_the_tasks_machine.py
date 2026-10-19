@@ -6,6 +6,8 @@ It never takes a machine for a question: a task whose machine is not in hand
 nothing else: no file written, no command started.
 """
 
+from tests.support.devices import enrollment_team, place_in_project_team
+
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -58,9 +60,10 @@ async def _task(client, *, lease: bool) -> tuple[uuid.UUID, uuid.UUID, str]:
             await devices.start("ada"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, owner.id),
         )
-        await devices.assign_to_project(
-            device.device_id, project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, device.device_id, project_id, actor_user_id=owner.id
         )
         topic = await db.get(Topic, room_id)
         assert topic is not None

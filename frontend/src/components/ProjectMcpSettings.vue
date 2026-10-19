@@ -103,7 +103,7 @@ const RUN_DOT: Record<McpRun['state'], string> = {
 
 function waitsOnOwner(server: McpServer) {
   const state = server.run?.state
-  return !!server.run?.owner && (state === 'awaiting' || state === 'refused') && server.status !== 'missing_values'
+  return (state === 'awaiting' || state === 'refused') && server.status !== 'missing_values'
 }
 
 const DOT: Record<McpServer['status'], string> = {
@@ -208,7 +208,6 @@ const fieldValue = (name: string) => props.values[name] ?? ''
                         tag="span"
                         class="t-body c-text"
                       >
-                        <template #name><UserRef :handle="server.run!.owner!" /></template>
                       </i18n-t>
                       <span v-else class="t-body c-text">{{ statusLine(server) }}</span>
                       <i18n-t

@@ -4,10 +4,9 @@
 字段与注释逐行原样搬来 —— 形状只有一处可看。谁用哪个模型见各子模块的 import。
 """
 
-import uuid
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from app.domain.device.login_kind import ConnectionKind
 
@@ -21,19 +20,16 @@ class DevicePollRequest(BaseModel):
 
 
 class ConnectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     device_code: str
     # The human-chosen name for this compute node (optional — blank keeps the name the
     # cli proposed at device-flow start, avoiding an "unnamed" node).
     device_name: str | None = None
-    project_id: uuid.UUID | None = None
+    team_id: int | None = None
 
 
 class RenameDeviceRequest(BaseModel):
     name: str
-
-
-class BindTeamRequest(BaseModel):
-    team_id: int
 
 
 class ClaudeCodeLoginOut(BaseModel):

@@ -7,6 +7,10 @@ inventory leaves out runs no tool. The inventory is the program
 very program against the test database.
 """
 
+from app.domain.device.wiring import sql_device_service
+from tests.support.devices import enrollment_team
+
+
 import json
 import os
 import runpy
@@ -45,10 +49,12 @@ def test_the_inventory_lists_the_pools_live_hosts_and_ready_warm_machines(client
             identity = IdentityService(db)
             owner = await identity.ensure_agent_user(handle="cheese-host-pool")
             now = datetime.now(UTC)
+            team_id = await enrollment_team(sql_device_service(db), owner.id)
 
             def device(device_id, private=True):
                 db.add(
                     DeviceRow(
+                        team_id=team_id,
                         device_id=device_id,
                         name=device_id,
                         token=f"token-{device_id}",

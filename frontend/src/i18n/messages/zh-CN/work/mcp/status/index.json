@@ -8,7 +8,7 @@
   "idle": "未启动",
   "running": "运行中",
   "failed": "启动失败",
-  "awaiting": "等 {name} 允许",
-  "refused": "{name} 没有允许",
+  "awaiting": "等团队管理员允许",
+  "refused": "团队管理员没有允许",
   "authorizedBy": "由 {name} 授权，{when}"
 }

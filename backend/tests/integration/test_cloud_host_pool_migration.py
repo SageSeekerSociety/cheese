@@ -20,7 +20,6 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.domain.device.models import DeviceTeamRow
 from app.domain.device.supply import Supply
 from app.domain.team.models import Team
 from tests.conftest import _PG_BASE, _admin_recreate_db
@@ -176,7 +175,12 @@ async def _seed(db_name: str) -> dict:
                     "supply": supply.name,
                 },
             )
-            db.add(DeviceTeamRow(device_id=device_id, team_id=team.id))
+            await db.execute(
+                text(
+                    "INSERT INTO device_team (id, device_id, team_id, created_at, updated_at) VALUES (:id, :device, :team, :now, :now)"
+                ),
+                {"id": uuid.uuid4(), "device": device_id, "team": team.id, "now": now},
+            )
         resource = str(room_id)
         # Written as rows, not through today's model: the table is at the
         # revision before the pool, and the model has moved on since.

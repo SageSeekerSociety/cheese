@@ -8,6 +8,8 @@ with it — and a machine that was away when it was removed logs it out as it
 next connects. A model service's key goes to the machine and nowhere else.
 """
 
+from tests.support.devices import enrollment_team
+
 import json
 import uuid
 from datetime import UTC, datetime
@@ -106,7 +108,10 @@ def _laptop(client, owner: str, *more: str) -> str:
             devices = sql_device_service(db)
             code = await devices.start(f"{owner}-laptop")
             device = await devices.approve(
-                code, owner_user_id=user.id, supply=Supply.self_hosted
+                code,
+                owner_user_id=user.id,
+                supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, user.id),
             )
             for local_id in (FIRST_LOGIN, *more):
                 db.add(

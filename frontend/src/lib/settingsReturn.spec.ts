@@ -17,7 +17,7 @@ describe('关掉设置去哪', () => {
   it('回到打开设置之前的那一页，设置里换页不算', () => {
     rememberPageBeforeSettings(page('/spaces/1/tasks?topic=2'))
     rememberPageBeforeSettings(page('/users/settings/profile', { settingsOverlay: true }))
-    rememberPageBeforeSettings(page('/users/settings/devices', { settingsOverlay: true }))
+    rememberPageBeforeSettings(page('/users/settings/connections', { settingsOverlay: true }))
     expect(pageBeforeSettings('/home')).toBe('/spaces/1/tasks?topic=2')
   })
 

@@ -459,8 +459,8 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
         expect: '查看日志',
       },
       {
-        name: '等电脑的主人允许',
-        note: '项目机器是成员自己的电脑：命令等它的主人在「等你处理」里允许。',
+        name: '等团队管理员允许',
+        note: '项目机器是团队设备：命令等团队管理员在「等你处理」里允许。',
         props: {
           list: mcpList({ servers: [mcpLocal({ run: { state: 'awaiting', log: [], owner: 'dana' } })] }),
           error: '',

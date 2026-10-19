@@ -206,7 +206,13 @@ async def close_account(session: AsyncSession, user_id: int) -> Closed | None:
             LocalDirectoryGrantRow.owner_user_id == user_id
         )
     )
-    await session.execute(delete(DeviceRow).where(DeviceRow.owner_user_id == user_id))
+    await session.execute(
+        delete(DeviceRow).where(
+            DeviceRow.team_id.in_(
+                select(Team.id).where(Team.personal_owner_user_id == user_id)
+            )
+        )
+    )
     # The model connections they hold: an API key, or a model service and its key.
     await session.execute(
         delete(AccountConnection).where(AccountConnection.owner_user_id == user_id)

@@ -23,6 +23,7 @@ import ThisDeviceView from '@/views/user/settings/ThisDeviceView.vue'
 
 /** 画法要 Vuetify、文案要语言包。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
+const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
 
 export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
   {
@@ -240,96 +241,31 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
   {
     id: 'this-device-view',
     title: 'ThisDeviceView',
-    get about() {
-      return t('catalog.thisDeviceView.about')
-    },
+    about: '这台电脑接入的团队，只读。示例数据。',
     file: 'src/views/user/settings/ThisDeviceView.vue',
     component: ThisDeviceView,
-    needs: UI_T,
-    // 「断开」那颗的确认框画在 body 上。
-    teleport: true,
+    needs: UI_T_R,
     args: {
       loading: false,
-      connected: true,
-      online: true,
-      connecting: false,
-      name: '工作站',
       teams: DEVICE_TEAMS,
-      teamIds: [2],
-      claudeLoggedIn: true,
-      claudePlan: 'max',
-      claudeService: null,
-      claudeState: 'idle',
-      canUseModelService: true,
       error: null,
+      enrollments: [
+        {
+          device_id: 'personal-device',
+          name: '工作站',
+          online: true,
+          team_id: 1,
+          screens: [],
+          logins: [MODEL_CONNECTIONS[0]],
+        },
+        { device_id: 'team-device', name: '数据组工作站', online: false, team_id: 2, screens: [] },
+      ],
     },
     states: [
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s1.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s1.note')
-        },
-        props: { loading: true },
-        expectSelector: '[role="progressbar"]',
-      },
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s2.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s2.note')
-        },
-        props: { connected: false },
-        expect: '未接入',
-        expectSelector: '.this-device__empty',
-      },
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s3.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s3.note')
-        },
-        props: {},
-        expect: '已接入 · 在线',
-        expectSelector: '.settings-card .this-device__status--on',
-      },
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s4.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s4.note')
-        },
-        props: { online: false },
-        expect: '已接入 · 离线',
-        // 这一格没有「在线」那一颗亮点的形状。
-        expectSelector: '.settings-card .this-device__status:not(.this-device__status--on)',
-      },
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s5.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s5.note')
-        },
-        props: { teamIds: [] },
-        expect: '未提供给团队',
-        expectSelector: '.this-device__chips .this-device__muted',
-      },
-      {
-        get name() {
-          return t('catalog.thisDeviceView.s6.name')
-        },
-        get note() {
-          return t('catalog.thisDeviceView.s6.note')
-        },
-        props: { error: '这台设备的接入状态没读出来' },
-        expect: '这台设备的接入状态没读出来',
-        expectSelector: '[role="alert"]',
-      },
+      { name: '多次接入', note: '每次接入各有在线状态。', props: {}, expect: '数据组' },
+      { name: '读取中', note: '正在读取。', props: { loading: true }, expectSelector: '[role="progressbar"]' },
+      { name: '暂无接入', note: '没有接入。', props: { enrollments: [] }, expect: '暂无接入' },
+      { name: '读取失败', note: '显示原因。', props: { error: '接入状态读取失败' }, expect: '接入状态读取失败' },
     ],
   },
 ]

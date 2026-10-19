@@ -124,7 +124,7 @@ async def test_granting_the_same_directory_twice_is_one_grant(service):
     first = await grant(service)
     second = await grant(service)
     assert first.id == second.id
-    assert len(await service.list_grants(OWNER)) == 1
+    assert len(await service.list_grants(DEVICE)) == 1
 
 
 # -- mode: read separately from read-write ----------------------------------
@@ -212,7 +212,7 @@ async def test_revoking_takes_effect_on_the_very_next_question(service):
     g = await grant(service, mode=GrantMode.READ_WRITE)
     assert (await service.authorize(ask(DOCS + "/a.txt", GrantMode.READ_WRITE))).allowed
 
-    revoked = await service.revoke(g.id, owner_user_id=OWNER)
+    revoked = await service.revoke(g.id, actor_user_id=OWNER, device_id=DEVICE)
     assert revoked is not None and revoked.revoked
 
     read = await service.authorize(ask(DOCS + "/a.txt", GrantMode.READ))
@@ -229,7 +229,7 @@ async def test_a_revoked_grant_is_absent_from_what_the_device_is_sent(service):
     before = await service.effective_grants(DEVICE, project_id=PROJECT)
     assert {g.id for g in before.grants} == {keep.id, drop.id}
 
-    await service.revoke(drop.id, owner_user_id=OWNER)
+    await service.revoke(drop.id, actor_user_id=OWNER, device_id=DEVICE)
     after = await service.effective_grants(DEVICE, project_id=PROJECT)
 
     assert {g.id for g in after.grants} == {keep.id}
@@ -238,26 +238,29 @@ async def test_a_revoked_grant_is_absent_from_what_the_device_is_sent(service):
     assert after.fingerprint != before.fingerprint
 
 
-async def test_revoking_someone_elses_grant_changes_nothing(service):
+async def test_revoking_a_grant_on_another_device_changes_nothing(service):
     g = await grant(service)
-    assert await service.revoke(g.id, owner_user_id=OWNER + 1) is None
+    assert (
+        await service.revoke(g.id, actor_user_id=OWNER, device_id="another-device")
+        is None
+    )
     assert (await service.authorize(ask(DOCS))).allowed
 
 
 async def test_revoking_twice_is_harmless(service):
     g = await grant(service, scope=GrantScope.USER, project_id=None)
-    first = await service.revoke(g.id, owner_user_id=OWNER)
-    second = await service.revoke(g.id, owner_user_id=OWNER)
+    first = await service.revoke(g.id, actor_user_id=OWNER, device_id=DEVICE)
+    second = await service.revoke(g.id, actor_user_id=OWNER, device_id=DEVICE)
     assert second is not None and second.revoked_at == first.revoked_at
 
 
 async def test_a_revoked_grant_is_still_listed_for_the_audit(service):
     """The row is kept, not deleted: the trail refers to it."""
     g = await grant(service)
-    await service.revoke(g.id, owner_user_id=OWNER)
+    await service.revoke(g.id, actor_user_id=OWNER, device_id=DEVICE)
 
-    assert [x.id for x in await service.list_grants(OWNER)] == []
-    with_history = await service.list_grants(OWNER, include_revoked=True)
+    assert [x.id for x in await service.list_grants(DEVICE)] == []
+    with_history = await service.list_grants(DEVICE, include_revoked=True)
     assert [x.id for x in with_history] == [g.id]
 
 

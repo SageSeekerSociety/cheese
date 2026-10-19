@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
 from app.core.sentences import say
-from app.domain.addressing import Event, Hand, address
+from app.domain.addressing import Addressed, Recipient, REASON_MACHINE_OWNER
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
@@ -72,7 +72,8 @@ from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
-from app.domain.team.models import Team
+from app.domain.team.models import Team, TeamUserRelation
+from app.domain.team.protocol import TeamMemberRole
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.usage.compute import ComputeRefused
@@ -213,12 +214,24 @@ async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> No
     # deferred-import: tests replace this name on app.domain.topic_membership.services
     from app.domain.topic_membership.services import TopicMemberService
 
-    owner = await db.get(User, device.owner_user_id)
-    if owner is None:
-        return
-    if owner.username in await TopicMemberService(db).people_in(
-        topic, team=project_team
-    ):
+    in_room = await TopicMemberService(db).people_in(topic, team=project_team)
+    admins = list(
+        await db.scalars(
+            select(User.username)
+            .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
+            .where(
+                TeamUserRelation.team_id == device.team_id,
+                TeamUserRelation.deleted_at.is_(None),
+                TeamUserRelation.role.in_([TeamMemberRole.OWNER, TeamMemberRole.ADMIN]),
+            )
+        )
+    )
+    recipients = tuple(
+        Recipient(handle, REASON_MACHINE_OWNER)
+        for handle in admins
+        if handle not in in_room
+    )
+    if not recipients:
         return
     project = await ProjectService(db).get_or_404(topic.project_id)
     team = await db.get(Team, project.team_id)
@@ -251,7 +264,7 @@ async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> No
             },
             occurred_at=datetime.now(UTC),
         ),
-        address(Event(machine_owner=owner.username), Hand.participant),
+        Addressed(recipients),
     )
 
 

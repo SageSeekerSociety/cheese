@@ -10,6 +10,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -35,7 +36,7 @@ class FakeDevices:
         self.started.append(name)
         return "code-1"
 
-    async def approve(self, code, *, owner_user_id, supply, name=None):
+    async def approve(self, code, *, owner_user_id, team_id, supply, name=None):
         # `supply` is required on the real service (#282 决定 2 /
         # #358) — mirrored here so this double cannot go on accepting a call the
         # production one rejects.
@@ -50,12 +51,6 @@ class FakeDevices:
 
     async def delete_platform_provisioned(self, device_id, *, actor_user_id):
         pass
-
-    async def assign_to_project(self, device_id, project_id, *, actor_user_id):
-        self.assigned.append((device_id, project_id))
-
-    async def assign_to_team(self, device_id, team_id, *, actor_user_id):
-        self.team_assigned.append((device_id, team_id))
 
 
 class FakeSession:
@@ -136,6 +131,12 @@ def build_service(
     service._devices = FakeDevices()
     service._client = SimpleNamespace(configured=True)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", FakeIdentity)
+    monkeypatch.setattr(
+        "app.domain.machine.services.team_service",
+        lambda _: SimpleNamespace(
+            ensure_personal_team=AsyncMock(return_value=SimpleNamespace(id=7))
+        ),
+    )
 
     monkeypatch.setattr(
         "app.domain.machine.services.settings.connector_public_base", origin

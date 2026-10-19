@@ -958,7 +958,6 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
     const paths = [
       '/users/settings/security',
       '/users/settings/profile',
-      '/users/settings/devices',
       `${projectPath}/settings/agents`,
     ];
     const seen: { path: string; left: number; width: number }[] = [];
