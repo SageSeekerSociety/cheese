@@ -283,6 +283,7 @@ class FakeGitHubPrClient:
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
+        self.task_metadata_batches: list[tuple[int, ...]] = []
         self.status_tokens: list[str] = []
         self.head_sha_calls: list[int] = []
         self.check_state_tokens: list[str] = []
@@ -411,6 +412,27 @@ class FakeGitHubPrClient:
                 1 for s in self.reviews_by_number.get(number, []) if s.kind == "comment"
             ),
         )
+
+    async def task_pr_metadata(self, *, owner, repo, numbers, token):
+        # deferred-import: pre-batch revisions use this fake's single-PR operation.
+        from app.domain.review.github_pr.task_pr_metadata import (
+            TaskPrMetadata,
+            TaskPrMetadataFailure,
+        )
+
+        if self.status_delay_s:
+            await asyncio.sleep(self.status_delay_s)
+        if self.status_error is not None:
+            raise self.status_error
+        self.task_metadata_batches.append(tuple(numbers))
+        return {
+            number: (
+                TaskPrMetadata(number, pr["head_sha"], pr["state"], pr["merged"])
+                if (pr := self.prs.get(number)) is not None
+                else TaskPrMetadataFailure("missing_pr")
+            )
+            for number in numbers
+        }
 
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
         self.check_state_tokens.append(token)
@@ -646,6 +668,11 @@ def app_world(client, monkeypatch):
         async def pr_status(self, number: int):
             return await fake.pull_request_status(
                 owner="owner", repo="repo", number=number, token="ghs_app_read"
+            )
+
+        async def task_pr_metadata(self, numbers):
+            return await fake.task_pr_metadata(
+                owner="owner", repo="repo", numbers=numbers, token="ghs_app_write"
             )
 
     async def _tokens_for_project(_project_id, _session):
