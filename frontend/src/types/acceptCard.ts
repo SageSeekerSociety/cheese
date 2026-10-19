@@ -116,7 +116,13 @@ export interface AcceptCard {
   artifact: { id: string; name: string; version: number } | null
   // 这一版交出去的是什么：一份文件（`filename`，字节在递卡那一刻落了快照）、一个
   // 地址（`url`），或者这次合并本身（`merge`，没有可下载的东西）。
-  deliverable: { kind: 'file' | 'link' | 'merge'; filename: string | null; url: string | null } | null
+  // revision：这一份是哪一版，采纳时原样带回（交付物可以在待处理时被换掉）。
+  deliverable: {
+    kind: 'file' | 'link' | 'merge'
+    filename: string | null
+    url: string | null
+    revision?: string | null
+  } | null
   completes_task?: boolean // 这次交付是不是任务的最后一步；不是的话采纳后任务接着做下一步
 }
 

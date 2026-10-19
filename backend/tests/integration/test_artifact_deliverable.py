@@ -28,7 +28,11 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
-from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
+from tests.integration.test_accept_pr import (
+    _give_card_a_pr,
+    _rendered_head,
+    _rendered_revision,
+)
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.integration.test_project_artifacts import remote_delivery as remote_delivery
 
@@ -129,7 +133,11 @@ def _hand_over(client, room_id: str, *, files=None, again=False, **declared):
 def _accept(client, card_id: str):
     r = client.post(
         f"/accept-cards/{card_id}/accept",
-        json={"decided_by": "alice", "head_sha": _rendered_head(client, card_id)},
+        json={
+            "decided_by": "alice",
+            "head_sha": _rendered_head(client, card_id),
+            "deliverable_revision": _rendered_revision(client, card_id),
+        },
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
@@ -440,7 +448,7 @@ def test_the_card_says_what_this_delivery_hands_over(client):
 
     cards = client.get(f"/topics/{room_id}/accept-card").json()["data"]["data"]
     card = next(c for c in cards if c["id"] == card_id)
-    assert card["deliverable"] == {
+    assert {k: card["deliverable"][k] for k in ("kind", "filename", "url")} == {
         "kind": "file",
         "filename": "报告.pdf",
         "url": None,
@@ -581,7 +589,7 @@ def test_the_reviewer_can_take_the_file_before_accepting(client):
     assert card["status"] == "pending"
     # 卡面要说得出这两样：这次动的是哪一项产物、交出去的是什么。
     assert card["artifact"]["name"] == "报告"
-    assert card["deliverable"] == {
+    assert {k: card["deliverable"][k] for k in ("kind", "filename", "url")} == {
         "kind": "file",
         "filename": "结题报告.docx",
         "url": None,
@@ -733,7 +741,11 @@ def test_file_and_link_deliveries_succeed_and_accept_without_branch_commits_or_p
 
     accepted = client.post(
         f"/accept-cards/{card['id']}/accept",
-        json={"decided_by": "alice", "head_sha": None},
+        json={
+            "decided_by": "alice",
+            "head_sha": None,
+            "deliverable_revision": card["deliverable"]["revision"],
+        },
         headers=session_auth_headers("alice"),
     )
     assert accepted.status_code == 200, accepted.text
@@ -871,3 +883,89 @@ def test_another_tasks_session_cannot_redeliver_this_tasks_card(client):
     assert r.status_code == 403, r.text
     got = client.get(f"/accept-cards/{card_id}/deliverable")
     assert got.content == "这条任务交的\n".encode()
+
+
+def test_accepting_after_a_redeliver_takes_a_fresh_look(client):
+    """采纳的是人看过的那一份。他看着第一稿，交付的人换成了第二稿（连文件名都
+    没变）：照着屏幕上那一版点采纳要被拒，卡还在等；重新看过再点才采纳。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/report.pdf": "第一稿\n"},
+        deliver="out/report.pdf",
+    )
+    assert filed.status_code == 200, filed.text
+    card_id = filed.json()["data"]["id"]
+    seen = _rendered_revision(client, card_id)
+    head = _rendered_head(client, card_id)
+
+    task = delivery_task(client, room_id)
+    _put(client, task, "out/report.pdf", "第二稿\n")
+    r = _redeliver(
+        client, task, delivery_headers(client, room_id), deliver="out/report.pdf"
+    )
+    assert r.status_code == 200, r.text
+
+    stale = client.post(
+        f"/accept-cards/{card_id}/accept",
+        json={"decided_by": "alice", "head_sha": head, "deliverable_revision": seen},
+        headers=session_auth_headers("alice"),
+    )
+    assert stale.status_code == 422, stale.text
+    (card,) = client.get(f"/topics/{room_id}/accept-card").json()["data"]["data"]
+    assert card["status"] == "pending"
+
+    _accept(client, card_id)
+    got = client.get(f"/accept-cards/{card_id}/deliverable")
+    assert got.content == "第二稿\n".encode()
+
+
+def test_an_accept_that_lands_during_a_redeliver_keeps_what_it_accepted(
+    client, monkeypatch
+):
+    """读机器上那一份要几秒，人正好在这几秒里采纳了：采纳的那一版不能被换掉，
+    它的字节也不能被删。换的那一方拿到 409。"""
+    from app.api.routes.accept import _accept_service
+    from app.domain.review.services import cards as cards_mod
+
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/报告.pdf": "采纳的那一份\n"},
+        deliver="out/报告.pdf",
+    )
+    assert filed.status_code == 200, filed.text
+    card_id = filed.json()["data"]["id"]
+    head = _rendered_head(client, card_id)
+    seen = _rendered_revision(client, card_id)
+    read = cards_mod._read_deliverable
+
+    async def read_while_someone_accepts(*args, **kwargs):
+        data = await read(*args, **kwargs)
+        async with client.test_factory() as session:
+            await _accept_service(session).accept(
+                card_id=uuid.UUID(card_id),
+                decided_by="alice",
+                head_sha=head,
+                deliverable_revision=seen,
+            )
+            await session.commit()
+        return data
+
+    monkeypatch.setattr(cards_mod, "_read_deliverable", read_while_someone_accepts)
+    task = delivery_task(client, room_id)
+    _put(client, task, "out/报告2.pdf", "想偷换的一份\n")
+    r = _redeliver(
+        client, task, delivery_headers(client, room_id), deliver="out/报告2.pdf"
+    )
+
+    assert r.status_code == 409, r.text
+    (card,) = client.get(f"/topics/{room_id}/accept-card").json()["data"]["data"]
+    assert card["status"] == "accepted"
+    assert card["deliverable"]["filename"] == "报告.pdf"
+    got = client.get(f"/accept-cards/{card_id}/deliverable")
+    assert got.content == "采纳的那一份\n".encode()

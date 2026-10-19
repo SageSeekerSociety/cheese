@@ -471,7 +471,10 @@ async def accept_card(
         raise AuthenticationRequiredError(say("acceptSignIn"))
     svc = _accept_service(db)
     card = await svc.accept(
-        card_id=card_id, decided_by=actor.handle, head_sha=body.head_sha
+        card_id=card_id,
+        decided_by=actor.handle,
+        head_sha=body.head_sha,
+        deliverable_revision=body.deliverable_revision,
     )
     return ok(await svc.describe(card))
 

@@ -115,6 +115,7 @@
   "revokeAcceptSignIn": "需要登录才能撤销采纳",
   "revokeAcceptedOnly": "只有已采纳的改动能撤销",
   "staleView": "有新提交，你看到的版本已过时，重新查看后再{action}",
+  "deliverableChanged": "交付物已更换，你看到的版本已过时，重新查看后再{action}",
   "staleViewPr": "PR #{pr} 有新提交，你看到的版本已过时，重新查看后再{action}",
   "taskBranchNothingToDeliver": "任务分支 {branch} 没有可交付的改动",
   "taskEndedOrNoBranch": "这条任务已结束或没有工作分支",

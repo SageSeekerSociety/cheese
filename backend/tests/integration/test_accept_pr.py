@@ -103,6 +103,26 @@ def _rendered_head(client, card_id: str) -> str | None:
     return asyncio.run(_do())
 
 
+def _rendered_revision(client, card_id: str) -> str | None:
+    """卡面上交付物的那一版（payload 的 `deliverable.revision`），读法和浏览器
+    一样：从卡所在房间的卡列表里取。交合并的卡没有这一项，是 None。"""
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _room() -> str:
+        async with client.test_factory() as s:
+            card = await AcceptCardRepository(s).get(_uuid.UUID(card_id))
+            assert card is not None
+            return str(card.topic_id)
+
+    listed = client.get(
+        f"/topics/{asyncio.run(_room())}/accept-card",
+        headers=session_auth_headers("alice"),
+    )
+    assert listed.status_code == 200, listed.text
+    (card,) = [c for c in listed.json()["data"]["data"] if c["id"] == card_id]
+    return (card.get("deliverable") or {}).get("revision")
+
+
 def _seen(client, card_id: str, head_sha) -> str | None:
     return _rendered_head(client, card_id) if head_sha is JUST_LOOKED else head_sha
 

@@ -353,10 +353,19 @@ class AcceptService:
         )
 
     async def accept(
-        self, *, card_id: uuid.UUID, decided_by: str, head_sha: str | None = None
+        self,
+        *,
+        card_id: uuid.UUID,
+        decided_by: str,
+        head_sha: str | None = None,
+        deliverable_revision: str | None = None,
     ) -> AcceptCard:
         return await _accept.accept(
-            self, card_id=card_id, decided_by=decided_by, head_sha=head_sha
+            self,
+            card_id=card_id,
+            decided_by=decided_by,
+            head_sha=head_sha,
+            deliverable_revision=deliverable_revision,
         )
 
     async def _accept_github(

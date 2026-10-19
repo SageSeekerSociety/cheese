@@ -111,6 +111,9 @@ _SEEN_HEAD_FIELD = Field(default=None, max_length=64)
 class AcceptDecision(BaseModel):
     decided_by: str = Field(min_length=1, max_length=64)
     head_sha: str | None = _SEEN_HEAD_FIELD
+    #: 交文件、交地址的卡：卡面上 `deliverable.revision` 那一版，同 `head_sha`
+    #: 一个道理 —— 交付物可以在卡待处理时原地换掉，合的必须是人看过的那一份。
+    deliverable_revision: str | None = Field(default=None, max_length=64)
 
 
 class RejectDecision(BaseModel):

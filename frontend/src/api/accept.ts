@@ -28,11 +28,16 @@ export function cardDeliverableUrl(cardId: string): string {
 // head，屏幕上那份不会自己变——不声明看的是哪一版，点下去合的就可能是一段没人
 // 看过的代码。后端拿它和卡当前的 head 对，不一致就 422 让人重新看过。
 // null 是合法值：卡还没被镜像过 head，或者根本不骑 PR（平台 lane）。
-export function acceptCard(cardId: string, decidedBy: string, headSha: string | null): Promise<AcceptCard> {
+export function acceptCard(
+  cardId: string,
+  decidedBy: string,
+  headSha: string | null,
+  deliverableRevision: string | null
+): Promise<AcceptCard> {
   return changesAwaiting(
     request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/accept`, {
       method: 'POST',
-      body: JSON.stringify({ decided_by: decidedBy, head_sha: headSha }),
+      body: JSON.stringify({ decided_by: decidedBy, head_sha: headSha, deliverable_revision: deliverableRevision }),
     })
   )
 }

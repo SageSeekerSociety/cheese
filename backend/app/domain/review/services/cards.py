@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from sqlalchemy import select
+
 from app.core.errors import (
     ConflictError,
     NotFoundError,
@@ -55,6 +57,7 @@ from app.domain.review.services._shared import (
     SEVERITY_WARN,
     WHO_HUMAN,
     ReviewerAdmission,
+    _deliverable_revision,
     _no_artifact_action,
     _one_artifact_action,
     _one_deliverable,
@@ -330,6 +333,17 @@ async def redeliver(
         if handed_over
         else None
     )
+    # 读机器上那一份可能要好几秒，人可能正好在这几秒里点了采纳。先锁住这一行、
+    # 重读状态，再动字节：否则采纳了的那一版会被换掉、它的快照被删掉。锁到提交
+    # 为止，晚到的采纳等这边写完再读。
+    await self._session.execute(
+        select(AcceptCard)
+        .where(AcceptCard.id == card.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if card.status != AcceptStatus.pending:
+        raise ConflictError(say("redeliverNoPendingCard"))
     before = card.deliverable_name or card.deliverable_url or ""
     if snapshot is not None:
         await asyncio.to_thread(
@@ -687,6 +701,9 @@ async def _render(
     if card.topic_id not in rooms:
         rooms[card.topic_id] = await self._topic_or_404(card.topic_id)
     topic = rooms[card.topic_id]
+    if data["deliverable"] is not None:
+        # 采纳时要原样带回来的那一版（`_deliverable_revision`）。
+        data["deliverable"]["revision"] = _deliverable_revision(topic.project_id, card)
     if topic.project_id not in projects:
         projects[topic.project_id] = await self._projects.get(topic.project_id)
     project = projects[topic.project_id]
