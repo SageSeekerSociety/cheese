@@ -324,6 +324,7 @@ def proposal_meta(body: FeedbackProposalIn, fingerprint: str) -> dict[str, Any]:
         "environment": body.environment,
         "tags": list(body.tags),
         "user_said": body.user_said,
+        "user_said_absent": body.user_said_absent,
         "fingerprint": fingerprint,
     }
 

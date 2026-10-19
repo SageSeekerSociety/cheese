@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AgentFeedbackCard from './AgentFeedbackCard.vue'
 
-import { dismissFeedbackProposal } from '@/api'
+import { dismissFeedbackProposal, listFeedbackProposals } from '@/api'
 import i18n, { setLocale } from '@/i18n'
 import { queryClient } from '@/query/client'
 import { expectRoom, forgetRoomSnapshots, settleRoom } from '@/query/snapshot'
@@ -132,6 +132,29 @@ describe('房间里的反馈卡', () => {
     const view = await mount()
     await fireEvent.click(view.getByRole('button', { name: /不用/ }))
     await vi.waitFor(() => expect(view.getAllByText('云端工作电脑反复创建失败')).toHaveLength(1))
+  })
+})
+
+describe('用户没说过话的卡（FB-100）', () => {
+  const saying = (said: Record<string, unknown>) =>
+    ({ ...proposal, payload: { ...proposal.payload, ...said } }) as FeedbackProposal
+
+  it('引的是用户原话时，标在「你当时说的」下面', async () => {
+    const view = await mount()
+    expect(view.container.textContent).toContain('你当时说的')
+    expect(view.getByText('开台机器？')).toBeTruthy()
+  })
+
+  it.each([
+    ['服务端说用户没说过话', { user_said: null, user_said_absent: true }],
+    ['还没有这个字段的旧卡，写的是那句约定好的话', { user_said: '用户没有就这个问题说过话' }],
+    ['旧卡在那句话后面多写了半句', { user_said: '用户没有就这个问题说过话，以上是芝士自己观察到的' }],
+  ])('%s：不把任何话当成用户说的', async (_, said) => {
+    vi.mocked(listFeedbackProposals).mockResolvedValueOnce([saying(said)])
+    const view = await mount()
+    expect(view.container.textContent).not.toContain('你当时说的')
+    expect(view.container.textContent).not.toContain('用户没有就这个问题说过话')
+    expect(view.container.textContent).toContain('用户没有就此说过话')
   })
 })
 

@@ -130,7 +130,7 @@ CALLS = {
             "title": "工具清单短了一截",
             "kind": "bug",
             "visibility": "public",
-            "user_said": "用户没有就这个问题说过话",
+            "user_said_absent": True,
         },
         "POST",
         f"/topics/{TOPIC}/feedback-proposals",
