@@ -5,6 +5,9 @@ tmp dirs, and assert on observable outcomes: exit codes, stdout, the JSON
 report, and which stub hooks actually executed (recorded by the stubs
 themselves). They never import ci-fast or re-assert its internals — a test
 that mirrors the implementation cannot catch the implementation being wrong.
+The one exception is `PlanConcurrencyTest`: whether two checks overlap cannot
+be observed from outside without measuring the machine, so that scheduler is
+driven with a stub in place of the runner.
 
 Stub hooks are `language: system` entries in the fixture's own
 .pre-commit-config.yaml: the command table still comes from a config file,
@@ -24,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -2321,6 +2325,75 @@ class PytestPluginTest(unittest.TestCase):
             reports=[("tests/unit/test_x.py::test_a", "call", "passed"),
                      ("tests/unit/test_x.py::test_a", "teardown", "failed")])
         self.assertEqual(validate_evidence(self.evidence(data))["result"], "fail")
+
+
+class PlanConcurrencyTest(unittest.TestCase):
+    """The plan scheduler, exercised directly.
+
+    Overlap is the one thing a subprocess run cannot show: a fixture that made
+    two checks sleep would be measuring the machine, not the scheduler. The
+    function below is pure except for the ``invoke`` it is handed, so it is
+    driven with a stub that records what ran at the same time.
+    """
+
+    @staticmethod
+    def _module():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ci_fast_plan", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _drive(self, plan, jobs):
+        module = self._module()
+        report = {"ran": [], "not_run": [], "reasons": []}
+        active = {}
+        overlaps = []
+        peak = [0]
+        lock = threading.Lock()
+
+        def invoke(identifier, command, cwd, evidence=None, env=None):
+            with lock:
+                active[str(cwd)] = active.get(str(cwd), 0) + 1
+                if active[str(cwd)] > 1:
+                    overlaps.append(identifier)
+                peak[0] = max(peak[0], sum(active.values()))
+            time.sleep(0.15)
+            with lock:
+                active[str(cwd)] -= 1
+                report["ran"].append({"id": identifier})
+            return {}
+
+        module.run_plan_checks(plan, invoke, jobs, report)
+        return report, overlaps, peak[0]
+
+    @staticmethod
+    def _plan(*pairs):
+        return [{"id": check_id, "command": [], "cwd": cwd} for check_id, cwd in pairs]
+
+    def test_two_trees_overlap_and_one_tree_never_does(self):
+        report, overlaps, peak = self._drive(
+            self._plan(("backend-pure", "backend"),
+                       ("frontend-unit", "frontend"),
+                       ("frontend-i18n", "frontend")), jobs=2)
+        self.assertEqual(peak, 2, "a second tree has to be able to start")
+        self.assertEqual(overlaps, [], "checks sharing a tree must not overlap")
+        # The report is a record of the plan, not a race log.
+        self.assertEqual([row["id"] for row in report["ran"]],
+                         ["backend-pure", "frontend-unit", "frontend-i18n"])
+
+    def test_one_job_keeps_the_tier_serial(self):
+        _report, overlaps, peak = self._drive(
+            self._plan(("backend-pure", "backend"), ("frontend-unit", "frontend")),
+            jobs=1)
+        self.assertEqual(peak, 1)
+        self.assertEqual(overlaps, [])
+
+    def test_jobs_default_follows_the_memory_the_tier_can_back(self):
+        module = self._module()
+        self.assertEqual(module.jobs_for(3072), 1)   # the work machine's cap
+        self.assertEqual(module.jobs_for(9216), 2)   # the CI runner's ceiling
+        self.assertEqual(module.jobs_for(9216, 1), 1)
 
 
 if __name__ == "__main__":

@@ -42,6 +42,27 @@ floored at 180s; an explicit `--budget` stays exact, including a shorter bound.
 per-check timeout (`--timeout`, default 900s). The report records `budget_seconds`
 and `budget_source`; exhausting either bound still reports unknown, never pass.
 
+## How the plan's checks are scheduled
+
+The plan's checks are separate processes with separate evidence, so two that
+work on different trees run at the same time. `--jobs` sets how many; the
+default is 2 when the tier may back it (`--memory-mib` at least 6144, where a
+16 GiB runner sits) and 1 below that — the work machine's 3072 MiB session cap
+keeps it serial. Checks that share a working directory never overlap: they
+write the same tree (Vitest's cache, the generated OpenAPI types, the narrow
+tsconfig), so they queue one after another.
+
+The numbers behind that bound, from 12 CI runs of the `fast` job: two checks
+dominated every run, `frontend-unit` (850–880s, 4.4–5.2 GiB) and `backend-pure`
+(520s p50, ~1.1 GiB). Serially the first consumed the whole 1200s budget and
+the second was cut off with what was left; together they fit a 16 GiB runner.
+Each check still keeps its own sampled RSS ceiling, timeout and evidence check,
+so a killed check is reported killed, never folded into a green or into another
+check's result.
+
+`--jobs 1` restores the strictly serial tier. The rows keep the plan's order
+either way, so the report does not depend on which check finished first.
+
 For example, `CI_FAST_BUDGET_SECONDS=600 task ci:fast` gives a quota-constrained
 machine ten minutes without changing repository config. Required CI's draft job
 already passes `--budget 1200`, so its bound is unchanged. `--memory-mib` remains
