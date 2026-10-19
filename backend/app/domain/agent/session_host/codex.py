@@ -124,7 +124,13 @@ class CodexDriver:
         readers: Readers,
     ) -> Subscription:
         return Subscription(
-            seat, mirror, call, readers.consume, readers.activity, moved=readers.moved
+            seat,
+            mirror,
+            call,
+            readers.consume,
+            readers.activity,
+            moved=readers.moved,
+            records=readers.records,
         )
 
     def images(self, images: tuple[Image, ...]) -> list:

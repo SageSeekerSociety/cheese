@@ -98,7 +98,16 @@ def _install(script: str) -> str:
 
 def configure(payload: dict) -> dict:
     state = (
-        Path(payload["state"].replace("$HOME", str(Path.home()))).expanduser().resolve()
+        Path(
+            payload["state"]
+            .replace(
+                "${CHEESE_PROFILE_ROOT:-.cheese}",
+                os.environ.get("CHEESE_PROFILE_ROOT", ".cheese"),
+            )
+            .replace("$HOME", str(Path.home()))
+        )
+        .expanduser()
+        .resolve()
     )
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (state / "bootstrap.lock").open("a") as lock:
