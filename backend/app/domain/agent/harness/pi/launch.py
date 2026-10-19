@@ -230,7 +230,7 @@ class HostLaunch:
         return f"""import base64,hashlib,json,os,sys,tempfile
 from pathlib import Path
 payload=json.loads({json.dumps(payload)!r})
-state=Path(payload["state"].replace("${{CHEESE_PROFILE_ROOT:-.cheese}}",os.environ.get("CHEESE_PROFILE_ROOT",".cheese")).replace("$HOME",str(Path.home()))).expanduser().resolve()
+state=Path(payload["state"].replace("$HOME",str(Path.home()))).expanduser().resolve()
 state.mkdir(parents=True,exist_ok=True,mode=0o700)
 digest=payload.pop("digest")
 shipped=payload.pop("archive",None)

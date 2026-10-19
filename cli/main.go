@@ -7,14 +7,11 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/rest-sh/restish/cli"
-	"github.com/spf13/pflag"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/apicli"
-	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/daemoncmd"
 )
 
@@ -24,25 +21,9 @@ import (
 var version = "dev"
 
 func main() {
-	// API hydration happens before Cobra executes, so select the profile first.
-	selection := pflag.NewFlagSet("profile", pflag.ContinueOnError)
-	selection.ParseErrorsWhitelist.UnknownFlags = true
-	selection.StringVar(&config.CLIProfile, "profile", "default", "enrollment profile")
-	// Declared so that -h/--help is Cobra's to answer: an undeclared help flag
-	// makes pflag stop here with ErrHelp.
-	selection.BoolP("help", "h", false, "")
-	if err := selection.Parse(os.Args[1:]); err != nil {
-		os.Exit(1)
-	}
-	if _, err := config.ProfilePath(config.CLIProfile); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	config.CLIProfileSet = selection.Changed("profile")
 	// apicli.Setup initializes Restish (its cobra root becomes `cheese`) and
 	// returns the `api` subcommand hosting every generated operation.
 	apiCmd := apicli.Setup(version)
-	cli.Root.PersistentFlags().String("profile", config.CLIProfile, "enrollment profile to use")
 
 	// The user-facing service lifecycle: connect / install / start / stop / …
 	for _, c := range daemoncmd.Commands() {
@@ -52,7 +33,7 @@ func main() {
 	// Only `cheese api …` needs the live spec; hydrating it costs a network
 	// round trip, so daemon commands (which must work offline / on a fresh box)
 	// never trigger it.
-	if args := selection.Args(); len(args) > 0 && args[0] == "api" {
+	if len(os.Args) > 1 && os.Args[1] == "api" {
 		apicli.LoadOperations(apiCmd)
 	}
 

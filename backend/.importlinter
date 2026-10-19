@@ -424,6 +424,10 @@ unmatched_ignore_imports_alerting = warn
 # `get_by_ids` imports only SQLAlchemy and the standard library, and is called
 # by repositories from layer 1 (`tag`, `avatars`) upward (`comments`, `groups`).
 #
+# `repositories` joined beside it (2026-10-18): the `Repository` base gives those
+# same repositories `get_by_id` / `get_by_ids` on top of `reads`, and imports
+# nothing else from the domain.
+#
 # `project_material_rows` joined at layer 1 (2026-10-17), by the same move one step
 # further: `project_material` (layer 4) reads tasks and accept cards, and both
 # `room_task` and `review` read back into this side, so importing their models
@@ -594,10 +598,10 @@ layers =
     platform_stats : feature_stats : dashboard : project_progress : project_situation : onboarding : account
     routine : task_quiet : admin : room_cleanup
     agent : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
-    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material
+    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material : voice
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ci_activity
-    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : session_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : project_material_rows : event_about : event_author : project_permissions : reads
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : session_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : project_material_rows : event_about : event_author : project_permissions : reads : repositories
 containers =
     app.domain
 exhaustive = true

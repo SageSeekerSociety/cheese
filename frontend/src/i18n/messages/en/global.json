@@ -92,6 +92,8 @@
     "mentionPick": "Pick from the {'@'} list",
     "mentionClose": "Close the {'@'} list",
     "touchNewline": "On touch screens Enter adds a new line",
-    "markAllRead": "Mark all rooms read"
+    "markAllRead": "Mark all rooms read",
+    "voice": "Voice input: start, press again when done",
+    "voiceCancel": "Discard a recording"
   }
 }

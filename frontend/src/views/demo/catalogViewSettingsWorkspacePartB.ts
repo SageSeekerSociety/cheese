@@ -166,7 +166,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
     file: 'src/views/user/settings/ModelConnectionsView.vue',
     component: ModelConnectionsView,
     needs: UI_T,
-    // 「解除」的确认框和「使用自定义模型服务」的表单都画在 body 上。
+    // 「解除」的确认框和添加、改名的表单都画在 body 上。
     teleport: true,
     args: {
       loading: false,
@@ -186,7 +186,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.modelConnectionsView.s1.note')
         },
         props: { connections: [], held: [] },
-        expect: '暂无模型连接',
+        expect: '暂无设备上的登录',
         expectSelector: '.settings-empty',
       },
       {
@@ -223,6 +223,17 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
         },
         props: { connections: MODEL_CONNECTIONS.filter((c) => c.device_id === 'dev-desk'), held: [] },
         expect: '实验室的 Pro',
+      },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s5.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s5.note')
+        },
+        props: {},
+        expect: '保存在账号里',
+        expectSelector: '[data-connection="held-glm"]',
       },
     ],
   },

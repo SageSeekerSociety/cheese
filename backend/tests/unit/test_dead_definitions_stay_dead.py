@@ -29,6 +29,16 @@ DEAD = {
     "is_parent_or_equal": "app.auth.core",
     "attach_cookie": "app.api.proxy",
     "forwardable_request_headers": "app.api.proxy",
+    "is_favorited": "app.domain.answers.repositories",
+    "running_notices": "app.domain.block.repositories",
+    "charge_spent": "app.domain.usage.ledger",
+    "attachment_exists": "app.domain.library.records",
+    "effective_shell": "app.domain.shell.service",
+    "seed_existing": "app.domain.living_doc.services",
+    "scope_names": "app.domain.memory.dream_prompt",
+    "project_of_scope": "app.domain.memory.models",
+    "waiting_in_room": "app.domain.thread.services",
+    "speaks_for_this_rooms_turn": "app.api.auth.resolver",
 }
 
 #: 语法树里出现的名字在源文本里必然也出现：先按文本筛，只解析筛中的文件，整个

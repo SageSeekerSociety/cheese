@@ -306,6 +306,7 @@ const {
   retryBusy,
   retryNow,
   onComposerSend,
+  hearVoice,
   errorMsg,
   linkDown,
   send,
@@ -575,6 +576,7 @@ useComposerShortcut({
           :atts-uploading="attsUploading"
           :reply-label="replyLabel"
           :post-checklist="postChecklist"
+          :hear-voice="hearVoice"
           @send="onComposerSend"
           @clear-reply="clearReply"
           @files="(files) => void addFiles(files)"

@@ -146,7 +146,7 @@ func APIBase() string {
 	if base := os.Getenv("CHEESE_API"); base != "" {
 		return strings.TrimRight(base, "/")
 	}
-	if cfg, err := config.Load(config.CommandPath()); err == nil && cfg.Base != "" {
+	if cfg, err := config.Load(config.DefaultPath()); err == nil && cfg.Base != "" {
 		return cfg.APIBase()
 	}
 	return "http://localhost:8080"
@@ -158,7 +158,7 @@ func resolveToken() string {
 	if tok := os.Getenv("CHEESE_TOKEN"); tok != "" {
 		return tok
 	}
-	if cfg, err := config.Load(config.CommandPath()); err == nil {
+	if cfg, err := config.Load(config.DefaultPath()); err == nil {
 		return cfg.Token
 	}
 	return ""
@@ -175,9 +175,6 @@ func selfConfigure(base string) string {
 			cfgBase = os.TempDir()
 		}
 		dir = filepath.Join(cfgBase, apiName)
-		if config.CLIProfile != "default" {
-			dir = filepath.Join(dir, "profiles", config.CLIProfile)
-		}
 		os.Setenv("CHEESE_CONFIG_DIR", dir)
 	}
 	_ = os.MkdirAll(dir, 0o700)

@@ -64,7 +64,7 @@ async def open_screen(
             screen_token=screen.token,
             cols=cols,
             rows=rows,
-            env={k: device.spelled(v) for k, v in env.items()} if env else env,
+            env=env,
         )
     )
     return screen
@@ -91,15 +91,14 @@ async def reassert_screen(
     is respawned under the SAME sid + screen token, so viewers and attribution
     stay intact."""
     screen.command = command
-    device = hub._device(screen.device_id)
-    await device.send(
+    await hub._device(screen.device_id).send(
         device_link.session_create(
             sid=screen.sid,
             command=command,
             screen_token=screen.token,
             cols=cols,
             rows=rows,
-            env={k: device.spelled(v) for k, v in env.items()} if env else env,
+            env=env,
             adopt=True,
         )
     )

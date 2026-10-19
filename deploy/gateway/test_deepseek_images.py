@@ -10,12 +10,21 @@ from litellm.llms.anthropic.experimental_pass_through.adapters.transformation im
     LiteLLMAnthropicMessagesAdapter,
 )
 from litellm.llms.deepseek.chat.transformation import DeepSeekChatConfig
+from litellm.proxy.types_utils.utils import get_instance_fn
+from litellm.utils import custom_llm_setup
 
 IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII="
 
 
 async def main():
     config = yaml.safe_load(Path(__file__).with_name("config.yaml").read_text())
+    # The proxy registers these before it builds its router; a row on one of
+    # them names a provider LiteLLM does not know otherwise.
+    litellm.custom_provider_map = [
+        {"provider": item["provider"], "custom_handler": get_instance_fn(item["custom_handler"])}
+        for item in config["litellm_settings"].get("custom_provider_map") or []
+    ]
+    custom_llm_setup()
     litellm.Router(model_list=config["model_list"])
     image = {
         "type": "image",
