@@ -210,3 +210,55 @@ class TestUserProfileIntegration:
             headers=self.headers,
         )
         assert "😂" in get_resp.json()["data"]["user"]["intro"]
+
+    def _write_profile(self, verb: str, body: dict) -> tuple[int, dict]:
+        response = getattr(self.client, verb)(
+            f"/users/{self.user.user_id}",
+            headers=self.headers,
+            json=body,
+        )
+        read = self.client.get(
+            f"/users/{self.user.user_id}",
+            headers=self.headers,
+        )
+        return response.status_code, read.json()["data"]["user"]
+
+    def test_patch_and_put_user_profile_agree(self):
+        """Both verbs write the body they are given, field by field.
+
+        Each verb is observed on its own — write, then read back — because
+        both answer with the same empty envelope: comparing responses alone
+        would miss a verb that silently drops a field.
+        """
+        for verb in ("patch", "put"):
+            nickname = f"{self.profile_prefix}_{verb}"
+            intro = f"{self.profile_prefix} {verb} intro"
+            status, user = self._write_profile(
+                verb, {"nickname": nickname, "intro": intro}
+            )
+            assert status == 200, verb
+            assert user["nickname"] == nickname, verb
+            assert user["intro"] == intro, verb
+
+        for verb in ("patch", "put"):
+            avatar_id = self._upload_avatar()
+            nickname = f"{self.profile_prefix}_{verb}_avatar"
+            status, user = self._write_profile(
+                verb, {"nickname": nickname, "avatarId": avatar_id}
+            )
+            assert status == 200, verb
+            assert user["avatarId"] == avatar_id, verb
+
+        for verb in ("patch", "put"):
+            status, _ = self._write_profile(verb, {"nickname": "   "})
+            assert status == 422, verb
+
+    @pytest.mark.parametrize("verb", ["patch", "put"])
+    def test_update_user_profile_rejects_non_owner_on_both_verbs(self, verb):
+        _aux_user, aux_headers = self._create_aux_user()
+        response = getattr(self.client, verb)(
+            f"/users/{self.user.user_id}",
+            headers=aux_headers,
+            json={"nickname": "hacked"},
+        )
+        assert response.status_code == 403
