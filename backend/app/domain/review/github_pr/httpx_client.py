@@ -9,7 +9,7 @@ bookkeeping on `self` that outlives a poll.
 import asyncio
 import hashlib
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 
 import httpx
@@ -41,7 +41,12 @@ from app.domain.review.github_pr.failure_logs import (
     _error_excerpt,
     _failure_headline,
 )
-from app.domain.review.github_pr.protocol import GitHubPrClient
+from app.domain.review.github_pr.branch_comparisons import read_branch_comparisons
+from app.domain.review.github_pr.protocol import (
+    BranchComparisonResult,
+    BranchPair,
+    GitHubPrClient,
+)
 from app.domain.review.github_pr_status import (
     PullRequestStatus,
     parse_pull_request_status,
@@ -609,6 +614,23 @@ class HttpxGitHubPrClient:
         self, *, owner: str, repo: str, ref: str, token: str
     ) -> list[dict]:
         return await self._check_runs(owner, repo, ref, token)
+
+    async def branch_comparisons(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        pairs: Sequence[BranchPair],
+        token: str,
+    ) -> dict[BranchPair, BranchComparisonResult]:
+        return await read_branch_comparisons(
+            api_base=self._api_base,
+            transport=self._transport,
+            headers=self._headers(token),
+            owner=owner,
+            repo=repo,
+            pairs=pairs,
+        )
 
     async def compare_status(
         self, *, owner: str, repo: str, base: str, head: str, token: str
