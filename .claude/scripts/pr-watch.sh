@@ -12,7 +12,8 @@
 #   contain the merge: passed as soon as any of them succeeded. A red run is not
 #   final while a newer containing batch may still fix main; the watch fails
 #   once the newest containing run is red and nothing newer starts within
-#   PR_WATCH_MAIN_RED_WAIT seconds (default 3600).
+#   PR_WATCH_MAIN_RED_WAIT seconds (default 3600). A merge reverted before a
+#   green batch or the live version fails the watch, naming the revert.
 #   --deploy   after a PR merges, follow the dev deploys (deploy-dev.yml) of
 #              main commits that contain it: deployed as soon as any of them
 #              succeeded, otherwise the newest one's result.
@@ -92,16 +93,38 @@ contains() {
   gh api "repos/$REPO/compare/$1...$2" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$'
 }
 
-# "<status> <conclusion> <run id>" of main's Required CI for $1: the newest
-# successful run on a main commit containing it, or else the newest such run
-# not cancelled, or nothing. Once a containing run has succeeded the merge has
+# The commit between merge $1 and $2 that reverts the merge of PR $3, or
+# nothing. Ancestry alone says $2 contains the merge even after a revert, so a
+# green batch or a live version past a revert would otherwise count as this
+# PR's. Recognised: git revert's "This reverts commit <sha>", GitHub's revert
+# button ("Reverts <repo>#<PR>"), and a `Revert "<merge subject>` headline.
+reverter_of() {
+  local merge=$1 sha=$2 pr=$3 subject csha msg
+  [ "$sha" != "$merge" ] || return 0
+  subject=$(gh api "repos/$REPO/commits/$merge" -q '.commit.message|split("\n")[0]' 2>/dev/null)
+  while IFS=$'\t' read -r csha msg; do
+    if [[ "$msg" == *"This reverts commit ${merge:0:7}"* || "$msg" == *"Reverts $REPO#$pr"* ]] \
+       || { [ -n "$subject" ] && [[ "$msg" == "Revert \"$subject"* ]]; }; then
+      echo "$csha"; return
+    fi
+  done < <(gh api "repos/$REPO/compare/$merge...$sha" -q '.commits[]|[.sha, .commit.message]|@tsv' 2>/dev/null)
+}
+
+# "<status> <conclusion> <run id>" of main's Required CI for merge $1 of PR $2:
+# the newest successful run on a main commit containing it, or else the newest
+# such run not cancelled, or nothing; "reverted <commit> <run id>" when that
+# successful run's commit comes after a revert of the merge. Once a containing run has succeeded the merge has
 # passed, whatever its own run or a later batch did.
 main_ci_of() {
-  local merge=$1 id st co sha newest=
+  local merge=$1 pr=$2 id st co sha newest= rev
   while read -r id st co sha; do
     [ "$sha" = "$merge" ] || contains "$merge" "$sha" || continue
     if [ "$co" != cancelled ]; then
-      [ "$st $co" = "completed success" ] && { echo "$st $co $id"; return; }
+      if [ "$st $co" = "completed success" ]; then
+        rev=$(reverter_of "$merge" "$sha" "$pr")
+        [ -n "$rev" ] && echo "reverted $rev $id" || echo "$st $co $id"
+        return
+      fi
       [ -n "$newest" ] || newest="$st $co $id"
     fi
     # Runs come newest first; those older than the merge's own cannot contain it.
@@ -147,17 +170,26 @@ while :; do
     IFS='|' read -r state head merge mergeable mstate auto <<<"$fields"
 
     if [ "$state" = MERGED ]; then
-      c=$(main_ci_of "$merge")
+      c=$(main_ci_of "$merge" "$p")
       if [ "${main_last[$p]:-unseen}" != "$c" ]; then
-        [ -z "$c" ] && say "$p" "merged as ${merge:0:9}; waiting for main Required CI" \
-                    || say "$p" "main Required CI run ${c##* }: ${c% *}"
-        main_last[$p]=$c
+        case "$c" in
+          "") say "$p" "merged as ${merge:0:9}; waiting for main Required CI" ;;
+          "reverted "*) ;;
+          *) say "$p" "main Required CI run ${c##* }: ${c% *}" ;;
+        esac
+        # Any change of state (a newer run, a re-run of the red one) restarts
+        # the red wait when main is red again.
+        main_last[$p]=$c red_run[$p]=
       fi
       case "$c" in
         "completed success "*) ;;
+        "reverted "*)
+          rev=${c#reverted }; rev=${rev% *}
+          say "$p" "stopped watching: merge ${merge:0:9} was reverted by ${rev:0:9} before main Required CI passed with it"
+          ended[$p]=1; continue ;;
         "completed failure "*|"completed timed_out "*|"completed action_required "*|"completed startup_failure "*|"completed stale "*)
           # The newest containing run is red. A newer batch may still fix main,
-          # so wait for one; each newer red run restarts the wait.
+          # so wait for one.
           if [ "${red_run[$p]:-}" != "${c##* }" ]; then
             red_run[$p]=${c##* } red_since[$p]=$(date +%s)
             say "$p" "main is red after merge ${merge:0:9} (run ${c##* }); waiting up to $((MAIN_RED_WAIT / 60)) min for a newer main batch containing it"
@@ -186,8 +218,14 @@ while :; do
           # A run can succeed while shipping an older commit whose images were
           # the newest built, so deployed means the live version contains it.
           live=$(curl -fsS "$DEV_VERSION_URL" 2>/dev/null | live_sha)
-          if [ -n "$live" ] && gh api "repos/$REPO/compare/$merge...$live" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$'; then
-            say "$p" "live on dev at ${live:0:9}"; ended[$p]=1 ok[$p]=1
+          if [ -n "$live" ] && contains "$merge" "$live"; then
+            rev=$(reverter_of "$merge" "$live" "$p")
+            if [ -n "$rev" ]; then
+              say "$p" "stopped watching: dev runs ${live:0:9}, after ${rev:0:9} reverted merge ${merge:0:9}"
+              ended[$p]=1
+            else
+              say "$p" "live on dev at ${live:0:9}"; ended[$p]=1 ok[$p]=1
+            fi
           elif [ "${last[$p]:-}" != "$key live" ]; then
             say "$p" "deploy run ${d##* } succeeded but dev runs ${live:0:9}, which lacks it; waiting"
             last[$p]="$key live"
