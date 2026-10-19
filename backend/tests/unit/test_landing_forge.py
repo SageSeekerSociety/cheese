@@ -525,8 +525,10 @@ def test_half_a_gate_is_not_a_gate():
 
 
 def test_a_repository_with_no_such_check_has_no_batch_gate():
-    """A hosted repository that never configured one: the batch reads find no
-    gate, and every caller falls back to judging each merge on its own."""
+    """A project that never configured one: the batch reads find no gate, and
+    every caller falls back to judging each merge on its own. The nameless run
+    is the one that would be mistaken for a gate, so it is what the case uses."""
+    assert gate_run([Check("", "completed", "failure", "", suite=1)]) is None
     assert (
         gate_run([Check("some other check", "completed", "failure", "", suite=1)])
         is None

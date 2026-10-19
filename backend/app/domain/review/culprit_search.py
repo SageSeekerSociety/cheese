@@ -92,6 +92,10 @@ async def advance(
         search = _load(row.state)
         run_id, since = row.run_id, row.dispatched_at
         started = row.created_at
+        # The tests the search started with, not this sweep's: the batch's red
+        # job may have been re-run with a different set, and every probe has to
+        # ask the same question for the answers to compare.
+        probes = list(row.tests) if row.tests else list(tests)
 
     if search.finished:
         return _finding(search)
@@ -117,7 +121,7 @@ async def advance(
     if not sha:
         return _finding(search)
     search = search.waiting_for(sha)
-    run = await reads.dispatch_bisect(sha, list(tests), uuid.uuid4().hex[:12])
+    run = await reads.dispatch_bisect(sha, probes, uuid.uuid4().hex[:12])
     if run is None:
         if not search.probed:
             # Nothing was learned: fall back to how such a batch was attributed

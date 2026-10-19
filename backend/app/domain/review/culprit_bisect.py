@@ -74,7 +74,12 @@ class Search:
         # before it passed; without a base there is nothing to tell it apart
         # from every probe failing.
         if self.lo == 0:
-            if self.base is None or len(self.probed) >= MAX_PROBES:
+            # A base already probed has answered: probing it again would spend
+            # a run, delay the batch, and let a flaky second answer take back a
+            # culprit the first one already named.
+            if self.base is None or self.base in self.probed:
+                return ""
+            if len(self.probed) >= MAX_PROBES:
                 return ""
             return self.base
         return ""
@@ -101,9 +106,12 @@ class Search:
             return ""
         if len(self.commits) < MIN_COMMITS:
             return "too few commits to bisect"
-        if self.lo < self.hi:
-            return "probe budget spent"
-        return "no passing base to check against"
+        if self.lo == 0 and self.base is None:
+            return "no passing base to check against"
+        # The oldest commit is settled but the base was never probed: the
+        # budget ran out before it could be. That is not "no base to compare
+        # with" — one may well exist — and the notice must not say it does not.
+        return "probe budget spent"
 
     def waiting_for(self, sha: str) -> "Search":
         """Hand ``sha`` out to be run: the search now waits on its verdict."""

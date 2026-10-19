@@ -121,7 +121,9 @@ async def test_the_oldest_commit_is_named_only_after_the_base_passed(db_factory)
     finding = await _run(db_factory, reads, COMMITS, project_id, base="green")
     assert finding.state == "located"
     assert finding.culprit == COMMITS[0]
-    assert reads.dispatched[-1] == "green"
+    # The base answers once: asking it again would spend a run and let a flaky
+    # second answer take back a culprit the first one already named.
+    assert reads.dispatched.count("green") == 1
 
 
 async def test_the_search_spends_at_most_five_probes(db_factory):
