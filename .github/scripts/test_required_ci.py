@@ -2442,23 +2442,40 @@ class MergeRefBaseTest(unittest.TestCase):
         self.git("commit", "-qm", f"add {name}")
         return self.git("rev-parse", "HEAD")
 
-    def test_a_merge_ref_answers_its_first_parent(self):
+    def merged_repo(self):
+        """A base, a PR branch off it, and main moving on before the merge.
+
+        Returns (head commit, main tip at merge time, merge commit). The local
+        ``commit.gpgsign=false`` keeps a host whose global config signs commits
+        (and has no working signer) from turning the fixture red.
+        """
         self.git("init", "-q", "-b", "main")
         self.git("config", "user.email", "test@example.com")
         self.git("config", "user.name", "test")
+        self.git("config", "commit.gpgsign", "false")
         self.commit("base.txt", "base\n")
         self.git("checkout", "-qb", "pr")
         head = self.commit("pr.txt", "pr\n")
         self.git("checkout", "-q", "main")
-        # Main moves after the PR branched: the payload may name either tip,
-        # while the merge ref is built on the tip at merge time.
         base_at_merge = self.commit("main.txt", "main\n")
         self.git("merge", "--no-ff", "-qm", "merge pr", "pr")
-        merge = self.git("rev-parse", "HEAD")
+        return head, base_at_merge, self.git("rev-parse", "HEAD")
+
+    def test_a_merge_ref_answers_its_first_parent(self):
+        head, base_at_merge, merge = self.merged_repo()
         self.assertEqual(
             gate.merge_ref_base("f" * 40, merge, cwd=self.repo), base_at_merge)
         # A ref that is not a merge keeps the event's answer.
         self.assertEqual(gate.merge_ref_base("f" * 40, head, cwd=self.repo), "f" * 40)
+
+    def test_the_cli_prints_the_gates_answer(self):
+        _, base_at_merge, _ = self.merged_repo()
+        script = WORKFLOW.parent.parent / "scripts" / "required-ci.py"
+        result = subprocess.run(
+            [sys.executable, str(script), "pr-base", "f" * 40],
+            cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), base_at_merge)
 
     def test_the_workflow_feeds_the_event_base_through_the_gate(self):
         # Run the step's real shell: python3 receives the event base, and the
