@@ -208,7 +208,7 @@ function occurrenceOf(block: Block): NoticeOccurrence {
 }
 
 /**
- * 「芝士起草了规则 / 整理了技能」那一行要带一颗「去确认」。
+ * 「芝士整理了技能」那一行要带一颗「去确认」。
  *
  * 确认入口在项目名旁的 ⋯ 菜单里，人在房间读到这一行时不知道去哪找（chiruotong
  * 在 dev 上实测找不到）。这一行本身就知道是哪一条，所以直接指过去。
@@ -218,10 +218,7 @@ export function confirmTarget(block: Block, projectId: string | null | undefined
   if (!projectId) return null
   // 人已经定下来了（保存、拒绝、删除）：这一行只说结果，没有要去确认的了。
   if (str(m?.state) === 'over') return null
-  const kind = str(m?.event_type)
-  if (kind === 'routine_proposed' && str(m?.routine_id))
-    return { name: 'project-routines', params: { projectId }, query: { routine: str(m?.routine_id) } }
-  if (kind === 'skill_proposed' && str(m?.skill_id))
+  if (str(m?.event_type) === 'skill_proposed' && str(m?.skill_id))
     return { name: 'project-skills', params: { projectId }, query: { skill: str(m?.skill_id) } }
   return null
 }

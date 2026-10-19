@@ -37,9 +37,10 @@ from __future__ import annotations
 # 否则那条路是 AttributeError。
 from app.domain.delivery.agent import dispatch_pending as dispatch_pending
 
-# 兼容门面：拆包之前那份 ``service.py`` 自己定义的名字，下面这一个不落 —— 八个常量、
-# ``now``、两个校验助手、``RoutineService``、十一个函数，外加它当时 import 进来、
-# 被别人按模块属性取用的 ``dispatch_pending``。除了上面这一个，它当时只是 import
+# 兼容门面：拆包之后各处可从 ``app.domain.routine.service`` 取到的名字 —— 八个常量、
+# ``now``、名字与 spec 两个助手（``name_of`` / ``validate_spec``）、``RoutineService``、
+# 九个函数，外加它当时 import 进来、被别人按模块属性取用的 ``dispatch_pending``。
+# 除了上面这一个，它当时只是 import
 # 进来、自己并不定义的名字（本域的 ``Routine``、``RoutineRun``，跨域的 ``Block``、
 # ``Topic`` 都在内）不再从这条路取，仓库里也没有调用方用它们。每个都写成 ``X as X``
 # 显式再导出，``RoutineService`` 仍是同一个类对象。
@@ -57,10 +58,9 @@ from app.domain.routine.service._shared import START_TIMEOUT as START_TIMEOUT
 from app.domain.routine.service._shared import TRIGGER_LABELS as TRIGGER_LABELS
 from app.domain.routine.service._shared import now as now
 from app.domain.routine.service.firing import _fire as _fire
-from app.domain.routine.service.firing import _previous_result as _previous_result
 from app.domain.routine.service.firing import run_prompt as run_prompt
-from app.domain.routine.service.rules import _clean_dir as _clean_dir
-from app.domain.routine.service.rules import _validate as _validate
+from app.domain.routine.service.rules import name_of as name_of
+from app.domain.routine.service.rules import validate_spec as validate_spec
 from app.domain.routine.service.scheduling import _events_for as _events_for
 from app.domain.routine.service.scheduling import _fire_events as _fire_events
 from app.domain.routine.service.scheduling import _fire_schedules as _fire_schedules

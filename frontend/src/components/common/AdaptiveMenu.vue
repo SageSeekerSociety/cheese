@@ -88,21 +88,22 @@ const sheetActivator = () => ({
     </template>
     <v-list min-width="160" role="menu">
       <slot name="desktopHeader" />
-      <v-list-item
-        v-for="action in props.actions"
-        :key="action.key"
-        role="menuitem"
-        :to="action.to"
-        :prepend-icon="action.icon"
-        :disabled="action.disabled || action.loading"
-        :class="{ 'adaptive-menu__item--danger': action.danger }"
-        @click="chooseOnDesktop(action)"
-      >
-        <v-list-item-title>{{ action.label }}</v-list-item-title>
-        <template v-if="action.badge" #append>
-          <span class="adaptive-menu__badge">{{ action.badge }}</span>
-        </template>
-      </v-list-item>
+      <template v-for="action in props.actions" :key="action.key">
+        <v-divider v-if="action.divider" class="adaptive-menu__divider" />
+        <v-list-item
+          role="menuitem"
+          :to="action.to"
+          :prepend-icon="action.icon"
+          :disabled="action.disabled || action.loading"
+          :class="{ 'adaptive-menu__item--danger': action.danger }"
+          @click="chooseOnDesktop(action)"
+        >
+          <v-list-item-title>{{ action.label }}</v-list-item-title>
+          <template v-if="action.badge" #append>
+            <span class="adaptive-menu__badge">{{ action.badge }}</span>
+          </template>
+        </v-list-item>
+      </template>
     </v-list>
   </v-menu>
   <template v-else>
@@ -114,6 +115,11 @@ const sheetActivator = () => ({
 </template>
 
 <style scoped>
+/* 分隔线：上面几件和「不可撤销的那一件」之间那一条。颜色用 v-divider 自己的那一套，
+   这里只给它上下留一点空。 */
+.adaptive-menu__divider {
+  margin: 4px 0;
+}
 .adaptive-menu__badge {
   margin-inline-start: 12px;
   color: var(--accent);

@@ -139,7 +139,6 @@ describe('芝士起草、等人确认的那一行', () => {
       history: createMemoryHistory(),
       routes: [
         { path: '/', component: stub },
-        { name: 'project-routines', path: '/projects/:projectId/routines', component: stub },
         { name: 'project-skills', path: '/projects/:projectId/skills', component: stub },
         { name: 'project-settings', path: '/projects/:projectId/settings/:section?', component: stub },
       ],
@@ -160,11 +159,26 @@ describe('芝士起草、等人确认的那一行', () => {
     })
   }
 
-  it('起草的规则：一颗「去确认」直接通到那一条', async () => {
-    const { getByTestId } = await mountWithRouter(proposed({ event_type: 'routine_proposed', routine_id: 'r-9' }))
-    const link = getByTestId('notice-confirm')
-    expect(link.textContent?.trim()).toBe('去确认')
-    expect(link.getAttribute('href')).toBe('/projects/proj-1/routines?routine=r-9')
+  it('旧版留在房间里的那一行提到一条规则：只当一行字，不带任何按钮', async () => {
+    // 新版建规则不落这一行（芝士自己在对话里说），旧房间里的还在，照样读得懂。
+    const { container } = await mountWithRouter(proposed({ event_type: 'routine_proposed', routine_id: 'r-9' }))
+    expect(container.textContent).toContain('名称：每周进展')
+    expect(container.querySelector('.sys-btn')).toBeNull()
+  })
+
+  it('规则那两类都不是「等人确认」的样子：没有「去确认」', async () => {
+    for (const kind of ['routine_proposed', 'routine_run']) {
+      const { queryByTestId } = await mountWithRouter(proposed({ event_type: kind, routine_id: 'r-9' }))
+      expect(queryByTestId('notice-confirm')).toBeNull()
+    }
+  })
+
+  it('规则删了以后：那一行只说结果', async () => {
+    const block = proposed({ event_type: 'routine_proposed', routine_id: 'r-9', who: '', state: 'over' })
+    block.content = '芝士删掉了例行事务「每周进展汇总」'
+    const { container } = await mountWithRouter(block)
+    expect(container.textContent).toContain('删掉了例行事务')
+    expect(container.querySelector('.sys-btn')).toBeNull()
   })
 
   it('整理的技能：通到技能页的那一条', async () => {
@@ -191,7 +205,7 @@ describe('芝士起草、等人确认的那一行', () => {
   })
 
   it('别的平台提示不带这颗按钮', async () => {
-    const { queryByTestId } = await mountWithRouter(proposed({ event_type: 'routine_result' }))
+    const { queryByTestId } = await mountWithRouter(proposed({ event_type: 'routine_result', routine_id: 'r-9' }))
     expect(queryByTestId('notice-confirm')).toBeNull()
   })
 })
