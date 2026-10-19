@@ -14,7 +14,7 @@
     <p v-if="error" role="alert" class="mc__notice c-danger">{{ error }}</p>
 
     <section class="settings-card" :aria-label="t('account.modelConnections.devicesTitle')">
-      <div class="settings-card__head">
+      <div class="settings-card__head mc-head">
         <div class="settings-card__title">{{ t('account.modelConnections.devicesTitle') }}</div>
         <!-- The visible text is the short form; the accessible name keeps the full action. -->
         <BaseButton
@@ -116,26 +116,14 @@
     </section>
 
     <section class="settings-card" :aria-label="t('account.modelConnections.heldTitle')">
-      <div class="settings-card__head">
+      <div class="settings-card__head mc-head">
         <div class="settings-card__title">{{ t('account.modelConnections.heldTitle') }}</div>
         <div class="mc-headbtns">
-          <BaseButton
-            kind="ghost"
-            size="sm"
-            prepend-icon="mdi-plus"
-            :aria-label="t('account.modelConnections.addApiKey')"
-            @click="openHeld('api_key')"
-          >
-            {{ t('account.modelConnections.addApiKeyShort') }}
+          <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="openHeld('api_key')">
+            {{ t('account.modelConnections.addApiKey') }}
           </BaseButton>
-          <BaseButton
-            kind="ghost"
-            size="sm"
-            prepend-icon="mdi-plus"
-            :aria-label="t('account.modelConnections.addAccountService')"
-            @click="openHeld('model_service')"
-          >
-            {{ t('account.modelConnections.addAccountServiceShort') }}
+          <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="openHeld('model_service')">
+            {{ t('account.modelConnections.addAccountService') }}
           </BaseButton>
         </div>
       </div>
@@ -747,6 +735,22 @@ watch(
 
   .mc-body__pad {
     padding: 0 16px 16px 42px;
+  }
+
+  /* The title keeps its line; add buttons that do not fit beside it go under it. */
+  .mc-head {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-bottom: 8px;
+  }
+
+  .mc-head .settings-card__title {
+    padding-bottom: 0;
+    white-space: nowrap;
+  }
+
+  .mc-headbtns {
+    margin-left: 12px;
   }
 }
 </style>
