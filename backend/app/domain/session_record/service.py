@@ -11,8 +11,8 @@ Three operations, all on `SessionRecord`:
 - `read` hands a conversation's records back in the order they were written,
   from whichever of the two homes each run is in.
 
-How long they are kept, and what goes when a conversation does, is
-`retention`'s.
+An object, once sealed, is never deleted. How long a row is kept, and so how
+long the app can read a run, is `retention`'s.
 
 What is kept is the journal row as the runner wrote it, the platform's
 `cheese` stamp included. The only change is the scrub (`scrubbed`):
@@ -184,7 +184,7 @@ async def append(sessions: SessionFactory, stream: Stream, rows: list[dict]) -> 
     in journal order); how many were new.
 
     Nothing is kept for a conversation that is gone: its records would have
-    nowhere to be read from, and the retention sweep would take them anyway.
+    nowhere to be read from, and the retention sweep would delete their rows anyway.
     """
     entries = await asyncio.to_thread(_entries, rows)
     if not entries:

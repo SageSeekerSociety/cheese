@@ -124,11 +124,6 @@ def _world():
         ("session record seal", "session_record.service.seal", "sessions"),
         ("session record retention", "session_record.retention.sweep", "sessions"),
         (
-            "session record orphans",
-            "session_record.retention.forget_orphans",
-            "sessions",
-        ),
-        (
             "notification email drain",
             "notification.maintenance.drain_email_queue",
             "sessions",
@@ -474,7 +469,6 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("run record expiry", 110),
         ("session record seal", 60),
         ("session record retention", 600),
-        ("session record orphans", 86400),
         ("notification email drain", 111),
         ("notification push drain", 112),
         ("notification digest", 113),
