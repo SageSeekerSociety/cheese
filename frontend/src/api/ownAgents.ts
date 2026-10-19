@@ -1,5 +1,5 @@
 // 成员自己的 Claude Code（#2991）：项目允不允许成员接入、谁加入了，以及一台电脑上登录了没有。
-import type { ClaudeCodeLogin, OwnAgentCallers, OwnAgentKind, OwnAgentsSettings } from '../types/ownAgents'
+import type { ClaudeCodeLogin, OwnAgentKind, OwnAgentsSettings } from '../types/ownAgents'
 
 import { connectorRequest } from './connector'
 import { request } from './http'
@@ -21,18 +21,6 @@ export function setOwnAgentsRules(
   return request<OwnAgentsSettings>(path(projectId), {
     method: 'PUT',
     body: JSON.stringify(rules),
-  })
-}
-
-/** 谁可以叫这位成员自己的 Claude Code；只有它的主人能改。 */
-export function setOwnAgentCallers(
-  projectId: string,
-  handle: string,
-  callers: OwnAgentCallers
-): Promise<OwnAgentsSettings> {
-  return request<OwnAgentsSettings>(`${path(projectId)}/${encodeURIComponent(handle)}/callers`, {
-    method: 'PUT',
-    body: JSON.stringify({ callers }),
   })
 }
 

@@ -27,7 +27,6 @@ const SETTINGS: Settings = {
       handle: 'agent-alice-max',
       // i18n-data: an agent's stored name, not interface copy
       name: 'alice的 Claude Code（Max）',
-      callers: 'owner',
       owner_handle: 'alice',
       owner_name: 'alice',
       connection: { kind: 'subscription', plan: 'max', model: null, on_account: false, allowed: true },
@@ -37,7 +36,6 @@ const SETTINGS: Settings = {
       handle: 'agent-bob-api',
       // i18n-data: an agent's stored name, not interface copy
       name: 'bob的 Claude Code（API）',
-      callers: 'owner',
       owner_handle: 'bob',
       owner_name: 'bob',
       connection: { kind: 'api_key', plan: null, model: null, on_account: true, allowed: true },

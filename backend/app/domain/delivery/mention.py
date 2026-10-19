@@ -33,7 +33,6 @@ from typing import Final
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_instance.own import owned_instance
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.conversation.services import of_room
 from app.domain.delivery.agent import instances_for_seats, now, record_agent
@@ -158,13 +157,6 @@ async def record_mentions(
         instance = instances.get(seat)
         if instance is None:
             continue
-        # A member's own agent answers only whoever its owner lets call it
-        # (#2991), never another agent: naming it from anyone else reaches
-        # nobody.
-        if await owned_instance(session, instance.id) is not None and (
-            by_agent or not await _calls_own(session, instance.id, author)
-        ):
-            continue
         if budget is not None and budget <= 0:
             summoned.fused.append(seat)
             continue
@@ -194,12 +186,3 @@ async def record_mentions(
             budget -= 1
         summoned.woken.append(seat)
     return summoned
-
-
-async def _calls_own(
-    session: AsyncSession, instance_id: uuid.UUID, author: str
-) -> bool:
-    # deferred-import: tests replace this name on app.domain.agent_instance.own
-    from app.domain.agent_instance.own import callable_by
-
-    return await callable_by(session, instance_id, author)
