@@ -2418,7 +2418,7 @@ class PlanConcurrencyTest(unittest.TestCase):
         waited for it — and it has to be reaped, not just skipped.
         """
         from ci_fast_process import clear_stop, execute, stop_all
-        token = "19.735"
+        token = f"19.{os.getpid()}"
         stop_all()
         try:
             started = time.monotonic()
@@ -2439,8 +2439,10 @@ class PlanConcurrencyTest(unittest.TestCase):
         registered, then raised where the cleanup can kill the group.
         """
         import ci_fast_process
-        from ci_fast_process import execute
-        token = "19.734"
+        from ci_fast_process import clear_stop, execute
+        # A previous test may have left the process in the stopped state.
+        clear_stop()
+        token = f"19.{os.getpid()}"
         real_popen = subprocess.Popen
 
         def popen_then_interrupt(*args, **kwargs):
