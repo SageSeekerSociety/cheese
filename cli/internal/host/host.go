@@ -48,6 +48,7 @@ type Host struct {
 	tm      screens
 	cfgPath string // for the shared screen-count state file ("" disables)
 	base    string // server origin, for self-update downloads
+	token   string
 
 	ctx      context.Context
 	mu       sync.Mutex
@@ -63,7 +64,10 @@ type Host struct {
 	localFSMu  sync.Mutex
 	localFSSet *localfs.GrantSet
 
-	updating atomic.Bool // guards against concurrent / re-entrant self-updates
+	updating    atomic.Bool // guards against concurrent / re-entrant self-updates
+	sleepMu     sync.Mutex
+	sleepCancel context.CancelFunc
+	sleepDone   chan struct{}
 }
 
 type sess struct {
@@ -100,6 +104,7 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 		tm:       tm,
 		cfgPath:  cfgPath,
 		base:     cfg.Base,
+		token:    cfg.Token,
 		sessions: map[string]*sess{},
 		execs:    map[string]context.CancelFunc{},
 	}, nil
@@ -149,6 +154,8 @@ func (h *Host) Run(ctx context.Context) error {
 	}()
 
 	go h.closeExitedScreens(ctx)
+	h.startSleep(ctx)
+	defer h.stopSleep()
 
 	return h.conn.Run(ctx, h.onMsg)
 }
@@ -245,7 +252,7 @@ func (h *Host) performUpdate() {
 	h.closeViewerClients()
 	fmt.Fprintln(os.Stderr, "cheese: binary updated in place; handing off to the new build (tasks preserved)…")
 	// syscall.Exec replaces the process image, so the viewer relays this process
-	// owns are the only thing that has to be let go by hand; the private tmux and
+	// owns and its sleep assertion have to be let go by hand; the private tmux and
 	// every hosted task survive as they do across an ordinary stop, and the new
 	// image reconnects and re-adopts them. If exec fails we deliberately do NOT exit —
 	// the tasks must live on; the already-replaced binary applies on next restart.
@@ -254,7 +261,11 @@ func (h *Host) performUpdate() {
 	// (Windows), that process refuses to start beside a live connector, and
 	// this one may not have exited by the time it looks.
 	h.clearState()
+	// Exec preserves the PID, so caffeinate -w would survive it. Release the
+	// assertion explicitly before handing off, and resume monitoring on failure.
+	h.stopSleep()
 	if err := handOff(self); err != nil {
+		h.startSleep(h.ctx)
 		h.publishState()
 		fmt.Fprintf(os.Stderr, "cheese: exec into new binary failed (applies on next restart): %v\n", err)
 	}

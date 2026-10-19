@@ -1,4 +1,16 @@
 {
+  "sessions": "AI sessions running on this computer",
+  "noSessions": "No running AI sessions",
+  "sessionsFailed": "Could not load sessions or sleep settings",
+  "sleepFailed": "Could not save sleep settings",
+  "preventSleep": "Prevent sleep while AI sessions run",
+  "preventSleepHint": "Prevent idle system sleep while AI sessions run here, and release when all finish. Applies to every enrollment on this computer",
+  "lidHint": "A Mac still sleeps with its lid closed on battery power",
+  "since": "Since {time}",
+  "role": {
+    "center": "Session host",
+    "executor": "Execution host"
+  },
   "loadFailed": "Couldn't load",
   "name": "Device name",
   "title": "This device",

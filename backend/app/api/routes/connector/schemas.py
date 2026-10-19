@@ -59,6 +59,30 @@ class ModelConnectionOut(ClaudeCodeLoginOut):
     last_used_at: str | None
 
 
+class DeviceScreenOut(BaseModel):
+    sid: str
+    agent_handle: str
+    agent_user_id: str
+    project_id: str | None
+    topic_id: str | None
+    agent_name: str | None
+    agent_name_source: str | None
+
+
+class EnrollmentDeviceOut(BaseModel):
+    device_id: str
+    name: str
+    online: bool
+    team_id: int
+    last_seen_at: str | None
+    screens: list[DeviceScreenOut]
+    logins: list[ClaudeCodeLoginOut]
+
+
+class AccessibleDevicesOut(BaseModel):
+    devices: list[EnrollmentDeviceOut]
+
+
 class AccountConnectionOut(BaseModel):
     """A model connection the caller's account holds: an Anthropic API key or
     a model service, kept sealed by the platform. Never the key."""

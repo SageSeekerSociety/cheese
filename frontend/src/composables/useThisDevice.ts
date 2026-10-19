@@ -8,7 +8,6 @@ import { desktopBridge } from '@/lib/desktop'
 
 export function useThisDevice() {
   const bridge = desktopBridge()
-  const device = ref<MyDevice | null>(null)
   const enrollments = ref<MyDevice[]>([])
   const teams = ref<MyTeam[]>([])
   const loading = ref(false)
@@ -20,7 +19,6 @@ export function useThisDevice() {
     try {
       const [ids, result, mine] = await Promise.all([bridge.thisDevices(), listAccessibleDevices(), listMyTeams()])
       enrollments.value = result.devices.filter((d) => ids.includes(d.device_id))
-      device.value = enrollments.value[0] ?? null
       teams.value = mine
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : t('account.thisDevice.loadFailed')
@@ -28,5 +26,5 @@ export function useThisDevice() {
       loading.value = false
     }
   }
-  return { available: bridge !== null, device, enrollments, teams, loading, error, load }
+  return { available: bridge !== null, enrollments, teams, loading, error, load }
 }
