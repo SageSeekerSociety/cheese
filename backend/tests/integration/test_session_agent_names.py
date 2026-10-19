@@ -1,6 +1,6 @@
 """Every place that names the agent behind a session on a device names the
-teammate the session belongs to: the bulk switch's session list, the team
-page's 「正在用」 lines, the screens open on a device and the notice its
+teammate the session belongs to: the bulk switch's session list,
+the screens open on a device and the notice its
 device's owner gets. A session of a
 project teammate carries that teammate's name; one that names no teammate
 carries the name of the project's default agent.
@@ -208,14 +208,17 @@ async def test_the_bulk_switch_names_each_sessions_teammate(client, monkeypatch)
     assert _by_handle(p, listed.json()["data"]["sessions"]) == EXPECTED
 
 
-async def test_the_team_page_names_each_sessions_teammate(client, monkeypatch):
+async def test_the_team_device_list_omits_work_details_for_running_sessions(
+    client, monkeypatch
+):
     p = await _all_at_work(client, monkeypatch)
 
     listed = client.get(f"/connector/teams/{p.team_id}/devices", headers=p.bob)
 
     assert listed.status_code == 200, listed.text
     [device] = listed.json()["devices"]
-    assert _by_handle(p, device["in_use"]) == EXPECTED
+    assert device["device_id"] == p.device_id
+    assert not {"in_use", "claude_code", "logins"} & device.keys()
 
 
 async def test_the_team_admin_is_told_which_teammate_started(client, monkeypatch):
