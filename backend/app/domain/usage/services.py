@@ -17,6 +17,7 @@ from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.project.services import ProjectService
 from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
 from app.domain.usage.budgets import CreditBudgets
@@ -88,8 +89,6 @@ class UsageService:
     ) -> dict[uuid.UUID, ledger.Refusal | None]:
         """`admit_project` for a batch: project id → ``ledger.Refusal`` or None.
         Projects missing from the table raise, as the single form does."""
-        from app.domain.project.services import ProjectService
-
         wanted = list(dict.fromkeys(project_ids))
         projects = await ProjectService(self._session).get_projects_by_ids(wanted)
         for pid in wanted:
