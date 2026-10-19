@@ -16,16 +16,18 @@
     <section class="settings-card" :aria-label="t('account.modelConnections.devicesTitle')">
       <div class="settings-card__head mc-head">
         <div class="settings-card__title">{{ t('account.modelConnections.devicesTitle') }}</div>
-        <!-- The visible text is the short form; the accessible name keeps the full action. -->
-        <BaseButton
-          kind="ghost"
-          size="sm"
-          prepend-icon="mdi-plus"
-          :aria-label="t('account.modelConnections.addService')"
-          @click="openService"
-        >
-          {{ t('account.modelConnections.useService') }}
-        </BaseButton>
+        <div class="mc-headbtns">
+          <!-- The visible text is the short form; the accessible name keeps the full action. -->
+          <BaseButton
+            kind="ghost"
+            size="sm"
+            prepend-icon="mdi-plus"
+            :aria-label="t('account.modelConnections.addService')"
+            @click="openService"
+          >
+            {{ t('account.modelConnections.useService') }}
+          </BaseButton>
+        </div>
       </div>
 
       <div v-if="firstLoad" class="d-flex justify-center py-6">
@@ -750,6 +752,9 @@ watch(
   }
 
   .mc-headbtns {
+    flex-wrap: wrap;
+    flex-shrink: 1;
+    min-width: 0;
     margin-left: 12px;
   }
 }
