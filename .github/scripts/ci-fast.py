@@ -27,10 +27,11 @@ A missing title is unverified, never replaced by a possibly unrelated HEAD title
 and a payload that cannot be read at all costs this run the title alone — the
 rest of the checks still run and can still fail it.
 
-Scope comes from Required CI's select()/path map, plus one local widening: a
-path the map does not name could be any kind of code, so it turns both product
-suites on — except for prose, which cannot hold the code a suite covers and is
-evidence for the doc checks alone (DOC_GLOBS). Changes include committed,
+Scope comes from Required CI's select()/path map, plus one local widening: the
+guards always run. A path the map does not name is reported under
+unknown_paths and judged by those guards and the static tier alone; it does not
+turn the product suites on, which a quick run cannot fit. Prose is not an
+unknown path (DOC_GLOBS). Changes include committed,
 staged, unstaged, untracked, deleted and both renamed paths. Hook commands
 remain in pre-commit config; tests reuse existing pytest/Vitest/type-ratchet
 entry points. No installs, no result cache, no hook or compiler config changes.
@@ -511,16 +512,17 @@ def run(args, report, finish, started):
     if not base_sha:
         scope = {suite: True for suite in paths_map}
         report["fallback"] = True
-    # A path the shared map does not name could be any kind of code, so the tier
-    # widens to both product suites; prose cannot be, so it is not an unknown
-    # path (DOC_GLOBS). Everything else widens exactly as before.
+    # A path the shared map does not name is recorded, and it is judged by the
+    # guards and static tier (which always run) — it does not widen the product
+    # suites. Widening them made the quick run need the full suite, which it
+    # cannot fit, so the whole run answered unknown. Prose is never unknown
+    # (DOC_GLOBS).
     unknown = [
         p for p in changed
         if not any(fnmatch.fnmatchcase(p, pat) for patterns in paths_map.values() for pat in patterns)
         and not any(fnmatch.fnmatchcase(p, pat) for pat in DOC_GLOBS)
     ]
     if unknown:
-        scope["backend"] = scope["frontend"] = True
         report["unknown_paths"] = unknown
     scope["guards"] = True
     # A frontend catalog edit under src/i18n/messages/** is read back by the
@@ -693,16 +695,23 @@ def run(args, report, finish, started):
 
     # Cheap high-frequency metadata first; tests/types before full-tree lint.
     hook("repo-rules")
+    # Static checks first: ruff, pyright and the guards answer in seconds, so
+    # their verdict exists before the slower test tier can run out the budget.
+    # The node-runtime hooks stay after the tests, which is where their
+    # budget check below expects them.
+    for identifier in hooks:
+        if identifier != "repo-rules" and identifier not in JS_RUNTIME_HOOKS:
+            hook(identifier)
     if args.tier != "static":
         with tempfile.TemporaryDirectory(prefix="ci-fast-") as tmp:
             plan, omissions = test_plan(Path(REPO_ROOT), changed, scope, Path(tmp),
-                                        bool(unknown) or not base_sha, args.memory_mib, frontend_scope)
+                                        not base_sha, args.memory_mib, frontend_scope)
             report["not_run"].extend(omissions)
             run_plan(plan)
     for identifier in hooks:
-        if identifier == "repo-rules":
+        if identifier not in JS_RUNTIME_HOOKS:
             continue
-        if identifier in JS_RUNTIME_HOOKS and deadline - time.monotonic() < JS_HOOK_MIN_SECONDS:
+        if deadline - time.monotonic() < JS_HOOK_MIN_SECONDS:
             # Tests/types already took what the tier had; a node hook started
             # now would spend its whole life being killed. Report it unknown —
             # this tier is allowed to say it could not check, and must never
