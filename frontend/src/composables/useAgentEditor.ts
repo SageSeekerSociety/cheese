@@ -10,6 +10,7 @@ import type { AgentFieldChoice } from '@/lib/modelChoices'
 import { ref, toValue } from 'vue'
 
 import { createProjectAgent, getProjectDefaultModel, updateProjectAgent } from '@/api'
+import { getOwnAgents } from '@/api/ownAgents'
 import { t } from '@/i18n'
 
 /** 表单收拢出来的那一份：新建和更新发的是同一个形状。 */
@@ -26,6 +27,7 @@ export interface AgentDraftPayload {
 export function useAgentEditor(projectId: MaybeRefOrGetter<string>) {
   /** 这个项目的模型目录。取不回来就是空的，下拉只剩「跟随项目」那一项。 */
   const choices = ref<AgentFieldChoice[]>([])
+  const connectionModel = ref(false)
   const modelsLoading = ref(false)
   const saving = ref(false)
   const error = ref<string | null>(null)
@@ -36,12 +38,28 @@ export function useAgentEditor(projectId: MaybeRefOrGetter<string>) {
   }
 
   /** 打开编辑框时问一次模型目录。失败留在 `error` 里，不挡住填写。 */
-  async function loadModels() {
+  async function loadModels(agent?: ProjectAgent | null) {
     modelsLoading.value = true
     choices.value = []
+    connectionModel.value = false
     try {
       const state = await getProjectDefaultModel(toValue(projectId))
       choices.value = state.choices
+      if (agent) {
+        const team = await getOwnAgents(toValue(projectId))
+        const connection = team.agents.find((a) => a.handle === agent.seat_handle)?.connection
+        if (connection) {
+          connectionModel.value = true
+          choices.value = connection.allowed_models.map((id) => ({
+            id,
+            label: id,
+            description: '',
+            default: false,
+            allowed: true,
+            requires_plan: null,
+          }))
+        }
+      }
     } catch (e) {
       error.value = e instanceof Error ? e.message : t('work.models.loadError')
     } finally {
@@ -85,5 +103,5 @@ export function useAgentEditor(projectId: MaybeRefOrGetter<string>) {
     }
   }
 
-  return { choices, modelsLoading, saving, error, clearError, loadModels, save }
+  return { choices, connectionModel, modelsLoading, saving, error, clearError, loadModels, save }
 }

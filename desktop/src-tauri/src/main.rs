@@ -48,7 +48,7 @@ const SERVER_PERMISSIONS: &[&str] = &[
     "allow-cancel-connect",
     "allow-this-device",
     "allow-prevent-sleep",
-    "allow-this-devices",
+    "allow-this-devices", "allow-enrollment-profiles",
     "allow-claude-login",
     "allow-cancel-claude-login",
     "allow-claude-logout",
@@ -151,6 +151,9 @@ async fn machine_sleep_setting(path: &std::path::Path, enabled: Option<bool>) ->
 
 #[tauri::command]
 async fn this_devices() -> Vec<String> { connect::stored_device_ids().await }
+
+#[tauri::command]
+async fn enrollment_profiles() -> std::collections::HashMap<String, String> { connect::enrollment_profiles().await }
 
 #[tauri::command]
 fn cancel_connect(running: State<'_, connect::Running>) {
@@ -319,6 +322,7 @@ fn main() {
             this_device,
             prevent_sleep,
             this_devices,
+            enrollment_profiles,
             claude_login,
             cancel_claude_login,
             claude_logout,

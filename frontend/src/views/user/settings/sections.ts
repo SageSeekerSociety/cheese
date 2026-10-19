@@ -21,10 +21,7 @@ export function settingsGroups(): SettingsGroup[] {
     {
       key: 'devices',
       title: t('account.settings.groups.devices'),
-      items: [
-        item('UserSettingsModelConnections', t('account.settings.modelConnections'), 'mdi-robot-outline'),
-        item('UserSettingsConnections', t('account.settings.connections'), 'mdi-link-variant'),
-      ],
+      items: [item('UserSettingsConnections', t('account.settings.connections'), 'mdi-link-variant')],
     },
     ...(desktopCan('autostart') || desktopCan('device')
       ? [

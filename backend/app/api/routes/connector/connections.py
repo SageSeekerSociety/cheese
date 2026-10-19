@@ -7,10 +7,13 @@
 """
 
 import logging
+import re
 import uuid
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter
+from pydantic import BaseModel, Field, RootModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
@@ -22,8 +25,8 @@ from app.api.routes.connector.schemas import (
     AccountConnectionOut,
     ClaudeCodeLoginOut,
     ConnectionRename,
+    ConnectionModels,
     ModelConnectionsOut,
-    ModelServiceRequest,
     RenameDeviceRequest,
 )
 from app.api.write_access import ROUTE_DECIDES
@@ -32,10 +35,10 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
     UnauthorizedError,
-    UnprocessableEntityError,
 )
 from app.core.sentences import say
 from app.domain.agent import model_connections
+from app.domain.agent.model_catalog import model_choices
 from app.domain.agent.device_hub import DeviceOffline, HubScreen, device_hub
 from app.domain.agent.harness.claude_code import executor_launch, owner_login
 from app.domain.agent_instance import account_connections
@@ -44,11 +47,66 @@ from app.domain.device import sandbox
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
-from app.domain.machine.session_work import device_users, screen_agent_name
+from app.domain.machine.session_work import screen_agent_name
 from app.domain.team.repositories import TeamRepository
+from app.domain.usage.services import UsageService
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)
+
+
+class StartClaudeLoginIn(BaseModel):
+    team_handle: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+
+
+class StartClaudeLoginOut(BaseModel):
+    opened: bool
+    command: str | None
+
+
+class LoginRefreshOut(RootModel[None]):
+    """Refreshing credentials returns no device-level model summary."""
+
+
+@router.post(
+    "/teams/{team_id}/devices/{device_id}/claude-login", dependencies=[ROUTE_DECIDES]
+)
+async def start_team_claude_login(
+    team_id: int,
+    device_id: str,
+    body: StartClaudeLoginIn,
+    resolver: ActorResolverDep,
+    service: DeviceServiceDep,
+    db: DbSession,
+) -> StartClaudeLoginOut:
+    await _team_access(db, resolver, team_id, manage=True)
+    device = await service.get_hosted_device(device_id)
+    if device is None or device.team_id != team_id:
+        raise NotFoundError(say("deviceNotFound"))
+    if not device_hub.is_online(device_id):
+        raise ConflictError(say("modelServiceMachineOffline"))
+    # The connector supplies its own --config, so the terminal command names
+    # this enrollment, including profiles whose team was enrolled more than once.
+    status = await device_hub.exec(device_id, ["cheesehost", "status"], timeout=15)
+    profile = re.search(
+        r"^\s*profile\s+([A-Za-z0-9_-]+)\s*$", status.get("stdout", ""), re.MULTILINE
+    )
+    command = f"cheesehost --profile {profile[1]} claude login" if profile else None
+    page = f"/teams/{body.team_handle}/models?" + urlencode({"loginDevice": device_id})
+    link = "cheese://open?" + urlencode({"path": page})
+    system = device_hub.target(device_id).partition("-")[0]
+    argv = {
+        "darwin": ["open", link],
+        "windows": ["rundll32", "url.dll,FileProtocolHandler", link],
+        "linux": ["xdg-open", link],
+    }.get(system)
+    if argv is None:
+        return StartClaudeLoginOut(opened=False, command=command)
+    try:
+        result = await device_hub.exec(device_id, argv, timeout=15)
+    except (DeviceOffline, TimeoutError):
+        return StartClaudeLoginOut(opened=False, command=command)
+    return StartClaudeLoginOut(opened=result.get("exit") == 0, command=command)
 
 
 async def _require_user(resolver: ActorResolverDep) -> int:
@@ -117,19 +175,10 @@ async def my_devices(
     user_id = await _require_user(resolver)
     devices = await service.list_enrolled_by(user_id)
     by_device = _screens_by_device()
-    # Every machine's owner-login in one query, before the loop: one query per
-    # self-hosted machine is what this list cost before (#2991).
-    logins = await owner_login.statuses(
-        db, [d.device_id for d in devices if d.supply == Supply.self_hosted]
-    )
     views = []
     for device in devices:
         view = await _device_view(db, device, by_device.get(device.device_id, []))
-        # Whether its owner's own Claude Code is logged in there for the
-        # platform (#2991): the owner's to see, not the team's. Only a machine
-        # they enrolled themselves runs it; a cloud machine says nothing.
         if device.supply == Supply.self_hosted:
-            view["claude_code"] = logins.get(device.device_id)
             # Whether it can give a session a sandbox, and if not the machine's
             # own reason, worded for its owner: theirs to act on.
             view["sandbox"] = sandbox.status(
@@ -157,82 +206,93 @@ async def accessible_devices(
     devices = []
     for team in await TeamRepository(db).list_teams_of_user(user_id):
         devices.extend(await service.list_devices_for_team(team.id))
-    logins = await owner_login.connections(db, [d.device_id for d in devices])
-    return {
-        "devices": [
-            {**await _device_view(db, d, []), "logins": logins.get(d.device_id, [])}
-            for d in devices
-        ]
-    }
+    return {"devices": [await _device_view(db, d, []) for d in devices]}
 
 
 async def _my_self_hosted(
     device_id: str, resolver: ActorResolverDep, service: DeviceService
 ) -> None:
-    """Only the machine's owner, and only for a machine they enrolled."""
+    """Only administrators of the device's current team may manage it."""
     user_id = await _require_user(resolver)
-    owned = {d.device_id: d for d in await service.list_enrolled_by(user_id)}
-    device = owned.get(device_id)
+    device = await service.get_device(device_id)
     if device is None or device.supply != Supply.self_hosted:
-        raise NotFoundError(say("deviceNotYours"))
+        raise NotFoundError(say("deviceNotFound"))
+    if not await service.may_manage(device, user_id):
+        raise ForbiddenError(say("deviceTeamAdminOnly"))
 
 
-async def _my_login(
-    db: DbSession, resolver: ActorResolverDep, service: DeviceService, login_id: str
-) -> str:
-    """The machine holding one of the caller's logins, on a machine they
-    enrolled, and only theirs."""
+async def _team_access(db, resolver, team_id: int, *, manage: bool = False) -> int:
+    user_id = await _require_user(resolver)
+    teams = TeamRepository(db)
+    if not await teams.is_team_member(team_id, user_id):
+        raise ForbiddenError(say("notTeamMember"))
+    if manage and not await teams.is_team_at_least_admin(team_id, user_id):
+        raise ForbiddenError(say("deviceTeamAdminOnly"))
+    return user_id
+
+
+async def _team_login(db, resolver, service, team_id: int, login_id: str) -> str:
+    await _team_access(db, resolver, team_id, manage=True)
     device_id = await owner_login.machine_of(db, login_id)
-    if device_id is None:
+    device = await service.get_device(device_id) if device_id else None
+    if device is None or device.team_id != team_id:
         raise NotFoundError(say("ownAgentConnectionNotFound"))
-    await _my_self_hosted(device_id, resolver, service)
-    return device_id
+    return device.device_id
 
 
 def _login_out(login: dict | None) -> ClaudeCodeLoginOut | None:
     return None if login is None else ClaudeCodeLoginOut.model_validate(login)
 
 
-@router.get("/my/model-connections")
-async def my_model_connections(
-    resolver: ActorResolverDep, db: DbSession
+@router.get("/teams/{team_id}/model-connections")
+async def team_model_connections(
+    team_id: int, resolver: ActorResolverDep, db: DbSession
 ) -> ModelConnectionsOut:
-    """The caller's model connections (#2991): the logins on the machines they
-    enrolled — what each logs in with, where it is kept, its last check — and
-    the API keys and model services their account holds. Never a key."""
-    user_id = await _require_user(resolver)
-    connections = await model_connections.of_owner(db, user_id, device_hub)
-    held = await account_connections.of_owner(db, user_id)
+    """The team's device logins, encrypted connections and platform models.
+    Subscription rows identify their credential device. Keys are never returned."""
+    user_id = await _team_access(db, resolver, team_id)
+    connections = await model_connections.of_team(db, team_id, device_hub)
+    held = await account_connections.of_team(db, team_id)
+    access = await UsageService(db).model_access(team_id)
     return ModelConnectionsOut.model_validate(
         {
+            "can_manage": await TeamRepository(db).is_team_at_least_admin(
+                team_id, user_id
+            ),
+            "platform_models": [
+                m for m in model_choices({}) if access.shows(m) and access.allows(m)
+            ],
             "connections": connections,
             "account_connections": [account_connections.view(r) for r in held],
         }
     )
 
 
-async def _my_account_connection(db, resolver, connection_id: uuid.UUID):
-    user_id = await _require_user(resolver)
-    row = await account_connections.owned(db, user_id, connection_id)
+async def _team_account_connection(
+    db, resolver, team_id: int, connection_id: uuid.UUID
+):
+    await _team_access(db, resolver, team_id, manage=True)
+    row = await account_connections.owned(db, team_id, connection_id)
     if row is None:
         raise NotFoundError(say("ownAgentConnectionNotFound"))
     return row
 
 
-# The handler decides: a person keeps a connection on their own account.
-@router.post("/my/model-connections", dependencies=[ROUTE_DECIDES])
+# The handler requires an administrator of the connection's team.
+@router.post("/teams/{team_id}/model-connections", dependencies=[ROUTE_DECIDES])
 async def add_account_connection(
-    body: AccountConnectionIn, resolver: ActorResolverDep, db: DbSession
+    team_id: int, body: AccountConnectionIn, resolver: ActorResolverDep, db: DbSession
 ) -> AccountConnectionOut:
-    """Keep an Anthropic API key or a model service on the caller's account,
-    with no machine (#2991). The service is called once first; a connection
+    """Keep an Anthropic API key or model service encrypted for the team.
+    The service is called once first; a connection
     it refuses is not kept, and the refusal says why. The key is sealed and
     never returned."""
-    user_id = await _require_user(resolver)
+    await _team_access(db, resolver, team_id, manage=True)
     row = await account_connections.create(
         db,
-        user_id,
+        team_id,
         kind=body.kind,
+        allowed_models=list(dict.fromkeys(body.allowed_models)),
         key=body.key,
         base_url=body.base_url,
         model=body.model,
@@ -242,30 +302,34 @@ async def add_account_connection(
     return AccountConnectionOut.model_validate(account_connections.view(row))
 
 
-# The handler decides: only its owner.
+# The handler requires an administrator of the connection's team.
 @router.post(
-    "/my/model-connections/{connection_id}/check", dependencies=[ROUTE_DECIDES]
+    "/teams/{team_id}/model-connections/{connection_id}/check",
+    dependencies=[ROUTE_DECIDES],
 )
 async def check_account_connection(
-    connection_id: uuid.UUID, resolver: ActorResolverDep, db: DbSession
+    team_id: int, connection_id: uuid.UUID, resolver: ActorResolverDep, db: DbSession
 ) -> AccountConnectionOut:
     """Call the service again with the connection, and record what it said."""
-    row = await _my_account_connection(db, resolver, connection_id)
+    row = await _team_account_connection(db, resolver, team_id, connection_id)
     await account_connections.check(db, row)
     await db.commit()
     return AccountConnectionOut.model_validate(account_connections.view(row))
 
 
-# The handler decides: only its owner.
-@router.patch("/my/model-connections/{connection_id}", dependencies=[ROUTE_DECIDES])
+# The handler requires an administrator of the connection's team.
+@router.patch(
+    "/teams/{team_id}/model-connections/{connection_id}", dependencies=[ROUTE_DECIDES]
+)
 async def rename_account_connection(
+    team_id: int,
     connection_id: uuid.UUID,
     body: ConnectionRename,
     resolver: ActorResolverDep,
     db: DbSession,
 ) -> AccountConnectionOut:
     """Name a connection; the own agents on it are named after it."""
-    row = await _my_account_connection(db, resolver, connection_id)
+    row = await _team_account_connection(db, resolver, team_id, connection_id)
     row.name = body.name or None
     await db.flush()
     await rename_for_connection(db, account_connection_id=row.id)
@@ -273,16 +337,18 @@ async def rename_account_connection(
     return AccountConnectionOut.model_validate(account_connections.view(row))
 
 
-# The handler decides: only its owner.
-@router.delete("/my/model-connections/{connection_id}", dependencies=[ROUTE_DECIDES])
+# The handler requires an administrator of the connection's team.
+@router.delete(
+    "/teams/{team_id}/model-connections/{connection_id}", dependencies=[ROUTE_DECIDES]
+)
 async def remove_account_connection(
-    connection_id: uuid.UUID, resolver: ActorResolverDep, db: DbSession
+    team_id: int, connection_id: uuid.UUID, resolver: ActorResolverDep, db: DbSession
 ) -> AccountConnectionOut:
-    """Remove a connection the caller's account holds: its key is deleted at
+    """Remove a team connection: its key is deleted at
     once, and nothing starts with it again. The own agents on it stay in their
     projects with no connection, as one on a removed machine login does.
     Answers with what was removed."""
-    row = await _my_account_connection(db, resolver, connection_id)
+    row = await _team_account_connection(db, resolver, team_id, connection_id)
     removed = AccountConnectionOut.model_validate(account_connections.view(row))
     await db.delete(row)
     await db.commit()
@@ -292,16 +358,11 @@ async def remove_account_connection(
 @router.post("/my/devices/{device_id}/claude-code", dependencies=[ROUTE_DECIDES])
 async def check_my_claude_code(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
-) -> dict[str, Any] | None:
-    """Ask one of the caller's machines again which logins their own Claude
-    Code has there (#2991), and answer the one the machine shows. They log in
-    on the machine itself, which tells the server nothing; the page showing
-    that machine asks, rather than leaving the answer from its last connection
-    standing. A logout its owner asked for while it was away is carried out
-    first."""
+) -> LoginRefreshOut:
+    """Refresh device credentials for the team Models page without a device summary."""
     await _my_self_hosted(device_id, resolver, service)
     await _ask_again(db, device_id)
-    return (await owner_login.statuses(db, [device_id])).get(device_id)
+    return LoginRefreshOut(None)
 
 
 async def _ask_again(db: DbSession, device_id: str) -> None:
@@ -318,33 +379,46 @@ async def _ask_again(db: DbSession, device_id: str) -> None:
     await db.commit()
 
 
-# The handler decides: only the machine's owner, a person, may ask it.
-@router.post("/my/claude-logins/{login_id}/check", dependencies=[ROUTE_DECIDES])
+# The handler requires an administrator of the login's team.
+@router.post(
+    "/teams/{team_id}/claude-logins/{login_id}/check", dependencies=[ROUTE_DECIDES]
+)
 async def check_my_claude_login(
-    login_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+    team_id: int,
+    login_id: str,
+    resolver: ActorResolverDep,
+    service: DeviceServiceDep,
+    db: DbSession,
 ) -> ClaudeCodeLoginOut | None:
     """Ask the machine holding one of the caller's logins again what it is
     (「模型连接」's 重新检查). The machine answers for all of its logins at once."""
-    await _ask_again(db, await _my_login(db, resolver, service, login_id))
+    await _ask_again(db, await _team_login(db, resolver, service, team_id, login_id))
     return _login_out(await owner_login.status(db, login_id))
 
 
-# The handler decides: only the machine's owner, a person, may remove it.
-@router.delete("/my/claude-logins/{login_id}", dependencies=[ROUTE_DECIDES])
+# The handler requires an administrator of the login's team.
+@router.delete(
+    "/teams/{team_id}/claude-logins/{login_id}", dependencies=[ROUTE_DECIDES]
+)
 async def revoke_my_claude_login(
-    login_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+    team_id: int,
+    login_id: str,
+    resolver: ActorResolverDep,
+    service: DeviceServiceDep,
+    db: DbSession,
 ) -> ClaudeCodeLoginOut | None:
     """Log one of the caller's own Claude Code logins out on its machine, from
     any browser (#2991); the machine's other logins stay. Out of use at once;
     the machine logs out now when online, else as it next connects."""
-    await _my_login(db, resolver, service, login_id)
+    await _team_login(db, resolver, service, team_id, login_id)
     await owner_login.revoke(db, device_hub, login_id)
     return _login_out(await owner_login.status(db, login_id))
 
 
-# The handler decides: only the machine's owner, a person, may name it.
-@router.patch("/my/claude-logins/{login_id}", dependencies=[ROUTE_DECIDES])
+# The handler requires an administrator of the login's team.
+@router.patch("/teams/{team_id}/claude-logins/{login_id}", dependencies=[ROUTE_DECIDES])
 async def rename_my_claude_login(
+    team_id: int,
     login_id: str,
     body: ConnectionRename,
     resolver: ActorResolverDep,
@@ -354,50 +428,14 @@ async def rename_my_claude_login(
     """Name one of the caller's own Claude Code logins (#2991); the own agents
     on it are named after it, whatever the machine reports later. The machine
     need not be online."""
-    await _my_login(db, resolver, service, login_id)
+    await _team_login(db, resolver, service, team_id, login_id)
     if not await owner_login.rename(db, login_id, body.name):
         raise NotFoundError(say("ownAgentConnectionNotFound"))
     await db.commit()
     return ClaudeCodeLoginOut.model_validate(await owner_login.status(db, login_id))
 
 
-# The handler decides: only the machine's owner, a person, may set it.
-@router.put(
-    "/my/devices/{device_id}/claude-code/model-service", dependencies=[ROUTE_DECIDES]
-)
-async def use_my_model_service(
-    device_id: str,
-    body: ModelServiceRequest,
-    resolver: ActorResolverDep,
-    service: DeviceServiceDep,
-    db: DbSession,
-) -> ClaudeCodeLoginOut | None:
-    """Add a login to the caller's own Claude Code on one of their machines
-    that calls another model service, from any browser (#2991), and answer it.
-    The key is handed to the machine, which keeps it; it is not stored here.
-    The machine has to be online."""
-    await _my_self_hosted(device_id, resolver, service)
-    if not device_hub.is_online(device_id):
-        raise ConflictError(say("modelServiceMachineOffline"))
-    try:
-        local_id = await owner_login.use_model_service(
-            db,
-            device_hub,
-            device_id,
-            base_url=body.base_url,
-            token=body.token,
-            model=body.model,
-        )
-    except owner_login.MachineRefused as refused:
-        raise UnprocessableEntityError(
-            say("modelServiceRefused", reason=str(refused))
-        ) from None
-    except (DeviceOffline, TimeoutError):
-        raise ConflictError(say("modelServiceMachineOffline")) from None
-    return _login_out(await owner_login.status_on(db, device_id, local_id))
-
-
-# The handler decides: only the machine's owner, a person, may ask it.
+# The handler requires an administrator of the device's team.
 @router.post("/my/devices/{device_id}/sandbox", dependencies=[ROUTE_DECIDES])
 async def check_my_sandbox(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
@@ -431,7 +469,7 @@ async def rename_my_device(
     service: DeviceServiceDep,
     db: DbSession,
 ) -> dict[str, Any]:
-    """Rename a device the caller owns (the service enforces ownership)."""
+    """Rename a device the caller's team administers."""
     user_id = await _require_user(resolver)
     device = await service.rename(device_id, body.name, actor_user_id=user_id)
     return await _device_view(db, device, _screens_by_device().get(device_id, []))
@@ -461,16 +499,43 @@ async def team_devices(
     devices = await service.list_devices_for_team(team_id)
     may_manage = await teams.is_team_at_least_admin(team_id, user_id)
     by_device = _screens_by_device()
-    users = await device_users(db, [d.device_id for d in devices]) if may_manage else {}
-    logins = await owner_login.connections(db, [d.device_id for d in devices])
     return {
         "can_manage": may_manage,
         "devices": [
-            {
-                **await _device_view(db, d, by_device.get(d.device_id, [])),
-                "in_use": users.get(d.device_id),
-                "logins": logins.get(d.device_id, []),
-            }
-            for d in devices
+            await _device_view(db, d, by_device.get(d.device_id, [])) for d in devices
         ],
     }
+
+
+@router.put(
+    "/teams/{team_id}/model-connections/{connection_id}/models",
+    dependencies=[ROUTE_DECIDES],
+)
+async def set_connection_models(
+    team_id: int,
+    connection_id: uuid.UUID,
+    body: ConnectionModels,
+    resolver: ActorResolverDep,
+    db: DbSession,
+) -> AccountConnectionOut:
+    row = await _team_account_connection(db, resolver, team_id, connection_id)
+    row.allowed_models = list(dict.fromkeys(body.allowed_models))
+    await db.commit()
+    return AccountConnectionOut.model_validate(account_connections.view(row))
+
+
+@router.put(
+    "/teams/{team_id}/claude-logins/{login_id}/models", dependencies=[ROUTE_DECIDES]
+)
+async def set_login_models(
+    team_id: int,
+    login_id: str,
+    body: ConnectionModels,
+    resolver: ActorResolverDep,
+    service: DeviceServiceDep,
+    db: DbSession,
+) -> ModelConnectionsOut:
+    await _team_login(db, resolver, service, team_id, login_id)
+    await owner_login.set_models(db, login_id, body.allowed_models)
+    await db.commit()
+    return await team_model_connections(team_id, resolver, db)

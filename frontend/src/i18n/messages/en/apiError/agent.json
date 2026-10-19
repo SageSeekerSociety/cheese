@@ -67,13 +67,8 @@
   "nounModelService": "model service",
   "offeredNeedsPrices": "A model needs both an input and an output price to be offered: an unpriced model silently disables the project's max_budget brake",
   "ownAgentAddPersonOnly": "Only members can add their own Claude Code to a project",
-  "ownAgentConnectionKindRefused": "This project doesn't allow this kind of model connection",
   "ownAgentConnectionNotFound": "Model connection not found: it isn't yours, or it was removed or logged out",
-  "ownAgentNotDefault": "A member's own Claude Code can't be the project's default teammate",
   "ownAgentNotFound": "No member's own Claude Code by that name in this project",
-  "ownAgentRemoveOwnerOnly": "Only its owner can remove their Claude Code from the project",
-  "ownAgentServiceHostRefused": "This project doesn't allow the model service at {host}",
-  "ownAgentsClosedHere": "This project doesn't allow members to bring their own Claude Code",
   "ownerMachineOffline": "Can't start: the computer holding this model connection is offline",
   "projectCredentialManagerOnly": "Only someone who can change the project's settings can manage its credentials",
   "projectNoGatewayKey": "The project “{name}” has no gateway key yet, so its budget can't be set",
@@ -123,6 +118,6 @@
   "topicNotFound": "Channel not found",
   "turnForceStopped": "This turn was force-stopped",
   "upstreamModelRequired": "The upstream model ID can't be empty",
-  "ownAgentTaskOwnerMessageRequired": "To create a task, cite the ID of a message written by your owner.",
-  "ownAgentHasNoOwner": "This agent has no personal owner to ask privately."
+  "ownAgentHasNoOwner": "This agent has no personal owner to ask privately.",
+  "teamConnectionModelRefused": "This team connection does not allow the selected model"
 }

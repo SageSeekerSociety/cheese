@@ -240,6 +240,7 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
   {
     id: 'dev-desk',
     local_id: 'default',
+    allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-desk',
     device_name: '工作站',
     online: true,
@@ -257,6 +258,7 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
   {
     id: 'dev-laptop',
     local_id: 'default',
+    allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-laptop',
     device_name: '王小明的 MacBook',
     online: true,
@@ -274,6 +276,7 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
   {
     id: 'dev-lab',
     local_id: 'default',
+    allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-lab',
     device_name: '实验室服务器',
     online: false,
@@ -290,6 +293,7 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
   },
   {
     id: 'login-desk-pro',
+    allowed_models: ['sonnet', 'opus', 'haiku'],
     local_id: 'K3V7Q2M8XWZ4TN6PRJ5BHD2C7A',
     device_id: 'dev-desk',
     device_name: '工作站',
@@ -318,6 +322,7 @@ export const MODEL_HELD: AccountConnection[] = [
   {
     id: 'held-key',
     kind: 'api_key',
+    allowed_models: ['sonnet', 'opus'],
     name: '工作用',
     key_last4: 'Q7zK',
     service_host: null,
@@ -329,6 +334,7 @@ export const MODEL_HELD: AccountConnection[] = [
   {
     id: 'held-glm',
     kind: 'model_service',
+    allowed_models: ['kimi-k2'],
     name: null,
     key_last4: '9f2c',
     service_host: 'open.bigmodel.cn',

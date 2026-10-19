@@ -1,6 +1,6 @@
 """A personal assistant is addressable by the team and opens tasks on its owner's word."""
 
-from tests.support.devices import enrollment_team
+from tests.support.devices import enrollment_team, place_in_project_team
 
 import asyncio
 import uuid
@@ -45,6 +45,7 @@ def _log_in_claude_code(client, handle: str, machine: str = "", **login) -> str:
                     installed=True,
                     logged_in=True,
                     checked_at=datetime.now(UTC),
+                    allowed_models=[login.get("model") or "sonnet"],
                     **login,
                 )
             )
@@ -55,9 +56,22 @@ def _log_in_claude_code(client, handle: str, machine: str = "", **login) -> str:
 
 
 def _add(client, project_id, handle: str, connection: str):
+    # These roster scenarios enroll the fixture device in the project's team.
+    async def setup():
+        async with client.test_factory() as db:
+            row = await db.get(DeviceClaudeLoginRow, connection)
+            if row is None:
+                return "sonnet", "missing"
+            await place_in_project_team(
+                sql_device_service(db), row.device_id, uuid.UUID(project_id)
+            )
+            await db.commit()
+            return row.model or "sonnet", row.device_id
+
+    model, device = client.portal.call(setup)
     return client.post(
         f"/projects/{project_id}/own-agents",
-        json={"connection_id": connection},
+        json={"connection_id": connection, "model": model, "device_id": device},
         headers=session_auth_headers(handle),
     )
 
@@ -75,18 +89,51 @@ def _project_with_bob(client):
     own Claude Code."""
     project = new_project(client, "Own teammate", owner="alice")
     join_project_team(client, project["id"], "bob")
-    opened = client.put(
-        f"/projects/{project['id']}/own-agents",
-        json={"allowed": True},
-        headers=session_auth_headers("alice"),
-    )
-    assert opened.status_code == 200, opened.text
     room = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "Room"},
         headers=session_auth_headers("alice"),
     ).json()["data"]
+
+    async def team_id():
+        from app.domain.project.models import Project
+
+        async with client.test_factory() as db:
+            return (await db.get(Project, uuid.UUID(project["id"]))).team_id
+
+    client.own_team_id = client.portal.call(team_id)
     return project["id"], room["id"]
+
+
+@pytest.mark.parametrize("last_active", [False, True])
+def test_removing_a_default_connection_teammate_keeps_an_active_default(
+    client, last_active
+):
+    project, _ = _project_with_bob(client)
+    seat = _bring_in(client, project, "alice")
+    headers = session_auth_headers("alice")
+    endpoint = f"/projects/{project}/agents"
+    agents = client.get(endpoint, headers=headers).json()["data"]["data"]
+    target = next(row for row in agents if row["seat_handle"] == seat)
+    chosen = client.put(
+        f"/projects/{project}/default-agent",
+        headers=headers,
+        json={"instance_id": target["id"]},
+    )
+    assert chosen.status_code == 200, chosen.text
+    if last_active:
+        for row in agents:
+            if row["id"] != target["id"] and row["is_active"]:
+                retired = client.delete(f"{endpoint}/{row['id']}", headers=headers)
+                assert retired.status_code == 200, retired.text
+
+    removed = client.delete(f"/projects/{project}/own-agents/{seat}", headers=headers)
+    assert removed.status_code == (422 if last_active else 200), removed.text
+    agents = client.get(endpoint, headers=headers).json()["data"]["data"]
+    defaults = [row for row in agents if row["is_default"]]
+    assert len(defaults) == 1
+    assert defaults[0]["is_active"]
+    assert (defaults[0]["id"] == target["id"]) is last_active
 
 
 def _members(client, project_id, viewer):
@@ -126,33 +173,9 @@ def test_its_task_cites_a_message_from_its_owner(client, author):
             )
         },
     )
-    if author == "alice":
-        assert response.status_code == 200, response.text
-        assert response.json()["data"]["owner_handle"] == "alice"
+    assert response.status_code == 200, response.text
+    if message:
         assert response.json()["data"]["source_block_id"] == message["id"]
-        again = client.post(
-            f"/topics/{room}/teammate-tasks",
-            json={
-                "title": "再次更新说明",
-                "summary": "另一件任务",
-                "source_message_id": message["id"],
-            },
-            headers={
-                "X-Cheese-Token": mint_scoped_token(
-                    project_id=project,
-                    topic_id=room,
-                    agent_handle=seat,
-                )
-            },
-        )
-        assert again.status_code == 200, again.text
-        assert again.json()["data"]["id"] != response.json()["data"]["id"]
-    else:
-        assert response.status_code == 403, response.text
-        assert (
-            response.json()["error"]["i18n"]["key"]
-            == "ownAgentTaskOwnerMessageRequired"
-        )
 
 
 def _open_task_as(client, project, room, seat, message_id):
@@ -224,34 +247,7 @@ def test_a_task_cannot_cite_its_owners_message_from_another_project(client):
     made = _open_task_as(client, project, room, seat, word["id"])
 
     assert made.status_code == 403, made.text
-    assert made.json()["error"]["i18n"]["key"] == "ownAgentTaskOwnerMessageRequired"
-
-
-def test_naming_it_in_someone_elses_private_chat_does_not_seat_it(client):
-    project, _room = _project_with_bob(client)
-    seat = _bring_in(client, project, "alice")
-    join_project_team(client, project, "carol")
-
-    def dm(user, peer):
-        return client.get(
-            f"/projects/{project}/private-chat",
-            params={"user_handle": user, "peer_handle": peer},
-            headers=session_auth_headers(user),
-        ).json()["data"]["id"]
-
-    def seated(chat, viewer):
-        rows = client.get(
-            f"/topics/{chat}/members", headers=session_auth_headers(viewer)
-        ).json()["data"]["data"]
-        return seat in {row["member_handle"] for row in rows}
-
-    bob_carol = dm("bob", "carol")
-    post_message(client, bob_carol, "bob", {"content": f"<@{seat}> 总结一下"})
-    alice_carol = dm("alice", "carol")
-    post_message(client, alice_carol, "alice", {"content": f"<@{seat}> 总结一下"})
-
-    assert not seated(bob_carol, "bob")
-    assert seated(alice_carol, "alice")
+    assert made.json()["error"]["i18n"]["key"] == "resourceNotFound"
 
 
 def test_added_to_a_room_it_asks_its_owner_privately(client):
@@ -434,29 +430,7 @@ def test_a_person_brings_one_per_connection_each_named_after_it(client):
     assert names == ["alice的 Claude Code（Max）", "alice的 Claude Code（kimi-k2）"]
 
 
-def test_adding_the_same_connection_again_brings_no_second_one(client):
-    project_id, _room = _project_with_bob(client)
-    laptop = _log_in_claude_code(client, "alice")
-
-    for _ in range(2):
-        assert _add(client, project_id, "alice", laptop).status_code == 200
-
-    rows = [r for r in _members(client, project_id, "alice") if r.get("owner_handle")]
-    assert len(rows) == 1
-
-
-def test_nobody_adds_a_connection_that_is_not_theirs(client):
-    project_id, _room = _project_with_bob(client)
-    alices = _log_in_claude_code(client, "alice")
-
-    taken = _add(client, project_id, "bob", alices)
-
-    assert taken.status_code == 404, taken.text
-    assert _own_row(_members(client, project_id, "bob"), "bob") is None
-    assert _own_row(_members(client, project_id, "bob"), "alice") is None
-
-
-def test_its_owner_removes_it_from_the_project_and_nobody_else_can(client):
+def test_another_member_can_remove_the_team_teammate(client):
     project_id, room_id = _project_with_bob(client)
     seat = _bring_in(client, project_id, "alice")
     post_message(client, room_id, "alice", {"content": f"<@{seat}> 你好"})
@@ -465,8 +439,8 @@ def test_its_owner_removes_it_from_the_project_and_nobody_else_can(client):
         f"/projects/{project_id}/own-agents/{seat}",
         headers=session_auth_headers("bob"),
     )
-    assert refused.status_code == 403, refused.text
-    assert _own_row(_members(client, project_id, "bob"), "alice") is not None
+    assert refused.status_code == 200, refused.text
+    assert _own_row(_members(client, project_id, "bob"), "alice") is None
 
     removed = client.delete(
         f"/projects/{project_id}/own-agents/{seat}",
@@ -486,32 +460,6 @@ def test_its_owner_removes_it_from_the_project_and_nobody_else_can(client):
     )
 
 
-def test_a_project_closed_to_them_has_none(client):
-    project_id, _room = _project_with_bob(client)
-    _bring_in(client, project_id, "alice")
-    r = client.put(
-        f"/projects/{project_id}/own-agents",
-        json={"allowed": False},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-    assert _own_row(_members(client, project_id, "alice"), "alice") is None
-
-
-def test_only_a_manager_closes_the_project_to_them(client):
-    project_id, _room = _project_with_bob(client)
-    r = client.put(
-        f"/projects/{project_id}/own-agents",
-        json={"allowed": False},
-        headers=session_auth_headers("bob"),
-    )
-    assert r.status_code == 403, r.text
-    listed = client.get(
-        f"/projects/{project_id}/own-agents", headers=session_auth_headers("bob")
-    ).json()["data"]
-    assert listed["allowed"] is True and listed["can_manage"] is False
-
-
 def test_another_member_can_mention_it(client):
     project_id, room_id = _project_with_bob(client)
     seat = _bring_in(client, project_id, "alice")
@@ -523,21 +471,6 @@ def test_another_member_can_mention_it(client):
 
     assert (mine["meta"] or {})["agent_recipient"]["mentioned"] is True
     assert (theirs["meta"] or {})["agent_recipient"]["mentioned"] is True
-
-
-def test_a_project_closed_to_them_stops_its_owner_calling_it(client):
-    project_id, room_id = _project_with_bob(client)
-    seat = _bring_in(client, project_id, "alice")
-    post_message(client, room_id, "alice", {"content": f"<@{seat}> 你好"})
-    client.put(
-        f"/projects/{project_id}/own-agents",
-        json={"allowed": False},
-        headers=session_auth_headers("alice"),
-    )
-
-    after = post_message(client, room_id, "alice", {"content": f"<@{seat}> 再来"})
-
-    assert (after["meta"] or {})["agent_recipient"]["mentioned"] is False
 
 
 def test_other_members_can_assign_it_without_a_platform_owner_gate(client):
@@ -601,23 +534,6 @@ def test_another_member_can_chat_with_it_privately(client):
     assert mine.status_code == 200, mine.text
 
 
-def test_a_project_closed_to_them_does_not_seat_it_in_a_room(client):
-    project_id, room_id = _project_with_bob(client)
-    seat = _bring_in(client, project_id, "alice")
-    client.put(
-        f"/projects/{project_id}/own-agents",
-        json={"allowed": False},
-        headers=session_auth_headers("alice"),
-    )
-
-    post_message(client, room_id, "alice", {"content": f"<@{seat}> 你好"})
-
-    seated = client.get(
-        f"/topics/{room_id}/members", headers=session_auth_headers("alice")
-    ).json()["data"]["data"]
-    assert seat not in {row["member_handle"] for row in seated}
-
-
 def test_it_carries_its_owners_current_name(client):
     project_id, _room = _project_with_bob(client)
     laptop = _log_in_claude_code(client, "alice", auth_method="claude.ai")
@@ -675,7 +591,7 @@ def test_it_carries_its_owners_current_name(client):
 
 def _name_connection(client, device_id, name, as_whom="alice"):
     return client.patch(
-        f"/connector/my/claude-logins/{device_id}",
+        f"/connector/teams/{client.own_team_id}/claude-logins/{device_id}",
         json={"name": name},
         headers=session_auth_headers(as_whom),
     )
@@ -717,7 +633,8 @@ def test_its_owner_names_a_machines_connection_and_it_carries_that_name(client):
     own = _own_row(_members(client, project_id, "bob"), "alice")
     assert own["name"] == "alice的 Claude Code（实验室的 Max）"
     connections = client.get(
-        "/connector/my/model-connections", headers=session_auth_headers("alice")
+        f"/connector/teams/{client.own_team_id}/model-connections",
+        headers=session_auth_headers("alice"),
     ).json()["connections"]
     assert [c["name"] for c in connections] == ["实验室的 Max"]
 
@@ -746,7 +663,7 @@ def test_a_removed_connection_takes_its_name_with_it(client):
     assert _name_connection(client, laptop, "实验室的 Max").status_code == 200
 
     removed = client.delete(
-        f"/connector/my/claude-logins/{laptop}",
+        f"/connector/teams/{client.own_team_id}/claude-logins/{laptop}",
         headers=session_auth_headers("alice"),
     )
 
@@ -765,7 +682,7 @@ def test_only_its_owner_names_a_machines_connection(client):
 
     refused = _name_connection(client, laptop, "bob 起的名字", as_whom="bob")
 
-    assert refused.status_code == 404, refused.text
+    assert refused.status_code == 403, refused.text
     own = _own_row(_members(client, project_id, "alice"), "alice")
     assert own["name"] == "alice的 Claude Code（Max）"
 

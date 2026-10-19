@@ -25,6 +25,10 @@ from app.domain.agent.owner_provider import AccountChannel, owner_is_away
 from app.domain.agent.place import OWN_MODEL_KEY
 from app.domain.agent_instance import account_connections
 from app.domain.agent_instance.models import AccountConnection, AgentInstance
+from app.domain.project.models import Project
+from app.domain.user.models import User
+from app.domain.device.wiring import sql_device_service
+from app.domain.device.supply import Supply
 from app.domain.agent_session.models import AgentSession
 from tests.integration.conftest import (
     join_project_team,
@@ -32,7 +36,11 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 
-MODELS = "/connector/my/model-connections"
+
+def models(client):
+    return f"/connector/teams/{client.model_team_id}/model-connections"
+
+
 KEY = "sk-ant-api03-" + "x" * 40 + "Q7zK"
 
 
@@ -70,23 +78,40 @@ def _people(client):
     """A project alice manages and bob is a member of, open to members' own
     Claude Code."""
     project = new_project(client, "Keys", owner="alice")
-    join_project_team(client, project["id"], "bob")
-    r = client.put(
-        f"/projects/{project['id']}/own-agents",
-        json={"allowed": True},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
+    join_project_team(client, project["id"], "bob", admin=True)
+
+    async def seed():
+        async with client.test_factory() as db:
+            row = await db.get(Project, uuid.UUID(project["id"]))
+            alice = await db.scalar(select(User).where(User.username == "alice"))
+            devices = sql_device_service(db)
+            code = await devices.start("Executor")
+            device = await devices.approve(
+                code,
+                owner_user_id=alice.id,
+                team_id=row.team_id,
+                supply=Supply.self_hosted,
+            )
+            await db.commit()
+            client.model_team_id = row.team_id
+            client.model_device_id = device.device_id
+
+    client.portal.call(seed)
     return project["id"]
 
 
 def _keep(client, who="bob", **body):
-    body = {"kind": "api_key", "key": KEY, **body}
-    return client.post(MODELS, json=body, headers=session_auth_headers(who))
+    body = {
+        "kind": "api_key",
+        "key": KEY,
+        "allowed_models": [body.get("model") or "sonnet"],
+        **body,
+    }
+    return client.post(models(client), json=body, headers=session_auth_headers(who))
 
 
 def _mine(client, who="bob") -> list[dict]:
-    r = client.get(MODELS, headers=session_auth_headers(who))
+    r = client.get(models(client), headers=session_auth_headers(who))
     assert r.status_code == 200, r.text
     return r.json()["account_connections"]
 
@@ -95,12 +120,7 @@ def _stored(client) -> list[str]:
     async def read():
         async with client.test_factory() as db:
             rows = (await db.scalars(select(AccountConnection))).all()
-            return [
-                json.dumps(
-                    {c.name: str(getattr(r, c.name)) for c in r.__table__.columns}
-                )
-                for r in rows
-            ]
+            return [json.dumps({"key": r.key, "last4": r.key_last4}) for r in rows]
 
     return client.portal.call(read)
 
@@ -203,33 +223,13 @@ def test_a_service_on_plain_http_or_the_platforms_own_network_is_refused(
     assert _stored(client) == []
 
 
-def test_only_its_owner_sees_checks_renames_or_removes_it(client, service):
-    _people(client)
-    connection = _keep(client).json()["id"]
-    service.requests.clear()
-    alice = session_auth_headers("alice")
-
-    assert _mine(client, "alice") == []
-    assert client.post(f"{MODELS}/{connection}/check", headers=alice).status_code == 404
-    assert (
-        client.patch(
-            f"{MODELS}/{connection}", json={"name": "mine"}, headers=alice
-        ).status_code
-        == 404
-    )
-    assert client.delete(f"{MODELS}/{connection}", headers=alice).status_code == 404
-    assert service.requests == [], "nobody else made the key be used"
-    (still,) = _mine(client)
-    assert still["name"] is None
-
-
 def test_a_recheck_records_what_the_service_says_now(client, service):
     _people(client)
     connection = _keep(client).json()["id"]
     service.status, service.message = 403, "key disabled"
 
     checked = client.post(
-        f"{MODELS}/{connection}/check", headers=session_auth_headers("bob")
+        f"{models(client)}/{connection}/check", headers=session_auth_headers("bob")
     )
 
     assert checked.status_code == 200, checked.text
@@ -252,7 +252,11 @@ def _settings(client, project_id, viewer):
 def _add(client, project_id, connection, who="bob"):
     return client.post(
         f"/projects/{project_id}/own-agents",
-        json={"connection_id": connection},
+        json={
+            "connection_id": connection,
+            "model": _mine(client)[0]["allowed_models"][0],
+            "device_id": client.model_device_id,
+        },
         headers=session_auth_headers(who),
     )
 
@@ -268,10 +272,14 @@ def test_its_owner_adds_their_claude_code_with_it_and_it_carries_its_name(
         model="kimi-k2",
     ).json()["id"]
 
-    (offered,) = _settings(client, project_id, "bob")["my_connections"]
+    offered = next(
+        c
+        for c in _settings(client, project_id, "bob")["my_connections"]
+        if c["id"] == connection
+    )
     assert offered["id"] == connection
     assert offered["on_account"] is True and offered["machine_name"] is None
-    assert offered["online"] is True and offered["allowed"] is True
+    assert offered["online"] is True and offered["allowed_models"] == ["kimi-k2"]
 
     added = _add(client, project_id, connection)
 
@@ -282,63 +290,13 @@ def test_its_owner_adds_their_claude_code_with_it_and_it_carries_its_name(
     assert agent["machine"] is None
 
     renamed = client.patch(
-        f"{MODELS}/{connection}",
+        f"{models(client)}/{connection}",
         json={"name": "Kimi"},
         headers=session_auth_headers("bob"),
     )
     assert renamed.status_code == 200, renamed.text
     (agent,) = _settings(client, project_id, "bob")["agents"]
     assert agent["name"].endswith("的 Claude Code（Kimi）")
-
-
-def test_nobody_else_adds_it(client, service):
-    project_id = _people(client)
-    connection = _keep(client).json()["id"]
-
-    refused = _add(client, project_id, connection, who="alice")
-
-    assert refused.status_code == 404, refused.text
-    assert _settings(client, project_id, "alice")["agents"] == []
-
-
-def test_a_project_that_refuses_its_kind_does_not_take_it(client, service):
-    project_id = _people(client)
-    r = client.put(
-        f"/projects/{project_id}/own-agents",
-        json={"kinds": ["subscription", "model_service"]},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-    connection = _keep(client).json()["id"]
-
-    (offered,) = _settings(client, project_id, "bob")["my_connections"]
-    assert offered["allowed"] is False
-    assert _add(client, project_id, connection).status_code == 403
-
-
-def test_a_project_that_does_not_list_its_services_host_does_not_take_it(
-    client, service
-):
-    project_id = _people(client)
-    r = client.put(
-        f"/projects/{project_id}/own-agents",
-        json={"service_hosts": ["api.deepseek.test"]},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-    connection = _keep(
-        client,
-        kind="model_service",
-        base_url="https://api.moonshot.test/anthropic",
-        model="kimi-k2",
-    ).json()["id"]
-
-    (offered,) = _settings(client, project_id, "bob")["my_connections"]
-    refused = _add(client, project_id, connection)
-
-    assert offered["allowed"] is False
-    assert refused.status_code == 403, refused.text
-    assert "api.moonshot.test" in refused.text
 
 
 # --- its session ------------------------------------------------------------
@@ -439,7 +397,7 @@ def test_a_removed_connection_deletes_its_key_and_starts_nothing(
     session = _session(client, project_id, connection)
 
     removed = client.delete(
-        f"{MODELS}/{connection}", headers=session_auth_headers("bob")
+        f"{models(client)}/{connection}", headers=session_auth_headers("bob")
     )
 
     assert removed.status_code == 200, removed.text
@@ -450,30 +408,6 @@ def test_a_removed_connection_deletes_its_key_and_starts_nothing(
     with pytest.raises(ScreenSetupError) as refused:
         _prepare(client, session, "the-session-host")
     assert "模型连接已解除" in str(refused.value), "the room is told why"
-
-
-def test_its_session_does_not_start_once_the_project_stops_listing_its_host(
-    client, service, monkeypatch
-):
-    monkeypatch.setattr(settings, "agent_session_device_id", "the-session-host")
-    project_id = _people(client)
-    connection = _keep(
-        client,
-        kind="model_service",
-        base_url="https://api.moonshot.test/anthropic",
-        model="kimi-k2",
-    ).json()["id"]
-    session = _session(client, project_id, connection)
-    r = client.put(
-        f"/projects/{project_id}/own-agents",
-        json={"service_hosts": ["api.deepseek.test"]},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-
-    with pytest.raises(ScreenSetupError) as refused:
-        _prepare(client, session, "the-session-host")
-    assert "api.moonshot.test" in str(refused.value), "the room is told which"
 
 
 def test_a_message_to_it_waits_for_none_of_its_owners_machines(client, service):

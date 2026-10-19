@@ -697,13 +697,13 @@ cheese_launch_phase credentials_selected
 # file is read through the shell's redirect, so on Windows Python is handed no
 # Git Bash path; a file that cannot be read leaves the session on the login.
 _MODEL_SERVICE_EXPORTS = """\
-import json, shlex, sys
+import json, os, shlex, sys
 s = json.load(sys.stdin)
 env = {"ANTHROPIC_BASE_URL": s["base_url"], "ANTHROPIC_AUTH_TOKEN": s["token"]}
 for name in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
              "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
              "CLAUDE_CODE_SUBAGENT_MODEL"):
-    env[name] = s["model"]
+    env[name] = os.environ.get("OWN_MODEL") or s["model"]
 for name, value in env.items():
     print("export %s=%s" % (name, shlex.quote(str(value))))
 """
@@ -730,6 +730,8 @@ fi
 if [ -f "$OWN_LOGIN/{MODEL_SERVICE_FILE}" ]; then
   eval "$(python3 -c '{_MODEL_SERVICE_EXPORTS}' < "$OWN_LOGIN/{MODEL_SERVICE_FILE}")"
 fi
+if [ -n "${{{OWN_MODEL}:-}}" ]; then export ANTHROPIC_MODEL="${{{OWN_MODEL}}}"; fi
+unset {OWN_MODEL}
 export CHEESE_OWN_LOGIN=1
 cheese_launch_phase credentials_selected
 """

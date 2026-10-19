@@ -11,16 +11,14 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_instance import account_connections
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own.connections import (
     Login,
-    _held,
-    logins,
-    logins_by_owners,
+    logins_by_teams,
 )
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.project.models import Project
 from app.domain.user.models import User
 from app.domain.user.services import faces_by_handle
 
@@ -32,14 +30,14 @@ class Owned:
     harness: str
     #: The machine holding the model connection it runs on.
     device_id: str | None = None
-    #: Or the connection its owner's account holds.
+    #: Or the connection the team stores encrypted on the platform.
     account_connection_id: uuid.UUID | None = None
     #: The login on that machine it runs on (`DeviceClaudeLoginRow.id`).
     login_id: str | None = None
 
     @property
     def on_account(self) -> bool:
-        """It runs on a connection its owner's account holds, so on the
+        """It runs on a connection the team stores encrypted on the platform, so on the
         deployment's session host rather than its owner's machine."""
         return self.account_connection_id is not None
 
@@ -140,33 +138,32 @@ async def owned_rows_in_project(
 async def connection_of(db: AsyncSession, owned: Owned) -> Login | None:
     """The model connection a member's own agent runs on, while it is one:
     None once its owner removed it, logged it out, or the machine is gone."""
-    if owned.account_connection_id is not None:
-        row = await account_connections.owned(
-            db, owned.owner_user_id, owned.account_connection_id
-        )
-        return _held(row) if row is not None else None
-    if owned.login_id is None:
-        return None
-    for login in await logins(db, owned.owner_user_id):
-        if login.id == owned.login_id:
-            return login
-    return None
+    return (await connections_of(db, [owned]))[owned.instance_id]
 
 
 async def connections_of(
     db: AsyncSession, owners: list[Owned]
 ) -> dict[uuid.UUID, Login | None]:
-    """Resolve a page without rereading any owner's connections for each agent."""
-    by_owner = await logins_by_owners(db, {owned.owner_user_id for owned in owners})
-    connections: dict[tuple[int, bool, str | None], Login] = {
-        (owner_id, login.on_account, login.id): login
-        for owner_id, logins in by_owner.items()
+    teams: dict[uuid.UUID, int] = {
+        instance_id: team_id
+        for instance_id, team_id in (
+            await db.execute(
+                select(AgentInstance.id, Project.team_id)
+                .join(Project, Project.id == AgentInstance.project_id)
+                .where(AgentInstance.id.in_([o.instance_id for o in owners]))
+            )
+        ).all()
+    }
+    by_team = await logins_by_teams(db, set(teams.values()))
+    connections: dict[tuple[int | None, bool, str | None], Login] = {
+        (team_id, login.on_account, login.id): login
+        for team_id, logins in by_team.items()
         for login in logins
     }
     return {
         owned.instance_id: connections.get(
             (
-                owned.owner_user_id,
+                teams.get(owned.instance_id),
                 owned.on_account,
                 str(owned.account_connection_id)
                 if owned.on_account

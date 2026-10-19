@@ -34,7 +34,9 @@ const compactPercent = ref(80)
 
 // 模型目录和「新建 / 更新」那两下都在这里，组件只画和接线
 // （`.claude/rules/architecture.md`：`src/components/**` 不碰 API 层）。
-const { choices, modelsLoading, saving, error, clearError, loadModels, save } = useAgentEditor(() => props.projectId)
+const { choices, connectionModel, modelsLoading, saving, error, clearError, loadModels, save } = useAgentEditor(
+  () => props.projectId
+)
 
 function blankConfiguration(): AgentConfiguration {
   return { body: '', skills: [], model: null, effort: null, compact_percent: null }
@@ -49,17 +51,21 @@ const handleProblem = computed(() => (isNew.value ? handleError(handle.value.tri
 
 // The model a teammate that names none runs on: the project's.
 const projectModel = computed(() => choices.value.find((choice) => choice.default) ?? null)
-const modelItems = computed(() => [
-  {
-    id: null,
-    label: projectModel.value
-      ? t('work.projectSettings.agents.editor.modelInherit', { model: projectModel.value.label })
-      : t('work.projectSettings.agents.editor.modelInheritPlain'),
-    allowed: true,
-    requires_plan: null,
-  },
-  ...choices.value,
-])
+const modelItems = computed(() =>
+  connectionModel.value
+    ? choices.value
+    : [
+        {
+          id: null,
+          label: projectModel.value
+            ? t('work.projectSettings.agents.editor.modelInherit', { model: projectModel.value.label })
+            : t('work.projectSettings.agents.editor.modelInheritPlain'),
+          allowed: true,
+          requires_plan: null,
+        },
+        ...choices.value,
+      ]
+)
 const runsOn = computed(() =>
   draft.value.model ? choices.value.find((choice) => choice.id === draft.value.model) ?? null : projectModel.value
 )
@@ -115,7 +121,7 @@ watch(
     handle.value = props.agent?.handle ?? ''
     presetName.value = null
     draft.value = blankConfiguration()
-    void loadModels()
+    void loadModels(props.agent)
     if (props.agent) draft.value = { ...blankConfiguration(), ...structuredClone(toRaw(props.agent.configuration)) }
     else applyPreset(null)
     allowMax.value = draft.value.effort === 'max'
@@ -140,7 +146,10 @@ function close() {
 async function submit() {
   submitted.value = true
   if (nameProblem.value || handleProblem.value) return
-  if (draft.value.model && !choices.value.some((choice) => choice.id === draft.value.model && choice.allowed)) {
+  if (
+    (connectionModel.value || draft.value.model) &&
+    !choices.value.some((choice) => choice.id === draft.value.model && choice.allowed)
+  ) {
     error.value = t('work.models.chooseAvailable')
     return
   }

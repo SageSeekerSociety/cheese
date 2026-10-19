@@ -68,6 +68,7 @@ def _launch_on_machine(
     other_service: dict | None = None,
     profile: str = ".cheese",
     migrated_keychain: bool = False,
+    chosen_model: str | None = None,
 ) -> dict:
     """Run the launcher the way a machine does, with the platform asking for
     Claude's ``opus`` on the machine's login ``login_id``, and return the
@@ -131,6 +132,7 @@ def _launch_on_machine(
         "CHEESE_TOKEN": "scoped-token",
         "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
         "ANTHROPIC_MODEL": "opus",
+        **({"OWN_MODEL": chosen_model} if chosen_model else {}),
         **({OWN_LOGIN_ID: login_id} if login_id is not None else {}),
     }
     if mac:
@@ -277,6 +279,21 @@ def test_an_unreadable_model_service_leaves_the_session_on_the_login(tmp_path):
     seen = _launch_on_machine(tmp_path, service={"model": "glm-4.6"})
     assert "ANTHROPIC_BASE_URL" not in seen
     assert seen["ANTHROPIC_MODEL"] == "opus"
+
+
+def test_team_selected_model_reaches_the_process_using_a_device_model_service(tmp_path):
+    seen = _launch_on_machine(
+        tmp_path,
+        service={
+            "base_url": "https://models.example.test",
+            "token": "team-key",
+            "model": "old-model",
+        },
+        chosen_model="selected-model",
+    )
+    assert seen["ANTHROPIC_MODEL"] == "selected-model"
+    assert seen["CLAUDE_CODE_SUBAGENT_MODEL"] == "selected-model"
+    assert "OWN_MODEL" not in seen
 
 
 async def test_an_own_session_starts_on_a_deployment_with_no_metering_proxy(
