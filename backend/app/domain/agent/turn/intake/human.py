@@ -170,7 +170,7 @@ async def refuse_call(
                 recipient["instance_id"] = str(instance.id)
                 recipient["handle"] = instance.handle
         recipient["mentioned"] = True
-    refused = await own_calls.refused(session, prepared.project, recipient, author)
+    refused = await own_calls.refused(session, prepared.project, recipient)
     return CallAdmission(seat, refused)
 
 

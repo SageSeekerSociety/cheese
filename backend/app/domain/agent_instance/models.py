@@ -74,21 +74,10 @@ class AgentInstance(UuidPk, Timestamps, Base):
     )
 
 
-class OwnCallers(enum.StrEnum):
-    """Who may set a member's own agent to work. Its owner decides; the
-    platform does not look at what the agent signs in with."""
-
-    #: Its owner alone.
-    owner = "owner"
-    #: Any person in the project, the owner included.
-    project = "project"
-
-
 class OwnAgent(Base):
     """A project's agent that is one member's own coding agent (#2991): their
     own Claude Code with one of their model connections — the login they gave
-    the platform on one of their machines (`cheesehost claude login`) — called
-    by whoever its owner lets call it (``callers``).
+    the platform on one of their machines (`cheesehost claude login`).
 
     It is still an ``AgentInstance`` — a memory pool, a seat, a name in the
     roster — and this row is what makes it someone's. A person may have one per
@@ -139,18 +128,6 @@ class OwnAgent(Base):
         ),
         nullable=True,
         index=True,
-    )
-    callers: Mapped[OwnCallers] = mapped_column(
-        Enum(
-            OwnCallers,
-            native_enum=False,
-            length=16,
-            create_constraint=True,
-            name="ck_own_agents_callers",
-        ),
-        nullable=False,
-        default=OwnCallers.owner,
-        server_default=OwnCallers.owner.value,
     )
 
 
