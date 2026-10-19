@@ -51,7 +51,8 @@ from app.domain.agent.device_hub import (
     DeviceOffline,
 )
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
-from app.domain.agent.harness.driven.subscription import Subscription
+from app.domain.agent.harness import SessionRef as Seat
+from app.domain.agent.harness.driven.subscription import Records, Subscription
 from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.reads import (
     CaughtUp,
@@ -147,8 +148,12 @@ class SessionHost:
         session_factory=None,
         mirrors: Path | None = None,
         on_alive: Callable[[uuid.UUID], None] | None = None,
+        records: Records | None = None,
     ):
         self._hub = hub
+        #: Where every row a session's journal holds is kept as its raw
+        #: record (`session_record.service.append`). None keeps no record.
+        self._records = records
         self._memory = memory
         #: Told the conversation of a session whose runner answered a read, on
         #: every pass that heard one: proof that its turn is still there, which
@@ -395,6 +400,9 @@ class SessionHost:
                 terminations,
                 moved,
                 announce,
+                # A session no place owns (a person's 芝士, a document's) has
+                # no conversation to keep a record in (`sessions._seat`).
+                self._records if _owned(running.seat) else None,
             ),
         )
         running.subscription = subscription
@@ -586,6 +594,12 @@ class SessionHost:
             for reading in stuck:
                 reading.cancel()
             await asyncio.gather(*stuck, return_exceptions=True)
+
+
+def _owned(seat: Seat | None) -> bool:
+    """Whether the session reads into a conversation: an ownerless session's
+    seat is the nil conversation (`sessions._seat`)."""
+    return seat is not None and seat.conversation_id.int != 0
 
 
 def _waiting_for(exc: Exception) -> str:

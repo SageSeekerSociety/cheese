@@ -83,9 +83,6 @@ class DreamBriefing:
     #: 这是不是一个代码项目（有仓库）。有仓库时会请它找出仓库的说明文件、对着核对。
     code_project: bool = False
 
-    def scope_names(self) -> list[str]:
-        return sorted(self.scopes)
-
 
 def _render_scope(name: str, files: dict[str, str]) -> str:
     if not files:

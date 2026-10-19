@@ -57,6 +57,7 @@ from app.domain.review import models as review  # noqa: F401
 from app.domain.room_task import models as room_task  # noqa: F401
 from app.domain.routine import models as routine  # noqa: F401
 from app.domain.run_record import models as run_record  # noqa: F401
+from app.domain.session_record import models as session_record  # noqa: F401
 from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401
@@ -65,6 +66,7 @@ from app.domain.team import models as team  # noqa: F401
 from app.domain.thread import models as thread  # noqa: F401
 from app.domain.topic import models as topic  # noqa: F401
 from app.domain.usage import models as usage  # noqa: F401
+from app.domain.voice import models as voice  # noqa: F401
 from app.domain.user import models as user  # noqa: F401
 from app.domain.web_snippet import models as web_snippet  # noqa: F401
 from app.domain.webhook import models as webhook  # noqa: F401

@@ -42,6 +42,39 @@ floored at 180s; an explicit `--budget` stays exact, including a shorter bound.
 per-check timeout (`--timeout`, default 900s). The report records `budget_seconds`
 and `budget_source`; exhausting either bound still reports unknown, never pass.
 
+## How the plan's checks are scheduled
+
+The plan's checks are separate processes with separate evidence, so two that
+work on different trees run at the same time. `--jobs` sets how many; the
+default is 2 when the tier may back it (`--memory-mib` at least 6144, where a
+16 GiB runner sits) and 1 below that — the work machine's 3072 MiB session cap
+keeps it serial. Checks that share a working directory never overlap: they
+write the same tree (Vitest's cache, the generated OpenAPI types, the narrow
+tsconfig), so they queue one after another.
+
+The numbers behind that bound, from 12 CI runs of the `fast` job: two checks
+dominated every run, `frontend-unit` (850–880s, 4.4–5.2 GiB) and `backend-pure`
+(520s p50, ~1.1 GiB). Serially the first consumed the whole 1200s budget and
+the second was cut off with what was left; together they fit a 16 GiB runner.
+Each check still keeps its own sampled RSS ceiling, timeout and evidence check,
+so a killed check is reported killed, never folded into a green or into another
+check's result.
+
+`--jobs 1` restores the strictly serial tier. The `ran` rows keep the plan's
+order either way, so that part of the report does not depend on which check
+finished first; `not_run` and `reasons` are still appended as checks finish.
+
+The ceiling is per check, so `jobs` is also what the machine has to back: at
+`--jobs 2` a runner may see up to twice the sampled ceiling. The observed peaks
+(5.2 GiB and 1.1 GiB) leave room on a 16 GiB runner; that is why the default
+stays at 2 and does not grow with the machine. An interrupt (Ctrl-C, or a
+cancelled job) stops every running check before the pool is joined — a check
+runs in its own session, so the signal would otherwise not reach it and the
+tier would wait out its own timeout. A signal that lands while a check is
+being forked, before its pid is known, is held until the check is registered
+and then raised where the same cleanup can kill it; the alternative leaves a
+process running in its own session after ci-fast has exited.
+
 For example, `CI_FAST_BUDGET_SECONDS=600 task ci:fast` gives a quota-constrained
 machine ten minutes without changing repository config. Required CI's draft job
 already passes `--budget 1200`, so its bound is unchanged. `--memory-mib` remains
@@ -226,14 +259,15 @@ everything is still allowed to answer unknown.
 - Scope comes from the same `select()` + path map as Required CI; the guards
   run on every invocation. Changes include committed, staged, unstaged,
   untracked, deleted and both sides of a rename.
-- A path the map does not name could be any kind of code, so this tier widens
-  the scope to both product suites. Prose cannot be, so a diff of only `.md`
-  files (`DOC_GLOBS`) is not an unknown path: `README.md`, `AGENTS.md` and a
-  skill's `SKILL.md` are named nowhere in the map, and treating them as unknown
-  turned a docs-only draft into the full suite, which the tier cannot fit — it
-  answered unknown. The doc checks that do read them (anchors, links, titles,
-  repo rules) are guards and run either way; a non-doc path next to a `.md`
-  still widens.
+- A path the map does not name is recorded under `unknown_paths` and judged by
+  the guards and the static tier alone; it does not turn the product suites on
+  (changed in #4393). Widening them made a quick run need the full suite, which
+  it cannot fit, so the whole run answered unknown and the guards' own verdict
+  was lost with it. Prose is not an unknown path either: a diff of only `.md`
+  files (`DOC_GLOBS`) is named nowhere in the map, and `README.md`, `AGENTS.md`
+  and a skill's `SKILL.md` would otherwise turn a docs-only draft into a run
+  with no product suite that could answer. The doc checks that do read them
+  (anchors, links, titles, repo rules) are guards and run either way.
 - Backend test selection is a pure static reverse-import graph over the AST
   (never file-name tokens), plus the always-on tree/i18n guard files. The
   pytest run loads a small audit plugin (`-p ci_fast_pytest_plugin`) that
@@ -258,15 +292,21 @@ everything is still allowed to answer unknown.
   an edit to one of the six frontend config files this script watches
   (`frontend/package.json`, `frontend/pnpm-lock.yaml`, `frontend/vite.config.ts`
   and the three `frontend/tsconfig*.json`) or to `.pre-commit-config.yaml`, a
-  `.github/` edit, a `frontend/src/test/` or `frontend/scripts/` edit, an
-  unknown path, no merge base, or a change that seeds no related root while
-  carrying runtime content — a catalog, a ratchet baseline, a stylesheet, a
-  deletion with no surviving root, a path outside `frontend/` that the scope map
-  still routes here (a site stylesheet, a ratchet script). Whether a change
-  carries that content is read from the paths the scope map routed into frontend
-  scope, not from the whole diff: a change that also touches the backend brings
-  its `.py` files along, and they are not frontend content the suite can
-  execute. A backend change does not reach the frontend type check here
+  `frontend/src/test/` or `frontend/scripts/` edit, no merge base, or a change
+  that seeds no related root while carrying runtime content — a catalog, a
+  ratchet baseline, a stylesheet, a deletion with no surviving root, a path
+  outside `frontend/` that the scope map still routes here (a site stylesheet,
+  a ratchet script). Whether a change carries that content is read from the
+  paths the scope map routed into frontend scope, not from the whole diff: a
+  change that also touches the backend brings its `.py` files along, and they
+  are not frontend content the suite can execute. Nor is a `.github/` edit: no
+  workflow or CI script is imported by the frontend graph, so it leaves a
+  related run seeded by the surviving roots and, alone, runs no unit test at
+  all (`frontend-unit` is recorded as an omission, not as the full suite or an
+  unknown). A path the map does not name is not frontend content either; since
+  #4393 it does not even turn frontend scope on. The full type check follows
+  the same rule: `.github/` is not part of the compiler project, so it no
+  longer forces `pnpm run typecheck`. A backend change does not reach the frontend type check here
   either: whether it moved the API document the frontend's types are
   generated from is decided only by Required CI's `api` job, so a route
   change that breaks those types passes this tier and goes red there. A

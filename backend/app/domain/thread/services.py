@@ -15,14 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.block.models import (
-    CONSUMED_TURN_META_KEY,
-    Block,
-    BlockKind,
-    consumed_turn,
-)
+from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.models import Conversation, ConversationKind
-from app.domain.conversation.services import of_room
 from app.domain.identity.handles import recipient_seat
 from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic, not_a_private_chat
@@ -192,32 +186,6 @@ async def answered_in_many(
     # answer in the channel's main line, where 芝士 has no session.
     assert all(block.id in threads for block in opens)
     return answers
-
-
-async def waiting_in_room(session: AsyncSession, room_id: uuid.UUID) -> list[uuid.UUID]:
-    """The conversations of a room — its 支线 and tasks — where a message to
-    芝士 is still waiting for an answer, oldest message first. A message still
-    waiting in the main line is waiting in its 支线."""
-
-    blocks = await session.scalars(
-        select(Block)
-        .where(
-            of_room(Block.conversation_id, room_id),
-            Block.kind == BlockKind.message,
-            Block.meta["agent_recipient"]["mentioned"].as_boolean(),
-        )
-        .order_by(Block.created_at, Block.id)
-    )
-    waiting: list[uuid.UUID] = []
-    for block in blocks:
-        if CONSUMED_TURN_META_KEY not in (block.meta or {}):
-            continue
-        if consumed_turn(block) is not None:
-            continue
-        conversation = await answered_in(session, block)
-        if conversation not in waiting:
-            waiting.append(conversation)
-    return waiting
 
 
 async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:

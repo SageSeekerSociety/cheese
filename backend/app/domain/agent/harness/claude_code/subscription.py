@@ -60,6 +60,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         completions: CompletionConsumer | None = None,
         terminations: TerminationConsumer | None = None,
         moved: subscription.Moved | None = None,
+        records: subscription.Records | None = None,
         input_protocol: int | None = INPUT_PROTOCOL,
     ):
         super().__init__(
@@ -72,6 +73,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             completions=completions,
             terminations=terminations,
             moved=moved,
+            records=records,
         )
         self.session_id = session_id
         self.recipient_handle = recipient_handle

@@ -249,6 +249,7 @@ class ClaudeCodeDriver:
             completions=readers.completions,
             terminations=readers.terminations,
             moved=readers.moved,
+            records=readers.records,
             input_protocol=launched.input_protocol,
         )
 

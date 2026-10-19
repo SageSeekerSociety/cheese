@@ -20,6 +20,7 @@ from app.domain.agent.harness import EventConsumer
 from app.domain.agent.harness import SessionRef as Seat
 from app.domain.agent.harness.driven.subscription import (
     Moved,
+    Records,
     SeatActivity,
     Subscription,
 )
@@ -70,6 +71,8 @@ class Readers:
     moved: Moved
     #: The session's controls moved (Claude Code's).
     announce: Callable[[], Awaitable[None]]
+    #: Every journal row, kept as the session's raw record.
+    records: Records | None
 
 
 def startup_refused(log: str, *, harness: str, timed_out: bool = False) -> StartRefused:
