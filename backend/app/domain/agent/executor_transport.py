@@ -1324,6 +1324,14 @@ class RemoteClient:
                 # name is spelled the machine's way here, into its task's
                 # checkout when it works one (`working_directory`).
                 workspace = self.working_directory()
+            elif (working := self.config.get("working_directory")) and (
+                working != workspace
+            ):
+                # The session works somewhere else than the project view (a
+                # task's checkout), and names paths from there: spell the view's
+                # own path into it for every call, not only the one that
+                # resolved. A room's session has the two equal.
+                original_workspace, workspace = workspace, working
             if params and method == "invoke":
                 params = {**params, "args": dict(params.get("args", {}))}
                 for field in ("file_path", "path", "notebook_path", "command"):

@@ -408,11 +408,15 @@ def run_on_the_machine(target, command):
     spelled_later = target.get("workspace") == DEFERRED_WORKSPACE
     client = RemoteClient(target)
     resolved = target.get("working_directory")
-    if short_name is not None and resolved:
-        # The target file keeps the answer (`working_directory`): either the
-        # launch's name was the placeholder, or the launch could not ask and a
-        # later command did. It is the session's directory from now on.
-        short_name = resolved
+    # A target with a lease can be for a machine the answer was not resolved
+    # on, and `acquire` drops the answer then: only a target with no lease to
+    # take is fixed enough to bind it before the command runs.
+    trusted = resolved if not target.get("lease_path") else None
+    if short_name is not None and trusted:
+        # The target file keeps the answer (`working_directory`): the launch's
+        # name was the placeholder, or the launch could not ask and a later
+        # command did. It is the session's directory from now on.
+        short_name = trusted
         spelled_later = False
     elif short_name is not None and not spelled_later:
         placeholder = target.get("virtual_workspace")
@@ -435,7 +439,7 @@ def run_on_the_machine(target, command):
             short_name = client.working_directory(notice=False)
         else:
             short_name = outward(short_name)
-    if resolved and os.path.normpath(cwd) == os.path.normpath(
+    if trusted and os.path.normpath(cwd) == os.path.normpath(
         target.get("workspace") or ""
     ):
         # The build still stands at the project view while the session's own
