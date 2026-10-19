@@ -34,6 +34,21 @@ changing its content or reply target returns a conflict. Parameter and permissio
 errors need correction before retrying. Quotes and line breaks travel in
 `content` as written.
 
+Pictures go with the message:
+
+```
+chat_send(content="This is the state before the fix.", attachments=["shots/before.png"])
+chat_send(attachments=["shots/after.png"])
+```
+
+The session tool reads each named file on the executor and posts its bytes in
+the same request. The backend keeps only the ones whose first bytes are PNG,
+JPEG, GIF or WebP, stores them under the room's `uploads/<random>/<name>`, and
+writes an `attachment` block in the same transaction as the message; both
+blocks are broadcast in send order, and the conversation draws the picture in
+the bubble. A message may be only pictures — `content` is then omitted. Other
+file types still go out through `cheese show`.
+
 ## Communication instructions
 
 The system prompt includes the chat guide before the first model request. The

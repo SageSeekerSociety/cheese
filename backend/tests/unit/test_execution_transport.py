@@ -540,6 +540,62 @@ def test_platform_mcp_preserves_backend_permission_failure(central_transport):
     assert len(clients) == 1
 
 
+def test_chat_send_carries_a_picture_with_the_message(central_transport):
+    """A `chat_send` that names a picture reads it on the executor and posts
+    its bytes with the message. The publication route then has both the words
+    and the picture — the reader sees it in the conversation, not as a page
+    that has to be opened."""
+    process, _, _, work = central_transport
+    raw = b"\x89PNG\r\n\x1a\n" + b"pixels"
+    (work / "shot.png").write_bytes(raw)
+    result = process.call(
+        "tools/call",
+        {
+            "name": "chat_send",
+            "arguments": {
+                "id": "picture",
+                "session_id": "fixture",
+                "content": "看这一张",
+                "attachments": [str(work / "shot.png")],
+            },
+        },
+    )
+    receipt = json.loads(result["content"][0]["text"])
+    assert "deny" not in receipt, receipt
+    sent = process.publications[-1]
+    assert sent["content"] == "看这一张"
+    assert sent["attachments"] == [
+        {
+            "path": str(work / "shot.png"),
+            "name": "shot.png",
+            "content_b64": base64.b64encode(raw).decode("ascii"),
+        }
+    ]
+
+
+def test_chat_send_publishes_a_picture_alone(central_transport):
+    """A message that is only a picture has no words to send: the content is
+    empty and the publication still lands."""
+    process, _, _, work = central_transport
+    (work / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\npixels")
+    result = process.call(
+        "tools/call",
+        {
+            "name": "chat_send",
+            "arguments": {
+                "id": "picture-alone",
+                "session_id": "fixture",
+                "attachments": [str(work / "shot.png")],
+            },
+        },
+    )
+    receipt = json.loads(result["content"][0]["text"])
+    assert "deny" not in receipt, receipt
+    sent = process.publications[-1]
+    assert sent["content"] == ""
+    assert len(sent["attachments"]) == 1
+
+
 def test_send_user_file_publishes_the_bytes_on_the_rooms_own_shown_route(
     central_transport,
 ):

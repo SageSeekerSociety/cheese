@@ -28,6 +28,10 @@ else:
     )
 
 MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
+#: One message carries at most this many pictures (`ATTACHMENTS_PER_MESSAGE` in
+#: `topics_messages`); the tool says so instead of letting the backend drop the
+#: rest without a word.
+MAX_CHAT_SEND_ATTACHMENTS = 9
 
 # What the tool result promises the caller about the file: `isImage` for the
 # suffixes that are pictures, `media_type` for what the bytes are. The room
@@ -107,6 +111,54 @@ def send_user_file_body(raw):
     reads it off `path`, so this and the room's table cannot drift.
     """
     return {"content_b64": base64.b64encode(raw).decode("ascii")}
+
+
+def chat_send_attachments(client, config, args, invoke, payload):
+    """The `attachments` a `chat_send` named, read on the machine as bytes.
+
+    The publication route takes the files with the message (see
+    `topics_messages._publish_as_agent`), and the executor's paths mean nothing
+    to the backend: each one is read here, through the same `invoke` every
+    machine operation uses, and carried as base64 beside the text. The
+    workspace-relative spelling is resolved the same way `SendUserFile` resolves
+    it, so a path written from the checkout is the path the person meant.
+    """
+    paths = args.get("attachments") or []
+    if not isinstance(paths, list):
+        raise RuntimeError("attachments must be a list of file paths")
+    if len(paths) > MAX_CHAT_SEND_ATTACHMENTS:
+        raise RuntimeError(
+            f"one message carries at most {MAX_CHAT_SEND_ATTACHMENTS} pictures"
+        )
+    files = []
+    for index, path in enumerate(paths):
+        if not isinstance(path, str) or not path.strip():
+            raise RuntimeError("each attachment must be a file path")
+        machine, _ = send_user_file_paths(
+            path, config, anchor=client.working_directory()
+        )
+        name = machine.rstrip("/").rsplit("/", 1)[-1] or "image"
+        size = stat_file_on_the_machine(
+            invoke, machine, f"{payload['id']}-chat-{index}-stat"
+        )
+        if size > MAX_SEND_USER_FILE_BYTES:
+            raise RuntimeError(
+                f"{path} is larger than "
+                f"{MAX_SEND_USER_FILE_BYTES // (1024 * 1024)}MB"
+            )
+        raw = read_file_on_the_machine(
+            invoke, machine, f"{payload['id']}-chat-{index}"
+        )
+        if not raw:
+            raise RuntimeError(f"{path} is empty")
+        files.append(
+            {
+                "path": machine,
+                "name": name,
+                "content_b64": base64.b64encode(raw).decode("ascii"),
+            }
+        )
+    return {**args, "attachments": files}
 
 
 def deliver_send_user_file(client, config, payload, args, invoke):

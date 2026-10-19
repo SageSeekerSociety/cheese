@@ -64,6 +64,9 @@ module-level `APIRouter` under `app.api.routes`, so the declaration below, with
 the same prefix and tags, is all it takes.
 """
 
+import asyncio
+import base64
+import binascii
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
@@ -82,6 +85,7 @@ from app.api.topics_deps import (
 )
 from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
 from app.auth.project_roles import may
+from app.core import raster_images
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -93,8 +97,9 @@ from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.mentions import mentioned_outside
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.store.human import HumanHandoff
-from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
+from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn
 from app.domain.delivery.agent import dispatch_pending
+from app.domain.library import service as library
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.delivery.note import send_note
 from app.domain.notice_meta import (
@@ -199,14 +204,61 @@ async def send_chat_message(
     return ok(sent)
 
 
+async def _agent_attachments(
+    place, items: list[ChatAttachmentIn]
+) -> list[dict]:
+    """The pictures an agent's message carries, kept as this room's uploads.
+
+    An agent's file lives on the executor, so it arrives as bytes, not as a
+    path. The bytes decide what it is (`raster_images.sniff`), and only the
+    four pictures a browser and a model both take inline get through. Each one
+    lands under `uploads/<random>/<name>`, the address a paste already gets, so
+    the conversation can draw it in the bubble without touching the preview
+    panel.
+    """
+    kept: list[dict] = []
+    for item in items[:ATTACHMENTS_PER_MESSAGE]:
+        if not item.content_b64:
+            raise ValidationError(
+                "An agent sends a file by its bytes, not by a path"
+            )
+        try:
+            raw = base64.b64decode(item.content_b64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValidationError(say("contentB64Invalid")) from exc
+        if not raw:
+            raise ValidationError(say("emptyFile"))
+        if len(raw) > library.MAX_FILE_BYTES:
+            raise ValidationError(
+                say("fileTooLarge", mb=library.MAX_FILE_BYTES // (1024 * 1024))
+            )
+        mime = raster_images.sniff(raw[:12])
+        if mime is None:
+            raise ValidationError(
+                "Only pictures (PNG, JPEG, GIF, WebP) go into the conversation; "
+                "other files go out with `cheese show`"
+            )
+        suffix = raster_images.MEDIA_TYPE_SUFFIX[mime]
+        name = item.name or item.path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        stem = name.rsplit(".", 1)[0] if "." in name else name
+        name = library.clean_upload_name(stem) + suffix
+        path = f"{library.MESSAGE_ATTACHMENT_PREFIX}/{uuid.uuid4().hex}/{name}"
+        await asyncio.to_thread(
+            library.write_room_file, place.project_id, place.room_id, path, raw
+        )
+        kept.append({"path": path, "mime": mime})
+    return kept
+
+
 async def _publish_as_agent(
     chat: ChatService, place, body: ChatMessageIn, author: str, db
 ) -> dict | None:
     """An agent's message: attributed to its live turn, never the start of one."""
-    if body.attachments:
-        raise ValidationError("An agent shares a file with `cheese show`, not here")
+    attachments = (
+        await _agent_attachments(place, body.attachments) if body.attachments else []
+    )
     content = body.content.strip()
-    if not content:
+    if not content and not attachments:
         raise ValidationError("content must not be blank")
     if body.reply_to is not None:
         parent = await BlockRepository(db).get(body.reply_to)
@@ -217,25 +269,32 @@ async def _publish_as_agent(
     runner = get_work_runner()
     work = runner.live_work_for_topic(place.conversation_id)
     turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
-    payload = await chat.messages.persist_assistant_message(
-        project_id=place.project_id,
-        topic_id=place.room_id,
-        inner_id=place.inner_id,
-        text=content,
-        turn_id=turn_id,
-        reply_to=body.reply_to,
-        roster=None,
-        topic_refs=[],
-        publish=True,
-        author=author,
-        publication_id=str(body.request_id),
-        extra_meta={"quoted_context": body.quoted_context.model_dump(mode="json")}
-        if body.quoted_context
-        else None,
+    payload, attachment_payloads = (
+        await chat.messages.persist_assistant_message_with_attachments(
+            attachments=attachments,
+            project_id=place.project_id,
+            topic_id=place.room_id,
+            inner_id=place.inner_id,
+            text=content,
+            turn_id=turn_id,
+            reply_to=body.reply_to,
+            roster=None,
+            topic_refs=[],
+            author=author,
+            publication_id=str(body.request_id),
+            extra_meta={"quoted_context": body.quoted_context.model_dump(mode="json")}
+            if body.quoted_context
+            else None,
+        )
     )
     await get_broker().publish(
         str(place.conversation_id), {"type": "assistant_block", "block": payload}
     )
+    # The pictures follow the words, in the order they were sent.
+    for block in attachment_payloads:
+        await get_broker().publish(
+            str(place.conversation_id), {"type": "assistant_block", "block": block}
+        )
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
     # A task's session names nobody into its task: it works for its owner.
