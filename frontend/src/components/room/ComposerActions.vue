@@ -146,6 +146,10 @@ const extras = computed<MenuAction[]>(() => {
   return list
 })
 const extrasCollapsed = computed(() => !!props.collapseExtras && extras.value.length > 1)
+// 手机上「还原原话」药丸进来时，这一行已经满载：附件、照片、⋯ 一起让开，
+// 只留麦克风、药丸、@ 和发送，八秒后原样回来。不让的话，「交给谁」的名字会被
+// 截到只剩一个字——这八秒里要判断的是「这句要不要还原」，不是还要发附件。
+const voiceUndoNeedsRoom = computed(() => !!props.collapseExtras && !!props.voiceSwap)
 
 // 触屏上没有键盘，「键盘快捷键」那一项在那儿是一句空话：手机上它本来收在 ⋯ 里，
 // 点开是一整页用不上的按键表。按输入方式判断，不按视口宽度（和 useChatRowActions
@@ -211,6 +215,7 @@ const summonText = computed(() => ({
     <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
            时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
     <BaseButton
+      v-if="!voiceUndoNeedsRoom"
       kind="ghost"
       class="composer-icon"
       icon="mdi-paperclip"
@@ -221,7 +226,7 @@ const summonText = computed(() => ({
     <!-- 手机上多一颗「照片」：那儿没有截图可贴、也没有东西可拖，从文件
              选择器里翻相册要绕好几步。 -->
     <BaseButton
-      v-if="showImagePicker"
+      v-if="showImagePicker && !voiceUndoNeedsRoom"
       kind="ghost"
       class="composer-icon"
       icon="mdi-image-outline"
@@ -245,7 +250,7 @@ const summonText = computed(() => ({
       @click="micKey"
       @contextmenu.prevent
     />
-    <AdaptiveMenu v-if="extrasCollapsed" :actions="menuExtras" location="top start">
+    <AdaptiveMenu v-if="extrasCollapsed && !voiceUndoNeedsRoom" :actions="menuExtras" location="top start">
       <template #activator="{ props: menu }">
         <BaseButton
           v-bind="menu"
