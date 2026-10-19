@@ -11,6 +11,7 @@ from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce
+from app.domain.agent.culprit_probes import PlatformProbes
 from app.domain.block.queries import turn_starts
 from app.domain.delivery.agent import (
     record_task_instruction,
@@ -41,6 +42,21 @@ _EXPECTED_PORTS = {
 _LIVE_PORTS = {
     "quiet_window_s": lambda: settings.draft_pr_sweep_activity_window_s,
 }
+
+
+class _ProbesOn:
+    """Equal to the culprit-probe runner reading these sessions: made at wiring
+    time, so only what it is bound to can be compared."""
+
+    def __init__(self, sessions):
+        self.sessions = sessions
+
+    def __eq__(self, other):
+        return isinstance(other, PlatformProbes) and other.sessions is self.sessions
+
+
+#: 接线时用这一套会话现做的口子。
+_WORLD_PORTS = {"probes": lambda world: _ProbesOn(world.sessions)}
 _KEYWORD_PORTS = {
     "pr poll": (
         "settle_card",
@@ -48,7 +64,7 @@ _KEYWORD_PORTS = {
         "task_teammate",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
-    "landing watch": ("record_instruction", "task_teammate", "machines"),
+    "landing watch": ("record_instruction", "task_teammate", "machines", "probes"),
     "draft pr sweep": ("dispatch_pending", "record_instruction", "quiet_window_s"),
 }
 
@@ -168,7 +184,13 @@ async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
     assert await world.jobs[name]._job() == {"did": 1}
     handed = argument if isinstance(argument, tuple) else (argument,)
     ports = {
-        port: (_LIVE_PORTS[port]() if port in _LIVE_PORTS else _EXPECTED_PORTS[port])
+        port: (
+            _LIVE_PORTS[port]()
+            if port in _LIVE_PORTS
+            else _WORLD_PORTS[port](world)
+            if port in _WORLD_PORTS
+            else _EXPECTED_PORTS[port]
+        )
         for port in _KEYWORD_PORTS.get(name, ())
     }
     work.assert_awaited_once_with(*(getattr(world, one) for one in handed), **ports)

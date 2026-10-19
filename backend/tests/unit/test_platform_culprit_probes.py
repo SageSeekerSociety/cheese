@@ -1,4 +1,4 @@
-"""A platform probe runs a pinned clone and distinguishes tests from setup."""
+"""A platform probe distinguishes a test's verdict from its setup's failure."""
 
 import base64
 import json
@@ -23,9 +23,7 @@ from app.domain.agent.culprit_probes import PlatformProbes
         (0, 4, "unknown"),
     ],
 )
-def test_probe_uses_test_report_and_preserves_original_checkout(
-    tmp_path, setup, test, expected
-):
+def test_probe_reads_the_verdict_from_the_test_report(tmp_path, setup, test, expected):
     source = tmp_path / "rocket"
     source.mkdir()
     subprocess.run(["git", "init", "-q", str(source)], check=True)
@@ -61,10 +59,6 @@ def test_probe_uses_test_report_and_preserves_original_checkout(
         ],
         check=True,
     )
-    sha = subprocess.check_output(
-        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
-    ).strip()
-    (source / "test_launch.py").write_text("uncommitted work\n")
     binary = tmp_path / "bin"
     binary.mkdir()
     uv = binary / "uv"
@@ -89,15 +83,14 @@ def test_probe_uses_test_report_and_preserves_original_checkout(
         os.environ, {"PATH": str(binary) + os.pathsep + os.environ["PATH"]}
     ):
         assert (
-            culprit_probe_script.probe(source, sha, ["test_launch.py"], directory)
+            culprit_probe_script.probe(source, ["test_launch.py"], directory)
             == expected
         )
-    assert (source / "test_launch.py").read_text() == "uncommitted work\n"
     ledger = [
         json.loads(line)
         for line in (directory / "commands.jsonl").read_text().splitlines()
     ]
-    assert any(sha in event.get("argv", []) for event in ledger)
+    assert any("uv" in event.get("argv", []) for event in ledger)
     assert (directory / "output.log").is_file()
 
 

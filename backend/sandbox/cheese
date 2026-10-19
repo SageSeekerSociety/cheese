@@ -4139,6 +4139,38 @@ def _checkout() -> Path:
     return target
 
 
+def _revision_tree(sha: str, target: str) -> None:
+    """A tree at commit `sha` of the project's repository, made at `target`.
+
+    The platform's culprit probe asks for it (`culprit_probe_script.py`): it
+    runs in a room, which is not a checkout, on a machine whose repository
+    cache was fetched when its tasks opened, so a commit that landed since is
+    not there. The exact commit is fetched from the forge into the cache with
+    this session's credential (`cheese git-credential`, never a token on a
+    command line), and checked out detached in a worktree of its own, which
+    its caller removes."""
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sha):
+        raise SystemExit("[cheese] revision-tree needs a full commit id")
+    tree = Path(target)
+    if not tree.is_absolute() or tree.exists():
+        raise SystemExit("[cheese] revision-tree needs a new absolute directory")
+    data = _call("GET", "/sandbox/forge-token")["data"]
+    remote = {
+        "remote": data["url"],
+        "forge_kind": data.get("kind"),
+        "forge_repo": data.get("repo"),
+    }
+    cache = Path.home() / ".cheese" / "repositories"
+    cache.mkdir(parents=True, exist_ok=True)
+    repo = cache / f"{_need('CHEESE_PROJECT', PROJECT)}.git"
+    with (cache / f"{repo.stem}.lock").open("a") as lock:
+        _lock(lock)
+        _prepare_repository(repo, remote)
+        _git_task(repo, "fetch", "--filter=blob:none", "origin", sha)
+        _git_task(repo, "worktree", "prune")
+        _git_task(repo, "worktree", "add", "--detach", str(tree), sha)
+
+
 def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
     task_id = str(uuid.UUID(task_id))
     project = _need("CHEESE_PROJECT", PROJECT)
@@ -6342,5 +6374,7 @@ if __name__ == "__main__":
         _git_credential(sys.argv[2])
     elif len(sys.argv) == 3 and sys.argv[1] == "git-attribution":
         _git_attribution(sys.argv[2])
+    elif len(sys.argv) == 4 and sys.argv[1] == "revision-tree":
+        _revision_tree(sys.argv[2], sys.argv[3])
     else:
         main()

@@ -1,7 +1,11 @@
 """Platform probe program, sent to a project's existing execution sandbox.
 
-Standard library only. Inputs and logs survive the process; each probe checks
-out its pinned revision in a separate clone and never writes the working tree.
+Standard library only. Inputs and logs survive the process. It runs in a
+room, which is not a checkout, and the commit it probes may have landed after
+the machine last fetched: the platform's CLI fetches that exact commit from
+the project's forge and checks it out in a worktree of the probe's own
+(`cheese revision-tree`), which is removed afterwards. Nothing else on the
+machine is written.
 """
 
 import json
@@ -53,17 +57,8 @@ def package_of(tree, test):
     raise ValueError("No supported package manifest owns the test")
 
 
-def probe(source, sha, tests, directory):
-    tree = directory / "tree"
-    if run(
-        ["git", "clone", "--no-hardlinks", "--no-checkout", str(source), str(tree)],
-        source,
-        directory,
-        60,
-    ):
-        return "unknown"
-    if run(["git", "checkout", "--detach", sha], tree, directory, 60):
-        return "unknown"
+def probe(tree, tests, directory):
+    """Run ``tests`` in ``tree``, a checkout of the probed commit."""
     tracked = subprocess.check_output(
         ["git", "ls-files", "-z"], cwd=tree, text=True
     ).split("\0")
@@ -156,24 +151,39 @@ def probe(source, sha, tests, directory):
     return "unknown"
 
 
+def remove(tree, directory):
+    """Take the probe's worktree out of the repository it was made in. Runs
+    in a `finally`: failing here must not take the verdict with it."""
+    try:
+        if (tree / ".git").exists():
+            common = subprocess.check_output(
+                ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                cwd=tree,
+                text=True,
+            ).strip()
+            run(["git", "worktree", "remove", "--force", str(tree)], common, directory)
+    except (OSError, subprocess.CalledProcessError) as error:
+        (directory / "cleanup-error.txt").write_text(str(error))
+    shutil.rmtree(tree, ignore_errors=True)
+
+
 def main():
     sha, tests, nonce = sys.argv[1], json.loads(sys.argv[2]), sys.argv[3]
     directory = Path.home() / ".cheese" / "culprit-probes" / nonce
     directory.mkdir(parents=True, exist_ok=False)
     (directory / "input.json").write_text(json.dumps({"sha": sha, "tests": tests}))
+    tree = directory / "tree"
     verdict = "unknown"
     try:
-        source = Path(
-            subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"], text=True
-            ).strip()
-        )
-        verdict = probe(source, sha, tests, directory)
+        if run(["cheese", "revision-tree", sha, str(tree)], directory, directory):
+            raise RuntimeError("The probed commit could not be checked out")
+        verdict = probe(tree, tests, directory)
     except Exception as error:
         (directory / "error.txt").write_text(str(error))
     finally:
-        # The clone and installed dependencies are disposable; inputs and logs remain.
-        shutil.rmtree(directory / "tree", ignore_errors=True)
+        # The worktree and installed dependencies are disposable; inputs and
+        # logs remain.
+        remove(tree, directory)
     (directory / "verdict").write_text(verdict)
     return {"pass": 0, "fail": 1, "unknown": 2}[verdict]
 
