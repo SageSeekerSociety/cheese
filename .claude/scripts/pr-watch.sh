@@ -107,7 +107,7 @@ reverter_of() {
   local reverts="Reverts $REPO#$3([^0-9]|$)" typed="^[Rr][Ee][Vv][Ee][Rr][Tt][(:].*#$3([^0-9]|$)"
   [ "$sha" != "$merge" ] || return 0
   [ -n "${subject_of[$merge]+set}" ] || { echo unknown; return; }
-  # Without per_page a compare call lists only the first 250 commits, and main
+  # Without per_page a compare call lists only the newest 250 commits, and main
   # takes more than that in a couple of days, so the range is read page by
   # page, 1000 per page (the most the endpoint serves). Each page says
   # "#T <total> <listed>"; a range whose pages do not add up is unknown.
