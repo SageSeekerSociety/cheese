@@ -120,13 +120,31 @@ async fn this_device() -> Option<String> {
 
 #[tauri::command]
 async fn prevent_sleep(enabled: Option<bool>) -> Result<bool, String> {
-    let mut cmd = platform::cheesehost();
-    cmd.arg("prevent-sleep");
-    if let Some(enabled) = enabled { cmd.arg(if enabled { "on" } else { "off" }); }
-    let out = cmd.output().await.map_err(|e| e.to_string())?;
-    if !out.status.success() { return Err(String::from_utf8_lossy(&out.stderr).into_owned()); }
-    let value: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
-    value.get("prevent_sleep").and_then(|v| v.as_bool()).ok_or_else(|| "Missing sleep preference".into())
+    machine_sleep_setting(
+        &platform::cheesehost_config().with_file_name("machine.json"),
+        enabled,
+    ).await
+}
+
+async fn machine_sleep_setting(path: &std::path::Path, enabled: Option<bool>) -> Result<bool, String> {
+    #[derive(serde::Deserialize, serde::Serialize, Default)]
+    struct Preference {
+        prevent_sleep: Option<bool>,
+    }
+
+    // Read machine.json directly so the preference works before cheesehost is installed.
+    let mut preference: Preference = match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string())?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Preference::default(),
+        Err(e) => return Err(e.to_string()),
+    };
+    if let Some(enabled) = enabled {
+        preference.prevent_sleep = Some(enabled);
+        std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+        let bytes = serde_json::to_vec(&preference).map_err(|e| e.to_string())?;
+        std::fs::write(path, bytes).map_err(|e| e.to_string())?;
+    }
+    Ok(preference.prevent_sleep.unwrap_or(true))
 }
 
 #[tauri::command]
@@ -469,6 +487,28 @@ fn fix_restored_size<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
 mod tests {
     use super::{stays_in_app, usable_size, SERVER_PERMISSIONS};
     use url::Url;
+
+    #[tokio::test]
+    async fn sleep_preference_works_before_a_connector_is_installed() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let home = std::env::temp_dir().join(format!("cheese-sleep-{}-{unique}", std::process::id()));
+        let path = home.join("cheese/machine.json");
+        let result: Result<(), String> = async {
+            assert!(super::machine_sleep_setting(&path, None).await?);
+            assert!(!super::machine_sleep_setting(&path, Some(false)).await?);
+            let stored: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(&path).map_err(|e| e.to_string())?
+            ).map_err(|e| e.to_string())?;
+            assert_eq!(stored["prevent_sleep"], false);
+            assert!(!super::machine_sleep_setting(&path, None).await?);
+            assert!(super::machine_sleep_setting(&path, Some(true)).await?);
+            assert!(super::machine_sleep_setting(&path, None).await?);
+            Ok(())
+        }.await;
+        let _ = std::fs::remove_dir_all(home);
+        assert!(result.is_ok(), "{result:?}");
+    }
 
     fn stays(url: &str) -> bool {
         stays_in_app(&Url::parse(url).unwrap())
