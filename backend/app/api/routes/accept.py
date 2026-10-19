@@ -37,7 +37,7 @@ from app.domain.notice_meta import (
     WHO_CHEESE,
     notice,
 )
-from app.domain.oauth.services import github_link_state
+from app.domain.oauth.services import github_sign_in_state
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.repository import identity
@@ -420,7 +420,7 @@ async def _owner_link_state(db: AsyncSession, topic, card, viewer: str | None):
         return None
     if await identity.owner_handle(db, card.task_id) != viewer:
         return None
-    return await github_link_state(db, viewer)
+    return await github_sign_in_state(db, viewer)
 
 
 @router.post("/accept-cards/{card_id}/approve", dependencies=[ROUTE_DECIDES])

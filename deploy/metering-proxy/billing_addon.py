@@ -605,8 +605,8 @@ _EGRESS_AUTH_BY_CLIENT: dict[str, str] = {}
 # the seat its whole reply and needed a person to wake the room (2026-10-12,
 # #1451). The cost of waiting is that the room stays quiet until the turn either
 # answers or runs out of retry budget; that trade is deliberate.
-# The backend recognises the phrase "subscription egress is offline" and shows
-# its own notice for it (`platform_failures`), which takes only short lines:
+# The backend recognises the phrase "subscription egress is offline" and
+# schedules a bounded resume if the CLI gives up (`resumable_failures`).
 # Claude Code prints this inside the JSON error body.
 EGRESS_OFFLINE_MESSAGE = (
     "cheese: the subscription egress is offline, so no model call was made. "

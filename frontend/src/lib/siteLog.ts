@@ -192,13 +192,15 @@ const RECORD_VERB: Record<string, string> = {
   prompt_replayed: 'work.room.site.record.delivery',
   timed_delivery: 'work.room.site.record.delivery',
   api_retry: 'work.room.site.record.retry',
+  turn_resume_wait: 'work.room.site.record.recovery',
+  turn_resume_started: 'work.room.site.record.recovery',
+  turn_resume_stopped: 'work.room.site.record.recovery',
   context_compact: 'work.room.site.record.compact',
   device_waiting: 'work.room.site.record.environment',
   cloud_startup: 'work.room.site.record.environment',
   cloud_provisioning: 'work.room.site.record.environment',
   sandbox_asleep: 'work.room.site.record.environment',
   memory_changed: 'work.room.site.record.memory',
-  wake_missed: 'work.room.site.record.wakeWatch',
 }
 
 /** 这一行是运行记录：平台在运行中记下的事，不是芝士做的一步。 */

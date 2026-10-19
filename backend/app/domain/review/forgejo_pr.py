@@ -218,9 +218,6 @@ class ForgejoClient:
             return "pending", "检查仍在运行"
         return "success", "检查已通过"
 
-    async def check_run_names(self, **kwargs):
-        return {r["name"] for r in await self.list_check_runs(**kwargs)}
-
     async def compare_files(self, *, owner, repo, base, head, token):
         comparison = f"{quote(base, safe='')}...{quote(head, safe='')}"
         data = self._data(

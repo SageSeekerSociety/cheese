@@ -45,6 +45,7 @@
   "githubRefusedCheckRuns": "GitHub refused to list check-runs (HTTP {status}): {reply}",
   "githubRefusedCheckStatus": "GitHub refused to report the check status (HTTP {status}): {reply}",
   "githubRefusedCheckSuites": "GitHub refused to list check-suites (HTTP {status}): {reply}",
+  "githubBranchComparisonInvalid": "GitHub returned an unusable branch comparison. Try again later.",
   "githubRefusedCommitOrder": "GitHub refused to compare the order of two commits (HTTP {status}): {reply}",
   "githubRefusedCommitRead": "GitHub refused to read the commit (HTTP {status}): {reply}",
   "githubRefusedCompare": "GitHub refused to compare the range of changes (HTTP {status}): {reply}",

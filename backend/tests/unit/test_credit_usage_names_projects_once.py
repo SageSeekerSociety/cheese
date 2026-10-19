@@ -1,20 +1,18 @@
-"""额度路由一次取完整批项目名，不按行逐条 ``ProjectService.get``。
+"""额度路由一次取完整批项目名和题目名，不按行逐条 ``get``。
 
 额度页把 ``projects`` 行和 ``packs`` 里引用的项目都按 id 问一次项目表，同一个项目
 会在这两组里交叉出现；额度后台的团队页则只有 ``packs``。逐条 ``get`` 是每行一次
-往返，现在两处都先把 pid 合成一份去重的全集，再用 ``get_projects_by_ids`` 一次
-取完。
+往返，现在两处都先把 id 合成一份去重的全集，再用 ``get_projects_by_ids`` /
+``get_tasks_by_ids`` 一次取完。
 
-这里钉三件事：
+这里钉四件事：
 
 - 三个项目在两组里交叉出现时，项目表只查一次，且拿到的是去重后的全集；
+- 题目表也只查一次，有题目的 pack 不再各问一次；
 - 输出与逐条版逐字段相同：项目名、题目名、项目不在表里时是 ``None``，以及没有
   项目时那个字段压根不出现；
 - 把批量换回逐条，同一条计数断言就红 —— 这是本文件存在的理由，不然计数写成
   多大都照样绿。这一条跑的是真函数，只把批量取那个方法换成逐条取。
-
-题目名那一半（``TaskService.get_task``）仍是逐条问，``domain/task/`` 此刻有在途
-改动；两个假服务都记下问了几次，用例同时确认它没被一起折成批量。
 """
 
 import uuid
@@ -68,10 +66,27 @@ class _Projects:
 
 
 class _Tasks:
-    """题目那半边：这次不改，记下逐条问了几次。"""
+    """题目那半边：记下每次问的是哪一批、哪几条。
 
-    def __init__(self) -> None:
+    ``per_row`` 让 ``get_tasks_by_ids`` 自己按 id 一条条问 —— 批量被换回逐条时
+    就是这个形状，答案不变，往返次数跟着题目数涨。
+    """
+
+    def __init__(self, per_row: bool = False) -> None:
+        self.per_row = per_row
+        self.batches: list[list] = []
         self.singles: list = []
+
+    async def get_tasks_by_ids(self, task_ids):
+        self.batches.append(list(task_ids))
+        if self.per_row:
+            found = {}
+            for task_id in task_ids:
+                task = await self.get_task(task_id)
+                if task is not None:
+                    found[task_id] = task
+            return found
+        return {tid: TASKS[tid] for tid in task_ids if tid in TASKS}
 
     async def get_task(self, task_id):
         self.singles.append(task_id)
@@ -95,6 +110,12 @@ def _assert_read_once(projects: _Projects) -> None:
     """项目表只查一次，且没有一条逐行 ``get``。"""
     assert len(projects.batches) == 1, f"项目表查了 {len(projects.batches)} 次"
     assert projects.singles == [], f"逐条取了 {len(projects.singles)} 次"
+
+
+def _assert_tasks_read_once(tasks: _Tasks) -> None:
+    """题目表只查一次，且没有一条逐行 ``get_task``。"""
+    assert len(tasks.batches) == 1, f"题目表查了 {len(tasks.batches)} 次"
+    assert tasks.singles == [], f"逐条取了 {len(tasks.singles)} 次"
 
 
 def _report() -> dict:
@@ -145,7 +166,9 @@ async def test_a_cross_listed_page_reads_the_project_table_once(
     out = await credit_usage._named(object(), _report())
 
     _assert_read_once(projects)
+    _assert_tasks_read_once(tasks)
     assert sorted(projects.batches[0]) == sorted([ALPHA, BETA, GAMMA, MISSING])
+    assert sorted(tasks.batches[0]) == sorted(["t-first", "t-second"])
 
     assert [row["name"] for row in out["projects"]] == ["Alpha", "Beta"]
     packs = out["packs"]
@@ -163,8 +186,6 @@ async def test_a_cross_listed_page_reads_the_project_table_once(
         None,
         None,
     ]
-    # 题目那半没被折成批量：有题目的两条各问了一次。
-    assert tasks.singles == ["t-first", "t-second"]
 
 
 @pytest.mark.anyio
@@ -191,6 +212,30 @@ async def test_a_batch_read_per_row_answers_the_same_and_fails_the_count(
     assert sorted(per_row_projects.singles) == sorted([ALPHA, BETA, GAMMA, MISSING])
     with pytest.raises(AssertionError):
         _assert_read_once(per_row_projects)
+
+
+@pytest.mark.anyio
+async def test_a_per_row_task_read_answers_the_same_and_fails_the_count(
+    monkeypatch, no_model_catalog
+):
+    """把题目改回 ``get_task`` 逐条问：答案逐字段相同，计数断言就红。
+
+    这正是改动前三处调用点各自的形状。``per_row`` 让它走 ``get_task``，
+    ``_assert_tasks_read_once`` 必须拒绝。
+    """
+    batched_tasks = _Tasks()
+    _install(monkeypatch, credit_usage, _Projects(), batched_tasks)
+    batched = await credit_usage._named(object(), _report())
+    _assert_tasks_read_once(batched_tasks)
+
+    per_row_tasks = _Tasks(per_row=True)
+    _install(monkeypatch, credit_usage, _Projects(), per_row_tasks)
+    per_row = await credit_usage._named(object(), _report())
+
+    assert per_row == batched
+    assert per_row_tasks.singles == ["t-first", "t-second"]
+    with pytest.raises(AssertionError):
+        _assert_tasks_read_once(per_row_tasks)
 
 
 @pytest.mark.anyio
@@ -225,7 +270,8 @@ async def test_the_admin_team_page_reads_the_project_table_once(monkeypatch):
     assert "task_name" not in packs[1] and "task_name" not in packs[3]
     assert "project_name" not in packs[3]
     assert packs[4]["project_name"] is None
-    assert tasks.singles == ["t-first", "t-second"]
+    _assert_tasks_read_once(tasks)
+    assert sorted(tasks.batches[0]) == sorted(["t-first", "t-second"])
 
 
 @pytest.mark.anyio

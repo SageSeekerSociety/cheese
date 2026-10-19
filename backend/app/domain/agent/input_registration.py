@@ -68,6 +68,7 @@ class _Registration:
 
 
 async def confirm_receipt(sessions, live: LiveWork, receipt) -> None:
+    started = None
     async with sessions() as session:
         row = await record_receipt(session, receipt)
         if row is None:
@@ -80,7 +81,16 @@ async def confirm_receipt(sessions, live: LiveWork, receipt) -> None:
             if row.settled_at is not None
             else {}
         )
+        if receipt.evidence == "native_echo" and row.settled_at is not None:
+            from app.domain.agent.turn_resume import started_on_receipt
+
+            started = await started_on_receipt(session, row.delivery_id, row.attempt_id)
         await session.commit()
+    if started is not None:
+        from app.domain.agent.run_records import publish
+
+        payload, room = started
+        await publish(payload, room=room)
     if receipt.evidence != "native_echo":
         return
     pending = live.unread_inputs.get(receipt.identity.conversation_id)

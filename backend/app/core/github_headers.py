@@ -1,7 +1,7 @@
 """GitHub REST API request headers assembled in one place.
 
 ``github_headers`` builds the ``Authorization`` and ``Accept`` pair shared by
-GitHub App token minting, OAuth user lookups, and ratchet artifact reads.
+GitHub App token minting and OAuth user lookups.
 ``api_version=True`` adds ``X-GitHub-Api-Version: 2022-11-28`` only for callers
 that already send it, keeping existing request semantics byte-for-byte intact.
 """

@@ -45,6 +45,8 @@ from pathlib import Path
 
 # These inspect trees/catalogs rather than importing the files they constrain,
 # so the import graph alone would not reach them; they always run.
+# test_ci_fast.py checks this tuple against the tree (a unit test that reads
+# tree files without importing app.*), so a new guard is not left to memory.
 TREE_GUARDS = (
     "test_domain_import_guard.py",
     "test_a_refusal_is_said_with_a_key.py", "test_sentences.py",
@@ -56,6 +58,13 @@ TREE_GUARDS = (
     "test_one_roster_agents_included.py", "test_local_fs_sharing_guard.py",
     "test_get_by_id_has_batch_sibling.py",
     "test_repositories_read_by_id_through_the_base.py",
+    # Read .claude/scripts, .github/workflows, deploy/ or a repository tree
+    # (app, backend, tests) instead of importing app.*, so no import edge
+    # reaches them.
+    "test_changed_runner.py", "test_postgres_version_pins.py",
+    "test_event_landing_guard.py", "test_metering_proxy_addon.py",
+    "test_known_debt_is_not_an_xfail.py", "test_dead_definitions_stay_dead.py",
+    "test_success_envelope_single_home.py",
 )
 META = {
     "backend/pyproject.toml", "backend/uv.lock",

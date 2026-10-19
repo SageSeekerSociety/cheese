@@ -18,9 +18,11 @@ import re
 import pytest
 from sqlalchemy import text
 
+from app.domain.room_task.services import TaskService
 from tests.integration.conftest import (
     a_team,
     join_project_team,
+    open_task,
     post_message,
     post_project,
 )
@@ -148,6 +150,14 @@ def test_topic_list_round_trips_do_not_grow_with_the_topic_count(client, bearer)
     with counting_sql(client) as small:
         assert client.get(url, headers=headers).status_code == 200
     small_count = len(small)
+    # Pin the absolute cost of this fixture's four-row list (three rooms plus
+    # the root the project creates). Every statement here is one a sidebar poll
+    # pays on every tick, so adding one is a deliberate act, not a rounding
+    # error — the relative check below would let a constant cost slip through.
+    assert small_count == 31, (
+        f"the topic list cost 31 statements; it now costs {small_count}.\n"
+        + "\n".join(small)
+    )
 
     _make(9)
     with counting_sql(client) as large:
@@ -158,6 +168,43 @@ def test_topic_list_round_trips_do_not_grow_with_the_topic_count(client, bearer)
     assert len(large) == small_count, (
         f"topic count grew 3 -> 12 and queries went {small_count} -> "
         f"{len(large)}; something is querying per topic.\n" + "\n".join(large)
+    )
+
+
+def test_topic_list_reads_room_tasks_once(client, bearer, monkeypatch):
+    """The list asks which tasks live in its rooms once per request.
+
+    ``_awaiting_an_answer`` folds a room's tasks into its 待答 set, and the
+    route folds the same tasks into the red rail's unresolved failures. Each
+    consumer used to read and reassemble the mapping; now the second one takes
+    the first one's answer.
+    """
+    project_id = _create_project(client, "Reads once")
+    headers = bearer(OWNER)
+    room_ids = []
+    for i in range(2):
+        r = client.post(
+            "/topics",
+            json={"project_id": project_id, "title": f"r{i}"},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        room_ids.append(r.json()["data"]["id"])
+    open_task(client, room_ids[0], "一件活", owner=OWNER)
+
+    calls: list[list[str]] = []
+    original = TaskService.tasks_of_rooms
+
+    async def counted(self, room_ids):
+        calls.append(list(room_ids))
+        return await original(self, room_ids)
+
+    monkeypatch.setattr(TaskService, "tasks_of_rooms", counted)
+    response = client.get(f"/topics?project_id={project_id}", headers=headers)
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1, (
+        f"the list asked for its rooms' tasks {len(calls)} times; "
+        "the second consumer rebuilt the mapping instead of reusing it."
     )
 
 

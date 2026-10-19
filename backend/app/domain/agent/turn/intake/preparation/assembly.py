@@ -45,6 +45,7 @@ from app.domain.agent.turn.intake.preparation.prompt import build_turn_prompt
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.state.inputs import _addressed_to, _pending_input_blocks
 from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
+from app.domain.agent_instance.own import current_role
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.queries import earlier_message_count, turn_history
@@ -252,7 +253,9 @@ async def prepare(
             else None
         )
         # Read the selected agent once so this turn's role and model agree.
-        role = await agents.system_prompt(agent)
+        role = await current_role(session, agent.instance_id) or (
+            await agents.system_prompt(agent)
+        )
         # 骨架是这个项目跑的那一个（结论 28），不是这个参与者的属
         # 性。这一轮只解析这一次，往下每一处都读它：会话行的键里有骨架，两处
         # 各自解析一次就够把一条会话拆成两条。

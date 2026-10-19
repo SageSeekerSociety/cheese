@@ -23,7 +23,6 @@ import { watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { provideAttachmentSource } from '@/composables/useAttachmentSource'
-import { useGithubLinkOutcome } from '@/composables/useGithubAccountLink'
 import { providePageChrome } from '@/composables/usePageChrome'
 import { providePublicVisitor } from '@/composables/usePublicVisitor'
 import { useSessionRestore } from '@/composables/useSessionRestore'
@@ -60,9 +59,6 @@ provideUserRefDirectory()
 providePageChrome()
 providePublicVisitor()
 provideAttachmentSource()
-
-// 关联 GitHub 从哪一页开始就回到哪一页，回来的结果在这里统一说一声。
-if (!import.meta.env.SSR) useGithubLinkOutcome()
 
 // 冷打开时「连不上、可以重试」那一层。逻辑在 composable 里
 // ——组件边界规则不允许子组件碰 services/router，而这里是视图那一层。

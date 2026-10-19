@@ -185,7 +185,7 @@ describe('project settings', () => {
     }
   })
 
-  it('shows your linked GitHub account and leaves unlinking it to account security', async () => {
+  it('shows the GitHub sign-in account and leaves disconnecting it to account security', async () => {
     me.id = '7'
     vi.mocked(api.listOAuthConnections).mockResolvedValue({
       connections: [

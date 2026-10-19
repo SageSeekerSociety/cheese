@@ -15,14 +15,18 @@ from app.auth.checker import require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import BadRequestError, ForbiddenError
 from app.core.sentences import say
+from app.domain.agent.model_catalog import model_choices
 from app.domain.authz import policy
 from app.domain.identity.services import IdentityService
 from app.domain.usage.incentives import CreditIncentives
+from app.domain.usage.plans import PlanService
 from app.domain.usage.schemas import (
     BetaCreditsOut,
     CreditRequestOut,
     CreditRequestsOut,
     CreditRewardOut,
+    CreditRewardsOut,
+    PublishedCreditPlansOut,
 )
 from app.domain.user.services import usernames_by_ids
 
@@ -61,6 +65,25 @@ async def require_human(
 @router.get("/users/me/credits/beta", **typed_response(BetaCreditsOut))
 async def beta_credits(db: DbSession, user: AuthUser) -> dict:
     return ok(await CreditIncentives(db).beta(user.user_id))
+
+
+@router.get("/users/me/credits/rewards", **typed_response(CreditRewardsOut))
+async def my_credit_rewards(db: DbSession, user: AuthUser) -> dict:
+    return ok(await CreditIncentives(db).rewards(user.user_id))
+
+
+@router.get("/credits/plans", **typed_response(PublishedCreditPlansOut))
+async def published_credit_plans(db: DbSession, user: AuthUser) -> dict:
+    plans = await PlanService(db).published_plans()
+    choices = model_choices(None)
+    for plan in plans:
+        tiers = plan["model_tiers"]
+        plan["models"] = [
+            choice["label"]
+            for choice in choices
+            if tiers is None or choice.get("tier") in tiers
+        ]
+    return ok({"plans": plans})
 
 
 @router.post(
