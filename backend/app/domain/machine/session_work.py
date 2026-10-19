@@ -605,9 +605,8 @@ def _another_sandbox_wanted(environment: Sandbox | SelfHosted) -> bool:
     replaces them freely, so a room whose sandbox is on a machine it cannot
     work in — its disk full, say — asks for the spec it is already on to be
     given a sandbox somewhere else, and answering "you are already there"
-    leaves it on that machine for good. False for the others: a person's
-    computers (``devices_of``) and a self-hosted machine each name one machine,
-    and the one the session is on is the one it asks for."""
+    leaves it on that machine for good. A sandbox on team devices keeps its
+    existing directory, as does a session that chose one whole machine."""
     spec = spec_of(environment.spec) if isinstance(environment, Sandbox) else None
     return spec is not None and spec.platform
 
