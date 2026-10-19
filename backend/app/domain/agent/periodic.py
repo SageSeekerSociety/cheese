@@ -72,6 +72,11 @@ def register_periodic_jobs(
     # Hands due resumes to the delivery ledger; the timed-delivery clock, next
     # in the manifest, dispatches them.
     jobs.register("turn resumes", 30, lambda: turn_resume.hand_due(sessions))
+    jobs.register(
+        "failed turn resume deliveries",
+        30,
+        lambda: turn_resume.report_failed_deliveries(sessions),
+    )
     # This clock is the only entry point to memory housekeeping.
     jobs.register(
         "memory dream", settings.memory_dream_sweep_interval_s, chat.sweep_memory_dreams

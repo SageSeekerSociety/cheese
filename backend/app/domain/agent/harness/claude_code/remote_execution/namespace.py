@@ -47,6 +47,10 @@ def enter(target_path, argv):
     """
     target = json.loads(Path(target_path).read_text())
     seen = target["session_workspace"]
+    # Where the session itself starts: a task's checkout, which is not where
+    # the project is mounted, so it is made here as an empty directory — what
+    # the session reads of it, it reads on the machine by that path.
+    start = target.get("start_directory") or seen
     view = target["central_workspace"]
     program = shutil.which(argv[0])
     if not program:
@@ -68,9 +72,20 @@ def enter(target_path, argv):
             f"This session cannot see its project at {seen!r}, the executor's "
             f"path: {problem}"
         )
+    if start != seen and _unplaceable(start, needed):
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        raise SystemExit(f"This session cannot start at {start!r}")
     _place(seen, view, Path(target_path).parent / "namespace-root")
-    os.chdir(seen)
-    os.environ["PWD"] = seen
+    if start != seen:
+        try:
+            os.makedirs(start, exist_ok=True)
+        except OSError:
+            # A session host that cannot make the directory still starts where
+            # it sees the project; `$T` names the checkout on the machine, and
+            # that is where its commands go.
+            start = seen
+    os.chdir(start)
+    os.environ["PWD"] = start
     os.execv(program, argv)
 
 

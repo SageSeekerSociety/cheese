@@ -39,7 +39,7 @@
     @close-totp="closeTotp"
     @change-password="handleChangePassword"
     @unbind="handleUnbind"
-    @relink-github="linkGithubAccount(SECURITY_PATH)"
+    @sign-in-github="signInWithGithub"
     @sign-out-device="signOutDevice"
     @sign-out-others="handleSignOutOthers"
     @copy="copy"
@@ -57,7 +57,7 @@ import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/brow
 
 import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
-import { linkGithubAccount } from '@/composables/useGithubAccountLink'
+import { signInWithGithub } from '@/composables/useGithubSignIn'
 
 import SecurityView from './SecurityView.vue'
 
@@ -70,8 +70,6 @@ import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
 import { oauthProviderName } from '@/views/account/oauthProvider'
 
-/** Where 关联 GitHub comes back to when it starts here. */
-const SECURITY_PATH = '/users/settings/security'
 import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 
 const dialogs = useDialog()

@@ -1,5 +1,4 @@
 {
-  "accountConnected": "GitHub account linked",
   "connectRepoFailed": "Couldn't connect the GitHub repository",
   "installPending": "Install request sent, awaiting approval from an organization admin",
   "loadFailed": "Couldn't load settings",

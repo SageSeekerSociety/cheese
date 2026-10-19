@@ -659,7 +659,8 @@ class TestGetProviderConfig:
         assert config.id == "github_app"
         assert config.name == "GitHub"
         assert config.client_id == "cid"
-        assert "read:user" in config.scope
+        assert config.scope == []
+        assert "scope=" not in GitHubProvider(config).get_authorization_url()
 
     def test_google_config(self):
         svc, _repo = _make_service()
