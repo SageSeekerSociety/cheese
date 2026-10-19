@@ -585,6 +585,7 @@ async def watch_landings(
     record_instruction: RecordInstruction,
     task_teammate: TaskTeammate,
     machines: SweepCheckouts | None = None,
+    probes=None,
 ) -> dict:
     """Merged task PRs, watched on the default branch for a while: the checks
     there and a deployment that includes them (`landing_watch`)."""
@@ -594,6 +595,7 @@ async def watch_landings(
         record_instruction=record_instruction,
         task_teammate=task_teammate,
         machines=machines,
+        probes=probes,
     )
 
 

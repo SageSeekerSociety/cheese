@@ -58,6 +58,7 @@ from app.domain.notice_meta import (
 )
 from app.domain.project.forge import background_quota, quota_serves_background
 from app.domain.review import culprit_bisect, culprit_search, landing_forge
+from app.domain.review.ports import ProbeRunner
 from app.domain.review.landing_forge import (
     BatchCommits,
     Check,
@@ -83,10 +84,12 @@ logger = logging.getLogger("cheesex.review.landing_watch")
 
 #: A completed check that went red. `cancelled` is not one: a newer push to
 #: the branch cancels the run it superseded.
-_FAILED = frozenset({"failure", "timed_out", "startup_failure"})
+_FAILED = frozenset(
+    {"failure", "timed_out", "startup_failure", "action_required", "stale"}
+)
 
 #: A completed check that passed, as `merge_state` reads it.
-_PASS = frozenset({"success", "neutral"})
+_PASS = frozenset({"success", "neutral", "skipped"})
 
 #: How many merges are looked at at once. What a look mostly waits on is the
 #: forge, asked with no session open (`_look`) — but it does hold a connection
@@ -157,6 +160,7 @@ async def watch_landings(
     record_instruction: RecordInstruction | None,
     task_teammate: TaskTeammate | None,
     machines: SweepCheckouts | None = None,
+    probes: ProbeRunner | None = None,
 ) -> dict:
     """One look at every merge still being watched, the tasks being written up
     whose AI teammate has gone on working, and the overdue closings.
@@ -207,7 +211,7 @@ async def watch_landings(
     # One forge read per sweep, however many looks need it: the commits of a
     # batch, their files and the failed tests in its logs are the same answer
     # for every landing it covers.
-    memo: dict = {}
+    memo: dict = {"probes": probes}
     looked_at = {
         landing_id: seen
         for chain in await asyncio.gather(
@@ -341,6 +345,14 @@ async def _look(
     # Asked with no session open, so no connection waits on the forge.
     if not await quota_serves_background(quota):
         return 0
+
+    candidate = reads
+
+    async def policy():
+        await candidate.configure()
+        return candidate
+
+    reads = await _once(memo, (project_id, "forge-policy"), policy)
     sha = sha or await reads.merge_sha(pr_number)
     if not sha:
         return 0
@@ -535,6 +547,7 @@ def _reds_elsewhere(runs: list[Check], gate: Check | None) -> list[Check]:
             run
             for run in group
             if run is not gate
+            and (gate is None or run.name not in gate.required)
             and (
                 gate is None
                 or run.suite is None
@@ -566,7 +579,7 @@ async def _judge_checks(
     if any(run.status != "completed" for run in own):
         return None
     red = _red_checks(own)
-    gate = gate_run(own, reads.main_gate.check)
+    gate = gate_run(own, reads.required_checks)
     anchor = await _green(reads, project_id, memo)
     if gate is not None and gate.conclusion in _FAILED:
         if anchor and await _covered(reads, project_id, sha, anchor, memo):
@@ -644,7 +657,7 @@ async def _judge_checks(
             )
         return None
     head, head_checks = covering
-    covering_gate = gate_run(head_checks, reads.main_gate.check)
+    covering_gate = gate_run(head_checks, reads.required_checks)
     if (
         covering_gate is None
         or covering_gate.conclusion is None
@@ -682,7 +695,7 @@ async def _gate_ran(
     """Whether ``sha`` was checked on its own, rather than in a batch."""
     if not sha:
         return False
-    gate = gate_run(await _checks(reads, project_id, sha, memo), reads.main_gate.check)
+    gate = gate_run(await _checks(reads, project_id, sha, memo), reads.required_checks)
     return (
         gate is not None
         and gate.status == "completed"
@@ -784,16 +797,16 @@ async def _search_for_culprit(
 
     None while a probe is out — the batch is red, and which task it belongs to
     is what the next sweeps are finding out. A search that cannot run at all
-    (no probe workflow, no permission) leaves the batch exactly as the file
+    (no project execution resource) leaves the batch exactly as the file
     match left it, so a repository without one is attributed as it always was.
     """
-    if not reads.main_gate.probe_workflow or not _searchable(batch):
+    if memo.get("probes") is None or not _searchable(batch):
         return batch
 
     async def step():
         return await culprit_search.advance(
             chat.session_factory,
-            reads,
+            memo["probes"],
             project_id=project_id,
             head=batch.head,
             base=batch.base,
@@ -843,7 +856,7 @@ async def _walk_back(
             complete = True
             break
         gate = gate_run(
-            await _checks(reads, project_id, parent, memo), reads.main_gate.check
+            await _checks(reads, project_id, parent, memo), reads.required_checks
         )
         if gate is not None and gate.status == "completed":
             if gate.conclusion in _PASS:
@@ -1198,6 +1211,7 @@ async def _withdraw_passed(
         if reads is None:
             continue
         try:
+            await reads.configure()
             anchor = await reads.main_green()
         except Exception:  # a forge read that fails withdraws nothing
             logger.warning(
@@ -1213,7 +1227,7 @@ async def _withdraw_passed(
                 runs = await reads.checks(merge_sha)
             except Exception:  # a forge read that fails withdraws nothing
                 continue
-            gate = gate_run(runs, reads.main_gate.check)
+            gate = gate_run(runs, reads.required_checks)
             # Only a red check in the batch's own workflow run is taken back:
             # a workflow that runs beside it (an image build, say) is another
             # suite, and Required CI going green says nothing about it. A

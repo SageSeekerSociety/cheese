@@ -15,6 +15,7 @@ from app.domain.review.ports import (
     RecordInstruction,
     SweepCheckouts,
     TaskTeammate,
+    ProbeRunner,
 )
 
 GateNudge = Callable[[uuid.UUID, str, str, dict], Awaitable[None]]
@@ -45,6 +46,7 @@ def register_periodic_jobs(
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
     machines: SweepCheckouts | None = None,
+    probes: ProbeRunner | None = None,
 ) -> None:
     jobs.register(
         "pr poll",
@@ -78,6 +80,7 @@ def register_periodic_jobs(
             record_instruction=record_instruction,
             task_teammate=task_teammate,
             machines=machines,
+            probes=probes,
         ),
         forge_bound=True,
     )

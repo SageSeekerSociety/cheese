@@ -13,6 +13,7 @@ never picks a commit to have an answer.
 """
 
 import logging
+import json
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -25,11 +26,11 @@ from app.core.db import SessionFactory
 from app.domain.review import culprit_bisect
 from app.domain.review.culprit_bisect import Search
 from app.domain.review.culprit_models import CulpritSearch
-from app.domain.review.landing_forge import LandingReads
+from app.domain.review.ports import ProbeRunner
 
 logger = logging.getLogger("cheesex.review.culprit_search")
 
-#: How long one probe may stay out. The workflow's own timeout is 20 minutes;
+#: How long one probe may stay out. The platform program bounds each step;
 #: past this the run is not coming back, and waiting would keep the batch's
 #: red unreported.
 PROBE_FOR = timedelta(minutes=25)
@@ -46,7 +47,7 @@ class Finding:
     """What one batch's culprit search comes to this sweep.
 
     ``unavailable`` is not a failed search: the platform could not run a probe
-    at all (no such workflow, no permission), so the batch is attributed the
+    at all (no project execution resource), so the batch is attributed the
     way it was before the search existed. ``unlocated`` is a search that ran
     and could not name a commit, and the reason is what the notice reports.
     """
@@ -58,7 +59,7 @@ class Finding:
 
 async def advance(
     sessions: SessionFactory,
-    reads: LandingReads,
+    probes: ProbeRunner,
     *,
     project_id: uuid.UUID,
     head: str,
@@ -95,7 +96,7 @@ async def advance(
         # The tests the search started with, not this sweep's: the batch's red
         # job may have been re-run with a different set, and every probe has to
         # ask the same question for the answers to compare.
-        probes = list(row.tests) if row.tests else list(tests)
+        test_files = list(row.tests) if row.tests else list(tests)
 
     if search.finished:
         return _finding(search)
@@ -110,7 +111,7 @@ async def advance(
             )
             await _save(sessions, project_id, head, search)
             return _finding(search)
-        verdict = await reads.bisect_verdict(run_id)
+        verdict = await probes.verdict(project_id, run_id)
         if verdict == "running":
             return Finding("searching")
         search = search.advance(verdict)
@@ -121,7 +122,10 @@ async def advance(
     if not sha:
         return _finding(search)
     search = search.waiting_for(sha)
-    run = await reads.dispatch_bisect(sha, probes, uuid.uuid4().hex[:12])
+    # The executor's command registry makes the same dispatch idempotent even
+    # if the sweep loses its answer before persisting the run id.
+    nonce = uuid.uuid5(project_id, json.dumps([head, sha, test_files])).hex[:12]
+    run = await probes.start(project_id, sha, test_files, nonce)
     if run is None:
         if not search.probed:
             # Nothing was learned: fall back to how such a batch was attributed

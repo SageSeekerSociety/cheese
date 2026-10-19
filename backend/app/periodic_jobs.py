@@ -34,6 +34,7 @@ from app.domain.machine import periodic as machine_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
 from app.domain.review import periodic as review_periodic
+from app.domain.agent.culprit_probes import PlatformProbes
 from app.domain.routine import periodic as routine_periodic
 from app.domain.run_record import periodic as run_record_periodic
 from app.domain.session_record import periodic as session_record_periodic
@@ -167,6 +168,7 @@ def periodic_jobs(
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
         machines=checkout_sweep.sweep,
+        probes=PlatformProbes(sessions),
     )
     machine_periodic.register_periodic_jobs(
         jobs,

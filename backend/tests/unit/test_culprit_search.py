@@ -33,13 +33,13 @@ class _Reads:
         self.dispatched: list[str] = []
         self._runs: dict[str, str] = {}
 
-    async def dispatch_bisect(self, sha, tests, nonce):
+    async def start(self, project_id, sha, tests, nonce):
         self.dispatched.append(sha)
         run = f"run-{len(self.dispatched)}"
         self._runs[run] = sha
         return run
 
-    async def bisect_verdict(self, run_id):
+    async def verdict(self, project_id, run_id):
         return self._verdict(self._runs[run_id])
 
 
@@ -50,17 +50,17 @@ class _SlowReads(_Reads):
         super().__init__(verdict)
         self._asked: set[str] = set()
 
-    async def bisect_verdict(self, run_id):
+    async def verdict(self, project_id, run_id):
         if run_id not in self._asked:
             self._asked.add(run_id)
             return "running"
-        return await super().bisect_verdict(run_id)
+        return await super().verdict(project_id, run_id)
 
 
 class _NoProbes(_Reads):
     """A repository that cannot run a probe (no workflow, no permission)."""
 
-    async def dispatch_bisect(self, sha, tests, nonce):
+    async def start(self, project_id, sha, tests, nonce):
         return None
 
 
@@ -164,9 +164,9 @@ class _RecordingReads(_Reads):
         super().__init__(verdict)
         self.test_sets: list[tuple[str, ...]] = []
 
-    async def dispatch_bisect(self, sha, tests, nonce):
+    async def start(self, project_id, sha, tests, nonce):
         self.test_sets.append(tuple(tests))
-        return await super().dispatch_bisect(sha, tests, nonce)
+        return await super().start(project_id, sha, tests, nonce)
 
 
 async def test_probes_keep_the_tests_the_search_started_with(db_factory):

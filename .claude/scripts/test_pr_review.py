@@ -53,6 +53,13 @@ case "$*" in
       *pulls/12*) printf '%s\n' $PR12_COMMITS ;;
       *pulls/13*) printf '%s\n' $PR13_COMMITS ;; *) printf '%s\n' $PR_COMMITS ;; esac ;;
   *check-runs*) printf '%s\n' "${CI_JSON:-}" ;;
+  *pulls/*) python3 - <<'PY'
+import json, os
+h = os.environ['PR_HEAD']
+print(json.dumps({'head': {'sha': h}, 'base': {'ref': 'main'}, 'draft': False,
+                  'body': os.environ.get('PR_BODY', '独立 review：head ' + h[:8] + ' 结论 无 blocker/major｜档位 B')}))
+PY
+    ;;
   *'"# "'*) printf '# A title\n\nThe body.\n' ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac
@@ -358,7 +365,7 @@ class PrReview(unittest.TestCase):
         self.assertFalse(tree.exists(), "post removes the review tree")
         self.assertTrue((d / "REVIEW-RESULT.md").exists())
         self.assertTrue((d / "meta").exists())
-        # ready reads the cache, not the link: a machine change takes /tmp with it.
+        # ready reads the stamped PR body even after a machine loses its /tmp link.
         link.unlink()
         # A newer round from another root must not answer for this PR either: /tmp is
         # shared with every other seat on the machine, and the cache is this seat's.
@@ -375,10 +382,9 @@ class PrReview(unittest.TestCase):
         self.assertTrue(out.stdout.startswith("可递：head "), out.stdout)
         self.assertIn(f"review {self.shas[-1][:8]}", out.stdout)
 
-    def test_ready_falls_back_to_a_round_that_is_only_in_tmp(self):
-        # A round made before the default moved has no cache copy and no symlink. The
-        # lookup must read /tmp as well, or every review done before this change becomes
-        # invisible to ready the moment it merges.
+    def test_ready_uses_the_stamp_even_with_only_an_old_tmp_round(self):
+        # Directory discovery does not participate in delivery: the fake forge
+        # supplies the current stamp even when the old round is all this seat has.
         review_md, _ = self.prepare()
         d, _ = self.post(review_md)
         old = Path("/tmp") / f"pr-review-12-{self.shas[-1][:12]}.input"
