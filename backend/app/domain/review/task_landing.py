@@ -5,8 +5,9 @@ last step (``AcceptCard.completes_task``). Any step but the last leaves the
 task open and moves it onto a branch cut from the project's latest code, for
 its AI teammate to carry on from. The last one has the AI teammate write the
 task up, and the task closes when that turn ends (`room_task.closing`). Either
-way the discussion the task came from hears what landed, and a merged PR is
-watched on the default branch for a while (`landing_watch`).
+way the discussion the task came from hears what landed. Nothing is watched
+after the merge: the repository's CI and deploy on its default branch are
+its own.
 
 A last step lands as a step after all when the task's own AI teammate is
 working in it on something begun after the delivery was handed over, or a
@@ -29,7 +30,7 @@ a task twice.
 
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,12 +54,6 @@ from app.domain.thread.services import open_thread
 from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger(__name__)
-
-#: How long a merge is watched on the default branch: its checks there, and a
-#: deployment that includes it. A repository's CI on main and a deploy after it
-#: take well under this; what has not happened by then is not reported.
-WATCH_FOR = timedelta(hours=2)
-
 
 def handed_in(task_teammate: TaskTeammate | None) -> TaskTeammate:
     """把 `review.ports.TaskTeammate` 要回来；没递进来当场炸掉，不走静默。
@@ -98,7 +93,7 @@ async def delivery_landed(
     if head:
         task.delivered_head = head[:64]
     if pr_number is not None:
-        await _watch(session, task, pr_number, now)
+        await _record_landing(session, task, pr_number, now)
     still_working = (
         completes
         and task.status == TaskStatus.open
@@ -303,20 +298,13 @@ async def _landing_exists(
     ) is not None
 
 
-async def _watch(
+async def _record_landing(
     session: AsyncSession, task: Task, pr_number: int, now: datetime
 ) -> None:
-    """Start watching the merge of ``pr_number`` on the default branch, once."""
+    """Record that the merge of ``pr_number`` landed on ``task``, once."""
     if await _landing_exists(session, task.id, pr_number):
         return
-    session.add(
-        TaskLanding(
-            task_id=task.id,
-            pr_number=pr_number,
-            landed_at=now,
-            watch_until=now + WATCH_FOR,
-        )
-    )
+    session.add(TaskLanding(task_id=task.id, pr_number=pr_number, landed_at=now))
 
 
 async def tell_origin(

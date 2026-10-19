@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Literal, Protocol
+from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -22,23 +22,11 @@ from app.domain.block.models import Block
 from app.domain.delivery_events import DeliveryEvent
 
 
-class ProbeRunner(Protocol):
-    """Platform execution of test probes, independent of repository workflows."""
-
-    async def start(
-        self, project_id: uuid.UUID, sha: str, tests: list[str], nonce: str
-    ) -> str | None: ...
-
-    async def verdict(
-        self, project_id: uuid.UUID, run_id: str
-    ) -> Literal["pass", "fail", "unknown", "running"]: ...
-
-
 class SweepCheckouts(Protocol):
     """在一台机器上删掉某间房那几个已关任务留下的检出目录。
 
     本包在「等着收尾那一轮、时间到了由平台替它关掉」这条路上用它
-    （`landing_watch.watch_landings` 里的 `close_overdue`）：一个任务关掉之后，它
+    （`pr_poll.sweep_closings` 里的 `close_overdue`）：一个任务关掉之后，它
     在那台机器上的工作目录要跟着走，而这件事要过 `agent` 和 `agent_session`，本包
     够不着。形状和 `room_task.ports.SweepCheckouts` 一样，两边各写一遍是这条规矩
     本身（上面那句：声明按消费者分开写）；两份由类型检查照着实现对齐。
@@ -57,7 +45,7 @@ class Chat(Protocol):
 
     形状是 `app.domain.agent.chat.ChatService` 的形状。`session_factory` 是本包自己
     开事务要的那一样；`work_runner` 本包不碰，只跟着 `chat` 一起往下递给合并路径上
-    那几层；`stop_work` 是 `landing_watch` 那边替平台关掉过期任务时要的
+    那几层；`stop_work` 是 `pr_poll.sweep_closings` 替平台关掉过期任务时要的
     （`room_task.closing.close_overdue` 的 ``work``，本包把这个对象原样交出去）。
 
     三个都写成只读属性或方法，而不是可写的字段：`ChatService` 上前两个本来就是

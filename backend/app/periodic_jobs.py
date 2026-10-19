@@ -16,7 +16,6 @@ from app.domain.agent import checkout_sweep
 from app.domain.agent import periodic as agent_periodic
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
-from app.domain.agent.culprit_probes import PlatformProbes
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent_instance.adapters import task_teammate
 from app.domain.block.queries import turn_starts
@@ -50,7 +49,7 @@ PERIODIC_JOB_NAMES = (
     "quiet task reminder",
     "pr poll",  # forge_bound: PR status reads
     "task pr poll",  # forge_bound: task branch/PR reads
-    "landing watch",  # forge_bound: merge, checks and deployment reads
+    "task closing",  # forge_bound: a task going on reads its next branch
     "draft pr sweep",  # forge_bound: branch/compare reads and PR creation
     "orphan sweep",
     "closed task stop",
@@ -168,7 +167,6 @@ def periodic_jobs(
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
         machines=checkout_sweep.sweep,
-        probes=PlatformProbes(sessions),
     )
     machine_periodic.register_periodic_jobs(
         jobs,
