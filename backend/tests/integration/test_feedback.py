@@ -1561,7 +1561,7 @@ def test_a_proposal_must_say_exactly_one_thing_about_what_the_user_said(client, 
         headers={"X-Cheese-Token": token},
     )
     assert r.status_code == 400, r.text
-    assert "user_said_absent" in r.text
+    assert "exactly one of user_said" in r.text
 
 
 def test_a_proposal_lands_as_a_card_that_a_person_then_sends(client):

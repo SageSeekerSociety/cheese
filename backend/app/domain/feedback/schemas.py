@@ -134,6 +134,7 @@ class FeedbackProposalIn(BaseModel):
     @model_validator(mode="after")
     def _says_who_said_it(self) -> FeedbackProposalIn:
         if (self.user_said is None) != self.user_said_absent:
+            # i18n-exempt: only the proposing agent reads it, in the 400's validation details
             raise ValueError(
                 "give exactly one of user_said (the user's words) "
                 "or user_said_absent=true (the user said nothing about it)"

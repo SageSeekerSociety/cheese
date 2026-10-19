@@ -56,12 +56,14 @@ const workspace = useWorkspaceStore()
 
 /**
  * 用户没有就这个问题说过话。早于 `user_said_absent` 的卡把这件事写成 `user_said`
- * 里那句约定好的话，库里还存着这样的卡，所以那句话也算。
+ * 里那句约定好的话，库里还存着这样的卡，所以那句话也算。按开头认而不是整句相等：
+ * 有的卡在后面多写了半句（「，以上是芝士自己观察到的」「。」），整句相等会把它们
+ * 照旧当成用户原话引出来。
  */
 const LEGACY_SAID_NOTHING = '用户没有就这个问题说过话' // i18n-data: compared against stored payloads, never shown
 function saidNothing(proposal: FeedbackProposal): boolean {
   const { user_said, user_said_absent } = proposal.payload
-  return user_said_absent === true || user_said?.trim() === LEGACY_SAID_NOTHING
+  return user_said_absent === true || !!user_said?.trim().startsWith(LEGACY_SAID_NOTHING)
 }
 
 /** 名册上的名字；名册里没有（还没加载、或者不在这个项目里）就退回 handle。 */
