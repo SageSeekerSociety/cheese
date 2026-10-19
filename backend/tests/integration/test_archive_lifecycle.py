@@ -669,6 +669,9 @@ class PrivateBucket:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self.refusing = False
+        # Takes the PUT but reports another size for it, as a truncated or
+        # replaced object would read back.
+        self.misreporting = False
         bucket = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -692,7 +695,9 @@ class PrivateBucket:
 
     async def stat(self, key: str):
         body = self.objects.get(key)
-        return None if body is None else (len(body), hashlib.md5(body).hexdigest())
+        if body is None:
+            return None
+        return (len(body) + self.misreporting, hashlib.md5(body).hexdigest())
 
     def transcripts(self) -> dict[str, bytes]:
         return {
@@ -860,6 +865,8 @@ async def test_an_archived_rooms_transcripts_are_in_the_bucket_after_they_expire
     room = session_host_room
     sessions = _with_codex_and_pi(room)
     assert _sweep(client) == {"completed": 1, "pending": 0}
+    # In the bucket from the removal on, not only once the host's copy is due.
+    assert room.bucket.transcripts() != {}
     await _make_due(client, room.cleanup_id)
     assert _sweep(client) == {"completed": 1, "pending": 0}
 
@@ -884,6 +891,38 @@ async def test_transcripts_the_bucket_did_not_take_outlive_their_expiry(
     assert room.bucket.transcripts() == {}
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, room.cleanup_id)).state == "retained"
+
+
+async def test_transcripts_the_bucket_holds_wrongly_outlive_their_expiry(
+    client, session_host_room
+):
+    room = session_host_room
+    room.bucket.misreporting = True
+    _sweep(client)
+    await _make_due(client, room.cleanup_id)
+    _sweep(client)
+
+    # The bucket took a PUT but does not hold what the host sent, so the
+    # host's copy is still the only good one.
+    assert room.archive.exists()
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, room.cleanup_id)).state == "retained"
+
+
+async def test_a_harness_session_linked_out_of_the_harness_is_not_archived(
+    client, session_host_room, tmp_path
+):
+    room = session_host_room
+    sessions = _with_codex_and_pi(room)
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "codex/sessions").mkdir(parents=True)
+    (elsewhere / "codex/sessions/other.jsonl").write_bytes(b'{"not":"ours"}\n')
+    (room.harness / "codex/seat-z").symlink_to(elsewhere, target_is_directory=True)
+    _sweep(client)
+
+    # Every session the harnesses wrote, and nothing the link points at.
+    [body] = room.bucket.transcripts().values()
+    assert _bundled(body, tmp_path) == sessions
 
 
 async def test_transcripts_kept_before_they_were_sent_are_sent_before_they_go(
