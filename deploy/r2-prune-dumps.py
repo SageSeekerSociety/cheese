@@ -5,16 +5,21 @@
 
 Policy, by the timestamp in the dump's name (local time, as db-backup.sh writes it):
   - younger than --hourly-days: kept, every hour;
-  - older: the last dump of each calendar day is kept; any other dump of that
-    day is deleted only once R2 holds an object of the same size under
+  - older: one dump per calendar day is kept -- the last one whose R2 copy
+    matches (db-backup.sh uploads only dumps that passed `pg_restore --list`),
+    or the day's last dump when none does. Any other dump of that day is
+    deleted only once R2 holds an object of the same size under
     <R2_PREFIX>/<name>. A missing or mismatched copy is re-uploaded and read
-    back first; if that fails the dump stays and the run exits 1;
+    back first; if that fails the dump stays and the run exits 3;
   - older than --retention-days full days: deleted, as `find -mtime +N` always
     did. The bucket's own 30-day lifecycle has expired the R2 copy by then.
 
 The uploader records no checksum, so size is the only comparison available.
-Writes one line per dump (kept / deleted / uploaded, reason, R2 key) to stdout
-and to --log. R2 configuration comes from r2-common (~/ops/r2.env).
+Exit 0: done; 3: some dumps kept because their copy could not be verified;
+anything else: the pruner itself failed. Writes one line per dump (kept /
+deleted / uploaded, reason, R2 key) to stdout and to --log. R2 configuration
+comes from r2-common (~/ops/r2.env). A file not named like db-backup.sh's
+dumps is left to db-backup.sh's plain `find -mtime +N` prune.
 """
 
 import argparse
@@ -63,7 +68,6 @@ def main() -> int:
         if match and path.is_file():
             stamp = time.mktime(time.strptime(match[1] + match[2], "%Y%m%d%H%M%S"))
             dumps.append((path, match[1], stamp))
-    last_of_day = {day: path for path, day, _ in dumps}  # names sort by time
 
     env = common.load_config()
     prefix = (env or {}).get("R2_PREFIX", "db").strip("/")
@@ -77,16 +81,39 @@ def main() -> int:
             # Do not echo SDK exceptions: endpoint URLs can contain credentials.
             unavailable = f"R2 listing failed ({type(exc).__name__})"
 
+    sizes = {}
+    for path, _, _ in dumps:
+        try:
+            sizes[path] = path.stat().st_size
+        except FileNotFoundError:  # removed by a concurrent run
+            pass
+    dumps = [dump for dump in dumps if dump[0] in sizes]
+
+    def key_of(path: Path) -> str:
+        return f"{prefix}/{path.name}" if prefix else path.name
+
+    def verified(path: Path) -> bool:
+        return remote is not None and remote.get(key_of(path)) == sizes[path]
+
+    # Names sort by time, so the last assignment per day wins.
+    last_of_day = {day: path for path, day, _ in dumps}
+    for path, day, _ in dumps:
+        if verified(path):
+            last_of_day[day] = path
+
+    def unlink(path: Path) -> None:
+        if not args.dry_run:
+            path.unlink(missing_ok=True)
+
     now = time.time()
     candidates = []
     unverified = False
     for path, day, stamp in dumps:
-        size = path.stat().st_size
-        key = f"{prefix}/{path.name}" if prefix else path.name
+        size = sizes[path]
+        key = key_of(path)
         age = now - stamp
         if age >= (args.retention_days + 1) * DAY:
-            if not args.dry_run:
-                path.unlink()
+            unlink(path)
             record("deleted", path, size, key, f"older than {args.retention_days} days (existing horizon)")
         elif age < args.hourly_days * DAY:
             record("kept", path, size, key, f"within {args.hourly_days} days (hourly)")
@@ -103,13 +130,15 @@ def main() -> int:
     for path, size, key in candidates:
         remote_size = remote.get(key)
         if remote_size == size:
-            if not args.dry_run:
-                path.unlink()
+            unlink(path)
             record("deleted", path, size, key, "not the daily copy; R2 size matches")
             continue
         found = "missing" if remote_size is None else f"size {remote_size} != local"
         if args.dry_run:
             record("uploaded", path, size, key, f"not the daily copy; R2 copy {found}; would re-upload")
+            continue
+        if not path.exists():
+            record("deleted", path, size, key, "already removed by a concurrent run")
             continue
         try:
             s3.upload_file(str(path), env["R2_BUCKET"], key)
@@ -122,7 +151,7 @@ def main() -> int:
             unverified = True
             record("kept", path, size, key, f"unverified: re-uploaded R2 size {uploaded} != local")
             continue
-        path.unlink()
+        unlink(path)
         record("uploaded", path, size, key, f"not the daily copy; R2 copy {found}; re-uploaded, size verified, local deleted")
 
     summary = " ".join(f"{action}={n}({nbytes}B)" for action, (n, nbytes) in sorted(totals.items()))
@@ -130,7 +159,7 @@ def main() -> int:
     if log_file:
         log_file.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} summary: {summary}\n")
         log_file.close()
-    return 1 if unverified else 0
+    return 3 if unverified else 0
 
 
 if __name__ == "__main__":

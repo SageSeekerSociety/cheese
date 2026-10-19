@@ -30,12 +30,15 @@ Docker volume. Everything else (R2 upload, verify, off-site) is shared.
 
 Backups: `~/backups/cheese-<ts>.dump` (compressed custom format), 30-day retention.
 A box whose `~/ops/backup.env` sets `CHEESE_BACKUP_HOURLY_DAYS` (dev: `7`) thins
-instead with `r2-prune-dumps.py`: every dump for that many days, then the last
-dump of each day up to the 30 days. Any other dump is deleted only once R2 holds
-an object of the same size; a missing or mismatched copy is re-uploaded and read
-back first, and stays local if that fails. Size is the check because the
-uploader records no checksum. A box without the file (prod) keeps the plain
-30-day prune. The pruner needs `r2-common.py` next to it in `~/ops`.
+instead with `r2-prune-dumps.py`: every dump for that many days, then one dump
+per day up to the 30 days (the day's last with a matching R2 copy). Any other
+dump is deleted only once R2 holds an object of the same size; a missing or
+mismatched copy is re-uploaded and read back first, and stays local if that
+fails (logged as `WARN`). Size is the check because the uploader records no
+checksum. The plain 30-day prune runs after it either way, and a pruner that
+fails outright (bad config, missing script) makes the unit exit non-zero. A box
+without the file (prod) keeps only the plain 30-day prune. The pruner needs
+`r2-common.py` next to it in `~/ops`.
 Each DB is on a **separate host** from its app box, so the DB dumps already
 survive a DB-host loss; the off-site R2 copy survives loss of the app box too.
 
