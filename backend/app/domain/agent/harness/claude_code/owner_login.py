@@ -27,7 +27,6 @@ login is out of use from the moment it is asked for.
 
 import json
 import logging
-import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -308,26 +307,6 @@ async def machine_of(session: AsyncSession, login_id: str) -> str | None:
     )
 
 
-async def status_on(
-    session: AsyncSession, device_id: str, local_id: str
-) -> dict | None:
-    """``status`` of the login a machine calls ``local_id``."""
-    row = await session.scalar(
-        select(DeviceClaudeLoginRow)
-        .where(
-            DeviceClaudeLoginRow.device_id == device_id,
-            DeviceClaudeLoginRow.local_id == local_id,
-        )
-        .execution_options(populate_existing=True)
-    )
-    return None if row is None else claude_login.view(row)
-
-
-def _shown_first(row: DeviceClaudeLoginRow) -> tuple:
-    usable = row.logged_in and row.revoked_at is None
-    return (not usable, row.local_id != FIRST_LOGIN, -row.checked_at.timestamp())
-
-
 class MachineRefused(Exception):
     """The machine ran the connector's command and it failed; the message is
     the last line the command printed to stderr."""
@@ -399,39 +378,6 @@ async def revoke(session: AsyncSession, hub, login_id: str) -> None:
             device_id,
             exc_info=True,
         )
-
-
-async def use_model_service(
-    session: AsyncSession, hub, device_id: str, *, base_url: str, token: str, model: str
-) -> str:
-    """Add a login to the machine that calls another model service, as
-    `cheesehost claude login --base-url` does there, and answer what the
-    machine calls it. The key travels to the machine in that command's environment and is
-    kept only there; nothing on this side stores or logs it. Raises
-    ``MachineRefused`` with the connector's reason."""
-    await settle(session, hub, device_id)
-    # Named here, so the record this answers is the one the machine made.
-    local_id = uuid.uuid4().hex
-    await _run(
-        hub,
-        device_id,
-        [
-            "claude",
-            "login",
-            "--base-url",
-            base_url,
-            "--model",
-            model,
-            "--login",
-            local_id,
-        ],
-        env={"CHEESE_MODEL_TOKEN": token},
-        # The first use on a machine downloads the pinned Claude Code build.
-        timeout=600,
-    )
-    await remember(session, device_id, await ask(hub, device_id))
-    await session.commit()
-    return local_id
 
 
 async def refresh(session_factory, hub, device_id: str) -> None:

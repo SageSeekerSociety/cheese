@@ -12,7 +12,7 @@ from app.domain.device.supply import Supply
 
 
 async def of_team(db: AsyncSession, team_id: int, hub) -> list[dict]:
-    """The owner's connections, the most recently confirmed first."""
+    """The team's device logins, the most recently confirmed first."""
     rows = (
         await db.execute(
             select(DeviceRow.device_id, DeviceRow.name, DeviceClaudeLoginRow)

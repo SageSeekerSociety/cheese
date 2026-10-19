@@ -105,6 +105,37 @@ def _project_with_bob(client):
     return project["id"], room["id"]
 
 
+@pytest.mark.parametrize("last_active", [False, True])
+def test_removing_a_default_connection_teammate_keeps_an_active_default(
+    client, last_active
+):
+    project, _ = _project_with_bob(client)
+    seat = _bring_in(client, project, "alice")
+    headers = session_auth_headers("alice")
+    endpoint = f"/projects/{project}/agents"
+    agents = client.get(endpoint, headers=headers).json()["data"]["data"]
+    target = next(row for row in agents if row["seat_handle"] == seat)
+    chosen = client.put(
+        f"/projects/{project}/default-agent",
+        headers=headers,
+        json={"instance_id": target["id"]},
+    )
+    assert chosen.status_code == 200, chosen.text
+    if last_active:
+        for row in agents:
+            if row["id"] != target["id"] and row["is_active"]:
+                retired = client.delete(f"{endpoint}/{row['id']}", headers=headers)
+                assert retired.status_code == 200, retired.text
+
+    removed = client.delete(f"/projects/{project}/own-agents/{seat}", headers=headers)
+    assert removed.status_code == (422 if last_active else 200), removed.text
+    agents = client.get(endpoint, headers=headers).json()["data"]["data"]
+    defaults = [row for row in agents if row["is_default"]]
+    assert len(defaults) == 1
+    assert defaults[0]["is_active"]
+    assert (defaults[0]["id"] == target["id"]) is last_active
+
+
 def _members(client, project_id, viewer):
     r = client.get(
         f"/projects/{project_id}/members", headers=session_auth_headers(viewer)

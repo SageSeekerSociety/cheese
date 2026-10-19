@@ -212,7 +212,7 @@ async def accessible_devices(
 async def _my_self_hosted(
     device_id: str, resolver: ActorResolverDep, service: DeviceService
 ) -> None:
-    """Only the machine's owner, and only for a machine they enrolled."""
+    """Only administrators of the device's current team may manage it."""
     user_id = await _require_user(resolver)
     device = await service.get_device(device_id)
     if device is None or device.supply != Supply.self_hosted:
@@ -248,9 +248,8 @@ def _login_out(login: dict | None) -> ClaudeCodeLoginOut | None:
 async def team_model_connections(
     team_id: int, resolver: ActorResolverDep, db: DbSession
 ) -> ModelConnectionsOut:
-    """The caller's model connections (#2991): the logins on the machines they
-    enrolled — what each logs in with, where it is kept, its last check — and
-    the API keys and model services their account holds. Never a key."""
+    """The team's device logins, encrypted connections and platform models.
+    Subscription rows identify their credential device. Keys are never returned."""
     user_id = await _team_access(db, resolver, team_id)
     connections = await model_connections.of_team(db, team_id, device_hub)
     held = await account_connections.of_team(db, team_id)
@@ -279,13 +278,13 @@ async def _team_account_connection(
     return row
 
 
-# The handler decides: a person keeps a connection on their own account.
+# The handler requires an administrator of the connection's team.
 @router.post("/teams/{team_id}/model-connections", dependencies=[ROUTE_DECIDES])
 async def add_account_connection(
     team_id: int, body: AccountConnectionIn, resolver: ActorResolverDep, db: DbSession
 ) -> AccountConnectionOut:
-    """Keep an Anthropic API key or a model service on the caller's account,
-    with no machine (#2991). The service is called once first; a connection
+    """Keep an Anthropic API key or model service encrypted for the team.
+    The service is called once first; a connection
     it refuses is not kept, and the refusal says why. The key is sealed and
     never returned."""
     await _team_access(db, resolver, team_id, manage=True)
@@ -303,7 +302,7 @@ async def add_account_connection(
     return AccountConnectionOut.model_validate(account_connections.view(row))
 
 
-# The handler decides: only its owner.
+# The handler requires an administrator of the connection's team.
 @router.post(
     "/teams/{team_id}/model-connections/{connection_id}/check",
     dependencies=[ROUTE_DECIDES],
@@ -318,7 +317,7 @@ async def check_account_connection(
     return AccountConnectionOut.model_validate(account_connections.view(row))
 
 
-# The handler decides: only its owner.
+# The handler requires an administrator of the connection's team.
 @router.patch(
     "/teams/{team_id}/model-connections/{connection_id}", dependencies=[ROUTE_DECIDES]
 )
@@ -338,14 +337,14 @@ async def rename_account_connection(
     return AccountConnectionOut.model_validate(account_connections.view(row))
 
 
-# The handler decides: only its owner.
+# The handler requires an administrator of the connection's team.
 @router.delete(
     "/teams/{team_id}/model-connections/{connection_id}", dependencies=[ROUTE_DECIDES]
 )
 async def remove_account_connection(
     team_id: int, connection_id: uuid.UUID, resolver: ActorResolverDep, db: DbSession
 ) -> AccountConnectionOut:
-    """Remove a connection the caller's account holds: its key is deleted at
+    """Remove a team connection: its key is deleted at
     once, and nothing starts with it again. The own agents on it stay in their
     projects with no connection, as one on a removed machine login does.
     Answers with what was removed."""
@@ -380,7 +379,7 @@ async def _ask_again(db: DbSession, device_id: str) -> None:
     await db.commit()
 
 
-# The handler decides: only the machine's owner, a person, may ask it.
+# The handler requires an administrator of the login's team.
 @router.post(
     "/teams/{team_id}/claude-logins/{login_id}/check", dependencies=[ROUTE_DECIDES]
 )
@@ -397,7 +396,7 @@ async def check_my_claude_login(
     return _login_out(await owner_login.status(db, login_id))
 
 
-# The handler decides: only the machine's owner, a person, may remove it.
+# The handler requires an administrator of the login's team.
 @router.delete(
     "/teams/{team_id}/claude-logins/{login_id}", dependencies=[ROUTE_DECIDES]
 )
@@ -416,7 +415,7 @@ async def revoke_my_claude_login(
     return _login_out(await owner_login.status(db, login_id))
 
 
-# The handler decides: only the machine's owner, a person, may name it.
+# The handler requires an administrator of the login's team.
 @router.patch("/teams/{team_id}/claude-logins/{login_id}", dependencies=[ROUTE_DECIDES])
 async def rename_my_claude_login(
     team_id: int,
@@ -436,7 +435,7 @@ async def rename_my_claude_login(
     return ClaudeCodeLoginOut.model_validate(await owner_login.status(db, login_id))
 
 
-# The handler decides: only the machine's owner, a person, may ask it.
+# The handler requires an administrator of the device's team.
 @router.post("/my/devices/{device_id}/sandbox", dependencies=[ROUTE_DECIDES])
 async def check_my_sandbox(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
@@ -470,7 +469,7 @@ async def rename_my_device(
     service: DeviceServiceDep,
     db: DbSession,
 ) -> dict[str, Any]:
-    """Rename a device the caller owns (the service enforces ownership)."""
+    """Rename a device the caller's team administers."""
     user_id = await _require_user(resolver)
     device = await service.rename(device_id, body.name, actor_user_id=user_id)
     return await _device_view(db, device, _screens_by_device().get(device_id, []))

@@ -534,12 +534,9 @@ def test_a_machine_learns_its_approval_was_withdrawn(client):
     )
 
 
-def test_the_owner_sees_claude_code_logged_in_once_they_log_in_on_the_machine(
-    client, monkeypatch
-):
-    """Logging in on the machine tells the server nothing; the owner's devices
-    page asks the machine, and sees the login without waiting for the machine
-    to connect again (#2991)."""
+def test_device_login_refresh_is_visible_on_team_models(client, monkeypatch):
+    """Refreshing a device discovers its subscription on team Models while
+    the device list continues to describe devices alone."""
     alice = _login_real(client, "alice")
     device_id = _enroll_device(client, alice)["device_id"]
     status = {"loggedIn": False}
@@ -553,19 +550,28 @@ def test_the_owner_sees_claude_code_logged_in_once_they_log_in_on_the_machine(
     asked = client.post(
         f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(alice)
     )
-    assert asked.status_code == 200 and asked.json()["logged_in"] is False
+    assert asked.status_code == 200 and asked.json() is None
+    listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
+    mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
+    models_path = f"/connector/teams/{mine['team_id']}/model-connections"
+    assert client.get(models_path, headers=_bearer(alice)).json()["connections"] == []
 
     status.update(loggedIn=True, subscriptionType="max")
     asked = client.post(
         f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(alice)
     )
-    assert asked.status_code == 200 and asked.json()["logged_in"] is True
+    assert asked.status_code == 200 and asked.json() is None
+    connections = client.get(models_path, headers=_bearer(alice)).json()["connections"]
+    assert len(connections) == 1
+    assert connections[0]["device_id"] == device_id
+    assert connections[0]["logged_in"] is True
+    assert connections[0]["subscription_type"] == "max"
     listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
     mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
-    assert mine["claude_code"]["logged_in"] is True
+    assert "claude_code" not in mine and "logins" not in mine
 
     bob = _login_real(client, "bob")
     theirs = client.post(
         f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(bob)
     )
-    assert theirs.status_code == 404
+    assert theirs.status_code == 403

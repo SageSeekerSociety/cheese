@@ -1,4 +1,4 @@
-"""Instantiate a team connection in a project and retire its teammate."""
+"""Instantiate a team connection as a project teammate."""
 
 import uuid
 
@@ -65,11 +65,3 @@ async def add(
     await _name_owners_agents(db, project.id, owner_user_id)
     await AgentInstanceService(db).ensure_identity(instance)
     return instance
-
-
-async def remove(db: AsyncSession, instance_id: uuid.UUID) -> None:
-    """Retire a teammate while preserving its history; the caller revokes seats."""
-    instance = await db.get(AgentInstance, instance_id)
-    if instance is not None:
-        instance.is_active = False
-        await db.flush()

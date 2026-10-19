@@ -20,7 +20,6 @@ from app.domain.agent_instance.own import (
     listing,
     my_connections,
     owned_by_seat,
-    remove,
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.device.wiring import sql_device_service
@@ -206,7 +205,12 @@ async def remove_own_agent(
     owned = await owned_by_seat(db, project_id, handle)
     if owned is None:
         raise NotFoundError(say("ownAgentNotFound"))
-    await remove(db, owned.instance_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    instance = await service.get_in_project(
+        project_id=project_id, instance_id=owned.instance_id
+    )
+    await service.deactivate(project, instance)
     await TopicMemberService(db).revoke_project_seats(
         project_id=project_id, member_handle=agent_instance_handle(owned.instance_id)
     )

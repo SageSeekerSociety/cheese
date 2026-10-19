@@ -24,7 +24,7 @@ _CHECK_TIMEOUT_S = 20
 #: How much of a service's refusal is kept to show its owner.
 _REASON_CHARS = 300
 
-#: The kinds an account may hold. A subscription is not one of them.
+#: Connection kinds stored encrypted on the platform, separate from device logins.
 HELD_KINDS = (ConnectionKind.api_key, ConnectionKind.model_service)
 
 

@@ -41,27 +41,6 @@ def upgrade():
         ondelete="CASCADE",
         postgresql_not_valid=True,
     )
-    with op.get_context().autocommit_block():
-        op.execute(
-            "ALTER TABLE account_model_connections VALIDATE CONSTRAINT fk_account_model_connections_team_id_team"
-        )
-    op.execute("""
-        INSERT INTO team (id, name, intro, description, avatar_id, personal_owner_user_id, created_at, updated_at)
-        SELECT nextval('team_seq'), '个人', '', '', 0, owner_user_id, now(), now()
-        FROM (SELECT DISTINCT owner_user_id FROM account_model_connections WHERE owner_user_id IS NOT NULL) owners
-        ON CONFLICT (personal_owner_user_id) WHERE personal_owner_user_id IS NOT NULL AND deleted_at IS NULL DO NOTHING
-    """)
-    op.execute("""
-        INSERT INTO team_user_relation (id, team_id, user_id, role, created_at, updated_at)
-        SELECT nextval('team_user_relation_seq'), t.id, t.personal_owner_user_id, 0, now(), now()
-        FROM team t WHERE t.personal_owner_user_id IN (SELECT owner_user_id FROM account_model_connections)
-        AND t.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM team_user_relation r WHERE r.team_id = t.id AND r.user_id = t.personal_owner_user_id AND r.deleted_at IS NULL)
-    """)
-    op.execute("""
-        UPDATE account_model_connections c SET team_id = t.id
-        FROM team t WHERE t.personal_owner_user_id = c.owner_user_id
-        AND t.deleted_at IS NULL AND c.team_id IS NULL
-    """)
     # Preserve old backend writes until the new backend has been deployed.
     op.execute("""
         CREATE FUNCTION connection_team_during_rollout() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -84,12 +63,6 @@ def upgrade():
     op.execute(
         "CREATE TRIGGER connection_team_during_rollout BEFORE INSERT ON account_model_connections FOR EACH ROW EXECUTE FUNCTION connection_team_during_rollout()"
     )
-    op.execute("""
-        UPDATE account_model_connections SET allowed_models = CASE WHEN model IS NOT NULL THEN jsonb_build_array(model) ELSE '["opus","sonnet","haiku"]'::jsonb END WHERE allowed_models = '[]'::jsonb
-    """)
-    op.execute("""
-        UPDATE claude_logins SET allowed_models = CASE WHEN model IS NOT NULL THEN jsonb_build_array(model) ELSE '["opus","sonnet","haiku"]'::jsonb END WHERE allowed_models = '[]'::jsonb
-    """)
     # Old backends can discover a device login during the rolling deployment.
     op.execute("""
         CREATE FUNCTION login_models_during_rollout() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -103,6 +76,33 @@ def upgrade():
     op.execute(
         "CREATE TRIGGER login_models_during_rollout BEFORE INSERT ON claude_logins FOR EACH ROW EXECUTE FUNCTION login_models_during_rollout()"
     )
+    with op.get_context().autocommit_block():
+        op.execute(
+            "ALTER TABLE account_model_connections VALIDATE CONSTRAINT fk_account_model_connections_team_id_team"
+        )
+    op.execute("""
+        INSERT INTO team (id, name, intro, description, avatar_id, personal_owner_user_id, created_at, updated_at)
+        SELECT nextval('team_seq'), '个人', '', '', 0, owner_user_id, now(), now()
+        FROM (SELECT DISTINCT owner_user_id FROM account_model_connections WHERE owner_user_id IS NOT NULL) owners
+        ON CONFLICT (personal_owner_user_id) WHERE personal_owner_user_id IS NOT NULL AND deleted_at IS NULL DO NOTHING
+    """)
+    op.execute("""
+        INSERT INTO team_user_relation (id, team_id, user_id, role, created_at, updated_at)
+        SELECT nextval('team_user_relation_seq'), t.id, t.personal_owner_user_id, 0, now(), now()
+        FROM team t WHERE t.personal_owner_user_id IN (SELECT owner_user_id FROM account_model_connections)
+        AND t.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM team_user_relation r WHERE r.team_id = t.id AND r.user_id = t.personal_owner_user_id AND r.deleted_at IS NULL)
+    """)
+    op.execute("""
+        UPDATE account_model_connections c SET team_id = t.id
+        FROM team t WHERE t.personal_owner_user_id = c.owner_user_id
+        AND t.deleted_at IS NULL AND c.team_id IS NULL
+    """)
+    op.execute("""
+        UPDATE account_model_connections SET allowed_models = CASE WHEN model IS NOT NULL THEN jsonb_build_array(model) ELSE '["opus","sonnet","haiku"]'::jsonb END WHERE allowed_models = '[]'::jsonb
+    """)
+    op.execute("""
+        UPDATE claude_logins SET allowed_models = CASE WHEN model IS NOT NULL THEN jsonb_build_array(model) ELSE '["opus","sonnet","haiku"]'::jsonb END WHERE allowed_models = '[]'::jsonb
+    """)
     op.execute("""
         UPDATE agent_instances a
         SET configuration = a.configuration::jsonb || jsonb_build_object('model', coalesce(c.model, l.model, 'sonnet'))
