@@ -45,10 +45,10 @@ logger = logging.getLogger("cheesex.topic.retire")
 
 # How long an archived room's session transcripts (Claude Code's, Codex's and
 # pi's own files) stay on the session host after its cleanup removes the room's
-# home. Their copy in the private bucket is kept for good (Zhifei's ruling on
-# #4398, 2026-10-19, "R2上的得留 transcripts非常有价值 一定要留……包括agent
-# traces", which supersedes #1611's on-host-only 30 days): the host's copy goes
-# only once the bucket is found to hold it as sent (`_expire_transcripts`).
+# home. Their copy in the private bucket is kept for good (decided on #4398,
+# 2026-10-19: every agent trace is kept, superseding #1611's on-host-only 30
+# days): the host's copy goes only once the bucket is found to hold it as sent
+# (`_expire_transcripts`).
 TRANSCRIPT_RETENTION = timedelta(days=30)
 
 # A cleanup that fails again for the same reason is tried again later and

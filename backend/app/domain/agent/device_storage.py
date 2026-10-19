@@ -109,8 +109,8 @@ def key_for(project_id: uuid.UUID, resource_id: str) -> str:
 
 
 #: Where in the private bucket an archived room's session transcripts are
-#: kept, for good: nothing deletes under it (Zhifei's ruling on #4398,
-#: 2026-10-19, "R2上的得留 transcripts非常有价值 一定要留……包括agent traces").
+#: kept, for good: nothing deletes under it (decided on #4398, 2026-10-19:
+#: every agent trace is kept permanently).
 TRANSCRIPTS_PREFIX = "transcripts/rooms"
 
 
