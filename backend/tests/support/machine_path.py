@@ -13,3 +13,9 @@ PROFILE_ROOT = "${CHEESE_PROFILE_ROOT:-.cheese}"
 
 def on_machine(recorded: str, home: Path | str, root: str = ".cheese") -> str:
     return recorded.replace(PROFILE_ROOT, root).replace("$HOME", str(home))
+
+
+def resolved(recorded: str, root: str = ".cheese") -> str:
+    """``recorded`` with the enrollment's root named, ``$HOME`` left as is: two
+    spellings the connector reads as one directory compare equal."""
+    return recorded.replace(PROFILE_ROOT, root)

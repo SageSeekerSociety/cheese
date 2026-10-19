@@ -148,6 +148,7 @@ from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
 )
 from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL  # noqa: E402
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
+from tests.support.machine_path import resolved  # noqa: E402
 
 # NOTE: `app.main` is deliberately NOT imported at module scope. Importing it
 # assembles the whole FastAPI app (`_discover_routers()` imports every module
@@ -536,12 +537,14 @@ class StubChannel(SeatChannel):
         """The seat whose runner is at ``state``: kept on the runner, so a
         channel standing in for a restarted backend that took over the
         runners (``sessions``) reaches them where they are."""
+        # The connector reads both spellings of the root as one directory.
+        state = resolved(state)
         if state.startswith("$HOME/.cheese/gone/"):
             *_, agent, session_id = state.split("/")
             return SimpleNamespace(agent_handle=agent, gone=session_id)
         for runner in self.sessions.values():
             session, placed = runner.placement
-            if placed == state:
+            if resolved(placed) == state:
                 return SimpleNamespace(
                     session=session,
                     agent_handle=runner.actor,
