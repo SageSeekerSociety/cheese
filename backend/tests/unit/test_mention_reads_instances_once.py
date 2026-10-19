@@ -39,14 +39,10 @@ async def _record(monkeypatch, session, named):
     async def fake_named_seats(*_a, **_k):
         return list(named)
 
-    async def not_owned(*_a, **_k):
-        return None
-
     async def fake_record_agent(_session, _event, *, instance_id, **_k):
         recorded.append(instance_id)
 
     monkeypatch.setattr(mention, "named_seats", fake_named_seats)
-    monkeypatch.setattr(mention, "owned_instance", not_owned)
     monkeypatch.setattr(mention, "record_agent", fake_record_agent)
     await mention.record_mentions(
         session,

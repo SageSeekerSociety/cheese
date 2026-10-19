@@ -23,12 +23,9 @@
 //
 // Everything that runs the type check goes through this file, because everything
 // that runs it needs the types present: `pnpm run typecheck` (the CI job, the
-// pre-commit hook, `task fe:check`), the narrow changed-files project the fast
-// tier builds in .github/scripts/ci_fast_checks.py, and the post-merge
-// collector — .claude/scripts/ratchet-snapshot.py runs this rather than
-// scripts/tsc-ratchet.mjs for exactly this reason: the collector installs
-// pnpm and runs the checks on a fresh checkout, where the types have never
-// been generated.
+// pre-commit hook, `task fe:check`), and the narrow changed-files project the
+// fast tier builds in .github/scripts/ci_fast_checks.py. On a fresh checkout,
+// the generated types must exist before the type check starts.
 import { spawnSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'

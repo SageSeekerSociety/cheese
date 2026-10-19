@@ -26,6 +26,7 @@ from app.domain.agent.harness.claude_code import owner_login
 from app.domain.agent.owner_provider import OwnerChannel
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -41,32 +42,51 @@ from tests.integration.conftest import (
 
 class _Machines:
     """The device hub as these rules see it: which machines are online, and
-    what each one answers. A logged-out machine says so when asked."""
+    what each one answers. A machine holds logins by the name it gives them;
+    a logged-out one says so when asked, and one logged out of anything but
+    the first is gone from it."""
 
     def __init__(self):
         self.online: set[str] = set()
-        self.logged_in: dict[str, bool] = {}
+        #: machine -> its logins, by local id -> logged in.
+        self.logins: dict[str, dict[str, bool]] = {}
         self.refuse_logout = False
         self.exec = AsyncMock(side_effect=self._exec)
 
     def is_online(self, device):
         return device in self.online
 
+    def all_online_screens(self):
+        return []
+
+    def target(self, device):
+        return ""
+
+    def holds(self, device, *local_ids: str):
+        self.logins.setdefault(device, {}).update(dict.fromkeys(local_ids, True))
+
     async def _exec(self, device, argv, **kwargs):
+        logins = self.logins.setdefault(device, {})
         if argv[:3] == [owner_login.CONNECTOR, "claude", "logout"]:
             if self.refuse_logout:
                 return {"exit": 1, "stdout": "", "stderr": "claude: logout: busy"}
-            self.logged_in[device] = False
+            if argv[3] == FIRST_LOGIN:
+                logins[FIRST_LOGIN] = False
+            else:
+                logins.pop(argv[3], None)
             return {"exit": 0, "stdout": "", "stderr": ""}
         if argv[:3] == [owner_login.CONNECTOR, "claude", "login"]:
-            self.logged_in[device] = True
+            logins[argv[argv.index("--login") + 1]] = True
             return {"exit": 0, "stdout": "", "stderr": ""}
-        status = {"loggedIn": self.logged_in.get(device, False)}
-        if status["loggedIn"]:
-            status |= {"authMethod": "claude.ai", "subscriptionType": "max"}
+        reports = []
+        for local_id, logged_in in {FIRST_LOGIN: False, **logins}.items():
+            status = {"loggedIn": logged_in}
+            if logged_in:
+                status |= {"authMethod": "claude.ai", "subscriptionType": "max"}
+            reports.append({"id": local_id, "status": status})
         return {
             "exit": 0,
-            "stdout": json.dumps({"installed": True, "status": status}),
+            "stdout": json.dumps({"installed": True, "logins": reports}),
         }
 
     def ran(self, device, argv):
@@ -76,8 +96,9 @@ class _Machines:
         )
 
 
-def _laptop(client, owner: str) -> str:
-    """A machine ``owner`` enrolled, logged in with their Claude subscription."""
+def _laptop(client, owner: str, *more: str) -> str:
+    """A machine ``owner`` enrolled, logged in with their Claude subscription
+    (its first login), and holding the further logins ``more`` as well."""
 
     async def enroll():
         async with client.test_factory() as db:
@@ -87,16 +108,18 @@ def _laptop(client, owner: str) -> str:
             device = await devices.approve(
                 code, owner_user_id=user.id, supply=Supply.self_hosted
             )
-            db.add(
-                DeviceClaudeLoginRow(
-                    device_id=device.device_id,
-                    installed=True,
-                    logged_in=True,
-                    auth_method="claude.ai",
-                    subscription_type="max",
-                    checked_at=datetime.now(UTC),
+            for local_id in (FIRST_LOGIN, *more):
+                db.add(
+                    DeviceClaudeLoginRow(
+                        device_id=device.device_id,
+                        local_id=local_id,
+                        installed=True,
+                        logged_in=True,
+                        auth_method="claude.ai",
+                        subscription_type="max",
+                        checked_at=datetime.now(UTC),
+                    )
                 )
-            )
             await db.commit()
             return device.device_id
 
@@ -118,18 +141,21 @@ def test_only_its_owner_sees_or_changes_a_connection(client, monkeypatch):
     laptop = _laptop(client, "alice")
     machines = _Machines()
     machines.online.add(laptop)
-    machines.logged_in[laptop] = True
+    machines.holds(laptop, FIRST_LOGIN)
     monkeypatch.setattr(connections, "device_hub", machines)
 
     assert [c["device_id"] for c in _connections(client, alice)] == [laptop]
     assert _connections(client, bob) == []
 
-    base = f"/connector/my/devices/{laptop}/claude-code"
-    assert client.delete(base, headers=bob).status_code == 404
-    assert client.post(base, headers=bob).status_code == 404
+    login = f"/connector/my/claude-logins/{laptop}"
+    assert client.delete(login, headers=bob).status_code == 404
+    assert client.post(f"{login}/check", headers=bob).status_code == 404
+    assert client.patch(login, headers=bob, json={"name": "x"}).status_code == 404
+    machine = f"/connector/my/devices/{laptop}/claude-code"
+    assert client.post(machine, headers=bob).status_code == 404
     service = {"base_url": "https://kimi.test", "token": "sk-bob", "model": "k2"}
     assert (
-        client.put(f"{base}/model-service", headers=bob, json=service).status_code
+        client.put(f"{machine}/model-service", headers=bob, json=service).status_code
         == 404
     )
 
@@ -145,15 +171,15 @@ def test_a_connection_removed_from_a_browser_logs_out_an_online_machine(
     laptop = _laptop(client, "alice")
     machines = _Machines()
     machines.online.add(laptop)
-    machines.logged_in[laptop] = True
+    machines.holds(laptop, FIRST_LOGIN)
     monkeypatch.setattr(connections, "device_hub", machines)
 
-    removed = client.delete(
-        f"/connector/my/devices/{laptop}/claude-code", headers=alice
-    )
+    removed = client.delete(f"/connector/my/claude-logins/{laptop}", headers=alice)
 
     assert removed.status_code == 200, removed.text
-    assert machines.ran(laptop, [owner_login.CONNECTOR, "claude", "logout"])
+    assert machines.ran(
+        laptop, [owner_login.CONNECTOR, "claude", "logout", FIRST_LOGIN]
+    )
     assert _connections(client, alice) == []
 
 
@@ -163,12 +189,10 @@ def test_a_connection_removed_while_its_machine_is_away_is_logged_out_when_it_co
     alice = _bearer(seed_user(client, "alice"))
     laptop = _laptop(client, "alice")
     machines = _Machines()
-    machines.logged_in[laptop] = True
+    machines.holds(laptop, FIRST_LOGIN)
     monkeypatch.setattr(connections, "device_hub", machines)
 
-    removed = client.delete(
-        f"/connector/my/devices/{laptop}/claude-code", headers=alice
-    )
+    removed = client.delete(f"/connector/my/claude-logins/{laptop}", headers=alice)
 
     assert removed.status_code == 200, removed.text
     (pending,) = _connections(client, alice)
@@ -180,8 +204,10 @@ def test_a_connection_removed_while_its_machine_is_away_is_logged_out_when_it_co
         owner_login.refresh_on_connect, client.test_request_factory, machines, laptop
     )
 
-    assert machines.ran(laptop, [owner_login.CONNECTOR, "claude", "logout"])
-    assert machines.logged_in[laptop] is False
+    assert machines.ran(
+        laptop, [owner_login.CONNECTOR, "claude", "logout", FIRST_LOGIN]
+    )
+    assert machines.logins[laptop][FIRST_LOGIN] is False
     assert _connections(client, alice) == []
 
 
@@ -213,9 +239,16 @@ def test_a_model_services_key_goes_to_the_machine_and_is_not_kept(client, monkey
 
     async def stored():
         async with client.test_factory() as db:
-            row = await db.get(DeviceClaudeLoginRow, laptop)
+            rows = await db.scalars(
+                select(DeviceClaudeLoginRow).where(
+                    DeviceClaudeLoginRow.device_id == laptop
+                )
+            )
             return json.dumps(
-                {c.name: str(getattr(row, c.name)) for c in row.__table__.columns}
+                [
+                    {c.name: str(getattr(row, c.name)) for c in row.__table__.columns}
+                    for row in rows
+                ]
             )
 
     assert key not in client.portal.call(stored)
@@ -251,8 +284,8 @@ def _room(client):
     return uuid.UUID(project["id"]), uuid.UUID(room["id"]), uuid.UUID(message["id"])
 
 
-async def _own_agent(factory, project_id, topic_id, laptop):
-    """Alice's own agent, added with her laptop's connection; its handle."""
+async def _own_agent(factory, project_id, topic_id, login_id):
+    """Alice's own agent, added with one of her logins; its id and handle."""
     async with factory() as db:
         alice = await db.scalar(select(User).where(User.username == "alice"))
         instance = AgentInstance(
@@ -268,7 +301,7 @@ async def _own_agent(factory, project_id, topic_id, laptop):
                 instance_id=instance.id,
                 owner_user_id=alice.id,
                 harness="claude-code",
-                device_id=laptop,
+                login_id=login_id,
             )
         )
         seat = await AgentInstanceService(db).ensure_identity(instance)
@@ -297,13 +330,13 @@ def test_a_removed_connection_starts_no_session(client, monkeypatch):
     project_id, topic_id, block_id = _room(client)
     laptop = _laptop(client, "alice")
     machines = _Machines()
-    machines.logged_in[laptop] = True
+    machines.holds(laptop, FIRST_LOGIN)
     monkeypatch.setattr(connections, "device_hub", machines)
     monkeypatch.setattr(initial_admission, "device_hub", machines)
 
     assert (
         client.delete(
-            f"/connector/my/devices/{laptop}/claude-code", headers=alice
+            f"/connector/my/claude-logins/{laptop}", headers=alice
         ).status_code
         == 200
     )
@@ -314,7 +347,7 @@ def test_a_removed_connection_starts_no_session(client, monkeypatch):
     client.portal.call(
         owner_login.refresh_on_connect, client.test_request_factory, machines, laptop
     )
-    assert machines.logged_in[laptop] is True
+    assert machines.logins[laptop][FIRST_LOGIN] is True
     # Asking it again from the page changes nothing either.
     recheck = client.post(f"/connector/my/devices/{laptop}/claude-code", headers=alice)
     assert recheck.status_code == 200, recheck.text
@@ -349,3 +382,128 @@ def test_a_removed_connection_starts_no_session(client, monkeypatch):
         assert "模型连接已解除" in str(refused.value)
 
     client.portal.call(run)
+
+
+# --- several logins on one machine --------------------------------------------
+
+
+def _login_id(client, laptop, local_id) -> str:
+    async def read():
+        async with client.test_factory() as db:
+            return await db.scalar(
+                select(DeviceClaudeLoginRow.id).where(
+                    DeviceClaudeLoginRow.device_id == laptop,
+                    DeviceClaudeLoginRow.local_id == local_id,
+                )
+            )
+
+    return client.portal.call(read)
+
+
+def test_each_login_on_one_machine_is_a_connection_of_its_own(client, monkeypatch):
+    alice = _bearer(seed_user(client, "alice"))
+    laptop = _laptop(client, "alice", "B7QX")
+    monkeypatch.setattr(connections, "device_hub", _Machines())
+
+    listed = _connections(client, alice)
+
+    assert [c["device_id"] for c in listed] == [laptop, laptop]
+    assert len({c["id"] for c in listed}) == 2
+    # The login the machine already had keeps the id it was known by.
+    assert {c["id"] for c in listed} == {laptop, _login_id(client, laptop, "B7QX")}
+
+
+def test_removing_one_login_leaves_the_other_on_the_same_machine(client, monkeypatch):
+    alice = _bearer(seed_user(client, "alice"))
+    laptop = _laptop(client, "alice", "B7QX")
+    machines = _Machines()
+    machines.online.add(laptop)
+    machines.holds(laptop, FIRST_LOGIN, "B7QX")
+    monkeypatch.setattr(connections, "device_hub", machines)
+    second = _login_id(client, laptop, "B7QX")
+
+    removed = client.delete(f"/connector/my/claude-logins/{second}", headers=alice)
+
+    assert removed.status_code == 200, removed.text
+    assert machines.ran(laptop, [owner_login.CONNECTOR, "claude", "logout", "B7QX"])
+    assert not machines.ran(
+        laptop, [owner_login.CONNECTOR, "claude", "logout", FIRST_LOGIN]
+    )
+    (left,) = _connections(client, alice)
+    assert left["id"] == laptop
+    assert left["logged_in"] is True and left["revoking"] is False
+
+    # Asked again, the machine still holds the first one only.
+    recheck = client.post(f"/connector/my/claude-logins/{laptop}/check", headers=alice)
+    assert recheck.status_code == 200, recheck.text
+    assert recheck.json()["logged_in"] is True
+    assert [c["id"] for c in _connections(client, alice)] == [laptop]
+
+
+def test_a_login_added_on_the_machine_is_listed_once_it_is_asked(client, monkeypatch):
+    alice = _bearer(seed_user(client, "alice"))
+    laptop = _laptop(client, "alice")
+    machines = _Machines()
+    machines.online.add(laptop)
+    machines.holds(laptop, FIRST_LOGIN, "C2QR")
+    monkeypatch.setattr(connections, "device_hub", machines)
+
+    asked = client.post(f"/connector/my/devices/{laptop}/claude-code", headers=alice)
+
+    assert asked.status_code == 200, asked.text
+    assert sorted(c["local_id"] for c in _connections(client, alice)) == sorted(
+        [FIRST_LOGIN, "C2QR"]
+    )
+
+    # Logged out and removed on the machine itself: it is no connection now.
+    del machines.logins[laptop]["C2QR"]
+    client.post(f"/connector/my/devices/{laptop}/claude-code", headers=alice)
+    assert [c["local_id"] for c in _connections(client, alice)] == [FIRST_LOGIN]
+
+
+def test_a_model_service_set_from_a_browser_is_a_login_of_its_own(client, monkeypatch):
+    alice = _bearer(seed_user(client, "alice"))
+    laptop = _laptop(client, "alice")
+    machines = _Machines()
+    machines.online.add(laptop)
+    machines.holds(laptop, FIRST_LOGIN)
+    monkeypatch.setattr(connections, "device_hub", machines)
+
+    saved = client.put(
+        f"/connector/my/devices/{laptop}/claude-code/model-service",
+        headers=alice,
+        json={
+            "base_url": "https://kimi.test/anthropic",
+            "token": "sk-x",
+            "model": "k2",
+        },
+    )
+
+    assert saved.status_code == 200, saved.text
+    added = saved.json()
+    assert added["id"] != laptop and added["local_id"] != FIRST_LOGIN
+    assert sorted(c["id"] for c in _connections(client, alice)) == sorted(
+        [laptop, added["id"]]
+    )
+
+
+def test_a_machine_shows_a_login_in_use_while_it_has_one(client, monkeypatch):
+    """「我的设备」 shows one login per machine: its first while that one is in
+    use, else another that is."""
+    alice = _bearer(seed_user(client, "alice"))
+    laptop = _laptop(client, "alice", "B7QX")
+    monkeypatch.setattr(connections, "device_hub", _Machines())
+
+    def shown():
+        listing = client.get("/connector/my/devices", headers=alice).json()
+        (mine,) = [d for d in listing["devices"] if d["device_id"] == laptop]
+        return mine["claude_code"]["local_id"]
+
+    assert shown() == FIRST_LOGIN
+    assert (
+        client.delete(
+            f"/connector/my/claude-logins/{laptop}", headers=alice
+        ).status_code
+        == 200
+    )
+    assert shown() == "B7QX"

@@ -62,11 +62,6 @@ export function connectGithubRepo(
 ): Promise<{ connected: boolean; repo?: string; account?: string; install_url?: string }> {
   return request(`/projects/${encodeURIComponent(projectId)}/github/connect`, { method: 'POST' })
 }
-/** GitHub's page to 关联 the signed-in person's account; it comes back to `returnPath`. */
-export function getGithubAccountAuthorizeUrl(returnPath: string): Promise<{ url: string }> {
-  return request(`/users/me/github-account/authorize-url?return_path=${encodeURIComponent(returnPath)}`)
-}
-
 // Personal OAuth/App connections (1.0 router, see legacyRequest): every
 // provider the user has linked, not just github_app; callers filter by providerId.
 export function listOAuthConnections(userId: string): Promise<{ connections: OAuthConnectionInfo[] }> {

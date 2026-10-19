@@ -378,7 +378,7 @@ async def _recover_silent_turn(
     await self._post_orphan_event(
         chat_service,
         topic_id,
-        say("toolsRecovered"),
+        self._TOOLS_RECOVERED_TEXT,
         # Topic-wide: the tools came back for the room, not for one turn.
         meta=self._TOOLS_RECOVERED_META,
     )

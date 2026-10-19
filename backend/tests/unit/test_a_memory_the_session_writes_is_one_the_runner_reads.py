@@ -68,6 +68,10 @@ class Executor:
         assert operation == "ping", operation
         return {"workspace": "/executor/project"}
 
+    def working_directory(self):
+        """The project: this fixture has no task whose checkout to open."""
+        return "/executor/project"
+
 
 def _session_writes(tmp_path, monkeypatch, actions) -> Path:
     """Run one session whose model makes ``actions``; return its home."""

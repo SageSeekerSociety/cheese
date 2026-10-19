@@ -24,6 +24,10 @@ covers:
 
 刷新令牌每次刷新都轮换。cookie 带 `Secure`（开发和测试环境除外）和 `SameSite=Lax`，并且带 `Max-Age`：否则浏览器关掉会话就删掉它，而 `localStorage` 里的访问令牌还在，下一次刷新就会把用户登出（`backend/app/api/routes/users/auth.py`）。
 
+用 GitHub 登录经过 cheesex-app 的用户授权。登录回调保存一条 `github_app` 用户连接；连接项目仓库时，平台用这条连接确认安装和仓库权限，任务负责人署名也读取同一条连接。用户授权过期且无法刷新时，重新用 GitHub 登录。GitHub App 的用户授权不请求 OAuth scopes；读取已验证的邮箱依赖 App 的 `Email addresses: Read-only` 权限。
+
+从 app 内（账号安全、项目设置的「仓库与署名」、任务里 PR 下方的署名提示）连接或重新授权 GitHub 是连接操作，不是登录。前端用当前知是会话取得短时、一次性的意图（`POST /users/auth/oauth/github-app/intent`，带上回到哪一页；桌面 app 发起时带 `X-Cheese-App`）。打开意图的浏览器必须持有同一账号仍有效的登录（登录路由读它的刷新 cookie），否则返回 `GITHUB_CONNECT_SIGNED_OUT`，意图不被消费：转发出去的链接在别的浏览器里什么也连不上。之后的 `state` 由 `OAUTH_STATE` cookie 绑定到这个浏览器。回调里：GitHub 身份已属于该账号就更新连接令牌；该账号还没有 GitHub 连接、这个身份也未被关联，就直接连接到该账号，不验证密码；身份已属于其他账号时返回 `ALREADY_LINKED`；该账号已连接另一个 GitHub 身份时返回 `ACCOUNT_MISMATCH`。这条路径不签发登录会话：成功后回到发起的页面，桌面 app 发起的结果经 `/account/to-app` 交回 app（`app/api/app_return.py`）。登录页不带意图，仍走决定页和已有账号的密码验证。
+
 ## 芝士和机器 {#agents}
 
 - **会话令牌**：每个会话一张平台签发的短期令牌（`CHEESE_TOKEN`），声明里带项目、频道和作者。它用来调用平台 API、通过模型准入，也用来换 GitHub 安装令牌。

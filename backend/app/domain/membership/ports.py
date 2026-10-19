@@ -47,9 +47,8 @@ class TeammateSeat:
     #: 是不是这个项目的默认队友：一间没有 AI 席位的老房间会落到谁身上（见
     #: `roster.py` 的 ``Member.project_default``）。
     is_default: bool = False
-    #: 成员自己的 agent（#2991）：归谁，谁能叫它。
+    #: 成员自己的 agent（#2991）：归谁。
     owner_handle: str | None = None
-    callers: str | None = None
 
 
 class ProjectTeam(Protocol):

@@ -1,8 +1,8 @@
 """A member's own Claude Code, run on their own machine (#2991).
 
 Only the process that talks to the model runs there, with the login its owner
-gave the platform (`cheesehost claude login`): a subscription's login stays on
-the machine it was given on. Its tools go to its execution environment like
+gave the platform (`cheesehost claude login`) that the agent was added with: a
+subscription's login stays on the machine it was given on. Its tools go to its execution environment like
 any session's (#2320) — the remote-execution client, the executor in that
 environment, its sandbox, the work lease and the platform tools are a central
 session's. Nothing runs on the platform's session host and nothing goes
@@ -18,7 +18,8 @@ there (`client.prepare`).
 
 Which machine runs the session: the one holding the model connection the
 agent was added with, and no other — a subscription's login never leaves the
-machine it was given on. While that machine is away the session waits for it.
+machine it was given on. A machine may hold several logins; the session signs
+in with that one (`place.OWN_LOGIN_ID`). While that machine is away the session waits for it.
 When the connection is gone (its owner removed or logged it out), or its kind
 or its model service's host is one the project does not allow, the session
 does not start, and the room is told why (`own.unusable`).
@@ -42,6 +43,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.place import (
     OWN_KEY,
+    OWN_LOGIN_ID,
     OWN_MODEL,
     OWN_MODEL_AUTH,
     OWN_MODEL_BASE_URL,
@@ -110,24 +112,33 @@ class OwnerChannel(CentralChannel):
             # launch: this session signs in with its owner's login on the
             # machine, and none of the metering proxy's environment is set.
             prepared.env["CHEESE_OWN_LOGIN"] = "1"
-            # What the machine calls a model with is read once, as the session
-            # starts. Folded into what the session was started with, so the
-            # next turn after its owner switches account or model service
-            # starts a new session instead of keeping the old one.
-            calls = await self._model_access(kwargs["precheck"].machine)
+            # Which of the machine's logins it signs in with, and what that
+            # login calls a model with, are read once, as the session starts.
+            # The second is folded into what the session was started with, so
+            # the next turn after its owner switches account or model service
+            # starts a new session instead of keeping the old one; the login
+            # itself never changes under an agent.
+            login = await self._login(kwargs["session"])
+            prepared.env[OWN_LOGIN_ID] = login.local_id
+            calls = f"{login.auth_method or ''}:{login.model or ''}"
             prepared.env["CHEESE_AGENT_CONFIG"] = hashlib.sha256(
                 f"{prepared.env.get('CHEESE_AGENT_CONFIG', '')}:{calls}".encode()
             ).hexdigest()
             yield prepared
 
-    async def _model_access(self, machine: str) -> str:
-        """How the owner's Claude Code on ``machine`` reaches a model, as it
-        last said: the kind of login, and a model service's model."""
+    async def _login(self, session: SessionRef) -> DeviceClaudeLoginRow:
+        """The login the agent was added with, as its machine last said; one
+        removed or logged out since the turn placed it starts nothing."""
         async with (self._session_factory or async_session_factory)() as db:
-            row = await db.get(DeviceClaudeLoginRow, machine)
-        if row is None:
-            return ""
-        return f"{row.auth_method or ''}:{row.model or ''}"
+            owned = await owned_by_session(db, session.project_id, session.agent_handle)
+            row = (
+                await db.get(DeviceClaudeLoginRow, owned.login_id)
+                if owned is not None and owned.login_id is not None
+                else None
+            )
+        if row is None or not row.logged_in or row.revoked_at is not None:
+            raise ScreenSetupError(say("ownAgentConnectionNotFound"))
+        return row
 
 
 class AccountChannel(CentralChannel):

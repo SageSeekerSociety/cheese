@@ -955,7 +955,7 @@ class TestUserRealNameService:
         )
 
         assert len(logs) == 2
-        user_repo.get_by_ids.assert_awaited_once_with([2])
+        user_repo.get_by_ids.assert_awaited_once_with([2], include_closed=True)
 
     @pytest.mark.anyio
     async def test_get_access_logs_user_not_found(self, service, user_repo) -> None:

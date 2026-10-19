@@ -160,6 +160,23 @@ class PlanService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def published_plans(self) -> list[dict]:
+        """Terms available to members, excluding administrator-only plans."""
+        rows = await self._session.scalars(
+            select(Plan).where(Plan.admin_only.is_(False)).order_by(Plan.rank, Plan.key)
+        )
+        fields = (
+            "key",
+            "name",
+            "audience",
+            "credits_per_period",
+            "period",
+            "windows",
+            "model_tiers",
+            "unlimited",
+        )
+        return [{key: plan[key] for key in fields} for plan in map(plan_out, rows)]
+
     async def plans(self) -> list[dict]:
         """Every plan, with how many teams are on it and whether new teams start
         on it."""

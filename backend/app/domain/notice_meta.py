@@ -154,10 +154,6 @@ EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 EVENT_TIMED_DELIVERY: Final = "timed_delivery"
 #: 芝士把一次做法整理成了项目技能，等人确认后才保存、才下发。
 EVENT_SKILL_PROPOSED: Final = "skill_proposed"
-#: 叫醒链上该来的那一拍没来（`domain/wake_watch/`）：总调度的定时器或者看门狗的
-#: 心跳停了。判到停摆之后，观察者给那条线上的座位点一条补跳
-#: （`wake_watch/catchup.py`）—— 这一条事件就是那条投递带的。
-EVENT_WAKE_MISSED: Final = "wake_missed"
 #: 芝士在某人的邮箱里写好了一封草稿；发不发由邮箱主人确认。
 EVENT_MAIL_DRAFTED: Final = "mail_drafted"
 #: 那封草稿的下落：邮箱主人发出了、发送失败了，或者放弃了。房间里的确认卡片据此
@@ -174,6 +170,9 @@ EVENT_ROUTINE_STOPPED: Final = "routine_stopped"
 #: AI 服务的一次请求失败了，会话正在按它自己的退避重试。重试期间房间里没有任何
 #: 输出，不说一声就和「在想」分不出来。同一段连续的重试只占一行，次数原地更新。
 EVENT_API_RETRY: Final = "api_retry"
+EVENT_TURN_RESUME_WAIT: Final = "turn_resume_wait"
+EVENT_TURN_RESUME_STARTED: Final = "turn_resume_started"
+EVENT_TURN_RESUME_STOPPED: Final = "turn_resume_stopped"
 #: 会话在压缩上下文：对话太长，模型接下一句之前要先把前面的内容整理成摘要。这期间
 #: 房间里没有任何输出，也不回新消息，不说一声就和会话挂了分不出来。开始时落一行，
 #: 结束时同一行改成已完成或失败（`meta.state = "over"`）。
@@ -253,7 +252,6 @@ EVENT_TYPES: Final = frozenset(
         EVENT_DEPENDENCY_REJECTED,
         EVENT_POLICY_PROPOSAL,
         EVENT_TIMED_DELIVERY,
-        EVENT_WAKE_MISSED,
         EVENT_SKILL_PROPOSED,
         EVENT_MAIL_DRAFTED,
         EVENT_MAIL_RESULT,
@@ -287,7 +285,6 @@ RUN_RECORD_EVENTS: Final = frozenset(
         EVENT_CONTEXT_COMPACT,
         EVENT_DEVICE_WAITING,
         EVENT_TIMED_DELIVERY,
-        EVENT_WAKE_MISSED,
         "cloud_startup",
         "cloud_provisioning",
         "sandbox_asleep",

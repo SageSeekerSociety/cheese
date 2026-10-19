@@ -17,11 +17,8 @@ import { collect, measure, open } from '../contrast-walk.mjs'
 // the gate, because the measurement needs a real browser and Playwright lives
 // here. Every run must clear its floor; there is no baseline.
 //
-// The walk itself is not here: it is in e2e/contrast-walk.mjs, shared with the
-// driver the ratchet snapshot collector runs (e2e/contrast-ratchet.mjs), so the
-// number that page records and the verdict this gate gives come out of the same
-// code. What stays here is the plants that say the walk still means what the
-// numbers need it to mean.
+// The walk lives in e2e/contrast-walk.mjs. The tests here check its verdict and
+// the planted cases that show the walk still measures the intended property.
 //
 // What it covers, and what it deliberately does not: the three public pages a
 // visitor can reach, in both themes, at 1440×900. `/` and `/about` are the same
