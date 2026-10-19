@@ -696,6 +696,7 @@ def harness_sessions(machine_home: Path, project: str, resource: str):
         / str(uuid.UUID(resource))
     )
     if any(path.is_symlink() for path in (root, root.parent, root.parent.parent)):
+        # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
         raise RuntimeError("harness path is a symlink")
     found = []
     for seat in sorted(root.glob("*/*")):
@@ -771,6 +772,7 @@ def send_transcripts(archive: Path, url: str):
     if not archive.is_file():
         return None
     if not url:
+        # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
         raise RuntimeError("there is no bucket to send the transcripts to")
     return put_archive(archive, url)
 
