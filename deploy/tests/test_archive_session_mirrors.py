@@ -24,12 +24,19 @@ class NotFound(Exception):
 
 
 class Bucket:
-    def __init__(self, *, corrupt=False):
+    def __init__(self, *, corrupt=False, touch_source=False):
         self.objects = {}
+        self.uploads = 0
         self.corrupt = corrupt
+        self.touch_source = touch_source
 
     def upload_file(self, path, bucket, key, ExtraArgs=None):
+        self.uploads += 1
         data = Path(path).read_bytes()
+        if self.touch_source:
+            # The session wrote to its mirror while it was being archived.
+            with open(path, "ab") as handle:
+                handle.write(b"late record")
         if self.corrupt:
             data = data[:-1]
         self.objects[key] = (data, dict((ExtraArgs or {}).get("Metadata", {})))
@@ -49,15 +56,18 @@ class Archive(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
 
-    def mirror(self, name, *, age_days, shm_age_days=None):
+    def mirror(self, name, *, age_days, shm_age_days=None, wal=b"", wal_age_days=None):
         directory = self.root / "p" / "room" / "claude-code" / name
         directory.mkdir(parents=True)
         db = directory / "records.sqlite"
         db.write_bytes(name.encode() * 100)
         shm = directory / "records.sqlite-shm"
         shm.write_bytes(b"\0" * 32)
-        (directory / "records.sqlite-wal").write_bytes(b"")
+        wal_path = directory / "records.sqlite-wal"
+        wal_path.write_bytes(wal)
         then = time.time() - age_days * DAY
+        wal_then = time.time() - (age_days if wal_age_days is None else wal_age_days) * DAY
+        os.utime(wal_path, (wal_then, wal_then))
         os.utime(db, (then, then))
         shm_then = time.time() - (age_days if shm_age_days is None else shm_age_days) * DAY
         os.utime(shm, (shm_then, shm_then))
@@ -105,6 +115,39 @@ class Archive(unittest.TestCase):
             archiver.archive(self.root, s3=Bucket(), bucket="private", prefix="archive/x",
                              older_than_s=7 * DAY, apply=True, held={str(db)})
         self.assertTrue(db.exists())
+
+
+    def test_a_write_ahead_log_with_records_leaves_with_its_mirror(self):
+        db = self.mirror("old", age_days=10, wal=b"frames not yet checkpointed")
+        bucket = Bucket()
+        self.run_archive(bucket)
+        self.assertFalse(db.parent.exists())
+        key = "archive/x/p/room/claude-code/old/records.sqlite-wal"
+        self.assertEqual(bucket.objects[key][0], b"frames not yet checkpointed")
+
+    def test_a_recently_written_log_keeps_an_old_mirror(self):
+        db = self.mirror("old", age_days=10, wal=b"a record from today", wal_age_days=0)
+        bucket = Bucket()
+        self.run_archive(bucket)
+        self.assertTrue(db.exists())
+        self.assertTrue((db.parent / "records.sqlite-wal").exists())
+        self.assertEqual(bucket.objects, {})
+
+    def test_a_mirror_written_during_its_upload_stays(self):
+        db = self.mirror("old", age_days=10)
+        totals = self.run_archive(Bucket(touch_source=True))
+        self.assertTrue(db.exists())
+        self.assertEqual(totals["failed"], 1)
+
+    def test_a_rerun_does_not_upload_what_the_bucket_already_holds(self):
+        db = self.mirror("old", age_days=10)
+        content = db.read_bytes()
+        bucket = Bucket()
+        key = "archive/x/p/room/claude-code/old/records.sqlite"
+        bucket.objects[key] = (content, {"sha256": hashlib.sha256(content).hexdigest()})
+        self.run_archive(bucket)
+        self.assertEqual(bucket.uploads, 0)
+        self.assertFalse(db.exists())
 
 
 if __name__ == "__main__":
