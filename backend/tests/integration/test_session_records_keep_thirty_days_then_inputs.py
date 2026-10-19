@@ -14,7 +14,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.session_record import retention, service
@@ -132,14 +132,113 @@ def test_a_deleted_conversation_keeps_no_records_and_no_archive(
     _seal(client, bucket)
 
     room = session.ref.topic_id
-    owner = {"X-Cheese-Token": "", **session_auth_headers("user-1")}
-    gone = client.delete(f"/topics/{room}", headers=owner)
-    assert gone.status_code == 200, gone.text
+    _delete_room(client, room)
     _forget(client, bucket)
 
     assert not [key for key in bucket.objects if str(room) in key]
+    assert _rows(client, room) == 0
 
-    async def rows() -> int:
+
+def test_a_conversation_whose_row_is_gone_keeps_nothing(client, tmp_path, bucket):
+    """Once a deleted channel's cleanup removes its row, nothing of it stays,
+    whatever was not yet swept."""
+    session, _work = _start(client, tmp_path, bucket)
+    _expire(client, bucket, days=31)
+    room = session.ref.topic_id
+
+    async def remove() -> None:
+        async with client.test_request_factory() as db:
+            await db.execute(text("DELETE FROM topics WHERE id = :id"), {"id": room})
+            await db.commit()
+
+    client.portal.call(remove)
+    _forget(client, bucket)
+
+    assert not [key for key in bucket.objects if str(room) in key]
+    assert _rows(client, room) == 0
+
+
+def test_an_unreadable_run_holds_up_neither_expiry_nor_deletion(
+    client, tmp_path, bucket
+):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    first, _ = _start(client, tmp_path / "a", bucket)
+    # Its object is gone, with its row still naming it.
+    bucket.objects.clear()
+    second, work = _start(client, tmp_path / "b", bucket)
+    _delete_room(client, first.ref.topic_id)
+
+    later = datetime.now(UTC) + timedelta(days=31)
+    _call(
+        client,
+        lambda: retention.expire(client.test_request_factory, bucket, now=later),
+    )
+    _forget(client, bucket)
+
+    assert _rows(client, first.ref.topic_id) == 0
+    kept = second.read(turn_id=work)
+    assert [item["record"]["message"]["content"] for item in kept] == [ASKED]
+
+
+def test_a_channel_deleted_while_its_last_records_are_sealed_leaves_no_object(
+    client, tmp_path, monkeypatch
+):
+    """The sealer runs on its own clock; the deletion must not lose an object
+    it writes in the middle."""
+    bucket = _SealsOnFirstDelete(client)
+    monkeypatch.setattr(service, "private_storage", lambda: bucket)
+    session, _work = _start(client, tmp_path, bucket)
+    # The channel's last turn, not yet sealed when it is deleted.
+    session.write(_turn(str(uuid.uuid4())))
+    session.drain()
+    room = session.ref.topic_id
+    _delete_room(client, room)
+    _forget(client, bucket)
+    _forget(client, bucket)
+
+    assert not [key for key in bucket.objects if str(room) in key]
+    assert _rows(client, room) == 0
+
+
+def test_without_a_bucket_a_deleted_conversation_still_loses_its_records(
+    client, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(service, "bucket", lambda: None)
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    session.write(_turn(str(uuid.uuid4())))
+    session.drain()
+    room = session.ref.topic_id
+    assert _rows(client, room) > 0
+    _delete_room(client, room)
+    _call(client, lambda: retention.sweep(client.test_request_factory))
+    assert _rows(client, room) == 0
+
+
+class _SealsOnFirstDelete(_Bucket):
+    """A bucket in the middle of whose first delete the sealer runs."""
+
+    def __init__(self, client) -> None:
+        super().__init__()
+        self.client = client
+        self.sealed = False
+
+    async def delete(self, key: str) -> bool:
+        if not self.sealed:
+            self.sealed = True
+            later = datetime.now(UTC) + service.SEAL_AFTER * 2
+            await service.seal(self.client.test_request_factory, self, now=later)
+        return await super().delete(key)
+
+
+def _delete_room(client, room: uuid.UUID) -> None:
+    owner = {"X-Cheese-Token": "", **session_auth_headers("user-1")}
+    gone = client.delete(f"/topics/{room}", headers=owner)
+    assert gone.status_code == 200, gone.text
+
+
+def _rows(client, room: uuid.UUID) -> int:
+    async def count() -> int:
         async with client.test_request_factory() as db:
             return await db.scalar(
                 select(func.count())
@@ -147,4 +246,4 @@ def test_a_deleted_conversation_keeps_no_records_and_no_archive(
                 .where(SessionRecord.conversation_id == room)
             )
 
-    assert client.portal.call(rows) == 0
+    return client.portal.call(count)

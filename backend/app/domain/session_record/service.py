@@ -184,7 +184,7 @@ async def append(sessions: SessionFactory, stream: Stream, rows: list[dict]) -> 
     in journal order); how many were new.
 
     Nothing is kept for a conversation that is gone: its records would have
-    nowhere to be read from, and the cascade would take them anyway.
+    nowhere to be read from, and the retention sweep would take them anyway.
     """
     entries = await asyncio.to_thread(_entries, rows)
     if not entries:
@@ -387,7 +387,7 @@ def _gzip(entries: list[dict]) -> bytes:
     return gzip.compress(lines.encode(), compresslevel=6)
 
 
-def _unpack(body: bytes) -> list[dict]:
+def unpack(body: bytes) -> list[dict]:
     return [
         json.loads(line) for line in gzip.decompress(body).decode().splitlines() if line
     ]
@@ -511,4 +511,4 @@ async def open_run(row: SessionRecord, storage: StorageBackend | None) -> list[d
     if body is None:
         # i18n-exempt: an invariant broken in storage, a 500 for the logs
         raise RuntimeError(f"sealed session records missing: {row.object_key}")
-    return await asyncio.to_thread(_unpack, body)
+    return await asyncio.to_thread(unpack, body)

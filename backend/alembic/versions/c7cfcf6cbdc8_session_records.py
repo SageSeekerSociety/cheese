@@ -36,7 +36,7 @@ def upgrade() -> None:
         # No foreign key to conversations, on purpose: a cascade would take
         # the rows and leave their objects in the bucket with nothing naming
         # them. The retention sweep removes a gone conversation's rows and
-        # objects together (session_record.service.forget_gone).
+        # objects together (session_record.retention.forget_gone).
         sa.UniqueConstraint(
             "conversation_id",
             "agent_handle",
@@ -63,6 +63,12 @@ def upgrade() -> None:
         "session_records",
         ["last_at"],
         postgresql_where=sa.text("object_key IS NULL"),
+    )
+    op.create_index(
+        "ix_session_records_sealed",
+        "session_records",
+        ["last_at"],
+        postgresql_where=sa.text("object_key IS NOT NULL"),
     )
     # The record of what a session did is evidence: a row is written once and
     # never changed. Sealing replaces short runs with a long one by DELETE and

@@ -4,9 +4,9 @@ A session's runner numbers every record its harness writes (Claude Code's
 stream-json lines, Codex's app-server notifications, pi's entries) and the
 backend mirrors that journal (`agent.harness.driven`). This table keeps those
 records the way they came, so that what the agent did can be read after the
-mirror has forgotten it: for `service.RETENTION` (30 days), after which only
+mirror has forgotten it: for `retention.RETENTION` (30 days), after which only
 the inputs the session was sent are kept, as a run of their own under
-`archive/user-messages/` (`service.expire`).
+`archive/user-messages/` (`retention.expire`).
 
 A row is a run of consecutive records of one session's journal, all of one
 turn. A record arrives as a run of one, with the record in the row
@@ -66,11 +66,17 @@ class SessionRecord(UuidPk, Base):
             "last_at",
             postgresql_where="object_key IS NULL",
         ),
+        # What the retention sweep picks up: sealed runs, oldest first.
+        Index(
+            "ix_session_records_sealed",
+            "last_at",
+            postgresql_where="object_key IS NOT NULL",
+        ),
     )
 
     # The conversation (`conversations.id`), deliberately without a foreign
     # key: a cascade would take the rows and leave their objects in the bucket
-    # with nothing naming them. `service.forget_gone` removes a gone
+    # with nothing naming them. `retention.forget_gone` removes a gone
     # conversation's rows and objects together.
     conversation_id: Mapped[uuid.UUID] = mapped_column()
     # The turn the runner stamped on these records (`cheese.work_id`); empty for
