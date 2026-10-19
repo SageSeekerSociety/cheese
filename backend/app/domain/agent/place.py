@@ -209,9 +209,9 @@ CLAUDE_LOGINS_DIR = "logins/claude-logins"
 #: it (`claudecode.serviceFile`), held to this name by the same test.
 MODEL_SERVICE_FILE = "model-service.json"
 
-#: In a login directory: its stable macOS Keychain namespace. Existing sessions
-#: keep refreshing this same item after the connector moves the login's files.
-CLAUDE_KEYCHAIN_FILE = "keychain-config-dir"
+#: In a migrated login: a security command retaining its original Keychain
+#: items while credential files are read from the enrollment's new directory.
+CLAUDE_KEYCHAIN_DIR = "keychain"
 
 #: A member's own Claude Code on a connection their account holds (#2991): its
 #: session host is the deployment's, and the connection reaches the launch as

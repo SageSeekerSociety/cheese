@@ -36,7 +36,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     session_transfer,
 )
 from app.domain.agent.place import (
-    CLAUDE_KEYCHAIN_FILE,
+    CLAUDE_KEYCHAIN_DIR,
     CHECKOUT_DIR,
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
@@ -156,8 +156,8 @@ def test_the_connector_logs_claude_code_in_where_the_backend_asks_about_it():
     assert service, "the connector stopped declaring the model service file"
     assert service.group(1) == MODEL_SERVICE_FILE
     keychain = re.search(r'ClaudeKeychain\s*=\s*"([^"]+)"', source)
-    assert keychain, "the connector stopped naming its Keychain namespace file"
-    assert keychain.group(1) == CLAUDE_KEYCHAIN_FILE
+    assert keychain, "the connector stopped naming its migrated Keychain command"
+    assert keychain.group(1) == CLAUDE_KEYCHAIN_DIR
     more = re.search(r'ClaudeLogins\s*=\s*"([^"]+)"', source)
     assert more, "the connector stopped declaring where further logins go"
     assert more.group(1) == CLAUDE_LOGINS_DIR

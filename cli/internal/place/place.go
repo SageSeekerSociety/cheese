@@ -72,6 +72,6 @@ const FirstClaudeLogin = "default"
 // (`MODEL_SERVICE_FILE`), held to this one by the same test.
 const ModelService = "model-service.json"
 
-// ClaudeKeychain records a login's stable Keychain namespace. Moving a login's
-// files must not detach it from credential refreshes by an existing session.
-const ClaudeKeychain = "keychain-config-dir"
+// ClaudeKeychain holds a migrated login's security command. It retains the
+// Keychain item shared with sessions started before the files moved.
+const ClaudeKeychain = "keychain"

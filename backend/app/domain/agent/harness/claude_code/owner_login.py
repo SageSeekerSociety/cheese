@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VERSION
 from app.domain.agent.place import (
-    CLAUDE_KEYCHAIN_FILE,
+    CLAUDE_KEYCHAIN_DIR,
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
     MODEL_SERVICE_FILE,
@@ -86,10 +86,6 @@ if not env.get("USER"):
 
 def report(login):
     local_id, directory = login
-    try:
-        credential_dir = (directory / KEYCHAIN).read_text()
-    except FileNotFoundError:
-        credential_dir = str(directory)
     # Another model service the owner set (`cheesehost claude login --base-url`):
     # the sessions call it and not the login. Its model and host leave the
     # machine, for its owner to tell services apart; its key does not.
@@ -107,7 +103,8 @@ def report(login):
     result = subprocess.run(
         [str(binary), "auth", "status"],
         env={**env, "CLAUDE_CONFIG_DIR": str(directory),
-             "CLAUDE_SECURESTORAGE_CONFIG_DIR": credential_dir},
+             "CLAUDE_SECURESTORAGE_CONFIG_DIR": str(directory),
+             "PATH": str(directory / KEYCHAIN) + os.pathsep + env.get("PATH", "")},
         capture_output=True, text=True, timeout=60,
     )
     try:
@@ -138,7 +135,7 @@ def program() -> str:
         f"FIRST = {FIRST_LOGIN!r}\n"
         f"LOGIN_ID = {LOGIN_ID.pattern!r}\n"
         f"SERVICE = {MODEL_SERVICE_FILE!r}\n"
-        f"KEYCHAIN = {CLAUDE_KEYCHAIN_FILE!r}\n"
+        f"KEYCHAIN = {CLAUDE_KEYCHAIN_DIR!r}\n"
         f"VERSION = {CLAUDE_PINNED_VERSION!r}\n" + _PROGRAM
     )
 

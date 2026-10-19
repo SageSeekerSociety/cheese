@@ -391,30 +391,9 @@ func Environment(base []string, loginDir string) []string {
 func Command(ctx context.Context, binary, loginDir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Env = Environment(os.Environ(), loginDir)
-	store, err := CredentialDir(loginDir)
-	if err != nil {
-		cmd.Err = err
-		return cmd
-	}
-	cmd.Env = append(cmd.Env, "CLAUDE_SECURESTORAGE_CONFIG_DIR="+store)
+	cmd.Env = append(cmd.Env, "CLAUDE_SECURESTORAGE_CONFIG_DIR="+loginDir,
+		"PATH="+filepath.Join(loginDir, place.ClaudeKeychain)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return cmd
-}
-
-// CredentialDir is the one credential namespace this login owns. A macOS
-// login keeps its Keychain identity when its files move, because an existing
-// Claude session continues refreshing that item until it restarts.
-func CredentialDir(loginDir string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(loginDir, place.ClaudeKeychain))
-	if errors.Is(err, os.ErrNotExist) {
-		return loginDir, nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if !filepath.IsAbs(string(data)) {
-		return "", errors.New("claude: invalid Keychain namespace")
-	}
-	return string(data), nil
 }
 
 // Status is what `claude auth status` reports about the platform's login.

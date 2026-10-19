@@ -217,19 +217,22 @@ def test_probe_reads_only_the_connected_enrollment(tmp_path):
     assert logins[FIRST_LOGIN].subscription_type == "pro"
 
 
-def test_probe_preserves_the_logins_keychain_namespace(tmp_path):
+def test_probe_uses_the_moved_logins_keychain_command(tmp_path):
     env = _machine(tmp_path, installed=True, logged_in=True)
     login = Path(env["FIRST_LOGIN_DIR"])
-    namespace = str(Path(env["HOME"]) / ".cheese/claude-login")
-    (login / "keychain-config-dir").write_text(namespace)
+    command = login / "keychain/security"
+    command.parent.mkdir()
+    command.write_text("#!/bin/sh\necho '{\"loggedIn\":true}'\n")
+    command.chmod(0o700)
+    other = tmp_path / "other-bin"
+    other.mkdir()
+    (other / "security").write_text("#!/bin/sh\necho '{\"loggedIn\":false}'\n")
+    (other / "security").chmod(0o700)
+    env["PATH"] = f"{other}:{env['PATH']}"
     binary = Path(env["PLATFORM_ROOT"]) / "claude/versions" / CLAUDE_PINNED_VERSION
     binary.write_text(
-        "#!/bin/sh\n"
-        'if [ "$CLAUDE_SECURESTORAGE_CONFIG_DIR" = "$EXPECTED_NAMESPACE" ]; then\n'
-        '  echo \'{"loggedIn":true,"authMethod":"claude.ai"}\'\n'
-        "else echo '{\"loggedIn\":false}'; fi\n"
+        "#!/bin/sh\nexec security find-generic-password -w -s synthetic-service\n"
     )
-    env["EXPECTED_NAMESPACE"] = namespace
     assert _ask(env).logged_in
 
 

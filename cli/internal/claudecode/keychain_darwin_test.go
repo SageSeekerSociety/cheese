@@ -3,6 +3,7 @@ package claudecode
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,29 @@ import (
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 )
+
+func TestMovingAFileBackedLoginKeepsItsCredential(t *testing.T) {
+	home := ownerHome(t)
+	source := filepath.Join(home, ".cheese/claude-login")
+	destination := filepath.Join(home, ".cheese/logins/claude-login")
+	if err := os.MkdirAll(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, ".credentials.json"), []byte("synthetic-file-credential"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLogins(place.Root); err != nil {
+		t.Fatal(err)
+	}
+	reader := filepath.Join(home, "read-file-login")
+	if err := os.WriteFile(reader, []byte("#!/bin/sh\nexec cat \"${CLAUDE_SECURESTORAGE_CONFIG_DIR:-$CLAUDE_CONFIG_DIR}/.credentials.json\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Command(context.Background(), reader, destination).Output()
+	if err != nil || string(got) != "synthetic-file-credential" {
+		t.Fatalf("moved file-backed login is unreadable: got %q, %v", got, err)
+	}
+}
 
 func TestMovingALoginKeepsAnActiveSessionsCredentialUpdates(t *testing.T) {
 	home := ownerHome(t)
@@ -46,12 +70,14 @@ fi
 		t.Fatal(err)
 	}
 	const credential = `{"claudeAiOauth":{"accessToken":"synthetic-token","refreshToken":"synthetic-refresh"}}`
-	// The fixture follows the pinned Claude build's Keychain protocol. The
-	// connector neither computes these service names nor reads the credential.
+	// The fixture follows the pinned Claude build's Keychain protocol and
+	// independently seeds both the Console and OAuth items.
 	hash := sha256.Sum256([]byte(source))
-	service := fmt.Sprintf("Claude Code-credentials-%x", hash[:4])
-	if err := exec.Command("security", "add-generic-password", "-a", "test", "-s", service, "-w", credential).Run(); err != nil {
-		t.Fatal(err)
+	for _, kind := range []string{"", "-credentials"} {
+		service := fmt.Sprintf("Claude Code%s-%x", kind, hash[:4])
+		if err := exec.Command("security", "add-generic-password", "-a", "test", "-s", service, "-w", credential).Run(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := MigrateLogins(place.Root); err != nil {
 		t.Fatal(err)
@@ -59,26 +85,52 @@ fi
 	reader := filepath.Join(home, "read-login")
 	if err := os.WriteFile(reader, []byte(`#!/bin/sh
 store="${CLAUDE_SECURESTORAGE_CONFIG_DIR:-$CLAUDE_CONFIG_DIR}"
-service="Claude Code-credentials-$(printf %s "$store" | shasum -a 256 | cut -c1-8)"
-exec security find-generic-password -s "$service" -w
+service="Claude Code${2}-$(printf %s "$store" | shasum -a 256 | cut -c1-8)"
+case "$1" in
+  read) exec security find-generic-password -a test -s "$service" -w ;;
+  argv) exec security add-generic-password -U -a test -s "$service" -X "$3" ;;
+  stdin) printf 'add-generic-password -U -a "test" -s "%s" -X "%s"\n' "$service" "$3" | security -i ;;
+  delete) exec security delete-generic-password -a test -s "$service" ;;
+esac
 `), 0700); err != nil {
 		t.Fatal(err)
 	}
-	read := func(expected string) {
+	call := func(args ...string) []byte {
 		t.Helper()
-		got, err := Command(context.Background(), reader, destination).Output()
-		if err != nil || string(got) != expected+"\n" {
-			t.Fatalf("enrollment cannot read its latest credential: %v", err)
+		got, err := Command(context.Background(), reader, destination, args...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("migrated login command %s: %v: %s", args[0], err, got)
+		}
+		return got
+	}
+	for _, kind := range []string{"", "-credentials"} {
+		if got := string(call("read", kind)); got != credential+"\n" {
+			t.Fatalf("migrated login lost its credential: %q", got)
+		}
+		service := fmt.Sprintf("Claude Code%s-%x", kind, hash[:4])
+		// A process started before migration still updates the original item.
+		const refreshed = "synthetic-retained-session-update"
+		if err := exec.Command("security", "add-generic-password", "-U", "-a", "test", "-s", service, "-w", refreshed).Run(); err != nil {
+			t.Fatal(err)
+		}
+		if got := string(call("read", kind)); got != refreshed+"\n" {
+			t.Fatalf("migrated login lost retained session's update: %q", got)
+		}
+		// Pinned Claude uses interactive input normally and argv for large
+		// credentials. Both must update the same item the old session reads.
+		for _, mode := range []string{"argv", "stdin"} {
+			updated := "synthetic-migrated-session-" + mode
+			call(mode, kind, hex.EncodeToString([]byte(updated)))
+			got, err := exec.Command("security", "find-generic-password", "-a", "test", "-s", service, "-w").Output()
+			if err != nil || string(got) != updated+"\n" {
+				t.Fatalf("retained session cannot read migrated session's %s update: %q, %v", mode, got, err)
+			}
+		}
+		call("delete", kind)
+		if err := exec.Command("security", "find-generic-password", "-a", "test", "-s", service, "-w").Run(); err == nil {
+			t.Fatal("logout left the migrated credential available")
 		}
 	}
-	read(credential)
-	// A process started before the upgrade still writes the namespace it was
-	// launched with. Its successful refresh must be visible to the enrollment.
-	const refreshed = `{"claudeAiOauth":{"accessToken":"synthetic-updated","refreshToken":"synthetic-refresh-updated"}}`
-	if err := exec.Command("security", "add-generic-password", "-U", "-a", "test", "-s", service, "-w", refreshed).Run(); err != nil {
-		t.Fatal(err)
-	}
-	read(refreshed)
 	if _, err := os.Stat(source); !os.IsNotExist(err) {
 		t.Fatalf("old shared login directory remains: %v", err)
 	}

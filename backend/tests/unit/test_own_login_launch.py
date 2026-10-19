@@ -67,7 +67,7 @@ def _launch_on_machine(
     login_id: str | None = FIRST_LOGIN,
     other_service: dict | None = None,
     profile: str = ".cheese",
-    credential_namespace: str | None = None,
+    migrated_keychain: bool = False,
 ) -> dict:
     """Run the launcher the way a machine does, with the platform asking for
     Claude's ``opus`` on the machine's login ``login_id``, and return the
@@ -86,8 +86,16 @@ def _launch_on_machine(
     for login in (first, second):
         login.mkdir(parents=True)
     used, unused = (second, first) if login_id == "B7QX" else (first, second)
-    if credential_namespace is not None:
-        (used / "keychain-config-dir").write_text(credential_namespace)
+    keychain_home = tmp_path / "keychain-home"
+    keychain_used = tmp_path / "migrated-keychain-used"
+    if migrated_keychain:
+        command = used / "keychain/security"
+        command.parent.mkdir()
+        command.write_text(
+            f'#!/bin/sh\nprintf %s "$HOME" > "{keychain_home}"\n'
+            f'touch "{keychain_used}"\n'
+        )
+        command.chmod(0o700)
     if service is not None:
         (used / MODEL_SERVICE_FILE).write_text(json.dumps(service))
     if other_service is not None:
@@ -125,7 +133,6 @@ def _launch_on_machine(
         "ANTHROPIC_MODEL": "opus",
         **({OWN_LOGIN_ID: login_id} if login_id is not None else {}),
     }
-    keychain_home = tmp_path / "keychain-home"
     if mac:
         machine = tmp_path / "machine-bin"
         machine.mkdir()
@@ -148,6 +155,7 @@ def _launch_on_machine(
         **json.loads(seen.read_text()),
         "_home": str(home),
         "_keychain_home": keychain_home.read_text() if keychain_home.exists() else None,
+        "_migrated_keychain_used": keychain_used.exists(),
     }
 
 
@@ -163,10 +171,13 @@ def test_an_own_session_reads_the_login_its_owner_gave_the_platform(tmp_path):
     assert "ANTHROPIC_AUTH_TOKEN" not in seen
 
 
-def test_a_moved_login_keeps_the_active_sessions_keychain_namespace(tmp_path):
-    namespace = str(tmp_path / "original-login")
-    seen = _launch_on_machine(tmp_path, credential_namespace=namespace, mac=True)
-    assert seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == namespace
+def test_a_moved_login_uses_its_keychain_command_with_the_owners_home(tmp_path):
+    seen = _launch_on_machine(tmp_path, migrated_keychain=True, mac=True)
+    assert seen["_migrated_keychain_used"]
+    assert seen["_keychain_home"] == seen["_home"]
+    assert seen["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == (
+        f"{seen['_home']}/.cheese/logins/claude-login"
+    )
 
 
 def test_an_own_session_on_another_login_reads_that_login_only(tmp_path):
