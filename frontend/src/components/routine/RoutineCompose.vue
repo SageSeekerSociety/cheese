@@ -10,7 +10,8 @@
 // 调用方把话递回来（`error`）—— 那句话写在这一页里，人改了字段就地再存一次。
 //
 // 「时间」和「条件」两颗勾选框看着是两样，其实是同一个 `trigger` 的二选一：一条规则只有
-// 一种触发方式。所以勾上这一颗就是取消那一颗，取消勾选是切换，不是「两样都不要」。
+// 一种触发方式。所以勾上这一颗就是取消那一颗；两颗都不勾也是允许的 —— 那样存下来先不跑，
+// 等之后在「修改」里定了触发方式再开始。
 //
 // 条件那一头记着的是 `eventTrigger`，取消再勾回来还是刚才那一样：勾选框只是它的开关。
 import type { Routine, RoutineInput, RoutineTrigger } from '@/lib/routine'
@@ -69,7 +70,7 @@ const form = reactive({
   title: '',
   instructions: '',
   note: '',
-  trigger: 'schedule' as RoutineTrigger,
+  trigger: 'schedule' as RoutineTrigger | '',
   freq: 'weekly',
   time: '09:00',
   weekdays: [0] as number[],
@@ -108,7 +109,7 @@ watch(
     asTemplate.value = false
     attempted.value = false
     const spec = (r?.spec ?? {}) as Record<string, unknown>
-    if (r && r.trigger !== 'schedule') eventTrigger.value = r.trigger
+    if (r && r.trigger && r.trigger !== 'schedule') eventTrigger.value = r.trigger
     Object.assign(form, {
       room: r?.topic_id || props.defaultRoom || props.rooms[0]?.id || '',
       title: r?.title ?? '',
@@ -136,21 +137,23 @@ const conditionOptions = computed(() =>
   }))
 )
 
-/** 勾「时间」或勾「条件」：都是把这一条换到那一头去，另一颗跟着灭。 */
+/** 勾「时间」或勾「条件」：换到那一头去，另一颗跟着灭；再点已选中的那颗就取消。 */
 function pickTrigger(next: RoutineTrigger) {
-  form.trigger = next
+  form.trigger = form.trigger === next ? '' : next
   if (next !== 'schedule') eventTrigger.value = next
 }
-/** 取消勾选不做任何事：一条规则必须有触发方式，勾选框在这里是一颗二选一。 */
 function toggleTime(on: unknown) {
   if (on) pickTrigger('schedule')
+  else if (form.trigger === 'schedule') form.trigger = ''
 }
 function toggleCondition(on: unknown) {
   if (on) pickTrigger(eventTrigger.value)
+  else if (form.trigger !== 'schedule') form.trigger = ''
 }
 
 /** 表单里的几样人话 → 后端要的 `spec`。 */
 function specFromForm(): Record<string, unknown> {
+  if (!form.trigger) return {}
   if (form.trigger !== 'schedule') return { scope: scopeOfRoutine() }
   return { ...whenFromForm(), ...keptFromRoutine() }
 }
@@ -194,7 +197,7 @@ function applyTemplate(tpl: RoutineTemplate) {
   form.title = tpl.title
   form.instructions = tpl.goal
   form.note = tpl.note ?? ''
-  form.trigger = tpl.trigger
+  form.trigger = tpl.trigger as RoutineTrigger | ''
   if (tpl.trigger === 'schedule') {
     const spec = tpl.spec
     form.freq = (spec.freq as string) ?? 'daily'
@@ -202,7 +205,7 @@ function applyTemplate(tpl: RoutineTemplate) {
     form.weekdays = (spec.weekdays as number[]) ?? [0]
     form.day = (spec.day as number) ?? 1
     form.minute = (spec.minute as number) ?? 0
-  } else {
+  } else if (tpl.trigger) {
     eventTrigger.value = tpl.trigger
   }
   tab.value = 'new'
@@ -456,6 +459,9 @@ function submit() {
         </button>
       </div>
     </div>
+    <p v-if="!form.trigger" class="t-meta c-faint compose__unset">
+      {{ t('routines.form.triggerUnset') }}
+    </p>
 
     <div class="compose__foot">
       <v-checkbox

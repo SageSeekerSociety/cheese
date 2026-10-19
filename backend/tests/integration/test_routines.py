@@ -123,6 +123,32 @@ def test_a_teammates_rule_runs_from_the_moment_it_is_saved(client):
     assert len(runner.submitted) == 1
 
 
+def test_a_rule_saved_without_a_trigger_waits_for_one(client):
+    """Two boxes left empty: the rule is saved, paused, due at no moment, and
+    the list says no moment has been chosen. Giving it one later starts it."""
+    room = _room(client, _project(client))
+    made = _weekly(client, room, owner_handle=OWNER, trigger="", spec={})
+    assert made.status_code == 200, made.text
+    routine = made.json()["data"]
+    assert routine["state"] == "paused"
+    assert routine["next_run_at"] is None
+    assert routine["trigger"] == ""
+    assert routine["trigger_text"]
+
+    patched = client.patch(
+        f"/routines/{routine['id']}",
+        headers=PERSON,
+        json={
+            "trigger": "schedule",
+            "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    after = patched.json()["data"]
+    assert after["state"] == "active"
+    assert after["next_run_at"] is not None
+
+
 def test_a_teammates_rule_leaves_no_line_of_the_platforms_own_in_the_room(client):
     """The teammate says it in its own words, in its own message; the platform
     does not add a card of its own. Same on the way out: nothing to rewrite."""

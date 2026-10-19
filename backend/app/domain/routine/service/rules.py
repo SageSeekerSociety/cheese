@@ -60,6 +60,9 @@ def name_of(title: str, instructions: str) -> str:
 
 
 def validate_spec(trigger: str, spec: dict, tz: str) -> dict:
+    # 不选触发方式：存得下去，先不跑（见 create 里 paused 那一段）。
+    if not trigger:
+        return {}
     try:
         kind = RoutineTrigger(trigger)
     except ValueError as exc:
@@ -226,7 +229,13 @@ async def create(
         created_by=by,
     )
     svc._session.add(row)
-    svc._activate(row)
+    if trigger:
+        svc._activate(row)
+    else:
+        # 「两个都不选」：先存着，不排下一次。等有人在修改里定了触发方式，它再开始跑。
+        row.state = RoutineState.paused.value
+        row.next_run_at = None
+        row.event_cursor = now()
     await svc._session.flush()
     return row
 
@@ -275,11 +284,18 @@ async def update(svc: pkg.RoutineService, row: Routine, *, changes: dict) -> Rou
         row.title = name_of(row.title, row.instructions)
     if changes.get("agent_handle"):
         row.agent_handle = await svc._agent_for(row.topic_id, changes["agent_handle"])
+    was_unset = not row.trigger
     row.trigger, row.spec, row.timezone = trigger, new_spec, tz
     row.revision += 1
     # An edit takes effect the same way a new rule does: an AI teammate's
-    # edit needs nobody's confirmation either.
-    if row.state == RoutineState.active.value:
+    # edit needs nobody's confirmation either. Taking the trigger away leaves
+    # the rule sitting there (nothing to be due at); giving one to a rule that
+    # never had it starts it from the next moment — that is the moment it was
+    # waiting for.
+    if not trigger:
+        row.state = RoutineState.paused.value
+        row.next_run_at = None
+    elif row.state == RoutineState.active.value or was_unset:
         svc._activate(row)
     await svc._session.flush()
     return row

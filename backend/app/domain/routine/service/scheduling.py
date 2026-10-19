@@ -78,6 +78,8 @@ async def _events_for(
     session: AsyncSession, routine: Routine, since: datetime
 ) -> list[tuple[str, str, datetime]]:
     """(occurrence key, human description, when) for events after `since`."""
+    if not routine.trigger:
+        return []
     trigger = RoutineTrigger(routine.trigger)
     in_room = routine.spec.get("scope") == "room"
     found: list[tuple[str, str, datetime]] = []
