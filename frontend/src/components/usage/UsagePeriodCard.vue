@@ -65,25 +65,45 @@ function windowUsed(w: UsageWindow): string {
     <template v-if="period">
       <div class="upc__head">
         <span class="upc__label">
-          {{ t('usage.period.used', { month }) }}
+          {{ t('usage.plans.current') }}
           <UsagePlanTag :plan="plan" />
         </span>
-        <span class="upc__figure t-num">
-          {{
-            period.unlimited || used === null || total === null
+        <span v-if="period.resets_at" class="upc__reset">{{
+          t('usage.period.resets', { at: fmtResetAt(period.resets_at, locale) })
+        }}</span>
+      </div>
+      <div class="upc__metrics">
+        <div>
+          <span class="upc__metric-label">{{ t('usage.balance.available') }}</span
+          ><strong class="upc__available t-num">{{
+            period.unlimited
               ? t('usage.period.unlimited')
-              : t('usage.period.figure', { used: points(used), total: points(total) })
-          }}
-        </span>
+              : used === null || total === null
+                ? '—'
+                : t('usage.points', { n: points(Math.max(0, total - used) + (otherCredits ?? 0)) })
+          }}</strong>
+        </div>
+        <div>
+          <span class="upc__metric-label">{{ t('usage.period.used', { month }) }}</span
+          ><strong class="upc__metric t-num">{{ used === null ? '—' : t('usage.points', { n: points(used) }) }}</strong>
+        </div>
+        <div>
+          <span class="upc__metric-label">{{ t('usage.balance.planTotal') }}</span
+          ><strong class="upc__metric t-num">{{
+            period.unlimited
+              ? t('usage.period.unlimited')
+              : total === null
+                ? '—'
+                : t('usage.points', { n: points(total) })
+          }}</strong>
+        </div>
       </div>
       <template v-if="!period.unlimited && used !== null && total !== null">
         <div class="upc__meta">
           <span :class="`upc__left upc__left--${tone}`">
-            {{ usedUp ? usedUpText : t('usage.period.remaining', { n: points(Math.max(0, total - used)) }) }}
+            {{ usedUp ? usedUpText : t('usage.balance.planRemaining', { n: points(Math.max(0, total - used)) }) }}
           </span>
-          <span v-if="period.resets_at">{{
-            t('usage.period.resets', { at: fmtResetAt(period.resets_at, locale) })
-          }}</span>
+          <span v-if="otherCredits">{{ t('usage.balance.extraRemaining', { n: points(otherCredits) }) }}</span>
         </div>
         <div
           class="upc__bar"
@@ -141,6 +161,42 @@ function windowUsed(w: UsageWindow): string {
   gap: 12px;
 }
 
+.upc__reset {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+.upc__metrics {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 24px;
+  padding: 8px 0;
+}
+.upc__metric-label {
+  display: block;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.upc__available,
+.upc__metric {
+  display: block;
+  color: var(--ink);
+  font-size: 23px;
+  line-height: var(--lh-23);
+  font-weight: 600;
+}
+@media (max-width: 599.98px) {
+  .upc__metrics {
+    grid-template-columns: 1fr 1fr;
+    gap: 24px 12px;
+  }
+  .upc__metrics > div:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
 .upc__label {
   display: inline-flex;
   white-space: nowrap;
@@ -150,14 +206,6 @@ function windowUsed(w: UsageWindow): string {
   font-size: 15px;
   font-weight: 600;
   line-height: var(--lh-15);
-}
-
-.upc__figure {
-  white-space: nowrap;
-  color: var(--ink);
-  font-size: 23px;
-  font-weight: 600;
-  line-height: var(--lh-23);
 }
 
 .upc__meta {

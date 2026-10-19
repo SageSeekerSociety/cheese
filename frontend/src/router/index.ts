@@ -52,6 +52,12 @@ const routes: RouteRecordRaw[] = [
   QuestionRoutes,
   SpacesRoutes,
   TeamsRoutes,
+  {
+    name: 'CreditPlans',
+    path: '/plans',
+    component: () => import('@/views/CreditPlans.vue'),
+    meta: { titleKey: 'usage.plans.title', isFullPage: true, hideTabs: true, backTo: 'HomeHub' },
+  },
   // --- CheeseX (agent workspace) routes ---------------------------------
   // Our grafted views navigate internally by these route names; they must be
   // registered here (the merged app uses main's router).
