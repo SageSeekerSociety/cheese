@@ -484,7 +484,9 @@ async def test_queued_message_retains_selected_teammate(business_db_factory, tmp
     )
     assert prepared.agent.handle == "first"
     assert prepared.pending_ids == [original]
-    assert "For second" not in prepared.prompt_text
+    # 另一位座位的消息现在也读得到，但标成点给别人的，不在这轮要答的清单里。
+    assert "For second" in prepared.prompt_text
+    assert "[u → @cheese-" in prepared.prompt_text
 
 
 @pytest.mark.anyio
