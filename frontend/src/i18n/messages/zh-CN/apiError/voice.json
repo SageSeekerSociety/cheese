@@ -1,0 +1,9 @@
+{
+  "voiceNotWav": "录音格式不对，请刷新页面后再试。",
+  "voiceEmpty": "这段录音是空的。",
+  "voiceTooLong": "一段录音最长 {seconds} 秒。",
+  "voiceDailyUsedUp": "今天的语音输入已经用完，明天再来。",
+  "voiceUnavailable": "语音输入暂时用不了。",
+  "voiceNotHeard": "这段没识别出来，可以再试一次。",
+  "voicePeopleOnly": "只有人能用语音输入。"
+}

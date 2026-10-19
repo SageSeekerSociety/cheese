@@ -101,24 +101,27 @@ class LedgerQueries:
         A windowed plan admits while every window has room. Once one is full,
         only an earmark or bought or granted credits may be spent; with none,
         the call waits for the window to reset."""
-        if payer.project_id is not None:
-            refused = await CreditBudgets(self._session).project_refusal(
-                payer.project_id
-            )
-            if refused is not None:
-                return refused
-        if payer.terms.unlimited:
-            return None
-        balance = await self.balance(payer)
-        if payer.terms.windowed:
-            if not any(w.full for w in balance.windows):
-                return None
-            if balance.packs_remaining() > 0:
-                return None
-            return balance.refusal()
-        if balance.exhausted:
-            return balance.refusal()
-        return None
+        key = payer.project_id or uuid.UUID(int=0)
+        return (await self.admit_many({key: payer}))[key]
+
+    async def admit_many(
+        self, payers: Mapping[uuid.UUID, Payer]
+    ) -> dict[uuid.UUID, Refusal | None]:
+        """``admit`` for many payers at once: budgets, packs and windows are
+        each read once for the whole batch."""
+        budgets = await CreditBudgets(self._session).project_refusals(
+            [p.project_id for p in payers.values() if p.project_id is not None]
+        )
+        paying = {
+            key: p
+            for key, p in payers.items()
+            if p.project_id not in budgets and not p.terms.unlimited
+        }
+        balances = await self.balances(paying) if paying else {}
+        return {
+            key: _verdict(payer, budgets, balances.get(key))
+            for key, payer in payers.items()
+        }
 
     async def balances(self, payers: Mapping[uuid.UUID, Payer]) -> dict:
         """``balance`` for many payers at once, in two queries."""
@@ -158,3 +161,17 @@ class LedgerQueries:
             .order_by(ComputeGrant.created_at, ComputeGrant.id)
         )
         return [p for p in rows.scalars() if _live(p, now)]
+
+
+def _verdict(
+    payer: Payer, budgets: Mapping[uuid.UUID, Refusal], balance: Balance | None
+) -> Refusal | None:
+    if payer.project_id is not None and payer.project_id in budgets:
+        return budgets[payer.project_id]
+    if balance is None:
+        return None
+    if payer.terms.windowed:
+        if not any(w.full for w in balance.windows) or balance.packs_remaining() > 0:
+            return None
+        return balance.refusal()
+    return balance.refusal() if balance.exhausted else None

@@ -96,6 +96,21 @@ export async function uploadAttachment(
   return body.data
 }
 
+/** 输入框里说的一段：交给后端听写，回来整理好的字（`text`）和原话（`raw`）。 */
+export async function hearVoice(topicId: string, wav: Blob): Promise<{ text: string; raw: string }> {
+  const form = new FormData()
+  form.append('file', wav, 'voice.wav')
+  const url = `${BASE}/topics/${encodeURIComponent(topicId)}/voice`
+  const { status, body } = await postFormWithProgress<ApiEnvelope<{ text: string; raw: string }>>(
+    url,
+    form,
+    authHeaders()
+  )
+  if (status < 200 || status >= 300 || !body || body.code !== 200)
+    throw new Error(refusalWords(body) || t('global.request.uploadFailed', { status }))
+  return body.data
+}
+
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).
 //
 // 注意这不是一个可以挂在 <img src> 上的地址：raw 端点从 Authorization 头认人，

@@ -185,13 +185,10 @@ async def unpaid_sandboxes(session: AsyncSession) -> list:
         return []
     _checked_at = now
     rows = (await session.execute(_running().add_columns(CloudHost.device_id))).all()
-    usage = UsageService(session)
-    refused: dict[uuid.UUID, bool] = {}
-    for row in rows:
-        if row.project_id not in refused:
-            refused[row.project_id] = (
-                await usage.admit_project(row.project_id) is not None
-            )
+    verdicts = await UsageService(session).admit_projects(
+        list({row.project_id for row in rows})
+    )
+    refused = {pid: verdict is not None for pid, verdict in verdicts.items()}
     due = [row for row in rows if refused[row.project_id]]
     rooms = {row.topic_id for row in due}
     busy = set()
